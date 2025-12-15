@@ -1,0 +1,2 @@
+- Make a flag to have an interactive install - e.g. `--interactive`
+    - If this flag is set, then ask for each entry and show the default value, retain the default value if no value is entered.

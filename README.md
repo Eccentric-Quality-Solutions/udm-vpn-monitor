@@ -61,10 +61,12 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
    nano /mnt/data/vpn-monitor/vpn-monitor.conf
    ```
    
-   Set `PEER_IPS` to your remote VPN endpoint IP address(es):
+   Set `PEER_IPS` to the **external/public IP address(es)** of your remote VPN gateway(s):
    ```bash
-   PEER_IPS="192.168.1.1 192.168.2.1"
+   PEER_IPS="203.0.113.1 198.51.100.1"
    ```
+   
+   **Important**: Use the external/public IP address that the VPN tunnel is established with, not the internal/private IP address. The script checks IPsec Security Associations (SAs) which are identified by external IP addresses.
 
 5. **Test manually**:
    ```bash
@@ -82,7 +84,7 @@ Edit `/mnt/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `PEER_IPS` | Space-separated list of remote VPN endpoint IPs | (required) |
+| `PEER_IPS` | Space-separated list of remote VPN endpoint **external/public** IPs | (required) |
 | `VPN_NAME` | VPN identifier for logging | "Site-to-Site VPN" |
 | `TIER1_THRESHOLD` | Failures before logging starts | 1 |
 | `TIER2_THRESHOLD` | Failures before surgical cleanup | 3 |
@@ -92,7 +94,7 @@ Edit `/mnt/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `CRON_SCHEDULE` | Cron schedule for check frequency (cron format) | "*/5 * * * *" |
 | `LOCKFILE_TIMEOUT` | Lockfile timeout in seconds (detects hung processes) | 300 |
 | `ENABLE_PING_CHECK` | Enable ping connectivity verification (0 or 1) | 1 |
-| `PING_TARGET_IP` | IP to ping through tunnel (empty = use peer IP) | "" |
+| `PING_TARGET_IP` | **Internal/private** IP to ping through tunnel (empty = use peer external IP) | "" |
 | `PING_COUNT` | Number of ping packets to send | 3 |
 | `PING_TIMEOUT` | Ping timeout per packet (seconds) | 2 |
 | `DEBUG` | Enable verbose logging (0 or 1) | 0 |

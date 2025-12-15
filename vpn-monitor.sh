@@ -33,7 +33,10 @@ PING_TIMEOUT=2
 DEBUG=0
 
 # Ensure state directory exists (needed before logging)
-mkdir -p "$STATE_DIR"
+mkdir -p "$STATE_DIR" || {
+    echo "ERROR: Cannot create state directory: $STATE_DIR" >&2
+    exit 1
+}
 
 # State files
 FAILURE_COUNTER_FILE="${STATE_DIR}/failure_counter"
@@ -43,50 +46,74 @@ RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
 
 # Logging function (defined early so it can be used during config loading)
+# Note: This function must not cause script exit even if logging fails
 log_message() {
     local level="$1"
     shift
     local message="$*"
     local timestamp
-    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S')
+    
+    # Always output to stderr first for debugging
+    local log_entry="[$timestamp] [$level] $message"
     
     # Ensure log directory exists and is writable
     local log_dir
     log_dir=$(dirname "$LOG_FILE")
     if [[ ! -d "$log_dir" ]]; then
-        mkdir -p "$log_dir" 2>/dev/null || {
-            echo "[$timestamp] [$level] $message" >&2
+        if ! mkdir -p "$log_dir" 2>/dev/null; then
+            echo "$log_entry" >&2
             echo "[$timestamp] [ERROR] Cannot create log directory: $log_dir" >&2
-            return 1
-        }
+            return 0  # Don't fail the script if logging fails
+        fi
     fi
     
     # Write to log file (append, create if doesn't exist)
-    if echo "[$timestamp] [$level] $message" >> "$LOG_FILE" 2>/dev/null; then
-        # Success
-        :
-    else
-        # Log write failed, at least output to stderr
-        echo "[$timestamp] [$level] $message" >&2
+    # Try to write, but don't fail the script if it doesn't work
+    {
+        echo "$log_entry" >> "$LOG_FILE" 2>&1
+    } || {
+        # If write failed, at least we tried - output to stderr
+        echo "$log_entry" >&2
         echo "[$timestamp] [ERROR] Failed to write to log file: $LOG_FILE" >&2
-        return 1
+    }
+    
+    # Always output ERROR and WARNING to stderr, and DEBUG if enabled
+    if [[ "${DEBUG:-0}" -eq 1 ]] || [[ "$level" == "ERROR" ]] || [[ "$level" == "WARNING" ]]; then
+        echo "$log_entry" >&2
     fi
     
-    if [[ "$DEBUG" -eq 1 ]] || [[ "$level" == "ERROR" ]] || [[ "$level" == "WARNING" ]]; then
-        echo "[$timestamp] [$level] $message" >&2
-    fi
+    return 0
 }
+
+# Test log file write capability early
+if ! touch "$LOG_FILE" 2>/dev/null; then
+    echo "ERROR: Cannot write to log file: $LOG_FILE" >&2
+    echo "ERROR: Check permissions on directory: $(dirname "$LOG_FILE")" >&2
+    exit 1
+fi
+
+# Verify logging works by writing a test message
+# This ensures log_message function will work before we proceed
+if ! echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] Log file initialized" >> "$LOG_FILE" 2>/dev/null; then
+    echo "ERROR: Cannot write to log file after touch test: $LOG_FILE" >&2
+    exit 1
+fi
 
 # Load configuration if it exists
 if [[ -f "$CONFIG_FILE" ]]; then
     # Validate config file is readable and not empty
     if [[ ! -r "$CONFIG_FILE" ]]; then
-        echo "ERROR: Configuration file is not readable: $CONFIG_FILE" >&2
+        log_message "ERROR" "Configuration file is not readable: $CONFIG_FILE"
         exit 1
     fi
     # shellcheck source=/dev/null
     # Source config file to load user-defined variables (overrides defaults)
-    source "$CONFIG_FILE"
+    if ! source "$CONFIG_FILE" 2>&1; then
+        log_message "ERROR" "Failed to source configuration file: $CONFIG_FILE"
+        exit 1
+    fi
+    log_message "INFO" "Configuration loaded from: $CONFIG_FILE"
 else
     log_message "WARNING" "Configuration file not found: $CONFIG_FILE"
     log_message "WARNING" "Using default configuration values"
@@ -94,8 +121,12 @@ fi
 
 # Initialize state files if they don't exist
 init_state() {
-    [[ ! -f "$FAILURE_COUNTER_FILE" ]] && echo "0" > "$FAILURE_COUNTER_FILE"
-    [[ ! -f "$RESTART_COUNT_FILE" ]] && echo "0" > "$RESTART_COUNT_FILE"
+    if [[ ! -f "$FAILURE_COUNTER_FILE" ]]; then
+        echo "0" > "$FAILURE_COUNTER_FILE" || log_message "WARNING" "Failed to create failure counter file"
+    fi
+    if [[ ! -f "$RESTART_COUNT_FILE" ]]; then
+        echo "0" > "$RESTART_COUNT_FILE" || log_message "WARNING" "Failed to create restart count file"
+    fi
     # LAST_BYTES_FILE is per-peer, initialized in check_vpn_status
 }
 
@@ -515,25 +546,40 @@ check_cron_persistence() {
 
 # Main execution
 main() {
+    # Log script start (also echo to stderr for debugging)
+    echo "DEBUG: Starting main() function, PID: $$" >&2
+    log_message "INFO" "VPN monitor script started (PID: $$)"
+    echo "DEBUG: After log_message call" >&2
+    
     # Initialize state
+    echo "DEBUG: Calling init_state()" >&2
     init_state
+    echo "DEBUG: After init_state()" >&2
     
     # Check cooldown
+    echo "DEBUG: Checking cooldown" >&2
     if check_cooldown; then
+        echo "DEBUG: In cooldown, exiting" >&2
+        log_message "INFO" "Script exiting: in cooldown period"
         exit 0
     fi
+    echo "DEBUG: Not in cooldown, continuing" >&2
     
     # Check cron persistence (first run only, to avoid log spam)
     if [[ ! -f "${STATE_DIR}/.cron_checked" ]]; then
+        echo "DEBUG: Checking cron persistence" >&2
         check_cron_persistence
         touch "${STATE_DIR}/.cron_checked"
     fi
     
     # Validate configuration
+    echo "DEBUG: Validating PEER_IPS (value: '${PEER_IPS}')" >&2
     if [[ -z "$PEER_IPS" ]]; then
+        echo "DEBUG: PEER_IPS is empty, logging error and exiting" >&2
         log_message "ERROR" "PEER_IPS not configured. Please set PEER_IPS in $CONFIG_FILE"
         exit 1
     fi
+    echo "DEBUG: PEER_IPS is configured, continuing" >&2
     
     # Validate and process each peer IP
     local all_ok=0
@@ -553,6 +599,12 @@ main() {
             all_ok=1
         fi
     done
+    
+    if [[ $all_ok -eq 0 ]]; then
+        log_message "INFO" "VPN monitor check completed successfully"
+    else
+        log_message "WARNING" "VPN monitor check completed with warnings/errors"
+    fi
     
     exit $all_ok
 }
@@ -613,11 +665,14 @@ if command -v flock >/dev/null 2>&1; then
                 # Lockfile is stale, force remove and try again
                 rm -f "$LOCKFILE"
                 if ! flock -n 9; then
+                    # Try to log before exiting (may fail if lockfile issue)
+                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARNING] Another instance is already running, exiting" >> "$LOG_FILE" 2>/dev/null || true
                     echo "WARNING: Another instance is already running, exiting" >&2
                     exit 0
                 fi
             else
                 # Lockfile is valid, another instance is actually running
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARNING] Another instance is already running, exiting" >> "$LOG_FILE" 2>/dev/null || true
                 echo "WARNING: Another instance is already running, exiting" >&2
                 exit 0
             fi
@@ -649,6 +704,7 @@ else
             # kill -0: check if process exists without sending signal (returns 0 if exists)
             if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
                 # Process is still running
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARNING] Another instance (PID $lock_pid) is already running, exiting" >> "$LOG_FILE" 2>/dev/null || true
                 echo "WARNING: Another instance (PID $lock_pid) is already running, exiting" >&2
                 exit 0
             fi
@@ -665,6 +721,7 @@ else
         trap "rm -f $LOCKFILE" EXIT INT TERM
     else
         # Race condition - another process got it first
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARNING] Could not acquire lockfile, exiting" >> "$LOG_FILE" 2>/dev/null || true
         echo "WARNING: Could not acquire lockfile, exiting" >&2
         exit 0
     fi
