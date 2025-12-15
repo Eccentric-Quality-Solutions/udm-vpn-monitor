@@ -1,0 +1,30 @@
+# Logs
+*.log
+cron.log
+vpn-monitor.log
+
+# State files (generated at runtime)
+failure_counter
+last_restart
+restart_count
+last_bytes
+cooldown_until
+vpn-monitor.lock
+.cron_checked
+
+# Local configuration (may contain sensitive info)
+vpn-monitor.conf.local
+*.conf.local
+
+# Editor files
+*.swp
+*.swo
+*~
+.DS_Store
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.bak
+
