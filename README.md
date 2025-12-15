@@ -56,15 +56,34 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
    ./install.sh
    ```
    
-   **Install without cron scheduling** (for manual execution):
-   ```bash
-   ./install.sh --no-cron
-   ```
+   If a configuration file already exists, you'll be prompted whether to overwrite it.
    
-   Use `--no-cron` if you want to:
-   - Run the script manually only
-   - Manage scheduling yourself (e.g., systemd timer, custom cron)
-   - Test the script before enabling automatic monitoring
+   **Installation options:**
+   
+   - **Install without cron scheduling** (for manual execution):
+     ```bash
+     ./install.sh --no-cron
+     ```
+   
+   - **Silent installation** (no prompts, preserves existing config):
+     ```bash
+     ./install.sh --silent
+     ```
+   
+   - **Silent installation with config overwrite**:
+     ```bash
+     ./install.sh --silent --overwrite-conf
+     ```
+   
+   - **Combine options**:
+     ```bash
+     ./install.sh --silent --no-cron --overwrite-conf
+     ```
+   
+   **Flag descriptions:**
+   - `--no-cron`: Install without setting up cron job (useful for manual execution or custom scheduling)
+   - `--silent`: Perform installation silently without prompts (by default preserves existing config)
+   - `--overwrite-conf`: Overwrite existing config file (only effective with `--silent`)
 
 4. **Configure the monitor**:
    ```bash

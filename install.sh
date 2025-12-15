@@ -14,8 +14,10 @@ SCRIPT_NAME="vpn-monitor.sh"
 CONFIG_NAME="vpn-monitor.conf"
 INSTALL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Flag to skip cron setup
+# Flags
 SKIP_CRON=0
+SILENT=0
+OVERWRITE_CONF=0
 
 # Colors for output
 RED='\033[0;31m'
@@ -61,28 +63,20 @@ create_install_dir() {
     mkdir -p "$INSTALL_DIR"
 }
 
-# Install scripts
-install_scripts() {
-    log_info "Installing scripts..."
+# Install config file (from template or create default)
+install_config_file() {
+    local overwrite_msg="$1"
     
-    # Copy main script
-    if [[ -f "${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}" ]]; then
-        cp "${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}" "${INSTALL_DIR}/${SCRIPT_NAME}"
-        chmod +x "${INSTALL_DIR}/${SCRIPT_NAME}"
-        log_info "Installed ${SCRIPT_NAME}"
-    else
-        log_error "Source file not found: ${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}"
-        exit 1
+    if [[ -n "$overwrite_msg" ]]; then
+        log_info "$overwrite_msg"
     fi
     
-    # Copy config if it doesn't exist
-    if [[ ! -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
-        if [[ -f "${INSTALL_SCRIPT_DIR}/${CONFIG_NAME}" ]]; then
-            cp "${INSTALL_SCRIPT_DIR}/${CONFIG_NAME}" "${INSTALL_DIR}/${CONFIG_NAME}"
-            log_info "Installed ${CONFIG_NAME} (please customize it)"
-        else
-            log_warn "Config template not found, creating default"
-            cat > "${INSTALL_DIR}/${CONFIG_NAME}" << 'EOF'
+    if [[ -f "${INSTALL_SCRIPT_DIR}/${CONFIG_NAME}" ]]; then
+        cp "${INSTALL_SCRIPT_DIR}/${CONFIG_NAME}" "${INSTALL_DIR}/${CONFIG_NAME}"
+        log_info "Installed ${CONFIG_NAME} (please customize it)"
+    else
+        log_warn "Config template not found, creating default"
+        cat > "${INSTALL_DIR}/${CONFIG_NAME}" << 'EOF'
 # UDM VPN Monitor Configuration
 PEER_IPS=""
 VPN_NAME="Site-to-Site VPN"
@@ -101,9 +95,48 @@ PING_COUNT=3
 PING_TIMEOUT=2
 DEBUG=0
 EOF
+    fi
+}
+
+# Install scripts
+install_scripts() {
+    log_info "Installing scripts..."
+    
+    # Copy main script
+    if [[ -f "${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}" ]]; then
+        cp "${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}" "${INSTALL_DIR}/${SCRIPT_NAME}"
+        chmod +x "${INSTALL_DIR}/${SCRIPT_NAME}"
+        log_info "Installed ${SCRIPT_NAME}"
+    else
+        log_error "Source file not found: ${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}"
+        exit 1
+    fi
+    
+    # Handle config file installation
+    if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
+        # Config file already exists
+        if [[ $SILENT -eq 1 ]]; then
+            # Silent mode: only overwrite if explicitly requested
+            if [[ $OVERWRITE_CONF -eq 1 ]]; then
+                install_config_file "Overwriting existing config file (--overwrite-conf flag)"
+            else
+                log_info "Config file already exists, preserving: ${INSTALL_DIR}/${CONFIG_NAME}"
+            fi
+        else
+            # Interactive mode: ask user
+            echo ""
+            log_warn "Config file already exists: ${INSTALL_DIR}/${CONFIG_NAME}"
+            read -p "Overwrite existing config file? (yes/no) [no]: " -r
+            echo ""
+            if [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+                install_config_file "Overwriting existing config file"
+            else
+                log_info "Preserving existing config file: ${INSTALL_DIR}/${CONFIG_NAME}"
+            fi
         fi
     else
-        log_info "Config file already exists, preserving: ${INSTALL_DIR}/${CONFIG_NAME}"
+        # Config file doesn't exist, install it
+        install_config_file "Installing config file"
     fi
 }
 
@@ -206,6 +239,11 @@ verify_installation() {
 
 # Display next steps
 display_next_steps() {
+    if [[ $SILENT -eq 1 ]]; then
+        # Silent mode: minimal output
+        return 0
+    fi
+    
     echo ""
     log_info "Installation complete!"
     echo ""
@@ -250,15 +288,34 @@ parse_args() {
         case "$1" in
             --no-cron)
                 SKIP_CRON=1
-                log_info "Cron setup will be skipped (--no-cron flag)"
+                if [[ $SILENT -eq 0 ]]; then
+                    log_info "Cron setup will be skipped (--no-cron flag)"
+                fi
+                shift
+                ;;
+            --silent)
+                SILENT=1
+                shift
+                ;;
+            --overwrite-conf)
+                OVERWRITE_CONF=1
                 shift
                 ;;
             --help|-h)
                 echo "Usage: $0 [OPTIONS]"
                 echo ""
                 echo "Options:"
-                echo "  --no-cron    Install without setting up cron job"
-                echo "  --help       Show this help message"
+                echo "  --no-cron         Install without setting up cron job"
+                echo "  --silent          Perform installation silently (no prompts)"
+                echo "  --overwrite-conf  Overwrite existing config file (only works with --silent)"
+                echo "  --help            Show this help message"
+                echo ""
+                echo "Examples:"
+                echo "  $0                                    # Interactive installation"
+                echo "  $0 --silent                          # Silent installation, preserve existing config"
+                echo "  $0 --silent --overwrite-conf          # Silent installation, overwrite config"
+                echo "  $0 --silent --no-cron                 # Silent installation, no cron"
+                echo "  $0 --silent --no-cron --overwrite-conf  # Silent installation, no cron, overwrite config"
                 echo ""
                 exit 0
                 ;;
@@ -268,6 +325,12 @@ parse_args() {
                 ;;
         esac
     done
+    
+    # Validate flag combinations
+    if [[ $OVERWRITE_CONF -eq 1 ]] && [[ $SILENT -eq 0 ]]; then
+        log_warn "Warning: --overwrite-conf is only effective with --silent flag"
+        log_warn "In interactive mode, you will be prompted to overwrite the config file"
+    fi
 }
 
 # Main installation
@@ -275,9 +338,11 @@ main() {
     # Parse command-line arguments
     parse_args "$@"
     
-    log_info "UDM VPN Monitor Installation"
-    log_info "=============================="
-    echo ""
+    if [[ $SILENT -eq 0 ]]; then
+        log_info "UDM VPN Monitor Installation"
+        log_info "=============================="
+        echo ""
+    fi
     
     check_root
     check_udm
