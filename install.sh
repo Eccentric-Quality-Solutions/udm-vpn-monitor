@@ -90,6 +90,7 @@ COOLDOWN_MINUTES=15
 MAX_RESTARTS_PER_HOUR=3
 LOG_FILE="/mnt/data/vpn-monitor/vpn-monitor.log"
 STATE_DIR="/mnt/data/vpn-monitor"
+CRON_SCHEDULE="*/5 * * * *"
 LOCKFILE_TIMEOUT=300
 ENABLE_PING_CHECK=1
 PING_TARGET_IP=""
@@ -107,17 +108,47 @@ EOF
 setup_cron() {
     log_info "Setting up cron job..."
     
+    # Load cron schedule from config if it exists, otherwise use default
+    local cron_schedule="*/5 * * * *"
+    if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
+        # Try to extract CRON_SCHEDULE from config file
+        # Handle both quoted (single or double) and unquoted values
+        local config_schedule
+        # Try double-quoted value first
+        config_schedule=$(grep "^CRON_SCHEDULE=" "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null | sed -n 's/^CRON_SCHEDULE="\(.*\)"/\1/p' | head -1)
+        # If empty, try single-quoted
+        if [[ -z "$config_schedule" ]]; then
+            config_schedule=$(grep "^CRON_SCHEDULE=" "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null | sed -n "s/^CRON_SCHEDULE='\(.*\)'/\1/p" | head -1)
+        fi
+        # If still empty, try unquoted
+        if [[ -z "$config_schedule" ]]; then
+            config_schedule=$(grep "^CRON_SCHEDULE=" "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null | sed 's/^CRON_SCHEDULE=//' | sed 's/^["'\'']//' | sed 's/["'\'']$//' | tr -d ' ' | head -1)
+        fi
+        # Validate it looks like a cron schedule (contains * or numbers)
+        if [[ -n "$config_schedule" ]] && [[ "$config_schedule" =~ [\*0-9] ]]; then
+            cron_schedule="$config_schedule"
+            log_info "Using cron schedule from config: $cron_schedule"
+        else
+            log_info "Using default cron schedule: $cron_schedule"
+        fi
+    else
+        log_info "Using default cron schedule: $cron_schedule"
+    fi
+    
     local cron_entry
-    cron_entry="*/5 * * * * ${INSTALL_DIR}/${SCRIPT_NAME} >> ${INSTALL_DIR}/cron.log 2>&1"
+    cron_entry="${cron_schedule} ${INSTALL_DIR}/${SCRIPT_NAME} >> ${INSTALL_DIR}/cron.log 2>&1"
     
     # Check if cron entry already exists
     if crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
         log_warn "Cron job already exists, skipping..."
-        log_info "To update the cron schedule, manually edit with: crontab -e"
+        log_info "To update the cron schedule:"
+        log_info "  1. Edit ${INSTALL_DIR}/${CONFIG_NAME} and set CRON_SCHEDULE"
+        log_info "  2. Remove old cron entry: crontab -e"
+        log_info "  3. Re-run install.sh to install new schedule"
     else
         # Add cron entry
         (crontab -l 2>/dev/null || true; echo "$cron_entry") | crontab -
-        log_info "Cron job installed (runs every 5 minutes)"
+        log_info "Cron job installed with schedule: $cron_schedule"
     fi
     
     # Display current cron entries

@@ -7,6 +7,7 @@
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
 
+# Strict error handling: exit on error, undefined vars, pipe failures
 set -euo pipefail
 
 # Get script directory
@@ -84,6 +85,7 @@ if [[ -f "$CONFIG_FILE" ]]; then
         exit 1
     fi
     # shellcheck source=/dev/null
+    # Source config file to load user-defined variables (overrides defaults)
     source "$CONFIG_FILE"
 else
     log_message "WARNING" "Configuration file not found: $CONFIG_FILE"
@@ -146,6 +148,8 @@ check_cooldown() {
 set_cooldown() {
     local minutes="$1"
     local cooldown_until
+    # Try Linux date format first, then BSD/macOS, fallback to manual calculation
+    # +%s: output as seconds since epoch
     cooldown_until=$(date -d "+${minutes} minutes" +%s 2>/dev/null || date -v+${minutes}M +%s 2>/dev/null || echo $(( $(date +%s) + minutes * 60 )))
     echo "$cooldown_until" > "$COOLDOWN_UNTIL_FILE"
     log_message "INFO" "Cooldown period set for $minutes minutes"
@@ -164,6 +168,7 @@ check_rate_limit() {
     fi
     
     # Count restarts in the last hour
+    # awk filters timestamps > one_hour_ago, wc -l counts lines, tr removes whitespace
     local recent_restarts
     recent_restarts=$(awk -v cutoff="$one_hour_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | wc -l | tr -d ' ')
     
@@ -182,8 +187,10 @@ record_restart() {
     echo "$timestamp" >> "$RESTART_COUNT_FILE"
     
     # Keep only last 24 hours of timestamps (cleanup old entries)
+    # Prevents restart count file from growing indefinitely
     local one_day_ago
     one_day_ago=$((timestamp - 86400))
+    # awk filters lines where first field (timestamp) > cutoff, writes to temp file
     awk -v cutoff="$one_day_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" > "${RESTART_COUNT_FILE}.tmp" 2>/dev/null || true
     mv "${RESTART_COUNT_FILE}.tmp" "$RESTART_COUNT_FILE" 2>/dev/null || true
     
@@ -191,6 +198,7 @@ record_restart() {
 }
 
 # Sanitize peer IP for use in filenames
+# Converts dots and colons to underscores (safe for filenames)
 sanitize_peer_ip() {
     local ip="$1"
     echo "$ip" | tr '.' '_' | tr ':' '_'
@@ -215,6 +223,7 @@ check_ping_connectivity() {
     fi
     
     # Determine ping command based on IP version
+    # Some systems have separate ping6, others use ping -6
     local ping_cmd
     if [[ "$target_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
         # IPv4
@@ -233,6 +242,7 @@ check_ping_connectivity() {
     
     # Perform ping check
     # Try Linux-style ping first (-W for timeout), fallback to BSD-style (-w)
+    # -c: count of packets, -q: quiet (summary only), -W/-w: timeout per packet
     local ping_result
     local ping_success=0
     
@@ -288,15 +298,19 @@ check_vpn_status() {
     local last_bytes_file="${STATE_DIR}/last_bytes_${peer_sanitized}"
     
     # Try ip xfrm state first (most reliable)
+    # xfrm = Linux IPsec framework - shows Security Associations (SAs) and byte counters
     if command -v ip >/dev/null 2>&1; then
         local xfrm_output
         # Use word boundaries to avoid partial IP matches (e.g., 192.168.1.1 matching 192.168.1.10)
+        # -A 10: show 10 lines after match (to get byte counter info)
         xfrm_output=$(ip xfrm state 2>/dev/null | grep -E "(^|[^0-9a-fA-F:])${peer_ip}([^0-9a-fA-F:]|$)" -A 10 || true)
         
         if [[ -n "$xfrm_output" ]]; then
             # Check if we have byte counters
             if echo "$xfrm_output" | grep -q "lifetime current:"; then
-                # Extract current bytes
+                # Extract current bytes from xfrm output
+                # Format: "lifetime current: 123456 bytes, 789 packets"
+                # sed extracts the number between "bytes " and next space/comma
                 local current_bytes
                 current_bytes=$(echo "$xfrm_output" | grep "lifetime current:" | head -1 | sed -n 's/.*bytes \([0-9]*\).*/\1/p' || echo "0")
                 
@@ -331,6 +345,7 @@ check_vpn_status() {
     fi
     
     # Fallback to swanctl if xfrm didn't confirm
+    # swanctl = strongSwan control utility (used by UDM for IPsec management)
     if [[ $vpn_ok -eq 0 ]] && command -v swanctl >/dev/null 2>&1; then
         local swanctl_output
         swanctl_output=$(swanctl --list-sas 2>/dev/null | grep -i "$peer_ip" || true)
@@ -344,6 +359,7 @@ check_vpn_status() {
     fi
     
     # Fallback to ipsec status if still not confirmed
+    # ipsec = legacy IPsec tools (libreswan/strongswan compatibility command)
     if [[ $vpn_ok -eq 0 ]] && command -v ipsec >/dev/null 2>&1; then
         local ipsec_output
         ipsec_output=$(ipsec status 2>/dev/null | grep -i "$peer_ip" || true)
@@ -378,7 +394,8 @@ check_vpn_status() {
         fi
     fi
     
-    return $((1 - vpn_ok))  # Return 0 if OK, 1 if failed
+    # Return 0 if OK, 1 if failed (invert vpn_ok: 1 becomes 0, 0 becomes 1)
+    return $((1 - vpn_ok))
 }
 
 # Surgical SA cleanup (Tier 2 recovery)
@@ -398,6 +415,7 @@ surgical_cleanup() {
         ip xfrm state delete dst "$peer_ip" 2>/dev/null || true
         
         # Try to reload/restart just this connection if swanctl available
+        # swanctl --reload: reloads configuration and re-establishes connections
         if command -v swanctl >/dev/null 2>&1; then
             swanctl --reload 2>/dev/null || true
         fi
@@ -423,12 +441,14 @@ full_restart() {
     # Perform restart
     if command -v ipsec >/dev/null 2>&1; then
         # Use PIPESTATUS to check exit code of ipsec, not tee
+        # PIPESTATUS[0] = exit code of first command in pipe (ipsec), not tee
         if ! ipsec restart 2>&1 | tee -a "$LOG_FILE"; then
             log_message "ERROR" "Failed to restart IPsec service (exit code: ${PIPESTATUS[0]})"
             return 1
         fi
     elif command -v swanctl >/dev/null 2>&1; then
         # Use PIPESTATUS to check exit code of swanctl, not tee
+        # PIPESTATUS[0] = exit code of first command in pipe (swanctl), not tee
         if ! swanctl --reload 2>&1 | tee -a "$LOG_FILE"; then
             log_message "ERROR" "Failed to reload swanctl (exit code: ${PIPESTATUS[0]})"
             return 1
@@ -549,6 +569,8 @@ check_lockfile_stale() {
     
     now=$(date +%s)
     # Try Linux stat format first, then BSD/macOS format
+    # -c %Y: Linux format, modification time as seconds since epoch
+    # -f %m: BSD/macOS format, modification time as seconds since epoch
     lockfile_mtime=$(stat -c %Y "$LOCKFILE" 2>/dev/null || stat -f %m "$LOCKFILE" 2>/dev/null || echo "0")
     
     if [[ $lockfile_mtime -eq 0 ]]; then
@@ -566,13 +588,16 @@ check_lockfile_stale() {
 }
 
 # Run with lockfile protection
+# flock = file locking utility (prevents multiple instances from running simultaneously)
 if command -v flock >/dev/null 2>&1; then
     # Use flock if available (preferred method)
     # Open lockfile for writing, acquire exclusive non-blocking lock
+    # File descriptor 9 is used for the lockfile
     (
         # Check if lockfile exists and is stale before trying to acquire
         if [[ -f "$LOCKFILE" ]] && check_lockfile_stale; then
             # Lockfile is stale, remove it and log
+            # Format: timestamp:pid, extract PID with cut
             local stale_pid
             stale_pid=$(cat "$LOCKFILE" 2>/dev/null | cut -d: -f2 || echo "unknown")
             rm -f "$LOCKFILE"
@@ -580,6 +605,7 @@ if command -v flock >/dev/null 2>&1; then
         fi
         
         # Try to acquire lock, exit if another instance is running
+        # -n: non-blocking (fail immediately if lock can't be acquired)
         if ! flock -n 9; then
             # Lock acquisition failed - another instance is running
             # Check if it's stale by file age
@@ -620,6 +646,7 @@ else
         else
             # Lockfile exists and not stale, check PID
             lock_pid=$(cat "$LOCKFILE" 2>/dev/null | cut -d: -f2 || echo "")
+            # kill -0: check if process exists without sending signal (returns 0 if exists)
             if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
                 # Process is still running
                 echo "WARNING: Another instance (PID $lock_pid) is already running, exiting" >&2
@@ -631,6 +658,7 @@ else
     fi
     
     # Try to create lockfile atomically with timestamp:pid format
+    # set -C: noclobber mode - prevents overwriting existing file (atomic check-and-create)
     if (set -C; echo "$(date +%s):$$" > "$LOCKFILE") 2>/dev/null; then
         # Successfully created lockfile
         lock_acquired=1
