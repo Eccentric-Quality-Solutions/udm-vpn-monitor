@@ -12,7 +12,7 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
 - **Connectivity Verification**: Optional ping checks verify end-to-end tunnel connectivity
 - **Tiered Recovery**: Escalates from logging → surgical SA cleanup → full restart
 - **Safety Controls**: Lockfiles with timeout detection, cooldown timers, and rate limiting prevent restart loops
-- **Persistent Logging**: Logs stored in `/mnt/data/` survive reboots
+- **Persistent Logging**: Logs stored in `/data/` survive reboots
 - **Cron-Based**: More resilient than long-running processes on UDM
 - **Per-Peer Tracking**: Monitors multiple VPN peers independently
 
@@ -41,7 +41,7 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
 1. **Transfer files to your UDM**:
    ```bash
    # From your local machine, copy files to UDM
-   scp vpn-monitor.sh vpn-monitor.conf install.sh root@<UDM_IP>:/tmp/
+   scp vpn-monitor.sh vpn-monitor.conf install.sh uninstall.sh root@<UDM_IP>:/tmp/
    ```
 
 2. **SSH into your UDM**:
@@ -55,10 +55,20 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
    chmod +x install.sh
    ./install.sh
    ```
+   
+   **Install without cron scheduling** (for manual execution):
+   ```bash
+   ./install.sh --no-cron
+   ```
+   
+   Use `--no-cron` if you want to:
+   - Run the script manually only
+   - Manage scheduling yourself (e.g., systemd timer, custom cron)
+   - Test the script before enabling automatic monitoring
 
 4. **Configure the monitor**:
    ```bash
-   nano /mnt/data/vpn-monitor/vpn-monitor.conf
+   nano /data/vpn-monitor/vpn-monitor.conf
    ```
    
    Set `PEER_IPS` to the **external/public IP address(es)** of your remote VPN gateway(s):
@@ -70,17 +80,22 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
 
 5. **Test manually**:
    ```bash
-   /mnt/data/vpn-monitor/vpn-monitor.sh
+   /data/vpn-monitor/vpn-monitor.sh
+   ```
+   
+   **Fake mode** (runs checks but doesn't escalate tiers):
+   ```bash
+   /data/vpn-monitor/vpn-monitor.sh --fake
    ```
 
 6. **Monitor logs**:
    ```bash
-   tail -f /mnt/data/vpn-monitor/vpn-monitor.log
+   tail -f /data/vpn-monitor/vpn-monitor.log
    ```
 
 ## Configuration
 
-Edit `/mnt/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
+Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -91,7 +106,7 @@ Edit `/mnt/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `TIER3_THRESHOLD` | Failures before full restart | 5 |
 | `COOLDOWN_MINUTES` | Minutes to wait after restart | 15 |
 | `MAX_RESTARTS_PER_HOUR` | Maximum restarts per hour | 3 |
-| `CRON_SCHEDULE` | Cron schedule for check frequency (cron format) | "*/5 * * * *" |
+| `CRON_SCHEDULE` | Cron schedule for check frequency (cron format) | "*/1 * * * *" |
 | `LOCKFILE_TIMEOUT` | Lockfile timeout in seconds (detects hung processes) | 300 |
 | `ENABLE_PING_CHECK` | Enable ping connectivity verification (0 or 1) | 1 |
 | `PING_TARGET_IP` | **Internal/private** IP to ping through tunnel (empty = use peer external IP) | "" |
@@ -100,10 +115,10 @@ Edit `/mnt/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `DEBUG` | Enable verbose logging (0 or 1) | 0 |
 
 **Cron Schedule Examples:**
-- `"*/5 * * * *"` - Every 5 minutes (default)
+- `"*/1 * * * *"` - Every 1 minute (default)
+- `"*/5 * * * *"` - Every 5 minutes
 - `"*/10 * * * *"` - Every 10 minutes
 - `"*/15 * * * *"` - Every 15 minutes
-- `"*/2 * * * *"` - Every 2 minutes (more frequent)
 - `"0 * * * *"` - Every hour (on the hour)
 
 ## How It Works
@@ -142,7 +157,7 @@ This dual approach is more reliable than checking IKE status alone, as it confir
 
 ### What Survives Reboots
 
-- ✅ Scripts in `/mnt/data/vpn-monitor/`
+- ✅ Scripts in `/data/vpn-monitor/`
 - ✅ Configuration files
 - ✅ Log files
 - ✅ Cron jobs (usually)
@@ -169,10 +184,10 @@ If monitoring stops after an upgrade:
 3. Or manually restore cron (check config for CRON_SCHEDULE first):
    ```bash
    # Check configured schedule
-   grep CRON_SCHEDULE /mnt/data/vpn-monitor/vpn-monitor.conf
+   grep CRON_SCHEDULE /data/vpn-monitor/vpn-monitor.conf
    
-   # Restore with default schedule (every 5 minutes)
-   (crontab -l 2>/dev/null; echo "*/5 * * * * /mnt/data/vpn-monitor/vpn-monitor.sh >> /mnt/data/vpn-monitor/cron.log 2>&1") | crontab -
+   # Restore with default schedule (every 1 minute)
+   (crontab -l 2>/dev/null; echo "*/1 * * * * /data/vpn-monitor/vpn-monitor.sh >> /data/vpn-monitor/cron.log 2>&1") | crontab -
    ```
 
 ## Monitoring & Troubleshooting
@@ -181,20 +196,23 @@ If monitoring stops after an upgrade:
 
 ```bash
 # Real-time log monitoring
-tail -f /mnt/data/vpn-monitor/vpn-monitor.log
+tail -f /data/vpn-monitor/vpn-monitor.log
 
 # View recent entries
-tail -n 100 /mnt/data/vpn-monitor/vpn-monitor.log
+tail -n 100 /data/vpn-monitor/vpn-monitor.log
 
 # Check for errors
-grep ERROR /mnt/data/vpn-monitor/vpn-monitor.log
+grep ERROR /data/vpn-monitor/vpn-monitor.log
 ```
 
 ### Manual Testing
 
 ```bash
 # Run monitor manually
-/mnt/data/vpn-monitor/vpn-monitor.sh
+/data/vpn-monitor/vpn-monitor.sh
+
+# Run in fake mode (checks failures but doesn't escalate tiers)
+/data/vpn-monitor/vpn-monitor.sh --fake
 
 # Check VPN status directly
 ip xfrm state | grep -A 10 <PEER_IP>
@@ -209,13 +227,21 @@ swanctl --list-sas
 ping -c 3 <PING_TARGET_IP>
 ```
 
+**Fake Mode (`--fake` flag):**
+The `--fake` flag allows you to test the monitoring script without triggering recovery actions. When enabled:
+- VPN status checks are performed normally
+- Failures are detected and logged
+- Failure counters are incremented
+- **Tier 2 (surgical cleanup) and Tier 3 (full restart) actions are skipped**
+- Useful for testing detection logic without affecting VPN connections
+
 ### Common Issues
 
 **Script not running:**
 - Check cron: `crontab -l`
-- Check lockfile: `ls -l /mnt/data/vpn-monitor/vpn-monitor.lock`
-- Check if lockfile is stale (older than LOCKFILE_TIMEOUT): `stat /mnt/data/vpn-monitor/vpn-monitor.lock`
-- Check logs: `tail /mnt/data/vpn-monitor/vpn-monitor.log`
+- Check lockfile: `ls -l /data/vpn-monitor/vpn-monitor.lock`
+- Check if lockfile is stale (older than LOCKFILE_TIMEOUT): `stat /data/vpn-monitor/vpn-monitor.lock`
+- Check logs: `tail /data/vpn-monitor/vpn-monitor.log`
 
 **Ping checks failing:**
 - Verify `PING_TARGET_IP` is reachable: `ping <PING_TARGET_IP>`
@@ -237,6 +263,42 @@ ping -c 3 <PING_TARGET_IP>
 
 ## Uninstallation
 
+### Automated Uninstallation (Recommended)
+
+Use the provided uninstall script:
+
+1. **Transfer uninstall script to your UDM** (if not already present):
+   ```bash
+   scp uninstall.sh root@<UDM_IP>:/tmp/
+   ```
+
+2. **SSH into your UDM**:
+   ```bash
+   ssh root@<UDM_IP>
+   ```
+
+3. **Run the uninstaller**:
+   ```bash
+   cd /tmp
+   chmod +x uninstall.sh
+   ./uninstall.sh
+   ```
+
+The script will:
+- Remove the cron job entry
+- Remove the installation directory (`/data/vpn-monitor`)
+- Remove all configuration, log, and state files
+- Verify complete removal
+
+**Non-interactive mode** (for automation):
+```bash
+./uninstall.sh --yes
+```
+
+### Manual Uninstallation
+
+If you prefer to uninstall manually:
+
 1. Remove cron entry:
    ```bash
    crontab -e
@@ -245,7 +307,7 @@ ping -c 3 <PING_TARGET_IP>
 
 2. Remove installation directory:
    ```bash
-   rm -rf /mnt/data/vpn-monitor
+   rm -rf /data/vpn-monitor
    ```
 
 ## Limitations & Disclaimers
@@ -287,7 +349,7 @@ If validation fails, it escalates through recovery tiers. The ping check helps d
 
 ### State Management
 
-State is tracked via files in `/mnt/data/vpn-monitor/`:
+State is tracked via files in `/data/vpn-monitor/`:
 - `failure_counter`: Consecutive failure count (shared across all peers)
 - `last_restart`: Timestamp of last restart
 - `restart_count`: Timestamps of all restarts (for rate limiting)

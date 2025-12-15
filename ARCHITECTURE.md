@@ -36,7 +36,7 @@ This document describes the architecture and design of the UDM VPN Monitor syste
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  State Files (/mnt/data/vpn-monitor/)                   │  │
+│  │  State Files (/data/vpn-monitor/)                        │  │
 │  │  • failure_counter                                       │  │
 │  │  • last_bytes_<peer_ip>                                  │  │
 │  │  • restart_count                                         │  │
@@ -60,7 +60,7 @@ graph TB
         Cron[Cron Scheduler<br/>Every 5 minutes]
         MainScript[vpn-monitor.sh<br/>Main Script]
         Config[vpn-monitor.conf<br/>Configuration]
-        StateDir[State Directory<br/>/mnt/data/vpn-monitor/]
+        StateDir[State Directory<br/>/data/vpn-monitor/]
         LogDir[Log Files]
     end
     
@@ -303,7 +303,7 @@ graph LR
 ## File Structure
 
 ```
-/mnt/data/vpn-monitor/
+/data/vpn-monitor/
 ├── vpn-monitor.sh              # Main monitoring script
 ├── vpn-monitor.conf            # Configuration file
 ├── vpn-monitor.log             # Main log file

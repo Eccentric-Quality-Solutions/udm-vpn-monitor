@@ -31,6 +31,8 @@ PING_TARGET_IP=""
 PING_COUNT=3
 PING_TIMEOUT=2
 DEBUG=0
+# Debug mode flag: when set, runs checks but doesn't escalate tiers
+NO_ESCALATE=0
 
 # Ensure state directory exists (needed before logging)
 mkdir -p "$STATE_DIR" || {
@@ -513,22 +515,30 @@ monitor_peer() {
         failure_count=$(increment_failure)
         log_message "WARNING" "VPN check failed for $peer_ip (failure count: $failure_count)"
         
-        # Tier 1: Log only (always happens)
+        # Tier 1: Logging (triggers when failure_count >= TIER1_THRESHOLD)
         if [[ $failure_count -ge $TIER1_THRESHOLD ]]; then
             log_message "INFO" "Tier 1: Logging failure for $peer_ip"
         fi
         
         # Tier 2: Surgical cleanup
         if [[ $failure_count -ge $TIER2_THRESHOLD ]] && [[ $failure_count -lt $TIER3_THRESHOLD ]]; then
-            log_message "WARNING" "Tier 2: Attempting surgical SA cleanup for $peer_ip"
-            surgical_cleanup "$peer_ip"
+            if [[ $NO_ESCALATE -eq 1 ]]; then
+                log_message "INFO" "Tier 2: Would attempt surgical SA cleanup for $peer_ip (skipped in fake mode)"
+            else
+                log_message "WARNING" "Tier 2: Attempting surgical SA cleanup for $peer_ip"
+                surgical_cleanup "$peer_ip"
+            fi
         fi
         
         # Tier 3: Full restart
         if [[ $failure_count -ge $TIER3_THRESHOLD ]]; then
-            log_message "ERROR" "Tier 3: Attempting full IPsec restart"
-            if full_restart; then
-                reset_failure_count
+            if [[ $NO_ESCALATE -eq 1 ]]; then
+                log_message "INFO" "Tier 3: Would attempt full IPsec restart (skipped in fake mode)"
+            else
+                log_message "ERROR" "Tier 3: Attempting full IPsec restart"
+                if full_restart; then
+                    reset_failure_count
+                fi
             fi
         fi
         
@@ -544,42 +554,97 @@ check_cron_persistence() {
     fi
 }
 
+# Parse command-line arguments
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --fake)
+                NO_ESCALATE=1
+                log_message "INFO" "Fake mode enabled: tier escalation disabled"
+                shift
+                ;;
+            --help|-h)
+                echo "Usage: $0 [OPTIONS]"
+                echo ""
+                echo "Options:"
+                echo "  --fake     Run checks and log failures but don't escalate tiers"
+                echo "  --help     Show this help message"
+                echo ""
+                exit 0
+                ;;
+            *)
+                log_message "WARNING" "Unknown argument: $1 (use --help for usage)"
+                shift
+                ;;
+        esac
+    done
+}
+
 # Main execution
 main() {
-    # Log script start (also echo to stderr for debugging)
-    echo "DEBUG: Starting main() function, PID: $$" >&2
-    log_message "INFO" "VPN monitor script started (PID: $$)"
-    echo "DEBUG: After log_message call" >&2
+    # Parse command-line arguments
+    parse_args "$@"
+    
+    # Log script start
+    if [[ $NO_ESCALATE -eq 1 ]]; then
+        log_message "INFO" "VPN monitor script started in fake mode (PID: $$) - tier escalation disabled"
+    else
+        log_message "INFO" "VPN monitor script started (PID: $$)"
+    fi
+    
+    # Debug output (only if DEBUG=1)
+    if [[ "${DEBUG:-0}" -eq 1 ]]; then
+        echo "DEBUG: Starting main() function, PID: $$" >&2
+        echo "DEBUG: After log_message call" >&2
+    fi
     
     # Initialize state
-    echo "DEBUG: Calling init_state()" >&2
+    if [[ "${DEBUG:-0}" -eq 1 ]]; then
+        echo "DEBUG: Calling init_state()" >&2
+    fi
     init_state
-    echo "DEBUG: After init_state()" >&2
+    if [[ "${DEBUG:-0}" -eq 1 ]]; then
+        echo "DEBUG: After init_state()" >&2
+    fi
     
     # Check cooldown
-    echo "DEBUG: Checking cooldown" >&2
+    if [[ "${DEBUG:-0}" -eq 1 ]]; then
+        echo "DEBUG: Checking cooldown" >&2
+    fi
     if check_cooldown; then
-        echo "DEBUG: In cooldown, exiting" >&2
+        if [[ "${DEBUG:-0}" -eq 1 ]]; then
+            echo "DEBUG: In cooldown, exiting" >&2
+        fi
         log_message "INFO" "Script exiting: in cooldown period"
         exit 0
     fi
-    echo "DEBUG: Not in cooldown, continuing" >&2
+    if [[ "${DEBUG:-0}" -eq 1 ]]; then
+        echo "DEBUG: Not in cooldown, continuing" >&2
+    fi
     
     # Check cron persistence (first run only, to avoid log spam)
     if [[ ! -f "${STATE_DIR}/.cron_checked" ]]; then
-        echo "DEBUG: Checking cron persistence" >&2
+        if [[ "${DEBUG:-0}" -eq 1 ]]; then
+            echo "DEBUG: Checking cron persistence" >&2
+        fi
         check_cron_persistence
         touch "${STATE_DIR}/.cron_checked"
     fi
     
     # Validate configuration
-    echo "DEBUG: Validating PEER_IPS (value: '${PEER_IPS}')" >&2
+    if [[ "${DEBUG:-0}" -eq 1 ]]; then
+        echo "DEBUG: Validating PEER_IPS (value: '${PEER_IPS}')" >&2
+    fi
     if [[ -z "$PEER_IPS" ]]; then
-        echo "DEBUG: PEER_IPS is empty, logging error and exiting" >&2
+        if [[ "${DEBUG:-0}" -eq 1 ]]; then
+            echo "DEBUG: PEER_IPS is empty, logging error and exiting" >&2
+        fi
         log_message "ERROR" "PEER_IPS not configured. Please set PEER_IPS in $CONFIG_FILE"
         exit 1
     fi
-    echo "DEBUG: PEER_IPS is configured, continuing" >&2
+    if [[ "${DEBUG:-0}" -eq 1 ]]; then
+        echo "DEBUG: PEER_IPS is configured, continuing" >&2
+    fi
     
     # Validate and process each peer IP
     local all_ok=0

@@ -9,10 +9,13 @@
 set -euo pipefail
 
 # Installation paths
-INSTALL_DIR="/mnt/data/vpn-monitor"
+INSTALL_DIR="/data/vpn-monitor"
 SCRIPT_NAME="vpn-monitor.sh"
 CONFIG_NAME="vpn-monitor.conf"
 INSTALL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Flag to skip cron setup
+SKIP_CRON=0
 
 # Colors for output
 RED='\033[0;31m'
@@ -43,9 +46,9 @@ check_root() {
 
 # Check if we're on a UDM
 check_udm() {
-    if [[ ! -d "/mnt/data" ]]; then
+    if [[ ! -d "/data" ]]; then
         log_error "This script is designed for UniFi Dream Machines"
-        log_error "/mnt/data directory not found"
+        log_error "/data directory not found"
         exit 1
     fi
     
@@ -88,9 +91,9 @@ TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
 COOLDOWN_MINUTES=15
 MAX_RESTARTS_PER_HOUR=3
-LOG_FILE="/mnt/data/vpn-monitor/vpn-monitor.log"
-STATE_DIR="/mnt/data/vpn-monitor"
-CRON_SCHEDULE="*/5 * * * *"
+LOG_FILE="/data/vpn-monitor/vpn-monitor.log"
+STATE_DIR="/data/vpn-monitor"
+CRON_SCHEDULE="*/1 * * * *"
 LOCKFILE_TIMEOUT=300
 ENABLE_PING_CHECK=1
 PING_TARGET_IP=""
@@ -109,7 +112,7 @@ setup_cron() {
     log_info "Setting up cron job..."
     
     # Load cron schedule from config if it exists, otherwise use default
-    local cron_schedule="*/5 * * * *"
+    local cron_schedule="*/1 * * * *"
     if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
         # Try to extract CRON_SCHEDULE from config file
         # Handle both quoted (single or double) and unquoted values
@@ -181,11 +184,15 @@ verify_installation() {
         log_info "Config verified: ${INSTALL_DIR}/${CONFIG_NAME}"
     fi
     
-    # Check cron entry
-    if ! crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
-        log_warn "Cron entry not found (may have been skipped if already exists)"
+    # Check cron entry (only if cron setup was not skipped)
+    if [[ $SKIP_CRON -eq 0 ]]; then
+        if ! crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
+            log_warn "Cron entry not found (may have been skipped if already exists)"
+        else
+            log_info "Cron entry verified"
+        fi
     else
-        log_info "Cron entry verified"
+        log_info "Cron setup skipped (--no-cron flag used)"
     fi
     
     if [[ $errors -eq 0 ]]; then
@@ -214,19 +221,60 @@ display_next_steps() {
     echo "  4. Monitor the log file:"
     echo "     tail -f ${INSTALL_DIR}/vpn-monitor.log"
     echo ""
-    log_warn "IMPORTANT: Persistence Notes"
-    echo "  - Scripts survive reboots (stored in /mnt/data/)"
-    echo "  - Cron jobs may be wiped during UniFi OS upgrades"
-    echo "  - Re-run this installer after upgrades if monitoring stops"
+    if [[ $SKIP_CRON -eq 1 ]]; then
+        log_warn "NOTE: Cron job was not installed (--no-cron flag used)"
+        echo "  - Run the script manually or set up your own scheduling"
+        echo "  - To install cron later, run: ./install.sh"
+        echo ""
+    else
+        log_warn "IMPORTANT: Persistence Notes"
+        echo "  - Scripts survive reboots (stored in /data/)"
+        echo "  - Cron jobs may be wiped during UniFi OS upgrades"
+        echo "  - Re-run this installer after upgrades if monitoring stops"
+        echo ""
+    fi
+    log_info "To uninstall, run:"
+    echo "  ./uninstall.sh"
     echo ""
-    log_info "To uninstall, remove:"
+    echo "  Or manually remove:"
     echo "  - ${INSTALL_DIR}/"
-    echo "  - Cron entry (crontab -e)"
+    if [[ $SKIP_CRON -eq 0 ]]; then
+        echo "  - Cron entry (crontab -e)"
+    fi
     echo ""
+}
+
+# Parse command-line arguments
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-cron)
+                SKIP_CRON=1
+                log_info "Cron setup will be skipped (--no-cron flag)"
+                shift
+                ;;
+            --help|-h)
+                echo "Usage: $0 [OPTIONS]"
+                echo ""
+                echo "Options:"
+                echo "  --no-cron    Install without setting up cron job"
+                echo "  --help       Show this help message"
+                echo ""
+                exit 0
+                ;;
+            *)
+                log_warn "Unknown argument: $1 (use --help for usage)"
+                shift
+                ;;
+        esac
+    done
 }
 
 # Main installation
 main() {
+    # Parse command-line arguments
+    parse_args "$@"
+    
     log_info "UDM VPN Monitor Installation"
     log_info "=============================="
     echo ""
@@ -235,7 +283,13 @@ main() {
     check_udm
     create_install_dir
     install_scripts
-    setup_cron
+    
+    # Setup cron only if not skipped
+    if [[ $SKIP_CRON -eq 0 ]]; then
+        setup_cron
+    else
+        log_info "Skipping cron setup (--no-cron flag used)"
+    fi
     
     if verify_installation; then
         display_next_steps
