@@ -2,13 +2,147 @@
 
 This guide provides information for developers contributing to the UDM VPN Monitor project, including tooling setup, development workflows, and code quality standards.
 
+## Getting Started
+
+### First Time Setup
+
+1. **Clone the repository**
+2. **Install development tools** (see below)
+3. **Run tests** to verify setup:
+   ```bash
+   ./tests/run_tests.sh
+   ```
+4. **Read ARCHITECTURE.md** to understand the system
+5. **Pick a small issue** to start contributing
+
+### Understanding the Codebase
+
+- **Main Script**: `vpn-monitor.sh` - Entry point, orchestrates monitoring
+- **Detection**: `check_vpn_status()` - Checks VPN health
+- **Recovery**: `surgical_cleanup()`, `full_restart()` - Recovery actions
+- **State**: Per-peer failure counters and byte tracking
+
+---
+
+## Detailed Getting Started Guide
+
+### First Time Setup (Detailed)
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd udm-vpn-monitor
+   ```
+
+2. **Install development tools** (see [Development Tooling](#development-tooling) below)
+   - ShellCheck (required)
+   - shfmt (required)
+   - bats (required)
+   - kcov (optional, for coverage)
+
+3. **Run tests to verify setup**
+   ```bash
+   ./tests/run_tests.sh
+   ```
+   All tests should pass. If not, check tool installation.
+
+4. **Read the architecture documentation**
+   - Start with [ARCHITECTURE.md](ARCHITECTURE.md) to understand system design
+   - Review [CODE_REVIEW.md](CODE_REVIEW.md) for code quality analysis and improvement areas
+   - Check [ENHANCEMENTS.md](ENHANCEMENTS.md) for planned features
+
+5. **Understand the codebase structure**
+   - **Main Script**: `vpn-monitor.sh` (1,829 lines) - Entry point, orchestrates monitoring
+   - **Detection**: `check_vpn_status()` - Checks VPN health using xfrm, swanctl, ipsec
+   - **Recovery**: `surgical_cleanup()`, `full_restart()` - Recovery actions (Tier 2, Tier 3)
+   - **State Management**: Per-peer failure counters and byte tracking
+   - **Common Library**: `lib/common.sh` - Shared utilities (logging, validation)
+
+6. **Pick a small issue to start**
+   - Check [CODE_REVIEW.md](CODE_REVIEW.md) for improvement recommendations
+   - Look for "good first issue" labels
+   - Start with documentation improvements or small refactorings
+
+### Understanding the Codebase (Detailed)
+
+**Key Components:**
+
+- **`vpn-monitor.sh`**: Main monitoring script
+  - Entry point: `main()` function
+  - Orchestrates: Configuration loading → State initialization → Peer monitoring → Recovery actions
+  - Lockfile protection prevents concurrent execution
+
+- **Detection Logic** (`check_vpn_status()`):
+  - Primary: `ip xfrm state` - Checks Security Associations and byte counters
+  - Fallback 1: `swanctl --list-sas` - Checks via swanctl
+  - Fallback 2: `ipsec status` - Checks via ipsec command
+  - Optional: Ping connectivity check
+
+- **Recovery Actions**:
+  - **Tier 1**: Logging only (after `TIER1_THRESHOLD` failures)
+  - **Tier 2**: Surgical cleanup - `swanctl --reload-conn` (per-connection) or `swanctl --reload` (all)
+  - **Tier 3**: Full restart - `ipsec restart` (affects all tunnels)
+
+- **State Management**:
+  - Per-peer failure counters: `logs/failure_counter_<peer_ip>`
+  - Per-peer byte counters: `last_bytes_<peer_ip>`
+  - Rate limiting: `logs/restart_count`
+  - Cooldown: `cooldown_until`
+
+**Code Flow:**
+
+```
+Cron Trigger
+  → Lockfile Check
+  → Load Configuration
+  → Initialize State
+  → Check Cooldown
+  → For Each Peer IP:
+      → Validate IP
+      → Check VPN Status (detection)
+      → If Failed: Increment Counter
+      → Escalate Recovery (Tier 1/2/3)
+      → If OK: Reset Counter
+  → Release Lockfile
+```
+
+**Testing Strategy:**
+
+- **Unit Tests**: `tests/test_vpn_monitor.sh` - Test individual functions
+- **Integration Tests**: `tests/test_integration.sh` - Test full workflows
+- **High-Risk Tests**: `tests/test_high_risk.sh` - Test critical paths
+- **Coverage**: Run with `--coverage` flag to generate reports
+
+### Common Development Tasks
+
+**Adding a New Feature:**
+1. Create feature branch: `git checkout -b feature/new-feature`
+2. Write tests first (TDD approach)
+3. Implement feature
+4. Run tests: `./tests/run_tests.sh`
+5. Check code quality: `shellcheck` and `shfmt`
+6. Update documentation
+7. Submit pull request
+
+**Fixing a Bug:**
+1. Reproduce the bug
+2. Write a test that fails (demonstrates the bug)
+3. Fix the bug
+4. Verify test passes
+5. Run full test suite
+6. Update CHANGELOG.md
+
+**Refactoring:**
+1. Ensure tests pass before refactoring
+2. Make small, incremental changes
+3. Run tests after each change
+4. Keep functionality identical (no behavior changes)
+
 ## Documentation Overview
 
-- **[README.md](README.md)** - User-facing documentation, installation, and usage instructions
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture, design decisions, and component interactions
-- **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
-- **[ENHANCEMENTS.md](ENHANCEMENTS.md)** - Future enhancement ideas and roadmap
-- **[tests/README.md](tests/README.md)** - Comprehensive testing documentation
+For a complete list of documentation files and their descriptions, see the [Documentation section in README.md](README.md#documentation).
+
+All source files include comprehensive in-code function documentation with function purpose, parameters, return values, side effects, examples, and notes. When reading the codebase, refer to function documentation blocks for detailed information about each function's behavior, parameters, and usage.
 
 ## Development Tooling
 
@@ -306,25 +440,55 @@ If CI fails:
 - Provide meaningful error messages
 
 #### Documentation
-- Document all functions with comments describing:
-  - Purpose
-  - Parameters
-  - Return values
-  - Side effects
+- Document all functions with comprehensive comments describing:
+  - Purpose and behavior
+  - Parameters (with types and descriptions)
+  - Return values and exit codes
+  - Side effects (file operations, logging, etc.)
+  - Usage examples (for complex functions)
+  - Notes about dependencies and requirements
+
+**Documentation Format:**
+All functions follow a consistent documentation format with sections for Arguments, Returns, Side effects, Examples, and Notes.
 
 Example:
 ```bash
 # Check if VPN peer is active
-# Parameters:
-#   $1: Peer IP address
+#
+# Verifies VPN tunnel health by checking IPsec Security Association state.
+# Uses multiple detection methods: xfrm (primary), swanctl (fallback), ipsec (fallback).
+#
+# Arguments:
+#   $1: Peer IP address (external/public IP of remote VPN gateway)
+#
 # Returns:
-#   0: Peer is active
-#   1: Peer is inactive or error
-check_vpn_peer() {
+#   0: VPN is healthy (SA exists, bytes increasing or non-zero)
+#   1: VPN check failed (no SA found or bytes not increasing)
+#
+# Side effects:
+#   - Creates/updates per-peer last_bytes file if byte counters found
+#   - Logs debug/warning messages about VPN state
+#
+# Examples:
+#   if check_vpn_status "203.0.113.1"; then
+#       echo "VPN is healthy"
+#   fi
+#
+# Note:
+#   Requires validate_ip_address, sanitize_peer_ip, log_message, STATE_DIR,
+#   ENABLE_PING_CHECK, PING_TARGET_IP to be set
+check_vpn_status() {
 	local peer_ip="$1"
 	# ... implementation ...
 }
 ```
+
+**Documentation Standards:**
+- All functions must have documentation blocks
+- Use descriptive function names and parameter names
+- Include examples for complex or commonly-used functions
+- Document all side effects (file operations, logging, etc.)
+- Note dependencies on other functions or global variables
 
 ### 5. ShellCheck Guidelines
 
@@ -347,32 +511,14 @@ CONFIG_VAR="value"
 
 ### 6. Testing Guidelines
 
-#### Writing Tests
+For comprehensive testing documentation including:
+- How to run tests
+- Writing new tests
+- Test structure and best practices
+- Test coverage reporting
+- CI/CD integration
 
-- Place tests in `tests/test_*.sh` files
-- Use descriptive test names: `@test "vpn-monitor.sh detects VPN failure"`
-- Test both success and failure cases
-- Use test helpers from `tests/test_helper.bash`
-- Mock external commands when possible
-
-#### Test Structure
-
-```bash
-#!/usr/bin/env bats
-
-load test_helper
-
-@test "function_name handles valid input" {
-	# Arrange
-	local input="test"
-	
-	# Act
-	local result=$(function_name "$input")
-	
-	# Assert
-	assert_equal "$result" "expected"
-}
-```
+See [tests/README.md](tests/README.md) for complete details.
 
 ### 7. Commit Guidelines
 

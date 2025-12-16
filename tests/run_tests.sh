@@ -23,6 +23,11 @@ COVERAGE_DIR="${PROJECT_ROOT}/coverage"
 COVERAGE_ENABLED=0
 COVERAGE_TOOL=""
 
+# Test filtering settings
+# Slow tests are excluded by default (integration and high-risk tests)
+# Set RUN_SLOW_TESTS=1 or use --slow flag to include them
+RUN_SLOW_TESTS="${RUN_SLOW_TESTS:-0}"
+
 # Show bats installation instructions
 show_bats_instructions() {
 	echo "Install bats using one of the following methods:" >&2
@@ -219,9 +224,37 @@ check_bats_helpers() {
 	fi
 }
 
+# Filter test files based on slow test setting
+# Outputs filtered file list to stdout (one per line)
+filter_test_files() {
+	local test_files=("${SCRIPT_DIR}"/test_*.sh)
+
+	for test_file in "${test_files[@]}"; do
+		local filename
+		filename=$(basename "$test_file")
+
+		# Check if this is a slow test file
+		# Slow tests are: test_integration.sh and test_high_risk.sh
+		if [[ "$filename" == "test_integration.sh" ]] || [[ "$filename" == "test_high_risk.sh" ]]; then
+			# Include slow tests only if RUN_SLOW_TESTS is enabled
+			if [[ "$RUN_SLOW_TESTS" -eq 1 ]]; then
+				echo "$test_file"
+				echo -e "${BLUE}Including slow test: $filename${NC}" >&2
+			else
+				echo -e "${YELLOW}Skipping slow test: $filename (use --slow to include)${NC}" >&2
+			fi
+		else
+			# Always include non-slow tests
+			echo "$test_file"
+		fi
+	done
+}
+
 # Run tests with coverage if enabled
 run_tests() {
-	local test_files=("${SCRIPT_DIR}"/test_*.sh)
+	# Filter test files based on slow test setting
+	local test_files
+	mapfile -t test_files < <(filter_test_files)
 	local test_count=${#test_files[@]}
 
 	if [[ $test_count -eq 0 ]]; then
@@ -230,6 +263,9 @@ run_tests() {
 	fi
 
 	echo -e "${GREEN}Running $test_count test file(s)...${NC}"
+	if [[ "$RUN_SLOW_TESTS" -eq 0 ]]; then
+		echo -e "${YELLOW}(Slow tests excluded - use --slow to include)${NC}"
+	fi
 	echo ""
 
 	cd "$PROJECT_ROOT"
@@ -370,6 +406,10 @@ parse_args() {
 			COVERAGE_ENABLED=1
 			shift
 			;;
+		--slow | -s)
+			RUN_SLOW_TESTS=1
+			shift
+			;;
 		--help | -h)
 			show_help
 			exit 0
@@ -392,12 +432,20 @@ Usage: $0 [OPTIONS]
 
 Options:
     --coverage, -c    Enable test coverage reporting (requires kcov)
+    --slow, -s        Include slow tests (integration and high-risk tests)
     --help, -h        Show this help message
 
 Examples:
-    $0                    Run tests without coverage
-    $0 --coverage         Run tests with coverage reporting
-    $0 -c                 Run tests with coverage reporting (short form)
+    $0                    Run fast tests only (excludes slow tests)
+    $0 --slow             Run all tests including slow tests
+    $0 --coverage         Run fast tests with coverage reporting
+    $0 --slow --coverage  Run all tests with coverage reporting
+
+Test Filtering:
+    By default, slow tests (test_integration.sh and test_high_risk.sh) are excluded
+    to speed up local development. Use --slow flag or set RUN_SLOW_TESTS=1 to include them.
+    
+    In CI/CD, set RUN_SLOW_TESTS=1 environment variable to run all tests.
 
 Coverage Reporting:
     Coverage reports are generated in HTML format in the 'coverage' directory.

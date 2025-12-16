@@ -162,12 +162,23 @@ remove_installation_dir() {
 #
 # Removes any stale lockfiles that may persist if the installation directory
 # was removed but lockfile remained (shouldn't happen normally).
+# This is a safety cleanup to ensure complete removal.
 #
 # Returns:
 #   0: Always succeeds (warnings logged but don't fail)
 #
 # Side effects:
-#   Removes lockfile if it exists
+#   - Removes lockfile if it exists
+#   - Logs warning if lockfile found (indicates unexpected state)
+#
+# Examples:
+#   cleanup_lockfile
+#   # Removes lockfile if it exists
+#
+# Note:
+#   Lockfile path: ${INSTALL_DIR}/vpn-monitor.lock
+#   Errors are silently ignored (|| true)
+#   Should not normally find lockfile (directory removal should have handled it)
 cleanup_lockfile() {
 	local lockfile="${INSTALL_DIR}/vpn-monitor.lock"
 	if [[ -f "$lockfile" ]]; then
@@ -181,10 +192,28 @@ cleanup_lockfile() {
 # Verifies that the uninstallation completed successfully by checking:
 #   - Installation directory no longer exists
 #   - Cron entry no longer exists
+#   - Logrotate configuration no longer exists
+# Logs errors for any components that still exist.
 #
 # Returns:
-#   0: Uninstallation verified successfully
+#   0: Uninstallation verified successfully (all components removed)
 #   1: Verification failed (some components still exist)
+#
+# Side effects:
+#   - Logs info messages for successful removals
+#   - Logs error messages for components still present
+#   - Counts errors and reports summary
+#
+# Examples:
+#   if verify_uninstallation; then
+#       echo "Uninstallation verified"
+#   else
+#       echo "Some components remain"
+#   fi
+#
+# Note:
+#   Checks INSTALL_DIR, crontab entries, and logrotate config
+#   Uses crontab -l and grep to check for cron entries
 verify_uninstallation() {
 	log_info "Verifying uninstallation..."
 

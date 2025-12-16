@@ -80,10 +80,12 @@ parse_args() {
 			;;
 		-c | --csv)
 			CSV_FILE="$2"
+			CSV_FILE_SET=1
 			shift 2
 			;;
 		-r | --report)
 			REPORT_FILE="$2"
+			REPORT_FILE_SET=1
 			shift 2
 			;;
 		-d | --date-range)
@@ -230,17 +232,37 @@ parse_date_range() {
 
 # Analyze log file
 #
-# Parses log file and extracts failure/recovery statistics.
+# Parses log file line by line and extracts failure/recovery statistics.
+# Categorizes log entries into failures, recoveries, and tier actions.
+# Filters by date range if DATE_START and DATE_END are set.
+# Extracts peer IPs and failure counts from log messages.
 #
 # Arguments:
-#   $1: Log file path
+#   $1: Log file path to analyze
 #
 # Returns:
-#   0: Success
-#   1: Error
+#   0: Success (log file parsed successfully)
+#   1: Error (file not found, not readable, or parsing error)
 #
 # Side effects:
-#   Sets global arrays: FAILURES, RECOVERIES, TIER1_ACTIONS, TIER2_ACTIONS, TIER3_ACTIONS
+#   Sets global arrays with parsed data:
+#   - FAILURES: Array of failure events (format: "timestamp|peer_ip|failure_count|level")
+#   - RECOVERIES: Array of recovery events (format: "timestamp|peer_ip|recovery_count|level")
+#   - TIER1_ACTIONS: Array of Tier 1 actions (format: "timestamp|peer_ip|level")
+#   - TIER2_ACTIONS: Array of Tier 2 action starts (format: "timestamp|peer_ip|level")
+#   - TIER2_COMPLETED: Array of Tier 2 completions (format: "timestamp|peer_ip|level")
+#   - TIER3_ACTIONS: Array of Tier 3 action starts (format: "timestamp|peer_ip|level")
+#   - TIER3_COMPLETED: Array of Tier 3 completions (format: "timestamp|peer_ip|level")
+#
+# Examples:
+#   if analyze_logs "$log_file"; then
+#       echo "Found ${#FAILURES[@]} failures"
+#   fi
+#
+# Note:
+#   Requires extract_peer_ip, extract_failure_count, date_in_range functions
+#   Log format expected: "[YYYY-MM-DD HH:MM:SS] [LEVEL] message"
+#   Filters by date range if DATE_START and DATE_END are set
 analyze_logs() {
 	local log_file="$1"
 	local date_start="${DATE_START:-}"
@@ -640,6 +662,15 @@ generate_csv() {
 main() {
 	# Parse command line arguments
 	parse_args "$@"
+
+	# Update REPORT_FILE and CSV_FILE to use OUTPUT_DIR if they weren't explicitly set
+	# This ensures that when -o changes OUTPUT_DIR, the default report/csv paths are updated
+	if [[ -z "${REPORT_FILE_SET:-}" ]]; then
+		REPORT_FILE="${OUTPUT_DIR}/vpn-monitor-report.txt"
+	fi
+	if [[ -z "${CSV_FILE_SET:-}" ]]; then
+		CSV_FILE="${OUTPUT_DIR}/vpn-monitor-analysis.csv"
+	fi
 
 	# Parse date range if specified
 	if [[ -n "$DATE_RANGE" ]]; then

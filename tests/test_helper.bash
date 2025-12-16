@@ -440,6 +440,42 @@ if ! type refute_file_contains >/dev/null 2>&1; then
     }
 fi
 
+# Create test install.sh setup with lib directory
+#
+# Creates a test directory structure with install.sh and the required lib directory.
+# This ensures install.sh can find lib/common.sh when sourced.
+#
+# Arguments:
+#   $1: Path to original install.sh script
+#   $2: Path where test install.sh should be created (directory will be created)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created test install.sh script
+#
+# Side effects:
+#   Creates test directory structure with install.sh and lib/ directory
+create_test_install_setup() {
+	local original_install="$1"
+	local test_install_dir="$2"
+	local project_root
+	project_root=$(cd "${BATS_TEST_DIRNAME}/.." && pwd)
+	
+	# Create test source directory
+	mkdir -p "$test_install_dir"
+	
+	# Copy install.sh
+	cp "$original_install" "${test_install_dir}/install.sh"
+	chmod +x "${test_install_dir}/install.sh"
+	
+	# Copy lib directory
+	cp -r "${project_root}/lib" "${test_install_dir}/lib"
+	
+	echo "${test_install_dir}/install.sh"
+}
+
 # Create a test version of vpn-monitor.sh with custom paths
 #
 # Creates a modified copy of vpn-monitor.sh with test-specific paths.
@@ -468,6 +504,10 @@ create_test_vpn_monitor_script() {
     local state_dir="${4:-}"
     local log_file="${5:-}"
     
+    # Get the project root directory (parent of tests directory)
+    local project_root
+    project_root=$(cd "${BATS_TEST_DIRNAME}/.." && pwd)
+    
     # Copy the original script
     cp "$original_script" "$test_script"
     chmod +x "$test_script"
@@ -492,6 +532,12 @@ create_test_vpn_monitor_script() {
         escaped_log=$(echo "$log_file" | sed 's/[[\.*^$()+?{|]/\\&/g')
         sed -i "s|^LOG_FILE=.*|LOG_FILE=\"${escaped_log}\"|" "$test_script"
     fi
+    
+    # Fix module source paths to use absolute paths from project root
+    # This ensures modules can be found even when script is copied to test directory
+    local escaped_project_root
+    escaped_project_root=$(echo "$project_root" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    sed -i "s|source \"\${SCRIPT_DIR}/lib/|source \"${escaped_project_root}/lib/|g" "$test_script"
     
     echo "$test_script"
 }

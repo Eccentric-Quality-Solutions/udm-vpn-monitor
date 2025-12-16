@@ -5,20 +5,119 @@
 
 load test_helper
 
-# Path to the VPN monitor script
+# Path to the VPN monitor script and modules
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
+LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
-# Helper function to source a function from vpn-monitor.sh
-# Extracts the function definition and sources it
+# Helper function to source a function from the appropriate module
+# Functions are now in separate module files, so we need to check each module
 source_function() {
 	local func_name="$1"
-	# Extract function using sed, matching from function start to closing brace
-	local func_def
-	func_def=$(sed -n "/^${func_name}(/,/^}/p" "$VPN_MONITOR_SCRIPT" 2>/dev/null)
-	if [[ -n "$func_def" ]]; then
-		# shellcheck source=/dev/null
-		eval "$func_def"
-	fi
+	local func_def=""
+
+	# Map functions to their module files
+	# Try each module file in order until we find the function
+	local modules=(
+		"${LIB_DIR}/logging.sh"
+		"${LIB_DIR}/config.sh"
+		"${LIB_DIR}/state.sh"
+		"${LIB_DIR}/detection.sh"
+		"${LIB_DIR}/recovery.sh"
+		"${LIB_DIR}/lockfile.sh"
+		"${VPN_MONITOR_SCRIPT}"
+	)
+
+	# Try to find the function in each module
+	for module in "${modules[@]}"; do
+		if [[ -f "$module" ]]; then
+			# Extract function using sed, matching from function start to closing brace
+			func_def=$(sed -n "/^${func_name}(/,/^}/p" "$module" 2>/dev/null)
+			if [[ -n "$func_def" ]]; then
+				# Set minimal required variables for functions that need them
+				SCRIPT_DIR="${SCRIPT_DIR:-${BATS_TEST_DIRNAME}/..}"
+				STATE_DIR="${STATE_DIR:-${TEST_DIR:-/tmp}}"
+				LOGS_DIR="${LOGS_DIR:-${STATE_DIR}/logs}"
+				LOCKFILE="${LOCKFILE:-${STATE_DIR}/vpn-monitor.lock}"
+				LOG_FILE="${LOG_FILE:-${LOGS_DIR}/vpn-monitor.log}"
+				RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${LOGS_DIR}/restart_count}"
+				COOLDOWN_UNTIL_FILE="${COOLDOWN_UNTIL_FILE:-${STATE_DIR}/cooldown_until}"
+				CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
+				DEBUG="${DEBUG:-0}"
+
+				# Source required dependencies first
+				case "$module" in
+				"${LIB_DIR}/config.sh")
+					# config.sh needs logging.sh
+					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+					fi
+					;;
+				"${LIB_DIR}/state.sh")
+					# state.sh needs logging.sh
+					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+					fi
+					;;
+				"${LIB_DIR}/detection.sh")
+					# detection.sh needs state.sh and logging.sh
+					# Also source detection.sh itself to make helper functions available
+					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/state.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+					fi
+					# Source detection.sh to make all helper functions available
+					# (e.g., validate_ipv4, validate_ipv6, etc. used by validate_ip_address)
+					if [[ -f "${LIB_DIR}/detection.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/detection.sh" 2>/dev/null || true
+						# Function already sourced, skip eval below
+						return 0
+					fi
+					;;
+				"${LIB_DIR}/recovery.sh")
+					# recovery.sh needs detection.sh, state.sh, logging.sh
+					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/state.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/detection.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/detection.sh" 2>/dev/null || true
+					fi
+					;;
+				"${LIB_DIR}/lockfile.sh")
+					# lockfile.sh needs state.sh and logging.sh
+					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/state.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+					fi
+					;;
+				esac
+
+				# Source the function
+				# shellcheck source=/dev/null
+				eval "$func_def"
+				return 0
+			fi
+		fi
+	done
+
+	# Function not found
+	return 1
 }
 
 @test "get_formatted_timestamp returns valid timestamp format" {

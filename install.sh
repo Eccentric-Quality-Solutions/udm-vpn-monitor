@@ -68,19 +68,30 @@ create_install_dir() {
 
 # Prompt for config value interactively
 #
-# Prompts the user for a configuration value, showing the default.
+# Prompts the user for a configuration value, showing the default in brackets.
 # If user presses Enter without input, uses the default value.
+# Used during interactive installation mode to gather configuration values.
 #
 # Arguments:
-#   $1: Config parameter name (e.g., "PEER_IPS")
-#   $2: Default value
-#   $3: Description/prompt text
+#   $1: Config parameter name (e.g., "PEER_IPS") - used for reference, not displayed
+#   $2: Default value (shown in brackets, used if user presses Enter)
+#   $3: Description/prompt text (displayed to user)
 #
 # Returns:
 #   0: Always succeeds
 #
 # Output:
 #   Prints the user's value (or default if empty) to stdout
+#
+# Examples:
+#   value=$(prompt_config_value "PEER_IPS" "" "Peer IP address(es)")
+#   # Prompts: "Peer IP address(es): "
+#   value=$(prompt_config_value "TIER1_THRESHOLD" "1" "Tier 1 threshold")
+#   # Prompts: "Tier 1 threshold [1]: "
+#
+# Note:
+#   Uses read -p to prompt user
+#   Empty input (Enter) uses default value
 prompt_config_value() {
 	local param_name="$1"
 	local default_value="$2"

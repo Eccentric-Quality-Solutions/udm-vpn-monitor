@@ -1,0 +1,39 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install bats
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bats
+    
+    - name: Install bats helper libraries
+      run: |
+        cd tests
+        bash install_bats_helpers.sh
+    
+    - name: Run all tests (including slow tests)
+      env:
+        RUN_SLOW_TESTS: 1
+      run: |
+        ./tests/run_tests.sh
+    
+    - name: Run tests with coverage (if kcov available)
+      continue-on-error: true
+      env:
+        RUN_SLOW_TESTS: 1
+      run: |
+        sudo apt-get install -y kcov || echo "kcov not available, skipping coverage"
+        ./tests/run_tests.sh --coverage || echo "Coverage generation failed, continuing"
+

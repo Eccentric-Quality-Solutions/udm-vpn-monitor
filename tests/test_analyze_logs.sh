@@ -113,14 +113,17 @@ EOF
 
 @test "analyze-logs.sh extracts tier actions from log file" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local report_file="${TEST_DIR}/vpn-monitor-report.txt"
 	create_sample_log_file "$log_file"
 
 	run bash "$ANALYZE_LOGS_SCRIPT" -l "$log_file" -o "$TEST_DIR"
 
 	assert_success
-	assert_output --partial "Tier 1 (Logging):"
-	assert_output --partial "Tier 2 (Surgical Cleanup):"
-	assert_output --partial "Tier 3 (Full Restart):"
+	# Tier statistics are in the report file, not stdout
+	assert_file_exist "$report_file"
+	assert_file_contains "$report_file" "Tier 1 (Logging):"
+	assert_file_contains "$report_file" "Tier 2 (Surgical Cleanup):"
+	assert_file_contains "$report_file" "Tier 3 (Full Restart):"
 }
 
 @test "analyze-logs.sh generates text report file" {

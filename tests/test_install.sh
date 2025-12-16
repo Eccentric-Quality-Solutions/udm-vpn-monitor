@@ -42,15 +42,14 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 @test "install.sh skips root check in dev mode" {
 	cd "$TEST_DIR"
 
-	# Create source files
-	mkdir -p "${TEST_DIR}/source"
-	cp "$INSTALL_SCRIPT" "${TEST_DIR}/source/install.sh"
+	# Create source files with install.sh and lib directory
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
 	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/install.sh"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
-	run bash "${TEST_DIR}/source/install.sh" --dev --silent --no-cron
+	run bash "$test_install" --dev --silent --no-cron
 	# Should succeed in dev mode even without root
 	assert_success
 }
@@ -58,15 +57,14 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 @test "install.sh creates installation directory in dev mode" {
 	cd "$TEST_DIR"
 
-	# Create source files
-	mkdir -p "${TEST_DIR}/source"
-	cp "$INSTALL_SCRIPT" "${TEST_DIR}/source/install.sh"
+	# Create source files with install.sh and lib directory
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
 	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/install.sh"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
-	run bash "${TEST_DIR}/source/install.sh" --dev --silent --no-cron
+	run bash "$test_install" --dev --silent --no-cron
 	assert_success
 
 	# Check installation directory was created
@@ -76,15 +74,14 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 @test "install.sh installs scripts in dev mode" {
 	cd "$TEST_DIR"
 
-	# Create source files
-	mkdir -p "${TEST_DIR}/source"
-	cp "$INSTALL_SCRIPT" "${TEST_DIR}/source/install.sh"
+	# Create source files with install.sh and lib directory
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
 	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/install.sh"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
-	run bash "${TEST_DIR}/source/install.sh" --dev --silent --no-cron
+	run bash "$test_install" --dev --silent --no-cron
 	assert_success
 
 	# Check scripts were installed
@@ -96,14 +93,13 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 @test "install.sh creates default config if template missing" {
 	cd "$TEST_DIR"
 
-	# Create source files without config
-	mkdir -p "${TEST_DIR}/source"
-	cp "$INSTALL_SCRIPT" "${TEST_DIR}/source/install.sh"
+	# Create source files with install.sh and lib directory (without config)
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	chmod +x "${TEST_DIR}/source/install.sh"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
-	run bash "${TEST_DIR}/source/install.sh" --dev --silent --no-cron
+	run bash "$test_install" --dev --silent --no-cron
 	assert_success
 
 	# Check default config was created
@@ -115,23 +111,22 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 @test "install.sh preserves existing config in silent mode" {
 	cd "$TEST_DIR"
 
-	# Create source files
-	mkdir -p "${TEST_DIR}/source"
-	cp "$INSTALL_SCRIPT" "${TEST_DIR}/source/install.sh"
+	# Create source files with install.sh and lib directory
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
 	echo "PEER_IPS=\"192.168.1.1\"" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/install.sh"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
 	# First installation
-	run bash "${TEST_DIR}/source/install.sh" --dev --silent --no-cron
+	run bash "$test_install" --dev --silent --no-cron
 	assert_success
 
 	# Modify installed config
 	echo "CUSTOM_VALUE=test" >>"${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
 
 	# Re-install without overwrite
-	run bash "${TEST_DIR}/source/install.sh" --dev --silent --no-cron
+	run bash "$test_install" --dev --silent --no-cron
 	assert_success
 
 	# Check custom value is preserved
@@ -141,23 +136,22 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 @test "install.sh overwrites config with --overwrite-conf flag" {
 	cd "$TEST_DIR"
 
-	# Create source files
-	mkdir -p "${TEST_DIR}/source"
-	cp "$INSTALL_SCRIPT" "${TEST_DIR}/source/install.sh"
+	# Create source files with install.sh and lib directory
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
 	echo "PEER_IPS=\"192.168.1.1\"" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/install.sh"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
 	# First installation
-	run bash "${TEST_DIR}/source/install.sh" --dev --silent --no-cron
+	run bash "$test_install" --dev --silent --no-cron
 	assert_success
 
 	# Modify installed config
 	echo "CUSTOM_VALUE=test" >>"${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
 
 	# Re-install with overwrite
-	run bash "${TEST_DIR}/source/install.sh" --dev --silent --no-cron --overwrite-conf
+	run bash "$test_install" --dev --silent --no-cron --overwrite-conf
 	assert_success
 
 	# Check custom value is gone
@@ -167,15 +161,14 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 @test "install.sh skips cron setup with --no-cron flag" {
 	cd "$TEST_DIR"
 
-	# Create source files
-	mkdir -p "${TEST_DIR}/source"
-	cp "$INSTALL_SCRIPT" "${TEST_DIR}/source/install.sh"
+	# Create source files with install.sh and lib directory
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
 	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/install.sh"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
-	run bash "${TEST_DIR}/source/install.sh" --dev --silent --no-cron
+	run bash "$test_install" --dev --silent --no-cron
 	assert_success
 
 	# Check cron entry was not created
@@ -188,19 +181,18 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 @test "install.sh sets up cron job when not skipped" {
 	cd "$TEST_DIR"
 
-	# Create source files
-	mkdir -p "${TEST_DIR}/source"
-	cp "$INSTALL_SCRIPT" "${TEST_DIR}/source/install.sh"
+	# Create source files with install.sh and lib directory
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
 	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/install.sh"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
 	# Remove any existing cron entries first
 	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
 
 	# Run install script - may fail if crontab has issues, but should at least attempt setup
-	run bash "${TEST_DIR}/source/install.sh" --dev --silent
+	run bash "$test_install" --dev --silent
 
 	# Check if cron entry was created (even if script had warnings)
 	run crontab -l 2>/dev/null
@@ -226,21 +218,20 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 @test "install.sh uses cron schedule from config" {
 	cd "$TEST_DIR"
 
-	# Create source files with custom cron schedule
-	mkdir -p "${TEST_DIR}/source"
-	cp "$INSTALL_SCRIPT" "${TEST_DIR}/source/install.sh"
+	# Create source files with install.sh and lib directory
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
 	cat >"${TEST_DIR}/source/vpn-monitor.conf" <<'EOF'
 PEER_IPS=""
 CRON_SCHEDULE="*/5 * * * *"
 EOF
-	chmod +x "${TEST_DIR}/source/install.sh"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
 	# Remove any existing cron entries first
 	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
 
-	run bash "${TEST_DIR}/source/install.sh" --dev --silent
+	run bash "$test_install" --dev --silent
 	assert_success
 
 	# Check cron entry uses custom schedule
@@ -255,15 +246,14 @@ EOF
 @test "install.sh verifies installation" {
 	cd "$TEST_DIR"
 
-	# Create source files
-	mkdir -p "${TEST_DIR}/source"
-	cp "$INSTALL_SCRIPT" "${TEST_DIR}/source/install.sh"
+	# Create source files with install.sh and lib directory
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
 	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/install.sh"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
-	run bash "${TEST_DIR}/source/install.sh" --dev --silent --no-cron
+	run bash "$test_install" --dev --silent --no-cron
 	assert_success
 
 	# Check verification output
@@ -273,15 +263,14 @@ EOF
 @test "install.sh handles missing source script gracefully" {
 	cd "$TEST_DIR"
 
-	# Create source directory without script
-	mkdir -p "${TEST_DIR}/source"
-	cp "$INSTALL_SCRIPT" "${TEST_DIR}/source/install.sh"
-	chmod +x "${TEST_DIR}/source/install.sh"
+	# Create source files with install.sh and lib directory (but no vpn-monitor.sh)
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 
 	# Change to source directory so script can't find vpn-monitor.sh
 	cd "${TEST_DIR}/source"
 
-	run bash "${TEST_DIR}/source/install.sh" --dev --silent --no-cron
+	run bash "$test_install" --dev --silent --no-cron
 	assert_failure
 	assert_output --partial "Source file not found"
 }
@@ -289,15 +278,14 @@ EOF
 @test "install.sh handles unknown arguments" {
 	cd "$TEST_DIR"
 
-	# Create source files
-	mkdir -p "${TEST_DIR}/source"
-	cp "$INSTALL_SCRIPT" "${TEST_DIR}/source/install.sh"
+	# Create source files with install.sh and lib directory
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
 	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/install.sh"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
-	run bash "${TEST_DIR}/source/install.sh" --dev --silent --no-cron --unknown-flag
+	run bash "$test_install" --dev --silent --no-cron --unknown-flag
 	# Should warn about unknown flag but may still succeed
 	assert_output --partial "Unknown argument"
 }
@@ -305,15 +293,14 @@ EOF
 @test "install.sh validates flag combinations" {
 	cd "$TEST_DIR"
 
-	# Create source files
-	mkdir -p "${TEST_DIR}/source"
-	cp "$INSTALL_SCRIPT" "${TEST_DIR}/source/install.sh"
+	# Create source files with install.sh and lib directory
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
 	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/install.sh"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
 	# --overwrite-conf without --silent should warn
-	run bash "${TEST_DIR}/source/install.sh" --dev --no-cron --overwrite-conf <<<"no"
+	run bash "$test_install" --dev --no-cron --overwrite-conf <<<"no"
 	assert_output --partial "only effective with --silent"
 }

@@ -37,3 +37,6 @@ bats-file/
 # Test coverage reports
 coverage/
 
+# Generated reports
+/reports/vpn-monitor-report.txt
+/reports/vpn-monitor-analysis.csv

@@ -45,7 +45,7 @@ EOF
 	run bash "$test_script"
 
 	assert_failure
-	assert_output --partial "PEER_IPS not configured"
+	assert_output --partial "PEER_IPS is required but not configured"
 }
 
 @test "vpn-monitor.sh creates state directory if missing" {

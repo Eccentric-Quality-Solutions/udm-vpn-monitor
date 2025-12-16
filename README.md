@@ -8,6 +8,14 @@ A best-effort watchdog for UniFi Dream Machines that detects Site-to-Site VPN fa
 
 This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM-Pro/UDM-SE) and automatically attempts recovery when VPN tunnels appear active but are non-functional. It uses IPsec xfrm state byte counters combined with optional ping connectivity checks to detect actual traffic flow and verify end-to-end connectivity, which is more reliable than checking IKE status alone.
 
+## Quick Start
+
+**New to this project?** See [QUICK_START.md](QUICK_START.md) for a 5-minute setup guide.
+
+**Having issues?** See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common problems and solutions.
+
+**For developers:** See [DEVELOPER.md](DEVELOPER.md) for development setup and [CODE_REVIEW.md](CODE_REVIEW.md) for code quality analysis.
+
 ## ⚠️ Important: Tier 2 Recovery Behavior
 
 **Before using this tool, understand how Tier 2 recovery works:**
@@ -231,46 +239,33 @@ swanctl --list-sas
 
 ## How It Works
 
+The monitor uses a multi-layered approach to verify VPN tunnel health and automatically recover from failures.
+
 ### Detection Method
 
-The monitor uses a multi-layered approach to verify VPN tunnel health:
-
-1. **Primary Check - xfrm State**: Uses `ip xfrm state` to check IPsec Security Associations (SAs) and validates that:
-   - SA exists for the peer IP
-   - Byte counters are non-zero and increasing
-   - Packets are actually flowing through the tunnel
-
-2. **Connectivity Verification - Ping Check** (if enabled): After confirming SA exists, performs ping tests to verify:
-   - End-to-end connectivity through the tunnel
-   - Actual routing is working (not just tunnel state)
-   - Remote system is responding
-
-This dual approach is more reliable than checking IKE status alone, as it confirms both tunnel state and actual traffic flow. The ping check helps detect cases where the tunnel exists but isn't routing traffic correctly.
+The monitor checks VPN tunnel health by:
+1. **Verifying IPsec Security Associations (SAs)** using `ip xfrm state` to confirm the tunnel exists and traffic is flowing
+2. **Optional ping checks** to verify end-to-end connectivity through the tunnel
 
 ### Tiered Recovery
 
-**Important Notes:**
-- **Per-Peer Failure Counter**: Each peer IP has its own independent failure counter tracked in `logs/failure_counter_<peer_ip>`. Failures are tracked separately per peer, allowing independent recovery actions. Recovery of one peer does not affect other peers' failure counters.
-- **⚠️ Tier 2 Recovery Scope - CRITICAL**: Tier 2 recovery scope depends on connection name configuration:
-  - **✅ With connection name (configured or auto-discovered)**: Uses `swanctl --reload-conn <connection-name>` to reload **only the specific failing connection**. This is true per-connection recovery with minimal impact on other tunnels.
-  - **⚠️ Without connection name**: Uses `swanctl --reload` which reloads **ALL IPsec connections**, temporarily affecting **all Site-to-Site and remote user VPNs**. This makes Tier 2 less "surgical" than intended.
-  - Connection names are automatically discovered from `swanctl --list-sas` if available (recommended), or you can manually configure `CONNECTION_NAME_<sanitized_peer_ip>` in the config file (see [Configuration](#configuration) section)
-- **Tier 3 Impact**: Tier 3 recovery always affects **all IPsec tunnels** (full restart) regardless of configuration
+The system uses a three-tier recovery approach that escalates based on consecutive failures:
 
-1. **Tier 1 (Logging)**: After first failure, logs the issue
-2. **Tier 2 (Surgical Cleanup)**: After 3 failures, attempts to delete specific SA states and reload configuration.
-   - **With connection name**: Uses `swanctl --reload-conn <connection-name>` for targeted per-connection recovery ✅
-   - **Without connection name**: Uses `swanctl --reload` which affects all tunnels ⚠️
-   - See [Configuration](#configuration) section for connection name setup
-3. **Tier 3 (Full Restart)**: After 5 failures, performs full `ipsec restart` (always affects all tunnels)
+1. **Tier 1 (Logging)**: Logs the failure for monitoring
+2. **Tier 2 (Surgical Cleanup)**: Attempts targeted recovery of the specific connection (when connection name is configured) or reloads all connections
+3. **Tier 3 (Full Restart)**: Performs a full IPsec restart affecting all tunnels
+
+**Important**: Each peer IP has its own independent failure counter, allowing per-peer recovery. Tier 2 recovery can be surgical (per-connection) when connection names are configured. See [Configuration](#configuration) for connection name setup.
 
 ### Safety Features
 
-- **Lockfiles with Timeout**: Prevents overlapping script executions and detects hung processes
-- **Cooldown Period**: 15-minute wait after restart before next check
-- **Rate Limiting**: Maximum 3 restarts per hour (configurable)
-- **Failure Thresholds**: Requires consecutive failures before action
-- **Input Validation**: Validates peer IPs and prevents injection attacks
+- Lockfile protection prevents overlapping executions
+- Cooldown period after restarts
+- Rate limiting to prevent excessive restarts
+- Per-peer failure tracking
+- Input validation for security
+
+For detailed architecture information including detection flow diagrams, recovery tier details, and technical implementation, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Persistence & Upgrades
 
@@ -309,7 +304,7 @@ If monitoring stops after an upgrade:
    (crontab -l 2>/dev/null; echo "*/1 * * * * /data/vpn-monitor/vpn-monitor.sh >> /data/vpn-monitor/cron.log 2>&1") | crontab -
    ```
 
-## Monitoring & Troubleshooting
+## Monitoring
 
 ### View Logs
 
@@ -319,65 +314,24 @@ tail -f /data/vpn-monitor/logs/vpn-monitor.log
 
 # View recent entries
 tail -n 100 /data/vpn-monitor/logs/vpn-monitor.log
-
-# Check for errors
-grep ERROR /data/vpn-monitor/logs/vpn-monitor.log
 ```
 
-### Log Analysis and Reporting
+### Generate Reports
 
-The `analyze-logs.sh` script provides detailed analysis of VPN monitor logs, generating reports on failure frequency and recovery success rates.
-
-**Basic Usage:**
+The `analyze-logs.sh` script analyzes VPN monitor logs and generates reports:
 
 ```bash
-# Analyze default log file and generate reports
+# Analyze logs and generate reports
 /data/vpn-monitor/analyze-logs.sh
-
-# Analyze specific log file
-/data/vpn-monitor/analyze-logs.sh -l /data/vpn-monitor/logs/vpn-monitor.log
 
 # Analyze logs for a specific date range
 /data/vpn-monitor/analyze-logs.sh -d 2025-01-01:2025-01-31
 
-# Output reports to custom directory
-/data/vpn-monitor/analyze-logs.sh -o /tmp/reports -v
+# View generated reports
+cat /data/vpn-monitor/reports/vpn-monitor-report.txt
 ```
 
-**Output Files:**
-
-- **Text Report** (`reports/vpn-monitor-report.txt`): Human-readable summary with statistics and event timeline
-- **CSV Export** (`reports/vpn-monitor-analysis.csv`): Detailed event data for spreadsheet analysis
-
-**Report Contents:**
-
-- **Summary Statistics**: Total failures, recoveries, failure frequency per day, recovery success rate
-- **Tier Action Analysis**: Tier 1/2/3 action counts and success rates
-- **Event Timeline**: Chronological list of failures, recoveries, and recovery actions
-- **CSV Data**: All events exported with timestamps, peer IPs, failure counts, and event types
-
-**Example Output:**
-
-```
-Summary:
-  Total Failures: 15
-  Total Recoveries: 12
-  Recovery Success Rate: 80.00%
-  Failures per Day: 2.14
-  
-Tier Actions:
-  Tier 1 (Logging): 15
-  Tier 2 (Surgical Cleanup):
-    Attempted: 8
-    Completed: 7
-    Success Rate: 87.50%
-  Tier 3 (Full Restart):
-    Attempted: 3
-    Completed: 3
-    Success Rate: 100.00%
-```
-
-The CSV export can be imported into spreadsheet applications (Excel, Google Sheets, etc.) for further analysis, charting, and trend visualization.
+Reports include summary statistics, tier action analysis, and event timelines. CSV exports are available for spreadsheet analysis.
 
 ### Manual Testing
 
@@ -387,19 +341,9 @@ The CSV export can be imported into spreadsheet applications (Excel, Google Shee
 
 # Run in fake mode (checks failures but doesn't escalate tiers)
 /data/vpn-monitor/vpn-monitor.sh --fake
-
-# Check VPN status directly
-ip xfrm state | grep -A 10 <PEER_IP>
-
-# Check IPsec status
-ipsec status
-
-# Check swanctl (if available)
-swanctl --list-sas
-
-# Test ping connectivity (if ping checks enabled)
-ping -c 3 <PING_TARGET_IP>
 ```
+
+For detailed troubleshooting, log analysis patterns, and diagnostic commands, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 **Fake Mode (`--fake` flag):**
 The `--fake` flag allows you to test the monitoring script without triggering recovery actions. When enabled:
@@ -409,43 +353,20 @@ The `--fake` flag allows you to test the monitoring script without triggering re
 - **Tier 2 (surgical cleanup) and Tier 3 (full restart) actions are skipped**
 - Useful for testing detection logic without affecting VPN connections
 
-### Common Issues
+### Troubleshooting
 
-**Script not running:**
-- Check cron: `crontab -l`
-- Check lockfile: `ls -l /data/vpn-monitor/vpn-monitor.lock`
-- Check if lockfile is stale (older than LOCKFILE_TIMEOUT): `stat /data/vpn-monitor/vpn-monitor.lock`
-- **Lockfile Format**: The lockfile uses `timestamp:pid` format (e.g., `1234567890:12345`)
-  - **Format**: `<unix_timestamp>:<process_id>`
-  - **Purpose**: Prevents concurrent script executions and detects hung processes
-  - **Interpretation**: 
-    - The timestamp indicates when the lockfile was created
-    - The PID is the process ID of the running script instance
-    - If the lockfile is older than `LOCKFILE_TIMEOUT` seconds, it's considered stale (hung process)
-  - **Debugging**: 
-    - View lockfile contents: `cat /data/vpn-monitor/vpn-monitor.lock`
-    - Check if PID is still running: `ps -p <pid>` (replace `<pid>` with the PID from lockfile)
-    - Calculate lockfile age: `echo $(($(date +%s) - $(stat -c %Y /data/vpn-monitor/vpn-monitor.lock)))` seconds
-    - Remove stale lockfile manually if needed: `rm /data/vpn-monitor/vpn-monitor.lock` (only if PID is not running)
-- Check logs: `tail /data/vpn-monitor/logs/vpn-monitor.log`
+For comprehensive troubleshooting guides covering common issues, diagnosis steps, and solutions, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
-**Ping checks failing:**
-- Verify `PING_TARGET_IP` is reachable: `ping <PING_TARGET_IP>`
-- Check if ping is blocked by firewall rules
-- Consider disabling ping checks (`ENABLE_PING_CHECK=0`) if ping is intentionally blocked
-- Ensure ping target is on the remote network (not just the peer IP)
+**Common issues include:**
+- Script not running (cron, lockfile, permissions)
+- False positives (VPN working but monitor reports failures)
+- Ping checks failing
+- Recovery not working
+- Configuration issues
+- Performance issues
+- Lockfile issues
 
-**False positives:**
-- Increase thresholds in config
-- Check if VPN actually has traffic (byte counters may be 0 if idle)
-- If ping checks are enabled, ensure `PING_TARGET_IP` is reachable
-- Disable ping checks (`ENABLE_PING_CHECK=0`) if ping is blocked by firewall
-- Enable DEBUG=1 for verbose logging
-
-**Restart loops:**
-- Check rate limiting is working
-- Increase `COOLDOWN_MINUTES`
-- Reduce `MAX_RESTARTS_PER_HOUR`
+Each issue includes detailed diagnosis steps and solutions in the troubleshooting guide.
 
 ## Uninstallation
 
@@ -622,76 +543,26 @@ This tool is provided as-is without warranty. Use at your own risk.
 
 The project includes a comprehensive test suite using [bats](https://github.com/bats-core/bats-core) (Bash Automated Testing System).
 
-### Running Tests
-
+Quick start:
 ```bash
 # Run all tests
 ./tests/run_tests.sh
 
-# Run tests with coverage reporting (requires kcov)
+# Run tests with coverage reporting
 ./tests/run_tests.sh --coverage
-
-# Run specific test file
-bats tests/test_install.sh
-bats tests/test_uninstall.sh
-bats tests/test_vpn_monitor.sh
-bats tests/test_integration.sh
-bats tests/test_high_risk.sh
 ```
 
-**High-Risk Tests**: The project includes a dedicated high-risk test suite (`test_high_risk.sh`) with 31 tests covering critical paths, error handling, and edge cases. See [tests/HIGH_RISK_TESTS.md](tests/HIGH_RISK_TESTS.md) for details.
-
-### Prerequisites
-
-Install bats-core:
-- macOS: `brew install bats-core`
-- Linux: Install from source (see [bats-core documentation](https://github.com/bats-core/bats-core#installation))
-
-Optional helper libraries (recommended):
-```bash
-./tests/install_bats_helpers.sh
-```
-
-**Coverage Reporting**: The test suite supports code coverage reporting using kcov. Run tests with `--coverage` flag to generate coverage reports. See [tests/README.md](tests/README.md) for detailed testing documentation and coverage reporting instructions.
+For detailed testing documentation including prerequisites, test structure, coverage reporting, and writing new tests, see [tests/README.md](tests/README.md).
 
 ## CI/CD
 
-This project uses GitHub Actions for continuous integration and continuous deployment. The CI pipeline automatically runs on every push and pull request to the main/master branches.
-
-### CI Pipeline
-
-The CI pipeline includes:
-
-1. **Linting**: Runs ShellCheck to detect shell script errors and security issues
-2. **Format Checking**: Verifies code formatting using shfmt
-3. **Testing**: Runs the full test suite using bats
-4. **Coverage Reporting**: Generates test coverage reports using kcov
-
-### Workflow Status
+This project uses GitHub Actions for continuous integration. The CI pipeline automatically runs on every push and pull request.
 
 Check the [Actions](https://github.com/YOUR_USERNAME/udm-vpn-monitor/actions) tab to view the status of CI runs.
 
 **Note:** Update the badge URL in the README header with your actual GitHub username/repository name to display the CI status badge correctly.
 
-### Local CI Checks
-
-Before pushing code, you can run the same checks locally:
-
-```bash
-# Format code
-shfmt -w *.sh lib/*.sh tests/*.sh
-
-# Check for errors
-shellcheck --severity=error *.sh lib/*.sh tests/*.sh
-
-# Run tests
-./tests/run_tests.sh
-
-# Run tests with coverage
-./tests/run_tests.sh --coverage
-```
-
-See [DEVELOPER.md](DEVELOPER.md) for detailed development workflow instructions.
+For detailed CI/CD pipeline information, local development checks, and workflow instructions, see [DEVELOPER.md](DEVELOPER.md).
 
 ## Contributing
 
@@ -709,11 +580,23 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed architecture diagrams, compo
 ## Documentation
 
 - **[README.md](README.md)** - This file: User-facing documentation, installation, and usage
+- **[QUICK_START.md](QUICK_START.md)** - 5-minute setup guide for new users
+- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and solutions
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture, design decisions, and component interactions
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
 - **[DEVELOPER.md](DEVELOPER.md)** - Developer guide with tooling setup, workflows, and code quality standards
 - **[ENHANCEMENTS.md](ENHANCEMENTS.md)** - Future enhancement ideas and roadmap
 - **[tests/README.md](tests/README.md)** - Comprehensive testing documentation
+
+**In-Code Documentation**: All functions in the codebase include comprehensive documentation with:
+- Function purpose and behavior
+- Parameter descriptions and types
+- Return values and exit codes
+- Side effects and file operations
+- Usage examples where helpful
+- Notes about dependencies and requirements
+
+See individual source files for detailed function documentation.
 
 ## Changelog
 

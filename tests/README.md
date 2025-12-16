@@ -14,7 +14,6 @@ This directory contains comprehensive tests for the UDM VPN Monitor scripts usin
 - `test_analyze_logs.sh` - Tests for `analyze-logs.sh` script
 - `run_tests.sh` - Test runner script
 - `generate_coverage_report.sh` - Generates test coverage reports from kcov output
-- `HIGH_RISK_TESTS.md` - Documentation for high-risk test suite
 
 ## Prerequisites
 
@@ -38,15 +37,40 @@ These can be installed using:
 
 ## Running Tests
 
-### Run All Tests
+### Run Fast Tests (Default)
+
+By default, slow tests are excluded to speed up local development:
 
 ```bash
 ./tests/run_tests.sh
 ```
 
-Or directly with bats:
+This runs:
+- `test_analyze_logs.sh`
+- `test_helper_functions.sh`
+- `test_install.sh`
+- `test_uninstall.sh`
+- `test_vpn_monitor.sh`
+
+### Run All Tests (Including Slow Tests)
+
+To include slow tests (integration and high-risk tests):
+
 ```bash
-bats tests/test_*.sh
+./tests/run_tests.sh --slow
+# or
+RUN_SLOW_TESTS=1 ./tests/run_tests.sh
+```
+
+Slow tests include:
+- `test_integration.sh` - Integration tests for full monitoring flow
+- `test_high_risk.sh` - High-risk edge case and error handling tests
+
+### Run with Coverage
+
+```bash
+./tests/run_tests.sh --coverage          # Fast tests only
+./tests/run_tests.sh --slow --coverage    # All tests with coverage
 ```
 
 ### Run Specific Test File
@@ -69,10 +93,26 @@ The high-risk test suite focuses on critical paths and error handling scenarios:
 bats tests/test_high_risk.sh
 
 # Run via test runner (includes all tests)
-./tests/run_tests.sh
+./tests/run_tests.sh --slow
+
+# Run a specific test
+bats tests/test_high_risk.sh -f "lockfile cleanup"
 ```
 
-See [HIGH_RISK_TESTS.md](HIGH_RISK_TESTS.md) for detailed documentation on the high-risk test suite.
+## Test Categories
+
+### Fast Tests (run by default)
+- `test_analyze_logs.sh` - Log analysis script tests
+- `test_helper_functions.sh` - Unit tests for helper functions
+- `test_install.sh` - Installation script tests
+- `test_uninstall.sh` - Uninstallation script tests
+- `test_vpn_monitor.sh` - Core VPN monitor functionality tests
+
+### Slow Tests (excluded by default)
+- `test_integration.sh` - Integration tests for full monitoring flow
+- `test_high_risk.sh` - High-risk edge case and error handling tests
+
+**Note**: Slow tests are automatically included in CI/CD via the `RUN_SLOW_TESTS=1` environment variable (see `.github/workflows/tests.yml`).
 
 ### Run Specific Test
 
@@ -130,15 +170,23 @@ Current test coverage: **26.7%** (532/1993 lines) as of latest run.
 
 ### High-Risk Tests (test_high_risk.sh)
 
-The high-risk test suite includes **31 tests** covering critical paths and error handling scenarios:
+The `test_high_risk.sh` file contains comprehensive tests for critical paths and error handling scenarios that could cause production failures. These tests focus on areas identified as **Critical Priority** in the test coverage gaps analysis.
 
-**Lockfile Management (4 tests)**:
+#### Overview
+
+The high-risk test suite includes **31 tests** covering critical paths and error handling scenarios across 4 main categories:
+
+#### Test Categories
+
+**1. Lockfile Management (4 tests)**
+Tests lockfile cleanup, error handling, and edge cases:
 - ✅ Lockfile cleanup on script exit
 - ✅ Lockfile cleanup on script error
 - ✅ Lockfile contains invalid format
 - ✅ Lockfile timestamp at timeout boundary
 
-**Configuration Loading (7 tests)**:
+**2. Configuration Loading and Validation (7 tests)**
+Tests configuration file error handling, security, and validation:
 - ✅ Config file contains syntax errors
 - ✅ Config file is unreadable (permission denied)
 - ✅ Config file is a directory instead of file
@@ -147,7 +195,8 @@ The high-risk test suite includes **31 tests** covering critical paths and error
 - ✅ Threshold values out of order
 - ✅ Config file attempts command injection via variable
 
-**VPN Status Detection (11 tests)**:
+**3. VPN Status Detection (11 tests)**
+Tests VPN detection edge cases, byte counter handling, and fallback mechanisms:
 - ✅ xfrm SA exists but byte counter is exactly 0
 - ✅ xfrm SA exists but byte counter decreases (wrap-around)
 - ✅ xfrm SA exists but byte counter stays same
@@ -160,7 +209,8 @@ The high-risk test suite includes **31 tests** covering critical paths and error
 - ✅ xfrm command fails with permission denied
 - ✅ Ping check enabled but PING_TARGET_IP not set
 
-**Recovery Actions (9 tests)**:
+**4. Recovery Actions (9 tests)**
+Tests recovery action execution, error handling, and verification:
 - ✅ Surgical cleanup with connection name configured (per-connection reload)
 - ✅ Surgical cleanup without connection name (full reload)
 - ✅ Surgical cleanup fails - error handling
@@ -171,7 +221,38 @@ The high-risk test suite includes **31 tests** covering critical paths and error
 - ✅ Rate limit file corrupted
 - ✅ Failure counter file is directory
 
-See [HIGH_RISK_TESTS.md](HIGH_RISK_TESTS.md) for detailed documentation.
+#### Test Statistics
+
+- **Total Tests**: 31
+- **Test Categories**: 4
+- **Focus Areas**: Critical error handling, edge cases, security
+
+#### Test Results
+
+All 31 tests pass successfully. Tests verify:
+- ✅ Error handling doesn't crash the script
+- ✅ Edge cases are handled gracefully
+- ✅ Security concerns (command injection) are mitigated
+- ✅ Recovery actions execute correctly
+- ✅ Fallback mechanisms work as expected
+
+#### CI Integration
+
+The high-risk tests are automatically included in CI because:
+1. `run_tests.sh` automatically discovers all `test_*.sh` files
+2. CI runs `./tests/run_tests.sh` which includes all test files
+3. No additional CI configuration needed
+
+#### Maintenance
+
+When adding new high-risk scenarios:
+1. Add tests to `test_high_risk.sh`
+2. Follow existing test patterns
+3. Use helper functions from `test_helper.bash`
+4. Ensure tests are isolated and don't depend on each other
+5. Run tests locally before committing
+
+For more information on test coverage gaps, see [TEST_COVERAGE_GAPS.md](../TEST_COVERAGE_GAPS.md).
 
 ### install.sh Tests
 

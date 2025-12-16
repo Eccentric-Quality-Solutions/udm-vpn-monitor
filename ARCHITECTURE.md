@@ -410,12 +410,23 @@ graph TB
   - `validate_ip_address()` - Robust IP address validation (IPv4/IPv6)
 - **Benefit**: Consistent error handling, reduced duplication, easier maintenance
 
-### 7. Rate Limiting
+### 7. Comprehensive In-Code Documentation
+- **Why**: Improve code readability and maintainability
+- **Implementation**: All functions include detailed documentation blocks with:
+  - Function purpose and behavior description
+  - Parameter descriptions with types
+  - Return value documentation
+  - Side effects documentation (file operations, logging, etc.)
+  - Usage examples for complex functions
+  - Notes about dependencies and requirements
+- **Benefit**: Easier onboarding for new developers, better code understanding, reduced need for external documentation
+
+### 8. Rate Limiting
 - **Why**: Prevent restart loops if VPN has persistent issues
 - **Implementation**: Track restart timestamps, limit per hour
 - **Benefit**: Protects system from excessive restarts
 
-### 7. Cooldown Period
+### 9. Cooldown Period
 - **Why**: Allow VPN to stabilize after restart
 - **Implementation**: Skip checks for configured minutes after restart
 - **Benefit**: Prevents false positives immediately after recovery
