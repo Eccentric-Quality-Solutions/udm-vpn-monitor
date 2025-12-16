@@ -68,9 +68,17 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
 
 1. **Transfer files to your UDM**:
    ```bash
-   # From your local machine, copy files to UDM
+   # Option 1: Use the helper script (recommended - lists specific files)
+   ./scp-files.sh <UDM_IP>
+   
+   # Option 2: Manually specify files
    scp vpn-monitor.sh vpn-monitor.conf install.sh uninstall.sh root@<UDM_IP>:/tmp/
+   
+   # Option 3: Use wildcards (copies all .sh and .conf files)
+   scp *.sh *.conf root@<UDM_IP>:/tmp/
    ```
+   
+   **Note**: The `scp-files.sh` script includes all required files including the `lib/` directory and `analyze-logs.sh`.
 
 2. **SSH into your UDM**:
    ```bash

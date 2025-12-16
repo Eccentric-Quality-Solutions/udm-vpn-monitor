@@ -4,6 +4,10 @@
 
 1. Copy files to UDM:
    ```bash
+   # Option 1: Use the helper script (recommended - lists specific files)
+   ./scp-files.sh <UDM_IP>
+   
+   # Option 2: Use wildcards (copies all .sh and .conf files)
    scp *.sh *.conf root@<UDM_IP>:/tmp/
    ```
 
@@ -50,7 +54,9 @@ For complete requirements details, see the [Requirements section in README.md](R
 
 ### Quick Installation Summary
 
-1. **Transfer files**: `scp *.sh *.conf root@<UDM_IP>:/tmp/`
+1. **Transfer files**: 
+   - Use helper script: `./scp-files.sh <UDM_IP>` (lists specific files)
+   - Or use wildcards: `scp *.sh *.conf root@<UDM_IP>:/tmp/`
 2. **SSH into UDM**: `ssh root@<UDM_IP>`
 3. **Run installer**: `cd /tmp && chmod +x install.sh && ./install.sh --interactive`
 4. **Configure PEER_IPS**: Edit `/data/vpn-monitor/vpn-monitor.conf` and set `PEER_IPS` to your remote VPN gateway's **external/public IP address(es)**
