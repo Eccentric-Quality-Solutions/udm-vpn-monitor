@@ -19,19 +19,52 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Logging function
+#
+# Logs an informational message with green [INFO] prefix.
+#
+# Arguments:
+#   $@: Message text (all arguments are concatenated)
+#
+# Returns:
+#   0: Always succeeds
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $*"
 }
 
+# Log a warning message
+#
+# Logs a warning message with yellow [WARN] prefix.
+#
+# Arguments:
+#   $@: Message text (all arguments are concatenated)
+#
+# Returns:
+#   0: Always succeeds
 log_warn() {
     echo -e "${YELLOW}[WARN]${NC} $*"
 }
 
+# Log an error message
+#
+# Logs an error message with red [ERROR] prefix.
+#
+# Arguments:
+#   $@: Message text (all arguments are concatenated)
+#
+# Returns:
+#   0: Always succeeds
 log_error() {
     echo -e "${RED}[ERROR]${NC} $*"
 }
 
 # Check if running as root
+#
+# Verifies that the script is running with root privileges.
+# Required for removing files from /data/ and modifying crontab.
+#
+# Returns:
+#   0: Running as root
+#   1: Not running as root (exits script with error)
 check_root() {
     if [[ $EUID -ne 0 ]]; then
         log_error "This script must be run as root"
@@ -40,6 +73,13 @@ check_root() {
 }
 
 # Check if installation exists
+#
+# Verifies that the VPN monitor installation directory exists.
+# Used to determine if there's anything to uninstall.
+#
+# Returns:
+#   0: Installation directory exists
+#   1: Installation directory not found
 check_installation() {
     if [[ ! -d "$INSTALL_DIR" ]]; then
         log_warn "Installation directory not found: $INSTALL_DIR"
@@ -50,6 +90,16 @@ check_installation() {
 }
 
 # Remove cron entry
+#
+# Removes the VPN monitor cron job entry from the root crontab.
+# Filters out lines containing "vpn-monitor.sh" and updates crontab.
+#
+# Returns:
+#   0: Cron entry removed successfully (or didn't exist)
+#   1: Failed to remove cron entry
+#
+# Side effects:
+#   Modifies root crontab
 remove_cron() {
     log_info "Removing cron job..."
     
@@ -72,6 +122,17 @@ remove_cron() {
 }
 
 # Remove installation directory
+#
+# Removes the entire installation directory and all its contents.
+# This includes scripts, config files, log files, and state files.
+#
+# Returns:
+#   0: Directory removed successfully (or didn't exist)
+#   1: Failed to remove directory
+#
+# Side effects:
+#   - Displays list of files that will be removed
+#   - Deletes ${INSTALL_DIR} and all contents
 remove_installation_dir() {
     log_info "Removing installation directory: $INSTALL_DIR"
     
@@ -99,7 +160,16 @@ remove_installation_dir() {
     return 0
 }
 
-# Clean up any stale lockfiles (if directory was removed but lockfile persists)
+# Clean up any stale lockfiles
+#
+# Removes any stale lockfiles that may persist if the installation directory
+# was removed but lockfile remained (shouldn't happen normally).
+#
+# Returns:
+#   0: Always succeeds (warnings logged but don't fail)
+#
+# Side effects:
+#   Removes lockfile if it exists
 cleanup_lockfile() {
     local lockfile="${INSTALL_DIR}/vpn-monitor.lock"
     if [[ -f "$lockfile" ]]; then
@@ -109,6 +179,14 @@ cleanup_lockfile() {
 }
 
 # Verify uninstallation
+#
+# Verifies that the uninstallation completed successfully by checking:
+#   - Installation directory no longer exists
+#   - Cron entry no longer exists
+#
+# Returns:
+#   0: Uninstallation verified successfully
+#   1: Verification failed (some components still exist)
 verify_uninstallation() {
     log_info "Verifying uninstallation..."
     
@@ -140,6 +218,12 @@ verify_uninstallation() {
 }
 
 # Display summary
+#
+# Displays a summary of what was removed during uninstallation.
+# Shows confirmation that VPN Monitor has been completely removed.
+#
+# Returns:
+#   0: Always succeeds
 display_summary() {
     echo ""
     log_info "Uninstallation complete!"
@@ -156,6 +240,27 @@ display_summary() {
 }
 
 # Main uninstallation
+#
+# Main entry point for the uninstallation script.
+# Orchestrates the complete uninstallation process.
+#
+# Arguments:
+#   $@: Command-line arguments
+#       --yes: Skip interactive confirmation (non-interactive mode)
+#
+# Returns:
+#   0: Uninstallation successful
+#   1: Uninstallation failed
+#
+# Execution flow:
+#   1. Check root privileges
+#   2. Check if installation exists
+#   3. Prompt for confirmation (unless --yes or CI environment)
+#   4. Remove cron entry
+#   5. Remove installation directory
+#   6. Clean up stale lockfiles
+#   7. Verify uninstallation
+#   8. Display summary
 main() {
     log_info "UDM VPN Monitor Uninstallation"
     log_info "================================="

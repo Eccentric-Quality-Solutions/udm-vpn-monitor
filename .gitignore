@@ -28,3 +28,9 @@ vpn-monitor.conf.local
 *.tmp
 *.bak
 
+# Test files and directories
+/tmp/bats-test-*
+bats-support/
+bats-assert/
+bats-file/
+

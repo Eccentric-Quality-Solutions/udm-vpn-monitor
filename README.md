@@ -109,7 +109,7 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
 
 6. **Monitor logs**:
    ```bash
-   tail -f /data/vpn-monitor/vpn-monitor.log
+   tail -f /data/vpn-monitor/logs/vpn-monitor.log
    ```
 
 ## Configuration
@@ -160,8 +160,12 @@ This dual approach is more reliable than checking IKE status alone, as it confir
 
 ### Tiered Recovery
 
+**Important Notes:**
+- **Shared Failure Counter**: The failure counter is **shared across all configured peer IPs**. If multiple peers fail, their failures accumulate in a single counter. Recovery of any peer resets the counter for all peers.
+- **Tier 2 and Tier 3 Impact**: Both Tier 2 and Tier 3 recovery actions affect **all IPsec tunnels**, not just the failing peer.
+
 1. **Tier 1 (Logging)**: After first failure, logs the issue
-2. **Tier 2 (Surgical Cleanup)**: After 3 failures, attempts to delete specific SA states and reload configuration
+2. **Tier 2 (Surgical Cleanup)**: After 3 failures, attempts to delete specific SA states and reload configuration. **Note**: While it attempts per-peer SA deletion, `swanctl --reload` reloads ALL IPsec connections, affecting all tunnels.
 3. **Tier 3 (Full Restart)**: After 5 failures, performs full `ipsec restart` (affects all tunnels)
 
 ### Safety Features
@@ -215,13 +219,13 @@ If monitoring stops after an upgrade:
 
 ```bash
 # Real-time log monitoring
-tail -f /data/vpn-monitor/vpn-monitor.log
+tail -f /data/vpn-monitor/logs/vpn-monitor.log
 
 # View recent entries
-tail -n 100 /data/vpn-monitor/vpn-monitor.log
+tail -n 100 /data/vpn-monitor/logs/vpn-monitor.log
 
 # Check for errors
-grep ERROR /data/vpn-monitor/vpn-monitor.log
+grep ERROR /data/vpn-monitor/logs/vpn-monitor.log
 ```
 
 ### Manual Testing
@@ -260,7 +264,8 @@ The `--fake` flag allows you to test the monitoring script without triggering re
 - Check cron: `crontab -l`
 - Check lockfile: `ls -l /data/vpn-monitor/vpn-monitor.lock`
 - Check if lockfile is stale (older than LOCKFILE_TIMEOUT): `stat /data/vpn-monitor/vpn-monitor.lock`
-- Check logs: `tail /data/vpn-monitor/vpn-monitor.log`
+- Lockfile format: `timestamp:pid` (e.g., `1234567890:12345`) - contains Unix timestamp and process ID
+- Check logs: `tail /data/vpn-monitor/logs/vpn-monitor.log`
 
 **Ping checks failing:**
 - Verify `PING_TARGET_IP` is reachable: `ping <PING_TARGET_IP>`
@@ -364,26 +369,69 @@ If ping checks are enabled (`ENABLE_PING_CHECK=1`), it additionally:
 - Verifies packet loss is < 100%
 - Confirms end-to-end connectivity through the tunnel
 
+**Ping Check Behavior:**
+- If SA exists but ping fails: VPN is still marked as OK (SA exists), but a warning is logged. This allows the tunnel to pass while warning about connectivity issues. If ping keeps failing, byte counters should also stop increasing, which will eventually trigger a failure.
+- If SA doesn't exist but ping succeeds: A warning is logged indicating connectivity exists via another route (not through the VPN tunnel).
+
 If validation fails, it escalates through recovery tiers. The ping check helps distinguish between "tunnel exists but broken" and "tunnel exists and working but idle".
 
 ### State Management
 
 State is tracked via files in `/data/vpn-monitor/`:
-- `failure_counter`: Consecutive failure count (shared across all peers)
+- `logs/failure_counter`: Consecutive failure count (**shared across all peers** - failures from any peer increment the same counter)
 - `last_restart`: Timestamp of last restart
-- `restart_count`: Timestamps of all restarts (for rate limiting)
-- `last_bytes_<peer_ip>`: Per-peer last known byte counter value (sanitized IP in filename)
+- `logs/restart_count`: Timestamps of all restarts (for rate limiting)
+- `logs/vpn-monitor.log`: Main log file
+- `last_bytes_<peer_ip>`: Per-peer last known byte counter value (sanitized IP in filename, e.g., `last_bytes_192_168_1_1`)
 - `cooldown_until`: Cooldown expiration timestamp
-- `vpn-monitor.lock`: Lockfile for execution control (includes timestamp:pid for timeout detection)
+- `vpn-monitor.lock`: Lockfile for execution control (format: `timestamp:pid` for timeout detection)
 - `.cron_checked`: Flag file to prevent repeated cron persistence checks
+
+**Per-Peer vs Shared State:**
+- **Per-peer**: Byte counters (`last_bytes_*`) are tracked separately for each peer IP
+- **Shared**: Failure counter is shared across all peers - if Peer A fails 3 times and Peer B fails 2 times, the counter will be 5, potentially triggering Tier 3 restart even though neither peer individually reached the threshold
 
 ## License
 
 This tool is provided as-is without warranty. Use at your own risk.
 
+## Testing
+
+The project includes a comprehensive test suite using [bats](https://github.com/bats-core/bats-core) (Bash Automated Testing System).
+
+### Running Tests
+
+```bash
+# Run all tests
+./tests/run_tests.sh
+
+# Run specific test file
+bats tests/test_install.sh
+bats tests/test_uninstall.sh
+bats tests/test_vpn_monitor.sh
+```
+
+### Prerequisites
+
+Install bats-core:
+- macOS: `brew install bats-core`
+- Linux: Install from source (see [bats-core documentation](https://github.com/bats-core/bats-core#installation))
+
+Optional helper libraries (recommended):
+```bash
+./tests/install_bats_helpers.sh
+```
+
+See [tests/README.md](tests/README.md) for detailed testing documentation.
+
 ## Contributing
 
 Issues and pull requests welcome. Please test thoroughly on UDM systems before submitting.
+
+When contributing:
+1. Add tests for new functionality
+2. Ensure all tests pass: `./tests/run_tests.sh`
+3. Follow existing code patterns and style
 
 ## Architecture
 

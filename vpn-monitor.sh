@@ -14,8 +14,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/vpn-monitor.conf"
 STATE_DIR="${SCRIPT_DIR}"
+LOGS_DIR="${STATE_DIR}/logs"
 LOCKFILE="${STATE_DIR}/vpn-monitor.lock"
-LOG_FILE="${STATE_DIR}/vpn-monitor.log"
+LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
 
 # Default configuration values
 PEER_IPS=""
@@ -40,15 +41,36 @@ mkdir -p "$STATE_DIR" || {
     exit 1
 }
 
+# Ensure logs directory exists (needed before logging)
+mkdir -p "$LOGS_DIR" || {
+    echo "ERROR: Cannot create logs directory: $LOGS_DIR" >&2
+    exit 1
+}
+
 # State files
-FAILURE_COUNTER_FILE="${STATE_DIR}/failure_counter"
+FAILURE_COUNTER_FILE="${LOGS_DIR}/failure_counter"
 LAST_RESTART_FILE="${STATE_DIR}/last_restart"
-RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
+RESTART_COUNT_FILE="${LOGS_DIR}/restart_count"
 # LAST_BYTES_FILE will be per-peer: ${STATE_DIR}/last_bytes_${peer_ip_sanitized}
 COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
 
 # Logging function (defined early so it can be used during config loading)
 # Note: This function must not cause script exit even if logging fails
+#
+# Logs a message with timestamp and level to both log file and stderr (for errors/warnings/debug)
+# This function is designed to be resilient - it will not fail the script if logging fails
+#
+# Arguments:
+#   $1: Log level (INFO, WARNING, ERROR, DEBUG)
+#   $2+: Message text (all remaining arguments are concatenated)
+#
+# Returns:
+#   0: Always returns 0 (never fails the script)
+#
+# Output:
+#   - Writes to LOG_FILE (append mode)
+#   - Outputs ERROR/WARNING/DEBUG to stderr
+#   - Creates log directory if it doesn't exist
 log_message() {
     local level="$1"
     shift
@@ -121,7 +143,38 @@ else
     log_message "WARNING" "Using default configuration values"
 fi
 
+# Recalculate LOGS_DIR after config loading (in case STATE_DIR was overridden)
+# If LOG_FILE was set in config, derive LOGS_DIR from LOG_FILE, otherwise use STATE_DIR/logs
+if [[ "$LOG_FILE" != "${LOGS_DIR}/vpn-monitor.log" ]]; then
+    # LOG_FILE was overridden in config, derive LOGS_DIR from it
+    LOGS_DIR=$(dirname "$LOG_FILE")
+else
+    # LOG_FILE not overridden, use STATE_DIR/logs
+    LOGS_DIR="${STATE_DIR}/logs"
+    LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
+fi
+
+# Ensure logs directory exists after config loading (in case paths changed)
+mkdir -p "$LOGS_DIR" || {
+    log_message "ERROR" "Cannot create logs directory: $LOGS_DIR"
+    exit 1
+}
+
+# Update state file paths to use LOGS_DIR (in case STATE_DIR was overridden)
+FAILURE_COUNTER_FILE="${LOGS_DIR}/failure_counter"
+RESTART_COUNT_FILE="${LOGS_DIR}/restart_count"
+
 # Initialize state files if they don't exist
+#
+# Creates required state files (failure_counter, restart_count) if they don't exist.
+# Per-peer byte counter files are created on-demand in check_vpn_status().
+#
+# State files:
+#   - FAILURE_COUNTER_FILE: Tracks consecutive VPN check failures (SHARED across all peers)
+#   - RESTART_COUNT_FILE: Tracks restart timestamps for rate limiting
+#
+# Returns:
+#   0: Always succeeds (warnings logged but don't fail)
 init_state() {
     if [[ ! -f "$FAILURE_COUNTER_FILE" ]]; then
         echo "0" > "$FAILURE_COUNTER_FILE" || log_message "WARNING" "Failed to create failure counter file"
@@ -133,6 +186,16 @@ init_state() {
 }
 
 # Get current failure counter
+#
+# Reads the current consecutive failure count from the state file.
+# Note: The failure counter is SHARED across all configured peer IPs.
+# If multiple peers fail, their failures accumulate in a single counter.
+#
+# Returns:
+#   Current failure count (0 if file doesn't exist or is empty)
+#
+# Output:
+#   Prints the failure count to stdout
 get_failure_count() {
     if [[ -f "$FAILURE_COUNTER_FILE" ]]; then
         cat "$FAILURE_COUNTER_FILE"
@@ -142,6 +205,17 @@ get_failure_count() {
 }
 
 # Increment failure counter
+#
+# Increments the consecutive failure counter by 1 and saves it to the state file.
+# Used to track how many times in a row the VPN check has failed.
+# Note: The failure counter is SHARED across all configured peer IPs.
+# Failures from any peer increment the same counter.
+#
+# Returns:
+#   New failure count value
+#
+# Output:
+#   Prints the new failure count to stdout
 increment_failure() {
     local count
     count=$(get_failure_count)
@@ -150,11 +224,29 @@ increment_failure() {
 }
 
 # Reset failure counter
+#
+# Resets the consecutive failure counter to 0.
+# Called when VPN check succeeds after previous failures.
+# Note: Resetting the counter affects ALL peers since the counter is shared.
+# If one peer recovers, the counter resets for all peers.
+#
+# Returns:
+#   0: Always succeeds
 reset_failure_count() {
     echo "0" > "$FAILURE_COUNTER_FILE"
 }
 
 # Check if we're in cooldown period
+#
+# Verifies if the script is currently in a cooldown period after a restart.
+# Cooldown periods prevent immediate re-restarts and allow VPN to stabilize.
+#
+# Returns:
+#   0: Currently in cooldown period
+#   1: Not in cooldown (or cooldown expired)
+#
+# Side effects:
+#   Removes cooldown file if it has expired
 check_cooldown() {
     if [[ ! -f "$COOLDOWN_UNTIL_FILE" ]]; then
         return 1  # Not in cooldown
@@ -178,6 +270,18 @@ check_cooldown() {
 }
 
 # Set cooldown period
+#
+# Sets a cooldown period to prevent immediate re-restarts after a full restart.
+# The cooldown period is stored as a timestamp in COOLDOWN_UNTIL_FILE.
+#
+# Arguments:
+#   $1: Cooldown duration in minutes
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   Creates/updates COOLDOWN_UNTIL_FILE with expiration timestamp
 set_cooldown() {
     local minutes="$1"
     local cooldown_until
@@ -189,6 +293,16 @@ set_cooldown() {
 }
 
 # Check rate limiting
+#
+# Verifies if the maximum number of restarts per hour has been exceeded.
+# Prevents restart loops by limiting how frequently full restarts can occur.
+#
+# Returns:
+#   0: Within rate limit (restart allowed)
+#   1: Rate limit exceeded (restart blocked)
+#
+# Note:
+#   Checks RESTART_COUNT_FILE for timestamps within the last hour
 check_rate_limit() {
     local now
     now=$(date +%s)
@@ -214,6 +328,17 @@ check_rate_limit() {
 }
 
 # Record restart timestamp
+#
+# Records the current timestamp to RESTART_COUNT_FILE for rate limiting.
+# Also cleans up old entries (older than 24 hours) to prevent file growth.
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Appends timestamp to RESTART_COUNT_FILE
+#   - Updates LAST_RESTART_FILE with current timestamp
+#   - Removes entries older than 24 hours from RESTART_COUNT_FILE
 record_restart() {
     local timestamp
     timestamp=$(date +%s)
@@ -231,13 +356,41 @@ record_restart() {
 }
 
 # Sanitize peer IP for use in filenames
-# Converts dots and colons to underscores (safe for filenames)
+#
+# Converts IP address characters that are unsafe for filenames to underscores.
+# Used to create per-peer state files (e.g., last_bytes_192_168_1_1).
+#
+# Arguments:
+#   $1: IP address (IPv4 or IPv6)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints sanitized IP address to stdout (dots and colons replaced with underscores)
 sanitize_peer_ip() {
     local ip="$1"
     echo "$ip" | tr '.' '_' | tr ':' '_'
 }
 
 # Check connectivity via ping
+#
+# Verifies end-to-end connectivity through the VPN tunnel by pinging a target IP.
+# This complements xfrm state checks by confirming actual traffic can flow.
+#
+# Arguments:
+#   $1: Target IP address to ping (IPv4 or IPv6)
+#
+# Returns:
+#   0: Ping successful (packet loss < 100%)
+#   1: Ping failed (100% packet loss or command error)
+#
+# Configuration:
+#   Uses PING_COUNT and PING_TIMEOUT from config file
+#   Automatically detects IPv4 vs IPv6 and uses appropriate ping command
+#
+# Note:
+#   Tries multiple ping command formats for compatibility (Linux/BSD)
 check_ping_connectivity() {
     local target_ip="$1"
     local ping_count="${PING_COUNT:-3}"
@@ -310,6 +463,28 @@ check_ping_connectivity() {
 }
 
 # Check VPN status using ip xfrm state
+#
+# Verifies VPN tunnel health by checking IPsec Security Association (SA) state and byte counters.
+# Uses multiple methods in order: ip xfrm state (primary), swanctl (fallback), ipsec status (fallback).
+# If ping checks are enabled, also verifies end-to-end connectivity.
+#
+# Arguments:
+#   $1: Peer IP address (external/public IP of remote VPN gateway)
+#
+# Returns:
+#   0: VPN is healthy (SA exists, bytes increasing or non-zero)
+#   1: VPN check failed (no SA found or bytes not increasing)
+#
+# Detection logic:
+#   1. Checks ip xfrm state for SA matching peer IP
+#   2. Validates byte counters are > 0 and increasing (if available)
+#   3. Falls back to swanctl --list-sas if xfrm doesn't confirm
+#   4. Falls back to ipsec status if swanctl doesn't confirm
+#   5. Optionally performs ping check if ENABLE_PING_CHECK=1
+#
+# Side effects:
+#   - Creates/updates per-peer last_bytes file if byte counters found
+#   - Logs debug/warning messages about VPN state
 check_vpn_status() {
     local peer_ip="$1"
     local vpn_ok=0
@@ -432,6 +607,28 @@ check_vpn_status() {
 }
 
 # Surgical SA cleanup (Tier 2 recovery)
+#
+# Attempts to clean up specific Security Associations for a peer.
+# This is less disruptive than a full restart but still affects all IPsec tunnels.
+#
+# Arguments:
+#   $1: Peer IP address to clean up
+#
+# Returns:
+#   0: Always succeeds (even if cleanup commands fail)
+#
+# Actions:
+#   1. Attempts to delete xfrm states matching peer IP (src and dst)
+#   2. Reloads swanctl configuration to re-establish connections
+#
+# Side effects:
+#   - Calls swanctl --reload which reloads ALL IPsec connections (not just the failing peer)
+#   - May temporarily disrupt all Site-to-Site and remote user VPNs
+#
+# Note:
+#   Without full selectors (src, dst, proto, spi), deletion may not be precise.
+#   swanctl --reload reloads all connections, making this less "surgical" than intended.
+#   Consider this a middle ground between logging (Tier 1) and full restart (Tier 3).
 surgical_cleanup() {
     local peer_ip="$1"
     log_message "INFO" "Attempting surgical SA cleanup for $peer_ip"
@@ -460,6 +657,28 @@ surgical_cleanup() {
 }
 
 # Full VPN restart (Tier 3 recovery)
+#
+# Performs a full restart of the IPsec service, affecting all VPN tunnels.
+# This is the most disruptive recovery action and should only be used after other methods fail.
+#
+# Returns:
+#   0: Restart successful
+#   1: Restart failed (rate limited or command error)
+#
+# Actions:
+#   1. Checks rate limiting (prevents restart loops)
+#   2. Records restart timestamp for rate limiting
+#   3. Executes 'ipsec restart' or 'swanctl --reload'
+#   4. Sets cooldown period to allow VPN to stabilize
+#
+# Side effects:
+#   - Affects ALL IPsec tunnels (not just the failing peer)
+#   - Temporarily disrupts all Site-to-Site and remote user VPNs
+#   - Sets cooldown period (COOLDOWN_MINUTES)
+#
+# Warning:
+#   This is disruptive and should be a last resort. Consider adjusting thresholds
+#   if this triggers too frequently.
 full_restart() {
     log_message "WARNING" "Performing full IPsec restart (affects all VPN tunnels)"
     
@@ -497,6 +716,33 @@ full_restart() {
 }
 
 # Main monitoring function
+#
+# Monitors a single VPN peer and implements tiered recovery escalation.
+# Checks VPN status and escalates recovery actions based on failure count thresholds.
+#
+# Arguments:
+#   $1: Peer IP address to monitor
+#
+# Returns:
+#   0: VPN is healthy (or recovered)
+#   1: VPN check failed (or recovery actions taken)
+#
+# Tier escalation:
+#   - Tier 1 (TIER1_THRESHOLD): Logging only
+#   - Tier 2 (TIER2_THRESHOLD): Surgical SA cleanup (affects all tunnels)
+#   - Tier 3 (TIER3_THRESHOLD): Full IPsec restart (affects all tunnels)
+#
+# Side effects:
+#   - Increments shared failure counter on VPN check failure (counter is shared across all peers)
+#   - Resets shared failure counter on VPN recovery (affects all peers)
+#   - Executes recovery actions based on failure count
+#   - Logs all actions and status changes
+#
+# Note:
+#   The failure counter is SHARED across all configured peer IPs.
+#   If Peer A fails 3 times and Peer B fails 2 times, the counter will be 5,
+#   potentially triggering Tier 3 restart even though neither peer individually reached the threshold.
+#   Recovery of any peer resets the counter for all peers.
 monitor_peer() {
     local peer_ip="$1"
     local failure_count
@@ -547,6 +793,19 @@ monitor_peer() {
 }
 
 # Check cron persistence
+#
+# Verifies that the cron job entry still exists in the crontab.
+# This helps detect if cron jobs were removed during UniFi OS upgrades.
+#
+# Returns:
+#   0: Always succeeds (warnings logged but don't fail script)
+#
+# Side effects:
+#   Logs warning if cron job not found
+#
+# Note:
+#   This check is performed once per script run (tracked via .cron_checked file)
+#   to avoid log spam on every execution.
 check_cron_persistence() {
     if ! crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
         log_message "WARNING" "Cron job not found! Persistence may have been lost."
@@ -555,6 +814,21 @@ check_cron_persistence() {
 }
 
 # Parse command-line arguments
+#
+# Processes command-line arguments and sets corresponding global flags.
+#
+# Arguments:
+#   $@: Command-line arguments
+#
+# Supported options:
+#   --fake: Enable fake mode (NO_ESCALATE=1) - runs checks but doesn't escalate tiers
+#   --help, -h: Display help message and exit
+#
+# Returns:
+#   0: Always succeeds (exits with 0 for --help)
+#
+# Side effects:
+#   Sets NO_ESCALATE flag if --fake is provided
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -581,6 +855,30 @@ parse_args() {
 }
 
 # Main execution
+#
+# Main entry point for the VPN monitor script.
+# Initializes state, checks cooldown, validates configuration, and monitors all configured peers.
+#
+# Arguments:
+#   $@: Command-line arguments (passed to parse_args)
+#
+# Returns:
+#   0: All peers healthy or checks completed successfully
+#   1: One or more peers failed checks or configuration error
+#
+# Execution flow:
+#   1. Parse command-line arguments
+#   2. Initialize state files
+#   3. Check cooldown period (exit if in cooldown)
+#   4. Check cron persistence (once per run)
+#   5. Validate PEER_IPS configuration
+#   6. Monitor each configured peer IP
+#   7. Exit with appropriate status code
+#
+# Side effects:
+#   - Creates state files and directories
+#   - Writes to log file
+#   - May execute recovery actions (if not in fake mode)
 main() {
     # Parse command-line arguments
     parse_args "$@"
@@ -675,6 +973,16 @@ main() {
 }
 
 # Check if lockfile is stale (exceeded timeout)
+#
+# Determines if an existing lockfile is stale (older than LOCKFILE_TIMEOUT seconds).
+# Stale lockfiles indicate a hung or crashed previous instance.
+#
+# Returns:
+#   0: Lockfile is stale (exceeded timeout)
+#   1: Lockfile is not stale (or doesn't exist)
+#
+# Note:
+#   Uses stat to get file modification time, handles both Linux and BSD/macOS formats
 check_lockfile_stale() {
     if [[ ! -f "$LOCKFILE" ]]; then
         return 1  # No lockfile, not stale
@@ -711,6 +1019,9 @@ if command -v flock >/dev/null 2>&1; then
     # Open lockfile for writing, acquire exclusive non-blocking lock
     # File descriptor 9 is used for the lockfile
     (
+        # Set up cleanup trap to ensure lock is released
+        trap 'rm -f "$LOCKFILE"; exec 9>&-' EXIT INT TERM
+        
         # Check if lockfile exists and is stale before trying to acquire
         if [[ -f "$LOCKFILE" ]] && check_lockfile_stale; then
             # Lockfile is stale, remove it and log
@@ -748,6 +1059,10 @@ if command -v flock >/dev/null 2>&1; then
         
         # Run main
         main "$@"
+        
+        # Explicitly close file descriptor and remove lockfile before exit
+        exec 9>&-
+        rm -f "$LOCKFILE"
     ) 9>"$LOCKFILE"
 else
     # Fallback: simple lockfile check (less reliable but better than nothing)

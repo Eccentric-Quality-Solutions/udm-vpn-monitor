@@ -37,16 +37,16 @@ This document describes the architecture and design of the UDM VPN Monitor syste
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  State Files (/data/vpn-monitor/)                        │  │
-│  │  • failure_counter                                       │  │
 │  │  • last_bytes_<peer_ip>                                  │  │
-│  │  • restart_count                                         │  │
 │  │  • cooldown_until                                        │  │
 │  │  • vpn-monitor.lock                                      │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Log Files                                               │  │
+│  │  Log Files (/data/vpn-monitor/logs/)                     │  │
 │  │  • vpn-monitor.log                                       │  │
+│  │  • failure_counter                                       │  │
+│  │  • restart_count                                         │  │
 │  │  • cron.log                                             │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
@@ -73,8 +73,8 @@ graph TB
     
     subgraph "Recovery Layer"
         Tier1[Tier 1: Logging]
-        Tier2[Tier 2: Surgical Cleanup<br/>SA Deletion + Reload]
-        Tier3[Tier 3: Full Restart<br/>ipsec restart]
+        Tier2[Tier 2: Surgical Cleanup<br/>SA Deletion + Reload<br/>Affects All Tunnels]
+        Tier3[Tier 3: Full Restart<br/>ipsec restart<br/>Affects All Tunnels]
     end
     
     subgraph "Safety Mechanisms"
@@ -306,14 +306,15 @@ graph LR
 /data/vpn-monitor/
 ├── vpn-monitor.sh              # Main monitoring script
 ├── vpn-monitor.conf            # Configuration file
-├── vpn-monitor.log             # Main log file
-├── cron.log                    # Cron execution log
 ├── vpn-monitor.lock            # Lockfile (timestamp:pid format)
 │
+├── logs/                       # Logs directory
+│   ├── vpn-monitor.log         # Main log file
+│   ├── failure_counter         # Shared failure count
+│   └── restart_count           # Timestamps of all restarts
+│
 ├── State Files:
-├── failure_counter             # Shared failure count
 ├── last_restart                # Last restart timestamp
-├── restart_count               # Timestamps of all restarts
 ├── cooldown_until              # Cooldown expiration timestamp
 ├── last_bytes_192_168_1_1     # Per-peer byte counters
 ├── last_bytes_192_168_2_1     # (sanitized IP in filename)
@@ -386,6 +387,7 @@ graph TB
 - **Why**: Multiple peers need independent monitoring
 - **Implementation**: Separate state files per peer (sanitized IP)
 - **Benefit**: Accurate detection for multi-peer setups
+- **Note**: Byte counters are tracked per-peer, but failure counters are shared across all peers
 
 ### 5. Dual Detection Method
 - **Why**: xfrm shows tunnel state, ping verifies connectivity
