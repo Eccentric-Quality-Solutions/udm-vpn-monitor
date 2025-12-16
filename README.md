@@ -6,6 +6,21 @@ A best-effort watchdog for UniFi Dream Machines that detects Site-to-Site VPN fa
 
 This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM-Pro/UDM-SE) and automatically attempts recovery when VPN tunnels appear active but are non-functional. It uses IPsec xfrm state byte counters combined with optional ping connectivity checks to detect actual traffic flow and verify end-to-end connectivity, which is more reliable than checking IKE status alone.
 
+## ⚠️ Important: Tier 2 Recovery Behavior
+
+**Before using this tool, understand how Tier 2 recovery works:**
+
+- **With connection name configured (or auto-discovered)**: Tier 2 uses `swanctl --reload-conn <connection-name>` to reload **only the specific failing connection**. This is true per-connection recovery with minimal impact.
+
+- **Without connection name**: Tier 2 uses `swanctl --reload` which reloads **ALL IPsec connections**, temporarily affecting **all Site-to-Site and remote user VPNs**. This is less "surgical" than intended.
+
+**To enable per-connection recovery:**
+- Connection names are automatically discovered from `swanctl` if available (recommended)
+- Or manually configure `CONNECTION_NAME_<sanitized_peer_ip>` in the config file
+- See the [Configuration](#configuration) section for details
+
+**Note:** Tier 3 recovery always affects all tunnels regardless of configuration.
+
 ## Features
 
 - **Robust Detection**: Uses `ip xfrm state` byte counters to detect actual VPN traffic flow
@@ -26,7 +41,7 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
 
 - ❌ A fully reliable daemon (best-effort)
 - ❌ Upgrade-proof (may require re-installation after UniFi OS upgrades)
-- ❌ Per-tunnel precise recovery (affects all IPsec tunnels on restart)
+- ❌ Per-tunnel precise recovery by default (Tier 2 affects all tunnels unless connection names are configured)
 - ❌ Guaranteed persistence (cron may be wiped on upgrades)
 
 ## Requirements
@@ -120,6 +135,7 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 |-----------|-------------|---------|
 | `PEER_IPS` | Space-separated list of remote VPN endpoint **external/public** IPs | (required) |
 | `VPN_NAME` | VPN identifier for logging | "Site-to-Site VPN" |
+| `CONNECTION_NAME_<peer_ip>` | Per-peer connection name for targeted reloads (see below) | "" |
 | `TIER1_THRESHOLD` | Failures before logging starts | 1 |
 | `TIER2_THRESHOLD` | Failures before surgical cleanup | 3 |
 | `TIER3_THRESHOLD` | Failures before full restart | 5 |
@@ -132,6 +148,54 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `PING_COUNT` | Number of ping packets to send | 3 |
 | `PING_TIMEOUT` | Ping timeout per packet (seconds) | 2 |
 | `DEBUG` | Enable verbose logging (0 or 1) | 0 |
+
+**Per-Peer Connection Name Configuration:**
+
+Connection names are used to enable per-connection reloads in Tier 2 (instead of reloading all tunnels). The script automatically discovers connection names from `swanctl` if not configured, but you can also manually configure them for better control.
+
+**Important:** Connection names must match actual connection names in your swanctl configuration. They are not arbitrary - they must exactly match what `swanctl --list-conns` shows. If you configure a name that doesn't exist (e.g., "hot dog" when no such connection exists), the reload will fail and fall back to reloading all connections.
+
+**Automatic Discovery (Recommended):**
+- If `CONNECTION_NAME_<sanitized_peer_ip>` is not configured, the script automatically discovers the connection name from `swanctl --list-sas`
+- Discovered connection names are cached in state files for performance
+- Auto-discovery happens on first use and is logged for visibility
+- **This is the recommended approach** as it ensures the connection name matches what swanctl actually has
+
+**When Auto-Discovery May Fail:**
+- **No active SA**: If the VPN tunnel is down and there's no active Security Association, `swanctl --list-sas` won't show the connection, so discovery fails
+- **swanctl not available**: If swanctl command is not installed or not in PATH
+- **Output format variations**: If swanctl output format differs from expected format (rare, but possible with different versions)
+- **Multiple connections with same peer IP**: If multiple connections share the same peer IP, discovery may pick the wrong one
+
+**Note:** Yes, every connection in swanctl configuration has a name (it's required), but discovery requires an active SA to find it. If discovery fails, the script gracefully falls back to reloading all connections.
+
+**Manual Configuration (Optional):**
+To manually configure connection names, use the format `CONNECTION_NAME_<sanitized_peer_ip>`. The sanitized peer IP replaces dots/colons with underscores.
+
+**Example:**
+```bash
+# First, find the actual connection names:
+swanctl --list-conns
+swanctl --list-sas
+
+# Then configure using the EXACT connection name from swanctl:
+# For peer IP 203.0.113.1, if swanctl shows connection "site-to-site-1":
+CONNECTION_NAME_203_0_113_1="site-to-site-1"
+
+# For peer IP 198.51.100.1, if swanctl shows connection "remote-office-vpn":
+CONNECTION_NAME_198_51_100_1="remote-office-vpn"
+```
+
+**Finding Connection Names:**
+```bash
+# List all configured connections
+swanctl --list-conns
+
+# List active Security Associations (shows connection names with peer IPs)
+swanctl --list-sas
+```
+
+**Note:** If connection names cannot be discovered (e.g., swanctl not available or no active SA), or if a manually configured name doesn't match swanctl, Tier 2 will fall back to reloading all IPsec connections (affects all tunnels). See the [Tiered Recovery](#tiered-recovery) section for details.
 
 **Cron Schedule Examples:**
 - `"*/1 * * * *"` - Every 1 minute (default)
@@ -162,11 +226,18 @@ This dual approach is more reliable than checking IKE status alone, as it confir
 
 **Important Notes:**
 - **Shared Failure Counter**: The failure counter is **shared across all configured peer IPs**. If multiple peers fail, their failures accumulate in a single counter. Recovery of any peer resets the counter for all peers.
-- **Tier 2 and Tier 3 Impact**: Both Tier 2 and Tier 3 recovery actions affect **all IPsec tunnels**, not just the failing peer.
+- **⚠️ Tier 2 Recovery Scope - CRITICAL**: Tier 2 recovery scope depends on connection name configuration:
+  - **✅ With connection name (configured or auto-discovered)**: Uses `swanctl --reload-conn <connection-name>` to reload **only the specific failing connection**. This is true per-connection recovery with minimal impact on other tunnels.
+  - **⚠️ Without connection name**: Uses `swanctl --reload` which reloads **ALL IPsec connections**, temporarily affecting **all Site-to-Site and remote user VPNs**. This makes Tier 2 less "surgical" than intended.
+  - Connection names are automatically discovered from `swanctl --list-sas` if available (recommended), or you can manually configure `CONNECTION_NAME_<sanitized_peer_ip>` in the config file (see [Configuration](#configuration) section)
+- **Tier 3 Impact**: Tier 3 recovery always affects **all IPsec tunnels** (full restart) regardless of configuration
 
 1. **Tier 1 (Logging)**: After first failure, logs the issue
-2. **Tier 2 (Surgical Cleanup)**: After 3 failures, attempts to delete specific SA states and reload configuration. **Note**: While it attempts per-peer SA deletion, `swanctl --reload` reloads ALL IPsec connections, affecting all tunnels.
-3. **Tier 3 (Full Restart)**: After 5 failures, performs full `ipsec restart` (affects all tunnels)
+2. **Tier 2 (Surgical Cleanup)**: After 3 failures, attempts to delete specific SA states and reload configuration.
+   - **With connection name**: Uses `swanctl --reload-conn <connection-name>` for targeted per-connection recovery ✅
+   - **Without connection name**: Uses `swanctl --reload` which affects all tunnels ⚠️
+   - See [Configuration](#configuration) section for connection name setup
+3. **Tier 3 (Full Restart)**: After 5 failures, performs full `ipsec restart` (always affects all tunnels)
 
 ### Safety Features
 
@@ -338,10 +409,14 @@ If you prefer to uninstall manually:
 
 ### Important Warnings
 
-1. **Full Restart Impact**: Tier 3 recovery restarts all IPsec tunnels, temporarily affecting all Site-to-Site and remote user VPNs
-2. **Best-Effort**: This is a watchdog tool, not a guaranteed daemon. It may miss failures or require manual intervention
-3. **Upgrade Compatibility**: UniFi OS upgrades may break functionality or remove cron jobs
-4. **No Official Support**: This is an unofficial tool. Use at your own risk
+1. **⚠️ Tier 2 Recovery Impact - READ THIS**: 
+   - **Without connection name configured (or auto-discovery fails)**: Tier 2 recovery uses `swanctl --reload` which reloads **ALL IPsec connections**, temporarily affecting **all Site-to-Site and remote user VPNs**. This is less "surgical" than intended.
+   - **With connection name configured (or auto-discovered)**: Tier 2 recovery uses `swanctl --reload-conn <connection-name>` which reloads **only the specific failing connection**. This is true per-connection recovery with minimal impact.
+   - **Recommendation**: Ensure connection names are available (auto-discovery is enabled by default) to minimize impact on other tunnels.
+2. **Full Restart Impact**: Tier 3 recovery always restarts all IPsec tunnels using `ipsec restart`, temporarily affecting all Site-to-Site and remote user VPNs, regardless of configuration.
+3. **Best-Effort**: This is a watchdog tool, not a guaranteed daemon. It may miss failures or require manual intervention
+4. **Upgrade Compatibility**: UniFi OS upgrades may break functionality or remove cron jobs
+5. **No Official Support**: This is an unofficial tool. Use at your own risk
 
 ### When to Use
 

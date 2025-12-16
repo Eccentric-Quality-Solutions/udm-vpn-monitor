@@ -390,6 +390,182 @@ sanitize_peer_ip() {
     echo "$ip" | tr '.' '_' | tr ':' '_'
 }
 
+# Discover connection name from swanctl
+#
+# Attempts to discover the connection name for a peer IP by parsing swanctl output.
+# Uses swanctl --list-sas to find active Security Associations and match them to connection names.
+#
+# Arguments:
+#   $1: Peer IP address
+#
+# Returns:
+#   0: Connection name discovered and printed to stdout
+#   1: Connection name not found (empty output)
+#
+# Output:
+#   Prints connection name to stdout if discovered, empty string otherwise
+#
+# Note:
+#   This function parses swanctl --list-sas output which typically shows:
+#   "connection-name: #X, ESTABLISHED, <peer_ip>..."
+#   We extract the connection name from lines containing the peer IP.
+discover_connection_name() {
+    local peer_ip="$1"
+    
+    if ! command -v swanctl >/dev/null 2>&1; then
+        return 1
+    fi
+    
+    # Get swanctl SA list and find entries matching this peer IP
+    # swanctl --list-sas output format varies, but typically shows:
+    # "connection-name: #X, ESTABLISHED, <peer_ip>..." or similar
+    # We look for lines containing the peer IP and extract the connection name
+    local sa_output
+    sa_output=$(swanctl --list-sas 2>/dev/null || true)
+    
+    if [[ -z "$sa_output" ]]; then
+        return 1
+    fi
+    
+    # Try to extract connection name from SA output
+    # Pattern: connection-name followed by colon, then peer IP appears later
+    # We look for lines containing the peer IP and extract the connection name (first field before colon)
+    local connection_name
+    connection_name=$(echo "$sa_output" | grep -i "$peer_ip" | head -1 | sed -n 's/^\([^:]*\):.*/\1/p' | tr -d ' ' || true)
+    
+    # Alternative: try swanctl --list-conns and match by peer IP in connection details
+    if [[ -z "$connection_name" ]]; then
+        local conns_output
+        conns_output=$(swanctl --list-conns 2>/dev/null || true)
+        
+        if [[ -n "$conns_output" ]]; then
+            # Parse connection list - format varies, try to find connection with matching peer
+            # This is a fallback method - may not always work depending on swanctl output format
+            connection_name=$(echo "$conns_output" | grep -B5 -i "$peer_ip" | grep -E "^[a-zA-Z0-9_-]+:" | head -1 | sed 's/:.*//' | tr -d ' ' || true)
+        fi
+    fi
+    
+    if [[ -n "$connection_name" ]]; then
+        echo "$connection_name"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Cache discovered connection name
+#
+# Stores a discovered connection name in a state file for future use.
+# This avoids repeated discovery operations and improves performance.
+#
+# Arguments:
+#   $1: Peer IP address
+#   $2: Connection name to cache
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   Creates/updates connection name cache file: ${STATE_DIR}/connection_name_<sanitized_peer_ip>
+cache_connection_name() {
+    local peer_ip="$1"
+    local connection_name="$2"
+    local peer_sanitized
+    peer_sanitized=$(sanitize_peer_ip "$peer_ip")
+    local cache_file="${STATE_DIR}/connection_name_${peer_sanitized}"
+    
+    echo "$connection_name" > "$cache_file" 2>/dev/null || true
+}
+
+# Get cached connection name
+#
+# Retrieves a previously discovered connection name from the cache.
+#
+# Arguments:
+#   $1: Peer IP address
+#
+# Returns:
+#   0: Cached connection name found and printed to stdout
+#   1: No cached connection name (empty output)
+#
+# Output:
+#   Prints cached connection name to stdout if found
+get_cached_connection_name() {
+    local peer_ip="$1"
+    local peer_sanitized
+    peer_sanitized=$(sanitize_peer_ip "$peer_ip")
+    local cache_file="${STATE_DIR}/connection_name_${peer_sanitized}"
+    
+    if [[ -f "$cache_file" ]]; then
+        local connection_name
+        connection_name=$(cat "$cache_file" 2>/dev/null | head -1 | tr -d '\n\r ' || true)
+        
+        if [[ -n "$connection_name" ]]; then
+            echo "$connection_name"
+            return 0
+        fi
+    fi
+    
+    return 1
+}
+
+# Get connection name for a peer IP
+#
+# Retrieves the connection name for a peer IP using the following priority:
+# 1. Check configuration file (CONNECTION_NAME_<sanitized_peer_ip>)
+# 2. Check cached discovered connection name
+# 3. Attempt to discover from swanctl and cache the result
+#
+# This allows per-peer connection-specific reloads using swanctl --reload-conn.
+# Connection names are automatically discovered if not configured.
+#
+# Arguments:
+#   $1: Peer IP address
+#
+# Returns:
+#   0: Connection name found and printed to stdout
+#   1: Connection name not found (empty output)
+#
+# Output:
+#   Prints connection name to stdout if found, empty string otherwise
+#
+# Example:
+#   If config contains: CONNECTION_NAME_203_0_113_1="site-to-site-1"
+#   Then get_connection_name "203.0.113.1" outputs: "site-to-site-1"
+#   
+#   If not configured, attempts to discover from swanctl and caches the result.
+get_connection_name() {
+    local peer_ip="$1"
+    local peer_sanitized
+    peer_sanitized=$(sanitize_peer_ip "$peer_ip")
+    local var_name="CONNECTION_NAME_${peer_sanitized}"
+    
+    # Priority 1: Check configuration file
+    local connection_name="${!var_name:-}"
+    
+    if [[ -n "$connection_name" ]]; then
+        echo "$connection_name"
+        return 0
+    fi
+    
+    # Priority 2: Check cached discovered connection name
+    if connection_name=$(get_cached_connection_name "$peer_ip" 2>/dev/null); then
+        echo "$connection_name"
+        return 0
+    fi
+    
+    # Priority 3: Attempt to discover from swanctl
+    if connection_name=$(discover_connection_name "$peer_ip" 2>/dev/null); then
+        # Cache the discovered connection name for future use
+        cache_connection_name "$peer_ip" "$connection_name"
+        log_message "INFO" "Auto-discovered connection name for $peer_ip: $connection_name"
+        echo "$connection_name"
+        return 0
+    fi
+    
+    return 1
+}
+
 # Check connectivity via ping
 #
 # Verifies end-to-end connectivity through the VPN tunnel by pinging a target IP.
@@ -626,7 +802,8 @@ check_vpn_status() {
 # Surgical SA cleanup (Tier 2 recovery)
 #
 # Attempts to clean up specific Security Associations for a peer.
-# This is less disruptive than a full restart but still affects all IPsec tunnels.
+# If a connection name is configured for the peer, attempts per-connection reload.
+# Otherwise falls back to reloading all IPsec connections.
 #
 # Arguments:
 #   $1: Peer IP address to clean up
@@ -636,16 +813,19 @@ check_vpn_status() {
 #
 # Actions:
 #   1. Attempts to delete xfrm states matching peer IP (src and dst)
-#   2. Reloads swanctl configuration to re-establish connections
+#   2. Reloads swanctl configuration:
+#      - If CONNECTION_NAME_<peer_ip> is configured: uses swanctl --reload-conn <name> (per-connection)
+#      - Otherwise: uses swanctl --reload (affects all connections)
 #
 # Side effects:
-#   - Calls swanctl --reload which reloads ALL IPsec connections (not just the failing peer)
-#   - May temporarily disrupt all Site-to-Site and remote user VPNs
+#   - If connection name not configured: Calls swanctl --reload which reloads ALL IPsec connections
+#   - If connection name configured: Calls swanctl --reload-conn which reloads only the specified connection
+#   - May temporarily disrupt VPN connections (scope depends on whether connection name is configured)
 #
 # Note:
 #   Without full selectors (src, dst, proto, spi), deletion may not be precise.
-#   swanctl --reload reloads all connections, making this less "surgical" than intended.
-#   Consider this a middle ground between logging (Tier 1) and full restart (Tier 3).
+#   To enable per-connection reload, configure CONNECTION_NAME_<sanitized_peer_ip> in config file.
+#   Example: CONNECTION_NAME_203_0_113_1="site-to-site-1"
 surgical_cleanup() {
     local peer_ip="$1"
     log_message "INFO" "Attempting surgical SA cleanup for $peer_ip"
@@ -661,10 +841,23 @@ surgical_cleanup() {
         ip xfrm state delete src "$peer_ip" 2>/dev/null || true
         ip xfrm state delete dst "$peer_ip" 2>/dev/null || true
         
-        # Try to reload/restart just this connection if swanctl available
-        # swanctl --reload: reloads configuration and re-establishes connections
+        # Try to reload connection using swanctl
         if command -v swanctl >/dev/null 2>&1; then
-            swanctl --reload 2>/dev/null || true
+            local connection_name
+            if connection_name=$(get_connection_name "$peer_ip" 2>/dev/null); then
+                # Connection name configured - use per-connection reload
+                log_message "INFO" "Using per-connection reload for $peer_ip (connection: $connection_name)"
+                if swanctl --reload-conn "$connection_name" 2>/dev/null; then
+                    log_message "INFO" "Successfully reloaded connection: $connection_name"
+                else
+                    log_message "WARNING" "Per-connection reload failed for $connection_name, falling back to full reload"
+                    swanctl --reload 2>/dev/null || true
+                fi
+            else
+                # No connection name configured - use full reload (affects all connections)
+                log_message "INFO" "No connection name configured for $peer_ip, using full reload (affects all tunnels)"
+                swanctl --reload 2>/dev/null || true
+            fi
         fi
         
         log_message "INFO" "Surgical cleanup completed for $peer_ip"
