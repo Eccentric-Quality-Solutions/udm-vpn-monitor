@@ -396,7 +396,21 @@ graph TB
 - **Implementation**: xfrm primary, ping optional verification
 - **Benefit**: Distinguishes "idle" from "broken"
 
-### 6. Rate Limiting
+### 6. Shared Library and Helper Functions
+- **Why**: Reduce code duplication and improve maintainability
+- **Implementation**: `lib/common.sh` provides shared logging and utility functions
+- **Helper Functions**: 
+  - `get_formatted_timestamp()` - Consistent date formatting
+  - `ensure_directory_exists()` - Centralized directory creation
+  - `log_and_exit_lockfile_conflict()` - Consistent lockfile conflict handling
+  - `extract_lockfile_pid()` - Lockfile PID extraction
+  - `is_process_running()` - Process existence checking
+  - `create_lockfile_atomically()` - Atomic lockfile creation
+  - `get_file_mtime()` - Cross-platform file modification time
+  - `validate_ip_address()` - Robust IP address validation (IPv4/IPv6)
+- **Benefit**: Consistent error handling, reduced duplication, easier maintenance
+
+### 7. Rate Limiting
 - **Why**: Prevent restart loops if VPN has persistent issues
 - **Implementation**: Track restart timestamps, limit per hour
 - **Benefit**: Protects system from excessive restarts

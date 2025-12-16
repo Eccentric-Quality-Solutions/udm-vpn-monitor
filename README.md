@@ -31,7 +31,10 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
 - **Safety Controls**: Lockfiles with timeout detection, cooldown timers, and rate limiting prevent restart loops
 - **Persistent Logging**: Logs stored in `/data/` survive reboots
 - **Cron-Based**: More resilient than long-running processes on UDM
-- **Per-Peer Tracking**: Monitors multiple VPN peers independently
+- **Per-Peer Tracking**: Monitors multiple VPN peers independently with independent failure counters
+- **Log Analysis**: Built-in `analyze-logs.sh` script for failure pattern analysis and CSV export
+- **Comprehensive Testing**: Extensive test suite with CI/CD integration
+- **Security**: Robust IP address validation prevents injection attacks
 
 ## What This Is
 
