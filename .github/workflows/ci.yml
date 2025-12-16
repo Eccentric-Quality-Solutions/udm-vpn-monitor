@@ -1,0 +1,205 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  lint:
+    name: Lint and Format Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Install shfmt
+        run: |
+          # Download and install shfmt binary
+          SHFMT_VERSION="v3.8.0"
+          if ! wget -q "https://github.com/mvdan/sh/releases/download/${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION#v}_linux_amd64" -O shfmt; then
+            echo "::error::Failed to download shfmt"
+            exit 1
+          fi
+          chmod +x shfmt
+          sudo mv shfmt /usr/local/bin/shfmt
+          shfmt --version
+
+      - name: Run ShellCheck
+        run: |
+          shellcheck --version
+          shellcheck --severity=error *.sh lib/*.sh tests/*.sh || {
+            echo "::error::ShellCheck found errors. Please fix them before merging."
+            exit 1
+          }
+
+      - name: Check code formatting with shfmt
+        run: |
+          shfmt --version
+          if ! shfmt -d *.sh lib/*.sh tests/*.sh; then
+            echo "::error::Code formatting issues detected. Please run 'shfmt -w *.sh lib/*.sh tests/*.sh' to fix."
+            exit 1
+          fi
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install bats
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+
+      - name: Install bats helper libraries
+        run: |
+          cd tests
+          if [ -f install_bats_helpers.sh ]; then
+            bash install_bats_helpers.sh
+          fi
+
+      - name: Run tests
+        run: |
+          ./tests/run_tests.sh
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            tests/test_*.sh
+            tests/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  test-coverage:
+    name: Test Coverage
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats kcov jq
+
+      - name: Install bats helper libraries
+        run: |
+          cd tests
+          if [ -f install_bats_helpers.sh ]; then
+            bash install_bats_helpers.sh
+          fi
+
+      - name: Run tests with coverage
+        run: |
+          ./tests/run_tests.sh --coverage
+
+      - name: Generate coverage report
+        run: |
+          ./tests/generate_coverage_report.sh || true
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            coverage/
+          retention-days: 30
+
+      - name: Extract coverage percentage
+        id: coverage
+        if: always()
+        run: |
+          set +e  # Don't fail if coverage extraction fails
+          
+          if [ -f coverage/index.js ]; then
+            # Extract coverage from kcov JavaScript report (v43+)
+            # Check if grep supports -P (Perl regex)
+            if grep --help 2>&1 | grep -q "\-P"; then
+              COVERAGE=$(grep -oP 'var header = \{[^}]+\}' coverage/index.js 2>/dev/null | \
+                grep -oP '"covered"\s*:\s*"?\K[0-9.]+' | head -1 || echo "")
+              INSTRUMENTED=$(grep -oP 'var header = \{[^}]+\}' coverage/index.js 2>/dev/null | \
+                grep -oP '"instrumented"\s*:\s*"?\K[0-9.]+' | head -1 || echo "")
+            else
+              # Fallback for systems without Perl regex support
+              COVERAGE=$(grep -o '"covered"[[:space:]]*:[[:space:]]*"[0-9.]*"' coverage/index.js 2>/dev/null | \
+                grep -o '[0-9.]*' | head -1 || echo "")
+              INSTRUMENTED=$(grep -o '"instrumented"[[:space:]]*:[[:space:]]*"[0-9.]*"' coverage/index.js 2>/dev/null | \
+                grep -o '[0-9.]*' | head -1 || echo "")
+            fi
+            
+            if [ -n "$COVERAGE" ] && [ -n "$INSTRUMENTED" ] && [ "$INSTRUMENTED" != "0" ]; then
+              PERCENT=$(awk "BEGIN {printf \"%.1f\", ($COVERAGE / $INSTRUMENTED) * 100}" 2>/dev/null || echo "N/A")
+              if [ "$PERCENT" != "N/A" ]; then
+                echo "percentage=$PERCENT" >> $GITHUB_OUTPUT
+                echo "Coverage: $PERCENT%"
+              fi
+            fi
+          elif [ -f coverage/index.json ] && command -v jq >/dev/null 2>&1; then
+            # Extract coverage from JSON report (older kcov versions)
+            PERCENT=$(jq -r '.merged_percent_covered' coverage/index.json 2>/dev/null || echo "N/A")
+            if [ "$PERCENT" != "N/A" ] && [ "$PERCENT" != "null" ] && [ -n "$PERCENT" ]; then
+              echo "percentage=$PERCENT" >> $GITHUB_OUTPUT
+              echo "Coverage: $PERCENT%"
+            fi
+          else
+            echo "Warning: Could not extract coverage percentage"
+          fi
+          
+          set -e  # Re-enable error handling
+
+      - name: Comment coverage on PR
+        if: github.event_name == 'pull_request' && steps.coverage.outputs.percentage && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v7
+        continue-on-error: true
+        with:
+          script: |
+            const coverage = '${{ steps.coverage.outputs.percentage }}';
+            const comment = `## Test Coverage\n\nCoverage: **${coverage}%**\n\nView detailed coverage report in the workflow artifacts.`;
+            
+            // Find existing coverage comment
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const existingComment = comments.data.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('## Test Coverage')
+            );
+            
+            if (existingComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body: comment
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: comment
+              });
+            }
+

@@ -34,3 +34,6 @@ bats-support/
 bats-assert/
 bats-file/
 
+# Test coverage reports
+coverage/
+

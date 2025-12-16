@@ -9,7 +9,7 @@ This document describes the architecture and design of the UDM VPN Monitor syste
 │                    UniFi Dream Machine (UDM)                    │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │              Cron Scheduler (every 5 min)                │  │
+│  │              Cron Scheduler (every 1 min)                │  │
 │  └────────────────────┬─────────────────────────────────────┘  │
 │                       │                                         │
 │                       ▼                                         │
@@ -45,7 +45,7 @@ This document describes the architecture and design of the UDM VPN Monitor syste
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  Log Files (/data/vpn-monitor/logs/)                     │  │
 │  │  • vpn-monitor.log                                       │  │
-│  │  • failure_counter                                       │  │
+│  │  • failure_counter_<peer_ip>  # Per-peer failure count │  │
 │  │  • restart_count                                         │  │
 │  │  • cron.log                                             │  │
 │  └──────────────────────────────────────────────────────────┘  │
@@ -57,7 +57,7 @@ This document describes the architecture and design of the UDM VPN Monitor syste
 ```mermaid
 graph TB
     subgraph "UDM System"
-        Cron[Cron Scheduler<br/>Every 5 minutes]
+        Cron[Cron Scheduler<br/>Every 1 minute]
         MainScript[vpn-monitor.sh<br/>Main Script]
         Config[vpn-monitor.conf<br/>Configuration]
         StateDir[State Directory<br/>/data/vpn-monitor/]
@@ -73,7 +73,7 @@ graph TB
     
     subgraph "Recovery Layer"
         Tier1[Tier 1: Logging]
-        Tier2[Tier 2: Surgical Cleanup<br/>SA Deletion + Reload<br/>Affects All Tunnels]
+        Tier2[Tier 2: Surgical Cleanup<br/>SA Deletion + Reload<br/>Per-Connection or All Tunnels]
         Tier3[Tier 3: Full Restart<br/>ipsec restart<br/>Affects All Tunnels]
     end
     
@@ -273,7 +273,7 @@ graph LR
     end
     
     subgraph "State Storage"
-        FailureCounter[failure_counter]
+        FailureCounter[failure_counter_<peer_ip>]
         ByteFiles[last_bytes_*]
         RestartLog[restart_count]
         CooldownFile[cooldown_until]
@@ -310,7 +310,7 @@ graph LR
 │
 ├── logs/                       # Logs directory
 │   ├── vpn-monitor.log         # Main log file
-│   ├── failure_counter         # Shared failure count
+│   ├── failure_counter_<peer_ip>  # Per-peer failure count (sanitized IP in filename)
 │   └── restart_count           # Timestamps of all restarts
 │
 ├── State Files:
@@ -383,11 +383,13 @@ graph TB
 - **Tiers**: Log → Cleanup → Restart
 - **Benefit**: Most issues resolved without full restart
 
-### 4. Per-Peer Byte Tracking
-- **Why**: Multiple peers need independent monitoring
+### 4. Per-Peer State Tracking
+- **Why**: Multiple peers need independent monitoring and recovery
 - **Implementation**: Separate state files per peer (sanitized IP)
-- **Benefit**: Accurate detection for multi-peer setups
-- **Note**: Byte counters are tracked per-peer, but failure counters are shared across all peers
+  - Per-peer failure counters: `failure_counter_<peer_ip>`
+  - Per-peer byte counters: `last_bytes_<peer_ip>`
+- **Benefit**: Accurate detection and independent recovery for multi-peer setups
+- **Note**: Both failure counters and byte counters are tracked per-peer, allowing independent failure tracking and recovery actions
 
 ### 5. Dual Detection Method
 - **Why**: xfrm shows tunnel state, ping verifies connectivity

@@ -2,20 +2,39 @@
 
 This document outlines potential improvements and enhancements for the UDM VPN Monitor project. These are suggestions for future development, prioritized by impact and complexity.
 
+## Completed Enhancements ✅
+
+### Code Quality and Maintainability Improvements
+**Status**: ✅ Completed  
+**Date**: Implementation completed across three code review sweeps
+
+**Improvements Made**:
+- **Dead Code Removal**: Removed unused variables and file operations (VPN_NAME now used, LAST_RESTART_FILE removed)
+- **Duplicate Code Refactoring**: Extracted 9 helper functions to reduce duplication
+- **Shared Libraries**: Created `lib/common.sh` for shared logging and root check functions
+- **Helper Functions Created**:
+  1. `get_formatted_timestamp()` - Consistent date formatting
+  2. `ensure_directory_exists()` - Centralized directory creation
+  3. `log_and_exit_lockfile_conflict()` - Consistent lockfile conflict handling
+  4. `extract_lockfile_pid()` - Lockfile PID extraction
+  5. `is_process_running()` - Process existence checking
+  6. `create_lockfile_atomically()` - Atomic lockfile creation
+  7. `get_timestamp_plus_minutes()` - Cross-platform timestamp calculation
+  8. `get_file_mtime()` - Cross-platform file modification time
+  9. `remove_stale_lockfile_if_needed()` - Lockfile stale detection
+
+**Impact**:
+- **20+ duplicate code blocks** consolidated into reusable functions
+- **Improved maintainability** - changes can be made in one place
+- **Consistent error handling** across the codebase
+- **Better code clarity** without sacrificing readability
+- **Cross-platform compatibility** improvements
+
+**Documentation**: Detailed findings and implementation notes are documented in the code review process.
+
+---
+
 ## High Priority Enhancements
-
-### 1. Per-Peer Failure Tracking
-**Current State**: Failure counter is shared across all peers  
-**Enhancement**: Track failures independently per peer IP  
-**Benefits**:
-- More accurate failure detection for multi-peer setups
-- Prevents one failing peer from affecting others
-- Better recovery targeting
-
-**Implementation Notes**:
-- Create per-peer failure counter files: `failure_counter_<peer_ip>`
-- Modify `increment_failure()` and `get_failure_count()` to accept peer IP
-- Update tier logic to check per-peer counters
 
 ### 2. Notification System
 **Current State**: Only logs to file  
@@ -91,41 +110,52 @@ This document outlines potential improvements and enhancements for the UDM VPN M
 - Configurable ports/URLs per peer
 - Multiple check types (OR/AND logic)
 
-### 7. Historical Logging and Analysis
-**Current State**: Single log file with rotation  
-**Enhancement**: Structured logging and analysis tools  
-**Benefits**:
-- Better troubleshooting
-- Pattern detection
-- Performance analysis
+### 7. Historical Logging and Analysis ✅ PARTIALLY COMPLETE
+**Status**: ✅ Partially Completed  
+**Date**: Log analysis script implemented
 
-**Implementation Notes**:
-- JSON log format option
-- Log rotation with compression
-- Analysis script: `analyze-logs.sh`
-- Generate reports: failure frequency, recovery success rate
-- Export to CSV for spreadsheet analysis
-
-### 8. Per-Tunnel Recovery
 **Current State**: 
-- Tier 2 (surgical cleanup) attempts per-peer SA deletion but then does `swanctl --reload` (affects all tunnels)
-- Tier 3 (full restart) does `ipsec restart` or `swanctl --reload` (affects all tunnels)
-- Partial per-peer targeting exists but not true per-tunnel recovery
+- ✅ Analysis script: `analyze-logs.sh` implemented
+- ✅ Generate reports: failure frequency, recovery success rate
+- ✅ Export to CSV for spreadsheet analysis
+- ✅ Log rotation with compression (cron.log rotation implemented via logrotate)
 
-**Enhancement**: Restart individual tunnels when possible using connection-specific commands  
-**Benefits**:
-- Less disruption
-- More targeted recovery
-- Better for multi-tunnel setups
-- True per-tunnel isolation
+**Remaining Work**:
+- JSON log format option (future enhancement)
+- Additional analysis features (pattern detection, performance analysis)
 
-**Implementation Notes**:
-- Use `swanctl --reload-conn <connection-name>` instead of `swanctl --reload`
-- Map peer IPs to connection names (requires configuration)
-- Fallback to full restart if per-tunnel fails
-- Configuration: `CONNECTION_NAME_<peer_ip>` mapping
-- Update Tier 2 to use `--reload-conn` instead of `--reload`
-- Optionally update Tier 3 to attempt per-tunnel restart before full restart
+**Completed Features**:
+- ✅ `analyze-logs.sh` script parses log files and extracts failure/recovery events
+- ✅ Calculates failure frequency (failures per day)
+- ✅ Calculates recovery success rate
+- ✅ Generates human-readable text reports
+- ✅ Exports detailed event data to CSV format
+- ✅ Supports date range filtering for analysis
+- ✅ Tracks Tier 1/2/3 action counts and success rates
+
+### 8. Per-Tunnel Recovery ✅ COMPLETED
+**Status**: ✅ Completed  
+**Date**: Implemented with connection name auto-discovery
+
+**Current State**: 
+- ✅ Tier 2 (surgical cleanup) uses `swanctl --reload-conn <connection-name>` when connection names are available (per-connection recovery)
+- ✅ Connection names are automatically discovered from `swanctl --list-sas` (recommended approach)
+- ✅ Manual configuration via `CONNECTION_NAME_<sanitized_peer_ip>` is also supported
+- ✅ Falls back to `swanctl --reload` (affects all tunnels) only when connection names cannot be discovered or configured
+- Tier 3 (full restart) still does `ipsec restart` or `swanctl --reload` (affects all tunnels) - this is intentional as a last resort
+
+**Benefits Achieved**:
+- ✅ Less disruption - per-connection recovery minimizes impact on other tunnels
+- ✅ More targeted recovery - only the failing connection is reloaded
+- ✅ Better for multi-tunnel setups - independent recovery per tunnel
+- ✅ True per-tunnel isolation when connection names are available
+
+**Implementation Details**:
+- ✅ Uses `swanctl --reload-conn <connection-name>` for per-connection reloads
+- ✅ Automatic connection name discovery from `swanctl --list-sas` (cached for performance)
+- ✅ Manual configuration via `CONNECTION_NAME_<sanitized_peer_ip>` mapping
+- ✅ Graceful fallback to full reload if connection name unavailable
+- ✅ Connection names cached in state files for performance
 
 ### 9. Watchdog Mode
 **Current State**: Cron-based execution  
@@ -202,34 +232,39 @@ This document outlines potential improvements and enhancements for the UDM VPN M
 - Separate lockfiles
 - Configurable instance names
 
-### 14. Automated Testing
-**Current State**: Manual testing  
-**Enhancement**: Automated test suite  
+### 14. Automated Testing ✅ PARTIALLY COMPLETE
+**Current State**: Comprehensive test suite using bats ✅  
+**Enhancement**: Enhanced test coverage and CI/CD integration  
 **Benefits**:
-- Regression prevention
-- Easier development
-- Better code quality
+- Regression prevention ✅
+- Easier development ✅
+- Better code quality ✅
 
-**Implementation Notes**:
-- Unit tests for functions (bash-test or bats)
-- Integration tests with mock VPN states
-- CI/CD pipeline
-- Test coverage reporting
+**Completed**:
+- ✅ Comprehensive test suite using bats (Bash Automated Testing System)
+- ✅ Tests for installation, uninstallation, and monitoring functionality
+- ✅ Test helpers for mocking system commands and environments
+- ✅ CI-friendly test execution
 
-### 15. Documentation Improvements
-**Current State**: README and inline comments  
-**Enhancement**: Comprehensive documentation  
+**Remaining Work**:
+- ✅ Unit tests for all helper functions (implemented in test_helper_functions.sh)
+- ✅ Integration tests with mock VPN states (implemented in test_integration.sh)
+- CI/CD pipeline integration
+- ✅ Test coverage reporting (implemented with kcov)
+
+### 15. Documentation Improvements ✅ SIGNIFICANTLY IMPROVED
+**Current State**: Comprehensive documentation ✅  
+**Enhancement**: Additional documentation enhancements  
 **Benefits**:
-- Easier onboarding
-- Better troubleshooting guides
-- Architecture documentation
+- Easier onboarding ✅
+- Better troubleshooting guides ✅
+- Architecture documentation ✅
 
-**Implementation Notes**:
-- Architecture diagram
-- Detailed troubleshooting guide
-- Configuration examples for common scenarios
+**Remaining Work**:
+- Architecture diagrams (visual)
+- More detailed troubleshooting scenarios
+- Video tutorials or walkthroughs
 - API documentation (if HTTP endpoint added)
-- Video tutorials
 
 ### 16. IPv6 Enhancements
 **Current State**: Basic IPv6 support  

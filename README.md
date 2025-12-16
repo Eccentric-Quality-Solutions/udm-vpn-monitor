@@ -1,5 +1,7 @@
 # UDM VPN Monitor
 
+[![CI](https://github.com/eccentric-quality-solutions/udm-vpn-monitor/workflows/CI/badge.svg)](https://github.com/eccentric-quality-solutions/udm-vpn-monitor/actions)
+
 A best-effort watchdog for UniFi Dream Machines that detects Site-to-Site VPN failures using IPsec xfrm state byte counters and ping connectivity checks, implementing tiered recovery. Designed for UniFi OS 4.3+ with realistic persistence expectations.
 
 ## Overview
@@ -75,6 +77,11 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
    
    **Installation options:**
    
+   - **Interactive configuration** (prompts for each config value with defaults):
+     ```bash
+     ./install.sh --interactive
+     ```
+   
    - **Install without cron scheduling** (for manual execution):
      ```bash
      ./install.sh --no-cron
@@ -90,15 +97,25 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
      ./install.sh --silent --overwrite-conf
      ```
    
+   - **Dev mode** (install to current directory instead of /data/vpn-monitor):
+     ```bash
+     ./install.sh --dev
+     ```
+   
    - **Combine options**:
      ```bash
      ./install.sh --silent --no-cron --overwrite-conf
+     ./install.sh --interactive --dev
      ```
    
    **Flag descriptions:**
+   - `--interactive`: Prompt for each configuration value with defaults (press Enter to accept default)
    - `--no-cron`: Install without setting up cron job (useful for manual execution or custom scheduling)
    - `--silent`: Perform installation silently without prompts (by default preserves existing config)
    - `--overwrite-conf`: Overwrite existing config file (only effective with `--silent`)
+   - `--dev`: Install to current working directory instead of `/data/vpn-monitor` (useful for development/testing)
+   
+   **Note:** `--interactive` and `--silent` flags cannot be used together.
 
 4. **Configure the monitor**:
    ```bash
@@ -120,6 +137,11 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
    **Fake mode** (runs checks but doesn't escalate tiers):
    ```bash
    /data/vpn-monitor/vpn-monitor.sh --fake
+   ```
+   
+   **Show version**:
+   ```bash
+   /data/vpn-monitor/vpn-monitor.sh --version
    ```
 
 6. **Monitor logs**:
@@ -225,7 +247,7 @@ This dual approach is more reliable than checking IKE status alone, as it confir
 ### Tiered Recovery
 
 **Important Notes:**
-- **Shared Failure Counter**: The failure counter is **shared across all configured peer IPs**. If multiple peers fail, their failures accumulate in a single counter. Recovery of any peer resets the counter for all peers.
+- **Per-Peer Failure Counter**: Each peer IP has its own independent failure counter tracked in `logs/failure_counter_<peer_ip>`. Failures are tracked separately per peer, allowing independent recovery actions. Recovery of one peer does not affect other peers' failure counters.
 - **⚠️ Tier 2 Recovery Scope - CRITICAL**: Tier 2 recovery scope depends on connection name configuration:
   - **✅ With connection name (configured or auto-discovered)**: Uses `swanctl --reload-conn <connection-name>` to reload **only the specific failing connection**. This is true per-connection recovery with minimal impact on other tunnels.
   - **⚠️ Without connection name**: Uses `swanctl --reload` which reloads **ALL IPsec connections**, temporarily affecting **all Site-to-Site and remote user VPNs**. This makes Tier 2 less "surgical" than intended.
@@ -299,6 +321,61 @@ tail -n 100 /data/vpn-monitor/logs/vpn-monitor.log
 grep ERROR /data/vpn-monitor/logs/vpn-monitor.log
 ```
 
+### Log Analysis and Reporting
+
+The `analyze-logs.sh` script provides detailed analysis of VPN monitor logs, generating reports on failure frequency and recovery success rates.
+
+**Basic Usage:**
+
+```bash
+# Analyze default log file and generate reports
+/data/vpn-monitor/analyze-logs.sh
+
+# Analyze specific log file
+/data/vpn-monitor/analyze-logs.sh -l /data/vpn-monitor/logs/vpn-monitor.log
+
+# Analyze logs for a specific date range
+/data/vpn-monitor/analyze-logs.sh -d 2025-01-01:2025-01-31
+
+# Output reports to custom directory
+/data/vpn-monitor/analyze-logs.sh -o /tmp/reports -v
+```
+
+**Output Files:**
+
+- **Text Report** (`reports/vpn-monitor-report.txt`): Human-readable summary with statistics and event timeline
+- **CSV Export** (`reports/vpn-monitor-analysis.csv`): Detailed event data for spreadsheet analysis
+
+**Report Contents:**
+
+- **Summary Statistics**: Total failures, recoveries, failure frequency per day, recovery success rate
+- **Tier Action Analysis**: Tier 1/2/3 action counts and success rates
+- **Event Timeline**: Chronological list of failures, recoveries, and recovery actions
+- **CSV Data**: All events exported with timestamps, peer IPs, failure counts, and event types
+
+**Example Output:**
+
+```
+Summary:
+  Total Failures: 15
+  Total Recoveries: 12
+  Recovery Success Rate: 80.00%
+  Failures per Day: 2.14
+  
+Tier Actions:
+  Tier 1 (Logging): 15
+  Tier 2 (Surgical Cleanup):
+    Attempted: 8
+    Completed: 7
+    Success Rate: 87.50%
+  Tier 3 (Full Restart):
+    Attempted: 3
+    Completed: 3
+    Success Rate: 100.00%
+```
+
+The CSV export can be imported into spreadsheet applications (Excel, Google Sheets, etc.) for further analysis, charting, and trend visualization.
+
 ### Manual Testing
 
 ```bash
@@ -335,7 +412,18 @@ The `--fake` flag allows you to test the monitoring script without triggering re
 - Check cron: `crontab -l`
 - Check lockfile: `ls -l /data/vpn-monitor/vpn-monitor.lock`
 - Check if lockfile is stale (older than LOCKFILE_TIMEOUT): `stat /data/vpn-monitor/vpn-monitor.lock`
-- Lockfile format: `timestamp:pid` (e.g., `1234567890:12345`) - contains Unix timestamp and process ID
+- **Lockfile Format**: The lockfile uses `timestamp:pid` format (e.g., `1234567890:12345`)
+  - **Format**: `<unix_timestamp>:<process_id>`
+  - **Purpose**: Prevents concurrent script executions and detects hung processes
+  - **Interpretation**: 
+    - The timestamp indicates when the lockfile was created
+    - The PID is the process ID of the running script instance
+    - If the lockfile is older than `LOCKFILE_TIMEOUT` seconds, it's considered stale (hung process)
+  - **Debugging**: 
+    - View lockfile contents: `cat /data/vpn-monitor/vpn-monitor.lock`
+    - Check if PID is still running: `ps -p <pid>` (replace `<pid>` with the PID from lockfile)
+    - Calculate lockfile age: `echo $(($(date +%s) - $(stat -c %Y /data/vpn-monitor/vpn-monitor.lock)))` seconds
+    - Remove stale lockfile manually if needed: `rm /data/vpn-monitor/vpn-monitor.lock` (only if PID is not running)
 - Check logs: `tail /data/vpn-monitor/logs/vpn-monitor.log`
 
 **Ping checks failing:**
@@ -445,15 +533,31 @@ If ping checks are enabled (`ENABLE_PING_CHECK=1`), it additionally:
 - Confirms end-to-end connectivity through the tunnel
 
 **Ping Check Behavior:**
-- If SA exists but ping fails: VPN is still marked as OK (SA exists), but a warning is logged. This allows the tunnel to pass while warning about connectivity issues. If ping keeps failing, byte counters should also stop increasing, which will eventually trigger a failure.
-- If SA doesn't exist but ping succeeds: A warning is logged indicating connectivity exists via another route (not through the VPN tunnel).
 
-If validation fails, it escalates through recovery tiers. The ping check helps distinguish between "tunnel exists but broken" and "tunnel exists and working but idle".
+The ping check provides additional connectivity verification beyond SA state checks. However, it's important to understand how ping failures interact with SA state:
+
+**Scenario 1: SA Exists But Ping Fails**
+- **Behavior**: VPN is marked as **OK** (SA check passes), but a **WARNING** is logged
+- **Reasoning**: The Security Association exists, indicating the tunnel is established at the IPsec level. The ping failure suggests the tunnel may not be routing traffic correctly, but the SA state is still valid
+- **Impact**: The tunnel passes the primary check (SA exists), allowing it to remain active while warning about connectivity issues
+- **Escalation**: If ping continues to fail, byte counters should also stop increasing (no traffic flowing), which will eventually trigger a failure when byte counters don't increase. This provides a natural escalation path: ping warnings → byte counter failure → recovery actions
+- **Use Case**: Helps detect cases where the tunnel is established but routing is broken, without immediately failing on transient ping issues
+
+**Scenario 2: SA Doesn't Exist But Ping Succeeds**
+- **Behavior**: VPN is marked as **FAILED** (SA check fails), but a **WARNING** is logged
+- **Reasoning**: No Security Association exists, so the VPN tunnel is down. However, ping succeeds, indicating connectivity exists via another route (not through the VPN tunnel)
+- **Impact**: The tunnel fails the primary check (no SA), triggering normal failure handling. The ping success warning helps distinguish between "no connectivity at all" vs "connectivity exists but not through VPN"
+- **Use Case**: Helps identify when connectivity exists via alternative routes (e.g., direct internet, other VPNs) even though the monitored tunnel is down
+
+**Why This Design?**
+The ping check is designed as a **supplementary diagnostic tool**, not a hard failure condition. The primary detection method (SA state + byte counters) remains the authoritative source for tunnel health. Ping checks provide early warning of connectivity issues while allowing the more reliable byte counter method to confirm actual traffic flow problems before triggering recovery actions.
+
+If validation fails (based on SA state and byte counters), it escalates through recovery tiers. The ping check helps distinguish between "tunnel exists but broken" and "tunnel exists and working but idle".
 
 ### State Management
 
 State is tracked via files in `/data/vpn-monitor/`:
-- `logs/failure_counter`: Consecutive failure count (**shared across all peers** - failures from any peer increment the same counter)
+- `logs/failure_counter_<peer_ip>`: Per-peer consecutive failure count (sanitized IP in filename, e.g., `failure_counter_192_168_1_1`)
 - `last_restart`: Timestamp of last restart
 - `logs/restart_count`: Timestamps of all restarts (for rate limiting)
 - `logs/vpn-monitor.log`: Main log file
@@ -462,9 +566,50 @@ State is tracked via files in `/data/vpn-monitor/`:
 - `vpn-monitor.lock`: Lockfile for execution control (format: `timestamp:pid` for timeout detection)
 - `.cron_checked`: Flag file to prevent repeated cron persistence checks
 
-**Per-Peer vs Shared State:**
-- **Per-peer**: Byte counters (`last_bytes_*`) are tracked separately for each peer IP
-- **Shared**: Failure counter is shared across all peers - if Peer A fails 3 times and Peer B fails 2 times, the counter will be 5, potentially triggering Tier 3 restart even though neither peer individually reached the threshold
+**Per-Peer State Tracking:**
+
+The monitor tracks state independently for each configured peer IP, enabling independent monitoring and recovery actions for multiple VPN tunnels. This is essential when monitoring multiple Site-to-Site VPN connections, as failures in one tunnel should not affect the monitoring or recovery of other tunnels.
+
+**File Naming Convention:**
+All per-peer state files use sanitized peer IP addresses in their filenames. Dots and colons are replaced with underscores (e.g., `192.168.1.1` becomes `192_168_1_1`, `2001:db8::1` becomes `2001_db8__1`). This ensures safe filenames while maintaining uniqueness per peer.
+
+**Per-Peer State Files:**
+
+1. **Failure Counters** (`logs/failure_counter_<peer_ip>`)
+   - **Purpose**: Tracks consecutive failure count for each peer independently
+   - **Creation**: Created on-demand when a peer first fails
+   - **Usage**: Used to determine which recovery tier to trigger (Tier 1, 2, or 3)
+   - **Independence**: Each peer has its own counter. For example:
+     - Peer A (`203.0.113.1`) failing 3 times → triggers Tier 2 recovery for Peer A
+     - Peer B (`198.51.100.1`) failing 2 times → triggers Tier 1 logging for Peer B
+     - These are tracked completely independently
+   - **Reset**: Counter resets to 0 when VPN check succeeds for that peer
+   - **Location**: Stored in `logs/` directory
+
+2. **Byte Counters** (`last_bytes_<peer_ip>`)
+   - **Purpose**: Stores the last known byte counter value from `ip xfrm state` for each peer
+   - **Creation**: Created on-demand when byte counters are first read for a peer
+   - **Usage**: Used to detect if byte counters are increasing (indicating active traffic flow)
+   - **Independence**: Each peer has its own byte counter file, allowing independent traffic flow detection
+   - **Update**: Updated each time a successful check reads increasing byte counters
+   - **Location**: Stored in main state directory (`/data/vpn-monitor/`)
+
+**Benefits of Per-Peer Tracking:**
+- **Independent Recovery**: Each tunnel can be recovered independently based on its own failure count
+- **Accurate Detection**: Byte counter tracking per peer ensures accurate detection of traffic flow issues for each tunnel
+- **Multi-Tunnel Support**: Enables monitoring of multiple VPN peers without interference between them
+- **Granular Logging**: Failure counters and recovery actions are tracked per peer, making troubleshooting easier
+
+**Example Scenario:**
+If you're monitoring three VPN peers (`203.0.113.1`, `198.51.100.1`, `192.0.2.1`), the monitor creates separate state files:
+- `logs/failure_counter_203_0_113_1` - tracks failures for first peer
+- `logs/failure_counter_198_51_100_1` - tracks failures for second peer  
+- `logs/failure_counter_192_0_2_1` - tracks failures for third peer
+- `last_bytes_203_0_113_1` - tracks byte counters for first peer
+- `last_bytes_198_51_100_1` - tracks byte counters for second peer
+- `last_bytes_192_0_2_1` - tracks byte counters for third peer
+
+Each peer's monitoring and recovery actions operate completely independently.
 
 ## License
 
@@ -480,11 +625,18 @@ The project includes a comprehensive test suite using [bats](https://github.com/
 # Run all tests
 ./tests/run_tests.sh
 
+# Run tests with coverage reporting (requires kcov)
+./tests/run_tests.sh --coverage
+
 # Run specific test file
 bats tests/test_install.sh
 bats tests/test_uninstall.sh
 bats tests/test_vpn_monitor.sh
+bats tests/test_integration.sh
+bats tests/test_high_risk.sh
 ```
+
+**High-Risk Tests**: The project includes a dedicated high-risk test suite (`test_high_risk.sh`) with 31 tests covering critical paths, error handling, and edge cases. See [tests/HIGH_RISK_TESTS.md](tests/HIGH_RISK_TESTS.md) for details.
 
 ### Prerequisites
 
@@ -497,7 +649,46 @@ Optional helper libraries (recommended):
 ./tests/install_bats_helpers.sh
 ```
 
-See [tests/README.md](tests/README.md) for detailed testing documentation.
+**Coverage Reporting**: The test suite supports code coverage reporting using kcov. Run tests with `--coverage` flag to generate coverage reports. See [tests/README.md](tests/README.md) for detailed testing documentation and coverage reporting instructions.
+
+## CI/CD
+
+This project uses GitHub Actions for continuous integration and continuous deployment. The CI pipeline automatically runs on every push and pull request to the main/master branches.
+
+### CI Pipeline
+
+The CI pipeline includes:
+
+1. **Linting**: Runs ShellCheck to detect shell script errors and security issues
+2. **Format Checking**: Verifies code formatting using shfmt
+3. **Testing**: Runs the full test suite using bats
+4. **Coverage Reporting**: Generates test coverage reports using kcov
+
+### Workflow Status
+
+Check the [Actions](https://github.com/YOUR_USERNAME/udm-vpn-monitor/actions) tab to view the status of CI runs.
+
+**Note:** Update the badge URL in the README header with your actual GitHub username/repository name to display the CI status badge correctly.
+
+### Local CI Checks
+
+Before pushing code, you can run the same checks locally:
+
+```bash
+# Format code
+shfmt -w *.sh lib/*.sh tests/*.sh
+
+# Check for errors
+shellcheck --severity=error *.sh lib/*.sh tests/*.sh
+
+# Run tests
+./tests/run_tests.sh
+
+# Run tests with coverage
+./tests/run_tests.sh --coverage
+```
+
+See [DEVELOPER.md](DEVELOPER.md) for detailed development workflow instructions.
 
 ## Contributing
 
@@ -511,6 +702,19 @@ When contributing:
 ## Architecture
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed architecture diagrams, component interactions, and design decisions.
+
+## Documentation
+
+- **[README.md](README.md)** - This file: User-facing documentation, installation, and usage
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture, design decisions, and component interactions
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
+- **[DEVELOPER.md](DEVELOPER.md)** - Developer guide with tooling setup, workflows, and code quality standards
+- **[ENHANCEMENTS.md](ENHANCEMENTS.md)** - Future enhancement ideas and roadmap
+- **[tests/README.md](tests/README.md)** - Comprehensive testing documentation
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a detailed history of changes and version information.
 
 ## Future Enhancements
 

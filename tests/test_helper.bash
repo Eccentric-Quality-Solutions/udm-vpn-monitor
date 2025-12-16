@@ -5,14 +5,15 @@
 
 # Load bats helper functions if available (optional)
 # These provide additional assertion functions but tests work without them
-if [[ -d "${BATS_TEST_DIRNAME}/../bats-support" ]]; then
-    load "${BATS_TEST_DIRNAME}/../bats-support/load.bash" 2>/dev/null || true
+# Helpers are located in the tests directory alongside test files
+if [[ -d "${BATS_TEST_DIRNAME}/bats-support" ]]; then
+    load "${BATS_TEST_DIRNAME}/bats-support/load.bash" 2>/dev/null || true
 fi
-if [[ -d "${BATS_TEST_DIRNAME}/../bats-assert" ]]; then
-    load "${BATS_TEST_DIRNAME}/../bats-assert/load.bash" 2>/dev/null || true
+if [[ -d "${BATS_TEST_DIRNAME}/bats-assert" ]]; then
+    load "${BATS_TEST_DIRNAME}/bats-assert/load.bash" 2>/dev/null || true
 fi
-if [[ -d "${BATS_TEST_DIRNAME}/../bats-file" ]]; then
-    load "${BATS_TEST_DIRNAME}/../bats-file/load.bash" 2>/dev/null || true
+if [[ -d "${BATS_TEST_DIRNAME}/bats-file" ]]; then
+    load "${BATS_TEST_DIRNAME}/bats-file/load.bash" 2>/dev/null || true
 fi
 
 # Fallback implementations for standard bats functions

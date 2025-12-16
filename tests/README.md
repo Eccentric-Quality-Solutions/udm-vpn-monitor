@@ -5,10 +5,16 @@ This directory contains comprehensive tests for the UDM VPN Monitor scripts usin
 ## Test Structure
 
 - `test_helper.bash` - Common test utilities and helper functions
+- `test_helper_functions.sh` - Unit tests for individual helper functions in `vpn-monitor.sh`
+- `test_integration.sh` - Integration tests for full monitoring flow with mock VPN states
+- `test_high_risk.sh` - **High-risk tests** for critical paths and error handling scenarios (31 tests)
 - `test_install.sh` - Tests for `install.sh` script
 - `test_uninstall.sh` - Tests for `uninstall.sh` script
 - `test_vpn_monitor.sh` - Tests for `vpn-monitor.sh` script
+- `test_analyze_logs.sh` - Tests for `analyze-logs.sh` script
 - `run_tests.sh` - Test runner script
+- `generate_coverage_report.sh` - Generates test coverage reports from kcov output
+- `HIGH_RISK_TESTS.md` - Documentation for high-risk test suite
 
 ## Prerequisites
 
@@ -49,7 +55,24 @@ bats tests/test_*.sh
 bats tests/test_install.sh
 bats tests/test_uninstall.sh
 bats tests/test_vpn_monitor.sh
+bats tests/test_integration.sh
+bats tests/test_high_risk.sh
+bats tests/test_analyze_logs.sh
 ```
+
+### Run High-Risk Tests
+
+The high-risk test suite focuses on critical paths and error handling scenarios:
+
+```bash
+# Run all high-risk tests
+bats tests/test_high_risk.sh
+
+# Run via test runner (includes all tests)
+./tests/run_tests.sh
+```
+
+See [HIGH_RISK_TESTS.md](HIGH_RISK_TESTS.md) for detailed documentation on the high-risk test suite.
 
 ### Run Specific Test
 
@@ -69,7 +92,86 @@ bats --verbose tests/test_*.sh
 bats --tap tests/test_*.sh
 ```
 
+### Run Tests with Coverage Reporting
+
+```bash
+# Run tests with coverage (requires kcov)
+./tests/run_tests.sh --coverage
+
+# Or use short form
+./tests/run_tests.sh -c
+```
+
+Coverage reports are generated in the `coverage/` directory:
+- **HTML Report**: `coverage/index.html` - Interactive coverage report
+- **Summary**: `coverage/summary.txt` - Text summary of coverage
+- **JSON Data**: `coverage/index.json` - Machine-readable coverage data
+
+To generate a coverage summary report:
+```bash
+./tests/generate_coverage_report.sh
+```
+
+**Prerequisites for Coverage**:
+- [kcov](https://github.com/SimonKagstrom/kcov) must be installed
+  - macOS: `brew install kcov`
+  - Ubuntu/Debian: `sudo apt-get install kcov`
+  - Fedora/RHEL: `sudo dnf install kcov`
+  - Or build from source (see kcov GitHub repository)
+
+**Optional**: Install `jq` for detailed coverage statistics in summaries
+- macOS: `brew install jq`
+- Ubuntu/Debian: `sudo apt-get install jq`
+- Fedora/RHEL: `sudo dnf install jq`
+
 ## Test Coverage
+
+Current test coverage: **26.7%** (532/1993 lines) as of latest run.
+
+### High-Risk Tests (test_high_risk.sh)
+
+The high-risk test suite includes **31 tests** covering critical paths and error handling scenarios:
+
+**Lockfile Management (4 tests)**:
+- ✅ Lockfile cleanup on script exit
+- ✅ Lockfile cleanup on script error
+- ✅ Lockfile contains invalid format
+- ✅ Lockfile timestamp at timeout boundary
+
+**Configuration Loading (7 tests)**:
+- ✅ Config file contains syntax errors
+- ✅ Config file is unreadable (permission denied)
+- ✅ Config file is a directory instead of file
+- ✅ LOG_FILE override in config recalculates LOGS_DIR
+- ✅ Negative threshold values in config
+- ✅ Threshold values out of order
+- ✅ Config file attempts command injection via variable
+
+**VPN Status Detection (11 tests)**:
+- ✅ xfrm SA exists but byte counter is exactly 0
+- ✅ xfrm SA exists but byte counter decreases (wrap-around)
+- ✅ xfrm SA exists but byte counter stays same
+- ✅ Byte counter file corrupted (non-numeric)
+- ✅ Byte counter file contains negative number
+- ✅ Byte counter file is empty
+- ✅ Byte counter file is directory
+- ✅ All detection methods unavailable
+- ✅ xfrm output contains multiple lifetime lines
+- ✅ xfrm command fails with permission denied
+- ✅ Ping check enabled but PING_TARGET_IP not set
+
+**Recovery Actions (9 tests)**:
+- ✅ Surgical cleanup with connection name configured (per-connection reload)
+- ✅ Surgical cleanup without connection name (full reload)
+- ✅ Surgical cleanup fails - error handling
+- ✅ Surgical cleanup connection name reload fails - fallback to full reload
+- ✅ Full restart with ipsec command
+- ✅ Full restart fails - error handling
+- ✅ Full restart when neither ipsec nor swanctl available
+- ✅ Rate limit file corrupted
+- ✅ Failure counter file is directory
+
+See [HIGH_RISK_TESTS.md](HIGH_RISK_TESTS.md) for detailed documentation.
 
 ### install.sh Tests
 
@@ -161,6 +263,74 @@ The `test_helper.bash` file provides many useful functions:
 5. **Test both success and failure cases**: Cover error paths
 6. **Use descriptive test names**: Make it clear what is being tested
 
+## Test Coverage Reporting
+
+The test suite supports code coverage reporting using [kcov](https://github.com/SimonKagstrom/kcov).
+
+### Running Tests with Coverage
+
+```bash
+# Enable coverage reporting
+./tests/run_tests.sh --coverage
+```
+
+Coverage reports include:
+- **HTML Report**: Interactive browser-based report showing line-by-line coverage
+- **Text Summary**: Coverage percentages and statistics
+- **JSON Data**: Machine-readable coverage data for CI/CD integration
+
+### Coverage Reports Location
+
+All coverage reports are generated in the `coverage/` directory:
+- `coverage/index.html` - Main HTML report (open in browser)
+- `coverage/summary.txt` - Text summary
+- `coverage/index.json` - JSON data for programmatic access
+
+### Generating Coverage Summary
+
+After running tests with coverage, generate a summary report:
+
+```bash
+./tests/generate_coverage_report.sh
+```
+
+This creates a text summary with coverage percentages per file.
+
+### Coverage in CI/CD
+
+Example GitHub Actions workflow with coverage:
+
+```yaml
+- name: Install dependencies
+  run: |
+    # Install bats
+    git clone https://github.com/bats-core/bats-core.git
+    cd bats-core
+    sudo ./install.sh /usr/local
+    
+    # Install kcov for coverage
+    sudo apt-get update && sudo apt-get install -y kcov
+
+- name: Run tests with coverage
+  run: ./tests/run_tests.sh --coverage
+
+- name: Upload coverage report
+  uses: codecov/codecov-action@v3
+  with:
+    files: ./coverage/index.json
+    flags: unittests
+```
+
+### What Gets Covered
+
+Coverage reporting tracks execution of:
+- `vpn-monitor.sh` - Main monitoring script
+- `install.sh` - Installation script
+- `uninstall.sh` - Uninstallation script
+- `lib/common.sh` - Shared library functions
+
+Test files and helper scripts are excluded from coverage reports.
+
 ## Continuous Integration
 
 Tests can be run in CI environments. The test suite:
@@ -170,6 +340,7 @@ Tests can be run in CI environments. The test suite:
 - Uses temporary directories
 - Doesn't require root (for most tests)
 - Can run in parallel (with proper isolation)
+- Supports coverage reporting with kcov
 
 ### Example CI Configuration
 
@@ -183,6 +354,11 @@ Tests can be run in CI environments. The test suite:
 
 - name: Run tests
   run: ./tests/run_tests.sh
+
+- name: Run tests with coverage
+  run: |
+    sudo apt-get update && sudo apt-get install -y kcov
+    ./tests/run_tests.sh --coverage
 ```
 
 ## Troubleshooting

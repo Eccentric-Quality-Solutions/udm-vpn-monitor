@@ -5,6 +5,8 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
+# Version: 0.0.1
+#
 
 set -euo pipefail
 
@@ -20,66 +22,11 @@ SKIP_CRON=0
 SILENT=0
 OVERWRITE_CONF=0
 DEV_MODE=0
+INTERACTIVE=0
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-# Logging function
-#
-# Logs an informational message with green [INFO] prefix.
-#
-# Arguments:
-#   $@: Message text (all arguments are concatenated)
-#
-# Returns:
-#   0: Always succeeds
-log_info() {
-    echo -e "${GREEN}[INFO]${NC} $*"
-}
-
-# Log a warning message
-#
-# Logs a warning message with yellow [WARN] prefix.
-#
-# Arguments:
-#   $@: Message text (all arguments are concatenated)
-#
-# Returns:
-#   0: Always succeeds
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $*"
-}
-
-# Log an error message
-#
-# Logs an error message with red [ERROR] prefix.
-#
-# Arguments:
-#   $@: Message text (all arguments are concatenated)
-#
-# Returns:
-#   0: Always succeeds
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $*"
-}
-
-# Check if running as root
-#
-# Verifies that the script is running with root privileges.
-# Required for installing to /data/ and modifying crontab.
-#
-# Returns:
-#   0: Running as root
-#   1: Not running as root (exits script with error)
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        log_error "This script must be run as root"
-        exit 1
-    fi
-}
+# Source shared common functions (logging, root check)
+# shellcheck source=lib/common.sh
+source "${INSTALL_SCRIPT_DIR}/lib/common.sh"
 
 # Check if we're on a UDM
 #
@@ -90,18 +37,18 @@ check_root() {
 #   0: UDM detected or dev mode enabled
 #   1: Not a UDM system (exits script with error)
 check_udm() {
-    if [[ $DEV_MODE -eq 1 ]]; then
-        log_info "Dev mode enabled, skipping UDM check"
-        return 0
-    fi
-    
-    if [[ ! -d "/data" ]]; then
-        log_error "This script is designed for UniFi Dream Machines"
-        log_error "/data directory not found"
-        exit 1
-    fi
-    
-    log_info "Detected UDM system"
+	if [[ $DEV_MODE -eq 1 ]]; then
+		log_info "Dev mode enabled, skipping UDM check"
+		return 0
+	fi
+
+	if [[ ! -d "/data" ]]; then
+		log_error "This script is designed for UniFi Dream Machines"
+		log_error "/data directory not found"
+		exit 1
+	fi
+
+	log_info "Detected UDM system"
 }
 
 # Create installation directory
@@ -113,15 +60,183 @@ check_udm() {
 # Returns:
 #   0: Always succeeds (exits script on failure)
 create_install_dir() {
-    log_info "Creating installation directory: $INSTALL_DIR"
-    mkdir -p "$INSTALL_DIR"
-    log_info "Creating logs directory: ${INSTALL_DIR}/logs"
-    mkdir -p "${INSTALL_DIR}/logs"
+	log_info "Creating installation directory: $INSTALL_DIR"
+	mkdir -p "$INSTALL_DIR"
+	log_info "Creating logs directory: ${INSTALL_DIR}/logs"
+	mkdir -p "${INSTALL_DIR}/logs"
+}
+
+# Prompt for config value interactively
+#
+# Prompts the user for a configuration value, showing the default.
+# If user presses Enter without input, uses the default value.
+#
+# Arguments:
+#   $1: Config parameter name (e.g., "PEER_IPS")
+#   $2: Default value
+#   $3: Description/prompt text
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the user's value (or default if empty) to stdout
+prompt_config_value() {
+	local param_name="$1"
+	local default_value="$2"
+	local description="$3"
+	local user_input=""
+
+	# Display prompt with default
+	if [[ -n "$default_value" ]]; then
+		read -p "${description} [${default_value}]: " user_input
+	else
+		read -p "${description}: " user_input
+	fi
+
+	# Use default if empty
+	if [[ -z "$user_input" ]]; then
+		echo "$default_value"
+	else
+		echo "$user_input"
+	fi
+}
+
+# Create config file interactively
+#
+# Prompts the user for each configuration value with defaults.
+# Creates the config file with user-provided values.
+#
+# Returns:
+#   0: Always succeeds (exits script on failure)
+#
+# Side effects:
+#   Creates ${INSTALL_DIR}/${CONFIG_NAME} with user-provided values
+create_interactive_config() {
+	log_info "Interactive configuration mode"
+	echo ""
+	log_info "Please provide configuration values (press Enter to accept default)"
+	echo ""
+
+	# Default values
+	local default_peer_ips=""
+	local default_vpn_name="Site-to-Site VPN"
+	local default_tier1=1
+	local default_tier2=3
+	local default_tier3=5
+	local default_cooldown=15
+	local default_max_restarts=3
+	local default_log_file="${INSTALL_DIR}/logs/vpn-monitor.log"
+	local default_state_dir="${INSTALL_DIR}"
+	local default_cron_schedule="*/1 * * * *"
+	local default_lockfile_timeout=300
+	local default_enable_ping=1
+	local default_ping_target=""
+	local default_ping_count=3
+	local default_ping_timeout=2
+	local default_debug=0
+
+	# Prompt for each value
+	local peer_ips
+	peer_ips=$(prompt_config_value "PEER_IPS" "$default_peer_ips" "Peer IP address(es) to monitor (space-separated, external/public IPs)")
+
+	local vpn_name
+	vpn_name=$(prompt_config_value "VPN_NAME" "$default_vpn_name" "VPN connection identifier/name")
+
+	local tier1
+	tier1=$(prompt_config_value "TIER1_THRESHOLD" "$default_tier1" "Tier 1 threshold (failures before logging)")
+
+	local tier2
+	tier2=$(prompt_config_value "TIER2_THRESHOLD" "$default_tier2" "Tier 2 threshold (failures before surgical cleanup)")
+
+	local tier3
+	tier3=$(prompt_config_value "TIER3_THRESHOLD" "$default_tier3" "Tier 3 threshold (failures before full restart)")
+
+	local cooldown
+	cooldown=$(prompt_config_value "COOLDOWN_MINUTES" "$default_cooldown" "Cooldown period after restart (minutes)")
+
+	local max_restarts
+	max_restarts=$(prompt_config_value "MAX_RESTARTS_PER_HOUR" "$default_max_restarts" "Maximum restarts per hour")
+
+	local cron_schedule
+	cron_schedule=$(prompt_config_value "CRON_SCHEDULE" "$default_cron_schedule" "Cron schedule (e.g., '*/1 * * * *' for every minute)")
+
+	local lockfile_timeout
+	lockfile_timeout=$(prompt_config_value "LOCKFILE_TIMEOUT" "$default_lockfile_timeout" "Lockfile timeout (seconds)")
+
+	local enable_ping
+	enable_ping=$(prompt_config_value "ENABLE_PING_CHECK" "$default_enable_ping" "Enable ping connectivity check (0 or 1)")
+
+	local ping_target
+	ping_target=$(prompt_config_value "PING_TARGET_IP" "$default_ping_target" "Ping target IP (internal/private IP, empty to use peer IP)")
+
+	local ping_count
+	ping_count=$(prompt_config_value "PING_COUNT" "$default_ping_count" "Ping count (number of packets)")
+
+	local ping_timeout
+	ping_timeout=$(prompt_config_value "PING_TIMEOUT" "$default_ping_timeout" "Ping timeout per packet (seconds)")
+
+	local debug
+	debug=$(prompt_config_value "DEBUG" "$default_debug" "Enable debug logging (0 or 1)")
+
+	# Create config file
+	cat >"${INSTALL_DIR}/${CONFIG_NAME}" <<EOF
+# UDM VPN Monitor Configuration
+# Generated via interactive installation
+
+# Peer IP address(es) to monitor (space-separated list)
+# This should be the EXTERNAL/PUBLIC IP address(es) of the remote VPN gateway(s)
+PEER_IPS="${peer_ips}"
+
+# VPN connection identifier/name (optional, for logging)
+VPN_NAME="${vpn_name}"
+
+# Failure threshold: number of consecutive failures before taking action
+TIER1_THRESHOLD=${tier1}
+TIER2_THRESHOLD=${tier2}
+TIER3_THRESHOLD=${tier3}
+
+# Cooldown period after restart (minutes)
+COOLDOWN_MINUTES=${cooldown}
+
+# Maximum restarts per hour (rate limiting)
+MAX_RESTARTS_PER_HOUR=${max_restarts}
+
+# Log file location (must be in /data/ for persistence)
+LOG_FILE="${default_log_file}"
+
+# State directory (for counter files and lockfiles)
+STATE_DIR="${default_state_dir}"
+
+# Cron schedule (cron format: minute hour day month weekday)
+CRON_SCHEDULE="${cron_schedule}"
+
+# Lockfile timeout (seconds)
+LOCKFILE_TIMEOUT=${lockfile_timeout}
+
+# Ping connectivity check
+ENABLE_PING_CHECK=${enable_ping}
+
+# Ping target IP address (internal/private IP on remote network)
+PING_TARGET_IP="${ping_target}"
+
+# Ping count (number of packets to send)
+PING_COUNT=${ping_count}
+
+# Ping timeout per packet (seconds)
+PING_TIMEOUT=${ping_timeout}
+
+# Enable debug logging (set to 1 for verbose output)
+DEBUG=${debug}
+EOF
+
+	log_info "Configuration file created: ${INSTALL_DIR}/${CONFIG_NAME}"
 }
 
 # Install config file (from template or create default)
 #
 # Installs the configuration file to the installation directory.
+# If INTERACTIVE flag is set, prompts for each value.
 # If a config template exists in the source directory, copies it.
 # Otherwise, creates a default configuration file.
 #
@@ -134,18 +249,25 @@ create_install_dir() {
 # Side effects:
 #   Creates or overwrites ${INSTALL_DIR}/${CONFIG_NAME}
 install_config_file() {
-    local overwrite_msg="$1"
-    
-    if [[ -n "$overwrite_msg" ]]; then
-        log_info "$overwrite_msg"
-    fi
-    
-    if [[ -f "${INSTALL_SCRIPT_DIR}/${CONFIG_NAME}" ]]; then
-        cp "${INSTALL_SCRIPT_DIR}/${CONFIG_NAME}" "${INSTALL_DIR}/${CONFIG_NAME}"
-        log_info "Installed ${CONFIG_NAME} (please customize it)"
-    else
-        log_warn "Config template not found, creating default"
-        cat > "${INSTALL_DIR}/${CONFIG_NAME}" << EOF
+	local overwrite_msg="$1"
+
+	if [[ -n "$overwrite_msg" ]]; then
+		log_info "$overwrite_msg"
+	fi
+
+	# Interactive mode: prompt for each value
+	if [[ $INTERACTIVE -eq 1 ]]; then
+		create_interactive_config
+		return 0
+	fi
+
+	# Non-interactive mode: copy template or create default
+	if [[ -f "${INSTALL_SCRIPT_DIR}/${CONFIG_NAME}" ]]; then
+		cp "${INSTALL_SCRIPT_DIR}/${CONFIG_NAME}" "${INSTALL_DIR}/${CONFIG_NAME}"
+		log_info "Installed ${CONFIG_NAME} (please customize it)"
+	else
+		log_warn "Config template not found, creating default"
+		cat >"${INSTALL_DIR}/${CONFIG_NAME}" <<EOF
 # UDM VPN Monitor Configuration
 PEER_IPS=""
 VPN_NAME="Site-to-Site VPN"
@@ -164,7 +286,7 @@ PING_COUNT=3
 PING_TIMEOUT=2
 DEBUG=0
 EOF
-    fi
+	fi
 }
 
 # Install scripts
@@ -177,47 +299,143 @@ EOF
 #
 # Side effects:
 #   - Copies vpn-monitor.sh to installation directory
-#   - Sets executable permissions on vpn-monitor.sh
+#   - Copies analyze-logs.sh to installation directory (if available)
+#   - Sets executable permissions on scripts
 #   - Installs config file (may prompt user in interactive mode)
 install_scripts() {
-    log_info "Installing scripts..."
-    
-    # Copy main script
-    if [[ -f "${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}" ]]; then
-        cp "${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}" "${INSTALL_DIR}/${SCRIPT_NAME}"
-        chmod +x "${INSTALL_DIR}/${SCRIPT_NAME}"
-        log_info "Installed ${SCRIPT_NAME}"
-    else
-        log_error "Source file not found: ${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}"
-        exit 1
-    fi
-    
-    # Handle config file installation
-    if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
-        # Config file already exists
-        if [[ $SILENT -eq 1 ]]; then
-            # Silent mode: only overwrite if explicitly requested
-            if [[ $OVERWRITE_CONF -eq 1 ]]; then
-                install_config_file "Overwriting existing config file (--overwrite-conf flag)"
-            else
-                log_info "Config file already exists, preserving: ${INSTALL_DIR}/${CONFIG_NAME}"
-            fi
-        else
-            # Interactive mode: ask user
-            echo ""
-            log_warn "Config file already exists: ${INSTALL_DIR}/${CONFIG_NAME}"
-            read -p "Overwrite existing config file? (yes/no) [no]: " -r
-            echo ""
-            if [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
-                install_config_file "Overwriting existing config file"
-            else
-                log_info "Preserving existing config file: ${INSTALL_DIR}/${CONFIG_NAME}"
-            fi
-        fi
-    else
-        # Config file doesn't exist, install it
-        install_config_file "Installing config file"
-    fi
+	log_info "Installing scripts..."
+
+	# Copy main script
+	if [[ -f "${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}" ]]; then
+		cp "${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}" "${INSTALL_DIR}/${SCRIPT_NAME}"
+		chmod +x "${INSTALL_DIR}/${SCRIPT_NAME}"
+		log_info "Installed ${SCRIPT_NAME}"
+	else
+		log_error "Source file not found: ${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}"
+		exit 1
+	fi
+
+	# Copy log analysis script (optional utility)
+	if [[ -f "${INSTALL_SCRIPT_DIR}/analyze-logs.sh" ]]; then
+		cp "${INSTALL_SCRIPT_DIR}/analyze-logs.sh" "${INSTALL_DIR}/analyze-logs.sh"
+		chmod +x "${INSTALL_DIR}/analyze-logs.sh"
+		log_info "Installed analyze-logs.sh (log analysis utility)"
+	fi
+
+	# Handle config file installation
+	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
+		# Config file already exists
+		if [[ $INTERACTIVE -eq 1 ]]; then
+			# Interactive mode: always prompt for new values (overwrites existing)
+			install_config_file "Config file exists, creating new interactive configuration"
+		elif [[ $SILENT -eq 1 ]]; then
+			# Silent mode: only overwrite if explicitly requested
+			if [[ $OVERWRITE_CONF -eq 1 ]]; then
+				install_config_file "Overwriting existing config file (--overwrite-conf flag)"
+			else
+				log_info "Config file already exists, preserving: ${INSTALL_DIR}/${CONFIG_NAME}"
+			fi
+		else
+			# Non-interactive, non-silent mode: ask user
+			echo ""
+			log_warn "Config file already exists: ${INSTALL_DIR}/${CONFIG_NAME}"
+			read -p "Overwrite existing config file? (yes/no) [no]: " -r
+			echo ""
+			if [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+				install_config_file "Overwriting existing config file"
+			else
+				log_info "Preserving existing config file: ${INSTALL_DIR}/${CONFIG_NAME}"
+			fi
+		fi
+	else
+		# Config file doesn't exist, install it
+		install_config_file "Installing config file"
+	fi
+}
+
+# Parse and validate cron schedule from config file
+#
+# Extracts CRON_SCHEDULE from config file and validates it has proper format.
+# Handles quoted and unquoted values cleanly.
+#
+# Arguments:
+#   $1: Path to config file
+#
+# Returns:
+#   0: Valid cron schedule found and parsed
+#   1: No valid cron schedule found (use default)
+#
+# Output:
+#   Prints the validated cron schedule to stdout (if valid)
+parse_cron_schedule() {
+	local config_file="$1"
+	local schedule=""
+
+	# Check if config file exists
+	if [[ ! -f "$config_file" ]]; then
+		return 1
+	fi
+
+	# Read the CRON_SCHEDULE line from config
+	local line
+	line=$(grep "^CRON_SCHEDULE=" "$config_file" 2>/dev/null | head -1)
+
+	if [[ -z "$line" ]]; then
+		return 1
+	fi
+
+	# Extract value after the equals sign
+	schedule="${line#CRON_SCHEDULE=}"
+
+	# Remove surrounding quotes (handles both single and double quotes)
+	# Trim leading/trailing whitespace first
+	schedule=$(echo "$schedule" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+
+	# Remove quotes if present
+	if [[ "$schedule" =~ ^\".*\"$ ]]; then
+		schedule="${schedule#\"}"
+		schedule="${schedule%\"}"
+	elif [[ "$schedule" =~ ^\'.*\'$ ]]; then
+		schedule="${schedule#\'}"
+		schedule="${schedule%\'}"
+	fi
+
+	# Trim whitespace again after quote removal
+	schedule=$(echo "$schedule" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+
+	# Validate: must be non-empty
+	if [[ -z "$schedule" ]]; then
+		return 1
+	fi
+
+	# Validate: must contain at least one digit or asterisk (basic cron field requirement)
+	if [[ ! "$schedule" =~ [0-9*] ]]; then
+		return 1
+	fi
+
+	# Validate: must have exactly 5 space-separated fields
+	# Split into array and count fields
+	local IFS=' '
+	local -a fields
+	read -ra fields <<<"$schedule"
+
+	if [[ ${#fields[@]} -ne 5 ]]; then
+		return 1
+	fi
+
+	# Basic validation: each field should contain valid cron characters
+	# Valid characters: digits, asterisk, comma, dash, slash
+	# Note: Fields are already split by spaces, so individual fields shouldn't contain whitespace
+	local field
+	for field in "${fields[@]}"; do
+		if [[ ! "$field" =~ ^[0-9*,\-/\]+$ ]]; then
+			return 1
+		fi
+	done
+
+	# Valid schedule found
+	echo "$schedule"
+	return 0
 }
 
 # Setup cron job
@@ -237,54 +455,114 @@ install_scripts() {
 #   Cron schedule format: minute hour day month weekday
 #   Example: "*/1 * * * *" = every 1 minute
 setup_cron() {
-    log_info "Setting up cron job..."
-    
-    # Load cron schedule from config if it exists, otherwise use default
-    local cron_schedule="*/1 * * * *"
-    if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
-        # Try to extract CRON_SCHEDULE from config file
-        # Handle both quoted (single or double) and unquoted values
-        local config_schedule
-        # Try double-quoted value first
-        config_schedule=$(grep "^CRON_SCHEDULE=" "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null | sed -n 's/^CRON_SCHEDULE="\(.*\)"/\1/p' | head -1)
-        # If empty, try single-quoted
-        if [[ -z "$config_schedule" ]]; then
-            config_schedule=$(grep "^CRON_SCHEDULE=" "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null | sed -n "s/^CRON_SCHEDULE='\(.*\)'/\1/p" | head -1)
-        fi
-        # If still empty, try unquoted
-        if [[ -z "$config_schedule" ]]; then
-            config_schedule=$(grep "^CRON_SCHEDULE=" "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null | sed 's/^CRON_SCHEDULE=//' | sed 's/^["'\'']//' | sed 's/["'\'']$//' | tr -d ' ' | head -1)
-        fi
-        # Validate it looks like a cron schedule (contains * or numbers)
-        if [[ -n "$config_schedule" ]] && [[ "$config_schedule" =~ [\*0-9] ]]; then
-            cron_schedule="$config_schedule"
-            log_info "Using cron schedule from config: $cron_schedule"
-        else
-            log_info "Using default cron schedule: $cron_schedule"
-        fi
-    else
-        log_info "Using default cron schedule: $cron_schedule"
-    fi
-    
-    local cron_entry
-    cron_entry="${cron_schedule} ${INSTALL_DIR}/${SCRIPT_NAME} >> ${INSTALL_DIR}/cron.log 2>&1"
-    
-    # Check if cron entry already exists
-    if crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
-        log_warn "Cron job already exists, skipping..."
-        log_info "To update the cron schedule:"
-        log_info "  1. Edit ${INSTALL_DIR}/${CONFIG_NAME} and set CRON_SCHEDULE"
-        log_info "  2. Remove old cron entry: crontab -e"
-        log_info "  3. Re-run install.sh to install new schedule"
-    else
-        # Add cron entry
-        (crontab -l 2>/dev/null || true; echo "$cron_entry") | crontab -
-        log_info "Cron job installed with schedule: $cron_schedule"
-    fi
-    
-    # Display current cron entries
-    log_info "Current cron entries:"
-    crontab -l 2>/dev/null | grep -E "(vpn-monitor|^#)" || log_warn "No cron entries found"
+	log_info "Setting up cron job..."
+
+	# Load cron schedule from config if it exists, otherwise use default
+	local cron_schedule="*/1 * * * *"
+	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
+		local config_schedule
+		if config_schedule=$(parse_cron_schedule "${INSTALL_DIR}/${CONFIG_NAME}"); then
+			cron_schedule="$config_schedule"
+			log_info "Using cron schedule from config: $cron_schedule"
+		else
+			log_info "Using default cron schedule: $cron_schedule"
+		fi
+	else
+		log_info "Using default cron schedule: $cron_schedule"
+	fi
+
+	local cron_entry
+	cron_entry="${cron_schedule} ${INSTALL_DIR}/${SCRIPT_NAME} >> ${INSTALL_DIR}/cron.log 2>&1"
+
+	# Note: cron.log will be created automatically on first cron run.
+	# Log rotation is configured via logrotate (see install_logrotate_config function).
+
+	# Check if cron entry already exists
+	if crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
+		log_warn "Cron job already exists, skipping..."
+		log_info "To update the cron schedule:"
+		log_info "  1. Edit ${INSTALL_DIR}/${CONFIG_NAME} and set CRON_SCHEDULE"
+		log_info "  2. Remove old cron entry: crontab -e"
+		log_info "  3. Re-run install.sh to install new schedule"
+	else
+		# Add cron entry
+		(
+			crontab -l 2>/dev/null || true
+			echo "$cron_entry"
+		) | crontab -
+		log_info "Cron job installed with schedule: $cron_schedule"
+	fi
+
+	# Display current cron entries
+	log_info "Current cron entries:"
+	crontab -l 2>/dev/null | grep -E "(vpn-monitor|^#)" || log_warn "No cron entries found"
+}
+
+# Install logrotate configuration for cron.log
+#
+# Creates a logrotate configuration file to manage cron.log rotation.
+# Rotates cron.log daily, keeps 7 days of logs, compresses old logs.
+# Only installs in production mode (not dev mode) and if logrotate is available.
+#
+# Returns:
+#   0: Logrotate config installed successfully (or skipped if not applicable)
+#   1: Failed to install logrotate config
+#
+# Side effects:
+#   Creates /etc/logrotate.d/vpn-monitor-cron if logrotate is available
+install_logrotate_config() {
+	# Skip in dev mode (logrotate configs are system-wide)
+	if [[ $DEV_MODE -eq 1 ]]; then
+		log_info "Skipping logrotate config installation (dev mode)"
+		return 0
+	fi
+
+	# Check if logrotate is available
+	if ! command -v logrotate >/dev/null 2>&1; then
+		log_warn "logrotate not found, skipping log rotation configuration"
+		log_warn "cron.log will grow indefinitely without manual rotation"
+		return 0
+	fi
+
+	# Check if we have write access to /etc/logrotate.d
+	if [[ ! -w /etc/logrotate.d ]]; then
+		log_warn "Cannot write to /etc/logrotate.d, skipping log rotation configuration"
+		log_warn "cron.log will grow indefinitely without manual rotation"
+		return 0
+	fi
+
+	local logrotate_config="/etc/logrotate.d/vpn-monitor-cron"
+
+	log_info "Installing logrotate configuration for cron.log..."
+
+	# Create logrotate configuration
+	cat >"$logrotate_config" <<EOF
+# UDM VPN Monitor - cron.log rotation
+# Automatically rotated by logrotate
+${INSTALL_DIR}/cron.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0644 root root
+    sharedscripts
+    postrotate
+        # No action needed after rotation
+    endscript
+}
+EOF
+
+	# Verify the config file was created
+	if [[ -f "$logrotate_config" ]]; then
+		log_info "Logrotate configuration installed: $logrotate_config"
+		log_info "cron.log will be rotated daily, keeping 7 days of compressed logs"
+		return 0
+	else
+		log_error "Failed to create logrotate configuration"
+		return 1
+	fi
 }
 
 # Verify installation
@@ -298,47 +576,47 @@ setup_cron() {
 #   0: Installation verified successfully
 #   1: Verification failed (errors found)
 verify_installation() {
-    log_info "Verifying installation..."
-    
-    local errors=0
-    
-    # Check script exists and is executable
-    if [[ ! -f "${INSTALL_DIR}/${SCRIPT_NAME}" ]]; then
-        log_error "Script not found: ${INSTALL_DIR}/${SCRIPT_NAME}"
-        errors=$((errors + 1))
-    elif [[ ! -x "${INSTALL_DIR}/${SCRIPT_NAME}" ]]; then
-        log_error "Script is not executable: ${INSTALL_DIR}/${SCRIPT_NAME}"
-        errors=$((errors + 1))
-    else
-        log_info "Script verified: ${INSTALL_DIR}/${SCRIPT_NAME}"
-    fi
-    
-    # Check config exists
-    if [[ ! -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
-        log_error "Config not found: ${INSTALL_DIR}/${CONFIG_NAME}"
-        errors=$((errors + 1))
-    else
-        log_info "Config verified: ${INSTALL_DIR}/${CONFIG_NAME}"
-    fi
-    
-    # Check cron entry (only if cron setup was not skipped)
-    if [[ $SKIP_CRON -eq 0 ]]; then
-        if ! crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
-            log_warn "Cron entry not found (may have been skipped if already exists)"
-        else
-            log_info "Cron entry verified"
-        fi
-    else
-        log_info "Cron setup skipped (--no-cron flag used)"
-    fi
-    
-    if [[ $errors -eq 0 ]]; then
-        log_info "Installation verified successfully"
-        return 0
-    else
-        log_error "Installation verification failed with $errors error(s)"
-        return 1
-    fi
+	log_info "Verifying installation..."
+
+	local errors=0
+
+	# Check script exists and is executable
+	if [[ ! -f "${INSTALL_DIR}/${SCRIPT_NAME}" ]]; then
+		log_error "Script not found: ${INSTALL_DIR}/${SCRIPT_NAME}"
+		errors=$((errors + 1))
+	elif [[ ! -x "${INSTALL_DIR}/${SCRIPT_NAME}" ]]; then
+		log_error "Script is not executable: ${INSTALL_DIR}/${SCRIPT_NAME}"
+		errors=$((errors + 1))
+	else
+		log_info "Script verified: ${INSTALL_DIR}/${SCRIPT_NAME}"
+	fi
+
+	# Check config exists
+	if [[ ! -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
+		log_error "Config not found: ${INSTALL_DIR}/${CONFIG_NAME}"
+		errors=$((errors + 1))
+	else
+		log_info "Config verified: ${INSTALL_DIR}/${CONFIG_NAME}"
+	fi
+
+	# Check cron entry (only if cron setup was not skipped)
+	if [[ $SKIP_CRON -eq 0 ]]; then
+		if ! crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
+			log_warn "Cron entry not found (may have been skipped if already exists)"
+		else
+			log_info "Cron entry verified"
+		fi
+	else
+		log_info "Cron setup skipped (--no-cron flag used)"
+	fi
+
+	if [[ $errors -eq 0 ]]; then
+		log_info "Installation verified successfully"
+		return 0
+	else
+		log_error "Installation verification failed with $errors error(s)"
+		return 1
+	fi
 }
 
 # Display next steps
@@ -350,54 +628,54 @@ verify_installation() {
 # Returns:
 #   0: Always succeeds
 display_next_steps() {
-    if [[ $SILENT -eq 1 ]]; then
-        # Silent mode: minimal output
-        return 0
-    fi
-    
-    echo ""
-    log_info "Installation complete!"
-    echo ""
-    log_info "Next steps:"
-    echo "  1. Edit the configuration file:"
-    echo "     ${INSTALL_DIR}/${CONFIG_NAME}"
-    echo ""
-    echo "  2. Set PEER_IPS to your remote VPN endpoint IP address(es)"
-    echo ""
-    echo "  3. Test the script manually:"
-    echo "     ${INSTALL_DIR}/${SCRIPT_NAME}"
-    echo ""
-    echo "  4. Monitor the log file:"
-    echo "     tail -f ${INSTALL_DIR}/logs/vpn-monitor.log"
-    echo ""
-    if [[ $SKIP_CRON -eq 1 ]]; then
-        log_warn "NOTE: Cron job was not installed (--no-cron flag used)"
-        echo "  - Run the script manually or set up your own scheduling"
-        echo "  - To install cron later, run: ./install.sh"
-        echo ""
-    else
-        if [[ $DEV_MODE -eq 1 ]]; then
-            log_warn "NOTE: Dev mode installation"
-            echo "  - Files installed to: ${INSTALL_DIR}"
-            echo "  - Cron job installed (if not skipped)"
-            echo ""
-        else
-            log_warn "IMPORTANT: Persistence Notes"
-            echo "  - Scripts survive reboots (stored in /data/)"
-            echo "  - Cron jobs may be wiped during UniFi OS upgrades"
-            echo "  - Re-run this installer after upgrades if monitoring stops"
-            echo ""
-        fi
-    fi
-    log_info "To uninstall, run:"
-    echo "  ./uninstall.sh"
-    echo ""
-    echo "  Or manually remove:"
-    echo "  - ${INSTALL_DIR}/"
-    if [[ $SKIP_CRON -eq 0 ]]; then
-        echo "  - Cron entry (crontab -e)"
-    fi
-    echo ""
+	if [[ $SILENT -eq 1 ]]; then
+		# Silent mode: minimal output
+		return 0
+	fi
+
+	echo ""
+	log_info "Installation complete!"
+	echo ""
+	log_info "Next steps:"
+	echo "  1. Edit the configuration file:"
+	echo "     ${INSTALL_DIR}/${CONFIG_NAME}"
+	echo ""
+	echo "  2. Set PEER_IPS to your remote VPN endpoint IP address(es)"
+	echo ""
+	echo "  3. Test the script manually:"
+	echo "     ${INSTALL_DIR}/${SCRIPT_NAME}"
+	echo ""
+	echo "  4. Monitor the log file:"
+	echo "     tail -f ${INSTALL_DIR}/logs/vpn-monitor.log"
+	echo ""
+	if [[ $SKIP_CRON -eq 1 ]]; then
+		log_warn "NOTE: Cron job was not installed (--no-cron flag used)"
+		echo "  - Run the script manually or set up your own scheduling"
+		echo "  - To install cron later, run: ./install.sh"
+		echo ""
+	else
+		if [[ $DEV_MODE -eq 1 ]]; then
+			log_warn "NOTE: Dev mode installation"
+			echo "  - Files installed to: ${INSTALL_DIR}"
+			echo "  - Cron job installed (if not skipped)"
+			echo ""
+		else
+			log_warn "IMPORTANT: Persistence Notes"
+			echo "  - Scripts survive reboots (stored in /data/)"
+			echo "  - Cron jobs may be wiped during UniFi OS upgrades"
+			echo "  - Re-run this installer after upgrades if monitoring stops"
+			echo ""
+		fi
+	fi
+	log_info "To uninstall, run:"
+	echo "  ./uninstall.sh"
+	echo ""
+	echo "  Or manually remove:"
+	echo "  - ${INSTALL_DIR}/"
+	if [[ $SKIP_CRON -eq 0 ]]; then
+		echo "  - Cron entry (crontab -e)"
+	fi
+	echo ""
 }
 
 # Parse command-line arguments
@@ -411,6 +689,7 @@ display_next_steps() {
 # Supported options:
 #   --no-cron: Skip cron job setup
 #   --silent: Perform installation silently (no prompts)
+#   --interactive: Prompt for each config value with defaults
 #   --overwrite-conf: Overwrite existing config file (only with --silent)
 #   --dev: Install to current directory instead of /data/vpn-monitor
 #   --help, -h: Display help message and exit
@@ -419,73 +698,89 @@ display_next_steps() {
 #   0: Always succeeds (exits with 0 for --help)
 #
 # Side effects:
-#   Sets global flags: SKIP_CRON, SILENT, OVERWRITE_CONF, DEV_MODE
+#   Sets global flags: SKIP_CRON, SILENT, INTERACTIVE, OVERWRITE_CONF, DEV_MODE
 #   Sets INSTALL_DIR based on DEV_MODE
 parse_args() {
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --no-cron)
-                SKIP_CRON=1
-                if [[ $SILENT -eq 0 ]]; then
-                    log_info "Cron setup will be skipped (--no-cron flag)"
-                fi
-                shift
-                ;;
-            --silent)
-                SILENT=1
-                shift
-                ;;
-            --overwrite-conf)
-                OVERWRITE_CONF=1
-                shift
-                ;;
-            --dev)
-                DEV_MODE=1
-                if [[ $SILENT -eq 0 ]]; then
-                    log_info "Dev mode enabled - installing to current working directory"
-                fi
-                shift
-                ;;
-            --help|-h)
-                echo "Usage: $0 [OPTIONS]"
-                echo ""
-                echo "Options:"
-                echo "  --no-cron         Install without setting up cron job"
-                echo "  --silent          Perform installation silently (no prompts)"
-                echo "  --overwrite-conf  Overwrite existing config file (only works with --silent)"
-                echo "  --dev             Install to current working directory (dev mode)"
-                echo "  --help            Show this help message"
-                echo ""
-                echo "Examples:"
-                echo "  $0                                    # Interactive installation"
-                echo "  $0 --silent                          # Silent installation, preserve existing config"
-                echo "  $0 --silent --overwrite-conf          # Silent installation, overwrite config"
-                echo "  $0 --silent --no-cron                 # Silent installation, no cron"
-                echo "  $0 --dev                              # Install to current directory (dev mode)"
-                echo "  $0 --dev --silent --no-cron           # Dev mode, silent, no cron"
-                echo "  $0 --silent --no-cron --overwrite-conf  # Silent installation, no cron, overwrite config"
-                echo ""
-                exit 0
-                ;;
-            *)
-                log_warn "Unknown argument: $1 (use --help for usage)"
-                shift
-                ;;
-        esac
-    done
-    
-    # Set INSTALL_DIR based on DEV_MODE
-    if [[ $DEV_MODE -eq 1 ]]; then
-        INSTALL_DIR="$(pwd)/vpn-monitor"
-    else
-        INSTALL_DIR="/data/vpn-monitor"
-    fi
-    
-    # Validate flag combinations
-    if [[ $OVERWRITE_CONF -eq 1 ]] && [[ $SILENT -eq 0 ]]; then
-        log_warn "Warning: --overwrite-conf is only effective with --silent flag"
-        log_warn "In interactive mode, you will be prompted to overwrite the config file"
-    fi
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--no-cron)
+			SKIP_CRON=1
+			if [[ $SILENT -eq 0 ]]; then
+				log_info "Cron setup will be skipped (--no-cron flag)"
+			fi
+			shift
+			;;
+		--silent)
+			SILENT=1
+			shift
+			;;
+		--interactive)
+			INTERACTIVE=1
+			if [[ $SILENT -eq 0 ]]; then
+				log_info "Interactive mode enabled - will prompt for config values"
+			fi
+			shift
+			;;
+		--overwrite-conf)
+			OVERWRITE_CONF=1
+			shift
+			;;
+		--dev)
+			DEV_MODE=1
+			if [[ $SILENT -eq 0 ]]; then
+				log_info "Dev mode enabled - installing to current working directory"
+			fi
+			shift
+			;;
+		--help | -h)
+			echo "Usage: $0 [OPTIONS]"
+			echo ""
+			echo "Options:"
+			echo "  --no-cron         Install without setting up cron job"
+			echo "  --silent          Perform installation silently (no prompts)"
+			echo "  --interactive     Prompt for each config value with defaults"
+			echo "  --overwrite-conf  Overwrite existing config file (only works with --silent)"
+			echo "  --dev             Install to current working directory (dev mode)"
+			echo "  --help            Show this help message"
+			echo ""
+			echo "Examples:"
+			echo "  $0                                    # Standard installation"
+			echo "  $0 --interactive                      # Interactive config setup"
+			echo "  $0 --silent                          # Silent installation, preserve existing config"
+			echo "  $0 --silent --overwrite-conf          # Silent installation, overwrite config"
+			echo "  $0 --silent --no-cron                 # Silent installation, no cron"
+			echo "  $0 --dev                              # Install to current directory (dev mode)"
+			echo "  $0 --dev --silent --no-cron           # Dev mode, silent, no cron"
+			echo "  $0 --interactive --dev                # Interactive config, dev mode"
+			echo "  $0 --silent --no-cron --overwrite-conf  # Silent installation, no cron, overwrite config"
+			echo ""
+			exit 0
+			;;
+		*)
+			log_warn "Unknown argument: $1 (use --help for usage)"
+			shift
+			;;
+		esac
+	done
+
+	# Set INSTALL_DIR based on DEV_MODE
+	if [[ $DEV_MODE -eq 1 ]]; then
+		INSTALL_DIR="$(pwd)/vpn-monitor"
+	else
+		INSTALL_DIR="/data/vpn-monitor"
+	fi
+
+	# Validate flag combinations
+	if [[ $OVERWRITE_CONF -eq 1 ]] && [[ $SILENT -eq 0 ]]; then
+		log_warn "Warning: --overwrite-conf is only effective with --silent flag"
+		log_warn "In interactive mode, you will be prompted to overwrite the config file"
+	fi
+
+	if [[ $INTERACTIVE -eq 1 ]] && [[ $SILENT -eq 1 ]]; then
+		log_error "Error: --interactive and --silent flags cannot be used together"
+		log_error "Interactive mode requires user prompts, which conflicts with silent mode"
+		exit 1
+	fi
 }
 
 # Main installation
@@ -510,42 +805,43 @@ parse_args() {
 #   7. Verify installation
 #   8. Display next steps
 main() {
-    # Parse command-line arguments
-    parse_args "$@"
-    
-    if [[ $SILENT -eq 0 ]]; then
-        log_info "UDM VPN Monitor Installation"
-        log_info "=============================="
-        if [[ $DEV_MODE -eq 1 ]]; then
-            log_info "Dev mode: Installing to ${INSTALL_DIR}"
-        fi
-        echo ""
-    fi
-    
-    # Skip root check in dev mode
-    if [[ $DEV_MODE -eq 0 ]]; then
-        check_root
-    fi
-    check_udm
-    create_install_dir
-    install_scripts
-    
-    # Setup cron only if not skipped
-    if [[ $SKIP_CRON -eq 0 ]]; then
-        setup_cron
-    else
-        log_info "Skipping cron setup (--no-cron flag used)"
-    fi
-    
-    if verify_installation; then
-        display_next_steps
-        exit 0
-    else
-        log_error "Installation completed with errors"
-        exit 1
-    fi
+	# Parse command-line arguments
+	parse_args "$@"
+
+	if [[ $SILENT -eq 0 ]]; then
+		log_info "UDM VPN Monitor Installation"
+		log_info "=============================="
+		if [[ $DEV_MODE -eq 1 ]]; then
+			log_info "Dev mode: Installing to ${INSTALL_DIR}"
+		fi
+		echo ""
+	fi
+
+	# Skip root check in dev mode
+	if [[ $DEV_MODE -eq 0 ]]; then
+		check_root
+	fi
+	check_udm
+	create_install_dir
+	install_scripts
+
+	# Setup cron only if not skipped
+	if [[ $SKIP_CRON -eq 0 ]]; then
+		setup_cron
+		# Install logrotate configuration for cron.log
+		install_logrotate_config
+	else
+		log_info "Skipping cron setup (--no-cron flag used)"
+	fi
+
+	if verify_installation; then
+		display_next_steps
+		exit 0
+	else
+		log_error "Installation completed with errors"
+		exit 1
+	fi
 }
 
 # Run main
 main "$@"
-
