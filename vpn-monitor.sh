@@ -48,7 +48,7 @@ mkdir -p "$LOGS_DIR" || {
 }
 
 # State files
-FAILURE_COUNTER_FILE="${LOGS_DIR}/failure_counter"
+# Note: Failure counters are per-peer: ${LOGS_DIR}/failure_counter_<peer_ip_sanitized>
 LAST_RESTART_FILE="${STATE_DIR}/last_restart"
 RESTART_COUNT_FILE="${LOGS_DIR}/restart_count"
 # LAST_BYTES_FILE will be per-peer: ${STATE_DIR}/last_bytes_${peer_ip_sanitized}
@@ -161,35 +161,35 @@ mkdir -p "$LOGS_DIR" || {
 }
 
 # Update state file paths to use LOGS_DIR (in case STATE_DIR was overridden)
-FAILURE_COUNTER_FILE="${LOGS_DIR}/failure_counter"
+# Note: Failure counters are per-peer: ${LOGS_DIR}/failure_counter_<peer_ip_sanitized>
 RESTART_COUNT_FILE="${LOGS_DIR}/restart_count"
 
 # Initialize state files if they don't exist
 #
-# Creates required state files (failure_counter, restart_count) if they don't exist.
-# Per-peer byte counter files are created on-demand in check_vpn_status().
+# Creates required state files (restart_count) if they don't exist.
+# Per-peer failure counter and byte counter files are created on-demand when needed.
 #
 # State files:
-#   - FAILURE_COUNTER_FILE: Tracks consecutive VPN check failures (SHARED across all peers)
 #   - RESTART_COUNT_FILE: Tracks restart timestamps for rate limiting
+#   - Per-peer failure counters: Created on-demand as failure_counter_<peer_ip>
+#   - Per-peer byte counters: Created on-demand as last_bytes_<peer_ip>
 #
 # Returns:
 #   0: Always succeeds (warnings logged but don't fail)
 init_state() {
-    if [[ ! -f "$FAILURE_COUNTER_FILE" ]]; then
-        echo "0" > "$FAILURE_COUNTER_FILE" || log_message "WARNING" "Failed to create failure counter file"
-    fi
     if [[ ! -f "$RESTART_COUNT_FILE" ]]; then
         echo "0" > "$RESTART_COUNT_FILE" || log_message "WARNING" "Failed to create restart count file"
     fi
-    # LAST_BYTES_FILE is per-peer, initialized in check_vpn_status
+    # Per-peer failure counters and byte counters are created on-demand
 }
 
-# Get current failure counter
+# Get current failure counter for a specific peer
 #
-# Reads the current consecutive failure count from the state file.
-# Note: The failure counter is SHARED across all configured peer IPs.
-# If multiple peers fail, their failures accumulate in a single counter.
+# Reads the current consecutive failure count from the per-peer state file.
+# Each peer has its own independent failure counter.
+#
+# Arguments:
+#   $1: Peer IP address
 #
 # Returns:
 #   Current failure count (0 if file doesn't exist or is empty)
@@ -197,19 +197,26 @@ init_state() {
 # Output:
 #   Prints the failure count to stdout
 get_failure_count() {
-    if [[ -f "$FAILURE_COUNTER_FILE" ]]; then
-        cat "$FAILURE_COUNTER_FILE"
+    local peer_ip="$1"
+    local peer_sanitized
+    peer_sanitized=$(sanitize_peer_ip "$peer_ip")
+    local counter_file="${LOGS_DIR}/failure_counter_${peer_sanitized}"
+    
+    if [[ -f "$counter_file" ]]; then
+        cat "$counter_file"
     else
         echo "0"
     fi
 }
 
-# Increment failure counter
+# Increment failure counter for a specific peer
 #
-# Increments the consecutive failure counter by 1 and saves it to the state file.
-# Used to track how many times in a row the VPN check has failed.
-# Note: The failure counter is SHARED across all configured peer IPs.
-# Failures from any peer increment the same counter.
+# Increments the consecutive failure counter by 1 and saves it to the per-peer state file.
+# Used to track how many times in a row the VPN check has failed for this specific peer.
+# Each peer has its own independent failure counter.
+#
+# Arguments:
+#   $1: Peer IP address
 #
 # Returns:
 #   New failure count value
@@ -217,23 +224,33 @@ get_failure_count() {
 # Output:
 #   Prints the new failure count to stdout
 increment_failure() {
+    local peer_ip="$1"
+    local peer_sanitized
+    peer_sanitized=$(sanitize_peer_ip "$peer_ip")
+    local counter_file="${LOGS_DIR}/failure_counter_${peer_sanitized}"
     local count
-    count=$(get_failure_count)
-    echo $((count + 1)) > "$FAILURE_COUNTER_FILE"
+    count=$(get_failure_count "$peer_ip")
+    echo $((count + 1)) > "$counter_file"
     echo $((count + 1))
 }
 
-# Reset failure counter
+# Reset failure counter for a specific peer
 #
-# Resets the consecutive failure counter to 0.
-# Called when VPN check succeeds after previous failures.
-# Note: Resetting the counter affects ALL peers since the counter is shared.
-# If one peer recovers, the counter resets for all peers.
+# Resets the consecutive failure counter to 0 for the specified peer.
+# Called when VPN check succeeds after previous failures for this peer.
+# Each peer has its own independent failure counter.
+#
+# Arguments:
+#   $1: Peer IP address
 #
 # Returns:
 #   0: Always succeeds
 reset_failure_count() {
-    echo "0" > "$FAILURE_COUNTER_FILE"
+    local peer_ip="$1"
+    local peer_sanitized
+    peer_sanitized=$(sanitize_peer_ip "$peer_ip")
+    local counter_file="${LOGS_DIR}/failure_counter_${peer_sanitized}"
+    echo "0" > "$counter_file"
 }
 
 # Check if we're in cooldown period
@@ -733,16 +750,15 @@ full_restart() {
 #   - Tier 3 (TIER3_THRESHOLD): Full IPsec restart (affects all tunnels)
 #
 # Side effects:
-#   - Increments shared failure counter on VPN check failure (counter is shared across all peers)
-#   - Resets shared failure counter on VPN recovery (affects all peers)
+#   - Increments per-peer failure counter on VPN check failure
+#   - Resets per-peer failure counter on VPN recovery
 #   - Executes recovery actions based on failure count
 #   - Logs all actions and status changes
 #
 # Note:
-#   The failure counter is SHARED across all configured peer IPs.
-#   If Peer A fails 3 times and Peer B fails 2 times, the counter will be 5,
-#   potentially triggering Tier 3 restart even though neither peer individually reached the threshold.
-#   Recovery of any peer resets the counter for all peers.
+#   Each peer has its own independent failure counter tracked in:
+#   ${LOGS_DIR}/failure_counter_<peer_ip_sanitized>
+#   This allows independent failure tracking and recovery per peer.
 monitor_peer() {
     local peer_ip="$1"
     local failure_count
@@ -750,15 +766,15 @@ monitor_peer() {
     # Check VPN status
     if check_vpn_status "$peer_ip"; then
         # VPN is OK
-        failure_count=$(get_failure_count)
+        failure_count=$(get_failure_count "$peer_ip")
         if [[ $failure_count -gt 0 ]]; then
             log_message "INFO" "VPN recovered for $peer_ip after $failure_count failures"
-            reset_failure_count
+            reset_failure_count "$peer_ip"
         fi
         return 0
     else
         # VPN check failed
-        failure_count=$(increment_failure)
+        failure_count=$(increment_failure "$peer_ip")
         log_message "WARNING" "VPN check failed for $peer_ip (failure count: $failure_count)"
         
         # Tier 1: Logging (triggers when failure_count >= TIER1_THRESHOLD)
@@ -783,7 +799,7 @@ monitor_peer() {
             else
                 log_message "ERROR" "Tier 3: Attempting full IPsec restart"
                 if full_restart; then
-                    reset_failure_count
+                    reset_failure_count "$peer_ip"
                 fi
             fi
         fi
