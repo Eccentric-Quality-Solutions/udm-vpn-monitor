@@ -32,6 +32,44 @@ This document outlines potential improvements and enhancements for the UDM VPN M
 
 **Documentation**: Detailed findings and implementation notes are documented in the code review process.
 
+### IPsec Tool Compatibility and Fallback Support
+**Status**: ✅ Completed  
+**Date**: Recent implementation
+
+**Enhancement**: Added automatic fallback support for different IPsec management tools (`swanctl` vs `ipsec`) to ensure compatibility across different UDM configurations.
+
+**Improvements Made**:
+- **Detection Fallback**: Enhanced detection to fall back through multiple methods:
+  - Primary: `ip xfrm state` (SA state and byte counters)
+  - Fallback 1: `swanctl --list-sas` (if xfrm unavailable)
+  - Fallback 2: `ipsec status` (if swanctl unavailable)
+- **Tier 2 Recovery Fallback**: Enhanced Tier 2 recovery with automatic tool detection:
+  - Preferred: `swanctl --reload-conn <connection-name>` (per-connection, when swanctl and connection name available)
+  - Fallback 1: `swanctl --reload` (all connections, when connection name unavailable)
+  - Fallback 2: `ipsec reload` (all connections, when swanctl unavailable)
+- **Tier 3 Recovery Fallback**: Enhanced Tier 3 recovery:
+  - Preferred: `ipsec restart` (affects all tunnels)
+  - Fallback: `swanctl --reload` (when ipsec unavailable)
+- **Automatic Tool Detection**: System automatically detects available commands using `command -v` and uses appropriate fallbacks
+
+**Impact**:
+- ✅ **Improved Compatibility**: Works on UDMs that use `ipsec` instead of `swanctl` for IPsec management
+- ✅ **Graceful Degradation**: System continues to function even when preferred tools are unavailable
+- ✅ **Better User Experience**: No manual configuration needed - system adapts automatically
+- ✅ **Reduced Failures**: Tier 2 recovery no longer silently fails when swanctl is unavailable
+
+**Technical Details**:
+- Tool availability checked using `command -v` before attempting to use commands
+- Fallback logic implemented in `lib/recovery.sh` for Tier 2 recovery
+- Fallback logic already present in `lib/recovery.sh` for Tier 3 recovery (enhanced)
+- Detection fallback chain implemented in `lib/detection.sh`
+
+**Documentation Updates**:
+- Updated README.md with tool availability and fallback behavior section
+- Updated ARCHITECTURE.md with accurate Tier 2 recovery state diagram
+- Updated DEVELOPER.md with detailed recovery action documentation
+- Updated CHANGELOG.md with enhancement details
+
 ---
 
 ## High Priority Enhancements
@@ -141,8 +179,9 @@ This document outlines potential improvements and enhancements for the UDM VPN M
 - ✅ Tier 2 (surgical cleanup) uses `swanctl --reload-conn <connection-name>` when connection names are available (per-connection recovery)
 - ✅ Connection names are automatically discovered from `swanctl --list-sas` (recommended approach)
 - ✅ Manual configuration via `CONNECTION_NAME_<sanitized_peer_ip>` is also supported
-- ✅ Falls back to `swanctl --reload` (affects all tunnels) only when connection names cannot be discovered or configured
-- Tier 3 (full restart) still does `ipsec restart` or `swanctl --reload` (affects all tunnels) - this is intentional as a last resort
+- ✅ Falls back to `swanctl --reload` (affects all tunnels) when connection names cannot be discovered or configured
+- ✅ Falls back to `ipsec reload` (affects all tunnels) when swanctl is unavailable (enhanced compatibility)
+- Tier 3 (full restart) uses `ipsec restart` (preferred) or `swanctl --reload` (fallback) - this is intentional as a last resort
 
 **Benefits Achieved**:
 - ✅ Less disruption - per-connection recovery minimizes impact on other tunnels
@@ -253,12 +292,21 @@ This document outlines potential improvements and enhancements for the UDM VPN M
 - ✅ Test coverage reporting (implemented with kcov)
 
 ### 15. Documentation Improvements ✅ SIGNIFICANTLY IMPROVED
+**Status**: ✅ Significantly Improved  
 **Current State**: Comprehensive documentation ✅  
 **Enhancement**: Additional documentation enhancements  
 **Benefits**:
 - Easier onboarding ✅
 - Better troubleshooting guides ✅
 - Architecture documentation ✅
+
+**Recent Improvements**:
+- ✅ Updated README.md with tool availability and fallback behavior documentation
+- ✅ Deduplicated README.md content for better clarity
+- ✅ Updated ARCHITECTURE.md with accurate Tier 2 recovery state diagrams
+- ✅ Enhanced DEVELOPER.md with detailed recovery action documentation
+- ✅ Updated CHANGELOG.md with recent enhancements
+- ✅ Removed outdated references (scp-files.sh)
 
 **Remaining Work**:
 - Architecture diagrams (visual)

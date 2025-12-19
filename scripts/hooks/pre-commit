@@ -1,0 +1,96 @@
+#!/bin/bash
+#
+# Pre-commit hook for UDM VPN Monitor
+# Runs linting, formatting checks, and regenerates the install package
+#
+# This ensures code quality and that the installer package is always up-to-date
+# with the current codebase when committing changes.
+
+set -euo pipefail
+
+# Get the repository root directory with explicit error handling
+REPO_ROOT=""
+if ! REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+	echo "Error: Not in a git repository or git command failed" >&2
+	exit 1
+fi
+
+if [[ -z "$REPO_ROOT" ]] || [[ ! -d "$REPO_ROOT" ]]; then
+	echo "Error: Could not determine repository root directory" >&2
+	exit 1
+fi
+
+cd "$REPO_ROOT"
+
+# Get list of staged shell script files
+mapfile -t STAGED_SH_FILES < <(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(sh)$' || true)
+
+# Run linting and formatting checks if there are staged shell files
+if [[ ${#STAGED_SH_FILES[@]} -gt 0 ]]; then
+	echo "Running code quality checks on ${#STAGED_SH_FILES[@]} staged shell script(s)..."
+
+	# Check if ShellCheck is available
+	if ! command -v shellcheck >/dev/null 2>&1; then
+		echo "Warning: ShellCheck not found. Install it to enable linting:" >&2
+		echo "  macOS: brew install shellcheck" >&2
+		echo "  Linux: sudo apt-get install shellcheck" >&2
+		echo "  See DEVELOPER.md for more installation options" >&2
+	else
+		# Run ShellCheck on staged files
+		echo "Running ShellCheck..."
+		if ! shellcheck --severity=error "${STAGED_SH_FILES[@]}"; then
+			echo "Error: ShellCheck found errors. Please fix them before committing." >&2
+			echo "Run 'shellcheck *.sh lib/*.sh tests/*.sh' to see all issues." >&2
+			exit 1
+		fi
+	fi
+
+	# Check if shfmt is available
+	if ! command -v shfmt >/dev/null 2>&1; then
+		echo "Warning: shfmt not found. Install it to enable formatting checks:" >&2
+		echo "  macOS: brew install shfmt" >&2
+		echo "  Linux: sudo snap install shfmt" >&2
+		echo "  See DEVELOPER.md for more installation options" >&2
+	else
+		# Check formatting with shfmt
+		echo "Checking code formatting with shfmt..."
+		if ! shfmt -d "${STAGED_SH_FILES[@]}" >/dev/null 2>&1; then
+			echo "Error: Code formatting issues detected." >&2
+			echo "Please run 'shfmt -w ${STAGED_SH_FILES[*]}' to fix formatting." >&2
+			exit 1
+		fi
+	fi
+fi
+
+# Check if prepare_install_package.sh exists
+if [[ ! -f "${REPO_ROOT}/prepare_install_package.sh" ]]; then
+	echo "Error: prepare_install_package.sh not found" >&2
+	exit 1
+fi
+
+# Check if prepare_install_package.sh is executable
+if [[ ! -x "${REPO_ROOT}/prepare_install_package.sh" ]]; then
+	chmod +x "${REPO_ROOT}/prepare_install_package.sh"
+fi
+
+echo "Running prepare_install_package.sh..."
+
+# Run prepare_install_package.sh
+if ! "${REPO_ROOT}/prepare_install_package.sh"; then
+	echo "Error: prepare_install_package.sh failed" >&2
+	exit 1
+fi
+
+# Check if the zip file was created
+PACKAGE_FILE="${REPO_ROOT}/udm-vpn-monitor-installer.zip"
+if [[ ! -f "$PACKAGE_FILE" ]]; then
+	echo "Error: Package file not created: $PACKAGE_FILE" >&2
+	exit 1
+fi
+
+# Add the package file to the staging area
+echo "Adding ${PACKAGE_FILE} to commit..."
+git add "$PACKAGE_FILE"
+
+echo "Pre-commit hook completed successfully."
+

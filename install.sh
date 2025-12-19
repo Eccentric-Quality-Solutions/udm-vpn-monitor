@@ -24,6 +24,22 @@ OVERWRITE_CONF=0
 DEV_MODE=0
 INTERACTIVE=0
 
+# Verify lib directory exists before sourcing
+# The lib directory should be present from the installation package extraction
+if [[ ! -d "${INSTALL_SCRIPT_DIR}/lib" ]]; then
+	echo "[ERROR] Library directory not found: ${INSTALL_SCRIPT_DIR}/lib"
+	echo "[ERROR] Please ensure the installation package was extracted correctly"
+	echo "[ERROR] Required library files: common.sh, config.sh, config_schema.sh, constants.sh, detection.sh, lockfile.sh, logging.sh, recovery.sh, state.sh"
+	exit 1
+fi
+
+# Verify common.sh exists
+if [[ ! -f "${INSTALL_SCRIPT_DIR}/lib/common.sh" ]]; then
+	echo "[ERROR] Required library file not found: ${INSTALL_SCRIPT_DIR}/lib/common.sh"
+	echo "[ERROR] Please ensure all library files are present"
+	exit 1
+fi
+
 # Source shared common functions (logging, root check)
 # shellcheck source=lib/common.sh
 source "${INSTALL_SCRIPT_DIR}/lib/common.sh"
@@ -302,7 +318,7 @@ EOF
 
 # Install scripts
 #
-# Copies the main VPN monitor script and configuration file to the installation directory.
+# Copies the main VPN monitor script, library files, and configuration file to the installation directory.
 # Handles existing config files based on SILENT and OVERWRITE_CONF flags.
 #
 # Returns:
@@ -310,6 +326,7 @@ EOF
 #
 # Side effects:
 #   - Copies vpn-monitor.sh to installation directory
+#   - Copies lib/ directory with all library modules to installation directory
 #   - Copies analyze-logs.sh to installation directory (if available)
 #   - Sets executable permissions on scripts
 #   - Installs config file (may prompt user in interactive mode)
@@ -323,6 +340,19 @@ install_scripts() {
 		log_info "Installed ${SCRIPT_NAME}"
 	else
 		log_error "Source file not found: ${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}"
+		exit 1
+	fi
+
+	# Copy library directory (required for vpn-monitor.sh)
+	if [[ -d "${INSTALL_SCRIPT_DIR}/lib" ]]; then
+		# Create lib directory in installation directory
+		mkdir -p "${INSTALL_DIR}/lib"
+		# Copy all library files
+		cp -r "${INSTALL_SCRIPT_DIR}/lib"/* "${INSTALL_DIR}/lib/"
+		log_info "Installed lib/ directory (library modules)"
+	else
+		log_error "Library directory not found: ${INSTALL_SCRIPT_DIR}/lib"
+		log_error "vpn-monitor.sh requires library files to function"
 		exit 1
 	fi
 
@@ -580,6 +610,7 @@ EOF
 #
 # Verifies that the installation completed successfully by checking:
 #   - Script file exists and is executable
+#   - Library directory exists with required files
 #   - Config file exists
 #   - Cron entry exists (if cron setup was not skipped)
 #
@@ -600,6 +631,40 @@ verify_installation() {
 		errors=$((errors + 1))
 	else
 		log_info "Script verified: ${INSTALL_DIR}/${SCRIPT_NAME}"
+	fi
+
+	# Check library directory exists
+	if [[ ! -d "${INSTALL_DIR}/lib" ]]; then
+		log_error "Library directory not found: ${INSTALL_DIR}/lib"
+		errors=$((errors + 1))
+	else
+		# Check for required library files (directly sourced by vpn-monitor.sh)
+		local required_libs=(
+			"logging.sh"
+			"config.sh"
+			"state.sh"
+			"detection.sh"
+			"recovery.sh"
+			"lockfile.sh"
+		)
+		# Also check for indirectly required files (sourced by other lib files)
+		local indirect_libs=(
+			"constants.sh"
+			"common.sh"
+			"config_schema.sh"
+		)
+		local missing_libs=0
+		for lib_file in "${required_libs[@]}" "${indirect_libs[@]}"; do
+			if [[ ! -f "${INSTALL_DIR}/lib/${lib_file}" ]]; then
+				log_error "Required library file not found: ${INSTALL_DIR}/lib/${lib_file}"
+				missing_libs=$((missing_libs + 1))
+			fi
+		done
+		if [[ $missing_libs -eq 0 ]]; then
+			log_info "Library directory verified: ${INSTALL_DIR}/lib (all required files present)"
+		else
+			errors=$((errors + missing_libs))
+		fi
 	fi
 
 	# Check config exists

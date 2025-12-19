@@ -8,8 +8,9 @@
 
 # Surgical SA cleanup (Tier 2 recovery)
 #
-# Attempts to clean up specific Security Associations for a peer by reloading swanctl configuration.
-# If a connection name is configured for the peer, attempts per-connection reload (surgical).
+# Attempts to clean up specific Security Associations for a peer by reloading IPsec configuration.
+# Prefers swanctl for per-connection reloads when available, falls back to ipsec reload if swanctl is unavailable.
+# If a connection name is configured for the peer and swanctl is available, attempts per-connection reload (surgical).
 # Otherwise falls back to reloading all IPsec connections (affects all tunnels).
 # This is less disruptive than full restart but more aggressive than logging.
 #
@@ -20,27 +21,33 @@
 #   0: Always succeeds (even if cleanup commands fail, errors are logged)
 #
 # Actions:
-#   Reloads swanctl configuration to clean up and re-establish SAs:
-#   - If CONNECTION_NAME_<peer_ip> is configured: uses swanctl --reload-conn <name> (per-connection)
-#   - Otherwise: uses swanctl --reload (affects all connections)
+#   Reloads IPsec configuration to clean up and re-establish SAs:
+#   - If swanctl available and CONNECTION_NAME_<peer_ip> is configured: uses swanctl --reload-conn <name> (per-connection)
+#   - If swanctl available but no connection name: uses swanctl --reload (affects all connections)
+#   - If swanctl unavailable but ipsec available: uses ipsec reload (affects all connections)
+#   - If ipsec reload fails: attempts ipsec restart as last resort
 #
 # Side effects:
-#   - If connection name not configured: Calls swanctl --reload which reloads ALL IPsec connections
-#   - If connection name configured: Calls swanctl --reload-conn which reloads only the specified connection
-#   - May temporarily disrupt VPN connections (scope depends on whether connection name is configured)
+#   - If swanctl available and connection name configured: Calls swanctl --reload-conn (surgical, per-connection)
+#   - If swanctl available but no connection name: Calls swanctl --reload (affects all connections)
+#   - If swanctl unavailable: Calls ipsec reload (affects all connections, not surgical)
+#   - May temporarily disrupt VPN connections (scope depends on tool availability and connection name configuration)
 #   - Logs all actions and results
 #
 # Examples:
 #   surgical_cleanup "203.0.113.1"
-#   # If CONNECTION_NAME_203_0_113_1="site-to-site-1" is configured:
+#   # If swanctl available and CONNECTION_NAME_203_0_113_1="site-to-site-1" is configured:
 #   #   Runs: swanctl --reload-conn site-to-site-1
-#   # Otherwise:
+#   # If swanctl available but no connection name:
 #   #   Runs: swanctl --reload (affects all tunnels)
+#   # If swanctl unavailable but ipsec available:
+#   #   Runs: ipsec reload (affects all tunnels)
 #
 # Note:
-#   This function relies on swanctl to properly clean up and re-establish Security Associations.
+#   This function prefers swanctl for per-connection reloads when available.
+#   Falls back to ipsec reload if swanctl is not available (many UDMs use ipsec instead of swanctl).
 #   Direct xfrm state deletion is not attempted because it requires full selectors (src, dst, proto, spi)
-#   which are not easily extractable. swanctl reload handles SA cleanup and re-establishment correctly.
+#   which are not easily extractable. swanctl/ipsec reload handles SA cleanup and re-establishment correctly.
 #   To enable per-connection reload, configure CONNECTION_NAME_<sanitized_peer_ip> in config file.
 #   Example: CONNECTION_NAME_203_0_113_1="site-to-site-1"
 #   Requires get_connection_name, warn_if_missing, and log_message to be set
@@ -49,7 +56,8 @@ surgical_cleanup() {
 	log_message "INFO" "Attempting surgical SA cleanup for $peer_ip"
 
 	# Reload connection using swanctl to clean up and re-establish SAs
-	if warn_if_missing "swanctl"; then
+	# Falls back to ipsec reload if swanctl is not available
+	if command -v swanctl >/dev/null 2>&1; then
 		local connection_name
 		if connection_name=$(get_connection_name "$peer_ip" 2>/dev/null); then
 			# Connection name configured - use per-connection reload
@@ -57,19 +65,37 @@ surgical_cleanup() {
 			if swanctl --reload-conn "$connection_name" 2>/dev/null; then
 				log_message "INFO" "Successfully reloaded connection: $connection_name"
 			else
-				log_message "WARNING" "Per-connection reload failed for $connection_name, falling back to full reload"
-				swanctl --reload 2>/dev/null || true
+				local reload_exit_code=$?
+				log_message "WARNING" "Per-connection reload failed for $connection_name (exit code: ${reload_exit_code}), falling back to full reload"
+				if swanctl --reload 2>/dev/null; then
+					log_message "INFO" "Full reload succeeded after per-connection reload failure"
+				else
+					local full_reload_exit_code=$?
+					log_message "ERROR" "Full reload also failed (exit code: ${full_reload_exit_code})"
+				fi
 			fi
 		else
 			# No connection name configured - use full reload (affects all connections)
 			log_message "INFO" "No connection name configured for $peer_ip, using full reload (affects all tunnels)"
 			swanctl --reload 2>/dev/null || true
 		fi
-
 		log_message "INFO" "Surgical cleanup completed for $peer_ip"
+	elif command -v ipsec >/dev/null 2>&1; then
+		# Fallback to ipsec reload if swanctl is not available
+		# Note: ipsec reload affects all connections (not per-connection)
+		log_message "INFO" "swanctl not available, using ipsec reload fallback (affects all tunnels)"
+		if ipsec reload 2>/dev/null; then
+			log_message "INFO" "Successfully reloaded IPsec connections via ipsec reload"
+		else
+			log_message "WARNING" "ipsec reload failed, attempting ipsec restart"
+			ipsec restart 2>/dev/null || true
+		fi
+		log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback)"
 	else
-		# warn_if_missing already logged the warning
-		:
+		# Neither command available
+		warn_if_missing "swanctl"
+		warn_if_missing "ipsec"
+		log_message "ERROR" "Neither swanctl nor ipsec command available for Tier 2 recovery"
 	fi
 }
 

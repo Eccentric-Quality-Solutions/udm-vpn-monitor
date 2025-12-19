@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/eccentric-quality-solutions/udm-vpn-monitor/workflows/CI/badge.svg)](https://github.com/eccentric-quality-solutions/udm-vpn-monitor/actions)
 
-A best-effort watchdog for UniFi Dream Machines that detects Site-to-Site VPN failures using IPsec xfrm state byte counters and ping connectivity checks, implementing tiered recovery. Designed for UniFi OS 4.3+ with realistic persistence expectations.
+A best-effort watchdog for UniFi Dream Machines that detects Site-to-Site VPN failures using IPsec xfrm state byte counters and ping connectivity checks with tiered recovery. Designed for UniFi OS 4.3+ with realistic persistence expectations.
 
 ## Overview
 
@@ -10,26 +10,21 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
 
 ## Quick Start
 
-**New to this project?** See [QUICK_START.md](QUICK_START.md) for a 5-minute setup guide.
+- See [QUICK_START.md](QUICK_START.md) for a 5-minute setup guide.
+- See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common problems and solutions.
+- See [DEVELOPER.md](DEVELOPER.md) for development setup and [CODE_REVIEW.md](CODE_REVIEW.md) for code quality analysis.
 
-**Having issues?** See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common problems and solutions.
+## ⚠️ Important: Tool Availability and Fallback Behavior
 
-**For developers:** See [DEVELOPER.md](DEVELOPER.md) for development setup and [CODE_REVIEW.md](CODE_REVIEW.md) for code quality analysis.
+**This tool supports both `swanctl` and `ipsec` commands with automatic fallback:**
 
-## ⚠️ Important: Tier 2 Recovery Behavior
+Many UDMs use `ipsec` instead of `swanctl` for IPsec management. The tool automatically detects which commands are available and falls back appropriately:
 
-**Before using this tool, understand how Tier 2 recovery works:**
+- **Detection**: Uses `ip xfrm state` (primary) → `swanctl --list-sas` (fallback) → `ipsec status` (fallback)
+- **Tier 2 Recovery**: Uses `swanctl --reload-conn` (per-connection) or `swanctl --reload` (all) → falls back to `ipsec reload` if swanctl unavailable
+- **Tier 3 Recovery**: Uses `ipsec restart` (preferred) → falls back to `swanctl --reload` if ipsec unavailable
 
-- **With connection name configured (or auto-discovered)**: Tier 2 uses `swanctl --reload-conn <connection-name>` to reload **only the specific failing connection**. This is true per-connection recovery with minimal impact.
-
-- **Without connection name**: Tier 2 uses `swanctl --reload` which reloads **ALL IPsec connections**, temporarily affecting **all Site-to-Site and remote user VPNs**. This is less "surgical" than intended.
-
-**To enable per-connection recovery:**
-- Connection names are automatically discovered from `swanctl` if available (recommended)
-- Or manually configure `CONNECTION_NAME_<sanitized_peer_ip>` in the config file
-- See the [Configuration](#configuration) section for details
-
-**Note:** Tier 3 recovery always affects all tunnels regardless of configuration.
+**Note:** See the [Tiered Recovery](#tiered-recovery) section for detailed behavior. Tier 3 recovery always affects all tunnels regardless of configuration or tool availability.
 
 ## Features
 
@@ -66,19 +61,22 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
 
 ## Installation
 
+The install package (recommended) includes all required files with proper directory structure. It can be created using `./prepare_install_package.sh` (creates zip) or `./prepare_install_package.sh --tar` (creates tar.gz).
+
 1. **Transfer files to your UDM**:
    ```bash
-   # Option 1: Use the helper script (recommended - lists specific files)
-   ./scp-files.sh <UDM_IP>
-   
-   # Option 2: Manually specify files
-   scp vpn-monitor.sh vpn-monitor.conf install.sh uninstall.sh root@<UDM_IP>:/tmp/
-   
-   # Option 3: Use wildcards (copies all .sh and .conf files)
-   scp *.sh *.conf root@<UDM_IP>:/tmp/
+   # Option 1: Use the install package (recommended - preserves directory structure)
+   # First, create the package:
+   ./prepare_install_package.sh              # Creates zip file
+   # Or create tar.gz:
+   ./prepare_install_package.sh --tar         # Creates tar.gz file
+   # Then transfer and extract:
+   scp udm-vpn-monitor-installer.zip root@<UDM_IP>:/tmp/
+   ssh root@<UDM_IP>
+   cd /tmp && unzip udm-vpn-monitor-installer.zip
+   # Or for tar.gz:
+   # cd /tmp && tar -xzf udm-vpn-monitor-installer.tar.gz
    ```
-   
-   **Note**: The `scp-files.sh` script includes all required files including the `lib/` directory and `analyze-logs.sh`.
 
 2. **SSH into your UDM**:
    ```bash
@@ -236,7 +234,7 @@ swanctl --list-conns
 swanctl --list-sas
 ```
 
-**Note:** If connection names cannot be discovered (e.g., swanctl not available or no active SA), or if a manually configured name doesn't match swanctl, Tier 2 will fall back to reloading all IPsec connections (affects all tunnels). See the [Tiered Recovery](#tiered-recovery) section for details.
+**Note:** If swanctl is not available, connection name discovery will fail and Tier 2 will use `ipsec reload` fallback (affects all tunnels). If swanctl is available but connection names cannot be discovered (e.g., no active SA), or if a manually configured name doesn't match swanctl, Tier 2 will fall back to reloading all IPsec connections (affects all tunnels). See the [Tiered Recovery](#tiered-recovery) section for details.
 
 **Cron Schedule Examples:**
 - `"*/1 * * * *"` - Every 1 minute (default)
@@ -251,19 +249,26 @@ The monitor uses a multi-layered approach to verify VPN tunnel health and automa
 
 ### Detection Method
 
-The monitor checks VPN tunnel health by:
-1. **Verifying IPsec Security Associations (SAs)** using `ip xfrm state` to confirm the tunnel exists and traffic is flowing
-2. **Optional ping checks** to verify end-to-end connectivity through the tunnel
+The monitor checks VPN tunnel health using multiple detection methods with automatic fallback:
+
+1. **Primary**: `ip xfrm state` - Verifies IPsec Security Associations (SAs) and byte counters to confirm the tunnel exists and traffic is flowing
+2. **Fallback 1**: `swanctl --list-sas` - Checks for active Security Associations via swanctl
+3. **Fallback 2**: `ipsec status` - Checks for connections via ipsec command (used when swanctl unavailable)
+4. **Optional**: Ping checks to verify end-to-end connectivity through the tunnel
 
 ### Tiered Recovery
 
 The system uses a three-tier recovery approach that escalates based on consecutive failures:
 
 1. **Tier 1 (Logging)**: Logs the failure for monitoring
-2. **Tier 2 (Surgical Cleanup)**: Attempts targeted recovery of the specific connection (when connection name is configured) or reloads all connections
-3. **Tier 3 (Full Restart)**: Performs a full IPsec restart affecting all tunnels
+2. **Tier 2 (Surgical Cleanup)**: 
+   - **With swanctl available**: Attempts targeted recovery using `swanctl --reload-conn` (per-connection) or `swanctl --reload` (all connections)
+   - **Without swanctl**: Falls back to `ipsec reload` (affects all connections, not surgical)
+3. **Tier 3 (Full Restart)**: 
+   - **Preferred**: Uses `ipsec restart` to restart all IPsec tunnels
+   - **Fallback**: Uses `swanctl --reload` if ipsec command unavailable
 
-**Important**: Each peer IP has its own independent failure counter, allowing per-peer recovery. Tier 2 recovery can be surgical (per-connection) when connection names are configured. See [Configuration](#configuration) for connection name setup.
+**Important**: Each peer IP has its own independent failure counter, allowing per-peer recovery. Tier 2 recovery can be surgical (per-connection) when swanctl is available and connection names are configured. See [Configuration](#configuration) for connection name setup.
 
 ### Safety Features
 
@@ -429,11 +434,8 @@ If you prefer to uninstall manually:
 
 ### Important Warnings
 
-1. **⚠️ Tier 2 Recovery Impact - READ THIS**: 
-   - **Without connection name configured (or auto-discovery fails)**: Tier 2 recovery uses `swanctl --reload` which reloads **ALL IPsec connections**, temporarily affecting **all Site-to-Site and remote user VPNs**. This is less "surgical" than intended.
-   - **With connection name configured (or auto-discovered)**: Tier 2 recovery uses `swanctl --reload-conn <connection-name>` which reloads **only the specific failing connection**. This is true per-connection recovery with minimal impact.
-   - **Recommendation**: Ensure connection names are available (auto-discovery is enabled by default) to minimize impact on other tunnels.
-2. **Full Restart Impact**: Tier 3 recovery always restarts all IPsec tunnels using `ipsec restart`, temporarily affecting all Site-to-Site and remote user VPNs, regardless of configuration.
+1. **⚠️ Tier 2 Recovery Impact - READ THIS**: See the [Tiered Recovery](#tiered-recovery) section for detailed behavior. In summary: Tier 2 can be surgical (per-connection) when swanctl is available and connection names are configured, otherwise it affects all tunnels.
+2. **Full Restart Impact**: Tier 3 recovery always restarts all IPsec tunnels using `ipsec restart` (preferred) or `swanctl --reload` (fallback), temporarily affecting all Site-to-Site and remote user VPNs, regardless of configuration.
 3. **Best-Effort**: This is a watchdog tool, not a guaranteed daemon. It may miss failures or require manual intervention
 4. **Upgrade Compatibility**: UniFi OS upgrades may break functionality or remove cron jobs
 5. **No Official Support**: This is an unofficial tool. Use at your own risk

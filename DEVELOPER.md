@@ -7,28 +7,6 @@ This guide provides information for developers contributing to the UDM VPN Monit
 ### First Time Setup
 
 1. **Clone the repository**
-2. **Install development tools** (see below)
-3. **Run tests** to verify setup:
-   ```bash
-   ./tests/run_tests.sh
-   ```
-4. **Read ARCHITECTURE.md** to understand the system
-5. **Pick a small issue** to start contributing
-
-### Understanding the Codebase
-
-- **Main Script**: `vpn-monitor.sh` - Entry point, orchestrates monitoring
-- **Detection**: `check_vpn_status()` - Checks VPN health
-- **Recovery**: `surgical_cleanup()`, `full_restart()` - Recovery actions
-- **State**: Per-peer failure counters and byte tracking
-
----
-
-## Detailed Getting Started Guide
-
-### First Time Setup (Detailed)
-
-1. **Clone the repository**
    ```bash
    git clone <repository-url>
    cd udm-vpn-monitor
@@ -40,30 +18,46 @@ This guide provides information for developers contributing to the UDM VPN Monit
    - bats (required)
    - kcov (optional, for coverage)
 
-3. **Run tests to verify setup**
+3. **Set up git hooks**:
+   ```bash
+   ./scripts/setup-git-hooks.sh
+   ```
+   This installs pre-commit hooks that:
+   - Run ShellCheck linting on staged shell scripts (if ShellCheck is installed)
+   - Check code formatting with shfmt on staged shell scripts (if shfmt is installed)
+   - Automatically regenerate the installer package before each commit
+   
+   **Note**: The hooks will warn if ShellCheck or shfmt are not installed, but will still proceed with package regeneration. For best results, install both tools (see [Required Tools](#required-tools) below).
+
+4. **Run tests to verify setup**
    ```bash
    ./tests/run_tests.sh
    ```
    All tests should pass. If not, check tool installation.
 
-4. **Read the architecture documentation**
+5. **Read the architecture documentation**
    - Start with [ARCHITECTURE.md](ARCHITECTURE.md) to understand system design
    - Review [CODE_REVIEW.md](CODE_REVIEW.md) for code quality analysis and improvement areas
    - Check [ENHANCEMENTS.md](ENHANCEMENTS.md) for planned features
 
-5. **Understand the codebase structure**
-   - **Main Script**: `vpn-monitor.sh` (1,829 lines) - Entry point, orchestrates monitoring
-   - **Detection**: `check_vpn_status()` - Checks VPN health using xfrm, swanctl, ipsec
-   - **Recovery**: `surgical_cleanup()`, `full_restart()` - Recovery actions (Tier 2, Tier 3)
+6. **Understand the codebase structure**
+   - **Main Script**: `vpn-monitor.sh` - Entry point, orchestrates monitoring
+   - **Detection**: `check_vpn_status()` - Checks VPN health using xfrm, swanctl, ipsec with automatic fallback
+   - **Recovery**: `surgical_cleanup()`, `full_restart()` - Recovery actions (Tier 2, Tier 3) with tool availability detection
    - **State Management**: Per-peer failure counters and byte tracking
-   - **Common Library**: `lib/common.sh` - Shared utilities (logging, validation)
+   - **Library Modules**: Modular architecture with dedicated modules in `lib/` directory
+     - `lib/common.sh` - Shared utilities (logging, validation)
+     - `lib/detection.sh` - VPN detection logic
+     - `lib/recovery.sh` - Recovery action implementations
+     - `lib/config.sh` - Configuration management
+     - And more (see ARCHITECTURE.md for complete list)
 
-6. **Pick a small issue to start**
+7. **Pick a small issue to start**
    - Check [CODE_REVIEW.md](CODE_REVIEW.md) for improvement recommendations
    - Look for "good first issue" labels
    - Start with documentation improvements or small refactorings
 
-### Understanding the Codebase (Detailed)
+### Understanding the Codebase
 
 **Key Components:**
 
@@ -80,8 +74,15 @@ This guide provides information for developers contributing to the UDM VPN Monit
 
 - **Recovery Actions**:
   - **Tier 1**: Logging only (after `TIER1_THRESHOLD` failures)
-  - **Tier 2**: Surgical cleanup - `swanctl --reload-conn` (per-connection) or `swanctl --reload` (all)
-  - **Tier 3**: Full restart - `ipsec restart` (affects all tunnels)
+  - **Tier 2**: Surgical cleanup
+    - **Preferred**: `swanctl --reload-conn <connection-name>` (per-connection, requires swanctl and connection name)
+    - **Fallback 1**: `swanctl --reload` (all connections, when connection name unavailable)
+    - **Fallback 2**: `ipsec reload` (all connections, when swanctl unavailable)
+    - **Note**: Per-connection recovery only available when swanctl is present
+  - **Tier 3**: Full restart
+    - **Preferred**: `ipsec restart` (affects all tunnels)
+    - **Fallback**: `swanctl --reload` (when ipsec unavailable)
+  - **Tool Availability**: The system automatically detects which commands are available (`command -v`) and uses appropriate fallbacks. This ensures compatibility across different UDM configurations where some use `swanctl` and others use `ipsec` for IPsec management.
 
 - **State Management**:
   - Per-peer failure counters: `logs/failure_counter_<peer_ip>`
@@ -456,7 +457,11 @@ Example:
 # Check if VPN peer is active
 #
 # Verifies VPN tunnel health by checking IPsec Security Association state.
-# Uses multiple detection methods: xfrm (primary), swanctl (fallback), ipsec (fallback).
+# Uses multiple detection methods with automatic fallback:
+#   - Primary: ip xfrm state (SA state and byte counters)
+#   - Fallback 1: swanctl --list-sas (if xfrm unavailable)
+#   - Fallback 2: ipsec status (if swanctl unavailable)
+#   - Optional: Ping connectivity check (if enabled)
 #
 # Arguments:
 #   $1: Peer IP address (external/public IP of remote VPN gateway)
@@ -476,7 +481,9 @@ Example:
 #
 # Note:
 #   Requires validate_ip_address, sanitize_peer_ip, log_message, STATE_DIR,
-#   ENABLE_PING_CHECK, PING_TARGET_IP to be set
+#   ENABLE_PING_CHECK, PING_TARGET_IP to be set.
+#   Automatically detects available tools (xfrm, swanctl, ipsec) and uses
+#   appropriate fallbacks for compatibility across different UDM configurations.
 check_vpn_status() {
 	local peer_ip="$1"
 	# ... implementation ...
@@ -538,6 +545,70 @@ Fix lockfile race condition in vpn-monitor.sh
 Fixes #123
 ```
 
+### 8. Git Pre-commit Hook
+
+This repository includes a pre-commit hook that runs code quality checks and automatically regenerates the installer package (`udm-vpn-monitor-installer.zip`) before each commit. This ensures code quality and that the installer package is always up-to-date with the current codebase.
+
+**What the hook does:**
+
+1. **Code Quality Checks** (if tools are installed):
+   - Runs ShellCheck on staged shell scripts to catch errors and security issues
+   - Checks code formatting with shfmt on staged shell scripts
+   - Blocks commit if errors are found (with helpful error messages)
+   - Warns if ShellCheck or shfmt are not installed (but allows commit to proceed)
+
+2. **Package Regeneration**:
+   - Automatically regenerates `udm-vpn-monitor-installer.zip` with current codebase
+   - Adds the updated package file to the commit
+
+**Note**: The hook will warn if ShellCheck or shfmt are not installed, but will still proceed with package regeneration. For best results and to catch issues early, install both tools (see [Required Tools](#required-tools) above).
+
+**Setup:**
+
+The hooks are stored in `scripts/hooks/` (version controlled) and must be installed to `.git/hooks/`:
+
+```bash
+./scripts/setup-git-hooks.sh
+```
+
+This should be run once after cloning the repository (see [First Time Setup](#first-time-setup) above).
+
+**What the hook does:**
+
+1. **Code Quality Checks** (if tools are installed):
+   - Runs ShellCheck on staged shell scripts to catch errors and security issues
+   - Checks code formatting with shfmt on staged shell scripts
+   - Blocks commit if errors are found (with helpful error messages)
+   - Warns if ShellCheck or shfmt are not installed (but allows commit to proceed)
+
+2. **Package Regeneration**:
+   - Runs `prepare_install_package.sh` to regenerate the installer package
+   - Adds the generated `udm-vpn-monitor-installer.zip` file to the commit
+   - Ensures the package is always synchronized with source code changes
+
+**Note**: The hook will warn if ShellCheck or shfmt are not installed, but will still proceed with package regeneration. For best results and to catch issues early, install both tools (see [Required Tools](#required-tools) above).
+
+**Hook files:**
+- **Source (version controlled)**: `scripts/hooks/pre-commit`
+- **Installed location**: `.git/hooks/pre-commit`
+
+**To bypass the hook** (not recommended):
+```bash
+git commit --no-verify -m "commit message"
+```
+
+**To manually test the hook:**
+```bash
+.git/hooks/pre-commit
+```
+
+**To reinstall hooks** (if hooks are updated):
+```bash
+./scripts/setup-git-hooks.sh
+```
+
+**Note:** The hook will fail if `prepare_install_package.sh` fails or if the package file cannot be created. Fix any issues before committing.
+
 ## Project Structure
 
 ```
@@ -547,8 +618,13 @@ udm-vpn-monitor/
 ├── uninstall.sh              # Uninstallation script
 ├── vpn-monitor.sh            # Main monitoring script
 ├── vpn-monitor.conf          # Configuration template
+├── prepare_install_package.sh # Creates installer package
 ├── lib/
 │   └── common.sh            # Shared library functions
+├── scripts/
+│   ├── hooks/               # Git hooks (version controlled)
+│   │   └── pre-commit       # Pre-commit hook
+│   └── setup-git-hooks.sh  # Hook installation script
 ├── tests/
 │   ├── test_*.sh            # Test files
 │   ├── test_helper.bash     # Test utilities

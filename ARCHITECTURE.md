@@ -73,8 +73,8 @@ graph TB
     
     subgraph "Recovery Layer"
         Tier1[Tier 1: Logging]
-        Tier2[Tier 2: Surgical Cleanup<br/>SA Deletion + Reload<br/>Per-Connection or All Tunnels]
-        Tier3[Tier 3: Full Restart<br/>ipsec restart<br/>Affects All Tunnels]
+        Tier2[Tier 2: Surgical Cleanup<br/>swanctl reload (preferred)<br/>ipsec reload (fallback)<br/>Per-Connection or All Tunnels]
+        Tier3[Tier 3: Full Restart<br/>ipsec restart (preferred)<br/>swanctl reload (fallback)<br/>Affects All Tunnels]
     end
     
     subgraph "Safety Mechanisms"
@@ -238,9 +238,15 @@ stateDiagram-v2
     }
     
     state Tier2 {
-        [*] --> DeleteSA
-        DeleteSA --> ReloadSwanctl
+        [*] --> CheckSwanctl{swanctl<br/>available?}
+        CheckSwanctl -->|Yes| CheckConnName{Connection<br/>name<br/>available?}
+        CheckSwanctl -->|No| ReloadIpsec[ipsec reload<br/>All Connections]
+        CheckConnName -->|Yes| ReloadConn[swanctl --reload-conn<br/>Per-Connection]
+        CheckConnName -->|No| ReloadSwanctl[swanctl --reload<br/>All Connections]
+        ReloadConn -->|Success| [*]
+        ReloadConn -->|Failure| ReloadSwanctl
         ReloadSwanctl --> [*]
+        ReloadIpsec --> [*]
     }
     
     state Tier3 {
@@ -356,6 +362,7 @@ graph TB
     
     SurgicalCleanup --> IP
     SurgicalCleanup --> Swanctl
+    SurgicalCleanup --> Ipsec
     
     FullRestart --> Ipsec
     FullRestart --> Swanctl
@@ -381,7 +388,14 @@ graph TB
 ### 3. Tiered Recovery
 - **Why**: Gradual escalation prevents unnecessary disruption
 - **Tiers**: Log → Cleanup → Restart
-- **Benefit**: Most issues resolved without full restart
+- **Tier 2 Details**: 
+  - Uses `swanctl --reload-conn` for per-connection reload when swanctl and connection name available
+  - Falls back to `swanctl --reload` (all connections) if no connection name
+  - Falls back to `ipsec reload` (all connections) if swanctl unavailable
+- **Tier 3 Details**: 
+  - Prefers `ipsec restart` (affects all tunnels)
+  - Falls back to `swanctl --reload` if ipsec unavailable
+- **Benefit**: Most issues resolved without full restart, with surgical per-connection recovery when possible
 
 ### 4. Per-Peer State Tracking
 - **Why**: Multiple peers need independent monitoring and recovery
@@ -391,10 +405,14 @@ graph TB
 - **Benefit**: Accurate detection and independent recovery for multi-peer setups
 - **Note**: Both failure counters and byte counters are tracked per-peer, allowing independent failure tracking and recovery actions
 
-### 5. Dual Detection Method
-- **Why**: xfrm shows tunnel state, ping verifies connectivity
-- **Implementation**: xfrm primary, ping optional verification
-- **Benefit**: Distinguishes "idle" from "broken"
+### 5. Multi-Method Detection with Fallback
+- **Why**: Different UDMs use different IPsec management tools (swanctl vs ipsec)
+- **Implementation**: 
+  - Primary: `ip xfrm state` (SA state and byte counters)
+  - Fallback 1: `swanctl --list-sas` (if xfrm unavailable)
+  - Fallback 2: `ipsec status` (if swanctl unavailable)
+  - Optional: Ping checks verify end-to-end connectivity
+- **Benefit**: Works across different UDM configurations, distinguishes "idle" from "broken"
 
 ### 6. Shared Library and Helper Functions
 - **Why**: Reduce code duplication and improve maintainability
@@ -435,9 +453,13 @@ graph TB
 
 1. **Fail-Safe Defaults**: Script exits gracefully on errors
 2. **Logging**: All errors logged with context
-3. **Fallbacks**: Multiple detection methods (xfrm → swanctl → ipsec)
+3. **Fallbacks**: 
+   - Detection: Multiple methods (xfrm → swanctl → ipsec)
+   - Tier 2 Recovery: swanctl (preferred) → ipsec reload (fallback)
+   - Tier 3 Recovery: ipsec restart (preferred) → swanctl reload (fallback)
 4. **Validation**: Input validation prevents injection attacks
 5. **State Recovery**: Stale lockfiles automatically cleaned up
+6. **Graceful Degradation**: If preferred tool unavailable, falls back to alternative without failing
 
 ## Performance Considerations
 

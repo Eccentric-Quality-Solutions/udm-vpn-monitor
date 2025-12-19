@@ -2,37 +2,6 @@
 
 Common issues and solutions for the UDM VPN Monitor.
 
-## Common Issues
-
-### Script Not Running
-**Symptoms**: No log entries, cron job exists but nothing happens
-
-**Solutions**:
-1. Check lockfile: `ls -l /data/vpn-monitor/vpn-monitor.lock`
-2. Check cron: `crontab -l | grep vpn-monitor`
-3. Run manually: `/data/vpn-monitor/vpn-monitor.sh`
-4. Check permissions: `ls -l /data/vpn-monitor/vpn-monitor.sh`
-
-### False Positives
-**Symptoms**: VPN is working but monitor reports failures
-
-**Solutions**:
-1. Check byte counters: `ip xfrm state | grep <PEER_IP>`
-2. Disable ping checks: `ENABLE_PING_CHECK=0`
-3. Increase thresholds in config
-4. Enable debug: `DEBUG=1` and check logs
-
-### Recovery Not Working
-**Symptoms**: Failures detected but VPN doesn't recover
-
-**Solutions**:
-1. Check recovery logs: `grep "Tier" /data/vpn-monitor/logs/vpn-monitor.log`
-2. Verify swanctl available: `which swanctl`
-3. Check connection names: `swanctl --list-conns`
-4. Test recovery manually: `/data/vpn-monitor/vpn-monitor.sh` (not --fake)
-
----
-
 ## Table of Contents
 
 - [Script Not Running](#script-not-running)

@@ -12,6 +12,7 @@ This directory contains comprehensive tests for the UDM VPN Monitor scripts usin
 - `test_uninstall.sh` - Tests for `uninstall.sh` script
 - `test_vpn_monitor.sh` - Tests for `vpn-monitor.sh` script
 - `test_analyze_logs.sh` - Tests for `analyze-logs.sh` script
+- `test_prepare_install_package.sh` - Tests for `prepare_install_package.sh` script
 - `run_tests.sh` - Test runner script
 - `generate_coverage_report.sh` - Generates test coverage reports from kcov output
 

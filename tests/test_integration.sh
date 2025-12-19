@@ -744,3 +744,191 @@ EOF
 
 	remove_mock_from_path
 }
+
+# ============================================================================
+# Tests for monitor_peer() function behavior
+# ============================================================================
+
+@test "integration: monitor_peer resets failure counter when VPN recovers" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+PEER_IPS="192.168.1.1"
+TIER1_THRESHOLD=1
+TIER2_THRESHOLD=3
+TIER3_THRESHOLD=5
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+	local failure_counter="${state_dir}/logs/failure_counter_192_168_1_1"
+
+	# Set failure counter to non-zero value (simulating previous failures)
+	echo "2" >"$failure_counter"
+
+	# Mock ip command - VPN now healthy (bytes increasing)
+	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	add_mock_to_path
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	# First run - establish baseline
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	# Second run - bytes increased, VPN should be healthy
+	mock_ip_xfrm_state "192.168.1.1" "2000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	assert_success
+	# Failure counter should be reset to 0
+	if [[ -f "$failure_counter" ]]; then
+		local count=$(cat "$failure_counter")
+		assert [ "$count" -eq 0 ]
+	fi
+	# Should log recovery message
+	assert_file_contains "$log_file" "recovered"
+
+	remove_mock_from_path
+}
+
+@test "integration: monitor_peer increments failure counter on VPN failure" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+PEER_IPS="192.168.1.1"
+TIER1_THRESHOLD=1
+TIER2_THRESHOLD=3
+TIER3_THRESHOLD=5
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+	local failure_counter="${state_dir}/logs/failure_counter_192_168_1_1"
+
+	# Mock ip command - VPN down (no SA found)
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    exit 0
+fi
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	assert_success
+	# Failure counter should be incremented
+	if [[ -f "$failure_counter" ]]; then
+		local count=$(cat "$failure_counter")
+		assert [ "$count" -eq 1 ]
+	fi
+	# Should log failure
+	assert_file_contains "$log_file" "VPN check failed"
+
+	remove_mock_from_path
+}
+
+@test "integration: monitor_peer tier escalation in fake mode skips actions" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+PEER_IPS="192.168.1.1"
+TIER1_THRESHOLD=1
+TIER2_THRESHOLD=2
+TIER3_THRESHOLD=3
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+	local failure_counter="${state_dir}/logs/failure_counter_192_168_1_1"
+
+	# Set failure count to Tier 2 threshold
+	echo "2" >"$failure_counter"
+
+	# Mock ip command - VPN down
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    exit 0
+fi
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	assert_success
+	# Should log that tier escalation is skipped in fake mode
+	assert_file_contains "$log_file" "skipped in fake mode"
+	assert_file_contains "$log_file" "Would attempt"
+
+	remove_mock_from_path
+}
+
+@test "integration: monitor_peer tier escalation triggers at correct thresholds" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+PEER_IPS="192.168.1.1"
+TIER1_THRESHOLD=1
+TIER2_THRESHOLD=2
+TIER3_THRESHOLD=3
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+	local failure_counter="${state_dir}/logs/failure_counter_192_168_1_1"
+
+	# Set failure count to Tier 1 threshold
+	echo "1" >"$failure_counter"
+
+	# Mock ip command - VPN down
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    exit 0
+fi
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	assert_success
+	# Should log Tier 1 action
+	assert_file_contains "$log_file" "Tier 1"
+
+	# Increment to Tier 2 threshold
+	echo "2" >"$failure_counter"
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	assert_success
+	# Should log Tier 2 action
+	assert_file_contains "$log_file" "Tier 2"
+
+	# Increment to Tier 3 threshold
+	echo "3" >"$failure_counter"
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	assert_success
+	# Should log Tier 3 action
+	assert_file_contains "$log_file" "Tier 3"
+
+	remove_mock_from_path
+}

@@ -743,3 +743,138 @@ EOF
 
 	assert_failure
 }
+
+# ============================================================================
+# Tests for config_schema.sh functions
+# ============================================================================
+
+@test "get_config_schema returns schema for existing variable" {
+	# Source config_schema.sh
+	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
+	fi
+
+	run get_config_schema "PEER_IPS"
+
+	assert_success
+	assert_output --partial "required"
+	assert_output --partial "string"
+}
+
+@test "get_config_schema returns failure for non-existent variable" {
+	# Source config_schema.sh
+	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
+	fi
+
+	run get_config_schema "NON_EXISTENT_VAR"
+
+	assert_failure
+}
+
+@test "is_config_required returns true for required variable" {
+	# Source config_schema.sh
+	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
+	fi
+
+	run is_config_required "PEER_IPS"
+
+	assert_success
+}
+
+@test "is_config_required returns false for optional variable" {
+	# Source config_schema.sh
+	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
+	fi
+
+	run is_config_required "VPN_NAME"
+
+	assert_failure
+}
+
+@test "is_config_required returns false for unknown variable" {
+	# Source config_schema.sh
+	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
+	fi
+
+	run is_config_required "UNKNOWN_VAR"
+
+	assert_failure
+}
+
+@test "get_config_default returns default value for variable with default" {
+	# Source config_schema.sh
+	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
+	fi
+
+	run get_config_default "VPN_NAME"
+
+	assert_success
+	assert_output "Site-to-Site VPN"
+}
+
+@test "get_config_default returns empty string for variable without default" {
+	# Source config_schema.sh
+	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
+	fi
+
+	run get_config_default "PEER_IPS"
+
+	assert_success
+	# Should return empty string (no default for required variables)
+	# Function may output newline, so check for empty or whitespace-only
+	if [[ -n "$output" ]] && [[ "$output" != "" ]]; then
+		echo "Expected empty output but got: '$output'" >&2
+		return 1
+	fi
+}
+
+@test "get_config_default returns failure for non-existent variable" {
+	# Source config_schema.sh
+	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
+	fi
+
+	run get_config_default "NON_EXISTENT_VAR"
+
+	assert_failure
+}
+
+@test "get_config_default handles integer defaults correctly" {
+	# Source config_schema.sh
+	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
+	fi
+
+	run get_config_default "ENABLE_PING_CHECK"
+
+	assert_success
+	assert_output "1"
+}
+
+@test "get_config_default handles cron schedule defaults correctly" {
+	# Source config_schema.sh
+	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
+	fi
+
+	run get_config_default "CRON_SCHEDULE"
+
+	assert_success
+	assert_output "*/1 * * * *"
+}

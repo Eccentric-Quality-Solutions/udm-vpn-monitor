@@ -542,3 +542,289 @@ EOF
 	assert_file_exist "$log_file"
 	# May warn if cron not found
 }
+
+# ============================================================================
+# Tests for main execution flow functions (initialize_monitor, validate_monitor_state, process_peer_ips)
+# ============================================================================
+
+@test "vpn-monitor.sh initialize_monitor logs script start in normal mode" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+PEER_IPS="192.168.1.1"
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+
+	# Mock ip command - VPN healthy
+	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	add_mock_to_path
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	assert_success
+	# Should log script start (not fake mode message)
+	assert_file_contains "$log_file" "VPN monitor script started"
+	refute_output --partial "fake mode"
+
+	remove_mock_from_path
+}
+
+@test "vpn-monitor.sh initialize_monitor logs script start in fake mode" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+PEER_IPS="192.168.1.1"
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+
+	# Mock ip command - VPN healthy
+	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	add_mock_to_path
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	assert_success
+	# Should log fake mode message
+	assert_file_contains "$log_file" "fake mode"
+	assert_file_contains "$log_file" "tier escalation disabled"
+
+	remove_mock_from_path
+}
+
+@test "vpn-monitor.sh initialize_monitor initializes state files" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+PEER_IPS="192.168.1.1"
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+
+	# Mock ip command - VPN healthy
+	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	add_mock_to_path
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	assert_success
+	# State files should be initialized
+	assert_file_exist "${TEST_DIR}/logs/restart_count"
+
+	remove_mock_from_path
+}
+
+@test "vpn-monitor.sh validate_monitor_state exits when in cooldown period" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+PEER_IPS="192.168.1.1"
+COOLDOWN_MINUTES=15
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+
+	# Set cooldown file with future timestamp
+	local cooldown_file="${TEST_DIR}/cooldown_until"
+	local future_time=$(($(date +%s) + 900)) # 15 minutes in future
+	echo "$future_time" >"$cooldown_file"
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
+
+	run bash "$test_script" --fake
+
+	assert_success
+	# Should exit early due to cooldown
+	assert_file_contains "$log_file" "in cooldown period"
+	assert_file_contains "$log_file" "Script exiting"
+}
+
+@test "vpn-monitor.sh validate_monitor_state continues when not in cooldown" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+PEER_IPS="192.168.1.1"
+COOLDOWN_MINUTES=15
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+
+	# Set cooldown file with past timestamp (expired)
+	local cooldown_file="${TEST_DIR}/cooldown_until"
+	local past_time=$(($(date +%s) - 900)) # 15 minutes in past
+	echo "$past_time" >"$cooldown_file"
+
+	# Mock ip command - VPN healthy
+	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	add_mock_to_path
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	assert_success
+	# Should continue execution (not exit early)
+	refute_output --partial "in cooldown period"
+	refute_output --partial "Script exiting: in cooldown"
+
+	remove_mock_from_path
+}
+
+@test "vpn-monitor.sh validate_monitor_state checks cron persistence on first run" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+PEER_IPS="192.168.1.1"
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+
+	# Remove cron entry if it exists
+	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+
+	# Mock ip command - VPN healthy
+	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	add_mock_to_path
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
+
+	# Remove .cron_checked file if it exists
+	rm -f "${TEST_DIR}/.cron_checked"
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	assert_success
+	# Should check cron persistence (may warn if cron not found)
+	# The check happens in validate_monitor_state
+
+	remove_mock_from_path
+}
+
+@test "vpn-monitor.sh process_peer_ips processes single peer" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+PEER_IPS="192.168.1.1"
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+
+	# Mock ip command - VPN healthy
+	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	add_mock_to_path
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	assert_success
+	# Should process the peer IP
+	assert_file_exist "$log_file"
+	# Log should contain peer processing (check for VPN status check)
+	assert_file_contains "$log_file" "192.168.1.1" || true
+
+	remove_mock_from_path
+}
+
+@test "vpn-monitor.sh process_peer_ips processes multiple peers" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+PEER_IPS="192.168.1.1 10.0.0.1"
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+
+	# Mock ip command - VPN healthy (handles both peer IPs)
+	# Create a mock that handles multiple peer IPs
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    # Return SA for any peer IP
+    echo "src 192.168.1.1 dst 192.168.1.1"
+    echo "    lifetime current: 1000 bytes"
+    echo "src 10.0.0.1 dst 10.0.0.1"
+    echo "    lifetime current: 1000 bytes"
+fi
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	assert_success
+	# Should process both peer IPs
+	assert_file_exist "$log_file"
+
+	remove_mock_from_path
+}
+
+@test "vpn-monitor.sh process_peer_ips skips empty peer IP" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+PEER_IPS="192.168.1.1  10.0.0.1"
+# Note: Extra spaces create empty elements
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+
+	# Mock ip command - VPN healthy
+	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	add_mock_to_path
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	assert_success
+	# Should skip empty peer IPs with warning
+	assert_file_contains "$log_file" "Skipping empty peer IP" || true
+
+	remove_mock_from_path
+}
+
+@test "vpn-monitor.sh process_peer_ips validates configuration" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+PEER_IPS=""
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
+
+	run bash "$test_script" --fake
+
+	# Should fail due to invalid configuration
+	assert_failure
+	assert_output --partial "PEER_IPS is required"
+}

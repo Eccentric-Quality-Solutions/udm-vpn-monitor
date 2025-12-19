@@ -5,6 +5,7 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 ## [Unreleased]
 
 ### Added
+- **IPsec Fallback for Tier 2 Recovery**: Tier 2 recovery now falls back to `ipsec reload` when `swanctl` is unavailable, ensuring compatibility with UDMs that use `ipsec` instead of `swanctl` for IPsec management
 - **CI/CD Pipeline**: GitHub Actions workflow for automated testing and validation
 - **Log Analysis Tool**: `analyze-logs.sh` script for analyzing VPN failure patterns and recovery success rates
 - **Modular Library Architecture**: Complete refactoring into modular library components:
@@ -36,6 +37,11 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 - **Configuration Schema Validation**: Schema-based configuration validation with type checking, range validation, and default value application
 
 ### Changed
+- **Tier 2 Recovery Fallback**: Enhanced Tier 2 recovery to automatically detect and fall back to `ipsec reload` when `swanctl` command is unavailable, improving compatibility across different UDM configurations
+- **Documentation Improvements**: 
+  - Deduplicated README.md by removing redundant "Install Package" section and consolidating Tier 2 recovery behavior explanations
+  - Updated ARCHITECTURE.md with accurate Tier 2 recovery state diagram showing per-connection vs full reload logic and ipsec fallback
+  - Clarified tool availability and fallback behavior throughout documentation
 - **Major Code Refactoring**: 
   - Complete modularization: Extracted all functionality into dedicated library modules
   - Reduced main script from ~1900 lines to ~530 lines through modularization
@@ -43,7 +49,9 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
   - Better separation of concerns with dedicated modules for each responsibility
 - **Per-Peer Failure Tracking**: Failure counters now tracked independently per peer IP (not shared)
 - **Surgical Cleanup**: Removed ineffective `ip xfrm state delete` commands; relies on `swanctl --reload-conn` for targeted recovery
-- **Installation Script**: Major refactoring with improved error handling, configuration management, and dev mode support
+- **Installation Script**: 
+  - Major refactoring with improved error handling, configuration management, and dev mode support
+  - Removed file reorganization code (`reorganize_lib_files()` function) as the install package now preserves the correct directory structure automatically. The script now expects the `lib/` directory to be present from package extraction.
 - **Uninstallation Script**: Improved crontab removal logic (preserves other cron jobs) and added logrotate configuration removal
 - **Log Analysis Script**: Enhanced function documentation and improved error handling
 - **Lockfile Handling**: Dedicated `lib/lockfile.sh` module with improved stale lockfile detection and atomic operations
@@ -68,6 +76,7 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
   - Updated README.md, DEVELOPER.md, and ARCHITECTURE.md with improved structure and content
 
 ### Removed
+- **scp-files.sh**: Removed helper script for file transfer (replaced by install package method)
 - **Dead Code**: Removed unused `LAST_RESTART_FILE` variable
 - **Ineffective Operations**: Removed `ip xfrm state delete` commands that required full selectors
 - **Generated Reports**: Removed generated report files from repository (reports/vpn-monitor-analysis.csv, reports/vpn-monitor-report.txt) - these are now generated on-demand by analyze-logs.sh
