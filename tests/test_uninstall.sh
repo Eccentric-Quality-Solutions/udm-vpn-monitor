@@ -658,7 +658,7 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	# We'll simulate a failed cron removal by not removing the cron entry
 	# and then calling verify_uninstallation
 	local test_script="${BATS_TEST_TMPDIR}/test_verify.sh"
-	cat > "$test_script" << EOF
+	cat >"$test_script" <<EOF
 #!/bin/bash
 source "$UNINSTALL_SCRIPT"
 verify_uninstallation
@@ -692,7 +692,7 @@ EOF
 
 	# Create a wrapper script that calls verify_uninstallation
 	local test_script="${BATS_TEST_TMPDIR}/test_verify.sh"
-	cat > "$test_script" << EOF
+	cat >"$test_script" <<EOF
 #!/bin/bash
 source "$UNINSTALL_SCRIPT"
 verify_uninstallation
@@ -731,7 +731,7 @@ EOF
 
 	# Create a wrapper script that calls verify_uninstallation
 	local test_script="${BATS_TEST_TMPDIR}/test_verify.sh"
-	cat > "$test_script" << EOF
+	cat >"$test_script" <<EOF
 #!/bin/bash
 source "$UNINSTALL_SCRIPT"
 verify_uninstallation
@@ -766,7 +766,7 @@ EOF
 
 	# Create a wrapper script that calls verify_uninstallation
 	local test_script="${BATS_TEST_TMPDIR}/test_verify.sh"
-	cat > "$test_script" << EOF
+	cat >"$test_script" <<EOF
 #!/bin/bash
 source "$UNINSTALL_SCRIPT"
 verify_uninstallation

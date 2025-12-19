@@ -461,7 +461,7 @@ EOF
 		echo "Debug: Checking output files..."
 		for i in {1..5}; do
 			if [[ -f "${TEST_DIR}/output_${i}.log" ]]; then
-				echo "Output $i (size: $(wc -c < "${TEST_DIR}/output_${i}.log")):"
+				echo "Output $i (size: $(wc -c <"${TEST_DIR}/output_${i}.log")):"
 				head -3 "${TEST_DIR}/output_${i}.log" || true
 			fi
 		done
@@ -2223,7 +2223,7 @@ EOF
 	assert_file_exist "$log_file"
 	# Both connection names should be in reload log (or full reload if fallback)
 	if [[ -f "$reload_log" ]]; then
-		local reload_count=$(wc -l < "$reload_log")
+		local reload_count=$(wc -l <"$reload_log")
 		assert [ "$reload_count" -ge 1 ]
 	fi
 
@@ -2735,7 +2735,7 @@ EOF
 	assert_file_exist "$log_file"
 	# Multiple reload calls should be made (one per peer at Tier 2)
 	if [[ -f "$reload_count_file" ]]; then
-		local reload_count=$(wc -l < "$reload_count_file" | tr -d ' ')
+		local reload_count=$(wc -l <"$reload_count_file" | tr -d ' ')
 		assert [ "$reload_count" -ge 1 ]
 	fi
 

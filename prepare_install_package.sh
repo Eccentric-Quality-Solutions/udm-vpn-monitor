@@ -50,30 +50,30 @@ TEMP_DIR=$(mktemp -d)
 
 # Cleanup function
 cleanup() {
-    rm -rf "$TEMP_DIR"
+	rm -rf "$TEMP_DIR"
 }
 trap cleanup EXIT
 
 # Main script files
 MAIN_FILES=(
-    "vpn-monitor.sh"
-    "install.sh"
-    "uninstall.sh"
-    "analyze-logs.sh"
-    "vpn-monitor.conf"
+	"vpn-monitor.sh"
+	"install.sh"
+	"uninstall.sh"
+	"analyze-logs.sh"
+	"vpn-monitor.conf"
 )
 
 # Library files
 LIB_FILES=(
-    "lib/common.sh"
-    "lib/config.sh"
-    "lib/config_schema.sh"
-    "lib/constants.sh"
-    "lib/detection.sh"
-    "lib/lockfile.sh"
-    "lib/logging.sh"
-    "lib/recovery.sh"
-    "lib/state.sh"
+	"lib/common.sh"
+	"lib/config.sh"
+	"lib/config_schema.sh"
+	"lib/constants.sh"
+	"lib/detection.sh"
+	"lib/lockfile.sh"
+	"lib/logging.sh"
+	"lib/recovery.sh"
+	"lib/state.sh"
 )
 
 echo "Preparing install package..."
@@ -83,30 +83,30 @@ mkdir -p "${TEMP_DIR}/lib"
 
 # Copy main files
 for file in "${MAIN_FILES[@]}"; do
-    if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
-        cp "${SCRIPT_DIR}/${file}" "${TEMP_DIR}/${file}"
-        echo "  Added: ${file}"
-    else
-        echo "Warning: ${file} not found, skipping" >&2
-    fi
+	if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
+		cp "${SCRIPT_DIR}/${file}" "${TEMP_DIR}/${file}"
+		echo "  Added: ${file}"
+	else
+		echo "Warning: ${file} not found, skipping" >&2
+	fi
 done
 
 # Copy library files
 for file in "${LIB_FILES[@]}"; do
-    if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
-        cp "${SCRIPT_DIR}/${file}" "${TEMP_DIR}/${file}"
-        echo "  Added: ${file}"
-    else
-        echo "Warning: ${file} not found, skipping" >&2
-    fi
+	if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
+		cp "${SCRIPT_DIR}/${file}" "${TEMP_DIR}/${file}"
+		echo "  Added: ${file}"
+	else
+		echo "Warning: ${file} not found, skipping" >&2
+	fi
 done
 
 # Create package file (zip or tar)
 cd "$TEMP_DIR"
 if [[ $USE_TAR -eq 1 ]]; then
-	tar -czf "${SCRIPT_DIR}/${PACKAGE_NAME}" . > /dev/null
+	tar -czf "${SCRIPT_DIR}/${PACKAGE_NAME}" . >/dev/null
 else
-	zip -r "${SCRIPT_DIR}/${PACKAGE_NAME}" . > /dev/null
+	zip -r "${SCRIPT_DIR}/${PACKAGE_NAME}" . >/dev/null
 fi
 cd "$SCRIPT_DIR"
 
@@ -116,15 +116,15 @@ echo ""
 echo "Files included:"
 echo "  Main files:"
 for file in "${MAIN_FILES[@]}"; do
-    if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
-        echo "    - ${file}"
-    fi
+	if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
+		echo "    - ${file}"
+	fi
 done
 echo "  Library files:"
 for file in "${LIB_FILES[@]}"; do
-    if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
-        echo "    - ${file}"
-    fi
+	if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
+		echo "    - ${file}"
+	fi
 done
 echo ""
 echo "To use this package:"
@@ -135,4 +135,3 @@ else
 	echo "  2. Extract: unzip ${PACKAGE_NAME}"
 fi
 echo "  3. Run: ./install.sh"
-
