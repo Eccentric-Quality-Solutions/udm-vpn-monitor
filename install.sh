@@ -767,6 +767,36 @@ display_next_steps() {
 	echo ""
 }
 
+# Display help message
+#
+# Prints usage information and available options for the install script.
+#
+# Returns:
+#   0: Always succeeds
+display_help() {
+	echo "Usage: $0 [OPTIONS]"
+	echo ""
+	echo "Options:"
+	echo "  --no-cron         Install without setting up cron job"
+	echo "  --silent          Perform installation silently (no prompts)"
+	echo "  --interactive     Prompt for each config value with defaults"
+	echo "  --overwrite-conf  Overwrite existing config file (only works with --silent)"
+	echo "  --dev             Install to current working directory (dev mode)"
+	echo "  --help, -h        Show this help message"
+	echo ""
+	echo "Examples:"
+	echo "  $0                                    # Standard installation"
+	echo "  $0 --interactive                      # Interactive config setup"
+	echo "  $0 --silent                          # Silent installation, preserve existing config"
+	echo "  $0 --silent --overwrite-conf          # Silent installation, overwrite config"
+	echo "  $0 --silent --no-cron                 # Silent installation, no cron"
+	echo "  $0 --dev                              # Install to current directory (dev mode)"
+	echo "  $0 --dev --silent --no-cron           # Dev mode, silent, no cron"
+	echo "  $0 --interactive --dev                # Interactive config, dev mode"
+	echo "  $0 --silent --no-cron --overwrite-conf  # Silent installation, no cron, overwrite config"
+	echo ""
+}
+
 # Parse command-line arguments
 #
 # Processes command-line arguments and sets corresponding global flags.
@@ -785,6 +815,7 @@ display_next_steps() {
 #
 # Returns:
 #   0: Always succeeds (exits with 0 for --help)
+#   1: Invalid argument provided (exits script)
 #
 # Side effects:
 #   Sets global flags: SKIP_CRON, SILENT, INTERACTIVE, OVERWRITE_CONF, DEV_MODE
@@ -822,32 +853,14 @@ parse_args() {
 			shift
 			;;
 		--help | -h)
-			echo "Usage: $0 [OPTIONS]"
-			echo ""
-			echo "Options:"
-			echo "  --no-cron         Install without setting up cron job"
-			echo "  --silent          Perform installation silently (no prompts)"
-			echo "  --interactive     Prompt for each config value with defaults"
-			echo "  --overwrite-conf  Overwrite existing config file (only works with --silent)"
-			echo "  --dev             Install to current working directory (dev mode)"
-			echo "  --help            Show this help message"
-			echo ""
-			echo "Examples:"
-			echo "  $0                                    # Standard installation"
-			echo "  $0 --interactive                      # Interactive config setup"
-			echo "  $0 --silent                          # Silent installation, preserve existing config"
-			echo "  $0 --silent --overwrite-conf          # Silent installation, overwrite config"
-			echo "  $0 --silent --no-cron                 # Silent installation, no cron"
-			echo "  $0 --dev                              # Install to current directory (dev mode)"
-			echo "  $0 --dev --silent --no-cron           # Dev mode, silent, no cron"
-			echo "  $0 --interactive --dev                # Interactive config, dev mode"
-			echo "  $0 --silent --no-cron --overwrite-conf  # Silent installation, no cron, overwrite config"
-			echo ""
+			display_help
 			exit 0
 			;;
 		*)
-			log_warn "Unknown argument: $1 (use --help for usage)"
-			shift
+			log_error "Invalid argument: $1"
+			echo ""
+			display_help
+			exit 1
 			;;
 		esac
 	done

@@ -275,7 +275,7 @@ EOF
 	assert_output --partial "Source file not found"
 }
 
-@test "install.sh handles unknown arguments" {
+@test "install.sh fails with invalid arguments" {
 	cd "$TEST_DIR"
 
 	# Create source files with install.sh and lib directory
@@ -285,9 +285,32 @@ EOF
 	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
-	run bash "$test_install" --dev --silent --no-cron --unknown-flag
-	# Should warn about unknown flag but may still succeed
-	assert_output --partial "Unknown argument"
+	# Test with invalid flag - should fail and show help
+	run bash "$test_install" --invalid-flag
+	assert_failure
+	assert_output --partial "Invalid argument: --invalid-flag"
+	assert_output --partial "Usage:"
+	assert_output --partial "Options:"
+	assert_output --partial "--no-cron"
+	assert_output --partial "--silent"
+	assert_output --partial "--dev"
+}
+
+@test "install.sh fails with invalid arguments and shows help message" {
+	cd "$TEST_DIR"
+
+	# Create source files with install.sh and lib directory
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
+	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
+	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
+	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+
+	# Test with multiple invalid flags - should fail on first invalid one
+	run bash "$test_install" --dev --unknown-flag
+	assert_failure
+	assert_output --partial "Invalid argument: --unknown-flag"
+	assert_output --partial "Usage:"
 }
 
 @test "install.sh validates flag combinations" {
