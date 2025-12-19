@@ -22,6 +22,48 @@ fi
 
 cd "$REPO_ROOT"
 
+# Helper function to find a command in PATH or common installation locations
+# Git hooks run with minimal environment, so we check multiple locations
+find_command() {
+	local cmd="$1"
+	
+	# First check if command is in PATH (works for apt-installed tools if PATH includes system paths)
+	if command -v "$cmd" >/dev/null 2>&1; then
+		command -v "$cmd"
+		return 0
+	fi
+	
+	# Check standard system paths (for apt-installed tools)
+	local system_paths=(
+		"/usr/bin"
+		"/usr/local/bin"
+		"/bin"
+	)
+	
+	for sys_path in "${system_paths[@]}"; do
+		if [[ -x "${sys_path}/${cmd}" ]]; then
+			echo "${sys_path}/${cmd}"
+			return 0
+		fi
+	done
+	
+	# Check common Homebrew locations (for Homebrew-installed tools)
+	local brew_paths=(
+		"/home/linuxbrew/.linuxbrew/bin"  # Linux Homebrew (default)
+		"$HOME/.linuxbrew/bin"             # Linux Homebrew (user install)
+		"/opt/homebrew/bin"                # macOS Homebrew (Apple Silicon)
+	)
+	
+	for brew_path in "${brew_paths[@]}"; do
+		if [[ -x "${brew_path}/${cmd}" ]]; then
+			echo "${brew_path}/${cmd}"
+			return 0
+		fi
+	done
+	
+	return 1
+}
+
 # Get list of staged shell script files
 mapfile -t STAGED_SH_FILES < <(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(sh)$' || true)
 
@@ -29,8 +71,9 @@ mapfile -t STAGED_SH_FILES < <(git diff --cached --name-only --diff-filter=ACM |
 if [[ ${#STAGED_SH_FILES[@]} -gt 0 ]]; then
 	echo "Running code quality checks on ${#STAGED_SH_FILES[@]} staged shell script(s)..."
 
-	# Check if ShellCheck is available
-	if ! command -v shellcheck >/dev/null 2>&1; then
+	# Find ShellCheck
+	SHELLCHECK_CMD=""
+	if ! SHELLCHECK_CMD=$(find_command shellcheck); then
 		echo "Warning: ShellCheck not found. Install it to enable linting:" >&2
 		echo "  macOS: brew install shellcheck" >&2
 		echo "  Linux: sudo apt-get install shellcheck" >&2
@@ -38,15 +81,16 @@ if [[ ${#STAGED_SH_FILES[@]} -gt 0 ]]; then
 	else
 		# Run ShellCheck on staged files
 		echo "Running ShellCheck..."
-		if ! shellcheck --severity=error "${STAGED_SH_FILES[@]}"; then
+		if ! "$SHELLCHECK_CMD" --severity=error "${STAGED_SH_FILES[@]}"; then
 			echo "Error: ShellCheck found errors. Please fix them before committing." >&2
 			echo "Run 'shellcheck *.sh lib/*.sh tests/*.sh' to see all issues." >&2
 			exit 1
 		fi
 	fi
 
-	# Check if shfmt is available
-	if ! command -v shfmt >/dev/null 2>&1; then
+	# Find shfmt
+	SHFMT_CMD=""
+	if ! SHFMT_CMD=$(find_command shfmt); then
 		echo "Warning: shfmt not found. Install it to enable formatting checks:" >&2
 		echo "  macOS: brew install shfmt" >&2
 		echo "  Linux: sudo snap install shfmt" >&2
@@ -54,7 +98,7 @@ if [[ ${#STAGED_SH_FILES[@]} -gt 0 ]]; then
 	else
 		# Check formatting with shfmt
 		echo "Checking code formatting with shfmt..."
-		if ! shfmt -d "${STAGED_SH_FILES[@]}" >/dev/null 2>&1; then
+		if ! "$SHFMT_CMD" -d "${STAGED_SH_FILES[@]}" >/dev/null 2>&1; then
 			echo "Error: Code formatting issues detected." >&2
 			echo "Please run 'shfmt -w ${STAGED_SH_FILES[*]}' to fix formatting." >&2
 			exit 1
