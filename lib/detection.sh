@@ -494,8 +494,8 @@ discover_connection_name() {
 #   # Creates: ${STATE_DIR}/connection_name_203_0_113_1
 #
 # Note:
-#   Requires STATE_DIR and sanitize_peer_ip to be set (from config.sh and state.sh)
-#   File write errors are silently ignored (returns 0)
+#   Requires STATE_DIR, sanitize_peer_ip, and log_message to be set (from config.sh, state.sh, logging.sh)
+#   File write errors are logged as warnings but don't fail the function (returns 0)
 #   Uses temporary file and mv for atomic write to prevent corruption on interruption
 cache_connection_name() {
 	local peer_ip="$1"
@@ -505,7 +505,9 @@ cache_connection_name() {
 	local cache_file="${STATE_DIR}/connection_name_${peer_sanitized}"
 
 	# Atomic write: write to temp file first, then rename
-	echo "$connection_name" >"${cache_file}.tmp" 2>/dev/null && mv "${cache_file}.tmp" "$cache_file" 2>/dev/null || true
+	if ! (echo "$connection_name" >"${cache_file}.tmp" 2>/dev/null && mv "${cache_file}.tmp" "$cache_file" 2>/dev/null); then
+		log_message "WARNING" "Failed to cache connection name for $peer_ip (file: $cache_file)"
+	fi
 }
 
 # Get cached connection name
@@ -651,6 +653,7 @@ check_ping_connectivity() {
 	# Determine ping command based on IP version
 	# Some systems have separate ping6, others use ping -6
 	local ping_cmd
+	local ping_args=()
 	if [[ "$target_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
 		# IPv4
 		ping_cmd="ping"
@@ -659,7 +662,8 @@ check_ping_connectivity() {
 		if command -v ping6 >/dev/null 2>&1; then
 			ping_cmd="ping6"
 		elif ping -6 >/dev/null 2>&1; then
-			ping_cmd="ping -6"
+			ping_cmd="ping"
+			ping_args=(-6)
 		else
 			log_message "WARNING" "IPv6 ping not available"
 			return 1
@@ -673,13 +677,13 @@ check_ping_connectivity() {
 	local ping_success=0
 
 	# Try Linux-style ping (most common on UDM)
-	if ping_result=$($ping_cmd -c "$ping_count" -W "$ping_timeout" -q "$target_ip" 2>&1); then
+	if ping_result=$("$ping_cmd" "${ping_args[@]}" -c "$ping_count" -W "$ping_timeout" -q "$target_ip" 2>&1); then
 		ping_success=1
 	# Try BSD-style ping as fallback
-	elif ping_result=$($ping_cmd -c "$ping_count" -w "$ping_timeout" -q "$target_ip" 2>&1); then
+	elif ping_result=$("$ping_cmd" "${ping_args[@]}" -c "$ping_count" -w "$ping_timeout" -q "$target_ip" 2>&1); then
 		ping_success=1
 	# Try without timeout flag (some systems)
-	elif ping_result=$($ping_cmd -c "$ping_count" -q "$target_ip" 2>&1); then
+	elif ping_result=$("$ping_cmd" "${ping_args[@]}" -c "$ping_count" -q "$target_ip" 2>&1); then
 		ping_success=1
 	fi
 
@@ -752,7 +756,10 @@ check_byte_counters() {
 		if [[ "$current_bytes" -gt "$last_bytes" ]] || [[ "$last_bytes" -eq 0 ]]; then
 			# Bytes are increasing or this is first check
 			# Atomic write: write to temp file first, then rename
-			echo "$current_bytes" >"${last_bytes_file}.tmp" && mv "${last_bytes_file}.tmp" "$last_bytes_file" || true
+			if ! (echo "$current_bytes" >"${last_bytes_file}.tmp" && mv "${last_bytes_file}.tmp" "$last_bytes_file"); then
+				log_message "ERROR" "Failed to update byte counter for $peer_ip (file: $last_bytes_file)"
+				# Continue execution but log the error
+			fi
 			log_message "DEBUG" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes)"
 			return 0
 		else

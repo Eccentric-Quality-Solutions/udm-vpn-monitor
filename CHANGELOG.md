@@ -5,6 +5,7 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 ## [Unreleased]
 
 ### Added
+- **Development Environment Setup Script**: `scripts/setup-dev-env.sh` - Automatically configures PATH for development tools (shfmt, shellcheck) whether installed via apt or Homebrew
 - **IPsec Fallback for Tier 2 Recovery**: Tier 2 recovery now falls back to `ipsec reload` when `swanctl` is unavailable, ensuring compatibility with UDMs that use `ipsec` instead of `swanctl` for IPsec management
 - **CI/CD Pipeline**: GitHub Actions workflow for automated testing and validation
 - **Log Analysis Tool**: `analyze-logs.sh` script for analyzing VPN failure patterns and recovery success rates

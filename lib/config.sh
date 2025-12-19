@@ -225,8 +225,8 @@ parse_config_schema() {
 # For required variables, exits script if value is empty.
 #
 # Arguments:
-#   $1: Variable name (used for error messages and eval)
-#   $2: Current variable value (may be updated via eval)
+#   $1: Variable name (used for error messages and indirect variable assignment)
+#   $2: Current variable value (may be updated via indirect assignment if default applied)
 #   $3: Required flag ("required" or "optional")
 #   $4: Default value from schema (may be empty string)
 #
@@ -238,7 +238,7 @@ parse_config_schema() {
 #   Prints updated variable value to stdout
 #
 # Side effects:
-#   - Updates the variable via eval if default is applied
+#   - Updates the variable via safe indirect assignment (declare -g + printf -v) if default is applied
 #   - Calls die() if required variable is empty (exits script)
 #
 # Examples:
@@ -271,8 +271,10 @@ apply_config_default() {
 	#
 	# IMPORTANT: Schema defaults in lib/config_schema.sh MUST match load_config() defaults.
 	if [[ "$required" == "optional" ]] && [[ -z "$var_value" ]] && [[ -n "$default_val" ]]; then
-		# Set default value from schema
-		eval "$var_name=\"\$default_val\""
+		# Set default value from schema using safe indirect variable assignment
+		# Use declare -g to ensure variable is in global scope, then printf -v for safe assignment
+		declare -g "$var_name"
+		printf -v "$var_name" '%s' "$default_val"
 		var_value="$default_val"
 	fi
 
@@ -294,8 +296,8 @@ apply_config_default() {
 # For optional variables with invalid types, applies default value if available.
 #
 # Arguments:
-#   $1: Variable name (used for error messages and eval)
-#   $2: Variable value (may be updated via eval if default applied)
+#   $1: Variable name (used for error messages and indirect variable assignment)
+#   $2: Variable value (may be updated via indirect assignment if default applied)
 #   $3: Variable type ("integer" or "string")
 #   $4: Required flag ("required" or "optional")
 #   $5: Default value from schema (used for correction if optional)
@@ -308,7 +310,7 @@ apply_config_default() {
 #   Prints updated variable value to stdout
 #
 # Side effects:
-#   - May update variable value via eval if default is applied for optional variables
+#   - May update variable value via safe indirect assignment (declare -g + printf -v) if default is applied for optional variables
 #   - Calls die() for required variables with invalid types
 #   - Calls log_message() for warnings about optional variables
 #
@@ -335,7 +337,9 @@ validate_config_type() {
 				# Apply default value for optional variables
 				if [[ -n "$default_val" ]]; then
 					log_message "WARNING" "$var_name must be an integer (current value: '$var_value'), using default: $default_val"
-					eval "$var_name=\"\$default_val\""
+					# Use safe indirect variable assignment instead of eval
+					declare -g "$var_name"
+					printf -v "$var_name" '%s' "$default_val"
 					var_value="$default_val"
 					# Re-validate with default value
 					if ! [[ "$var_value" =~ ^[0-9]+$ ]]; then
@@ -368,8 +372,8 @@ validate_config_type() {
 # For optional variables with invalid values, applies default if available.
 #
 # Arguments:
-#   $1: Variable name (used for error messages and eval)
-#   $2: Variable value (may be updated via eval if default applied)
+#   $1: Variable name (used for error messages and indirect variable assignment)
+#   $2: Variable value (may be updated via indirect assignment if default applied)
 #   $3: Variable type ("integer" or "string")
 #   $4: Required flag ("required" or "optional")
 #   $5: Default value from schema (used for correction if optional)
@@ -383,7 +387,7 @@ validate_config_type() {
 #   Prints updated variable value to stdout
 #
 # Side effects:
-#   - May update variable value via eval if default is applied for optional variables
+#   - May update variable value via safe indirect assignment (declare -g + printf -v) if default is applied for optional variables
 #   - Calls die() for required variables that fail validation
 #   - Calls log_message() for warnings about optional variables
 #
@@ -412,7 +416,9 @@ validate_config_rule() {
 				# Apply default value for optional variables
 				if [[ -n "$default_val" ]]; then
 					log_message "WARNING" "$var_name is empty, using default: $default_val"
-					eval "$var_name=\"\$default_val\""
+					# Use safe indirect variable assignment instead of eval
+					declare -g "$var_name"
+					printf -v "$var_name" '%s' "$default_val"
 					var_value="$default_val"
 				else
 					log_message "WARNING" "$var_name is empty, no default available"
@@ -444,14 +450,16 @@ validate_config_rule() {
 		if [[ "$min_val" =~ ^[A-Z_]+$ ]] && [[ -n "${!min_val:-}" ]]; then
 			min_val="${!min_val}"
 		fi
-		if [[ "$var_type" == "integer" ]] && [[ $var_value -lt $min_val ]]; then
+		if [[ "$var_type" == "integer" ]] && [[ "$var_value" -lt "$min_val" ]]; then
 			if [[ "$required" == "required" ]]; then
 				die "$var_name must be at least $min_val (current value: $var_value)"
 			else
 				# Apply default value for optional variables
 				if [[ -n "$default_val" ]]; then
 					log_message "WARNING" "$var_name must be at least $min_val (current value: $var_value), using default: $default_val"
-					eval "$var_name=\"\$default_val\""
+					# Use safe indirect variable assignment instead of eval
+					declare -g "$var_name"
+					printf -v "$var_name" '%s' "$default_val"
 					var_value="$default_val"
 				else
 					log_message "WARNING" "$var_name must be at least $min_val (current value: $var_value), no default available"
@@ -462,14 +470,16 @@ validate_config_rule() {
 		;;
 	max:*)
 		local max_val="${rule#max:}"
-		if [[ "$var_type" == "integer" ]] && [[ $var_value -gt $max_val ]]; then
+		if [[ "$var_type" == "integer" ]] && [[ "$var_value" -gt "$max_val" ]]; then
 			if [[ "$required" == "required" ]]; then
 				die "$var_name must be at most $max_val (current value: $var_value)"
 			else
 				# Apply default value for optional variables
 				if [[ -n "$default_val" ]]; then
 					log_message "WARNING" "$var_name must be at most $max_val (current value: $var_value), using default: $default_val"
-					eval "$var_name=\"\$default_val\""
+					# Use safe indirect variable assignment instead of eval
+					declare -g "$var_name"
+					printf -v "$var_name" '%s' "$default_val"
 					var_value="$default_val"
 				else
 					log_message "WARNING" "$var_name must be at most $max_val (current value: $var_value), no default available"
@@ -495,7 +505,9 @@ validate_config_rule() {
 				# Apply default value for optional variables
 				if [[ -n "$default_val" ]]; then
 					log_message "WARNING" "$var_name must be one of: $allowed_values (current value: '$var_value'), using default: $default_val"
-					eval "$var_name=\"\$default_val\""
+					# Use safe indirect variable assignment instead of eval
+					declare -g "$var_name"
+					printf -v "$var_name" '%s' "$default_val"
 					var_value="$default_val"
 				else
 					log_message "WARNING" "$var_name must be one of: $allowed_values (current value: '$var_value'), no default available"
@@ -532,7 +544,7 @@ validate_config_rule() {
 #   Prints updated variable value to stdout
 #
 # Side effects:
-#   - May update variable value via eval if default is applied for optional variables
+#   - May update variable value via safe indirect assignment (declare -g + printf -v) if default is applied for optional variables
 #   - Calls validate_config_rule for each rule in the list
 #
 # Examples:
@@ -582,7 +594,7 @@ validate_config_rules() {
 #   1: Variable is invalid (validation failed)
 #
 # Side effects:
-#   - May set variable value via eval if default is applied for optional variables
+#   - May set variable value via safe indirect assignment (declare -g + printf -v) if default is applied for optional variables
 #   - Calls die() for required variables that fail validation
 #   - Calls log_message() for warnings about optional variables
 #
@@ -733,7 +745,13 @@ validate_config() {
 
 	# Custom validation: IP address format (not handled by schema)
 	# Schema validates PEER_IPS is non-empty, but IP format validation requires custom logic
-	for peer_ip in $PEER_IPS; do
+	# Convert space-separated string to array to avoid word splitting and globbing
+	# Use IFS to split on spaces, read into array with proper quoting
+	local IFS=' '
+	local -a peer_ips_array
+	read -ra peer_ips_array <<<"$PEER_IPS"
+
+	for peer_ip in "${peer_ips_array[@]}"; do
 		# Basic validation: non-empty (shouldn't happen after schema validation, but check anyway)
 		if [[ -z "$peer_ip" ]]; then
 			log_message "WARNING" "Skipping empty peer IP"

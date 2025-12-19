@@ -2,74 +2,6 @@
 
 This document outlines potential improvements and enhancements for the UDM VPN Monitor project. These are suggestions for future development, prioritized by impact and complexity.
 
-## Completed Enhancements ✅
-
-### Code Quality and Maintainability Improvements
-**Status**: ✅ Completed  
-**Date**: Implementation completed across three code review sweeps
-
-**Improvements Made**:
-- **Dead Code Removal**: Removed unused variables and file operations (VPN_NAME now used, LAST_RESTART_FILE removed)
-- **Duplicate Code Refactoring**: Extracted 9 helper functions to reduce duplication
-- **Shared Libraries**: Created `lib/common.sh` for shared logging and root check functions
-- **Helper Functions Created**:
-  1. `get_formatted_timestamp()` - Consistent date formatting
-  2. `ensure_directory_exists()` - Centralized directory creation
-  3. `log_and_exit_lockfile_conflict()` - Consistent lockfile conflict handling
-  4. `extract_lockfile_pid()` - Lockfile PID extraction
-  5. `is_process_running()` - Process existence checking
-  6. `create_lockfile_atomically()` - Atomic lockfile creation
-  7. `get_timestamp_plus_minutes()` - Cross-platform timestamp calculation
-  8. `get_file_mtime()` - Cross-platform file modification time
-  9. `remove_stale_lockfile_if_needed()` - Lockfile stale detection
-
-**Impact**:
-- **20+ duplicate code blocks** consolidated into reusable functions
-- **Improved maintainability** - changes can be made in one place
-- **Consistent error handling** across the codebase
-- **Better code clarity** without sacrificing readability
-- **Cross-platform compatibility** improvements
-
-**Documentation**: Detailed findings and implementation notes are documented in the code review process.
-
-### IPsec Tool Compatibility and Fallback Support
-**Status**: ✅ Completed  
-**Date**: Recent implementation
-
-**Enhancement**: Added automatic fallback support for different IPsec management tools (`swanctl` vs `ipsec`) to ensure compatibility across different UDM configurations.
-
-**Improvements Made**:
-- **Detection Fallback**: Enhanced detection to fall back through multiple methods:
-  - Primary: `ip xfrm state` (SA state and byte counters)
-  - Fallback 1: `swanctl --list-sas` (if xfrm unavailable)
-  - Fallback 2: `ipsec status` (if swanctl unavailable)
-- **Tier 2 Recovery Fallback**: Enhanced Tier 2 recovery with automatic tool detection:
-  - Preferred: `swanctl --reload-conn <connection-name>` (per-connection, when swanctl and connection name available)
-  - Fallback 1: `swanctl --reload` (all connections, when connection name unavailable)
-  - Fallback 2: `ipsec reload` (all connections, when swanctl unavailable)
-- **Tier 3 Recovery Fallback**: Enhanced Tier 3 recovery:
-  - Preferred: `ipsec restart` (affects all tunnels)
-  - Fallback: `swanctl --reload` (when ipsec unavailable)
-- **Automatic Tool Detection**: System automatically detects available commands using `command -v` and uses appropriate fallbacks
-
-**Impact**:
-- ✅ **Improved Compatibility**: Works on UDMs that use `ipsec` instead of `swanctl` for IPsec management
-- ✅ **Graceful Degradation**: System continues to function even when preferred tools are unavailable
-- ✅ **Better User Experience**: No manual configuration needed - system adapts automatically
-- ✅ **Reduced Failures**: Tier 2 recovery no longer silently fails when swanctl is unavailable
-
-**Technical Details**:
-- Tool availability checked using `command -v` before attempting to use commands
-- Fallback logic implemented in `lib/recovery.sh` for Tier 2 recovery
-- Fallback logic already present in `lib/recovery.sh` for Tier 3 recovery (enhanced)
-- Detection fallback chain implemented in `lib/detection.sh`
-
-**Documentation Updates**:
-- Updated README.md with tool availability and fallback behavior section
-- Updated ARCHITECTURE.md with accurate Tier 2 recovery state diagram
-- Updated DEVELOPER.md with detailed recovery action documentation
-- Updated CHANGELOG.md with enhancement details
-
 ---
 
 ## High Priority Enhancements
@@ -162,40 +94,6 @@ This document outlines potential improvements and enhancements for the UDM VPN M
 - JSON log format option (future enhancement)
 - Additional analysis features (pattern detection, performance analysis)
 
-**Completed Features**:
-- ✅ `analyze-logs.sh` script parses log files and extracts failure/recovery events
-- ✅ Calculates failure frequency (failures per day)
-- ✅ Calculates recovery success rate
-- ✅ Generates human-readable text reports
-- ✅ Exports detailed event data to CSV format
-- ✅ Supports date range filtering for analysis
-- ✅ Tracks Tier 1/2/3 action counts and success rates
-
-### 8. Per-Tunnel Recovery ✅ COMPLETED
-**Status**: ✅ Completed  
-**Date**: Implemented with connection name auto-discovery
-
-**Current State**: 
-- ✅ Tier 2 (surgical cleanup) uses `swanctl --reload-conn <connection-name>` when connection names are available (per-connection recovery)
-- ✅ Connection names are automatically discovered from `swanctl --list-sas` (recommended approach)
-- ✅ Manual configuration via `CONNECTION_NAME_<sanitized_peer_ip>` is also supported
-- ✅ Falls back to `swanctl --reload` (affects all tunnels) when connection names cannot be discovered or configured
-- ✅ Falls back to `ipsec reload` (affects all tunnels) when swanctl is unavailable (enhanced compatibility)
-- Tier 3 (full restart) uses `ipsec restart` (preferred) or `swanctl --reload` (fallback) - this is intentional as a last resort
-
-**Benefits Achieved**:
-- ✅ Less disruption - per-connection recovery minimizes impact on other tunnels
-- ✅ More targeted recovery - only the failing connection is reloaded
-- ✅ Better for multi-tunnel setups - independent recovery per tunnel
-- ✅ True per-tunnel isolation when connection names are available
-
-**Implementation Details**:
-- ✅ Uses `swanctl --reload-conn <connection-name>` for per-connection reloads
-- ✅ Automatic connection name discovery from `swanctl --list-sas` (cached for performance)
-- ✅ Manual configuration via `CONNECTION_NAME_<sanitized_peer_ip>` mapping
-- ✅ Graceful fallback to full reload if connection name unavailable
-- ✅ Connection names cached in state files for performance
-
 ### 9. Watchdog Mode
 **Current State**: Cron-based execution  
 **Enhancement**: Optional daemon mode with watchdog  
@@ -212,19 +110,24 @@ This document outlines potential improvements and enhancements for the UDM VPN M
 - Maintain cron mode as default (more reliable on UDM)
 
 ### 10. Configuration Validation
-**Current State**: Basic validation  
-**Enhancement**: Comprehensive config validation  
+**Status**: ✅ Mostly Completed  
+**Current State**: Comprehensive validation implemented  
+**Enhancement**: Additional connectivity testing  
 **Benefits**:
 - Catch errors early
 - Better error messages
 - Prevent misconfiguration
 
-**Implementation Notes**:
-- Validate all config values on startup
-- Check IP format, numeric ranges, file paths
-- Validate thresholds make sense (Tier1 < Tier2 < Tier3)
-- Test connectivity to ping targets
-- Provide clear error messages
+**Completed**:
+- ✅ Validate all config values on startup (`validate_config()`)
+- ✅ Check IP format (`validate_ip_address()` for IPv4/IPv6)
+- ✅ Numeric ranges (min/max validation for all integer configs)
+- ✅ File paths validation (checks writability of STATE_DIR, LOGS_DIR, LOG_FILE directories)
+- ✅ Validate thresholds make sense (Tier1 < Tier2 < Tier3 via relative validation: `TIER2_THRESHOLD min:TIER1_THRESHOLD`, `TIER3_THRESHOLD min:TIER2_THRESHOLD`)
+- ✅ Clear error messages (schema-based validation with descriptive errors)
+
+**Remaining**:
+- ⏳ Test connectivity to ping targets (not yet implemented - would require actual ping test during config validation)
 
 ## Low Priority / Nice-to-Have Enhancements
 
@@ -242,34 +145,6 @@ This document outlines potential improvements and enhancements for the UDM VPN M
 - Real-time status updates
 - Configuration editor
 - Optional: authentication
-
-### 12. SNMP Support
-**Current State**: No SNMP  
-**Enhancement**: SNMP MIB for monitoring  
-**Benefits**:
-- Integration with SNMP monitoring tools
-- Standard protocol support
-- Enterprise monitoring compatibility
-
-**Implementation Notes**:
-- Define custom MIB
-- Export via `snmpd` extension
-- OIDs for: peer status, failure counts, restart counts
-- Read-only access
-
-### 13. Multi-Instance Support
-**Current State**: Single instance per UDM  
-**Enhancement**: Support multiple monitoring instances  
-**Benefits**:
-- Different configs for different VPN types
-- Separate monitoring for different networks
-- Testing without affecting production
-
-**Implementation Notes**:
-- Instance identifier in config
-- Separate state directories
-- Separate lockfiles
-- Configurable instance names
 
 ### 14. Automated Testing ✅ PARTIALLY COMPLETE
 **Current State**: Comprehensive test suite using bats ✅  
@@ -290,29 +165,6 @@ This document outlines potential improvements and enhancements for the UDM VPN M
 - ✅ Integration tests with mock VPN states (implemented in test_integration.sh)
 - CI/CD pipeline integration
 - ✅ Test coverage reporting (implemented with kcov)
-
-### 15. Documentation Improvements ✅ SIGNIFICANTLY IMPROVED
-**Status**: ✅ Significantly Improved  
-**Current State**: Comprehensive documentation ✅  
-**Enhancement**: Additional documentation enhancements  
-**Benefits**:
-- Easier onboarding ✅
-- Better troubleshooting guides ✅
-- Architecture documentation ✅
-
-**Recent Improvements**:
-- ✅ Updated README.md with tool availability and fallback behavior documentation
-- ✅ Deduplicated README.md content for better clarity
-- ✅ Updated ARCHITECTURE.md with accurate Tier 2 recovery state diagrams
-- ✅ Enhanced DEVELOPER.md with detailed recovery action documentation
-- ✅ Updated CHANGELOG.md with recent enhancements
-- ✅ Removed outdated references (scp-files.sh)
-
-**Remaining Work**:
-- Architecture diagrams (visual)
-- More detailed troubleshooting scenarios
-- Video tutorials or walkthroughs
-- API documentation (if HTTP endpoint added)
 
 ### 16. IPv6 Enhancements
 **Current State**: Basic IPv6 support  

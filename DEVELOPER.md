@@ -18,7 +18,19 @@ This guide provides information for developers contributing to the UDM VPN Monit
    - bats (required)
    - kcov (optional, for coverage)
 
-3. **Set up git hooks**:
+3. **Set up development environment PATH**:
+   ```bash
+   ./scripts/setup-dev-env.sh
+   ```
+   This script:
+   - Checks for tools in standard system paths (`/usr/bin`, `/usr/local/bin`, `/bin`) for apt-installed tools
+   - Checks for tools in Homebrew paths if Homebrew is installed
+   - Adds Homebrew to PATH in your shell config (`.bashrc`, `.zshrc`, or `.profile`) if needed
+   - Provides installation instructions for missing tools
+   
+   **Note**: The script works whether tools are installed via `apt` or Homebrew. It only modifies PATH if tools aren't already accessible. After running, reload your shell: `source ~/.bashrc` (or open a new terminal).
+
+4. **Set up git hooks**:
    ```bash
    ./scripts/setup-git-hooks.sh
    ```
@@ -29,18 +41,18 @@ This guide provides information for developers contributing to the UDM VPN Monit
    
    **Note**: The hooks will warn if ShellCheck or shfmt are not installed, but will still proceed with package regeneration. For best results, install both tools (see [Required Tools](#required-tools) below).
 
-4. **Run tests to verify setup**
+5. **Run tests to verify setup**
    ```bash
    ./tests/run_tests.sh
    ```
    All tests should pass. If not, check tool installation.
 
-5. **Read the architecture documentation**
+6. **Read the architecture documentation**
    - Start with [ARCHITECTURE.md](ARCHITECTURE.md) to understand system design
    - Review [CODE_REVIEW.md](CODE_REVIEW.md) for code quality analysis and improvement areas
    - Check [ENHANCEMENTS.md](ENHANCEMENTS.md) for planned features
 
-6. **Understand the codebase structure**
+7. **Understand the codebase structure**
    - **Main Script**: `vpn-monitor.sh` - Entry point, orchestrates monitoring
    - **Detection**: `check_vpn_status()` - Checks VPN health using xfrm, swanctl, ipsec with automatic fallback
    - **Recovery**: `surgical_cleanup()`, `full_restart()` - Recovery actions (Tier 2, Tier 3) with tool availability detection
@@ -52,7 +64,7 @@ This guide provides information for developers contributing to the UDM VPN Monit
      - `lib/config.sh` - Configuration management
      - And more (see ARCHITECTURE.md for complete list)
 
-7. **Pick a small issue to start**
+8. **Pick a small issue to start**
    - Check [CODE_REVIEW.md](CODE_REVIEW.md) for improvement recommendations
    - Look for "good first issue" labels
    - Start with documentation improvements or small refactorings
@@ -342,6 +354,20 @@ This installs:
 
 ## Development Workflow
 
+### 0. Initial Setup
+
+If you haven't already, set up your development environment:
+
+```bash
+# Configure PATH for development tools (shfmt, shellcheck)
+./scripts/setup-dev-env.sh
+
+# Set up git hooks
+./scripts/setup-git-hooks.sh
+```
+
+The `setup-dev-env.sh` script automatically detects tools installed via `apt` or Homebrew and configures your PATH accordingly. After running it, reload your shell configuration or open a new terminal.
+
 ### 1. Code Quality Checks
 
 Before committing code, run both ShellCheck and shfmt:
@@ -624,6 +650,7 @@ udm-vpn-monitor/
 ├── scripts/
 │   ├── hooks/               # Git hooks (version controlled)
 │   │   └── pre-commit       # Pre-commit hook
+│   ├── setup-dev-env.sh    # Development environment setup (configures PATH)
 │   └── setup-git-hooks.sh  # Hook installation script
 ├── tests/
 │   ├── test_*.sh            # Test files

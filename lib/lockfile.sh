@@ -154,7 +154,7 @@ check_lockfile_stale() {
 
 	lockfile_age=$((now - lockfile_mtime))
 
-	if [[ $lockfile_age -gt $LOCKFILE_TIMEOUT ]]; then
+	if [[ "$lockfile_age" -gt "$LOCKFILE_TIMEOUT" ]]; then
 		return 0 # Stale (exceeded timeout)
 	fi
 

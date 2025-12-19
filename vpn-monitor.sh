@@ -453,7 +453,13 @@ process_peer_ips() {
 	validate_config
 
 	# Process each peer IP
-	for peer_ip in $PEER_IPS; do
+	# Convert space-separated string to array to avoid word splitting and globbing
+	# Use IFS to split on spaces, read into array with proper quoting
+	local IFS=' '
+	local -a peer_ips_array
+	read -ra peer_ips_array <<<"$PEER_IPS"
+
+	for peer_ip in "${peer_ips_array[@]}"; do
 		# Basic validation: non-empty (shouldn't happen after validate_config, but check anyway)
 		if [[ -z "$peer_ip" ]]; then
 			log_message "WARNING" "Skipping empty peer IP"

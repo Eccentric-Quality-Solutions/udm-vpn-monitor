@@ -18,7 +18,7 @@
 #   $1: Peer IP address to clean up (used to find connection name)
 #
 # Returns:
-#   0: Always succeeds (even if cleanup commands fail, errors are logged)
+#   0: Always succeeds (cleanup commands attempted, errors are logged if they fail)
 #
 # Actions:
 #   Reloads IPsec configuration to clean up and re-establish SAs:
@@ -77,18 +77,29 @@ surgical_cleanup() {
 		else
 			# No connection name configured - use full reload (affects all connections)
 			log_message "INFO" "No connection name configured for $peer_ip, using full reload (affects all tunnels)"
-			swanctl --reload 2>/dev/null || true
+			if ! swanctl --reload 2>&1; then
+				local reload_exit_code=$?
+				log_message "ERROR" "swanctl --reload failed (exit code: ${reload_exit_code})"
+			else
+				log_message "INFO" "Successfully reloaded all connections via swanctl --reload"
+			fi
 		fi
 		log_message "INFO" "Surgical cleanup completed for $peer_ip"
 	elif command -v ipsec >/dev/null 2>&1; then
 		# Fallback to ipsec reload if swanctl is not available
 		# Note: ipsec reload affects all connections (not per-connection)
 		log_message "INFO" "swanctl not available, using ipsec reload fallback (affects all tunnels)"
-		if ipsec reload 2>/dev/null; then
+		if ipsec reload 2>&1; then
 			log_message "INFO" "Successfully reloaded IPsec connections via ipsec reload"
 		else
-			log_message "WARNING" "ipsec reload failed, attempting ipsec restart"
-			ipsec restart 2>/dev/null || true
+			local reload_exit_code=$?
+			log_message "WARNING" "ipsec reload failed (exit code: ${reload_exit_code}), attempting ipsec restart"
+			if ! ipsec restart 2>&1; then
+				local restart_exit_code=$?
+				log_message "ERROR" "ipsec restart also failed (exit code: ${restart_exit_code})"
+			else
+				log_message "INFO" "Successfully restarted IPsec service via ipsec restart"
+			fi
 		fi
 		log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback)"
 	else
@@ -220,7 +231,7 @@ monitor_peer() {
 	if check_vpn_status "$peer_ip"; then
 		# VPN is OK
 		failure_count=$(get_failure_count "$peer_ip")
-		if [[ $failure_count -gt 0 ]]; then
+		if [[ "$failure_count" -gt 0 ]]; then
 			log_message "INFO" "${VPN_NAME:-VPN} recovered for $peer_ip after $failure_count failures"
 			reset_failure_count "$peer_ip"
 		fi
@@ -231,13 +242,13 @@ monitor_peer() {
 		log_message "WARNING" "${VPN_NAME:-VPN} check failed for $peer_ip (failure count: $failure_count)"
 
 		# Tier 1: Logging (triggers when failure_count >= TIER1_THRESHOLD)
-		if [[ $failure_count -ge $TIER1_THRESHOLD ]]; then
+		if [[ "$failure_count" -ge "$TIER1_THRESHOLD" ]]; then
 			log_message "INFO" "Tier 1: Logging ${VPN_NAME:-VPN} failure for $peer_ip"
 		fi
 
 		# Tier 2: Surgical cleanup
-		if [[ $failure_count -ge $TIER2_THRESHOLD ]] && [[ $failure_count -lt $TIER3_THRESHOLD ]]; then
-			if [[ $NO_ESCALATE -eq 1 ]]; then
+		if [[ "$failure_count" -ge "$TIER2_THRESHOLD" ]] && [[ "$failure_count" -lt "$TIER3_THRESHOLD" ]]; then
+			if [[ "$NO_ESCALATE" -eq 1 ]]; then
 				log_message "INFO" "Tier 2: Would attempt surgical SA cleanup for $peer_ip (skipped in fake mode)"
 			else
 				log_message "WARNING" "Tier 2: Attempting surgical SA cleanup for $peer_ip"
@@ -246,8 +257,8 @@ monitor_peer() {
 		fi
 
 		# Tier 3: Full restart
-		if [[ $failure_count -ge $TIER3_THRESHOLD ]]; then
-			if [[ $NO_ESCALATE -eq 1 ]]; then
+		if [[ "$failure_count" -ge "$TIER3_THRESHOLD" ]]; then
+			if [[ "$NO_ESCALATE" -eq 1 ]]; then
 				log_message "INFO" "Tier 3: Would attempt full IPsec restart (skipped in fake mode)"
 			else
 				log_message "ERROR" "Tier 3: Attempting full IPsec restart"

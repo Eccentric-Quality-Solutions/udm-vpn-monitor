@@ -164,7 +164,10 @@ increment_failure() {
 	count=$(get_failure_count "$peer_ip")
 	local new_count=$((count + 1))
 	# Atomic write: write to temp file first, then rename
-	echo "$new_count" >"${counter_file}.tmp" && mv "${counter_file}.tmp" "$counter_file" || true
+	if ! (echo "$new_count" >"${counter_file}.tmp" && mv "${counter_file}.tmp" "$counter_file"); then
+		log_message "ERROR" "Failed to update failure counter for $peer_ip"
+		# Continue execution but log the error
+	fi
 	echo "$new_count"
 }
 
@@ -198,7 +201,10 @@ reset_failure_count() {
 	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
 	local counter_file="${LOGS_DIR}/failure_counter_${peer_sanitized}"
 	# Atomic write: write to temp file first, then rename
-	echo "0" >"${counter_file}.tmp" && mv "${counter_file}.tmp" "$counter_file" || true
+	if ! (echo "0" >"${counter_file}.tmp" && mv "${counter_file}.tmp" "$counter_file"); then
+		log_message "ERROR" "Failed to reset failure counter for $peer_ip"
+		# Continue execution but log the error
+	fi
 }
 
 # Get timestamp plus N minutes
@@ -294,7 +300,7 @@ check_cooldown() {
 	local now
 	now=$(date +%s)
 
-	if [[ $now -lt $cooldown_until ]]; then
+	if [[ "$now" -lt "$cooldown_until" ]]; then
 		local remaining
 		remaining=$((cooldown_until - now))
 		log_message "INFO" "In cooldown period, $remaining seconds remaining"
@@ -335,7 +341,10 @@ set_cooldown() {
 	local cooldown_until
 	cooldown_until=$(get_timestamp_plus_minutes "$minutes")
 	# Atomic write: write to temp file first, then rename
-	echo "$cooldown_until" >"${COOLDOWN_UNTIL_FILE}.tmp" && mv "${COOLDOWN_UNTIL_FILE}.tmp" "$COOLDOWN_UNTIL_FILE" || true
+	if ! (echo "$cooldown_until" >"${COOLDOWN_UNTIL_FILE}.tmp" && mv "${COOLDOWN_UNTIL_FILE}.tmp" "$COOLDOWN_UNTIL_FILE"); then
+		log_message "ERROR" "Failed to set cooldown period (file: $COOLDOWN_UNTIL_FILE)"
+		# Continue execution but log the error
+	fi
 	log_message "INFO" "Cooldown period set for $minutes minutes"
 }
 
@@ -380,7 +389,7 @@ check_rate_limit() {
 	local recent_restarts
 	recent_restarts=$(awk -v cutoff="$one_hour_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | wc -l | tr -d ' ')
 
-	if [[ $recent_restarts -ge $MAX_RESTARTS_PER_HOUR ]]; then
+	if [[ "$recent_restarts" -ge "$MAX_RESTARTS_PER_HOUR" ]]; then
 		log_message "WARNING" "Rate limit exceeded: $recent_restarts restarts in last hour (max: $MAX_RESTARTS_PER_HOUR)"
 		return 1 # Rate limited
 	fi
