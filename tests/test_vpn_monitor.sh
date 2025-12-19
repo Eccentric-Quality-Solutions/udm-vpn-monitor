@@ -26,12 +26,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_output --partial "Usage:"
 }
 
-@test "vpn-monitor.sh exits with error if PEER_IPS not configured" {
-	# Create temporary config without PEER_IPS
+@test "vpn-monitor.sh exits with error if EXTERNAL_PEER_IPS not configured" {
+	# Create temporary config without EXTERNAL_PEER_IPS
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 VPN_NAME="Test VPN"
-PEER_IPS=""
+EXTERNAL_PEER_IPS=""
 EOF
 
 	# Create state directory and ensure log directory exists
@@ -45,13 +45,13 @@ EOF
 	run bash "$test_script"
 
 	assert_failure
-	assert_output --partial "PEER_IPS is required but not configured"
+	assert_output --partial "EXTERNAL_PEER_IPS is required but not configured"
 }
 
 @test "vpn-monitor.sh creates state directory if missing" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	# State directory doesn't exist yet
@@ -71,7 +71,7 @@ EOF
 @test "vpn-monitor.sh initializes state files" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -92,7 +92,7 @@ EOF
 @test "vpn-monitor.sh creates log file" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}"
@@ -111,7 +111,7 @@ EOF
 @test "vpn-monitor.sh logs script start" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}"
@@ -130,7 +130,7 @@ EOF
 @test "vpn-monitor.sh handles --fake flag" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}"
@@ -149,7 +149,7 @@ EOF
 @test "vpn-monitor.sh validates peer IP format" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="invalid-ip"
+EXTERNAL_PEER_IPS="invalid-ip"
 EOF
 
 	# Ensure log directory exists
@@ -174,7 +174,7 @@ EOF
 @test "vpn-monitor.sh rejects dangerous characters in peer IP" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1; rm -rf /"
+EXTERNAL_PEER_IPS="192.168.1.1; rm -rf /"
 EOF
 
 	mkdir -p "${TEST_DIR}"
@@ -193,7 +193,7 @@ EOF
 @test "vpn-monitor.sh handles multiple peer IPs" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1 10.0.0.1"
+EXTERNAL_PEER_IPS="192.168.1.1 10.0.0.1"
 EOF
 
 	# Ensure log directory exists
@@ -213,7 +213,7 @@ EOF
 @test "vpn-monitor.sh maintains independent failure counters per peer" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1 10.0.0.1"
+EXTERNAL_PEER_IPS="192.168.1.1 10.0.0.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -272,7 +272,7 @@ EOF
 @test "vpn-monitor.sh increments failure counter on failure" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -308,7 +308,7 @@ EOF
 @test "vpn-monitor.sh resets failure counter on success" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	# Ensure log directory exists
@@ -348,7 +348,7 @@ EOF
 @test "vpn-monitor.sh respects cooldown period" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 COOLDOWN_MINUTES=15
 EOF
 
@@ -373,7 +373,7 @@ EOF
 @test "vpn-monitor.sh handles lockfile timeout" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 LOCKFILE_TIMEOUT=300
 EOF
 
@@ -402,7 +402,7 @@ EOF
 @test "vpn-monitor.sh prevents concurrent execution with lockfile" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}"
@@ -428,7 +428,7 @@ EOF
 @test "vpn-monitor.sh loads configuration from file" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 VPN_NAME="Custom VPN Name"
 DEBUG=1
 EOF
@@ -455,8 +455,8 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
 
-	# Set PEER_IPS via environment since config file doesn't exist
-	PEER_IPS="192.168.1.1" \
+	# Set EXTERNAL_PEER_IPS via environment since config file doesn't exist
+	EXTERNAL_PEER_IPS="192.168.1.1" \
 		run bash "$test_script" --fake
 
 	# Should use defaults and warn
@@ -466,7 +466,7 @@ EOF
 @test "vpn-monitor.sh handles ping check when enabled" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 ENABLE_PING_CHECK=1
 PING_TARGET_IP="192.168.1.1"
 PING_COUNT=3
@@ -499,7 +499,7 @@ EOF
 @test "vpn-monitor.sh handles debug mode" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 DEBUG=1
 EOF
 
@@ -523,7 +523,7 @@ EOF
 @test "vpn-monitor.sh checks cron persistence" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}"
@@ -550,7 +550,7 @@ EOF
 @test "vpn-monitor.sh initialize_monitor logs script start in normal mode" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -577,7 +577,7 @@ EOF
 @test "vpn-monitor.sh initialize_monitor logs script start in fake mode" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -604,7 +604,7 @@ EOF
 @test "vpn-monitor.sh initialize_monitor initializes state files" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -630,7 +630,7 @@ EOF
 @test "vpn-monitor.sh validate_monitor_state exits when in cooldown period" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 COOLDOWN_MINUTES=15
 EOF
 
@@ -656,7 +656,7 @@ EOF
 @test "vpn-monitor.sh validate_monitor_state continues when not in cooldown" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 COOLDOWN_MINUTES=15
 EOF
 
@@ -689,7 +689,7 @@ EOF
 @test "vpn-monitor.sh validate_monitor_state checks cron persistence on first run" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -721,7 +721,7 @@ EOF
 @test "vpn-monitor.sh process_peer_ips processes single peer" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -749,7 +749,7 @@ EOF
 @test "vpn-monitor.sh process_peer_ips processes multiple peers" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1 10.0.0.1"
+EXTERNAL_PEER_IPS="192.168.1.1 10.0.0.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -786,7 +786,7 @@ EOF
 @test "vpn-monitor.sh process_peer_ips skips empty peer IP" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1  10.0.0.1"
+EXTERNAL_PEER_IPS="192.168.1.1  10.0.0.1"
 # Note: Extra spaces create empty elements
 EOF
 
@@ -813,7 +813,7 @@ EOF
 @test "vpn-monitor.sh process_peer_ips validates configuration" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS=""
+EXTERNAL_PEER_IPS=""
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -826,5 +826,5 @@ EOF
 
 	# Should fail due to invalid configuration
 	assert_failure
-	assert_output --partial "PEER_IPS is required"
+	assert_output --partial "EXTERNAL_PEER_IPS is required"
 }

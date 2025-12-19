@@ -896,24 +896,28 @@ check_ipsec_status() {
 # Used to verify end-to-end connectivity or diagnose issues.
 #
 # Arguments:
-#   $1: VPN status (0 = OK, 1 = failed)
-#   $2: Peer IP address
+#   $1: VPN status (1 = OK, 0 = failed)
+#   $2: Ping target IP address (internal IP if provided, otherwise external IP)
 #
 # Returns:
 #   0: Always succeeds (ping check is informational)
 #
 # Side effects:
 #   - Logs warning/debug messages about ping results
+#
+# Note:
+#   Uses PING_TARGET_IP if configured (for backward compatibility), otherwise uses the provided IP
+#   The provided IP should be the internal IP if available, falling back to external IP
 check_ping_if_enabled() {
 	local vpn_ok="$1"
-	local peer_ip="$2"
+	local ping_ip="$2"
 
 	if [[ "${ENABLE_PING_CHECK:-0}" -ne 1 ]]; then
 		return 0
 	fi
 
-	# Determine ping target: use PING_TARGET_IP if configured, otherwise use peer_ip
-	local ping_target="${PING_TARGET_IP:-$peer_ip}"
+	# Determine ping target: use PING_TARGET_IP if configured (backward compatibility), otherwise use provided IP
+	local ping_target="${PING_TARGET_IP:-$ping_ip}"
 
 	if [[ $vpn_ok -eq 1 ]]; then
 		# SA exists, verify connectivity with ping check
@@ -943,18 +947,19 @@ check_ping_if_enabled() {
 # If ping checks are enabled, also verifies end-to-end connectivity.
 #
 # Arguments:
-#   $1: Peer IP address (external/public IP of remote VPN gateway)
+#   $1: External peer IP address (external/public IP of remote VPN gateway, used for xfrm state checks)
+#   $2: Internal peer IP address (optional, used for ping checks, falls back to external if not provided)
 #
 # Returns:
 #   0: VPN is healthy (SA exists, bytes increasing or non-zero)
 #   1: VPN check failed (no SA found or bytes not increasing)
 #
 # Detection logic:
-#   1. Checks ip xfrm state for SA matching peer IP
+#   1. Checks ip xfrm state for SA matching external peer IP
 #   2. Validates byte counters are > 0 and increasing (if available)
 #   3. Falls back to swanctl --list-sas if xfrm doesn't confirm
 #   4. Falls back to ipsec status if swanctl doesn't confirm
-#   5. Optionally performs ping check if ENABLE_PING_CHECK=1
+#   5. Optionally performs ping check if ENABLE_PING_CHECK=1 (uses internal IP if provided)
 #
 # Side effects:
 #   - Creates/updates per-peer last_bytes file if byte counters found
@@ -963,32 +968,36 @@ check_ping_if_enabled() {
 # Note:
 #   Requires validate_ip_address, sanitize_peer_ip, log_message, STATE_DIR, ENABLE_PING_CHECK,
 #   PING_TARGET_IP to be set
+#   External IP is used for xfrm/swanctl checks, internal IP is used for ping checks
 check_vpn_status() {
-	local peer_ip="$1"
+	local external_peer_ip="$1"
+	local internal_peer_ip="${2:-}"
 	local vpn_ok=0
 
-	# Validate peer IP format using proper validation function
-	if ! validate_ip_address "$peer_ip"; then
-		log_message "ERROR" "Invalid peer IP format: $peer_ip"
+	# Validate external peer IP format using proper validation function
+	if ! validate_ip_address "$external_peer_ip"; then
+		log_message "ERROR" "Invalid external peer IP format: $external_peer_ip"
 		return 1
 	fi
 
-	# Per-peer bytes file
+	# Per-peer bytes file (use external IP for state tracking)
 	local peer_sanitized
-	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
+	peer_sanitized=$(sanitize_peer_ip "$external_peer_ip")
 	local last_bytes_file="${STATE_DIR}/last_bytes_${peer_sanitized}"
 
-	# Try detection methods in order of reliability
-	if check_xfrm_status "$peer_ip" "$last_bytes_file"; then
+	# Try detection methods in order of reliability (use external IP for xfrm/swanctl)
+	if check_xfrm_status "$external_peer_ip" "$last_bytes_file"; then
 		vpn_ok=1
-	elif check_swanctl_status "$peer_ip"; then
+	elif check_swanctl_status "$external_peer_ip"; then
 		vpn_ok=1
-	elif check_ipsec_status "$peer_ip"; then
+	elif check_ipsec_status "$external_peer_ip"; then
 		vpn_ok=1
 	fi
 
 	# Perform ping check if enabled (informational, doesn't affect vpn_ok)
-	check_ping_if_enabled "$vpn_ok" "$peer_ip"
+	# Use internal IP if provided, otherwise fall back to external IP
+	local ping_ip="${internal_peer_ip:-$external_peer_ip}"
+	check_ping_if_enabled "$vpn_ok" "$ping_ip"
 
 	# Return 0 if OK, 1 if failed (invert vpn_ok: 1 becomes 0, 0 becomes 1)
 	return $((1 - vpn_ok))

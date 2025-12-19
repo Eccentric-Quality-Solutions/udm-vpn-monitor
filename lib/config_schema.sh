@@ -27,7 +27,7 @@
 # delimiter or implement escaping).
 #
 # Examples:
-#   ["PEER_IPS"]="required|string|non-empty"
+#   ["EXTERNAL_PEER_IPS"]="required|string|non-empty"
 #   ["TIER1_THRESHOLD"]="required|integer|min:1"
 #   ["TIER2_THRESHOLD"]="required|integer|min:TIER1_THRESHOLD"
 #   ["ENABLE_PING_CHECK"]="optional|integer|values:0,1|default:1"
@@ -47,7 +47,8 @@
 #   - Schema defaults: Validation, correction of invalid values, consistency
 declare -A CONFIG_SCHEMA=(
 	# Required configuration
-	["PEER_IPS"]="required|string|non-empty"
+	["EXTERNAL_PEER_IPS"]="required|string|non-empty"
+	["INTERNAL_PEER_IPS"]="optional|string||default:"
 	["TIER1_THRESHOLD"]="required|integer|min:1"
 	# NOTE: TIER2_THRESHOLD has relative validation (depends on TIER1_THRESHOLD)
 	# Validation order is handled safely - see validate_config_schema() documentation
@@ -89,7 +90,7 @@ declare -A CONFIG_SCHEMA=(
 #   Prints schema string to stdout in format: "required|type|rules|default"
 #
 # Examples:
-#   schema=$(get_config_schema "PEER_IPS")
+#   schema=$(get_config_schema "EXTERNAL_PEER_IPS")
 #   # Returns: "required|string|non-empty"
 #
 # Note:
@@ -116,8 +117,8 @@ get_config_schema() {
 #   1: Variable is optional or not found in schema
 #
 # Examples:
-#   if is_config_required "PEER_IPS"; then
-#       echo "PEER_IPS is required"
+#   if is_config_required "EXTERNAL_PEER_IPS"; then
+#       echo "EXTERNAL_PEER_IPS is required"
 #   fi
 #
 # Note:

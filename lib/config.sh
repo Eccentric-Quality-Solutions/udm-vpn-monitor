@@ -139,7 +139,9 @@ load_config() {
 	# To change defaults, update BOTH locations:
 	#   - This file (load_config function)
 	#   - lib/config_schema.sh (CONFIG_SCHEMA array)
-	PEER_IPS="${PEER_IPS:-}"
+
+	EXTERNAL_PEER_IPS="${EXTERNAL_PEER_IPS:-}"
+	INTERNAL_PEER_IPS="${INTERNAL_PEER_IPS:-}"
 	VPN_NAME="${VPN_NAME:-Site-to-Site VPN}"
 	TIER1_THRESHOLD="${TIER1_THRESHOLD:-1}"
 	TIER2_THRESHOLD="${TIER2_THRESHOLD:-3}"
@@ -599,7 +601,7 @@ validate_config_rules() {
 #   - Calls log_message() for warnings about optional variables
 #
 # Examples:
-#   validate_config_var "PEER_IPS"
+#   validate_config_var "EXTERNAL_PEER_IPS"
 #   validate_config_var "TIER1_THRESHOLD" "5"
 #
 # Note:
@@ -744,26 +746,53 @@ validate_config() {
 	fi
 
 	# Custom validation: IP address format (not handled by schema)
-	# Schema validates PEER_IPS is non-empty, but IP format validation requires custom logic
+	# Schema validates EXTERNAL_PEER_IPS is non-empty, but IP format validation requires custom logic
 	# Convert space-separated string to array to avoid word splitting and globbing
 	# Use IFS to split on spaces, read into array with proper quoting
 	local IFS=' '
-	local -a peer_ips_array
-	read -ra peer_ips_array <<<"$PEER_IPS"
+	local -a external_peer_ips_array
+	local -a internal_peer_ips_array
+	read -ra external_peer_ips_array <<<"$EXTERNAL_PEER_IPS"
+	read -ra internal_peer_ips_array <<<"$INTERNAL_PEER_IPS"
 
-	for peer_ip in "${peer_ips_array[@]}"; do
+	# Validate external peer IPs (required)
+	for peer_ip in "${external_peer_ips_array[@]}"; do
 		# Basic validation: non-empty (shouldn't happen after schema validation, but check anyway)
 		if [[ -z "$peer_ip" ]]; then
-			log_message "WARNING" "Skipping empty peer IP"
+			log_message "WARNING" "Skipping empty external peer IP"
 			continue
 		fi
 
 		# Validate IP address format using proper validation function
 		# This function handles both IPv4 and IPv6 validation, including security checks
 		if ! validate_ip_address "$peer_ip"; then
-			die "Invalid peer IP format: $peer_ip"
+			die "Invalid external peer IP format: $peer_ip"
 		fi
 	done
+
+	# Validate internal peer IPs (optional, but if set must match count and be valid)
+	if [[ -n "$INTERNAL_PEER_IPS" ]]; then
+		local external_count=${#external_peer_ips_array[@]}
+		local internal_count=${#internal_peer_ips_array[@]}
+
+		if [[ $internal_count -gt 0 ]] && [[ $internal_count -ne $external_count ]]; then
+			log_message "WARNING" "INTERNAL_PEER_IPS count ($internal_count) does not match EXTERNAL_PEER_IPS count ($external_count). Only matching internal IPs will be used."
+		fi
+
+		# Validate internal IPs (even if count doesn't match, validate what's there)
+		for peer_ip in "${internal_peer_ips_array[@]}"; do
+			# Basic validation: non-empty
+			if [[ -z "$peer_ip" ]]; then
+				log_message "WARNING" "Skipping empty internal peer IP"
+				continue
+			fi
+
+			# Validate IP address format
+			if ! validate_ip_address "$peer_ip"; then
+				die "Invalid internal peer IP format: $peer_ip"
+			fi
+		done
+	fi
 
 	# Validate file paths are writable (if they exist)
 	# Check STATE_DIR is writable

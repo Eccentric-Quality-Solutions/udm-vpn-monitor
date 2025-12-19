@@ -89,7 +89,7 @@ create_install_dir() {
 # Used during interactive installation mode to gather configuration values.
 #
 # Arguments:
-#   $1: Config parameter name (e.g., "PEER_IPS") - used for reference, not displayed
+#   $1: Config parameter name (e.g., "EXTERNAL_PEER_IPS") - used for reference, not displayed
 #   $2: Default value (shown in brackets, used if user presses Enter)
 #   $3: Description/prompt text (displayed to user)
 #
@@ -100,7 +100,7 @@ create_install_dir() {
 #   Prints the user's value (or default if empty) to stdout
 #
 # Examples:
-#   value=$(prompt_config_value "PEER_IPS" "" "Peer IP address(es)")
+#   value=$(prompt_config_value "EXTERNAL_PEER_IPS" "" "External peer IP address(es)")
 #   # Prompts: "Peer IP address(es): "
 #   value=$(prompt_config_value "TIER1_THRESHOLD" "1" "Tier 1 threshold")
 #   # Prompts: "Tier 1 threshold [1]: "
@@ -164,8 +164,11 @@ create_interactive_config() {
 	local default_debug=0
 
 	# Prompt for each value
-	local peer_ips
-	peer_ips=$(prompt_config_value "PEER_IPS" "$default_peer_ips" "Peer IP address(es) to monitor (space-separated, external/public IPs)")
+	local external_peer_ips
+	external_peer_ips=$(prompt_config_value "EXTERNAL_PEER_IPS" "$default_peer_ips" "External/Public peer IP address(es) to monitor (space-separated, external/public IPs)")
+
+	local internal_peer_ips
+	internal_peer_ips=$(prompt_config_value "INTERNAL_PEER_IPS" "" "Internal/Private peer IP address(es) (optional, space-separated, for ping checks, empty to skip)")
 
 	local vpn_name
 	vpn_name=$(prompt_config_value "VPN_NAME" "$default_vpn_name" "VPN connection identifier/name")
@@ -195,7 +198,7 @@ create_interactive_config() {
 	enable_ping=$(prompt_config_value "ENABLE_PING_CHECK" "$default_enable_ping" "Enable ping connectivity check (0 or 1)")
 
 	local ping_target
-	ping_target=$(prompt_config_value "PING_TARGET_IP" "$default_ping_target" "Ping target IP (internal/private IP, empty to use peer IP)")
+	ping_target=$(prompt_config_value "PING_TARGET_IP" "$default_ping_target" "Ping target IP (DEPRECATED - use INTERNAL_PEER_IPS instead, empty to skip)")
 
 	local ping_count
 	ping_count=$(prompt_config_value "PING_COUNT" "$default_ping_count" "Ping count (number of packets)")
@@ -211,9 +214,17 @@ create_interactive_config() {
 # UDM VPN Monitor Configuration
 # Generated via interactive installation
 
-# Peer IP address(es) to monitor (space-separated list)
+# External/Public peer IP address(es) to monitor (space-separated list)
 # This should be the EXTERNAL/PUBLIC IP address(es) of the remote VPN gateway(s)
-PEER_IPS="${peer_ips}"
+# This is the IP address used to establish the IPsec tunnel and check xfrm state
+EXTERNAL_PEER_IPS="${external_peer_ips}"
+
+# Internal/Private peer IP address(es) to monitor (space-separated list)
+# This should be the INTERNAL/PRIVATE IP address(es) of the remote VPN gateway(s)
+# This is the IP address used for ping connectivity checks through the tunnel
+# Must match the order of EXTERNAL_PEER_IPS (first internal IP corresponds to first external IP)
+# If empty, ping checks will use EXTERNAL_PEER_IPS instead
+INTERNAL_PEER_IPS="${internal_peer_ips}"
 
 # VPN connection identifier/name (optional, for logging)
 VPN_NAME="${vpn_name}"
@@ -296,7 +307,8 @@ install_config_file() {
 		log_warn "Config template not found, creating default"
 		cat >"${INSTALL_DIR}/${CONFIG_NAME}" <<EOF
 # UDM VPN Monitor Configuration
-PEER_IPS=""
+EXTERNAL_PEER_IPS=""
+INTERNAL_PEER_IPS=""
 VPN_NAME="Site-to-Site VPN"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
@@ -716,7 +728,8 @@ display_next_steps() {
 	echo "  1. Edit the configuration file:"
 	echo "     ${INSTALL_DIR}/${CONFIG_NAME}"
 	echo ""
-	echo "  2. Set PEER_IPS to your remote VPN endpoint IP address(es)"
+	echo "  2. Set EXTERNAL_PEER_IPS to your remote VPN endpoint external/public IP address(es)"
+	echo "  3. Optionally set INTERNAL_PEER_IPS to your remote VPN endpoint internal/private IP address(es)"
 	echo ""
 	echo "  3. Test the script manually:"
 	echo "     ${INSTALL_DIR}/${SCRIPT_NAME}"

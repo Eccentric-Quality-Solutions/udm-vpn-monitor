@@ -11,7 +11,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 @test "integration: VPN healthy - no action taken" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -53,7 +53,7 @@ EOF
 @test "integration: VPN down - Tier 1 logging triggered" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -98,7 +98,7 @@ EOF
 @test "integration: VPN down - Tier 2 surgical cleanup triggered" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -153,7 +153,7 @@ EOF
 @test "integration: VPN down - Tier 3 full restart triggered" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -199,7 +199,7 @@ EOF
 @test "integration: VPN recovery after failures - counter reset" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -239,7 +239,7 @@ EOF
 @test "integration: Multiple peers - independent failure tracking" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1 10.0.0.1"
+EXTERNAL_PEER_IPS="192.168.1.1 10.0.0.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -295,7 +295,7 @@ EOF
 @test "integration: Ping check enabled - VPN SA exists but ping fails" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 ENABLE_PING_CHECK=1
 PING_TARGET_IP="192.168.1.1"
 PING_COUNT=3
@@ -335,7 +335,7 @@ EOF
 @test "integration: Ping check enabled - VPN SA exists and ping succeeds" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 ENABLE_PING_CHECK=1
 PING_TARGET_IP="192.168.1.1"
 PING_COUNT=3
@@ -374,7 +374,7 @@ EOF
 @test "integration: Rate limiting prevents excessive restarts" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -427,7 +427,7 @@ EOF
 @test "integration: Cooldown period prevents immediate restart" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 COOLDOWN_MINUTES=15
 EOF
 
@@ -454,7 +454,7 @@ EOF
 @test "integration: Connection name discovery and caching" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -526,7 +526,7 @@ EOF
 @test "integration: Per-connection reload used when connection name available" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -598,7 +598,7 @@ EOF
 @test "integration: Byte counter tracking - bytes not increasing detected" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -633,7 +633,7 @@ EOF
 @test "integration: Byte counter tracking - bytes increasing detected as healthy" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -678,7 +678,7 @@ EOF
 @test "integration: Fallback to swanctl when xfrm unavailable" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -713,7 +713,7 @@ EOF
 @test "integration: Fallback to ipsec status when xfrm and swanctl unavailable" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -752,7 +752,7 @@ EOF
 @test "integration: monitor_peer resets failure counter when VPN recovers" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -797,7 +797,7 @@ EOF
 @test "integration: monitor_peer increments failure counter on VPN failure" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -839,7 +839,7 @@ EOF
 @test "integration: monitor_peer tier escalation in fake mode skips actions" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=2
 TIER3_THRESHOLD=3
@@ -880,7 +880,7 @@ EOF
 @test "integration: monitor_peer tier escalation triggers at correct thresholds" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=2
 TIER3_THRESHOLD=3

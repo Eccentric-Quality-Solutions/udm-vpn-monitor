@@ -304,8 +304,8 @@ parse_args() {
 #   2. Initialize state files
 #   3. Check cooldown period (exit if in cooldown)
 #   4. Check cron persistence (once per run)
-#   5. Validate PEER_IPS configuration
-#   6. Monitor each configured peer IP
+#   5. Validate EXTERNAL_PEER_IPS configuration
+#   6. Monitor each configured peer IP (external and internal)
 #   7. Exit with appropriate status code
 #
 # Side effects:
@@ -422,8 +422,9 @@ validate_monitor_state() {
 # Process all peer IPs
 #
 # Iterates through configured peer IPs and monitors each one.
-# Validates configuration before processing to ensure PEER_IPS is set correctly.
+# Validates configuration before processing to ensure EXTERNAL_PEER_IPS is set correctly.
 # Skips empty peer IPs with a warning.
+# Uses EXTERNAL_PEER_IPS for xfrm state checks and INTERNAL_PEER_IPS for ping checks.
 #
 # Returns:
 #   0: All peers are healthy (all monitor_peer calls succeeded)
@@ -431,7 +432,7 @@ validate_monitor_state() {
 #
 # Side effects:
 #   - Validates configuration via validate_config()
-#   - Calls monitor_peer() for each peer IP in PEER_IPS
+#   - Calls monitor_peer() for each peer IP pair (external, internal)
 #   - Logs warnings for empty peer IPs (skips them)
 #   - Enables debug output if DEBUG=1
 #
@@ -441,14 +442,16 @@ validate_monitor_state() {
 #   fi
 #
 # Note:
-#   Requires validate_config, monitor_peer, log_message, PEER_IPS, DEBUG to be set
-#   PEER_IPS should be space-separated list of IP addresses
+#   Requires validate_config, monitor_peer, log_message, EXTERNAL_PEER_IPS, INTERNAL_PEER_IPS, DEBUG to be set
+#   EXTERNAL_PEER_IPS should be space-separated list of external/public IP addresses
+#   INTERNAL_PEER_IPS should be space-separated list of internal/private IP addresses (optional)
 process_peer_ips() {
 	local all_ok=0
 
 	# Validate configuration
 	if [[ "${DEBUG:-0}" -eq 1 ]]; then
-		echo "DEBUG: Validating PEER_IPS (value: '${PEER_IPS}')" >&2
+		echo "DEBUG: Validating EXTERNAL_PEER_IPS (value: '${EXTERNAL_PEER_IPS}')" >&2
+		echo "DEBUG: INTERNAL_PEER_IPS (value: '${INTERNAL_PEER_IPS}')" >&2
 	fi
 	validate_config
 
@@ -456,19 +459,31 @@ process_peer_ips() {
 	# Convert space-separated string to array to avoid word splitting and globbing
 	# Use IFS to split on spaces, read into array with proper quoting
 	local IFS=' '
-	local -a peer_ips_array
-	read -ra peer_ips_array <<<"$PEER_IPS"
+	local -a external_peer_ips_array
+	local -a internal_peer_ips_array
+	read -ra external_peer_ips_array <<<"$EXTERNAL_PEER_IPS"
+	read -ra internal_peer_ips_array <<<"$INTERNAL_PEER_IPS"
 
-	for peer_ip in "${peer_ips_array[@]}"; do
+	local idx=0
+	for external_peer_ip in "${external_peer_ips_array[@]}"; do
 		# Basic validation: non-empty (shouldn't happen after validate_config, but check anyway)
-		if [[ -z "$peer_ip" ]]; then
-			log_message "WARNING" "Skipping empty peer IP"
+		if [[ -z "$external_peer_ip" ]]; then
+			log_message "WARNING" "Skipping empty external peer IP"
 			continue
 		fi
 
-		if ! monitor_peer "$peer_ip"; then
+		# Get corresponding internal IP (if available)
+		local internal_peer_ip=""
+		if [[ $idx -lt ${#internal_peer_ips_array[@]} ]] && [[ -n "${internal_peer_ips_array[$idx]}" ]]; then
+			internal_peer_ip="${internal_peer_ips_array[$idx]}"
+		fi
+
+		# Monitor peer with both external and internal IPs
+		if ! monitor_peer "$external_peer_ip" "$internal_peer_ip"; then
 			all_ok=1
 		fi
+
+		((idx++))
 	done
 
 	return $all_ok

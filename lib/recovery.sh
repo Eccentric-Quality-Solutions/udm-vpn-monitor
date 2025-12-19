@@ -198,7 +198,8 @@ full_restart() {
 # Checks VPN status and escalates recovery actions based on failure count thresholds.
 #
 # Arguments:
-#   $1: Peer IP address to monitor
+#   $1: External peer IP address to monitor (used for xfrm state checks)
+#   $2: Internal peer IP address (optional, used for ping checks, falls back to external if not provided)
 #
 # Returns:
 #   0: VPN is healthy (or recovered)
@@ -219,40 +220,42 @@ full_restart() {
 #   Each peer has its own independent failure counter tracked in:
 #   ${LOGS_DIR}/failure_counter_<peer_ip_sanitized>
 #   This allows independent failure tracking and recovery per peer.
+#   External IP is used for xfrm/swanctl checks, internal IP is used for ping checks.
 #
 #   Requires check_vpn_status, get_failure_count, increment_failure, reset_failure_count,
 #   surgical_cleanup, full_restart, log_message, VPN_NAME, TIER1_THRESHOLD, TIER2_THRESHOLD,
 #   TIER3_THRESHOLD, NO_ESCALATE to be set
 monitor_peer() {
-	local peer_ip="$1"
+	local external_peer_ip="$1"
+	local internal_peer_ip="${2:-}"
 	local failure_count
 
-	# Check VPN status
-	if check_vpn_status "$peer_ip"; then
+	# Check VPN status (uses external IP for xfrm, internal IP for ping)
+	if check_vpn_status "$external_peer_ip" "$internal_peer_ip"; then
 		# VPN is OK
-		failure_count=$(get_failure_count "$peer_ip")
+		failure_count=$(get_failure_count "$external_peer_ip")
 		if [[ "$failure_count" -gt 0 ]]; then
-			log_message "INFO" "${VPN_NAME:-VPN} recovered for $peer_ip after $failure_count failures"
-			reset_failure_count "$peer_ip"
+			log_message "INFO" "${VPN_NAME:-VPN} recovered for $external_peer_ip after $failure_count failures"
+			reset_failure_count "$external_peer_ip"
 		fi
 		return 0
 	else
 		# VPN check failed
-		failure_count=$(increment_failure "$peer_ip")
-		log_message "WARNING" "${VPN_NAME:-VPN} check failed for $peer_ip (failure count: $failure_count)"
+		failure_count=$(increment_failure "$external_peer_ip")
+		log_message "WARNING" "${VPN_NAME:-VPN} check failed for $external_peer_ip (failure count: $failure_count)"
 
 		# Tier 1: Logging (triggers when failure_count >= TIER1_THRESHOLD)
 		if [[ "$failure_count" -ge "$TIER1_THRESHOLD" ]]; then
-			log_message "INFO" "Tier 1: Logging ${VPN_NAME:-VPN} failure for $peer_ip"
+			log_message "INFO" "Tier 1: Logging ${VPN_NAME:-VPN} failure for $external_peer_ip"
 		fi
 
 		# Tier 2: Surgical cleanup
 		if [[ "$failure_count" -ge "$TIER2_THRESHOLD" ]] && [[ "$failure_count" -lt "$TIER3_THRESHOLD" ]]; then
 			if [[ "$NO_ESCALATE" -eq 1 ]]; then
-				log_message "INFO" "Tier 2: Would attempt surgical SA cleanup for $peer_ip (skipped in fake mode)"
+				log_message "INFO" "Tier 2: Would attempt surgical SA cleanup for $external_peer_ip (skipped in fake mode)"
 			else
-				log_message "WARNING" "Tier 2: Attempting surgical SA cleanup for $peer_ip"
-				surgical_cleanup "$peer_ip"
+				log_message "WARNING" "Tier 2: Attempting surgical SA cleanup for $external_peer_ip"
+				surgical_cleanup "$external_peer_ip"
 			fi
 		fi
 
@@ -263,7 +266,7 @@ monitor_peer() {
 			else
 				log_message "ERROR" "Tier 3: Attempting full IPsec restart"
 				if full_restart; then
-					reset_failure_count "$peer_ip"
+					reset_failure_count "$external_peer_ip"
 				fi
 			fi
 		fi

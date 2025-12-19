@@ -21,7 +21,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 @test "high-risk: lockfile cleanup on script exit" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -51,7 +51,7 @@ EOF
 @test "high-risk: lockfile cleanup on script error" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="invalid-ip-format"
+EXTERNAL_PEER_IPS="invalid-ip-format"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -79,7 +79,7 @@ EOF
 @test "high-risk: lockfile contains invalid format" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -111,7 +111,7 @@ EOF
 @test "high-risk: lockfile timestamp at timeout boundary" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 LOCKFILE_TIMEOUT=300
 EOF
 
@@ -147,7 +147,7 @@ EOF
 @test "high-risk: lockfile acquisition prevents concurrent execution" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -190,7 +190,7 @@ EOF
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -243,7 +243,7 @@ EOF
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -273,7 +273,7 @@ EOF
 @test "high-risk: lockfile cleanup on SIGTERM" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -320,7 +320,7 @@ EOF
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -401,7 +401,7 @@ EOF
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -477,7 +477,7 @@ EOF
 @test "high-risk: lockfile removed between check and creation (TOCTOU race)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -531,7 +531,7 @@ EOF
 @test "high-risk: PID reuse scenario (old PID reused, lockfile appears valid but process is different)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -587,7 +587,7 @@ EOF
 @test "high-risk: script crashes - lockfile should be detected as stale on next run" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 LOCKFILE_TIMEOUT=1
 EOF
 
@@ -646,7 +646,7 @@ EOF
 @test "high-risk: trap handlers properly clean up lockfile in all exit scenarios" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -710,7 +710,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Create config with syntax error (unclosed quote)
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1
+EXTERNAL_PEER_IPS="192.168.1.1
 VPN_NAME="Test VPN"
 EOF
 
@@ -733,7 +733,7 @@ EOF
 @test "high-risk: config file is unreadable" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	# Make config file unreadable
@@ -781,7 +781,7 @@ EOF
 @test "high-risk: LOG_FILE override in config recalculates LOGS_DIR" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 LOG_FILE="/tmp/custom-logs/vpn-monitor.log"
 EOF
 
@@ -816,7 +816,7 @@ EOF
 @test "high-risk: negative threshold values in config" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=-1
 TIER2_THRESHOLD=-3
 TIER3_THRESHOLD=-5
@@ -853,7 +853,7 @@ EOF
 @test "high-risk: threshold values out of order" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=5
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=1
@@ -894,7 +894,7 @@ EOF
 @test "high-risk: xfrm SA exists but byte counter is exactly 0" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -930,7 +930,7 @@ EOF
 @test "high-risk: xfrm SA exists but byte counter decreases" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -970,7 +970,7 @@ EOF
 @test "high-risk: xfrm SA exists but byte counter stays same" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1010,7 +1010,7 @@ EOF
 @test "high-risk: byte counter file corrupted" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1042,7 +1042,7 @@ EOF
 @test "high-risk: byte counter file contains negative number" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1074,7 +1074,7 @@ EOF
 @test "high-risk: byte counter file is empty" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1106,7 +1106,7 @@ EOF
 @test "high-risk: all detection methods unavailable" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1138,7 +1138,7 @@ EOF
 @test "high-risk: xfrm output contains multiple lifetime lines" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1176,7 +1176,7 @@ EOF
 @test "high-risk: ping check enabled but PING_TARGET_IP not set" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 ENABLE_PING_CHECK=1
 PING_TARGET_IP=""
 EOF
@@ -1213,7 +1213,7 @@ EOF
 @test "high-risk: surgical cleanup with connection name configured" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -1275,7 +1275,7 @@ EOF
 @test "high-risk: surgical cleanup without connection name uses full reload" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -1336,7 +1336,7 @@ EOF
 @test "high-risk: surgical cleanup fails - error handling" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -1388,7 +1388,7 @@ EOF
 @test "high-risk: full restart with ipsec command" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -1446,7 +1446,7 @@ EOF
 @test "high-risk: full restart fails - error handling" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -1500,7 +1500,7 @@ EOF
 @test "high-risk: full restart when neither ipsec nor swanctl available" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -1545,7 +1545,7 @@ EOF
 @test "high-risk: rate limit file corrupted" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -1594,9 +1594,9 @@ EOF
 
 @test "high-risk: config file attempts command injection via variable" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	# Attempt command injection via PEER_IPS
+	# Attempt command injection via EXTERNAL_PEER_IPS
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1; echo 'injected' > /tmp/injection_test"
+EXTERNAL_PEER_IPS="192.168.1.1; echo 'injected' > /tmp/injection_test"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1625,7 +1625,7 @@ EOF
 @test "high-risk: xfrm command fails with permission denied" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1660,7 +1660,7 @@ EOF
 @test "high-risk: failure counter file is directory" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1697,7 +1697,7 @@ EOF
 @test "high-risk: surgical cleanup connection name reload fails - fallback to full reload" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -1759,7 +1759,7 @@ EOF
 @test "high-risk: byte counter file is directory" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1790,7 +1790,7 @@ EOF
 @test "high-risk: verify correct behavior when switching between flock and fallback modes" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1848,7 +1848,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Create config that attempts to source external commands
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 # Attempt to source external file (security risk)
 source /etc/passwd
 EOF
@@ -1872,7 +1872,7 @@ EOF
 @test "high-risk: config file contains null bytes or invalid characters" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Create config with null bytes and invalid characters
-	printf 'PEER_IPS="192.168.1.1"\x00INVALID\xFFCHAR' >"$config_file"
+	printf 'EXTERNAL_PEER_IPS="192.168.1.1"\x00INVALID\xFFCHAR' >"$config_file"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -1899,7 +1899,7 @@ EOF
 @test "high-risk: xfrm output format variations (different Linux kernel versions)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1937,7 +1937,7 @@ EOF
 @test "high-risk: xfrm returns multiple SAs for same peer IP (which one is checked?)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1976,7 +1976,7 @@ EOF
 @test "high-risk: xfrm output contains malformed byte counter line" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -2011,7 +2011,7 @@ EOF
 @test "high-risk: first check (no previous bytes) - should accept any non-zero value" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -2045,7 +2045,7 @@ EOF
 @test "high-risk: byte counter increases but very slowly (within normal variance)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -2077,7 +2077,7 @@ EOF
 @test "high-risk: byte counter jumps dramatically (counter reset on remote side)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -2108,7 +2108,7 @@ EOF
 @test "high-risk: connection name configured but doesn't exist in swanctl (should fallback)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -2168,7 +2168,7 @@ EOF
 @test "high-risk: multiple peers failing simultaneously - verify independent cleanup" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1 10.0.0.1"
+EXTERNAL_PEER_IPS="192.168.1.1 10.0.0.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -2233,7 +2233,7 @@ EOF
 @test "high-risk: full restart with swanctl command (success case)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -2293,7 +2293,7 @@ EOF
 @test "high-risk: full restart with swanctl command fails (error handling)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -2349,7 +2349,7 @@ EOF
 @test "high-risk: restart succeeds but VPN doesn't recover (cooldown still set)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -2405,7 +2405,7 @@ EOF
 @test "high-risk: restart fails but cooldown is still set (should it be?)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -2461,7 +2461,7 @@ EOF
 @test "high-risk: PIPESTATUS handling when restart command fails in pipe" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -2516,7 +2516,7 @@ EOF
 @test "high-risk: recovery action partially succeeds (e.g., swanctl reload starts but fails mid-way)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -2574,7 +2574,7 @@ EOF
 @test "high-risk: recovery action succeeds but VPN still fails on next check" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -2630,7 +2630,7 @@ EOF
 @test "high-risk: recovery action fails and failure counter continues incrementing" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -2686,7 +2686,7 @@ EOF
 @test "high-risk: multiple recovery actions triggered simultaneously (multiple peers)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1 10.0.0.1"
+EXTERNAL_PEER_IPS="192.168.1.1 10.0.0.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -2745,7 +2745,7 @@ EOF
 @test "high-risk: recovery action during cooldown period (should be prevented)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -2807,7 +2807,7 @@ EOF
 	# The script will hang if restart command hangs - this is a known limitation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-PEER_IPS="192.168.1.1"
+EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5

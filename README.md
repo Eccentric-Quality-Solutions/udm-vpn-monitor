@@ -65,22 +65,21 @@ The install package (recommended) includes all required files with proper direct
 
 1. **Transfer files to your UDM**:
    ```bash
-   # Option 1: Use the install package (recommended - preserves directory structure)
    # First, create the package:
    ./prepare_install_package.sh              # Creates zip file
    # Or create tar.gz:
    ./prepare_install_package.sh --tar         # Creates tar.gz file
    # Then transfer and extract:
    scp udm-vpn-monitor-installer.zip root@<UDM_IP>:/tmp/
-   ssh root@<UDM_IP>
-   cd /tmp && unzip udm-vpn-monitor-installer.zip
-   # Or for tar.gz:
-   # cd /tmp && tar -xzf udm-vpn-monitor-installer.tar.gz
+
    ```
 
 2. **SSH into your UDM**:
    ```bash
    ssh root@<UDM_IP>
+   cd /tmp && unzip udm-vpn-monitor-installer.zip
+   # Or for tar.gz:
+   # cd /tmp && tar -xzf udm-vpn-monitor-installer.tar.gz
    ```
 
 3. **Run the installer**:

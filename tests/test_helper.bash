@@ -202,7 +202,7 @@ create_mock_config() {
     local config_file="${1:-${MOCK_INSTALL_DIR}/vpn-monitor.conf}"
     cat > "$config_file" << 'EOF'
 # Test configuration
-PEER_IPS="192.168.1.1 10.0.0.1"
+EXTERNAL_PEER_IPS="192.168.1.1 10.0.0.1"
 VPN_NAME="Test VPN"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3

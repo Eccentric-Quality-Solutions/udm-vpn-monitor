@@ -104,7 +104,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 
 	# Check default config was created
 	assert_file_exist "${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
-	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "PEER_IPS"
+	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "EXTERNAL_PEER_IPS"
 	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "VPN_NAME"
 }
 
@@ -115,7 +115,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	local test_install
 	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "PEER_IPS=\"192.168.1.1\"" >"${TEST_DIR}/source/vpn-monitor.conf"
+	echo "EXTERNAL_PEER_IPS=\"192.168.1.1\"" >"${TEST_DIR}/source/vpn-monitor.conf"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
 	# First installation
@@ -140,7 +140,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	local test_install
 	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "PEER_IPS=\"192.168.1.1\"" >"${TEST_DIR}/source/vpn-monitor.conf"
+	echo "EXTERNAL_PEER_IPS=\"192.168.1.1\"" >"${TEST_DIR}/source/vpn-monitor.conf"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
 	# First installation
@@ -223,7 +223,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
 	cat >"${TEST_DIR}/source/vpn-monitor.conf" <<'EOF'
-PEER_IPS=""
+EXTERNAL_PEER_IPS=""
 CRON_SCHEDULE="*/5 * * * *"
 EOF
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"

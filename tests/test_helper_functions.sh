@@ -755,7 +755,7 @@ EOF
 		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
 	fi
 
-	run get_config_schema "PEER_IPS"
+	run get_config_schema "EXTERNAL_PEER_IPS"
 
 	assert_success
 	assert_output --partial "required"
@@ -781,7 +781,7 @@ EOF
 		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
 	fi
 
-	run is_config_required "PEER_IPS"
+	run is_config_required "EXTERNAL_PEER_IPS"
 
 	assert_success
 }
@@ -830,7 +830,7 @@ EOF
 		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
 	fi
 
-	run get_config_default "PEER_IPS"
+	run get_config_default "EXTERNAL_PEER_IPS"
 
 	assert_success
 	# Should return empty string (no default for required variables)
