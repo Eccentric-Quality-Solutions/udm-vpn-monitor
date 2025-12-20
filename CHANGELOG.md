@@ -43,6 +43,7 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
   - Deduplicated README.md by removing redundant "Install Package" section and consolidating Tier 2 recovery behavior explanations
   - Updated ARCHITECTURE.md with accurate Tier 2 recovery state diagram showing per-connection vs full reload logic and ipsec fallback
   - Clarified tool availability and fallback behavior throughout documentation
+  - Updated all documentation files (README.md, QUICK_START.md, TROUBLESHOOTING.md, ARCHITECTURE.md) to use correct configuration variable names (`EXTERNAL_PEER_IPS` and `INTERNAL_PEER_IPS` instead of deprecated `PEER_IPS`)
 - **Major Code Refactoring**: 
   - Complete modularization: Extracted all functionality into dedicated library modules
   - Reduced main script from ~1900 lines to ~530 lines through modularization

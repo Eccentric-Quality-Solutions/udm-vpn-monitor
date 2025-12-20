@@ -25,7 +25,8 @@
 3. Configure peer IPs:
    ```bash
    nano /data/vpn-monitor/vpn-monitor.conf
-   # Set PEER_IPS="203.0.113.1"
+   # Set EXTERNAL_PEER_IPS="203.0.113.1"
+   # Optionally set INTERNAL_PEER_IPS="192.168.100.1" for ping checks
    ```
 
 4. Test:
@@ -62,7 +63,7 @@ For complete requirements details, see the [Requirements section in README.md](R
    - Or use wildcards: `scp *.sh *.conf root@<UDM_IP>:/tmp/` (note: also requires copying `lib/` directory)
 2. **SSH into UDM**: `ssh root@<UDM_IP>`
 3. **Run installer**: `cd /tmp && chmod +x install.sh && ./install.sh --interactive`
-4. **Configure PEER_IPS**: Edit `/data/vpn-monitor/vpn-monitor.conf` and set `PEER_IPS` to your remote VPN gateway's **external/public IP address(es)**
+4. **Configure EXTERNAL_PEER_IPS**: Edit `/data/vpn-monitor/vpn-monitor.conf` and set `EXTERNAL_PEER_IPS` to your remote VPN gateway's **external/public IP address(es)**. Optionally set `INTERNAL_PEER_IPS` for ping checks.
 5. **Test**: `/data/vpn-monitor/vpn-monitor.sh --fake`
 6. **Monitor**: `tail -f /data/vpn-monitor/logs/vpn-monitor.log`
 
@@ -145,7 +146,8 @@ All actions are logged to `/data/vpn-monitor/logs/vpn-monitor.log`.
 For complete configuration options, descriptions, and examples, see the [Configuration section in README.md](README.md#configuration).
 
 **Key settings:**
-- `PEER_IPS` - **Required**: External IPs of remote VPN gateways
+- `EXTERNAL_PEER_IPS` - **Required**: External/public IPs of remote VPN gateways
+- `INTERNAL_PEER_IPS` - **Optional**: Internal/private IPs for ping checks (uses EXTERNAL_PEER_IPS if not set)
 - `TIER1_THRESHOLD` - Failures before logging (default: 1)
 - `TIER2_THRESHOLD` - Failures before surgical cleanup (default: 3)
 - `TIER3_THRESHOLD` - Failures before full restart (default: 5)

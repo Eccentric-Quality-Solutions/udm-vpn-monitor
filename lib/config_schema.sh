@@ -67,6 +67,8 @@ declare -A CONFIG_SCHEMA=(
 	["PING_TIMEOUT"]="optional|integer|min:1|max:30|default:2"
 	["DEBUG"]="optional|integer|values:0,1|default:0"
 	["NO_ESCALATE"]="optional|integer|values:0,1|default:0"
+	# EXPERIMENTAL: xfrm-based recovery (disabled by default - see SWANCTL_ALTERNATIVES.md for risks)
+	["ENABLE_XFRM_RECOVERY"]="optional|integer|values:0,1|default:0"
 	["LOCKFILE_TIMEOUT"]="optional|integer|min:60|max:3600|default:300"
 	["LOG_FILE"]="optional|string||default:"
 	["STATE_DIR"]="optional|string||default:"

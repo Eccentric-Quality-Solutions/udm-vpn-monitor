@@ -462,9 +462,277 @@ If CI fails:
 - Use descriptive names: `check_vpn_status()` not `check()`
 
 #### Error Handling
-- Use `set -euo pipefail` at the top of scripts
-- Check return codes explicitly: `if ! command; then ...`
-- Provide meaningful error messages
+
+**Error Handling Strategy**
+
+The codebase uses a consistent error handling strategy to ensure predictable behavior and maintainability. Follow these patterns when writing or modifying code:
+
+**1. Fatal Errors (Script Should Exit)**
+
+Use `die()` for fatal errors that prevent the script from continuing:
+
+```bash
+# When to use die():
+# - Configuration errors (required config missing)
+# - Critical system errors (cannot create required directories)
+# - Security violations (invalid input that could be exploited)
+# - Missing required dependencies (critical commands not available)
+
+if [[ ! -f "$CONFIG_FILE" ]] && [[ -z "${EXTERNAL_PEER_IPS:-}" ]]; then
+    die "Configuration file not found and EXTERNAL_PEER_IPS not set"
+fi
+
+if ! command -v ip >/dev/null 2>&1; then
+    die "Required command 'ip' not found in PATH"
+fi
+```
+
+**Pattern**: `die()` logs the error and exits the script with code 1. Use descriptive error messages that help users understand what went wrong and how to fix it.
+
+**2. Non-Fatal Errors (Function Should Return Error Code)**
+
+Functions that can fail gracefully should return error codes (0 = success, 1 = failure):
+
+```bash
+# When to return error codes:
+# - Validation failures (invalid input, but script can continue)
+# - Optional operations that fail (fallback available)
+# - Operations that may fail but don't prevent script execution
+# - Detection/check operations (VPN status checks, etc.)
+
+check_vpn_status() {
+    local peer_ip="$1"
+    
+    if ! validate_ip_address "$peer_ip"; then
+        log_message "ERROR" "Invalid peer IP format: $peer_ip"
+        return 1  # Return error code, don't die
+    fi
+    
+    # ... check logic ...
+    
+    if [[ $vpn_ok -eq 0 ]]; then
+        return 1  # VPN check failed
+    fi
+    
+    return 0  # VPN is healthy
+}
+
+# Caller handles the error:
+if ! check_vpn_status "$peer_ip"; then
+    log_message "WARNING" "VPN check failed for $peer_ip"
+    increment_failure "$peer_ip"
+fi
+```
+
+**Pattern**: Return 0 for success, 1 for failure. Callers check the return code and handle errors appropriately.
+
+**3. Warnings (Non-Fatal, Logged)**
+
+Use `log_message "WARNING"` for non-fatal issues that should be logged but don't prevent execution:
+
+```bash
+# When to log warnings:
+# - Optional features unavailable (fallback available)
+# - Degraded functionality (works but not optimal)
+# - Recoverable errors (can continue with reduced functionality)
+# - Informational warnings (user should be aware)
+
+if ! command -v swanctl >/dev/null 2>&1; then
+    log_message "WARNING" "swanctl not available, using ipsec fallback"
+    # Continue with ipsec fallback
+fi
+
+if [[ ! -f "$cache_file" ]]; then
+    log_message "WARNING" "Cache file not found: $cache_file (will recreate)"
+    # Continue and recreate cache
+fi
+```
+
+**Pattern**: Log the warning and continue execution. The warning alerts users to potential issues but doesn't stop the script.
+
+**4. Error Handling Helper Functions**
+
+For consistent error handling, use the provided helper functions:
+
+```bash
+# Logging (always available)
+log_message "INFO" "Operation completed successfully"
+log_message "WARNING" "Optional feature unavailable"
+log_message "ERROR" "Operation failed but continuing"
+log_message "DEBUG" "Debug information"  # Only if DEBUG=1
+
+# Fatal errors
+die "Fatal error message"  # Logs and exits with code 1
+
+# Check if command exists (logs warning if missing)
+if ! warn_if_missing "swanctl"; then
+    # Command not available, use fallback
+fi
+```
+
+**5. Error Handling Patterns by Function Type**
+
+**Validation Functions**:
+```bash
+# Return error codes, don't die
+validate_ip_address() {
+    local ip="$1"
+    if [[ -z "$ip" ]]; then
+        return 1  # Invalid
+    fi
+    # ... validation logic ...
+    return 0  # Valid
+}
+```
+
+**Detection Functions**:
+```bash
+# Return error codes, log warnings for failures
+check_vpn_status() {
+    # ... detection logic ...
+    if [[ $detection_failed -eq 1 ]]; then
+        log_message "WARNING" "VPN detection failed for $peer_ip"
+        return 1
+    fi
+    return 0
+}
+```
+
+**Recovery Functions**:
+```bash
+# Log errors/warnings, return error codes
+surgical_cleanup() {
+    if ! swanctl --reload-conn "$conn_name" 2>/dev/null; then
+        log_message "WARNING" "Per-connection reload failed, falling back"
+        # Try fallback
+        if ! swanctl --reload 2>/dev/null; then
+            log_message "ERROR" "Full reload also failed"
+            return 1  # Return error, don't die
+        fi
+    fi
+    return 0
+}
+```
+
+**State Management Functions**:
+```bash
+# Log errors but continue (state operations shouldn't fail script)
+increment_failure() {
+    if ! (echo "$new_count" > "${counter_file}.tmp" && mv "${counter_file}.tmp" "$counter_file"); then
+        log_message "ERROR" "Failed to update failure counter for $peer_ip"
+        # Continue execution but log the error
+        # Return error code so caller knows it failed
+        return 1
+    fi
+    return 0
+}
+```
+
+**6. Error Handling Best Practices**
+
+- **Always check return codes**: Don't ignore return values from functions
+  ```bash
+  # Good
+  if ! check_vpn_status "$peer_ip"; then
+      handle_failure
+  fi
+  
+  # Bad
+  check_vpn_status "$peer_ip"  # Return value ignored
+  ```
+
+- **Provide context in error messages**: Include relevant information
+  ```bash
+  # Good
+  log_message "ERROR" "Failed to update failure counter for $peer_ip (file: $counter_file)"
+  
+  # Bad
+  log_message "ERROR" "Update failed"
+  ```
+
+- **Use appropriate log levels**: 
+  - `ERROR`: Something went wrong but script continues
+  - `WARNING`: Potential issue, degraded functionality
+  - `INFO`: Normal operation, informational
+  - `DEBUG`: Detailed debugging information (only if DEBUG=1)
+
+- **Handle errors at the right level**: 
+  - Low-level functions return error codes
+  - High-level functions handle errors and decide whether to die() or continue
+
+- **Don't suppress errors unnecessarily**: 
+  ```bash
+  # Good - explicit error handling
+  if ! command 2>/dev/null; then
+      log_message "WARNING" "Command failed, using fallback"
+      fallback_command
+  fi
+  
+  # Bad - silently ignoring errors
+  command 2>/dev/null  # Errors hidden, no handling
+  ```
+
+**7. Common Error Handling Patterns**
+
+**Pattern: Try-Fallback**
+```bash
+if command -v swanctl >/dev/null 2>&1; then
+    swanctl --reload
+elif command -v ipsec >/dev/null 2>&1; then
+    log_message "WARNING" "swanctl not available, using ipsec fallback"
+    ipsec reload
+else
+    die "Neither swanctl nor ipsec available"
+fi
+```
+
+**Pattern: Validate-Continue**
+```bash
+if ! validate_ip_address "$peer_ip"; then
+    log_message "ERROR" "Invalid peer IP: $peer_ip"
+    return 1  # Return error, don't die
+fi
+# Continue with validated input
+```
+
+**Pattern: Optional-Feature**
+```bash
+if [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
+    if ! check_ping_connectivity "$target_ip"; then
+        log_message "WARNING" "Ping check failed (optional feature)"
+        # Continue - ping is optional
+    fi
+fi
+```
+
+**Pattern: Atomic-Write**
+```bash
+if ! (echo "$data" > "${file}.tmp" && mv "${file}.tmp" "$file"); then
+    log_message "ERROR" "Failed to write state file: $file"
+    return 1  # Return error, don't die (state operations shouldn't kill script)
+fi
+```
+
+**8. Error Handling Checklist**
+
+When writing or reviewing code, ensure:
+- [ ] Fatal errors use `die()` with descriptive messages
+- [ ] Non-fatal errors return error codes (0/1)
+- [ ] Warnings are logged with `log_message "WARNING"`
+- [ ] Return codes are checked by callers
+- [ ] Error messages include context (peer IP, file path, etc.)
+- [ ] Appropriate log levels are used (ERROR/WARNING/INFO/DEBUG)
+- [ ] Errors are handled at the right level (low-level returns, high-level handles)
+- [ ] Fallback mechanisms are used when appropriate
+- [ ] State operations don't kill the script (log errors but continue)
+
+**9. Examples of Good Error Handling**
+
+See these functions for reference:
+- `check_vpn_status()` in `lib/detection.sh` - Returns error codes, logs warnings
+- `surgical_cleanup()` in `lib/recovery.sh` - Tries multiple methods, logs failures
+- `validate_config()` in `lib/config.sh` - Uses `die()` for fatal config errors
+- `increment_failure()` in `lib/state.sh` - Logs errors but continues execution
 
 #### Documentation
 - Document all functions with comprehensive comments describing:

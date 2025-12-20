@@ -34,7 +34,7 @@ get_formatted_timestamp() {
 # Logging function
 # Note: This function must not cause script exit even if logging fails
 #
-# Logs a message with timestamp and level to both log file and stderr (for errors/warnings/debug).
+# Logs a message with timestamp and level to both log file and stderr (for errors/warnings/debug/info).
 # This function is designed to be resilient - it will not fail the script if logging fails.
 # Creates log directory if it doesn't exist.
 #
@@ -47,13 +47,15 @@ get_formatted_timestamp() {
 #
 # Output:
 #   - Writes formatted log entry to LOG_FILE (append mode)
-#   - Outputs ERROR/WARNING/DEBUG messages to stderr
+#   - Outputs ERROR/WARNING to stderr (always)
+#   - Outputs DEBUG messages to stderr if DEBUG=1
+#   - Outputs INFO messages to stderr if running interactively (TTY attached)
 #   - Format: "[YYYY-MM-DD HH:MM:SS] [LEVEL] message"
 #
 # Side effects:
 #   - Creates log directory if it doesn't exist (mkdir -p)
 #   - Writes to log file (may fail silently)
-#   - Outputs to stderr for ERROR/WARNING/DEBUG levels
+#   - Outputs to stderr based on level and execution context
 #
 # Examples:
 #   log_message "INFO" "VPN monitor started"
@@ -64,6 +66,8 @@ get_formatted_timestamp() {
 #   Requires LOG_FILE and DEBUG variables to be set (typically from config.sh)
 #   Log file write errors are caught and don't fail the script
 #   DEBUG messages only output to stderr if DEBUG=1
+#   INFO messages output to stderr when running interactively (manual execution)
+#   When run via cron (no TTY), INFO messages only go to log file (quiet operation)
 log_message() {
 	local level="$1"
 	shift
@@ -95,8 +99,19 @@ log_message() {
 		echo "[$timestamp] [ERROR] Failed to write to log file: $LOG_FILE" >&2
 	}
 
-	# Always output ERROR and WARNING to stderr, and DEBUG if enabled
-	if [[ "${DEBUG:-0}" -eq 1 ]] || [[ "$level" == "ERROR" ]] || [[ "$level" == "WARNING" ]]; then
+	# Determine if running interactively (TTY attached to stderr)
+	# This allows INFO messages to be shown when running manually
+	# Check stderr (fd 2) since that's where we output messages
+	local is_interactive=0
+	if [[ -t 2 ]]; then
+		is_interactive=1
+	fi
+
+	# Output to stderr:
+	# - Always: ERROR and WARNING
+	# - If DEBUG=1: DEBUG messages
+	# - If interactive (TTY): INFO messages (so users see success when running manually)
+	if [[ "${DEBUG:-0}" -eq 1 ]] || [[ "$level" == "ERROR" ]] || [[ "$level" == "WARNING" ]] || ([[ "$level" == "INFO" ]] && [[ $is_interactive -eq 1 ]]); then
 		echo "$log_entry" >&2
 	fi
 

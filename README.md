@@ -16,15 +16,21 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
 
 ## ⚠️ Important: Tool Availability and Fallback Behavior
 
-**This tool supports both `swanctl` and `ipsec` commands with automatic fallback:**
+**This tool supports per-connection recovery with multiple fallback methods:**
 
-Many UDMs use `ipsec` instead of `swanctl` for IPsec management. The tool automatically detects which commands are available and falls back appropriately:
+Many UDMs don't have `swanctl` installed, but the tool can still perform per-connection recovery using xfrm-based SA deletion. The tool automatically detects which commands are available and falls back appropriately:
 
 - **Detection**: Uses `ip xfrm state` (primary) → `swanctl --list-sas` (fallback) → `ipsec status` (fallback)
-- **Tier 2 Recovery**: Uses `swanctl --reload-conn` (per-connection) or `swanctl --reload` (all) → falls back to `ipsec reload` if swanctl unavailable
+- **Tier 2 Recovery**: 
+  - **Preferred**: `swanctl --reload-conn <name>` (per-connection, requires swanctl + connection name)
+  - **Fallback 1**: `swanctl --reload` (all connections, if swanctl available but no connection name)
+  - **Fallback 2**: xfrm-based per-connection recovery (⚠️ EXPERIMENTAL, opt-in via `ENABLE_XFRM_RECOVERY=1`, uses `ip xfrm state delete` when swanctl unavailable)
+  - **Fallback 3**: `ipsec reload` (all connections, if xfrm recovery disabled or fails)
 - **Tier 3 Recovery**: Uses `ipsec restart` (preferred) → falls back to `swanctl --reload` if ipsec unavailable
 
-**Note:** See the [Tiered Recovery](#tiered-recovery) section for detailed behavior. Tier 3 recovery always affects all tunnels regardless of configuration or tool availability.
+**Note:** See the [Tiered Recovery](#tiered-recovery) section for detailed behavior. Tier 3 recovery always affects all tunnels regardless of configuration or tool availability. 
+
+⚠️ **Experimental Feature**: xfrm-based recovery is available but **disabled by default** (`ENABLE_XFRM_RECOVERY=0`) due to documented risks (see `architecture-docs/SWANCTL_ALTERNATIVES.md`). It provides per-connection recovery without swanctl, but requires explicit opt-in and testing on your system.
 
 ## Features
 
@@ -138,12 +144,17 @@ The install package (recommended) includes all required files with proper direct
    nano /data/vpn-monitor/vpn-monitor.conf
    ```
    
-   Set `PEER_IPS` to the **external/public IP address(es)** of your remote VPN gateway(s):
+   Set `EXTERNAL_PEER_IPS` to the **external/public IP address(es)** of your remote VPN gateway(s):
    ```bash
-   PEER_IPS="203.0.113.1 198.51.100.1"
+   EXTERNAL_PEER_IPS="203.0.113.1 198.51.100.1"
    ```
    
-   **Important**: Use the external/public IP address that the VPN tunnel is established with, not the internal/private IP address. The script checks IPsec Security Associations (SAs) which are identified by external IP addresses.
+   Optionally, set `INTERNAL_PEER_IPS` to the **internal/private IP address(es)** for ping checks:
+   ```bash
+   INTERNAL_PEER_IPS="192.168.100.1 192.168.200.1"
+   ```
+   
+   **Important**: Use the external/public IP address that the VPN tunnel is established with, not the internal/private IP address. The script checks IPsec Security Associations (SAs) which are identified by external IP addresses. If `INTERNAL_PEER_IPS` is not set, ping checks will use `EXTERNAL_PEER_IPS` instead.
 
 5. **Test manually**:
    ```bash
@@ -171,7 +182,8 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `PEER_IPS` | Space-separated list of remote VPN endpoint **external/public** IPs | (required) |
+| `EXTERNAL_PEER_IPS` | Space-separated list of remote VPN endpoint **external/public** IPs | (required) |
+| `INTERNAL_PEER_IPS` | Space-separated list of remote VPN endpoint **internal/private** IPs (for ping checks, optional) | "" |
 | `VPN_NAME` | VPN identifier for logging | "Site-to-Site VPN" |
 | `CONNECTION_NAME_<peer_ip>` | Per-peer connection name for targeted reloads (see below) | "" |
 | `TIER1_THRESHOLD` | Failures before logging starts | 1 |
@@ -186,6 +198,7 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `PING_COUNT` | Number of ping packets to send | 3 |
 | `PING_TIMEOUT` | Ping timeout per packet (seconds) | 2 |
 | `DEBUG` | Enable verbose logging (0 or 1) | 0 |
+| `ENABLE_XFRM_RECOVERY` | ⚠️ EXPERIMENTAL: Enable xfrm-based per-connection recovery (0 or 1, see risks below) | 0 |
 
 **Per-Peer Connection Name Configuration:**
 
@@ -255,19 +268,42 @@ The monitor checks VPN tunnel health using multiple detection methods with autom
 3. **Fallback 2**: `ipsec status` - Checks for connections via ipsec command (used when swanctl unavailable)
 4. **Optional**: Ping checks to verify end-to-end connectivity through the tunnel
 
+### Failure Type Detection
+
+The monitor distinguishes between different types of VPN failures to provide more accurate diagnostics:
+
+1. **IKE Phase 1 Down**: The initial secure channel (ISAKMP SA) is not established. This means the VPN cannot establish any connection. Detected by checking `swanctl --list-sas` for IKE SAs.
+
+2. **IPsec Phase 2 Down**: IKE Phase 1 is established, but the IPsec tunnel (ESP/AH SA) is not. The secure channel exists but cannot pass encrypted traffic. Detected by checking `ip xfrm state` for IPsec SAs when IKE Phase 1 is up.
+
+3. **Routing Issue**: Both IKE Phase 1 and IPsec Phase 2 are established, but traffic is not flowing properly. This could indicate routing problems, firewall issues, or network connectivity problems beyond the VPN tunnel itself. Detected by checking byte counters (not increasing) or ping failures when both phases are up.
+
+4. **Unknown**: Unable to determine the specific failure type (fallback when detection methods are unavailable).
+
+Failure types are automatically detected and logged with each failure, helping you understand the root cause of VPN issues. The failure type is included in log messages and can help guide troubleshooting efforts.
+
 ### Tiered Recovery
 
 The system uses a three-tier recovery approach that escalates based on consecutive failures:
 
 1. **Tier 1 (Logging)**: Logs the failure for monitoring
 2. **Tier 2 (Surgical Cleanup)**: 
-   - **With swanctl available**: Attempts targeted recovery using `swanctl --reload-conn` (per-connection) or `swanctl --reload` (all connections)
-   - **Without swanctl**: Falls back to `ipsec reload` (affects all connections, not surgical)
+   - **Preferred (swanctl + connection name)**: Uses `swanctl --reload-conn <name>` for per-connection recovery
+   - **Fallback 1 (swanctl, no connection name)**: Uses `swanctl --reload` (affects all connections)
+   - **Fallback 2 (no swanctl, xfrm enabled)**: Uses xfrm-based per-connection recovery via `ip xfrm state delete` (⚠️ EXPERIMENTAL, requires `ENABLE_XFRM_RECOVERY=1`)
+   - **Fallback 3 (xfrm disabled or failed)**: Uses `ipsec reload` (affects all connections)
 3. **Tier 3 (Full Restart)**: 
    - **Preferred**: Uses `ipsec restart` to restart all IPsec tunnels
    - **Fallback**: Uses `swanctl --reload` if ipsec command unavailable
 
-**Important**: Each peer IP has its own independent failure counter, allowing per-peer recovery. Tier 2 recovery can be surgical (per-connection) when swanctl is available and connection names are configured. See [Configuration](#configuration) for connection name setup.
+**Important**: Each peer IP has its own independent failure counter, allowing per-peer recovery. Tier 2 recovery can be surgical (per-connection) in multiple ways:
+- **With swanctl**: Uses `swanctl --reload-conn` when connection names are configured (recommended)
+- **Without swanctl**: Can use xfrm-based SA deletion for per-connection recovery (⚠️ EXPERIMENTAL, requires `ENABLE_XFRM_RECOVERY=1`)
+- **Default behavior**: Falls back to `ipsec reload` (affects all connections) if swanctl unavailable and xfrm recovery disabled
+
+⚠️ **Warning**: xfrm-based recovery is experimental and disabled by default. See `architecture-docs/SWANCTL_ALTERNATIVES.md` for detailed risk analysis. Only enable if you understand the risks and have tested on your system.
+
+See [Configuration](#configuration) for connection name setup (optional, improves swanctl-based recovery) and xfrm recovery settings.
 
 ### Safety Features
 

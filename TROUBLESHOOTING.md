@@ -406,7 +406,7 @@ For complete configuration documentation, including all parameters and their des
 
 3. **Check required values**:
    ```bash
-   grep PEER_IPS /data/vpn-monitor/vpn-monitor.conf
+   grep EXTERNAL_PEER_IPS /data/vpn-monitor/vpn-monitor.conf
    ```
    Should not be empty.
 
@@ -418,14 +418,16 @@ For complete configuration documentation, including all parameters and their des
 
 ### Solutions
 
-**If PEER_IPS is empty**:
+**If EXTERNAL_PEER_IPS is empty**:
 ```bash
 # Edit config
 nano /data/vpn-monitor/vpn-monitor.conf
-# Set PEER_IPS to your remote VPN gateway's external/public IP address(es)
-# Example: PEER_IPS="203.0.113.1"
+# Set EXTERNAL_PEER_IPS to your remote VPN gateway's external/public IP address(es)
+# Example: EXTERNAL_PEER_IPS="203.0.113.1"
+# Optionally set INTERNAL_PEER_IPS for ping checks
+# Example: INTERNAL_PEER_IPS="192.168.100.1"
 ```
-See [README.md Configuration section](README.md#configuration) for details on configuring PEER_IPS.
+See [README.md Configuration section](README.md#configuration) for details on configuring EXTERNAL_PEER_IPS and INTERNAL_PEER_IPS.
 
 **If config syntax error**:
 - Check for unclosed quotes
@@ -463,7 +465,7 @@ See [README.md Configuration section](README.md#configuration) for details on co
 
 2. **Check for multiple peers**:
    ```bash
-   grep PEER_IPS /data/vpn-monitor/vpn-monitor.conf
+   grep EXTERNAL_PEER_IPS /data/vpn-monitor/vpn-monitor.conf
    ```
    More peers = longer execution time.
 

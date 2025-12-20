@@ -155,6 +155,9 @@ load_config() {
 	PING_TIMEOUT="${PING_TIMEOUT:-2}"
 	DEBUG="${DEBUG:-0}"
 	NO_ESCALATE="${NO_ESCALATE:-0}"
+	# EXPERIMENTAL: xfrm-based per-connection recovery (disabled by default due to risks)
+	# See architecture-docs/SWANCTL_ALTERNATIVES.md for detailed risk analysis
+	ENABLE_XFRM_RECOVERY="${ENABLE_XFRM_RECOVERY:-0}"
 
 	# Load configuration if it exists
 	if [[ -f "$config_file" ]]; then

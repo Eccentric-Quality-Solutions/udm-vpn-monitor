@@ -21,8 +21,12 @@ EOF
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}"
 
+	# Set initial byte counter directly (skip baseline establishment run)
+	local last_bytes_file="${state_dir}/last_bytes_192_168_1_1"
+	echo "1000" >"$last_bytes_file"
+
 	# Mock ip command to return healthy VPN (SA exists, bytes increasing)
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "192.168.1.1" "2000" >/dev/null
 	# Rename mock_ip to ip so script finds it
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
@@ -31,12 +35,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	# First run - establish baseline bytes
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
-
-	# Second run - bytes should have increased (simulate by using higher value)
-	mock_ip_xfrm_state "192.168.1.1" "2000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	# Run script - bytes should have increased from baseline
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
 
 	assert_success
@@ -766,20 +765,19 @@ EOF
 	# Set failure counter to non-zero value (simulating previous failures)
 	echo "2" >"$failure_counter"
 
+	# Set initial byte counter directly (skip baseline establishment run)
+	local last_bytes_file="${state_dir}/last_bytes_192_168_1_1"
+	echo "1000" >"$last_bytes_file"
+
 	# Mock ip command - VPN now healthy (bytes increasing)
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "192.168.1.1" "2000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	# First run - establish baseline
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
-
-	# Second run - bytes increased, VPN should be healthy
-	mock_ip_xfrm_state "192.168.1.1" "2000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	# Run script - bytes increased, VPN should be healthy
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
 
 	assert_success

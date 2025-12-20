@@ -512,32 +512,39 @@ create_test_vpn_monitor_script() {
     cp "$original_script" "$test_script"
     chmod +x "$test_script"
     
-    # Modify the script to use test paths
-    # Need to escape special characters for sed
+    # Prepare escaped values for sed (escape special characters)
+    local escaped_config=""
+    local escaped_state=""
+    local escaped_log=""
+    local escaped_project_root
+    
     if [[ -n "$config_file" ]]; then
-        # Escape forward slashes and other special chars
-        local escaped_config
         escaped_config=$(echo "$config_file" | sed 's/[[\.*^$()+?{|]/\\&/g')
-        sed -i "s|^CONFIG_FILE=.*|CONFIG_FILE=\"${escaped_config}\"|" "$test_script"
     fi
     if [[ -n "$state_dir" ]]; then
-        local escaped_state
         escaped_state=$(echo "$state_dir" | sed 's/[[\.*^$()+?{|]/\\&/g')
-        sed -i "s|^STATE_DIR=.*|STATE_DIR=\"${escaped_state}\"|" "$test_script"
-        # Also update LOCKFILE which depends on STATE_DIR
-        sed -i "s|^LOCKFILE=.*|LOCKFILE=\"${escaped_state}/vpn-monitor.lock\"|" "$test_script"
     fi
     if [[ -n "$log_file" ]]; then
-        local escaped_log
         escaped_log=$(echo "$log_file" | sed 's/[[\.*^$()+?{|]/\\&/g')
-        sed -i "s|^LOG_FILE=.*|LOG_FILE=\"${escaped_log}\"|" "$test_script"
     fi
-    
-    # Fix module source paths to use absolute paths from project root
-    # This ensures modules can be found even when script is copied to test directory
-    local escaped_project_root
     escaped_project_root=$(echo "$project_root" | sed 's/[[\.*^$()+?{|]/\\&/g')
-    sed -i "s|source \"\${SCRIPT_DIR}/lib/|source \"${escaped_project_root}/lib/|g" "$test_script"
+    
+    # Build sed script with all replacements in single pass
+    local sed_script=""
+    if [[ -n "$escaped_config" ]]; then
+        sed_script="${sed_script}s|^CONFIG_FILE=.*|CONFIG_FILE=\"${escaped_config}\"|;"
+    fi
+    if [[ -n "$escaped_state" ]]; then
+        sed_script="${sed_script}s|^STATE_DIR=.*|STATE_DIR=\"${escaped_state}\"|;"
+        sed_script="${sed_script}s|^LOCKFILE=.*|LOCKFILE=\"${escaped_state}/vpn-monitor.lock\"|;"
+    fi
+    if [[ -n "$escaped_log" ]]; then
+        sed_script="${sed_script}s|^LOG_FILE=.*|LOG_FILE=\"${escaped_log}\"|;"
+    fi
+    sed_script="${sed_script}s|source \"\${SCRIPT_DIR}/lib/|source \"${escaped_project_root}/lib/|g"
+    
+    # Apply all replacements in single sed pass
+    sed -i "$sed_script" "$test_script"
     
     echo "$test_script"
 }

@@ -693,7 +693,7 @@ check_ping_connectivity() {
 		packet_loss=$(echo "$ping_result" | grep -oE '[0-9]+% packet loss' | grep -oE '[0-9]+' || echo "100")
 
 		if [[ "$packet_loss" -lt 100 ]]; then
-			log_message "DEBUG" "Ping check OK: $target_ip (${packet_loss}% packet loss)"
+			log_message "INFO" "Ping check OK: $target_ip (${packet_loss}% packet loss)"
 			return 0
 		else
 			log_message "WARNING" "Ping check failed: $target_ip (100% packet loss)"
@@ -723,7 +723,7 @@ check_ping_connectivity() {
 #
 # Side effects:
 #   - Updates last_bytes file if bytes are valid (writes current_bytes)
-#   - Logs debug messages for valid counters
+#   - Logs INFO messages for valid counters
 #   - Logs warning messages for invalid counters
 #
 # Examples:
@@ -760,7 +760,7 @@ check_byte_counters() {
 				log_message "ERROR" "Failed to update byte counter for $peer_ip (file: $last_bytes_file)"
 				# Continue execution but log the error
 			fi
-			log_message "DEBUG" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes)"
+			log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes)"
 			return 0
 		else
 			log_message "WARNING" "VPN suspect: SA exists but bytes not increasing (current=$current_bytes, last=$last_bytes)"
@@ -819,7 +819,7 @@ check_xfrm_status() {
 		fi
 	else
 		# SA exists but no byte counter info (or extraction failed)
-		log_message "DEBUG" "VPN OK: SA exists for $peer_ip (no byte counter info)"
+		log_message "INFO" "VPN OK: SA exists for $peer_ip (no byte counter info)"
 		return 0
 	fi
 }
@@ -849,7 +849,7 @@ check_swanctl_status() {
 	swanctl_output=$(swanctl --list-sas 2>/dev/null | grep -i "$peer_ip" || true)
 
 	if [[ -n "$swanctl_output" ]]; then
-		log_message "DEBUG" "VPN OK: SA found via swanctl for $peer_ip"
+		log_message "INFO" "VPN OK: SA found via swanctl for $peer_ip"
 		return 0
 	else
 		log_message "WARNING" "VPN suspect: No SA found via swanctl for $peer_ip"
@@ -882,7 +882,7 @@ check_ipsec_status() {
 	ipsec_output=$(ipsec status 2>/dev/null | grep -i "$peer_ip" || true)
 
 	if [[ -n "$ipsec_output" ]]; then
-		log_message "DEBUG" "VPN OK: Connection found via ipsec status for $peer_ip"
+		log_message "INFO" "VPN OK: Connection found via ipsec status for $peer_ip"
 		return 0
 	else
 		log_message "WARNING" "VPN suspect: No connection found via ipsec status for $peer_ip"
@@ -928,7 +928,7 @@ check_ping_if_enabled() {
 			# This allows xfrm to pass but warns about connectivity
 			# If ping keeps failing, byte counters should also stop increasing
 		else
-			log_message "DEBUG" "VPN connectivity verified: ping check passed for $ping_target"
+			log_message "INFO" "VPN connectivity verified: ping check passed for $ping_target"
 		fi
 	else
 		# SA doesn't exist, but try ping anyway to see if there's any connectivity
@@ -938,6 +938,241 @@ check_ping_if_enabled() {
 	fi
 
 	return 0
+}
+
+# Check for IKE Phase 1 Security Association
+#
+# Checks if IKE Phase 1 SA (ISAKMP SA) exists for a peer using swanctl.
+# IKE Phase 1 establishes the initial secure channel for key exchange.
+# If IKE Phase 1 is down, the VPN tunnel cannot be established.
+#
+# Arguments:
+#   $1: Peer IP address to check
+#
+# Returns:
+#   0: IKE Phase 1 SA found
+#   1: IKE Phase 1 SA not found or swanctl unavailable
+#
+# Side effects:
+#   - Logs debug messages about IKE SA status
+#
+# Note:
+#   Uses swanctl --list-sas which shows IKE SAs (Phase 1).
+#   swanctl output format: "connection-name: #X, ESTABLISHED, <peer_ip>..."
+#   Requires swanctl command to be available
+check_ike_phase1() {
+	local peer_ip="$1"
+
+	if ! command -v swanctl >/dev/null 2>&1; then
+		return 1
+	fi
+
+	local swanctl_output
+	swanctl_output=$(swanctl --list-sas 2>/dev/null | grep -i "$peer_ip" || true)
+
+	if [[ -n "$swanctl_output" ]]; then
+		# Check if SA is ESTABLISHED (IKE Phase 1 is up)
+		if echo "$swanctl_output" | grep -qi "ESTABLISHED"; then
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+# Check for IPsec Phase 2 Security Association
+#
+# Checks if IPsec Phase 2 SA (ESP/AH SA) exists for a peer using xfrm.
+# IPsec Phase 2 establishes the actual encrypted tunnel for data transfer.
+# If Phase 2 is down but Phase 1 is up, the tunnel is partially established but cannot pass traffic.
+#
+# Arguments:
+#   $1: Peer IP address to check
+#
+# Returns:
+#   0: IPsec Phase 2 SA found
+#   1: IPsec Phase 2 SA not found or xfrm unavailable
+#
+# Side effects:
+#   - Logs debug messages about IPsec SA status
+#
+# Note:
+#   Uses ip xfrm state which shows IPsec SAs (Phase 2).
+#   xfrm shows ESP/AH SAs that are used for actual data encryption.
+#   Requires ip command to be available
+check_ipsec_phase2() {
+	local peer_ip="$1"
+
+	if ! command -v ip >/dev/null 2>&1; then
+		return 1
+	fi
+
+	local xfrm_output
+	# Use word boundaries to avoid partial IP matches
+	xfrm_output=$(ip xfrm state 2>/dev/null | grep -E "(^|[^0-9a-fA-F:])${peer_ip}([^0-9a-fA-F:]|$)" || true)
+
+	if [[ -n "$xfrm_output" ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+# Detect VPN failure type
+#
+# Determines the specific type of VPN failure by checking IKE Phase 1 and IPsec Phase 2 SAs.
+# Categorizes failures into three types:
+#   - "ike_phase1_down": IKE Phase 1 SA is down (no secure channel established)
+#   - "ipsec_phase2_down": IKE Phase 1 is up but IPsec Phase 2 SA is down (tunnel partially established)
+#   - "routing_issue": Both Phase 1 and Phase 2 are up but traffic isn't flowing (byte counters/ping issues)
+#   - "unknown": Unable to determine failure type (fallback)
+#
+# Arguments:
+#   $1: External peer IP address (used for SA checks)
+#   $2: Internal peer IP address (optional, used for ping checks)
+#   $3: Last bytes file path (optional, used to check if bytes are increasing)
+#
+# Returns:
+#   0: Failure type detected and printed to stdout
+#   1: Unable to determine failure type
+#
+# Output:
+#   Prints failure type to stdout: "ike_phase1_down", "ipsec_phase2_down", "routing_issue", or "unknown"
+#
+# Side effects:
+#   - Logs debug messages about failure type detection
+#
+# Examples:
+#   failure_type=$(detect_failure_type "203.0.113.1" "192.168.1.1" "$last_bytes_file")
+#   case "$failure_type" in
+#       "ike_phase1_down") echo "IKE Phase 1 is down" ;;
+#       "ipsec_phase2_down") echo "IPsec Phase 2 is down" ;;
+#       "routing_issue") echo "Routing issue detected" ;;
+#   esac
+#
+# Note:
+#   Requires check_ike_phase1, check_ipsec_phase2, check_byte_counters, check_ping_connectivity
+#   External IP is used for SA checks, internal IP is used for ping checks
+detect_failure_type() {
+	local external_peer_ip="$1"
+	local internal_peer_ip="${2:-}"
+	local last_bytes_file="${3:-}"
+
+	# Check IKE Phase 1 (ISAKMP SA)
+	local ike_phase1_up=0
+	if check_ike_phase1 "$external_peer_ip"; then
+		ike_phase1_up=1
+	fi
+
+	# Check IPsec Phase 2 (ESP/AH SA)
+	local ipsec_phase2_up=0
+	if check_ipsec_phase2 "$external_peer_ip"; then
+		ipsec_phase2_up=1
+	fi
+
+	# Determine failure type based on SA states
+	if [[ $ike_phase1_up -eq 0 ]]; then
+		# IKE Phase 1 is down - no secure channel established
+		echo "ike_phase1_down"
+		return 0
+	elif [[ $ipsec_phase2_up -eq 0 ]]; then
+		# IKE Phase 1 is up but IPsec Phase 2 is down - tunnel partially established
+		echo "ipsec_phase2_down"
+		return 0
+	elif [[ $ike_phase1_up -eq 1 ]] && [[ $ipsec_phase2_up -eq 1 ]]; then
+		# Both Phase 1 and Phase 2 are up - check for routing issues
+		# Check byte counters if available
+		local has_routing_issue=0
+
+		# Check byte counters if last_bytes_file is provided
+		if [[ -n "$last_bytes_file" ]]; then
+			local xfrm_output
+			xfrm_output=$(ip xfrm state 2>/dev/null | grep -E "(^|[^0-9a-fA-F:])${external_peer_ip}([^0-9a-fA-F:]|$)" -A 10 || true)
+			if [[ -n "$xfrm_output" ]]; then
+				local current_bytes=""
+				current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null || echo "")
+
+				if [[ -n "$current_bytes" ]] && [[ "$current_bytes" =~ ^[0-9]+$ ]]; then
+					# Successfully extracted byte counter - check if bytes are not increasing
+					local last_bytes=0
+					if [[ -f "$last_bytes_file" ]]; then
+						last_bytes=$(cat "$last_bytes_file" 2>/dev/null || echo "0")
+						if [[ ! "$last_bytes" =~ ^[0-9]+$ ]]; then
+							last_bytes=0
+						fi
+					fi
+
+					# If bytes exist but aren't increasing (and it's not the first check), it's a routing issue
+					if [[ "$current_bytes" -gt 0 ]] && [[ "$current_bytes" -le "$last_bytes" ]] && [[ "$last_bytes" -gt 0 ]]; then
+						has_routing_issue=1
+					elif [[ "$current_bytes" -eq 0 ]] && [[ "$last_bytes" -gt 0 ]]; then
+						# Bytes dropped to zero after previously having traffic - routing issue
+						has_routing_issue=1
+					fi
+				fi
+			fi
+		fi
+
+		# Check ping if enabled and internal IP provided
+		# Only check ping if we haven't already detected a routing issue from byte counters
+		if [[ $has_routing_issue -eq 0 ]] && [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
+			if ! check_ping_connectivity "$internal_peer_ip" 2>/dev/null; then
+				has_routing_issue=1
+			fi
+		fi
+
+		if [[ $has_routing_issue -eq 1 ]]; then
+			echo "routing_issue"
+			return 0
+		fi
+	fi
+
+	# Unable to determine failure type (fallback)
+	echo "unknown"
+	return 1
+}
+
+# Get last detected failure type for a peer
+#
+# Retrieves the last detected failure type from the state file.
+# This allows recovery actions to use failure-specific recovery strategies.
+#
+# Arguments:
+#   $1: Peer IP address
+#
+# Returns:
+#   0: Failure type found and printed to stdout
+#   1: No failure type stored (or file doesn't exist)
+#
+# Output:
+#   Prints failure type to stdout: "ike_phase1_down", "ipsec_phase2_down", "routing_issue", or "unknown"
+#
+# Examples:
+#   failure_type=$(get_failure_type "203.0.113.1")
+#   if [[ "$failure_type" == "ike_phase1_down" ]]; then
+#       echo "IKE Phase 1 is down"
+#   fi
+#
+# Note:
+#   Requires sanitize_peer_ip and STATE_DIR to be set
+#   Failure type is stored in: ${STATE_DIR}/failure_type_<sanitized_peer_ip>
+get_failure_type() {
+	local peer_ip="$1"
+	local peer_sanitized
+	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
+	local failure_type_file="${STATE_DIR}/failure_type_${peer_sanitized}"
+
+	if [[ -f "$failure_type_file" ]]; then
+		local failure_type
+		failure_type=$(cat "$failure_type_file" 2>/dev/null | head -1 | tr -d '\n\r ' || echo "unknown")
+		if [[ -n "$failure_type" ]]; then
+			echo "$failure_type"
+			return 0
+		fi
+	fi
+
+	echo "unknown"
+	return 1
 }
 
 # Check VPN status using ip xfrm state
@@ -998,6 +1233,31 @@ check_vpn_status() {
 	# Use internal IP if provided, otherwise fall back to external IP
 	local ping_ip="${internal_peer_ip:-$external_peer_ip}"
 	check_ping_if_enabled "$vpn_ok" "$ping_ip"
+
+	# If VPN check failed, detect and log the failure type
+	if [[ $vpn_ok -eq 0 ]]; then
+		local failure_type
+		failure_type=$(detect_failure_type "$external_peer_ip" "$internal_peer_ip" "$last_bytes_file" 2>/dev/null || echo "unknown")
+
+		# Store failure type in state file for recovery actions
+		local failure_type_file="${STATE_DIR}/failure_type_${peer_sanitized}"
+		echo "$failure_type" >"${failure_type_file}.tmp" 2>/dev/null && mv "${failure_type_file}.tmp" "$failure_type_file" 2>/dev/null || true
+
+		case "$failure_type" in
+		"ike_phase1_down")
+			log_message "WARNING" "VPN failure type: IKE Phase 1 down (no secure channel established) for $external_peer_ip"
+			;;
+		"ipsec_phase2_down")
+			log_message "WARNING" "VPN failure type: IPsec Phase 2 down (IKE Phase 1 up but tunnel not established) for $external_peer_ip"
+			;;
+		"routing_issue")
+			log_message "WARNING" "VPN failure type: Routing issue (both phases up but traffic not flowing) for $external_peer_ip"
+			;;
+		*)
+			log_message "WARNING" "VPN failure type: Unknown (unable to determine specific failure type) for $external_peer_ip"
+			;;
+		esac
+	fi
 
 	# Return 0 if OK, 1 if failed (invert vpn_ok: 1 becomes 0, 0 becomes 1)
 	return $((1 - vpn_ok))

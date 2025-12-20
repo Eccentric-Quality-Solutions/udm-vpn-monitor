@@ -113,7 +113,7 @@ flowchart TD
     LoadConfig --> InitState[Initialize State Files]
     InitState --> CooldownCheck{In<br/>Cooldown?}
     CooldownCheck -->|Yes| Exit2([Exit: In<br/>cooldown period])
-    CooldownCheck -->|No| ValidateConfig{PEER_IPS<br/>Configured?}
+    CooldownCheck -->|No| ValidateConfig{EXTERNAL_PEER_IPS<br/>Configured?}
     ValidateConfig -->|No| Exit3([Exit: Config<br/>Error])
     ValidateConfig -->|Yes| ForEachPeer[For Each Peer IP]
     
@@ -268,7 +268,7 @@ stateDiagram-v2
 ```mermaid
 graph LR
     subgraph "Input"
-        ConfigFile[Config File<br/>PEER_IPS, thresholds]
+        ConfigFile[Config File<br/>EXTERNAL_PEER_IPS, INTERNAL_PEER_IPS, thresholds]
         XfrmState[System State<br/>ip xfrm state]
     end
     
@@ -391,11 +391,12 @@ graph TB
 - **Tier 2 Details**: 
   - Uses `swanctl --reload-conn` for per-connection reload when swanctl and connection name available
   - Falls back to `swanctl --reload` (all connections) if no connection name
-  - Falls back to `ipsec reload` (all connections) if swanctl unavailable
+  - Falls back to xfrm-based per-connection recovery (uses `ip xfrm state delete`) if swanctl unavailable
+  - Falls back to `ipsec reload` (all connections) if xfrm recovery fails
 - **Tier 3 Details**: 
   - Prefers `ipsec restart` (affects all tunnels)
   - Falls back to `swanctl --reload` if ipsec unavailable
-- **Benefit**: Most issues resolved without full restart, with surgical per-connection recovery when possible
+- **Benefit**: Most issues resolved without full restart, with surgical per-connection recovery available even without swanctl (via xfrm)
 
 ### 4. Per-Peer State Tracking
 - **Why**: Multiple peers need independent monitoring and recovery
