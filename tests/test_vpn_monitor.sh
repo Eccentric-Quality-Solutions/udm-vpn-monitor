@@ -235,7 +235,8 @@ EOF
 	echo "4" >"$failure_counter2"
 
 	# Mock ip command to return no SA (VPN down) for both peers
-	local mock_ip=$(mock_ip_xfrm_state "$peer1_ip" "0")
+	local mock_ip
+	mock_ip=$(mock_ip_xfrm_state "$peer1_ip" "0")
 	add_mock_to_path
 
 	# Create test version of script with custom paths
@@ -248,20 +249,24 @@ EOF
 	# Each peer should have its own independent counter
 	# Peer 1 should have incremented from 2
 	if [[ -f "$failure_counter1" ]]; then
-		local count1=$(cat "$failure_counter1")
+		local count1
+		count1=$(cat "$failure_counter1")
 		assert [ "$count1" -gt 2 ]
 	fi
 
 	# Peer 2 should have incremented from 4
 	if [[ -f "$failure_counter2" ]]; then
-		local count2=$(cat "$failure_counter2")
+		local count2
+		count2=$(cat "$failure_counter2")
 		assert [ "$count2" -gt 4 ]
 	fi
 
 	# Counters should be independent (count1 != count2)
 	if [[ -f "$failure_counter1" ]] && [[ -f "$failure_counter2" ]]; then
-		local count1=$(cat "$failure_counter1")
-		local count2=$(cat "$failure_counter2")
+		local count1
+		count1=$(cat "$failure_counter1")
+		local count2
+		count2=$(cat "$failure_counter2")
 		# They should differ since they started at different values
 		assert [ "$count1" != "$count2" ]
 	fi
@@ -286,7 +291,8 @@ EOF
 	local failure_counter="${TEST_DIR}/logs/failure_counter_${peer_sanitized}"
 
 	# Mock ip command to return no SA (VPN down)
-	local mock_ip=$(mock_ip_xfrm_state "$peer_ip" "0")
+	local mock_ip
+	mock_ip=$(mock_ip_xfrm_state "$peer_ip" "0")
 	add_mock_to_path
 
 	# Create test version of script with custom paths
@@ -298,7 +304,8 @@ EOF
 
 	# Per-peer failure counter should be incremented
 	if [[ -f "$failure_counter" ]]; then
-		local count=$(cat "$failure_counter")
+		local count
+		count=$(cat "$failure_counter")
 		assert [ "$count" -gt 0 ]
 	fi
 
@@ -336,7 +343,8 @@ EOF
 
 	# Per-peer failure counter should be reset (if script ran successfully)
 	if [[ -f "$failure_counter" ]]; then
-		local count=$(cat "$failure_counter")
+		local count
+		count=$(cat "$failure_counter")
 		# Counter should be 0 if VPN check succeeded
 		# Note: This test may need VPN to actually be "up" for counter to reset
 		assert [ "$count" -ge 0 ]
@@ -477,11 +485,13 @@ EOF
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 
 	# Mock ping command
-	local mock_ping=$(mock_ping "192.168.1.1" "1")
+	local mock_ping
+	mock_ping=$(mock_ping "192.168.1.1" "1")
 	add_mock_to_path
 
 	# Mock ip command to return SA (VPN appears up)
-	local mock_ip=$(mock_ip_xfrm_state "192.168.1.1" "1000")
+	local mock_ip
+	mock_ip=$(mock_ip_xfrm_state "192.168.1.1" "1000")
 
 	# Create test version of script with custom paths
 	local test_script

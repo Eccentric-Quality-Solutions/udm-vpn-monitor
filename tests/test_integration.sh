@@ -85,7 +85,8 @@ EOF
 	# Should increment failure counter
 	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
 	assert_file_exist "$failure_counter"
-	local count=$(cat "$failure_counter")
+	local count
+	count=$(cat "$failure_counter")
 	assert [ "$count" -ge 1 ]
 
 	# Should log Tier 1 action
@@ -121,19 +122,16 @@ fi
 EOF
 	chmod +x "$mock_ip"
 
-	# Mock swanctl for surgical cleanup
-	local mock_swanctl="${TEST_DIR}/swanctl"
-	cat >"$mock_swanctl" <<'EOF'
+	# Mock ipsec for surgical cleanup
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	cat >"$mock_ipsec" <<'EOF'
 #!/bin/bash
-if [[ "$1" == "--list-sas" ]]; then
-    exit 0
-fi
-if [[ "$1" == "--reload" ]] || [[ "$1" == "--reload-conn" ]]; then
+if [[ "$1" == "reload" ]]; then
     echo "Reloaded"
     exit 0
 fi
 EOF
-	chmod +x "$mock_swanctl"
+	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
 	# Create test version of script
@@ -179,7 +177,8 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock ipsec for full restart
-	local mock_ipsec=$(mock_ipsec)
+	local mock_ipsec
+	mock_ipsec=$(mock_ipsec)
 	add_mock_to_path
 
 	# Create test version of script
@@ -226,7 +225,8 @@ EOF
 	assert_success
 	# Failure counter should be reset
 	assert_file_exist "$failure_counter"
-	local count=$(cat "$failure_counter")
+	local count
+	count=$(cat "$failure_counter")
 	assert [ "$count" -eq 0 ]
 
 	# Should log recovery message
@@ -277,14 +277,16 @@ EOF
 	# Peer1 should have failure counter incremented
 	local failure_counter1="${TEST_DIR}/logs/failure_counter_192_168_1_1"
 	if [[ -f "$failure_counter1" ]]; then
-		local count1=$(cat "$failure_counter1")
+		local count1
+		count1=$(cat "$failure_counter1")
 		assert [ "$count1" -ge 1 ]
 	fi
 
 	# Peer2 should not have failure counter (or should be 0)
 	local failure_counter2="${TEST_DIR}/logs/failure_counter_10_0_0_1"
 	if [[ -f "$failure_counter2" ]]; then
-		local count2=$(cat "$failure_counter2")
+		local count2
+		count2=$(cat "$failure_counter2")
 		assert [ "$count2" -eq 0 ]
 	fi
 
@@ -310,7 +312,8 @@ EOF
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 
 	# Mock ping - fails (100% packet loss)
-	local mock_ping=$(mock_ping "192.168.1.1" "0")
+	mock_ping "192.168.1.1" "0" >/dev/null
+	mv "${TEST_DIR}/mock_ping" "${TEST_DIR}/ping" 2>/dev/null || true
 	add_mock_to_path
 
 	# Create test version of script
@@ -450,7 +453,9 @@ EOF
 	assert_file_contains "$log_file" "cooldown period"
 }
 
-@test "integration: Connection name discovery and caching" {
+# However, per-connection recovery IS available via xfrm (experimental, opt-in via ENABLE_XFRM_RECOVERY=1).
+# Connection names discovered from ipsec status are for logging only, not for recovery.
+@test "integration: Tier 2 recovery uses ipsec reload (default behavior)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -463,7 +468,6 @@ EOF
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}"
 	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
-
 	# Set failure count to Tier 2 threshold
 	echo "3" >"$failure_counter"
 
@@ -477,23 +481,16 @@ fi
 EOF
 	chmod +x "$mock_ip"
 
-	# Mock swanctl - return connection name
-	local mock_swanctl="${TEST_DIR}/swanctl"
-	cat >"$mock_swanctl" <<'EOF'
+	# Mock ipsec - track reload call
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	cat >"$mock_ipsec" <<'EOF'
 #!/bin/bash
-if [[ "$1" == "--list-sas" ]]; then
-    echo "test-connection: #1, ESTABLISHED, 192.168.1.1"
-fi
-if [[ "$1" == "--reload-conn" ]] && [[ "$2" == "test-connection" ]]; then
-    echo "Reloaded connection: test-connection"
-    exit 0
-fi
-if [[ "$1" == "--reload" ]]; then
-    echo "Reloaded all"
+if [[ "$1" == "reload" ]]; then
+    echo "ipsec-reload-called" > /tmp/ipsec_called.txt
     exit 0
 fi
 EOF
-	chmod +x "$mock_swanctl"
+	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
 	# Create test version of script
@@ -502,93 +499,12 @@ EOF
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
 
-	# Connection name discovery happens during get_connection_name call
-	# which is called during surgical_cleanup when failure count >= Tier 2
-	# VPN is down, failure count is 3, so Tier 2 should trigger and discover connection name
-	local cache_file="${state_dir}/connection_name_192_168_1_1"
-	# Connection name should be cached after discovery during Tier 2 recovery
-	# Note: Discovery only happens if get_connection_name is called, which happens in surgical_cleanup
-	# Since we're in --fake mode, surgical_cleanup is logged but not executed, so discovery may not happen
-	# Let's check if discovery was attempted (logged) or if cache file was created
-	if [[ -f "$cache_file" ]]; then
-		local cached_name=$(cat "$cache_file")
-		assert [ "$cached_name" = "test-connection" ]
-	else
-		# In fake mode, surgical_cleanup logs but doesn't execute, so discovery may not happen
-		# Check log for Tier 2 action instead
-		assert_file_contains "$log_file" "Tier 2"
-	fi
-
-	remove_mock_from_path
-}
-
-@test "integration: Per-connection reload used when connection name available" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
-	local cache_file="${state_dir}/connection_name_192_168_1_1"
-
-	# Set failure count to Tier 2 threshold
-	echo "3" >"$failure_counter"
-
-	# Pre-cache connection name
-	echo "test-connection" >"$cache_file"
-
-	# Mock ip command - VPN down
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ip"
-
-	# Mock swanctl - track which command was called
-	local mock_swanctl="${TEST_DIR}/swanctl"
-	cat >"$mock_swanctl" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "--reload-conn" ]] && [[ "$2" == "test-connection" ]]; then
-    echo "per-connection-reload" > /tmp/swanctl_called.txt
-    exit 0
-fi
-if [[ "$1" == "--reload" ]]; then
-    echo "full-reload" > /tmp/swanctl_called.txt
-    exit 0
-fi
-EOF
-	chmod +x "$mock_swanctl"
-	add_mock_to_path
-
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
-
-	# Script may exit with code 1 when VPN check fails, but reload should still happen
-	# Should use per-connection reload
-	if [[ -f /tmp/swanctl_called.txt ]]; then
-		local called=$(cat /tmp/swanctl_called.txt)
-		assert [ "$called" = "per-connection-reload" ]
-		rm -f /tmp/swanctl_called.txt
-	fi
-
-	# Should log per-connection reload (check for either message variant)
-	if ! grep -q "per-connection reload" "$log_file" && ! grep -q "Using per-connection reload" "$log_file"; then
-		echo "Expected per-connection reload message not found in log" >&2
-		echo "Log contents:" >&2
-		cat "$log_file" >&2
-		return 1
+	# Should use ipsec reload (affects all tunnels)
+	assert_file_exist "$log_file"
+	assert_file_contains "$log_file" "ipsec reload"
+	if [[ -f /tmp/ipsec_called.txt ]]; then
+		assert_file_exist /tmp/ipsec_called.txt
+		rm -f /tmp/ipsec_called.txt
 	fi
 
 	remove_mock_from_path
@@ -674,7 +590,7 @@ EOF
 	remove_mock_from_path
 }
 
-@test "integration: Fallback to swanctl when xfrm unavailable" {
+@test "integration: Fallback to ipsec status when xfrm unavailable" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -685,47 +601,12 @@ EOF
 	local state_dir="${TEST_DIR}"
 
 	# Don't create ip mock (xfrm unavailable)
-	# Mock swanctl - return SA
-	local mock_swanctl="${TEST_DIR}/swanctl"
-	cat >"$mock_swanctl" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "--list-sas" ]]; then
-    echo "test-conn: IKEv2, established, 192.168.1.1"
-fi
-EOF
-	chmod +x "$mock_swanctl"
-	add_mock_to_path
-
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
-
-	assert_success
-	# Should use swanctl fallback
-	assert_file_contains "$log_file" "swanctl"
-
-	remove_mock_from_path
-}
-
-@test "integration: Fallback to ipsec status when xfrm and swanctl unavailable" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-
-	# Don't create ip or swanctl mocks
 	# Mock ipsec - return status
 	local mock_ipsec="${TEST_DIR}/ipsec"
 	cat >"$mock_ipsec" <<'EOF'
 #!/bin/bash
 if [[ "$1" == "status" ]]; then
-    echo "192.168.1.1: ESTABLISHED"
+    echo "test-conn: established, 192.168.1.1"
 fi
 EOF
 	chmod +x "$mock_ipsec"
@@ -738,7 +619,7 @@ EOF
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
 
 	assert_success
-	# Should use ipsec fallback
+	# Should use ipsec status fallback
 	assert_file_contains "$log_file" "ipsec status"
 
 	remove_mock_from_path

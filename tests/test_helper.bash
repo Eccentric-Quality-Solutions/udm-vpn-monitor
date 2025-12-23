@@ -55,10 +55,17 @@ assert_output() {
         pattern="${1:-}"
     fi
     
+    # Handle empty output case - if pattern is also empty, that's a match
     if [[ -z "${output:-}" ]]; then
-        echo "Expected output to contain: $pattern" >&2
-        echo "Actual output: (empty)" >&2
-        return 1
+        if [[ -z "$pattern" ]]; then
+            # Both output and pattern are empty - this is a match
+            return 0
+        else
+            # Output is empty but pattern is not - mismatch
+            echo "Expected output to contain: $pattern" >&2
+            echo "Actual output: (empty)" >&2
+            return 1
+        fi
     fi
     
     if [[ $use_partial -eq 1 ]]; then
@@ -760,41 +767,6 @@ fi
 EOF
     chmod +x "$mock_ip"
     echo "$mock_ip"
-}
-
-# Create mock swanctl command
-#
-# Creates a mock 'swanctl' command that returns fake SA list output.
-# Used to simulate strongSwan SA states in tests.
-#
-# Arguments:
-#   $1: Peer IP address to include in mock output
-#   $2: Status ("up" or "down", default: "up")
-#
-# Returns:
-#   0: Always succeeds
-#
-# Output:
-#   Prints the path to the created mock script
-#
-# Side effects:
-#   Creates mock script in TEST_DIR
-mock_swanctl() {
-    local peer_ip="$1"
-    local status="${2:-up}"
-    
-    local mock_swanctl="${TEST_DIR}/mock_swanctl"
-    cat > "$mock_swanctl" << EOF
-#!/bin/bash
-if [[ "\$1" == "--list-sas" ]]; then
-    if [[ "$status" == "up" ]]; then
-        echo "test-conn: IKEv2, established, ${peer_ip}"
-        echo "test-conn: ESP, established, ${peer_ip}"
-    fi
-fi
-EOF
-    chmod +x "$mock_swanctl"
-    echo "$mock_swanctl"
 }
 
 # Create mock ping command

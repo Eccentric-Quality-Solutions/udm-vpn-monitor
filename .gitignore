@@ -41,4 +41,4 @@ coverage/
 /reports/vpn-monitor-report.txt
 /reports/vpn-monitor-analysis.csv
 
-architecture-docs/
+architecture-docs/tests/.bats/

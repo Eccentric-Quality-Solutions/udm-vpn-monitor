@@ -34,15 +34,25 @@ source_function() {
 			func_def=$(sed -n "/^${func_name}(/,/^}/p" "$module" 2>/dev/null)
 			if [[ -n "$func_def" ]]; then
 				# Set minimal required variables for functions that need them
+				# Export these so they're available in subshells created by 'run'
 				SCRIPT_DIR="${SCRIPT_DIR:-${BATS_TEST_DIRNAME}/..}"
+				export SCRIPT_DIR
 				STATE_DIR="${STATE_DIR:-${TEST_DIR:-/tmp}}"
+				export STATE_DIR
 				LOGS_DIR="${LOGS_DIR:-${STATE_DIR}/logs}"
+				export LOGS_DIR
 				LOCKFILE="${LOCKFILE:-${STATE_DIR}/vpn-monitor.lock}"
+				export LOCKFILE
 				LOG_FILE="${LOG_FILE:-${LOGS_DIR}/vpn-monitor.log}"
+				export LOG_FILE
 				RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${LOGS_DIR}/restart_count}"
+				export RESTART_COUNT_FILE
 				COOLDOWN_UNTIL_FILE="${COOLDOWN_UNTIL_FILE:-${STATE_DIR}/cooldown_until}"
+				export COOLDOWN_UNTIL_FILE
 				CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
+				export CONFIG_FILE
 				DEBUG="${DEBUG:-0}"
+				export DEBUG
 
 				# Source required dependencies first
 				case "$module" in
@@ -705,43 +715,173 @@ SCRIPT
 	fi
 }
 
-@test "discover_connection_name finds connection from swanctl output" {
-	# Create mock swanctl
-	local mock_swanctl="${TEST_DIR}/swanctl"
-	cat >"$mock_swanctl" <<'EOF'
+# ============================================================================
+# Tests for discover_connection_name function (ipsec-based discovery)
+# ============================================================================
+
+@test "discover_connection_name extracts connection name from ipsec status (libreswan format)" {
+	source_function "discover_connection_name"
+	source_function "sanitize_peer_ip"
+
+	# Mock ipsec command - libreswan format
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	cat >"$mock_ipsec" <<'EOF'
 #!/bin/bash
-if [[ "$1" == "--list-sas" ]]; then
-    echo "test-connection: #1, ESTABLISHED, 192.168.1.1"
+if [[ "$1" == "status" ]]; then
+    echo "site-a: ESTABLISHED 1 hour ago, 192.168.1.1...192.168.1.2"
+    echo "site-b: ESTABLISHED 2 hours ago, 10.0.0.1...10.0.0.2"
 fi
 EOF
-	chmod +x "$mock_swanctl"
+	chmod +x "$mock_ipsec"
+	PATH="${TEST_DIR}:${PATH}"
 
-	# Source the function
-	source_function "discover_connection_name"
-
-	PATH="${TEST_DIR}:${PATH}" run discover_connection_name "192.168.1.1"
+	STATE_DIR="${TEST_DIR}"
+	run discover_connection_name "192.168.1.1"
 
 	assert_success
-	assert_output "test-connection"
+	assert_output "site-a"
 }
 
-@test "discover_connection_name returns failure when not found" {
-	# Create mock swanctl that returns empty
-	local mock_swanctl="${TEST_DIR}/swanctl"
-	cat >"$mock_swanctl" <<'EOF'
+@test "discover_connection_name extracts connection name from ipsec status (strongswan format)" {
+	source_function "discover_connection_name"
+	source_function "sanitize_peer_ip"
+
+	# Mock ipsec command - strongswan format
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	cat >"$mock_ipsec" <<'EOF'
 #!/bin/bash
-if [[ "$1" == "--list-sas" ]]; then
-    echo ""
+if [[ "$1" == "status" ]]; then
+    echo "site-a: IKEv1, ESTABLISHED, 192.168.1.1"
+    echo "site-b: IKEv2, ESTABLISHED, 10.0.0.1"
 fi
 EOF
-	chmod +x "$mock_swanctl"
+	chmod +x "$mock_ipsec"
+	PATH="${TEST_DIR}:${PATH}"
 
-	# Source the function
+	STATE_DIR="${TEST_DIR}"
+	run discover_connection_name "192.168.1.1"
+
+	assert_success
+	assert_output "site-a"
+}
+
+@test "discover_connection_name returns empty string when connection not found" {
 	source_function "discover_connection_name"
+	source_function "sanitize_peer_ip"
 
-	PATH="${TEST_DIR}:${PATH}" run discover_connection_name "192.168.1.1"
+	# Mock ipsec command - no matching peer IP
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	cat >"$mock_ipsec" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "status" ]]; then
+    echo "site-a: ESTABLISHED 1 hour ago, 192.168.1.1...192.168.1.2"
+fi
+EOF
+	chmod +x "$mock_ipsec"
+	PATH="${TEST_DIR}:${PATH}"
 
-	assert_failure
+	export STATE_DIR="${TEST_DIR}"
+	run discover_connection_name "10.0.0.1"
+
+	assert_success
+	assert_output ""
+}
+
+@test "discover_connection_name caches connection name" {
+	# Match test 27 pattern: call source_function first
+	source_function "discover_connection_name"
+	source_function "sanitize_peer_ip"
+
+	# Set STATE_DIR AFTER source_function (matching test 27)
+	# But ensure it's exported so it's available in subshells created by 'run'
+	STATE_DIR="${TEST_DIR}"
+	export STATE_DIR
+
+	# Mock ipsec command - libreswan format
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	cat >"$mock_ipsec" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "status" ]]; then
+    echo "site-a: ESTABLISHED 1 hour ago, 192.168.1.1...192.168.1.2"
+fi
+EOF
+	chmod +x "$mock_ipsec"
+	PATH="${TEST_DIR}:${PATH}"
+	export PATH
+
+	# Clean up any existing cache file from previous tests
+	local cache_file="${TEST_DIR}/connection_name_192_168_1_1"
+	rm -f "$cache_file"
+
+	# First call - should discover and cache
+	# Use plain 'run' like test 27 (source_function makes functions available)
+	run discover_connection_name "192.168.1.1"
+	assert_success
+	# Manually verify output - assert_output has scoping issues with $output
+	# The output variable IS set correctly (we verified with debug), but assert_output
+	# can't see it. So we'll verify manually and skip assert_output.
+	if [[ "${output:-}" != "site-a" ]]; then
+		echo "Expected output: site-a" >&2
+		echo "Actual output: [${output:-}]" >&2
+		return 1
+	fi
+	assert_file_exist "$cache_file"
+	assert [ "$(cat "$cache_file")" = "site-a" ]
+
+	# Remove ipsec mock - second call should use cache
+	rm -f "$mock_ipsec"
+	# Ensure STATE_DIR is still exported for second call
+	export STATE_DIR
+	run discover_connection_name "192.168.1.1"
+	assert_success
+	# Manually verify output - assert_output has scoping issues
+	if [[ "${output:-}" != "site-a" ]]; then
+		echo "Expected output: site-a" >&2
+		echo "Actual output: [${output:-}]" >&2
+		echo "DEBUG: STATE_DIR in test=$STATE_DIR" >&2
+		echo "DEBUG: cache_file=$cache_file" >&2
+		echo "DEBUG: cache exists=$([ -f "$cache_file" ] && echo yes || echo no)" >&2
+		if [[ -f "$cache_file" ]]; then
+			echo "DEBUG: cache content=[$(cat "$cache_file")]" >&2
+		fi
+		return 1
+	fi
+}
+
+@test "discover_connection_name returns empty when ipsec command not available" {
+	source_function "discover_connection_name"
+	source_function "sanitize_peer_ip"
+
+	# Ensure ipsec is not in PATH
+	PATH="/usr/bin:/bin"
+	export STATE_DIR="${TEST_DIR}"
+
+	run discover_connection_name "192.168.1.1"
+
+	assert_success
+	assert_output ""
+}
+
+@test "discover_connection_name handles ipsec status failure gracefully" {
+	source_function "discover_connection_name"
+	source_function "sanitize_peer_ip"
+
+	# Mock ipsec command - fails
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	cat >"$mock_ipsec" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "status" ]]; then
+    exit 1
+fi
+EOF
+	chmod +x "$mock_ipsec"
+	PATH="${TEST_DIR}:${PATH}"
+
+	STATE_DIR="${TEST_DIR}"
+	run discover_connection_name "192.168.1.1"
+
+	assert_success
+	assert_output ""
 }
 
 # ============================================================================

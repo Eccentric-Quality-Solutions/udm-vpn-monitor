@@ -54,7 +54,7 @@ This guide provides information for developers contributing to the UDM VPN Monit
 
 7. **Understand the codebase structure**
    - **Main Script**: `vpn-monitor.sh` - Entry point, orchestrates monitoring
-   - **Detection**: `check_vpn_status()` - Checks VPN health using xfrm, swanctl, ipsec with automatic fallback
+   - **Detection**: `check_vpn_status()` - Checks VPN health using xfrm, ipsec with automatic fallback
    - **Recovery**: `surgical_cleanup()`, `full_restart()` - Recovery actions (Tier 2, Tier 3) with tool availability detection
    - **State Management**: Per-peer failure counters and byte tracking
    - **Library Modules**: Modular architecture with dedicated modules in `lib/` directory
@@ -80,21 +80,16 @@ This guide provides information for developers contributing to the UDM VPN Monit
 
 - **Detection Logic** (`check_vpn_status()`):
   - Primary: `ip xfrm state` - Checks Security Associations and byte counters
-  - Fallback 1: `swanctl --list-sas` - Checks via swanctl
-  - Fallback 2: `ipsec status` - Checks via ipsec command
+  - Fallback: `ipsec status` - Checks via ipsec command
   - Optional: Ping connectivity check
 
 - **Recovery Actions**:
   - **Tier 1**: Logging only (after `TIER1_THRESHOLD` failures)
   - **Tier 2**: Surgical cleanup
-    - **Preferred**: `swanctl --reload-conn <connection-name>` (per-connection, requires swanctl and connection name)
-    - **Fallback 1**: `swanctl --reload` (all connections, when connection name unavailable)
-    - **Fallback 2**: `ipsec reload` (all connections, when swanctl unavailable)
-    - **Note**: Per-connection recovery only available when swanctl is present
+    - **Experimental**: xfrm-based per-connection recovery (requires `ENABLE_XFRM_RECOVERY=1`, disabled by default)
+    - **Default**: `ipsec reload` (all connections)
   - **Tier 3**: Full restart
-    - **Preferred**: `ipsec restart` (affects all tunnels)
-    - **Fallback**: `swanctl --reload` (when ipsec unavailable)
-  - **Tool Availability**: The system automatically detects which commands are available (`command -v`) and uses appropriate fallbacks. This ensures compatibility across different UDM configurations where some use `swanctl` and others use `ipsec` for IPsec management.
+    - Uses: `ipsec restart` (affects all tunnels)
 
 - **State Management**:
   - Per-peer failure counters: `logs/failure_counter_<peer_ip>`
@@ -537,9 +532,9 @@ Use `log_message "WARNING"` for non-fatal issues that should be logged but don't
 # - Recoverable errors (can continue with reduced functionality)
 # - Informational warnings (user should be aware)
 
-if ! command -v swanctl >/dev/null 2>&1; then
-    log_message "WARNING" "swanctl not available, using ipsec fallback"
-    # Continue with ipsec fallback
+if ! command -v ipsec >/dev/null 2>&1; then
+    log_message "WARNING" "ipsec command not available"
+    # Handle missing ipsec command
 fi
 
 if [[ ! -f "$cache_file" ]]; then
@@ -570,8 +565,8 @@ handle_error "INFO" "Operation completed with minor issues"
 die "Fatal error message"  # Logs and exits with code 1
 
 # Check if command exists (logs warning if missing)
-if ! warn_if_missing "swanctl"; then
-    # Command not available, use fallback
+if ! warn_if_missing "ipsec"; then
+    # Command not available, handle error
 fi
 ```
 
@@ -616,11 +611,18 @@ check_vpn_status() {
 ```bash
 # Log errors/warnings, return error codes
 surgical_cleanup() {
-    if ! swanctl --reload-conn "$conn_name" 2>/dev/null; then
-        log_message "WARNING" "Per-connection reload failed, falling back"
-        # Try fallback
-        if ! swanctl --reload 2>/dev/null; then
-            log_message "ERROR" "Full reload also failed"
+    if [[ "${ENABLE_XFRM_RECOVERY:-0}" -eq 1 ]]; then
+        if ! attempt_xfrm_recovery "$peer_ip"; then
+            log_message "WARNING" "xfrm recovery failed, falling back"
+            # Try fallback
+            if ! ipsec reload 2>/dev/null; then
+                log_message "ERROR" "ipsec reload also failed"
+                return 1  # Return error, don't die
+            fi
+        fi
+    else
+        if ! ipsec reload 2>/dev/null; then
+            log_message "ERROR" "ipsec reload failed"
             return 1  # Return error, don't die
         fi
     fi
@@ -690,13 +692,10 @@ increment_failure() {
 
 **Pattern: Try-Fallback**
 ```bash
-if command -v swanctl >/dev/null 2>&1; then
-    swanctl --reload
-elif command -v ipsec >/dev/null 2>&1; then
-    log_message "WARNING" "swanctl not available, using ipsec fallback"
+if command -v ipsec >/dev/null 2>&1; then
     ipsec reload
 else
-    die "Neither swanctl nor ipsec available"
+    die "ipsec command not available"
 fi
 ```
 
@@ -767,8 +766,7 @@ Example:
 # Verifies VPN tunnel health by checking IPsec Security Association state.
 # Uses multiple detection methods with automatic fallback:
 #   - Primary: ip xfrm state (SA state and byte counters)
-#   - Fallback 1: swanctl --list-sas (if xfrm unavailable)
-#   - Fallback 2: ipsec status (if swanctl unavailable)
+#   - Fallback: ipsec status (if xfrm unavailable)
 #   - Optional: Ping connectivity check (if enabled)
 #
 # Arguments:
@@ -790,7 +788,7 @@ Example:
 # Note:
 #   Requires validate_ip_address, sanitize_peer_ip, log_message, STATE_DIR,
 #   ENABLE_PING_CHECK, PING_TARGET_IP to be set.
-#   Automatically detects available tools (xfrm, swanctl, ipsec) and uses
+#   Automatically detects available tools (xfrm, ipsec) and uses
 #   appropriate fallbacks for compatibility across different UDM configurations.
 check_vpn_status() {
 	local peer_ip="$1"

@@ -9,7 +9,7 @@
 # Delete Security Associations for a specific peer using xfrm
 #
 # Attempts per-connection recovery by deleting SAs for a specific peer IP using the Linux kernel's
-# xfrm framework. This provides surgical recovery without requiring swanctl.
+# xfrm framework. This provides surgical recovery for per-connection recovery.
 #
 # ⚠️ WARNING: This is an EXPERIMENTAL feature with known risks:
 #   - xfrm output format varies across kernel versions (parsing may fail)
@@ -20,8 +20,7 @@
 #
 # This function should only be used when:
 #   1. ENABLE_XFRM_RECOVERY=1 is explicitly set in configuration
-#   2. swanctl is not available (otherwise swanctl is preferred)
-#   3. User understands the risks and has tested on their system
+#   2. User understands the risks and has tested on their system
 #
 # Arguments:
 #   $1: Peer IP address to clean up
@@ -39,7 +38,7 @@
 #   This function parses 'ip xfrm state' output to extract SA selectors (src, dst, proto, spi).
 #   Format variations across kernel versions may affect reliability. Falls back gracefully if parsing fails.
 #   Requires 'ip' command and root privileges.
-#   See architecture-docs/SWANCTL_ALTERNATIVES.md for detailed risk analysis.
+#   See documentation for detailed risk analysis.
 attempt_xfrm_recovery() {
 	local peer_ip="$1"
 	local deleted_count=0
@@ -50,12 +49,17 @@ attempt_xfrm_recovery() {
 		return 1
 	fi
 
-	log_message "INFO" "Attempting xfrm-based per-connection recovery for $peer_ip"
-
 	# Get all xfrm state entries for this peer IP
-	# Use word boundaries to avoid partial IP matches
+	# Use word boundaries to avoid partial IP matches (e.g., match 192.168.1.1 but not 192.168.1.10)
+	# Escape regex special characters in peer_ip to prevent regex injection
+	# IP addresses are validated before reaching this function, but we escape to be safe
+	# Escape dots, brackets, and other regex special characters
+	local peer_ip_escaped
+	peer_ip_escaped=$(printf '%s\n' "$peer_ip" | sed -e 's/\./\\./g' -e 's/\[/\\[/g' -e 's/\]/\\]/g' -e 's/\*/\\*/g' -e 's/\^/\\^/g' -e 's/\$/\\$/g' -e 's/(/\\(/g' -e 's/)/\\)/g' -e 's/+/\\+/g' -e 's/?/\\?/g' -e 's/{/\\{/g' -e 's/}/\\}/g' -e 's/|/\\|/g')
 	local xfrm_output
-	xfrm_output=$(ip xfrm state 2>/dev/null | grep -E "(^|[^0-9a-fA-F:])${peer_ip}([^0-9a-fA-F:]|$)" -A 20 || true)
+	# Note: Using grep -E (extended regex) instead of grep -F (fixed-string) because we need
+	# word boundary matching to avoid partial IP matches. The peer_ip is properly escaped above.
+	xfrm_output=$(ip xfrm state 2>/dev/null | grep -E "(^|[^0-9a-fA-F:])${peer_ip_escaped}([^0-9a-fA-F:]|$)" -A 20 || true)
 
 	if [[ -z "$xfrm_output" ]]; then
 		log_message "INFO" "No SAs found for $peer_ip in xfrm state (may already be down)"
@@ -139,141 +143,79 @@ attempt_xfrm_recovery() {
 # Surgical SA cleanup (Tier 2 recovery)
 #
 # Attempts to clean up specific Security Associations for a peer by reloading IPsec configuration.
-# Uses a tiered approach: swanctl (per-connection) → xfrm (per-connection) → ipsec reload (all connections).
-# If a connection name is configured for the peer and swanctl is available, attempts per-connection reload (surgical).
-# Otherwise attempts xfrm-based per-connection recovery, falling back to ipsec reload if that fails.
+# Uses a tiered approach: xfrm (per-connection) → ipsec reload (all connections).
+# Attempts xfrm-based per-connection recovery if enabled, falling back to ipsec reload if that fails.
 # This is less disruptive than full restart but more aggressive than logging.
 #
 # Arguments:
-#   $1: Peer IP address to clean up (used to find connection name)
+#   $1: Peer IP address to clean up
 #
 # Returns:
 #   0: Always succeeds (cleanup commands attempted, errors are logged if they fail)
 #
 # Actions:
 #   Reloads IPsec configuration to clean up and re-establish SAs:
-#   - If swanctl available and CONNECTION_NAME_<peer_ip> is configured: uses swanctl --reload-conn <name> (per-connection)
-#   - If swanctl available but no connection name: uses swanctl --reload (affects all connections)
-#   - If swanctl unavailable: attempts xfrm-based per-connection recovery (surgical)
-#   - If xfrm recovery fails: falls back to ipsec reload (affects all connections)
+#   - If xfrm recovery enabled: attempts xfrm-based per-connection recovery (surgical)
+#   - If xfrm recovery fails or disabled: falls back to ipsec reload (affects all connections)
 #   - If ipsec reload fails: attempts ipsec restart as last resort
 #
 # Side effects:
-#   - If swanctl available and connection name configured: Calls swanctl --reload-conn (surgical, per-connection)
-#   - If swanctl available but no connection name: Calls swanctl --reload (affects all connections)
-#   - If swanctl unavailable: Attempts xfrm-based recovery (surgical, per-connection)
-#   - If xfrm recovery fails: Calls ipsec reload (affects all connections, not surgical)
-#   - May temporarily disrupt VPN connections (scope depends on tool availability and connection name configuration)
+#   - If xfrm recovery enabled: Attempts xfrm-based recovery (surgical, per-connection)
+#   - If xfrm recovery fails or disabled: Calls ipsec reload (affects all connections, not surgical)
+#   - May temporarily disrupt VPN connections (scope depends on xfrm recovery availability)
 #   - Logs all actions and results
 #
 # Examples:
 #   surgical_cleanup "203.0.113.1"
-#   # If swanctl available and CONNECTION_NAME_203_0_113_1="site-to-site-1" is configured:
-#   #   Runs: swanctl --reload-conn site-to-site-1
-#   # If swanctl available but no connection name:
-#   #   Runs: swanctl --reload (affects all tunnels)
-#   # If swanctl unavailable:
+#   # If xfrm recovery enabled:
 #   #   Attempts: xfrm-based per-connection recovery (surgical)
 #   #   If xfrm fails: Runs ipsec reload (affects all tunnels)
+#   # If xfrm recovery disabled:
+#   #   Runs: ipsec reload (affects all tunnels)
 #
 # Note:
-#   This function prefers swanctl for per-connection reloads when available.
-#   Falls back to xfrm-based recovery for per-connection recovery when swanctl is unavailable.
-#   Falls back to ipsec reload if xfrm recovery fails (many UDMs use ipsec instead of swanctl).
-#   To enable per-connection reload with swanctl, configure CONNECTION_NAME_<sanitized_peer_ip> in config file.
-#   Example: CONNECTION_NAME_203_0_113_1="site-to-site-1"
-#   Requires get_connection_name, warn_if_missing, log_message, and attempt_xfrm_recovery to be set
+#   Falls back to xfrm-based recovery for per-connection recovery when enabled.
+#   Falls back to ipsec reload if xfrm recovery fails or is disabled.
+#   Requires warn_if_missing, log_message, and attempt_xfrm_recovery to be set
 surgical_cleanup() {
 	local peer_ip="$1"
-	log_message "INFO" "Attempting surgical SA cleanup for $peer_ip"
+	# Try to discover connection name for better logging (optional, for debugging)
+	local conn_name=""
+	if command -v discover_connection_name >/dev/null 2>&1; then
+		conn_name=$(discover_connection_name "$peer_ip" 2>/dev/null || echo "")
+	fi
+	local peer_display="$peer_ip"
+	if [[ -n "$conn_name" ]]; then
+		peer_display="$peer_ip (conn: $conn_name)"
+	fi
+	log_message "INFO" "Attempting surgical SA cleanup for $peer_display"
 
-	# Reload connection using swanctl to clean up and re-establish SAs
-	# Falls back to xfrm-based recovery if swanctl is not available
-	if command -v swanctl >/dev/null 2>&1; then
-		local connection_name
-		if connection_name=$(get_connection_name "$peer_ip" 2>/dev/null); then
-			# Connection name configured - use per-connection reload
-			log_message "INFO" "Using per-connection reload for $peer_ip (connection: $connection_name)"
-			if swanctl --reload-conn "$connection_name" 2>/dev/null; then
-				log_message "INFO" "Successfully reloaded connection: $connection_name"
-			else
-				local reload_exit_code=$?
-				handle_error "WARNING" "Per-connection reload failed for $connection_name (exit code: ${reload_exit_code}), falling back to full reload"
-				if swanctl --reload 2>/dev/null; then
-					log_message "INFO" "Full reload succeeded after per-connection reload failure"
-				else
-					local full_reload_exit_code=$?
-					handle_error "ERROR" "Full reload also failed (exit code: ${full_reload_exit_code})" 0
-				fi
-			fi
-		else
-			# No connection name configured - use full reload (affects all connections)
-			log_message "INFO" "No connection name configured for $peer_ip, using full reload (affects all tunnels)"
-			if ! swanctl --reload 2>&1; then
-				local reload_exit_code=$?
-				handle_error "ERROR" "swanctl --reload failed (exit code: ${reload_exit_code})" 0
-			else
-				log_message "INFO" "Successfully reloaded all connections via swanctl --reload"
-			fi
-		fi
-		log_message "INFO" "Surgical cleanup completed for $peer_ip"
-	elif command -v ip >/dev/null 2>&1; then
-		# swanctl not available - try xfrm-based per-connection recovery (if enabled)
+	# Try xfrm-based per-connection recovery (if enabled)
+	if command -v ip >/dev/null 2>&1; then
 		if [[ "${ENABLE_XFRM_RECOVERY:-0}" -eq 1 ]]; then
-			log_message "INFO" "swanctl not available, attempting xfrm-based per-connection recovery for $peer_ip (EXPERIMENTAL)"
+			log_message "INFO" "Attempting xfrm-based per-connection recovery for $peer_ip (EXPERIMENTAL)"
 			if attempt_xfrm_recovery "$peer_ip"; then
 				log_message "INFO" "xfrm-based recovery completed for $peer_ip"
+				log_message "INFO" "Surgical cleanup completed for $peer_ip (via xfrm)"
+				return 0
 			else
 				# xfrm recovery failed - fall back to ipsec reload
 				handle_error "WARNING" "xfrm-based recovery failed, falling back to ipsec reload (affects all tunnels)"
-				if command -v ipsec >/dev/null 2>&1; then
-					if ipsec reload 2>&1; then
-						log_message "INFO" "Successfully reloaded IPsec connections via ipsec reload"
-					else
-						local reload_exit_code=$?
-						handle_error "WARNING" "ipsec reload failed (exit code: ${reload_exit_code}), attempting ipsec restart"
-						if ! ipsec restart 2>&1; then
-							local restart_exit_code=$?
-							handle_error "ERROR" "ipsec restart also failed (exit code: ${restart_exit_code})" 0
-						else
-							log_message "INFO" "Successfully restarted IPsec service via ipsec restart"
-						fi
-					fi
-				else
-					handle_error "ERROR" "Neither ipsec command available for fallback recovery" 0
-				fi
 			fi
-			log_message "INFO" "Surgical cleanup completed for $peer_ip (via xfrm/ipsec fallback)"
 		else
-			# xfrm recovery disabled - skip directly to ipsec reload
-			log_message "INFO" "swanctl not available, xfrm recovery disabled (ENABLE_XFRM_RECOVERY=0), using ipsec reload fallback (affects all tunnels)"
-			if command -v ipsec >/dev/null 2>&1; then
-				if ipsec reload 2>&1; then
-					log_message "INFO" "Successfully reloaded IPsec connections via ipsec reload"
-				else
-					local reload_exit_code=$?
-					handle_error "WARNING" "ipsec reload failed (exit code: ${reload_exit_code}), attempting ipsec restart"
-					if ! ipsec restart 2>&1; then
-						local restart_exit_code=$?
-						handle_error "ERROR" "ipsec restart also failed (exit code: ${restart_exit_code})" 0
-					else
-						log_message "INFO" "Successfully restarted IPsec service via ipsec restart"
-					fi
-				fi
-			else
-				handle_error "ERROR" "Neither ipsec command available for fallback recovery" 0
-			fi
-			log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback, xfrm disabled)"
+			log_message "INFO" "xfrm recovery disabled (ENABLE_XFRM_RECOVERY=0), using ipsec reload fallback (affects all tunnels)"
 		fi
-	elif command -v ipsec >/dev/null 2>&1; then
-		# Neither swanctl nor ip available - fall back to ipsec reload
-		log_message "INFO" "swanctl and ip commands not available, using ipsec reload fallback (affects all tunnels)"
-		if ipsec reload 2>&1; then
+	fi
+
+	# Fall back to ipsec reload
+	if command -v ipsec >/dev/null 2>&1; then
+		log_message "INFO" "Attempting ipsec reload (affects all tunnels)"
+		if ipsec reload >/dev/null 2>&1; then
 			log_message "INFO" "Successfully reloaded IPsec connections via ipsec reload"
 		else
 			local reload_exit_code=$?
 			handle_error "WARNING" "ipsec reload failed (exit code: ${reload_exit_code}), attempting ipsec restart"
-			if ! ipsec restart 2>&1; then
+			if ! ipsec restart >/dev/null 2>&1; then
 				local restart_exit_code=$?
 				handle_error "ERROR" "ipsec restart also failed (exit code: ${restart_exit_code})" 0
 			else
@@ -283,10 +225,9 @@ surgical_cleanup() {
 		log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback)"
 	else
 		# Neither command available
-		warn_if_missing "swanctl"
 		warn_if_missing "ip"
 		warn_if_missing "ipsec"
-		handle_error "ERROR" "Neither swanctl, ip, nor ipsec command available for Tier 2 recovery" 0
+		handle_error "ERROR" "Neither ip nor ipsec command available for Tier 2 recovery" 0
 	fi
 
 	# Always return 0 (function always succeeds - cleanup commands attempted, errors are logged)
@@ -306,7 +247,7 @@ surgical_cleanup() {
 # Actions:
 #   1. Checks rate limiting (prevents restart loops via check_rate_limit)
 #   2. Records restart timestamp for rate limiting (record_restart)
-#   3. Executes 'ipsec restart' or 'swanctl --reload' (prefers ipsec, falls back to swanctl)
+#   3. Executes 'ipsec restart' to restart all IPsec tunnels
 #   4. Sets cooldown period to allow VPN to stabilize (set_cooldown)
 #
 # Side effects:
@@ -344,8 +285,9 @@ full_restart() {
 	record_restart
 
 	# Perform restart
-	# Check for commands silently first (we have fallbacks, so only warn if both are missing)
+	# Check for ipsec command
 	if command -v ipsec >/dev/null 2>&1; then
+		log_message "INFO" "Executing ipsec restart (affects all tunnels)"
 		# Capture exit code explicitly to avoid PIPESTATUS being cleared
 		# PIPESTATUS[0] = exit code of first command in pipe (ipsec), not tee
 		ipsec restart 2>&1 | tee -a "$LOG_FILE"
@@ -354,20 +296,10 @@ full_restart() {
 			handle_error "ERROR" "Failed to restart IPsec service (exit code: $ipsec_exit_code)" 0
 			return 1
 		fi
-	elif command -v swanctl >/dev/null 2>&1; then
-		# Capture exit code explicitly to avoid PIPESTATUS being cleared
-		# PIPESTATUS[0] = exit code of first command in pipe (swanctl), not tee
-		swanctl --reload 2>&1 | tee -a "$LOG_FILE"
-		local swanctl_exit_code=${PIPESTATUS[0]}
-		if [[ $swanctl_exit_code -ne 0 ]]; then
-			handle_error "ERROR" "Failed to reload swanctl (exit code: $swanctl_exit_code)" 0
-			return 1
-		fi
 	else
-		# Both commands missing - warn about both
+		# ipsec command missing
 		warn_if_missing "ipsec"
-		warn_if_missing "swanctl"
-		die "Neither ipsec nor swanctl command available"
+		die "ipsec command not available"
 	fi
 
 	log_message "INFO" "Full IPsec restart completed"
@@ -403,7 +335,7 @@ full_restart() {
 #   Each peer has its own independent failure counter tracked in:
 #   ${LOGS_DIR}/failure_counter_<peer_ip_sanitized>
 #   This allows independent failure tracking and recovery per peer.
-#   External IP is used for xfrm/swanctl checks, internal IP is used for ping checks.
+#   External IP is used for xfrm checks, internal IP is used for ping checks.
 #
 #   Requires check_vpn_status, get_failure_count, increment_failure, reset_failure_count,
 #   surgical_cleanup, full_restart, log_message, VPN_NAME, TIER1_THRESHOLD, TIER2_THRESHOLD,
@@ -418,7 +350,16 @@ monitor_peer() {
 		# VPN is OK
 		failure_count=$(get_failure_count "$external_peer_ip")
 		if [[ "$failure_count" -gt 0 ]]; then
-			log_message "INFO" "${VPN_NAME:-VPN} recovered for $external_peer_ip after $failure_count failures"
+			# Try to discover connection name for better logging (optional, for debugging)
+			local conn_name=""
+			if command -v discover_connection_name >/dev/null 2>&1; then
+				conn_name=$(discover_connection_name "$external_peer_ip" 2>/dev/null || echo "")
+			fi
+			local peer_display="$external_peer_ip"
+			if [[ -n "$conn_name" ]]; then
+				peer_display="$external_peer_ip (conn: $conn_name)"
+			fi
+			log_message "INFO" "${VPN_NAME:-VPN} recovered for $peer_display after $failure_count failures"
 			reset_failure_count "$external_peer_ip"
 
 			# Clear failure type file on recovery
@@ -445,11 +386,8 @@ monitor_peer() {
 		# Format failure type for display
 		local failure_type_display=""
 		case "$failure_type" in
-		"ike_phase1_down")
-			failure_type_display=" (IKE Phase 1 down)"
-			;;
-		"ipsec_phase2_down")
-			failure_type_display=" (IPsec Phase 2 down)"
+		"tunnel_down")
+			failure_type_display=" (tunnel down)"
 			;;
 		"routing_issue")
 			failure_type_display=" (routing issue)"
@@ -466,7 +404,9 @@ monitor_peer() {
 		# Tier 2: Surgical cleanup
 		if [[ "$failure_count" -ge "$TIER2_THRESHOLD" ]] && [[ "$failure_count" -lt "$TIER3_THRESHOLD" ]]; then
 			if [[ "$NO_ESCALATE" -eq 1 ]]; then
+				# In fake mode, log what would be done (including the command that would be used)
 				log_message "INFO" "Tier 2: Would attempt surgical SA cleanup for $external_peer_ip (skipped in fake mode)"
+				log_message "INFO" "Tier 2: Would use ipsec reload (affects all tunnels)"
 			else
 				handle_error "WARNING" "Tier 2: Attempting surgical SA cleanup for $external_peer_ip"
 				surgical_cleanup "$external_peer_ip"
@@ -476,7 +416,14 @@ monitor_peer() {
 		# Tier 3: Full restart
 		if [[ "$failure_count" -ge "$TIER3_THRESHOLD" ]]; then
 			if [[ "$NO_ESCALATE" -eq 1 ]]; then
-				log_message "INFO" "Tier 3: Would attempt full IPsec restart (skipped in fake mode)"
+				# In fake mode, still check rate limit to test the logic
+				# This allows tests to verify rate limiting behavior
+				if ! check_rate_limit; then
+					# Rate limit would prevent restart (logged by check_rate_limit)
+					log_message "INFO" "Tier 3: Would attempt full IPsec restart (skipped in fake mode, rate limit would prevent)"
+				else
+					log_message "INFO" "Tier 3: Would attempt full IPsec restart (skipped in fake mode)"
+				fi
 			else
 				handle_error "ERROR" "Tier 3: Attempting full IPsec restart" 0
 				if full_restart; then

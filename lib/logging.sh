@@ -111,7 +111,7 @@ log_message() {
 	# - Always: ERROR and WARNING
 	# - If DEBUG=1: DEBUG messages
 	# - If interactive (TTY): INFO messages (so users see success when running manually)
-	if [[ "${DEBUG:-0}" -eq 1 ]] || [[ "$level" == "ERROR" ]] || [[ "$level" == "WARNING" ]] || ([[ "$level" == "INFO" ]] && [[ $is_interactive -eq 1 ]]); then
+	if [[ "${DEBUG:-0}" -eq 1 ]] || [[ "$level" == "ERROR" ]] || [[ "$level" == "WARNING" ]] || { [[ "$level" == "INFO" ]] && [[ $is_interactive -eq 1 ]]; }; then
 		echo "$log_entry" >&2
 	fi
 
@@ -208,7 +208,7 @@ handle_error() {
 # This is useful for optional commands that enhance functionality but are not required.
 #
 # Arguments:
-#   $1: Command name to check (e.g., "swanctl", "ping", "ip")
+#   $1: Command name to check (e.g., "ipsec", "ping", "ip")
 #
 # Returns:
 #   0: Command is available (found in PATH)
@@ -219,8 +219,8 @@ handle_error() {
 #   - Does not exit script (allows graceful degradation)
 #
 # Examples:
-#   if warn_if_missing "swanctl"; then
-#       swanctl --list-sas
+#   if warn_if_missing "ipsec"; then
+#       ipsec status
 #   fi
 #
 # Note:

@@ -159,7 +159,6 @@ load_config() {
 	DEBUG="${DEBUG:-0}"
 	NO_ESCALATE="${NO_ESCALATE:-0}"
 	# EXPERIMENTAL: xfrm-based per-connection recovery (disabled by default due to risks)
-	# See architecture-docs/SWANCTL_ALTERNATIVES.md for detailed risk analysis
 	ENABLE_XFRM_RECOVERY="${ENABLE_XFRM_RECOVERY:-0}"
 
 	# Load configuration if it exists
@@ -577,8 +576,7 @@ validate_config_rules() {
 
 	IFS=',' read -ra rule_array <<<"$rules"
 	for rule in "${rule_array[@]}"; do
-		var_value=$(validate_config_rule "$var_name" "$var_value" "$var_type" "$required" "$default_val" "$rule")
-		if [[ $? -ne 0 ]]; then
+		if ! var_value=$(validate_config_rule "$var_name" "$var_value" "$var_type" "$required" "$default_val" "$rule"); then
 			return 1
 		fi
 	done
@@ -647,8 +645,7 @@ validate_config_var() {
 	} <<<"$schema_parts"
 
 	# Apply default value if needed
-	var_value=$(apply_config_default "$var_name" "$var_value" "$required" "$default_val")
-	if [[ $? -ne 0 ]]; then
+	if ! var_value=$(apply_config_default "$var_name" "$var_value" "$required" "$default_val"); then
 		return 1
 	fi
 
@@ -658,14 +655,12 @@ validate_config_var() {
 	fi
 
 	# Validate type
-	var_value=$(validate_config_type "$var_name" "$var_value" "$var_type" "$required" "$default_val")
-	if [[ $? -ne 0 ]]; then
+	if ! var_value=$(validate_config_type "$var_name" "$var_value" "$var_type" "$required" "$default_val"); then
 		return 1
 	fi
 
 	# Validate rules
-	var_value=$(validate_config_rules "$var_name" "$var_value" "$var_type" "$required" "$default_val" "$rules")
-	if [[ $? -ne 0 ]]; then
+	if ! var_value=$(validate_config_rules "$var_name" "$var_value" "$var_type" "$required" "$default_val" "$rules"); then
 		return 1
 	fi
 
@@ -772,6 +767,7 @@ validate_config() {
 		# Validate IP address format using proper validation function
 		# This function handles both IPv4 and IPv6 validation, including security checks
 		if ! validate_ip_address "$peer_ip"; then
+			handle_error "ERROR" "Invalid peer IP format: $peer_ip" 0
 			die "Invalid external peer IP format: $peer_ip"
 		fi
 	done

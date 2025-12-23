@@ -243,10 +243,18 @@ log_and_exit_lockfile_conflict() {
 		message="Another instance is already running, exiting"
 	fi
 
-	# Try to log to file (may fail if lockfile issue prevents access)
-	echo "[$timestamp] [WARNING] $message" >>"$LOG_FILE" 2>/dev/null || true
+	# Ensure log file directory exists before trying to write
+	if [[ -n "${LOG_FILE:-}" ]]; then
+		local log_dir
+		log_dir=$(dirname "$LOG_FILE" 2>/dev/null || echo "")
+		if [[ -n "$log_dir" ]] && [[ ! -d "$log_dir" ]]; then
+			mkdir -p "$log_dir" 2>/dev/null || true
+		fi
+		# Try to log to file (may fail if lockfile issue prevents access)
+		echo "[$timestamp] [WARNING] $message" >>"$LOG_FILE" 2>/dev/null || true
+	fi
 
-	# Always output to stderr
+	# Always output to stderr (this is what tests check)
 	echo "WARNING: $message" >&2
 
 	exit 0
@@ -276,6 +284,26 @@ acquire_lockfile_flock() {
 	local main_func="$1"
 	shift
 
+	# Check if lockfile exists and contains a valid PID before trying flock
+	# This handles the case where a lockfile was created manually (not via flock)
+	# This check must happen BEFORE opening the file descriptor (which would truncate the file)
+	if [[ -f "$LOCKFILE" ]]; then
+		local lock_pid
+		lock_pid=$(extract_lockfile_pid "$LOCKFILE" 2>/dev/null || echo "")
+		if [[ -n "$lock_pid" ]] && is_process_running "$lock_pid"; then
+			# Lockfile exists with a running PID - another instance is running
+			log_and_exit_lockfile_conflict "$lock_pid"
+		fi
+		# Lockfile exists but PID is not running or invalid - check if stale
+		if check_lockfile_stale; then
+			# Lockfile is stale, remove it
+			local stale_pid
+			stale_pid=$(extract_lockfile_pid "$LOCKFILE" || echo "unknown")
+			rm -f "$LOCKFILE"
+			echo "WARNING: Removed stale lockfile (timeout exceeded, PID was: $stale_pid)" >&2
+		fi
+	fi
+
 	# Use flock if available (preferred method)
 	# Open lockfile for writing, acquire exclusive non-blocking lock
 	# File descriptor 9 is used for the lockfile
@@ -304,7 +332,10 @@ acquire_lockfile_flock() {
 				fi
 			else
 				# Lockfile is valid, another instance is actually running
-				log_and_exit_lockfile_conflict
+				# Extract PID for better logging
+				local lock_pid
+				lock_pid=$(extract_lockfile_pid "$LOCKFILE" 2>/dev/null || echo "")
+				log_and_exit_lockfile_conflict "$lock_pid"
 			fi
 		fi
 

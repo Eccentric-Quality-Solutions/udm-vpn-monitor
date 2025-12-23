@@ -14,23 +14,23 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
 - See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common problems and solutions.
 - See [DEVELOPER.md](DEVELOPER.md) for development setup and [CODE_REVIEW.md](CODE_REVIEW.md) for code quality analysis.
 
-## ⚠️ Important: Tool Availability and Fallback Behavior
+## ⚠️ Important: Recovery Behavior
 
-**This tool supports per-connection recovery with multiple fallback methods:**
+**Recovery behavior:**
 
-Many UDMs don't have `swanctl` installed, but the tool can still perform per-connection recovery using xfrm-based SA deletion. The tool automatically detects which commands are available and falls back appropriately:
-
-- **Detection**: Uses `ip xfrm state` (primary) → `swanctl --list-sas` (fallback) → `ipsec status` (fallback)
+- **Detection**: Uses `ip xfrm state` (primary) → `ipsec status` (fallback)
 - **Tier 2 Recovery**: 
-  - **Preferred**: `swanctl --reload-conn <name>` (per-connection, requires swanctl + connection name)
-  - **Fallback 1**: `swanctl --reload` (all connections, if swanctl available but no connection name)
-  - **Fallback 2**: xfrm-based per-connection recovery (⚠️ EXPERIMENTAL, opt-in via `ENABLE_XFRM_RECOVERY=1`, uses `ip xfrm state delete` when swanctl unavailable)
-  - **Fallback 3**: `ipsec reload` (all connections, if xfrm recovery disabled or fails)
-- **Tier 3 Recovery**: Uses `ipsec restart` (preferred) → falls back to `swanctl --reload` if ipsec unavailable
+  - **Experimental option**: xfrm-based per-connection recovery (⚠️ EXPERIMENTAL, opt-in via `ENABLE_XFRM_RECOVERY=1`, disabled by default)
+  - **Default**: `ipsec reload` (affects **all connections**)
+- **Tier 3 Recovery**: Always uses `ipsec restart` (affects **all connections**)
 
-**Note:** See the [Tiered Recovery](#tiered-recovery) section for detailed behavior. Tier 3 recovery always affects all tunnels regardless of configuration or tool availability. 
+**Important Notes:**
+- **Tier 2 recovery**: By default affects all VPN tunnels (not just the failed one) - **per-connection recovery is not supported by default**
+- **Tier 3 recovery**: Always affects all tunnels regardless of configuration
+- **Per-peer monitoring**: Each VPN is monitored independently, but recovery actions may affect all tunnels
+- ⚠️ **Experimental xfrm recovery**: Available but **disabled by default** (`ENABLE_XFRM_RECOVERY=0`) due to documented risks. Most users should not enable this.
 
-⚠️ **Experimental Feature**: xfrm-based recovery is available but **disabled by default** (`ENABLE_XFRM_RECOVERY=0`) due to documented risks (see `architecture-docs/SWANCTL_ALTERNATIVES.md`). It provides per-connection recovery without swanctl, but requires explicit opt-in and testing on your system.
+See the [Tiered Recovery](#tiered-recovery) section for detailed behavior.
 
 ## Features
 
@@ -56,7 +56,7 @@ Many UDMs don't have `swanctl` installed, but the tool can still perform per-con
 
 - ❌ A fully reliable daemon (best-effort)
 - ❌ Upgrade-proof (may require re-installation after UniFi OS upgrades)
-- ❌ Per-tunnel precise recovery by default (Tier 2 affects all tunnels unless connection names are configured)
+- ❌ Per-tunnel precise recovery by default (Tier 2 affects all tunnels unless experimental xfrm recovery is enabled)
 - ❌ Guaranteed persistence (cron may be wiped on upgrades)
 
 ## Requirements
@@ -186,7 +186,6 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `EXTERNAL_PEER_IPS` | Space-separated list of remote VPN endpoint **external/public** IPs | (required) |
 | `INTERNAL_PEER_IPS` | Space-separated list of remote VPN endpoint **internal/private** IPs (for ping checks, optional) | "" |
 | `VPN_NAME` | VPN identifier for logging | "Site-to-Site VPN" |
-| `CONNECTION_NAME_<peer_ip>` | Per-peer connection name for targeted reloads (see below) | "" |
 | `TIER1_THRESHOLD` | Failures before logging starts | 1 |
 | `TIER2_THRESHOLD` | Failures before surgical cleanup | 3 |
 | `TIER3_THRESHOLD` | Failures before full restart | 5 |
@@ -204,53 +203,6 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `DEBUG` | Enable verbose logging (0 or 1) | 0 |
 | `ENABLE_XFRM_RECOVERY` | ⚠️ EXPERIMENTAL: Enable xfrm-based per-connection recovery (0 or 1, see risks below) | 0 |
 
-**Per-Peer Connection Name Configuration:**
-
-Connection names are used to enable per-connection reloads in Tier 2 (instead of reloading all tunnels). The script automatically discovers connection names from `swanctl` if not configured, but you can also manually configure them for better control.
-
-**Important:** Connection names must match actual connection names in your swanctl configuration. They are not arbitrary - they must exactly match what `swanctl --list-conns` shows. If you configure a name that doesn't exist (e.g., "hot dog" when no such connection exists), the reload will fail and fall back to reloading all connections.
-
-**Automatic Discovery (Recommended):**
-- If `CONNECTION_NAME_<sanitized_peer_ip>` is not configured, the script automatically discovers the connection name from `swanctl --list-sas`
-- Discovered connection names are cached in state files for performance
-- Auto-discovery happens on first use and is logged for visibility
-- **This is the recommended approach** as it ensures the connection name matches what swanctl actually has
-
-**When Auto-Discovery May Fail:**
-- **No active SA**: If the VPN tunnel is down and there's no active Security Association, `swanctl --list-sas` won't show the connection, so discovery fails
-- **swanctl not available**: If swanctl command is not installed or not in PATH
-- **Output format variations**: If swanctl output format differs from expected format (rare, but possible with different versions)
-- **Multiple connections with same peer IP**: If multiple connections share the same peer IP, discovery may pick the wrong one
-
-**Note:** Yes, every connection in swanctl configuration has a name (it's required), but discovery requires an active SA to find it. If discovery fails, the script gracefully falls back to reloading all connections.
-
-**Manual Configuration (Optional):**
-To manually configure connection names, use the format `CONNECTION_NAME_<sanitized_peer_ip>`. The sanitized peer IP replaces dots/colons with underscores.
-
-**Example:**
-```bash
-# First, find the actual connection names:
-swanctl --list-conns
-swanctl --list-sas
-
-# Then configure using the EXACT connection name from swanctl:
-# For peer IP 203.0.113.1, if swanctl shows connection "site-to-site-1":
-CONNECTION_NAME_203_0_113_1="site-to-site-1"
-
-# For peer IP 198.51.100.1, if swanctl shows connection "remote-office-vpn":
-CONNECTION_NAME_198_51_100_1="remote-office-vpn"
-```
-
-**Finding Connection Names:**
-```bash
-# List all configured connections
-swanctl --list-conns
-
-# List active Security Associations (shows connection names with peer IPs)
-swanctl --list-sas
-```
-
-**Note:** If swanctl is not available, connection name discovery will fail and Tier 2 will use `ipsec reload` fallback (affects all tunnels). If swanctl is available but connection names cannot be discovered (e.g., no active SA), or if a manually configured name doesn't match swanctl, Tier 2 will fall back to reloading all IPsec connections (affects all tunnels). See the [Tiered Recovery](#tiered-recovery) section for details.
 
 **Cron Schedule Examples:**
 - `"*/1 * * * *"` - Every 1 minute (default)
@@ -307,6 +259,198 @@ The VPN keepalive daemon is an optional background process that sends periodic p
 
 **Note:** The keepalive daemon is separate from the monitoring script. The monitoring script still runs via cron and performs its own checks. Keepalive only sends periodic pings to keep tunnels alive - it does not perform failure detection or recovery.
 
+## Common Scenarios
+
+### Monitoring 3 Site-to-Site VPNs
+
+When monitoring multiple VPN tunnels, configure all peer IPs in your config file:
+
+```bash
+# /data/vpn-monitor/vpn-monitor.conf
+EXTERNAL_PEER_IPS="203.0.113.1 198.51.100.1 192.0.2.1"
+INTERNAL_PEER_IPS="192.168.100.1 192.168.200.1 192.168.300.1"
+VPN_NAME="Multi-Site VPN"
+```
+
+**Key Points:**
+- Each VPN is monitored independently with its own failure counter
+- Failures in one tunnel don't affect monitoring of other tunnels
+- Recovery actions are per-peer (each peer has independent failure tracking)
+- State files are created per peer (e.g., `failure_counter_203_0_113_1`, `last_bytes_198_51_100_1`)
+
+**Example Log Output:**
+```
+[2025-01-15 10:00:00] INFO: VPN check for 203.0.113.1: OK
+[2025-01-15 10:00:00] INFO: VPN check for 198.51.100.1: OK
+[2025-01-15 10:00:00] WARNING: VPN check for 192.0.2.1: FAILED (tunnel down)
+```
+
+**Per-Connection Recovery:**
+
+**Default Behavior:**
+- **Tier 2 recovery** affects **all VPN tunnels** (uses `ipsec reload`)
+- **Tier 3 recovery** always affects **all VPN tunnels** (uses `ipsec restart`)
+
+⚠️ **Experimental Option**: There is an experimental xfrm-based per-connection recovery option (`ENABLE_XFRM_RECOVERY=1`), but it's **disabled by default** due to documented risks and requires extensive testing. See the [Configuration](#configuration) section for details. **Most users should not enable this** - the default behavior (affecting all tunnels) is safer and more reliable.
+
+### Testing without Affecting Production VPNs
+
+Use the `--fake` flag to test the monitoring script without triggering recovery actions:
+
+```bash
+# Run in fake mode (checks failures but doesn't escalate tiers)
+/data/vpn-monitor/vpn-monitor.sh --fake
+```
+
+**What Fake Mode Does:**
+- ✅ Performs all VPN status checks normally
+- ✅ Detects and logs failures
+- ✅ Increments failure counters
+- ✅ Logs what recovery actions would be taken
+- ❌ **Skips Tier 2 (surgical cleanup) actions**
+- ❌ **Skips Tier 3 (full restart) actions**
+
+**Use Cases:**
+- Testing detection logic without affecting VPN connections
+- Validating configuration before enabling automatic recovery
+- Troubleshooting false positives without risk
+- Verifying that peer IPs are correctly configured
+
+**Example Output:**
+```
+[2025-01-15 10:00:00] INFO: Running in FAKE mode - recovery actions will be skipped
+[2025-01-15 10:00:00] WARNING: VPN check for 203.0.113.1: FAILED (routing issue)
+[2025-01-15 10:00:00] INFO: [FAKE] Would trigger Tier 2 recovery (surgical cleanup) after 3 failures
+```
+
+**Testing Keepalive Separately:**
+You can also test the keepalive daemon independently:
+```bash
+# Start keepalive manually (if enabled in config)
+/data/vpn-monitor/vpn-keepalive.sh start
+
+# Check status
+/data/vpn-monitor/vpn-keepalive.sh status
+
+# View logs
+tail -f /data/vpn-monitor/logs/vpn-keepalive.log
+```
+
+### Troubleshooting False Positives
+
+False positives occur when the monitor reports VPN failures even though the tunnel is actually healthy. Common causes and solutions:
+
+**1. Idle VPN Tunnels**
+
+**Problem:** Healthy VPN tunnels with no traffic are detected as failed because byte counters aren't increasing.
+
+**Solution:** Enable the VPN keepalive daemon to send periodic pings:
+```bash
+# In vpn-monitor.conf
+ENABLE_KEEPALIVE=1
+KEEPALIVE_INTERVAL=30
+KEEPALIVE_PING_COUNT=1
+```
+
+Then enable and start the keepalive service:
+```bash
+systemctl enable --now vpn-keepalive
+```
+
+**2. Ping Checks Failing (But VPN Working)**
+
+**Problem:** Ping checks fail even though the VPN tunnel is working correctly.
+
+**Possible Causes:**
+- Firewall rules blocking ICMP on the remote network
+- Remote gateway not responding to pings
+- Using external IPs for ping (should use internal IPs)
+
+**Solution:**
+- Configure `INTERNAL_PEER_IPS` for ping checks:
+  ```bash
+  INTERNAL_PEER_IPS="192.168.100.1 192.168.200.1"
+  ```
+- Or disable ping checks if not needed:
+  ```bash
+  ENABLE_PING_CHECK=0
+  ```
+
+**Note:** Ping failures don't cause VPN failures - they only log warnings. The primary detection method (SA state + byte counters) is authoritative.
+
+**3. Byte Counter Detection Issues**
+
+**Problem:** Byte counters aren't increasing even though traffic is flowing.
+
+**Possible Causes:**
+- Traffic is flowing but counters haven't updated yet
+- Very low traffic volume
+- Counters reset after SA rekey
+
+**Solution:**
+- Increase thresholds to allow more tolerance:
+  ```bash
+  TIER1_THRESHOLD=2
+  TIER2_THRESHOLD=5
+  TIER3_THRESHOLD=8
+  ```
+- Enable keepalive to ensure regular traffic flow
+- Check logs to understand the failure pattern:
+  ```bash
+  tail -f /data/vpn-monitor/logs/vpn-monitor.log
+  ```
+
+**4. Transient Network Issues**
+
+**Problem:** Brief network hiccups trigger false positives.
+
+**Solution:**
+- Increase thresholds to require multiple consecutive failures:
+  ```bash
+  TIER1_THRESHOLD=2    # Log after 2 consecutive failures
+  TIER2_THRESHOLD=5    # Recover after 5 consecutive failures
+  TIER3_THRESHOLD=10   # Full restart after 10 consecutive failures
+  ```
+- Adjust cron schedule to check less frequently:
+  ```bash
+  CRON_SCHEDULE="*/5 * * * *"  # Check every 5 minutes instead of every minute
+  ```
+
+**5. Verification Steps**
+
+When troubleshooting false positives:
+
+1. **Check VPN status manually:**
+   ```bash
+   ip xfrm state | grep <peer_ip>
+   ipsec status
+   ```
+
+2. **Verify byte counters are increasing:**
+   ```bash
+   # Run monitor manually and check output
+   /data/vpn-monitor/vpn-monitor.sh
+   ```
+
+3. **Review failure type in logs:**
+   ```bash
+   grep "FAILED" /data/vpn-monitor/logs/vpn-monitor.log | tail -20
+   ```
+   Look for failure types: "tunnel down", "routing issue", or "unknown"
+
+4. **Test connectivity:**
+   ```bash
+   ping -c 3 <internal_peer_ip>
+   ```
+
+5. **Check keepalive status** (if enabled):
+   ```bash
+   systemctl status vpn-keepalive
+   tail -f /data/vpn-monitor/logs/vpn-keepalive.log
+   ```
+
+For more detailed troubleshooting guidance, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
 ## How It Works
 
 The monitor uses a multi-layered approach to verify VPN tunnel health and automatically recover from failures.
@@ -316,21 +460,18 @@ The monitor uses a multi-layered approach to verify VPN tunnel health and automa
 The monitor checks VPN tunnel health using multiple detection methods with automatic fallback:
 
 1. **Primary**: `ip xfrm state` - Verifies IPsec Security Associations (SAs) and byte counters to confirm the tunnel exists and traffic is flowing
-2. **Fallback 1**: `swanctl --list-sas` - Checks for active Security Associations via swanctl
-3. **Fallback 2**: `ipsec status` - Checks for connections via ipsec command (used when swanctl unavailable)
-4. **Optional**: Ping checks to verify end-to-end connectivity through the tunnel
+2. **Fallback**: `ipsec status` - Checks for connections via ipsec command
+3. **Optional**: Ping checks to verify end-to-end connectivity through the tunnel
 
 ### Failure Type Detection
 
 The monitor distinguishes between different types of VPN failures to provide more accurate diagnostics:
 
-1. **IKE Phase 1 Down**: The initial secure channel (ISAKMP SA) is not established. This means the VPN cannot establish any connection. Detected by checking `swanctl --list-sas` for IKE SAs.
+1. **Tunnel Down**: The IPsec Phase 2 SA (ESP/AH SA) doesn't exist, indicating the tunnel is not established.Detected by checking `ip xfrm state` for Phase 2 SAs.
 
-2. **IPsec Phase 2 Down**: IKE Phase 1 is established, but the IPsec tunnel (ESP/AH SA) is not. The secure channel exists but cannot pass encrypted traffic. Detected by checking `ip xfrm state` for IPsec SAs when IKE Phase 1 is up.
+2. **Routing Issue**: The Phase 2 SA exists (tunnel is established), but traffic is not flowing properly. This could indicate routing problems, firewall issues, or network connectivity problems beyond the VPN tunnel itself. Detected by checking byte counters (not increasing) or ping failures when the tunnel is established.
 
-3. **Routing Issue**: Both IKE Phase 1 and IPsec Phase 2 are established, but traffic is not flowing properly. This could indicate routing problems, firewall issues, or network connectivity problems beyond the VPN tunnel itself. Detected by checking byte counters (not increasing) or ping failures when both phases are up.
-
-4. **Unknown**: Unable to determine the specific failure type (fallback when detection methods are unavailable).
+3. **Unknown**: Unable to determine the specific failure type (fallback when detection methods are unavailable).
 
 Failure types are automatically detected and logged with each failure, helping you understand the root cause of VPN issues. The failure type is included in log messages and can help guide troubleshooting efforts.
 
@@ -340,22 +481,18 @@ The system uses a three-tier recovery approach that escalates based on consecuti
 
 1. **Tier 1 (Logging)**: Logs the failure for monitoring
 2. **Tier 2 (Surgical Cleanup)**: 
-   - **Preferred (swanctl + connection name)**: Uses `swanctl --reload-conn <name>` for per-connection recovery
-   - **Fallback 1 (swanctl, no connection name)**: Uses `swanctl --reload` (affects all connections)
-   - **Fallback 2 (no swanctl, xfrm enabled)**: Uses xfrm-based per-connection recovery via `ip xfrm state delete` (⚠️ EXPERIMENTAL, requires `ENABLE_XFRM_RECOVERY=1`)
-   - **Fallback 3 (xfrm disabled or failed)**: Uses `ipsec reload` (affects all connections)
+   - **Experimental option (xfrm enabled)**: Uses xfrm-based per-connection recovery via `ip xfrm state delete` (⚠️ EXPERIMENTAL, requires `ENABLE_XFRM_RECOVERY=1`)
+   - **Default (xfrm disabled or failed)**: Uses `ipsec reload` (affects all connections)
 3. **Tier 3 (Full Restart)**: 
-   - **Preferred**: Uses `ipsec restart` to restart all IPsec tunnels
-   - **Fallback**: Uses `swanctl --reload` if ipsec command unavailable
+   - Uses `ipsec restart` to restart all IPsec tunnels
 
-**Important**: Each peer IP has its own independent failure counter, allowing per-peer recovery. Tier 2 recovery can be surgical (per-connection) in multiple ways:
-- **With swanctl**: Uses `swanctl --reload-conn` when connection names are configured (recommended)
-- **Without swanctl**: Can use xfrm-based SA deletion for per-connection recovery (⚠️ EXPERIMENTAL, requires `ENABLE_XFRM_RECOVERY=1`)
-- **Default behavior**: Falls back to `ipsec reload` (affects all connections) if swanctl unavailable and xfrm recovery disabled
+**Important**: Each peer IP has its own independent failure counter, allowing per-peer monitoring. However, recovery actions:
+- **Default**: Tier 2 affects all connections (uses `ipsec reload`) - **per-connection recovery is not supported by default**
+- **Experimental option**: xfrm-based per-connection recovery exists but is disabled by default (⚠️ EXPERIMENTAL, requires `ENABLE_XFRM_RECOVERY=1`)
 
-⚠️ **Warning**: xfrm-based recovery is experimental and disabled by default. See `architecture-docs/SWANCTL_ALTERNATIVES.md` for detailed risk analysis. Only enable if you understand the risks and have tested on your system.
+⚠️ **Warning**: xfrm-based recovery is experimental and disabled by default. Only enable if you understand the risks and have tested on your system.
 
-See [Configuration](#configuration) for connection name setup (optional, improves swanctl-based recovery) and xfrm recovery settings.
+See [Configuration](#configuration) for xfrm recovery settings.
 
 ### Safety Features
 
@@ -526,8 +663,8 @@ If you prefer to uninstall manually:
 
 ### Important Warnings
 
-1. **⚠️ Tier 2 Recovery Impact - READ THIS**: See the [Tiered Recovery](#tiered-recovery) section for detailed behavior. In summary: Tier 2 can be surgical (per-connection) when swanctl is available and connection names are configured, otherwise it affects all tunnels.
-2. **Full Restart Impact**: Tier 3 recovery always restarts all IPsec tunnels using `ipsec restart` (preferred) or `swanctl --reload` (fallback), temporarily affecting all Site-to-Site and remote user VPNs, regardless of configuration.
+1. **⚠️ Tier 2 Recovery Impact - READ THIS**: See the [Tiered Recovery](#tiered-recovery) section for detailed behavior. In summary: Tier 2 affects all tunnels by default (uses `ipsec reload`). Experimental xfrm-based per-connection recovery is available but disabled by default.
+2. **Full Restart Impact**: Tier 3 recovery always restarts all IPsec tunnels using `ipsec restart`, temporarily affecting all Site-to-Site and remote user VPNs, regardless of configuration.
 3. **Best-Effort**: This is a watchdog tool, not a guaranteed daemon. It may miss failures or require manual intervention
 4. **Upgrade Compatibility**: UniFi OS upgrades may break functionality or remove cron jobs
 5. **No Official Support**: This is an unofficial tool. Use at your own risk

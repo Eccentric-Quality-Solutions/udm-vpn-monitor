@@ -66,15 +66,14 @@ graph TB
     
     subgraph "Detection Layer"
         XfrmCheck[ip xfrm state<br/>SA & Byte Counters]
-        SwanctlCheck[swanctl --list-sas<br/>Fallback Check]
         IpsecCheck[ipsec status<br/>Fallback Check]
         PingCheck[ping check<br/>Connectivity Test]
     end
     
     subgraph "Recovery Layer"
         Tier1[Tier 1: Logging]
-        Tier2[Tier 2: Surgical Cleanup<br/>swanctl reload (preferred)<br/>ipsec reload (fallback)<br/>Per-Connection or All Tunnels]
-        Tier3[Tier 3: Full Restart<br/>ipsec restart (preferred)<br/>swanctl reload (fallback)<br/>Affects All Tunnels]
+        Tier2[Tier 2: Surgical Cleanup<br/>xfrm recovery (experimental)<br/>ipsec reload (default)<br/>All Tunnels]
+        Tier3[Tier 3: Full Restart<br/>ipsec restart<br/>Affects All Tunnels]
     end
     
     subgraph "Safety Mechanisms"
@@ -89,8 +88,7 @@ graph TB
     Lockfile --> Config
     Config --> StateDir
     MainScript --> XfrmCheck
-    XfrmCheck -->|No SA| SwanctlCheck
-    SwanctlCheck -->|No SA| IpsecCheck
+    XfrmCheck -->|No SA| IpsecCheck
     XfrmCheck -->|SA Found| PingCheck
     PingCheck -->|Pass| Tier1
     XfrmCheck -->|Fail| Tier1
@@ -123,7 +121,7 @@ flowchart TD
     
     CheckVPN --> XfrmCheck{ip xfrm state<br/>SA Found?}
     XfrmCheck -->|Yes| ByteCheck{Bytes<br/>Increasing?}
-    XfrmCheck -->|No| SwanctlCheck{swanctl<br/>SA Found?}
+    XfrmCheck -->|No| IpsecCheck{ipsec status<br/>Found?}
     
     ByteCheck -->|Yes| PingCheck{Enable<br/>Ping Check?}
     ByteCheck -->|No| VPNFail[VPN Failed]
@@ -133,8 +131,6 @@ flowchart TD
     PingTest -->|Yes| VPNOK
     PingTest -->|No| VPNFail
     
-    SwanctlCheck -->|Yes| VPNOK
-    SwanctlCheck -->|No| IpsecCheck{ipsec status<br/>Found?}
     IpsecCheck -->|Yes| VPNOK
     IpsecCheck -->|No| VPNFail
     
@@ -174,7 +170,6 @@ flowchart TD
 sequenceDiagram
     participant Script as vpn-monitor.sh
     participant Xfrm as ip xfrm state
-    participant Swanctl as swanctl
     participant Ipsec as ipsec
     participant Ping as ping
     participant State as State Files
@@ -202,18 +197,12 @@ sequenceDiagram
     else SA Found but No Byte Counters
         Script->>Script: VPN OK (assume working)
     else No SA Found
-        Script->>Swanctl: Fallback: Check SA
-        Swanctl-->>Script: SA found/not found
-        alt Swanctl Found SA
+        Script->>Ipsec: Fallback: Check status
+        Ipsec-->>Script: Connection found/not found
+        alt Ipsec Found
             Script->>Script: VPN OK
-        else Swanctl No SA
-            Script->>Ipsec: Fallback: Check status
-            Ipsec-->>Script: Connection found/not found
-            alt Ipsec Found
-                Script->>Script: VPN OK
-            else Ipsec Not Found
-                Script->>Script: VPN Failed
-            end
+        else Ipsec Not Found
+            Script->>Script: VPN Failed
         end
     end
 ```
@@ -238,14 +227,11 @@ stateDiagram-v2
     }
     
     state Tier2 {
-        [*] --> CheckSwanctl{swanctl<br/>available?}
-        CheckSwanctl -->|Yes| CheckConnName{Connection<br/>name<br/>available?}
-        CheckSwanctl -->|No| ReloadIpsec[ipsec reload<br/>All Connections]
-        CheckConnName -->|Yes| ReloadConn[swanctl --reload-conn<br/>Per-Connection]
-        CheckConnName -->|No| ReloadSwanctl[swanctl --reload<br/>All Connections]
-        ReloadConn -->|Success| [*]
-        ReloadConn -->|Failure| ReloadSwanctl
-        ReloadSwanctl --> [*]
+        [*] --> CheckXfrm{Xfrm Recovery<br/>Enabled?}
+        CheckXfrm -->|Yes| AttemptXfrm[xfrm recovery<br/>Per-Connection]
+        CheckXfrm -->|No| ReloadIpsec[ipsec reload<br/>All Connections]
+        AttemptXfrm -->|Success| [*]
+        AttemptXfrm -->|Failure| ReloadIpsec
         ReloadIpsec --> [*]
     }
     
@@ -333,7 +319,6 @@ graph LR
 graph TB
     subgraph "External Commands"
         IP[ip xfrm state]
-        Swanctl[swanctl]
         Ipsec[ipsec]
         PingCmd[ping/ping6]
     end
@@ -353,7 +338,6 @@ graph TB
     
     MonitorPeer --> CheckVPN
     CheckVPN --> IP
-    CheckVPN --> Swanctl
     CheckVPN --> Ipsec
     CheckVPN --> PingCmd
     
@@ -361,11 +345,9 @@ graph TB
     MonitorPeer -->|Tier 3| FullRestart
     
     SurgicalCleanup --> IP
-    SurgicalCleanup --> Swanctl
     SurgicalCleanup --> Ipsec
     
     FullRestart --> Ipsec
-    FullRestart --> Swanctl
     FullRestart --> RateLimit
     FullRestart --> Cooldown
     
@@ -389,14 +371,11 @@ graph TB
 - **Why**: Gradual escalation prevents unnecessary disruption
 - **Tiers**: Log → Cleanup → Restart
 - **Tier 2 Details**: 
-  - Uses `swanctl --reload-conn` for per-connection reload when swanctl and connection name available
-  - Falls back to `swanctl --reload` (all connections) if no connection name
-  - Falls back to xfrm-based per-connection recovery (uses `ip xfrm state delete`) if swanctl unavailable
-  - Falls back to `ipsec reload` (all connections) if xfrm recovery fails
+  - Experimental: xfrm-based per-connection recovery (uses `ip xfrm state delete`) if `ENABLE_XFRM_RECOVERY=1` (disabled by default)
+  - Default: `ipsec reload` (all connections)
 - **Tier 3 Details**: 
-  - Prefers `ipsec restart` (affects all tunnels)
-  - Falls back to `swanctl --reload` if ipsec unavailable
-- **Benefit**: Most issues resolved without full restart, with surgical per-connection recovery available even without swanctl (via xfrm)
+  - Uses `ipsec restart` (affects all tunnels)
+- **Benefit**: Most issues resolved without full restart, with experimental per-connection recovery option available
 
 ### 4. Per-Peer State Tracking
 - **Why**: Multiple peers need independent monitoring and recovery
@@ -407,11 +386,10 @@ graph TB
 - **Note**: Both failure counters and byte counters are tracked per-peer, allowing independent failure tracking and recovery actions
 
 ### 5. Multi-Method Detection with Fallback
-- **Why**: Different UDMs use different IPsec management tools (swanctl vs ipsec)
+- **Why**: Robust detection across different UDM configurations
 - **Implementation**: 
   - Primary: `ip xfrm state` (SA state and byte counters)
-  - Fallback 1: `swanctl --list-sas` (if xfrm unavailable)
-  - Fallback 2: `ipsec status` (if swanctl unavailable)
+  - Fallback: `ipsec status` (if xfrm unavailable)
   - Optional: Ping checks verify end-to-end connectivity
 - **Benefit**: Works across different UDM configurations, distinguishes "idle" from "broken"
 
@@ -455,9 +433,9 @@ graph TB
 1. **Fail-Safe Defaults**: Script exits gracefully on errors
 2. **Logging**: All errors logged with context
 3. **Fallbacks**: 
-   - Detection: Multiple methods (xfrm → swanctl → ipsec)
-   - Tier 2 Recovery: swanctl (preferred) → ipsec reload (fallback)
-   - Tier 3 Recovery: ipsec restart (preferred) → swanctl reload (fallback)
+   - Detection: Multiple methods (xfrm → ipsec)
+   - Tier 2 Recovery: xfrm recovery (experimental, if enabled) → ipsec reload (default)
+   - Tier 3 Recovery: ipsec restart
 4. **Validation**: Input validation prevents injection attacks
 5. **State Recovery**: Stale lockfiles automatically cleaned up
 6. **Graceful Degradation**: If preferred tool unavailable, falls back to alternative without failing

@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # VPN status detection for UDM VPN Monitor
-# Handles VPN detection using xfrm, swanctl, ipsec, and ping checks
+# Handles VPN detection using xfrm, ipsec, and ping checks
 #
 # Version: 0.0.1
 #
@@ -399,221 +399,6 @@ extract_byte_counter() {
 	return 0
 }
 
-# Discover connection name from swanctl
-#
-# Attempts to discover the connection name for a peer IP by parsing swanctl output.
-# Uses swanctl --list-sas to find active Security Associations and match them to connection names.
-# Falls back to swanctl --list-conns if --list-sas doesn't find a match.
-#
-# Arguments:
-#   $1: Peer IP address to find connection name for
-#
-# Returns:
-#   0: Connection name discovered and printed to stdout
-#   1: Connection name not found (swanctl unavailable or no match)
-#
-# Output:
-#   Prints connection name to stdout if discovered, empty string otherwise
-#
-# Examples:
-#   conn_name=$(discover_connection_name "203.0.113.1")
-#   if [[ $? -eq 0 ]]; then
-#       echo "Found connection: $conn_name"
-#   fi
-#
-# Note:
-#   Requires swanctl command to be available (checks via warn_if_missing)
-#   Parses swanctl --list-sas output which typically shows:
-#   "connection-name: #X, ESTABLISHED, <peer_ip>..."
-#   Extracts connection name from lines containing the peer IP
-#   Requires warn_if_missing function to be available (from logging.sh)
-discover_connection_name() {
-	local peer_ip="$1"
-
-	if ! warn_if_missing "swanctl"; then
-		return 1
-	fi
-
-	# Get swanctl SA list and find entries matching this peer IP
-	# swanctl --list-sas output format varies, but typically shows:
-	# "connection-name: #X, ESTABLISHED, <peer_ip>..." or similar
-	# We look for lines containing the peer IP and extract the connection name
-	local sa_output
-	sa_output=$(swanctl --list-sas 2>/dev/null || true)
-
-	if [[ -z "$sa_output" ]]; then
-		return 1
-	fi
-
-	# Try to extract connection name from SA output
-	# Pattern: connection-name followed by colon, then peer IP appears later
-	# We look for lines containing the peer IP and extract the connection name (first field before colon)
-	local connection_name
-	connection_name=$(echo "$sa_output" | grep -i "$peer_ip" | head -1 | sed -n 's/^\([^:]*\):.*/\1/p' | tr -d ' ' || true)
-
-	# Alternative: try swanctl --list-conns and match by peer IP in connection details
-	if [[ -z "$connection_name" ]]; then
-		local conns_output
-		conns_output=$(swanctl --list-conns 2>/dev/null || true)
-
-		if [[ -n "$conns_output" ]]; then
-			# Parse connection list - format varies, try to find connection with matching peer
-			# This is a fallback method - may not always work depending on swanctl output format
-			connection_name=$(echo "$conns_output" | grep -B5 -i "$peer_ip" | grep -E "^[a-zA-Z0-9_-]+:" | head -1 | sed 's/:.*//' | tr -d ' ' || true)
-		fi
-	fi
-
-	if [[ -n "$connection_name" ]]; then
-		echo "$connection_name"
-		return 0
-	else
-		return 1
-	fi
-}
-
-# Cache discovered connection name
-#
-# Stores a discovered connection name in a state file for future use.
-# This avoids repeated discovery operations and improves performance.
-# Cache file format: single line with connection name.
-#
-# Arguments:
-#   $1: Peer IP address (used to generate cache filename)
-#   $2: Connection name to cache (written to file)
-#
-# Returns:
-#   0: Always succeeds (even if file write fails silently)
-#
-# Side effects:
-#   Creates/updates connection name cache file (atomic write):
-#   ${STATE_DIR}/connection_name_<sanitized_peer_ip>
-#   File contains single line with connection name (no newline)
-#
-# Examples:
-#   cache_connection_name "203.0.113.1" "site-to-site-1"
-#   # Creates: ${STATE_DIR}/connection_name_203_0_113_1
-#
-# Note:
-#   Requires STATE_DIR, sanitize_peer_ip, and log_message to be set (from config.sh, state.sh, logging.sh)
-#   File write errors are logged as warnings but don't fail the function (returns 0)
-#   Uses temporary file and mv for atomic write to prevent corruption on interruption
-cache_connection_name() {
-	local peer_ip="$1"
-	local connection_name="$2"
-	local peer_sanitized
-	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
-	local cache_file="${STATE_DIR}/connection_name_${peer_sanitized}"
-
-	# Atomic write: write to temp file first, then rename
-	if ! (echo "$connection_name" >"${cache_file}.tmp" 2>/dev/null && mv "${cache_file}.tmp" "$cache_file" 2>/dev/null); then
-		handle_error "WARNING" "Failed to cache connection name for $peer_ip (file: $cache_file)"
-	fi
-}
-
-# Get cached connection name
-#
-# Retrieves a previously discovered connection name from the cache file.
-# Reads the first line of the cache file and trims whitespace/newlines.
-#
-# Arguments:
-#   $1: Peer IP address (used to locate cache file)
-#
-# Returns:
-#   0: Cached connection name found and printed to stdout
-#   1: No cached connection name (file doesn't exist or is empty)
-#
-# Output:
-#   Prints cached connection name to stdout if found (trimmed, no newlines)
-#
-# Examples:
-#   cached_name=$(get_cached_connection_name "203.0.113.1")
-#   if [[ $? -eq 0 ]] && [[ -n "$cached_name" ]]; then
-#       echo "Using cached: $cached_name"
-#   fi
-#
-# Note:
-#   Requires STATE_DIR and sanitize_peer_ip to be set (from config.sh and state.sh)
-#   Cache file: ${STATE_DIR}/connection_name_<sanitized_peer_ip>
-#   Reads first line only and trims whitespace/newlines
-get_cached_connection_name() {
-	local peer_ip="$1"
-	local peer_sanitized
-	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
-	local cache_file="${STATE_DIR}/connection_name_${peer_sanitized}"
-
-	if [[ -f "$cache_file" ]]; then
-		local connection_name
-		connection_name=$(cat "$cache_file" 2>/dev/null | head -1 | tr -d '\n\r ' || true)
-
-		if [[ -n "$connection_name" ]]; then
-			echo "$connection_name"
-			return 0
-		fi
-	fi
-
-	return 1
-}
-
-# Get connection name for a peer IP
-#
-# Retrieves the connection name for a peer IP using the following priority:
-# 1. Check configuration file (CONNECTION_NAME_<sanitized_peer_ip>)
-# 2. Check cached discovered connection name
-# 3. Attempt to discover from swanctl and cache the result
-#
-# This allows per-peer connection-specific reloads using swanctl --reload-conn.
-# Connection names are automatically discovered if not configured.
-#
-# Arguments:
-#   $1: Peer IP address
-#
-# Returns:
-#   0: Connection name found and printed to stdout
-#   1: Connection name not found (empty output)
-#
-# Output:
-#   Prints connection name to stdout if found, empty string otherwise
-#
-# Example:
-#   If config contains: CONNECTION_NAME_203_0_113_1="site-to-site-1"
-#   Then get_connection_name "203.0.113.1" outputs: "site-to-site-1"
-#
-#   If not configured, attempts to discover from swanctl and caches the result.
-#
-# Note:
-#   Requires sanitize_peer_ip, log_message, and STATE_DIR to be set
-get_connection_name() {
-	local peer_ip="$1"
-	local peer_sanitized
-	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
-	local var_name="CONNECTION_NAME_${peer_sanitized}"
-
-	# Priority 1: Check configuration file
-	local connection_name="${!var_name:-}"
-
-	if [[ -n "$connection_name" ]]; then
-		echo "$connection_name"
-		return 0
-	fi
-
-	# Priority 2: Check cached discovered connection name
-	if connection_name=$(get_cached_connection_name "$peer_ip" 2>/dev/null); then
-		echo "$connection_name"
-		return 0
-	fi
-
-	# Priority 3: Attempt to discover from swanctl
-	if connection_name=$(discover_connection_name "$peer_ip" 2>/dev/null); then
-		# Cache the discovered connection name for future use
-		cache_connection_name "$peer_ip" "$connection_name"
-		log_message "INFO" "Auto-discovered connection name for $peer_ip: $connection_name"
-		echo "$connection_name"
-		return 0
-	fi
-
-	return 1
-}
-
 # Check connectivity via ping
 #
 # Verifies end-to-end connectivity through the VPN tunnel by pinging a target IP.
@@ -825,39 +610,6 @@ check_xfrm_status() {
 	fi
 }
 
-# Check VPN status using swanctl
-#
-# Checks for Security Association (SA) existence using swanctl command.
-#
-# Arguments:
-#   $1: Peer IP address
-#
-# Returns:
-#   0: SA found
-#   1: SA not found
-#
-# Side effects:
-#   - Logs debug/warning messages
-check_swanctl_status() {
-	local peer_ip="$1"
-
-	# swanctl = strongSwan control utility (used by UDM for IPsec management)
-	if ! command -v swanctl >/dev/null 2>&1; then
-		return 1
-	fi
-
-	local swanctl_output
-	swanctl_output=$(swanctl --list-sas 2>/dev/null | grep -i "$peer_ip" || true)
-
-	if [[ -n "$swanctl_output" ]]; then
-		log_message "INFO" "VPN OK: SA found via swanctl for $peer_ip"
-		return 0
-	else
-		handle_error "WARNING" "VPN suspect: No SA found via swanctl for $peer_ip"
-		return 1
-	fi
-}
-
 # Check VPN status using ipsec status
 #
 # Checks for connection existence using ipsec status command.
@@ -880,7 +632,8 @@ check_ipsec_status() {
 	fi
 
 	local ipsec_output
-	ipsec_output=$(ipsec status 2>/dev/null | grep -i "$peer_ip" || true)
+	# Use fixed-string matching (-F) for consistency and safety (IP addresses don't need case-insensitive matching)
+	ipsec_output=$(ipsec status 2>/dev/null | grep -F "$peer_ip" || true)
 
 	if [[ -n "$ipsec_output" ]]; then
 		log_message "INFO" "VPN OK: Connection found via ipsec status for $peer_ip"
@@ -889,6 +642,94 @@ check_ipsec_status() {
 		handle_error "WARNING" "VPN suspect: No connection found via ipsec status for $peer_ip"
 		return 1
 	fi
+}
+
+# Discover connection name from ipsec status
+#
+# Attempts to discover the IPsec connection name associated with a peer IP
+# by parsing ipsec status output. Connection names are cached to avoid
+# repeated parsing. This is for logging/debugging purposes only - recovery
+# actions use ipsec reload which affects all connections.
+#
+# Arguments:
+#   $1: Peer IP address (external/public IP)
+#
+# Returns:
+#   0: Always succeeds (function never fails, returns empty string if not found)
+#
+# Output:
+#   Prints connection name to stdout if found, empty string otherwise
+#
+# Side effects:
+#   - Caches connection name in ${STATE_DIR}/connection_name_<sanitized_peer_ip>
+#   - Logs debug messages if DEBUG=1
+#
+# Examples:
+#   conn_name=$(discover_connection_name "192.168.1.1")
+#   # Returns: "site-a" or empty string
+#
+# Note:
+#   Requires sanitize_peer_ip, STATE_DIR, and log_message to be set
+#   ipsec command is optional - cached values can be retrieved even if ipsec is unavailable
+#   Connection names are for logging only - recovery uses ipsec reload (all connections)
+discover_connection_name() {
+	local peer_ip="$1"
+	local connection_name=""
+
+	# Sanitize peer IP for cache filename
+	local peer_sanitized
+	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
+	local cache_file="${STATE_DIR}/connection_name_${peer_sanitized}"
+
+	# Check cache first - use cached value if available, even if ipsec is not available
+	if [[ -f "$cache_file" ]]; then
+		connection_name=$(cat "$cache_file" 2>/dev/null || echo "")
+		if [[ -n "$connection_name" ]]; then
+			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "Using cached connection name '$connection_name' for $peer_ip"
+			echo "$connection_name"
+			return 0
+		fi
+	fi
+
+	# Check if ipsec command is available (only needed if cache miss)
+	if ! command -v ipsec >/dev/null 2>&1; then
+		echo ""
+		return 0
+	fi
+
+	# Get ipsec status output
+	local ipsec_output
+	ipsec_output=$(ipsec status 2>/dev/null || true)
+
+	if [[ -z "$ipsec_output" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Parse ipsec status output to find connection name
+	# Common formats:
+	# - libreswan: "conn-name: ESTABLISHED 1 hour ago, 192.168.1.1...192.168.1.2"
+	# - strongswan: "conn-name: IKEv1, ESTABLISHED, 192.168.1.1"
+	# Look for lines containing the peer IP and extract connection name (text before colon)
+	local IFS=$'\n'
+	for line in $ipsec_output; do
+		# Check if line contains peer IP
+		if echo "$line" | grep -qF "$peer_ip"; then
+			# Extract connection name (everything before first colon, trimmed)
+			connection_name=$(echo "$line" | sed -n 's/^[[:space:]]*\([^:]*\):.*/\1/p' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+			if [[ -n "$connection_name" ]]; then
+				# Cache the result
+				echo "$connection_name" >"$cache_file" 2>/dev/null || true
+				[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "Discovered connection name '$connection_name' for $peer_ip"
+				echo "$connection_name"
+				return 0
+			fi
+		fi
+	done
+
+	# Not found - return empty string
+	echo ""
+	return 0
 }
 
 # Check ping connectivity if enabled
@@ -936,49 +777,10 @@ check_ping_if_enabled() {
 		if check_ping_connectivity "$ping_target"; then
 			handle_error "WARNING" "Ping check passed but no SA found - tunnel may be down but connectivity exists via other route"
 		fi
+		# Note: If ping fails when SA doesn't exist, check_ping_connectivity already logs the failure
 	fi
 
 	return 0
-}
-
-# Check for IKE Phase 1 Security Association
-#
-# Checks if IKE Phase 1 SA (ISAKMP SA) exists for a peer using swanctl.
-# IKE Phase 1 establishes the initial secure channel for key exchange.
-# If IKE Phase 1 is down, the VPN tunnel cannot be established.
-#
-# Arguments:
-#   $1: Peer IP address to check
-#
-# Returns:
-#   0: IKE Phase 1 SA found
-#   1: IKE Phase 1 SA not found or swanctl unavailable
-#
-# Side effects:
-#   - Logs debug messages about IKE SA status
-#
-# Note:
-#   Uses swanctl --list-sas which shows IKE SAs (Phase 1).
-#   swanctl output format: "connection-name: #X, ESTABLISHED, <peer_ip>..."
-#   Requires swanctl command to be available
-check_ike_phase1() {
-	local peer_ip="$1"
-
-	if ! command -v swanctl >/dev/null 2>&1; then
-		return 1
-	fi
-
-	local swanctl_output
-	swanctl_output=$(swanctl --list-sas 2>/dev/null | grep -i "$peer_ip" || true)
-
-	if [[ -n "$swanctl_output" ]]; then
-		# Check if SA is ESTABLISHED (IKE Phase 1 is up)
-		if echo "$swanctl_output" | grep -qi "ESTABLISHED"; then
-			return 0
-		fi
-	fi
-
-	return 1
 }
 
 # Check for IPsec Phase 2 Security Association
@@ -1022,12 +824,14 @@ check_ipsec_phase2() {
 
 # Detect VPN failure type
 #
-# Determines the specific type of VPN failure by checking IKE Phase 1 and IPsec Phase 2 SAs.
-# Categorizes failures into three types:
-#   - "ike_phase1_down": IKE Phase 1 SA is down (no secure channel established)
-#   - "ipsec_phase2_down": IKE Phase 1 is up but IPsec Phase 2 SA is down (tunnel partially established)
-#   - "routing_issue": Both Phase 1 and Phase 2 are up but traffic isn't flowing (byte counters/ping issues)
+# Determines the specific type of VPN failure by checking IPsec Phase 2 SAs and traffic flow.
+# Categorizes failures into two main types:
+#   - "tunnel_down": IPsec Phase 2 SA doesn't exist (tunnel not established)
+#   - "routing_issue": Phase 2 SA exists but traffic isn't flowing (byte counters/ping issues)
 #   - "unknown": Unable to determine failure type (fallback)
+#
+# Note:
+#   If Phase 2 SA doesn't exist, the tunnel is down (could be Phase 1 or Phase 2 issue, but we can't distinguish).
 #
 # Arguments:
 #   $1: External peer IP address (used for SA checks)
@@ -1039,7 +843,7 @@ check_ipsec_phase2() {
 #   1: Unable to determine failure type
 #
 # Output:
-#   Prints failure type to stdout: "ike_phase1_down", "ipsec_phase2_down", "routing_issue", or "unknown"
+#   Prints failure type to stdout: "tunnel_down", "routing_issue", or "unknown"
 #
 # Side effects:
 #   - Logs debug messages about failure type detection
@@ -1047,42 +851,32 @@ check_ipsec_phase2() {
 # Examples:
 #   failure_type=$(detect_failure_type "203.0.113.1" "192.168.1.1" "$last_bytes_file")
 #   case "$failure_type" in
-#       "ike_phase1_down") echo "IKE Phase 1 is down" ;;
-#       "ipsec_phase2_down") echo "IPsec Phase 2 is down" ;;
+#       "tunnel_down") echo "VPN tunnel is down" ;;
 #       "routing_issue") echo "Routing issue detected" ;;
 #   esac
 #
 # Note:
-#   Requires check_ike_phase1, check_ipsec_phase2, check_byte_counters, check_ping_connectivity
+#   Requires check_ipsec_phase2, check_byte_counters, check_ping_connectivity
 #   External IP is used for SA checks, internal IP is used for ping checks
 detect_failure_type() {
 	local external_peer_ip="$1"
 	local internal_peer_ip="${2:-}"
 	local last_bytes_file="${3:-}"
 
-	# Check IKE Phase 1 (ISAKMP SA)
-	local ike_phase1_up=0
-	if check_ike_phase1 "$external_peer_ip"; then
-		ike_phase1_up=1
-	fi
-
 	# Check IPsec Phase 2 (ESP/AH SA)
+	# Phase 2 SA existence indicates tunnel is established (Phase 1 must be up for Phase 2 to exist)
 	local ipsec_phase2_up=0
 	if check_ipsec_phase2 "$external_peer_ip"; then
 		ipsec_phase2_up=1
 	fi
 
-	# Determine failure type based on SA states
-	if [[ $ike_phase1_up -eq 0 ]]; then
-		# IKE Phase 1 is down - no secure channel established
-		echo "ike_phase1_down"
+	# Determine failure type based on SA state
+	if [[ $ipsec_phase2_up -eq 0 ]]; then
+		# No Phase 2 SA found - tunnel is down
+		echo "tunnel_down"
 		return 0
-	elif [[ $ipsec_phase2_up -eq 0 ]]; then
-		# IKE Phase 1 is up but IPsec Phase 2 is down - tunnel partially established
-		echo "ipsec_phase2_down"
-		return 0
-	elif [[ $ike_phase1_up -eq 1 ]] && [[ $ipsec_phase2_up -eq 1 ]]; then
-		# Both Phase 1 and Phase 2 are up - check for routing issues
+	elif [[ $ipsec_phase2_up -eq 1 ]]; then
+		# Phase 2 SA exists - tunnel is established, check for routing issues
 		# Check byte counters if available
 		local has_routing_issue=0
 
@@ -1130,9 +924,20 @@ detect_failure_type() {
 			echo "routing_issue"
 			return 0
 		fi
+		# Phase 2 SA exists but no routing issue detected
+		# This can happen when:
+		#   - Byte counters are not available (last_bytes_file not provided or extraction failed)
+		#   - Ping check is disabled or internal IP not provided
+		#   - VPN check failed for another reason (e.g., byte counter validation in check_xfrm_status)
+		# In this case, we return "unknown" since we can't definitively determine the failure type
+		# without additional diagnostic information
 	fi
 
 	# Unable to determine failure type (fallback)
+	# This occurs when:
+	#   - Phase 2 SA doesn't exist (handled above as "tunnel_down")
+	#   - Phase 2 SA exists but we can't determine if it's a routing issue (see comment above)
+	#   - Detection methods are unavailable or failed
 	echo "unknown"
 	return 1
 }
@@ -1150,12 +955,12 @@ detect_failure_type() {
 #   1: No failure type stored (or file doesn't exist)
 #
 # Output:
-#   Prints failure type to stdout: "ike_phase1_down", "ipsec_phase2_down", "routing_issue", or "unknown"
+#   Prints failure type to stdout: "tunnel_down", "routing_issue", or "unknown"
 #
 # Examples:
 #   failure_type=$(get_failure_type "203.0.113.1")
-#   if [[ "$failure_type" == "ike_phase1_down" ]]; then
-#       echo "IKE Phase 1 is down"
+#   if [[ "$failure_type" == "tunnel_down" ]]; then
+#       echo "VPN tunnel is down"
 #   fi
 #
 # Note:
@@ -1183,7 +988,7 @@ get_failure_type() {
 # Check VPN status using ip xfrm state
 #
 # Verifies VPN tunnel health by checking IPsec Security Association (SA) state and byte counters.
-# Uses multiple methods in order: ip xfrm state (primary), swanctl (fallback), ipsec status (fallback).
+# Uses multiple methods in order: ip xfrm state (primary), ipsec status (fallback).
 # If ping checks are enabled, also verifies end-to-end connectivity.
 #
 # Arguments:
@@ -1197,9 +1002,8 @@ get_failure_type() {
 # Detection logic:
 #   1. Checks ip xfrm state for SA matching external peer IP
 #   2. Validates byte counters are > 0 and increasing (if available)
-#   3. Falls back to swanctl --list-sas if xfrm doesn't confirm
-#   4. Falls back to ipsec status if swanctl doesn't confirm
-#   5. Optionally performs ping check if ENABLE_PING_CHECK=1 (uses internal IP if provided)
+#   3. Falls back to ipsec status if xfrm doesn't confirm
+#   4. Optionally performs ping check if ENABLE_PING_CHECK=1 (uses internal IP if provided)
 #
 # Side effects:
 #   - Creates/updates per-peer last_bytes file if byte counters found
@@ -1208,7 +1012,7 @@ get_failure_type() {
 # Note:
 #   Requires validate_ip_address, sanitize_peer_ip, log_message, STATE_DIR, ENABLE_PING_CHECK,
 #   PING_TARGET_IP to be set
-#   External IP is used for xfrm/swanctl checks, internal IP is used for ping checks
+#   External IP is used for xfrm checks, internal IP is used for ping checks
 check_vpn_status() {
 	local external_peer_ip="$1"
 	local internal_peer_ip="${2:-}"
@@ -1225,10 +1029,8 @@ check_vpn_status() {
 	peer_sanitized=$(sanitize_peer_ip "$external_peer_ip")
 	local last_bytes_file="${STATE_DIR}/last_bytes_${peer_sanitized}"
 
-	# Try detection methods in order of reliability (use external IP for xfrm/swanctl)
+	# Try detection methods in order of reliability (use external IP for xfrm)
 	if check_xfrm_status "$external_peer_ip" "$last_bytes_file"; then
-		vpn_ok=1
-	elif check_swanctl_status "$external_peer_ip"; then
 		vpn_ok=1
 	elif check_ipsec_status "$external_peer_ip"; then
 		vpn_ok=1
@@ -1249,14 +1051,11 @@ check_vpn_status() {
 		echo "$failure_type" >"${failure_type_file}.tmp" 2>/dev/null && mv "${failure_type_file}.tmp" "$failure_type_file" 2>/dev/null || true
 
 		case "$failure_type" in
-		"ike_phase1_down")
-			handle_error "WARNING" "VPN failure type: IKE Phase 1 down (no secure channel established) for $external_peer_ip"
-			;;
-		"ipsec_phase2_down")
-			handle_error "WARNING" "VPN failure type: IPsec Phase 2 down (IKE Phase 1 up but tunnel not established) for $external_peer_ip"
+		"tunnel_down")
+			handle_error "WARNING" "VPN failure type: Tunnel down (no Phase 2 SA found) for $external_peer_ip"
 			;;
 		"routing_issue")
-			handle_error "WARNING" "VPN failure type: Routing issue (both phases up but traffic not flowing) for $external_peer_ip"
+			handle_error "WARNING" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $external_peer_ip"
 			;;
 		*)
 			handle_error "WARNING" "VPN failure type: Unknown (unable to determine specific failure type) for $external_peer_ip"

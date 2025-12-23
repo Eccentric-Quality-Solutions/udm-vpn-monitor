@@ -296,7 +296,8 @@ EOF
 
 @test "analyze-logs.sh uses default log file location" {
 	# Create log file in default location relative to script
-	local script_dir="$(dirname "$ANALYZE_LOGS_SCRIPT")"
+	local script_dir
+	script_dir="$(dirname "$ANALYZE_LOGS_SCRIPT")"
 	local default_log="${script_dir}/logs/vpn-monitor.log"
 	mkdir -p "$(dirname "$default_log")"
 	create_sample_log_file "$default_log"

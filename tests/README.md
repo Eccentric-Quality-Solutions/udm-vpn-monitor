@@ -36,6 +36,16 @@ These can be installed using:
 ./install_bats_helpers.sh
 ```
 
+### Performance Optimization
+
+- **GNU parallel** or **rush** - For parallel test execution (significantly faster)
+  - macOS: `brew install parallel`
+  - Ubuntu/Debian: `sudo apt-get install parallel`
+  - Fedora/RHEL: `sudo dnf install parallel`
+  
+  Parallel execution can reduce test time by 3-4x on multi-core systems. The test runner
+  will automatically detect and use parallel execution if available (see [Parallel Execution](#parallel-execution) below).
+
 ## Running Tests
 
 ### Run Fast Tests (Default)
@@ -73,6 +83,35 @@ Slow tests include:
 ./tests/run_tests.sh --coverage          # Fast tests only
 ./tests/run_tests.sh --slow --coverage    # All tests with coverage
 ```
+
+### Parallel Execution
+
+The test runner supports parallel execution to significantly reduce test time. By default, parallel execution is enabled if GNU parallel or rush is installed.
+
+```bash
+# Auto-detect CPU cores (default)
+./tests/run_tests.sh
+
+# Use specific number of parallel jobs
+./tests/run_tests.sh --jobs 8
+
+# Disable parallel execution
+./tests/run_tests.sh --jobs 0
+
+# Set via environment variable
+PARALLEL_JOBS=4 ./tests/run_tests.sh
+```
+
+**Performance Impact:**
+- Without parallel: ~15 minutes (all tests)
+- With parallel (8 jobs): ~3-5 minutes (all tests)
+- With parallel (fast tests only): ~1-2 minutes
+
+**Requirements:**
+- GNU parallel or rush must be installed
+- If not available, tests run sequentially (still works, just slower)
+
+**Note:** Coverage reporting may be slower with parallel execution due to kcov overhead, but is still supported.
 
 ### Run Specific Test File
 
@@ -218,7 +257,7 @@ Tests recovery action execution, error handling, and verification:
 - ✅ Surgical cleanup connection name reload fails - fallback to full reload
 - ✅ Full restart with ipsec command
 - ✅ Full restart fails - error handling
-- ✅ Full restart when neither ipsec nor swanctl available
+- ✅ Full restart when ipsec is not available
 - ✅ Rate limit file corrupted
 - ✅ Failure counter file is directory
 

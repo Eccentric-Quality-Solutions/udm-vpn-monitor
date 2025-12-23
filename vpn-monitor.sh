@@ -542,6 +542,12 @@ main() {
 		log_message "WARNING" "VPN monitor check completed with warnings/errors"
 	fi
 
+	# In fake mode, always exit with 0 (we're just checking/logging, not taking action)
+	# Failures are logged but don't cause the script to fail in fake mode
+	if [[ "${NO_ESCALATE:-0}" -eq 1 ]]; then
+		exit 0
+	fi
+
 	exit $all_ok
 }
 

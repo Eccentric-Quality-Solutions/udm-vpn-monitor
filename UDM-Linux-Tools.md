@@ -1,0 +1,28 @@
+These are some of the Linux utilities that we have to work with on a UDM running OS 4.3+:
+- ip
+- ss
+- ipsec
+- tcpdump
+- netstat
+- ps
+- top
+- htop
+- free
+- uptime
+- df
+- dig
+- nslookup
+- getent
+- dmesg
+- awk
+- sed
+- grep
+- watch
+- timeout
+- crontab
+- date
+- expr
+- iptables
+- iptables-save
+
+We do not have: logread, systemctl, swanctl

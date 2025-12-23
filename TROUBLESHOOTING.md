@@ -162,11 +162,11 @@ service cron status
   Requires more failures before action.
 
 **If VPN uses different detection method**:
-- Script uses `ip xfrm state` (primary), `swanctl` (fallback), `ipsec` (fallback)
+- Script uses `ip xfrm state` (primary), `ipsec` (fallback)
 - If your VPN doesn't show up in these, detection may not work
 - Check which method your VPN uses:
   ```bash
-  swanctl --list-sas
+  ip xfrm state
   ipsec status
   ```
 
@@ -187,19 +187,12 @@ service cron status
    ```
    Look for Tier 2 and Tier 3 action messages.
 
-2. **Check if swanctl is available**:
+2. **Check if ipsec command is available**:
    ```bash
-   which swanctl
-   swanctl --version
+   which ipsec
+   ipsec --version
    ```
-   Tier 2 recovery requires swanctl.
-
-3. **Check connection names**:
-   ```bash
-   swanctl --list-conns
-   swanctl --list-sas
-   ```
-   Verify connection names match config (if configured).
+   Tier 2 and Tier 3 recovery require ipsec command.
 
 4. **Check if recovery actually ran**:
    ```bash
@@ -222,21 +215,10 @@ service cron status
 
 ### Solutions
 
-**If swanctl not available**:
-- Tier 2 recovery requires swanctl
-- Install swanctl or use Tier 3 recovery only
-- Or configure connection names manually
-
-**If connection names don't match**:
-- Auto-discovery may have failed
-- Manually configure connection names (see [README.md Configuration section](README.md#configuration) for details):
-  ```bash
-  # Find connection name
-  swanctl --list-sas | grep <PEER_IP>
-  
-  # Configure in config file using sanitized peer IP format
-  CONNECTION_NAME_203_0_113_1="site-to-site-1"
-  ```
+**If ipsec command not available**:
+- Tier 2 and Tier 3 recovery require ipsec command
+- Check if ipsec is installed: `which ipsec`
+- Check system logs: `dmesg | tail -50`
 
 **If rate limited**:
 - Too many restarts in last hour (default: max 3)
@@ -249,10 +231,10 @@ service cron status
 - Or reduce `COOLDOWN_MINUTES` in config
 
 **If recovery actions fail**:
-- Check if `ipsec` or `swanctl` commands work manually:
+- Check if `ipsec` command works manually:
   ```bash
   ipsec restart
-  swanctl --reload
+  ipsec reload
   ```
 - Check for permission issues
 - Check system logs: `dmesg | tail -50`
