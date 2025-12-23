@@ -37,6 +37,7 @@ Many UDMs don't have `swanctl` installed, but the tool can still perform per-con
 - **Robust Detection**: Uses `ip xfrm state` byte counters to detect actual VPN traffic flow
 - **Connectivity Verification**: Optional ping checks verify end-to-end tunnel connectivity
 - **Tiered Recovery**: Escalates from logging → surgical SA cleanup → full restart
+- **VPN Keepalive Daemon**: Optional background daemon sends periodic pings to prevent idle VPN tunnels from timing out
 - **Safety Controls**: Lockfiles with timeout detection, cooldown timers, and rate limiting prevent restart loops
 - **Persistent Logging**: Logs stored in `/data/` survive reboots
 - **Cron-Based**: More resilient than long-running processes on UDM
@@ -197,6 +198,9 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `PING_TARGET_IP` | **Internal/private** IP to ping through tunnel (empty = use peer external IP) | "" |
 | `PING_COUNT` | Number of ping packets to send | 3 |
 | `PING_TIMEOUT` | Ping timeout per packet (seconds) | 2 |
+| `ENABLE_KEEPALIVE` | Enable VPN keepalive daemon (0 or 1, see [Keepalive Daemon](#keepalive-daemon)) | 0 |
+| `KEEPALIVE_INTERVAL` | Keepalive ping interval (seconds, 10-300) | 30 |
+| `KEEPALIVE_PING_COUNT` | Number of ping packets per keepalive ping (1-5) | 1 |
 | `DEBUG` | Enable verbose logging (0 or 1) | 0 |
 | `ENABLE_XFRM_RECOVERY` | ⚠️ EXPERIMENTAL: Enable xfrm-based per-connection recovery (0 or 1, see risks below) | 0 |
 
@@ -254,6 +258,54 @@ swanctl --list-sas
 - `"*/10 * * * *"` - Every 10 minutes
 - `"*/15 * * * *"` - Every 15 minutes
 - `"0 * * * *"` - Every hour (on the hour)
+
+### Keepalive Daemon
+
+The VPN keepalive daemon is an optional background process that sends periodic ping traffic through VPN tunnels to prevent them from being marked as idle or disconnected by network devices. This helps prevent false positives where healthy but idle VPN tunnels are incorrectly detected as failed.
+
+**Configuration:**
+
+1. **Enable keepalive** in `vpn-monitor.conf`:
+   ```bash
+   ENABLE_KEEPALIVE=1
+   KEEPALIVE_INTERVAL=30
+   KEEPALIVE_PING_COUNT=1
+   ```
+
+2. **Start the daemon** using systemd (recommended):
+   ```bash
+   systemctl enable --now vpn-keepalive
+   ```
+   
+   Or start manually:
+   ```bash
+   /data/vpn-monitor/vpn-keepalive.sh start
+   ```
+
+**Management:**
+
+- **Check status**: `systemctl status vpn-keepalive` or `/data/vpn-monitor/vpn-keepalive.sh status`
+- **Stop daemon**: `systemctl stop vpn-keepalive` or `/data/vpn-monitor/vpn-keepalive.sh stop`
+- **Restart daemon**: `systemctl restart vpn-keepalive` or `/data/vpn-monitor/vpn-keepalive.sh restart`
+- **View logs**: `journalctl -u vpn-keepalive -f` or `tail -f /data/vpn-monitor/logs/vpn-keepalive.log`
+
+**How It Works:**
+
+- Runs as a separate background daemon process (independent from the monitoring script)
+- Pings each configured peer at regular intervals (default: every 30 seconds)
+- Uses internal IP addresses (from `INTERNAL_PEER_IPS`) when available, falls back to external IPs
+- Minimal logging (only logs failures, not successful pings)
+- Automatically restarts on failure (when managed via systemd)
+- Respects `ENABLE_KEEPALIVE` configuration - won't start if disabled
+
+**When to Use:**
+
+- VPN tunnels that may be idle for extended periods
+- Network devices that timeout idle connections
+- VPNs that require periodic traffic to maintain state
+- Reducing false positives from idle tunnel detection
+
+**Note:** The keepalive daemon is separate from the monitoring script. The monitoring script still runs via cron and performs its own checks. Keepalive only sends periodic pings to keep tunnels alive - it does not perform failure detection or recovery.
 
 ## How It Works
 
@@ -409,12 +461,17 @@ For comprehensive troubleshooting guides covering common issues, diagnosis steps
 - Script not running (cron, lockfile, permissions)
 - False positives (VPN working but monitor reports failures)
 - Ping checks failing
+- Keepalive daemon issues
 - Recovery not working
 - Configuration issues
 - Performance issues
 - Lockfile issues
 
 Each issue includes detailed diagnosis steps and solutions in the troubleshooting guide.
+
+## Keepalive Daemon
+
+See the [Keepalive Daemon](#keepalive-daemon) section in Configuration for details on enabling and managing the VPN keepalive daemon.
 
 ## Uninstallation
 

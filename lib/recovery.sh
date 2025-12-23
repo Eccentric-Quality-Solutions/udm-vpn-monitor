@@ -46,7 +46,7 @@ attempt_xfrm_recovery() {
 	local failed_count=0
 
 	if ! command -v ip >/dev/null 2>&1; then
-		log_message "WARNING" "ip command not available for xfrm recovery"
+		handle_error "WARNING" "ip command not available for xfrm recovery"
 		return 1
 	fi
 
@@ -80,7 +80,7 @@ attempt_xfrm_recovery() {
 					log_message "INFO" "Deleted SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
 					((deleted_count++))
 				else
-					log_message "WARNING" "Failed to delete SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
+					handle_error "WARNING" "Failed to delete SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
 					((failed_count++))
 				fi
 			fi
@@ -111,7 +111,7 @@ attempt_xfrm_recovery() {
 			log_message "INFO" "Deleted SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
 			((deleted_count++))
 		else
-			log_message "WARNING" "Failed to delete SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
+			handle_error "WARNING" "Failed to delete SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
 			((failed_count++))
 		fi
 	fi
@@ -128,7 +128,7 @@ attempt_xfrm_recovery() {
 		sleep 3
 		return 0
 	elif [[ $failed_count -gt 0 ]]; then
-		log_message "WARNING" "xfrm recovery: Failed to delete $failed_count SA(s) for $peer_ip"
+		handle_error "WARNING" "xfrm recovery: Failed to delete $failed_count SA(s) for $peer_ip"
 		return 1
 	else
 		log_message "INFO" "xfrm recovery: No SAs found to delete for $peer_ip"
@@ -198,12 +198,12 @@ surgical_cleanup() {
 				log_message "INFO" "Successfully reloaded connection: $connection_name"
 			else
 				local reload_exit_code=$?
-				log_message "WARNING" "Per-connection reload failed for $connection_name (exit code: ${reload_exit_code}), falling back to full reload"
+				handle_error "WARNING" "Per-connection reload failed for $connection_name (exit code: ${reload_exit_code}), falling back to full reload"
 				if swanctl --reload 2>/dev/null; then
 					log_message "INFO" "Full reload succeeded after per-connection reload failure"
 				else
 					local full_reload_exit_code=$?
-					log_message "ERROR" "Full reload also failed (exit code: ${full_reload_exit_code})"
+					handle_error "ERROR" "Full reload also failed (exit code: ${full_reload_exit_code})" 0
 				fi
 			fi
 		else
@@ -211,7 +211,7 @@ surgical_cleanup() {
 			log_message "INFO" "No connection name configured for $peer_ip, using full reload (affects all tunnels)"
 			if ! swanctl --reload 2>&1; then
 				local reload_exit_code=$?
-				log_message "ERROR" "swanctl --reload failed (exit code: ${reload_exit_code})"
+				handle_error "ERROR" "swanctl --reload failed (exit code: ${reload_exit_code})" 0
 			else
 				log_message "INFO" "Successfully reloaded all connections via swanctl --reload"
 			fi
@@ -225,22 +225,22 @@ surgical_cleanup() {
 				log_message "INFO" "xfrm-based recovery completed for $peer_ip"
 			else
 				# xfrm recovery failed - fall back to ipsec reload
-				log_message "WARNING" "xfrm-based recovery failed, falling back to ipsec reload (affects all tunnels)"
+				handle_error "WARNING" "xfrm-based recovery failed, falling back to ipsec reload (affects all tunnels)"
 				if command -v ipsec >/dev/null 2>&1; then
 					if ipsec reload 2>&1; then
 						log_message "INFO" "Successfully reloaded IPsec connections via ipsec reload"
 					else
 						local reload_exit_code=$?
-						log_message "WARNING" "ipsec reload failed (exit code: ${reload_exit_code}), attempting ipsec restart"
+						handle_error "WARNING" "ipsec reload failed (exit code: ${reload_exit_code}), attempting ipsec restart"
 						if ! ipsec restart 2>&1; then
 							local restart_exit_code=$?
-							log_message "ERROR" "ipsec restart also failed (exit code: ${restart_exit_code})"
+							handle_error "ERROR" "ipsec restart also failed (exit code: ${restart_exit_code})" 0
 						else
 							log_message "INFO" "Successfully restarted IPsec service via ipsec restart"
 						fi
 					fi
 				else
-					log_message "ERROR" "Neither ipsec command available for fallback recovery"
+					handle_error "ERROR" "Neither ipsec command available for fallback recovery" 0
 				fi
 			fi
 			log_message "INFO" "Surgical cleanup completed for $peer_ip (via xfrm/ipsec fallback)"
@@ -252,16 +252,16 @@ surgical_cleanup() {
 					log_message "INFO" "Successfully reloaded IPsec connections via ipsec reload"
 				else
 					local reload_exit_code=$?
-					log_message "WARNING" "ipsec reload failed (exit code: ${reload_exit_code}), attempting ipsec restart"
+					handle_error "WARNING" "ipsec reload failed (exit code: ${reload_exit_code}), attempting ipsec restart"
 					if ! ipsec restart 2>&1; then
 						local restart_exit_code=$?
-						log_message "ERROR" "ipsec restart also failed (exit code: ${restart_exit_code})"
+						handle_error "ERROR" "ipsec restart also failed (exit code: ${restart_exit_code})" 0
 					else
 						log_message "INFO" "Successfully restarted IPsec service via ipsec restart"
 					fi
 				fi
 			else
-				log_message "ERROR" "Neither ipsec command available for fallback recovery"
+				handle_error "ERROR" "Neither ipsec command available for fallback recovery" 0
 			fi
 			log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback, xfrm disabled)"
 		fi
@@ -272,10 +272,10 @@ surgical_cleanup() {
 			log_message "INFO" "Successfully reloaded IPsec connections via ipsec reload"
 		else
 			local reload_exit_code=$?
-			log_message "WARNING" "ipsec reload failed (exit code: ${reload_exit_code}), attempting ipsec restart"
+			handle_error "WARNING" "ipsec reload failed (exit code: ${reload_exit_code}), attempting ipsec restart"
 			if ! ipsec restart 2>&1; then
 				local restart_exit_code=$?
-				log_message "ERROR" "ipsec restart also failed (exit code: ${restart_exit_code})"
+				handle_error "ERROR" "ipsec restart also failed (exit code: ${restart_exit_code})" 0
 			else
 				log_message "INFO" "Successfully restarted IPsec service via ipsec restart"
 			fi
@@ -286,7 +286,7 @@ surgical_cleanup() {
 		warn_if_missing "swanctl"
 		warn_if_missing "ip"
 		warn_if_missing "ipsec"
-		log_message "ERROR" "Neither swanctl, ip, nor ipsec command available for Tier 2 recovery"
+		handle_error "ERROR" "Neither swanctl, ip, nor ipsec command available for Tier 2 recovery" 0
 	fi
 
 	# Always return 0 (function always succeeds - cleanup commands attempted, errors are logged)
@@ -333,10 +333,10 @@ surgical_cleanup() {
 #   Uses PIPESTATUS to capture command exit code (not tee exit code)
 #   Command output is both displayed and appended to log file
 full_restart() {
-	log_message "WARNING" "Performing full IPsec restart (affects all VPN tunnels)"
+	handle_error "WARNING" "Performing full IPsec restart (affects all VPN tunnels)"
 
 	if ! check_rate_limit; then
-		log_message "ERROR" "Rate limit exceeded, skipping full restart"
+		handle_error "ERROR" "Rate limit exceeded, skipping full restart" 0
 		return 1
 	fi
 
@@ -351,7 +351,7 @@ full_restart() {
 		ipsec restart 2>&1 | tee -a "$LOG_FILE"
 		local ipsec_exit_code=${PIPESTATUS[0]}
 		if [[ $ipsec_exit_code -ne 0 ]]; then
-			log_message "ERROR" "Failed to restart IPsec service (exit code: $ipsec_exit_code)"
+			handle_error "ERROR" "Failed to restart IPsec service (exit code: $ipsec_exit_code)" 0
 			return 1
 		fi
 	elif command -v swanctl >/dev/null 2>&1; then
@@ -360,7 +360,7 @@ full_restart() {
 		swanctl --reload 2>&1 | tee -a "$LOG_FILE"
 		local swanctl_exit_code=${PIPESTATUS[0]}
 		if [[ $swanctl_exit_code -ne 0 ]]; then
-			log_message "ERROR" "Failed to reload swanctl (exit code: $swanctl_exit_code)"
+			handle_error "ERROR" "Failed to reload swanctl (exit code: $swanctl_exit_code)" 0
 			return 1
 		fi
 	else
@@ -456,7 +456,7 @@ monitor_peer() {
 			;;
 		esac
 
-		log_message "WARNING" "${VPN_NAME:-VPN} check failed for $external_peer_ip (failure count: $failure_count)$failure_type_display"
+		handle_error "WARNING" "${VPN_NAME:-VPN} check failed for $external_peer_ip (failure count: $failure_count)$failure_type_display"
 
 		# Tier 1: Logging (triggers when failure_count >= TIER1_THRESHOLD)
 		if [[ "$failure_count" -ge "$TIER1_THRESHOLD" ]]; then
@@ -468,7 +468,7 @@ monitor_peer() {
 			if [[ "$NO_ESCALATE" -eq 1 ]]; then
 				log_message "INFO" "Tier 2: Would attempt surgical SA cleanup for $external_peer_ip (skipped in fake mode)"
 			else
-				log_message "WARNING" "Tier 2: Attempting surgical SA cleanup for $external_peer_ip"
+				handle_error "WARNING" "Tier 2: Attempting surgical SA cleanup for $external_peer_ip"
 				surgical_cleanup "$external_peer_ip"
 			fi
 		fi
@@ -478,7 +478,7 @@ monitor_peer() {
 			if [[ "$NO_ESCALATE" -eq 1 ]]; then
 				log_message "INFO" "Tier 3: Would attempt full IPsec restart (skipped in fake mode)"
 			else
-				log_message "ERROR" "Tier 3: Attempting full IPsec restart"
+				handle_error "ERROR" "Tier 3: Attempting full IPsec restart" 0
 				if full_restart; then
 					reset_failure_count "$external_peer_ip"
 				fi

@@ -23,6 +23,7 @@ SILENT=0
 OVERWRITE_CONF=0
 DEV_MODE=0
 INTERACTIVE=0
+KEEPALIVE_ONLY=0
 
 # Verify lib directory exists before sourcing
 # The lib directory should be present from the installation package extraction
@@ -209,6 +210,18 @@ create_interactive_config() {
 	local debug
 	debug=$(prompt_config_value "DEBUG" "$default_debug" "Enable debug logging (0 or 1)")
 
+	local default_enable_keepalive="1"
+	local enable_keepalive
+	enable_keepalive=$(prompt_config_value "ENABLE_KEEPALIVE" "$default_enable_keepalive" "Enable VPN keepalive daemon (0 or 1)")
+
+	local default_keepalive_interval="30"
+	local keepalive_interval
+	keepalive_interval=$(prompt_config_value "KEEPALIVE_INTERVAL" "$default_keepalive_interval" "Keepalive ping interval (seconds)")
+
+	local default_keepalive_ping_count="1"
+	local keepalive_ping_count
+	keepalive_ping_count=$(prompt_config_value "KEEPALIVE_PING_COUNT" "$default_keepalive_ping_count" "Keepalive ping count (packets)")
+
 	# Create config file
 	cat >"${INSTALL_DIR}/${CONFIG_NAME}" <<EOF
 # UDM VPN Monitor Configuration
@@ -263,6 +276,11 @@ PING_COUNT=${ping_count}
 
 # Ping timeout per packet (seconds)
 PING_TIMEOUT=${ping_timeout}
+
+# VPN Keepalive Daemon
+ENABLE_KEEPALIVE=${enable_keepalive}
+KEEPALIVE_INTERVAL=${keepalive_interval}
+KEEPALIVE_PING_COUNT=${keepalive_ping_count}
 
 # Enable debug logging (set to 1 for verbose output)
 DEBUG=${debug}
@@ -323,6 +341,9 @@ ENABLE_PING_CHECK=1
 PING_TARGET_IP=""
 PING_COUNT=3
 PING_TIMEOUT=2
+ENABLE_KEEPALIVE=1
+KEEPALIVE_INTERVAL=30
+KEEPALIVE_PING_COUNT=1
 DEBUG=0
 EOF
 	fi
@@ -366,6 +387,13 @@ install_scripts() {
 		log_error "Library directory not found: ${INSTALL_SCRIPT_DIR}/lib"
 		log_error "vpn-monitor.sh requires library files to function"
 		exit 1
+	fi
+
+	# Copy keepalive script (optional utility)
+	if [[ -f "${INSTALL_SCRIPT_DIR}/vpn-keepalive.sh" ]]; then
+		cp "${INSTALL_SCRIPT_DIR}/vpn-keepalive.sh" "${INSTALL_DIR}/vpn-keepalive.sh"
+		chmod +x "${INSTALL_DIR}/vpn-keepalive.sh"
+		log_info "Installed vpn-keepalive.sh"
 	fi
 
 	# Copy log analysis script (optional utility)
@@ -549,6 +577,151 @@ setup_cron() {
 	# Display current cron entries
 	log_info "Current cron entries:"
 	crontab -l 2>/dev/null | grep -E "(vpn-monitor|^#)" || log_warn "No cron entries found"
+}
+
+# Install systemd service for keepalive daemon
+#
+# Installs and enables the systemd service file for the VPN keepalive daemon.
+# Only installs if systemd is available, keepalive is enabled in config, and not in dev mode.
+#
+# Returns:
+#   0: Service installed successfully (or skipped if not applicable)
+#   1: Failed to install service
+#
+# Side effects:
+#   - Creates /etc/systemd/system/vpn-keepalive.service
+#   - Reloads systemd daemon
+#   - Enables service (but doesn't start it - user must enable keepalive first)
+install_keepalive_service() {
+	# Skip in dev mode (systemd services are system-wide)
+	if [[ $DEV_MODE -eq 1 ]]; then
+		log_info "Skipping systemd service installation (dev mode)"
+		return 0
+	fi
+
+	# Check if systemd is available
+	if ! command -v systemctl >/dev/null 2>&1; then
+		log_warn "systemctl not found, skipping systemd service installation"
+		log_warn "Keepalive daemon must be started manually: ${INSTALL_DIR}/vpn-keepalive.sh start"
+		return 0
+	fi
+
+	# Check if we have write access to /etc/systemd/system
+	if [[ ! -w /etc/systemd/system ]]; then
+		log_warn "Cannot write to /etc/systemd/system, skipping systemd service installation"
+		log_warn "Keepalive daemon must be started manually: ${INSTALL_DIR}/vpn-keepalive.sh start"
+		return 0
+	fi
+
+	# Check if keepalive script exists
+	if [[ ! -f "${INSTALL_DIR}/vpn-keepalive.sh" ]]; then
+		log_info "Keepalive script not found, skipping systemd service installation"
+		return 0
+	fi
+
+	local service_file="/etc/systemd/system/vpn-keepalive.service"
+	local template_file="${INSTALL_SCRIPT_DIR}/vpn-keepalive.service"
+
+	# Check if template exists
+	if [[ ! -f "$template_file" ]]; then
+		log_warn "Service template not found: $template_file"
+		log_warn "Skipping systemd service installation"
+		return 0
+	fi
+
+	log_info "Installing systemd service for VPN keepalive daemon..."
+
+	# Replace %INSTALL_DIR% placeholder with actual install directory
+	sed "s|%INSTALL_DIR%|${INSTALL_DIR}|g" "$template_file" >"$service_file"
+
+	# Verify the service file was created
+	if [[ ! -f "$service_file" ]]; then
+		log_error "Failed to create systemd service file"
+		log_warn "Keepalive daemon can still be started manually: ${INSTALL_DIR}/vpn-keepalive.sh start"
+		return 0 # Don't fail installation for optional feature
+	fi
+
+	# Reload systemd daemon to pick up new service
+	if ! systemctl daemon-reload; then
+		log_error "Failed to reload systemd daemon"
+		log_warn "Keepalive daemon can still be started manually: ${INSTALL_DIR}/vpn-keepalive.sh start"
+		return 0 # Don't fail installation for optional feature
+	fi
+
+	log_info "Systemd service installed: $service_file"
+
+	return 0
+}
+
+# Enable and start keepalive service
+#
+# Enables and starts the systemd service for the VPN keepalive daemon.
+# Only works if systemd is available and service is installed.
+#
+# Returns:
+#   0: Service enabled/started successfully (or skipped if not applicable)
+#   1: Failed to enable/start service
+#
+# Side effects:
+#   - Enables systemd service for auto-start on boot
+#   - Starts the service immediately
+enable_and_start_keepalive_service() {
+	# Skip in dev mode
+	if [[ $DEV_MODE -eq 1 ]]; then
+		log_info "Skipping keepalive service enable (dev mode)"
+		return 0
+	fi
+
+	# Check if systemd is available
+	if ! command -v systemctl >/dev/null 2>&1; then
+		log_warn "systemctl not found, cannot enable keepalive service"
+		log_warn "Start keepalive manually: ${INSTALL_DIR}/vpn-keepalive.sh start"
+		return 0
+	fi
+
+	# Check if service file exists
+	local service_file="/etc/systemd/system/vpn-keepalive.service"
+	if [[ ! -f "$service_file" ]]; then
+		log_warn "Systemd service file not found: $service_file"
+		log_warn "Install service first, then enable: systemctl enable --now vpn-keepalive"
+		return 0
+	fi
+
+	# Check if keepalive is enabled in config
+	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
+		local enable_keepalive
+		enable_keepalive=$(grep -E "^ENABLE_KEEPALIVE=" "${INSTALL_DIR}/${CONFIG_NAME}" | cut -d'=' -f2 | tr -d '"' || echo "0")
+		if [[ "$enable_keepalive" != "1" ]]; then
+			log_warn "ENABLE_KEEPALIVE is not set to 1 in config file"
+			log_warn "Set ENABLE_KEEPALIVE=1 in ${INSTALL_DIR}/${CONFIG_NAME}, then enable service"
+			log_info "To enable later: systemctl enable --now vpn-keepalive"
+			return 0
+		fi
+	else
+		log_warn "Config file not found: ${INSTALL_DIR}/${CONFIG_NAME}"
+		log_warn "Set ENABLE_KEEPALIVE=1 in config file, then enable service"
+		return 0
+	fi
+
+	log_info "Enabling and starting VPN keepalive service..."
+
+	# Enable service for auto-start on boot
+	if ! systemctl enable vpn-keepalive >/dev/null 2>&1; then
+		log_error "Failed to enable systemd service"
+		log_warn "Keepalive daemon can still be started manually: ${INSTALL_DIR}/vpn-keepalive.sh start"
+		return 0 # Don't fail installation for optional feature
+	fi
+
+	# Start service immediately
+	if ! systemctl start vpn-keepalive >/dev/null 2>&1; then
+		log_error "Failed to start systemd service"
+		log_warn "Service enabled but not started. Check status: systemctl status vpn-keepalive"
+		log_warn "Start manually: systemctl start vpn-keepalive or ${INSTALL_DIR}/vpn-keepalive.sh start"
+		return 0 # Don't fail installation for optional feature
+	fi
+
+	log_info "VPN keepalive service enabled and started successfully"
+	return 0
 }
 
 # Install logrotate configuration for cron.log
@@ -782,6 +955,7 @@ display_help() {
 	echo "  --interactive     Prompt for each config value with defaults"
 	echo "  --overwrite-conf  Overwrite existing config file (only works with --silent)"
 	echo "  --dev             Install to current working directory (dev mode)"
+	echo "  --keepalive-only  Only install and enable keepalive daemon (requires existing installation)"
 	echo "  --help, -h        Show this help message"
 	echo ""
 	echo "Examples:"
@@ -794,6 +968,7 @@ display_help() {
 	echo "  $0 --dev --silent --no-cron           # Dev mode, silent, no cron"
 	echo "  $0 --interactive --dev                # Interactive config, dev mode"
 	echo "  $0 --silent --no-cron --overwrite-conf  # Silent installation, no cron, overwrite config"
+	echo "  $0 --keepalive-only                   # Install and enable keepalive daemon only"
 	echo ""
 }
 
@@ -811,6 +986,7 @@ display_help() {
 #   --interactive: Prompt for each config value with defaults
 #   --overwrite-conf: Overwrite existing config file (only with --silent)
 #   --dev: Install to current directory instead of /data/vpn-monitor
+#   --keepalive-only: Only install and enable keepalive daemon (requires existing installation)
 #   --help, -h: Display help message and exit
 #
 # Returns:
@@ -818,7 +994,7 @@ display_help() {
 #   1: Invalid argument provided (exits script)
 #
 # Side effects:
-#   Sets global flags: SKIP_CRON, SILENT, INTERACTIVE, OVERWRITE_CONF, DEV_MODE
+#   Sets global flags: SKIP_CRON, SILENT, INTERACTIVE, OVERWRITE_CONF, DEV_MODE, KEEPALIVE_ONLY
 #   Sets INSTALL_DIR based on DEV_MODE
 parse_args() {
 	while [[ $# -gt 0 ]]; do
@@ -849,6 +1025,13 @@ parse_args() {
 			DEV_MODE=1
 			if [[ $SILENT -eq 0 ]]; then
 				log_info "Dev mode enabled - installing to current working directory"
+			fi
+			shift
+			;;
+		--keepalive-only)
+			KEEPALIVE_ONLY=1
+			if [[ $SILENT -eq 0 ]]; then
+				log_info "Keepalive-only mode - will only install and enable keepalive daemon"
 			fi
 			shift
 			;;
@@ -883,6 +1066,12 @@ parse_args() {
 		log_error "Interactive mode requires user prompts, which conflicts with silent mode"
 		exit 1
 	fi
+
+	if [[ $KEEPALIVE_ONLY -eq 1 ]]; then
+		if [[ $INTERACTIVE -eq 1 ]] || [[ $OVERWRITE_CONF -eq 1 ]] || [[ $SKIP_CRON -eq 1 ]]; then
+			log_warn "Warning: --keepalive-only mode ignores --interactive, --overwrite-conf, and --no-cron flags"
+		fi
+	fi
 }
 
 # Main installation
@@ -911,14 +1100,85 @@ main() {
 	parse_args "$@"
 
 	if [[ $SILENT -eq 0 ]]; then
-		log_info "UDM VPN Monitor Installation"
-		log_info "=============================="
+		if [[ $KEEPALIVE_ONLY -eq 1 ]]; then
+			log_info "UDM VPN Monitor - Keepalive Installation"
+			log_info "=========================================="
+		else
+			log_info "UDM VPN Monitor Installation"
+			log_info "=============================="
+		fi
 		if [[ $DEV_MODE -eq 1 ]]; then
 			log_info "Dev mode: Installing to ${INSTALL_DIR}"
 		fi
 		echo ""
 	fi
 
+	# Handle keepalive-only mode
+	if [[ $KEEPALIVE_ONLY -eq 1 ]]; then
+		# Skip root check in dev mode
+		if [[ $DEV_MODE -eq 0 ]]; then
+			check_root
+		fi
+
+		# Check if installation exists
+		if [[ ! -d "$INSTALL_DIR" ]]; then
+			log_error "Installation directory not found: $INSTALL_DIR"
+			log_error "Please run full installation first: ./install.sh"
+			exit 1
+		fi
+
+		if [[ ! -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
+			log_error "Configuration file not found: ${INSTALL_DIR}/${CONFIG_NAME}"
+			log_error "Please run full installation first: ./install.sh"
+			exit 1
+		fi
+
+		# Check if keepalive script exists, if not install it
+		if [[ ! -f "${INSTALL_DIR}/vpn-keepalive.sh" ]]; then
+			log_info "Keepalive script not found, installing..."
+			if [[ ! -f "${INSTALL_SCRIPT_DIR}/vpn-keepalive.sh" ]]; then
+				log_error "Keepalive script template not found: ${INSTALL_SCRIPT_DIR}/vpn-keepalive.sh"
+				exit 1
+			fi
+			cp "${INSTALL_SCRIPT_DIR}/vpn-keepalive.sh" "${INSTALL_DIR}/vpn-keepalive.sh"
+			chmod +x "${INSTALL_DIR}/vpn-keepalive.sh"
+			log_info "Installed vpn-keepalive.sh"
+		fi
+
+		# Ensure ENABLE_KEEPALIVE=1 in config file
+		if grep -q "^ENABLE_KEEPALIVE=" "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null; then
+			# Update existing setting
+			if [[ "$(grep "^ENABLE_KEEPALIVE=" "${INSTALL_DIR}/${CONFIG_NAME}" | cut -d'=' -f2 | tr -d '"')" != "1" ]]; then
+				log_info "Setting ENABLE_KEEPALIVE=1 in config file..."
+				sed -i 's/^ENABLE_KEEPALIVE=.*/ENABLE_KEEPALIVE=1/' "${INSTALL_DIR}/${CONFIG_NAME}"
+			fi
+		else
+			# Add setting if not present
+			log_info "Adding ENABLE_KEEPALIVE=1 to config file..."
+			echo "" >>"${INSTALL_DIR}/${CONFIG_NAME}"
+			echo "# VPN Keepalive Daemon" >>"${INSTALL_DIR}/${CONFIG_NAME}"
+			echo "ENABLE_KEEPALIVE=1" >>"${INSTALL_DIR}/${CONFIG_NAME}"
+		fi
+
+		# Install systemd service
+		install_keepalive_service
+
+		# Enable and start service
+		enable_and_start_keepalive_service
+
+		if [[ $SILENT -eq 0 ]]; then
+			echo ""
+			log_info "Keepalive installation complete!"
+			echo ""
+			log_info "Keepalive daemon status:"
+			systemctl status vpn-keepalive --no-pager -l 2>/dev/null || /data/vpn-monitor/vpn-keepalive.sh status 2>/dev/null || log_warn "Could not check keepalive status"
+			echo ""
+		fi
+
+		exit 0
+	fi
+
+	# Normal installation flow
 	# Skip root check in dev mode
 	if [[ $DEV_MODE -eq 0 ]]; then
 		check_root
@@ -934,6 +1194,18 @@ main() {
 		install_logrotate_config
 	else
 		log_info "Skipping cron setup (--no-cron flag used)"
+	fi
+
+	# Install systemd service for keepalive daemon
+	install_keepalive_service
+
+	# Enable and start keepalive service if enabled in config
+	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
+		local enable_keepalive
+		enable_keepalive=$(grep -E "^ENABLE_KEEPALIVE=" "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "0")
+		if [[ "$enable_keepalive" == "1" ]]; then
+			enable_and_start_keepalive_service
+		fi
 	fi
 
 	if verify_installation; then

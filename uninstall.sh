@@ -158,6 +158,95 @@ remove_installation_dir() {
 	return 0
 }
 
+# Remove systemd service for keepalive daemon
+#
+# Disables, stops, and removes the systemd service file for the VPN keepalive daemon.
+# Only removes if systemd is available and service exists.
+#
+# Returns:
+#   0: Always succeeds (warnings logged but don't fail)
+#
+# Side effects:
+#   - Disables systemd service
+#   - Stops systemd service if running
+#   - Removes /etc/systemd/system/vpn-keepalive.service
+#   - Reloads systemd daemon
+remove_keepalive_service() {
+	local service_file="/etc/systemd/system/vpn-keepalive.service"
+
+	# Check if systemd is available
+	if ! command -v systemctl >/dev/null 2>&1; then
+		return 0
+	fi
+
+	# Check if service file exists
+	if [[ ! -f "$service_file" ]]; then
+		return 0
+	fi
+
+	log_info "Removing systemd service for VPN keepalive daemon..."
+
+	# Disable service (if enabled)
+	if systemctl is-enabled vpn-keepalive >/dev/null 2>&1; then
+		systemctl disable vpn-keepalive >/dev/null 2>&1 || log_warn "Failed to disable systemd service"
+	fi
+
+	# Stop service (if running)
+	if systemctl is-active vpn-keepalive >/dev/null 2>&1; then
+		systemctl stop vpn-keepalive >/dev/null 2>&1 || log_warn "Failed to stop systemd service"
+	fi
+
+	# Remove service file
+	rm -f "$service_file" 2>/dev/null || log_warn "Failed to remove systemd service file"
+
+	# Reload systemd daemon
+	systemctl daemon-reload >/dev/null 2>&1 || log_warn "Failed to reload systemd daemon"
+
+	return 0
+}
+
+# Stop keepalive daemon if running
+#
+# Stops the VPN keepalive daemon if it is running.
+# This ensures the daemon is cleanly stopped before uninstallation.
+#
+# Returns:
+#   0: Always succeeds (warnings logged but don't fail)
+#
+# Side effects:
+#   - Stops keepalive daemon if running
+#   - Removes PID file
+#
+# Note:
+#   Uses the keepalive script's stop command if available
+#   Falls back to manual PID file check and kill if script unavailable
+stop_keepalive_daemon() {
+	local keepalive_script="${INSTALL_DIR}/vpn-keepalive.sh"
+	local pidfile="${INSTALL_DIR}/vpn-keepalive.pid"
+
+	# Try to use keepalive script's stop command if available
+	if [[ -f "$keepalive_script" ]] && [[ -x "$keepalive_script" ]]; then
+		if "$keepalive_script" status >/dev/null 2>&1; then
+			log_info "Stopping VPN keepalive daemon..."
+			"$keepalive_script" stop >/dev/null 2>&1 || log_warn "Failed to stop keepalive daemon via script"
+		fi
+	# Fallback: check PID file directly
+	elif [[ -f "$pidfile" ]]; then
+		local pid
+		pid=$(cat "$pidfile" 2>/dev/null || echo "")
+		if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+			log_info "Stopping VPN keepalive daemon (PID: $pid)..."
+			kill -TERM "$pid" 2>/dev/null || true
+			sleep 1
+			# Force kill if still running
+			if kill -0 "$pid" 2>/dev/null; then
+				kill -KILL "$pid" 2>/dev/null || true
+			fi
+			rm -f "$pidfile" 2>/dev/null || true
+		fi
+	fi
+}
+
 # Clean up any stale lockfiles
 #
 # Removes any stale lockfiles that may persist if the installation directory
@@ -244,6 +333,15 @@ verify_uninstallation() {
 		log_info "Logrotate configuration removed"
 	fi
 
+	# Check systemd service is gone
+	local service_file="/etc/systemd/system/vpn-keepalive.service"
+	if [[ -f "$service_file" ]]; then
+		log_error "Systemd service still exists: $service_file"
+		errors=$((errors + 1))
+	else
+		log_info "Systemd service removed"
+	fi
+
 	if [[ $errors -eq 0 ]]; then
 		log_info "Uninstallation verified successfully"
 		return 0
@@ -267,6 +365,7 @@ display_summary() {
 	log_info "Removed:"
 	echo "  - Installation directory: $INSTALL_DIR"
 	echo "  - Cron job entry"
+	echo "  - VPN keepalive systemd service"
 	echo "  - All configuration files"
 	echo "  - All log files"
 	echo "  - All state files"
@@ -320,6 +419,8 @@ main() {
 		echo "  - All configuration files"
 		echo "  - All log files"
 		echo "  - Cron job entry"
+		echo "  - VPN keepalive daemon (if running)"
+		echo "  - VPN keepalive systemd service (if installed)"
 		echo "  - Logrotate configuration (if installed)"
 		echo ""
 		read -p "Are you sure you want to continue? (yes/no): " -r
@@ -332,6 +433,8 @@ main() {
 
 	remove_cron
 	remove_logrotate_config
+	remove_keepalive_service
+	stop_keepalive_daemon
 	remove_installation_dir
 	cleanup_lockfile
 

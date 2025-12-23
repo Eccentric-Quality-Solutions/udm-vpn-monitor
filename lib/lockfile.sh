@@ -284,19 +284,22 @@ acquire_lockfile_flock() {
 		# Set up cleanup trap to ensure lock is released
 		trap 'rm -f "$LOCKFILE"; exec 9>&-' EXIT INT TERM
 
-		# Check if lockfile exists and is stale before trying to acquire
-		remove_stale_lockfile_if_needed || true
-
-		# Try to acquire lock, exit if another instance is running
+		# Try to acquire lock first (prevents race condition)
 		# -n: non-blocking (fail immediately if lock can't be acquired)
 		if ! flock -n 9; then
-			# Lock acquisition failed - another instance is running
-			# Check if it's stale by file age
+			# Lock acquisition failed - check if it's stale
 			if check_lockfile_stale; then
-				# Lockfile is stale, force remove and try again
+				# Lockfile is stale, extract PID for logging before removal
+				local stale_pid
+				stale_pid=$(extract_lockfile_pid "$LOCKFILE" || echo "unknown")
+				# Force remove stale lockfile and log warning
 				rm -f "$LOCKFILE"
+				echo "WARNING: Removed stale lockfile (timeout exceeded, PID was: $stale_pid)" >&2
+				# Try again with non-blocking lock
 				if ! flock -n 9; then
-					# Try to log before exiting (may fail if lockfile issue)
+					# Still can't acquire lock after removing stale lockfile
+					# This could happen if another process acquired it between
+					# removal and retry, or if the lockfile wasn't actually stale
 					log_and_exit_lockfile_conflict
 				fi
 			else

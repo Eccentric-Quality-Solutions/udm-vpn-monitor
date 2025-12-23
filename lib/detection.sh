@@ -506,7 +506,7 @@ cache_connection_name() {
 
 	# Atomic write: write to temp file first, then rename
 	if ! (echo "$connection_name" >"${cache_file}.tmp" 2>/dev/null && mv "${cache_file}.tmp" "$cache_file" 2>/dev/null); then
-		log_message "WARNING" "Failed to cache connection name for $peer_ip (file: $cache_file)"
+		handle_error "WARNING" "Failed to cache connection name for $peer_ip (file: $cache_file)"
 	fi
 }
 
@@ -640,13 +640,13 @@ check_ping_connectivity() {
 
 	# Validate ping target
 	if [[ -z "$target_ip" ]]; then
-		log_message "WARNING" "Ping check enabled but PING_TARGET_IP not configured"
+		handle_error "WARNING" "Ping check enabled but PING_TARGET_IP not configured"
 		return 1
 	fi
 
 	# Check if ping command is available
 	if ! warn_if_missing "ping"; then
-		log_message "WARNING" "Ping check enabled but ping command not available"
+		handle_error "WARNING" "Ping check enabled but ping command not available"
 		return 1
 	fi
 
@@ -665,7 +665,7 @@ check_ping_connectivity() {
 			ping_cmd="ping"
 			ping_args=(-6)
 		else
-			log_message "WARNING" "IPv6 ping not available"
+			handle_error "WARNING" "IPv6 ping not available"
 			return 1
 		fi
 	fi
@@ -696,12 +696,12 @@ check_ping_connectivity() {
 			log_message "INFO" "Ping check OK: $target_ip (${packet_loss}% packet loss)"
 			return 0
 		else
-			log_message "WARNING" "Ping check failed: $target_ip (100% packet loss)"
+			handle_error "WARNING" "Ping check failed: $target_ip (100% packet loss)"
 			return 1
 		fi
 	else
 		# Ping command failed
-		log_message "WARNING" "Ping check failed: $target_ip (ping command error or timeout)"
+		handle_error "WARNING" "Ping check failed: $target_ip (ping command error or timeout)"
 		return 1
 	fi
 }
@@ -757,17 +757,17 @@ check_byte_counters() {
 			# Bytes are increasing or this is first check
 			# Atomic write: write to temp file first, then rename
 			if ! (echo "$current_bytes" >"${last_bytes_file}.tmp" && mv "${last_bytes_file}.tmp" "$last_bytes_file"); then
-				log_message "ERROR" "Failed to update byte counter for $peer_ip (file: $last_bytes_file)"
+				handle_error "ERROR" "Failed to update byte counter for $peer_ip (file: $last_bytes_file)" 0
 				# Continue execution but log the error
 			fi
 			log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes)"
 			return 0
 		else
-			log_message "WARNING" "VPN suspect: SA exists but bytes not increasing (current=$current_bytes, last=$last_bytes)"
+			handle_error "WARNING" "VPN suspect: SA exists but bytes not increasing (current=$current_bytes, last=$last_bytes)"
 			return 1
 		fi
 	else
-		log_message "WARNING" "VPN suspect: SA exists but bytes=0"
+		handle_error "WARNING" "VPN suspect: SA exists but bytes=0"
 		return 1
 	fi
 }
@@ -798,12 +798,13 @@ check_xfrm_status() {
 	fi
 
 	local xfrm_output
-	# Use word boundaries to avoid partial IP matches (e.g., 192.168.1.1 matching 192.168.1.10)
+	# Use fixed-string matching to prevent regex pattern injection and avoid partial IP matches
 	# -A 10: show 10 lines after match (to get byte counter info)
-	xfrm_output=$(ip xfrm state 2>/dev/null | grep -E "(^|[^0-9a-fA-F:])${peer_ip}([^0-9a-fA-F:]|$)" -A 10 || true)
+	# -F: fixed-string matching (treats IP address as literal, not regex pattern)
+	xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "$peer_ip" -A 10 || true)
 
 	if [[ -z "$xfrm_output" ]]; then
-		log_message "WARNING" "VPN suspect: No SA found for $peer_ip in xfrm state"
+		handle_error "WARNING" "VPN suspect: No SA found for $peer_ip in xfrm state"
 		return 1
 	fi
 
@@ -852,7 +853,7 @@ check_swanctl_status() {
 		log_message "INFO" "VPN OK: SA found via swanctl for $peer_ip"
 		return 0
 	else
-		log_message "WARNING" "VPN suspect: No SA found via swanctl for $peer_ip"
+		handle_error "WARNING" "VPN suspect: No SA found via swanctl for $peer_ip"
 		return 1
 	fi
 }
@@ -885,7 +886,7 @@ check_ipsec_status() {
 		log_message "INFO" "VPN OK: Connection found via ipsec status for $peer_ip"
 		return 0
 	else
-		log_message "WARNING" "VPN suspect: No connection found via ipsec status for $peer_ip"
+		handle_error "WARNING" "VPN suspect: No connection found via ipsec status for $peer_ip"
 		return 1
 	fi
 }
@@ -923,7 +924,7 @@ check_ping_if_enabled() {
 		# SA exists, verify connectivity with ping check
 		if ! check_ping_connectivity "$ping_target"; then
 			# SA exists but ping failed - tunnel may be broken
-			log_message "WARNING" "VPN SA exists but ping check failed for $ping_target - tunnel may not be routing traffic"
+			handle_error "WARNING" "VPN SA exists but ping check failed for $ping_target - tunnel may not be routing traffic"
 			# Don't fail completely - SA exists, but mark as suspect
 			# This allows xfrm to pass but warns about connectivity
 			# If ping keeps failing, byte counters should also stop increasing
@@ -933,7 +934,7 @@ check_ping_if_enabled() {
 	else
 		# SA doesn't exist, but try ping anyway to see if there's any connectivity
 		if check_ping_connectivity "$ping_target"; then
-			log_message "WARNING" "Ping check passed but no SA found - tunnel may be down but connectivity exists via other route"
+			handle_error "WARNING" "Ping check passed but no SA found - tunnel may be down but connectivity exists via other route"
 		fi
 	fi
 
@@ -1008,8 +1009,9 @@ check_ipsec_phase2() {
 	fi
 
 	local xfrm_output
-	# Use word boundaries to avoid partial IP matches
-	xfrm_output=$(ip xfrm state 2>/dev/null | grep -E "(^|[^0-9a-fA-F:])${peer_ip}([^0-9a-fA-F:]|$)" || true)
+	# Use fixed-string matching to prevent regex pattern injection and avoid partial IP matches
+	# -F: fixed-string matching (treats IP address as literal, not regex pattern)
+	xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "$peer_ip" || true)
 
 	if [[ -n "$xfrm_output" ]]; then
 		return 0
@@ -1087,7 +1089,10 @@ detect_failure_type() {
 		# Check byte counters if last_bytes_file is provided
 		if [[ -n "$last_bytes_file" ]]; then
 			local xfrm_output
-			xfrm_output=$(ip xfrm state 2>/dev/null | grep -E "(^|[^0-9a-fA-F:])${external_peer_ip}([^0-9a-fA-F:]|$)" -A 10 || true)
+			# Use fixed-string matching to prevent regex pattern injection
+			# -F: fixed-string matching (treats IP address as literal, not regex pattern)
+			# -A 10: show 10 lines after match (to get byte counter info)
+			xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "$external_peer_ip" -A 10 || true)
 			if [[ -n "$xfrm_output" ]]; then
 				local current_bytes=""
 				current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null || echo "")
@@ -1211,7 +1216,7 @@ check_vpn_status() {
 
 	# Validate external peer IP format using proper validation function
 	if ! validate_ip_address "$external_peer_ip"; then
-		log_message "ERROR" "Invalid external peer IP format: $external_peer_ip"
+		handle_error "ERROR" "Invalid external peer IP format: $external_peer_ip" 0
 		return 1
 	fi
 
@@ -1245,16 +1250,16 @@ check_vpn_status() {
 
 		case "$failure_type" in
 		"ike_phase1_down")
-			log_message "WARNING" "VPN failure type: IKE Phase 1 down (no secure channel established) for $external_peer_ip"
+			handle_error "WARNING" "VPN failure type: IKE Phase 1 down (no secure channel established) for $external_peer_ip"
 			;;
 		"ipsec_phase2_down")
-			log_message "WARNING" "VPN failure type: IPsec Phase 2 down (IKE Phase 1 up but tunnel not established) for $external_peer_ip"
+			handle_error "WARNING" "VPN failure type: IPsec Phase 2 down (IKE Phase 1 up but tunnel not established) for $external_peer_ip"
 			;;
 		"routing_issue")
-			log_message "WARNING" "VPN failure type: Routing issue (both phases up but traffic not flowing) for $external_peer_ip"
+			handle_error "WARNING" "VPN failure type: Routing issue (both phases up but traffic not flowing) for $external_peer_ip"
 			;;
 		*)
-			log_message "WARNING" "VPN failure type: Unknown (unable to determine specific failure type) for $external_peer_ip"
+			handle_error "WARNING" "VPN failure type: Unknown (unable to determine specific failure type) for $external_peer_ip"
 			;;
 		esac
 	fi

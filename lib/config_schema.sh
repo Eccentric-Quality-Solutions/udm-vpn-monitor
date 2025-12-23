@@ -65,6 +65,9 @@ declare -A CONFIG_SCHEMA=(
 	["PING_TARGET_IP"]="optional|string||default:"
 	["PING_COUNT"]="optional|integer|min:1|max:10|default:3"
 	["PING_TIMEOUT"]="optional|integer|min:1|max:30|default:2"
+	["ENABLE_KEEPALIVE"]="optional|integer|values:0,1|default:1"
+	["KEEPALIVE_INTERVAL"]="optional|integer|min:10|max:300|default:30"
+	["KEEPALIVE_PING_COUNT"]="optional|integer|min:1|max:5|default:1"
 	["DEBUG"]="optional|integer|values:0,1|default:0"
 	["NO_ESCALATE"]="optional|integer|values:0,1|default:0"
 	# EXPERIMENTAL: xfrm-based recovery (disabled by default - see SWANCTL_ALTERNATIVES.md for risks)

@@ -145,6 +145,62 @@ die() {
 	exit "$exit_code"
 }
 
+# Handle error with consistent logging and optional exit
+#
+# Provides a unified interface for error handling that logs messages
+# with appropriate severity levels and optionally exits for fatal errors.
+# This function standardizes error handling patterns across the codebase.
+#
+# Arguments:
+#   $1: Severity level (ERROR, WARNING, INFO)
+#   $2: Error message to log
+#   $3: Exit code (optional, defaults to 1, only used for ERROR severity)
+#
+# Returns:
+#   0: Always returns 0 (unless severity is ERROR and exit_code is non-zero, then exits)
+#   Never returns if severity is ERROR and exit_code is non-zero (exits script)
+#
+# Side effects:
+#   - Logs message using log_message with specified severity
+#   - Exits script if severity is ERROR and exit_code is non-zero
+#
+# Examples:
+#   # Non-fatal error (logs warning, continues execution)
+#   handle_error "WARNING" "Optional feature unavailable, using fallback"
+#
+#   # Fatal error (logs error and exits)
+#   handle_error "ERROR" "Critical configuration missing" 1
+#
+#   # Informational error (logs info, continues execution)
+#   handle_error "INFO" "Operation completed with minor issues"
+#
+# Note:
+#   Requires log_message and die functions to be available (from this file)
+#   For ERROR severity with non-zero exit_code, calls die() which exits the script
+#   For other severities or zero exit_code, only logs the message
+handle_error() {
+	local severity="$1"
+	local message="$2"
+	local exit_code="${3:-1}"
+
+	# Validate severity
+	if [[ "$severity" != "ERROR" ]] && [[ "$severity" != "WARNING" ]] && [[ "$severity" != "INFO" ]]; then
+		# Invalid severity, default to ERROR
+		log_message "ERROR" "Invalid severity '$severity' in handle_error, defaulting to ERROR"
+		severity="ERROR"
+	fi
+
+	# Log the message
+	log_message "$severity" "$message"
+
+	# For ERROR severity with non-zero exit code, exit the script
+	if [[ "$severity" == "ERROR" ]] && [[ "$exit_code" -ne 0 ]]; then
+		die "$message" "$exit_code"
+	fi
+
+	return 0
+}
+
 # Warn if command is missing
 #
 # Checks if a command is available in the system PATH using command -v.

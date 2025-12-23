@@ -58,7 +58,7 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 #   Per-peer files are created on-demand by increment_failure and check_byte_counters
 init_state() {
 	if ! ensure_file_exists "$RESTART_COUNT_FILE" "0"; then
-		log_message "WARNING" "Failed to create restart count file"
+		handle_error "WARNING" "Failed to create restart count file"
 	fi
 	# Per-peer failure counters and byte counters are created on-demand
 }
@@ -165,7 +165,7 @@ increment_failure() {
 	local new_count=$((count + 1))
 	# Atomic write: write to temp file first, then rename
 	if ! (echo "$new_count" >"${counter_file}.tmp" && mv "${counter_file}.tmp" "$counter_file"); then
-		log_message "ERROR" "Failed to update failure counter for $peer_ip"
+		handle_error "ERROR" "Failed to update failure counter for $peer_ip" 0
 		# Continue execution but log the error
 	fi
 	echo "$new_count"
@@ -202,7 +202,7 @@ reset_failure_count() {
 	local counter_file="${LOGS_DIR}/failure_counter_${peer_sanitized}"
 	# Atomic write: write to temp file first, then rename
 	if ! (echo "0" >"${counter_file}.tmp" && mv "${counter_file}.tmp" "$counter_file"); then
-		log_message "ERROR" "Failed to reset failure counter for $peer_ip"
+		handle_error "ERROR" "Failed to reset failure counter for $peer_ip" 0
 		# Continue execution but log the error
 	fi
 }
@@ -342,7 +342,7 @@ set_cooldown() {
 	cooldown_until=$(get_timestamp_plus_minutes "$minutes")
 	# Atomic write: write to temp file first, then rename
 	if ! (echo "$cooldown_until" >"${COOLDOWN_UNTIL_FILE}.tmp" && mv "${COOLDOWN_UNTIL_FILE}.tmp" "$COOLDOWN_UNTIL_FILE"); then
-		log_message "ERROR" "Failed to set cooldown period (file: $COOLDOWN_UNTIL_FILE)"
+		handle_error "ERROR" "Failed to set cooldown period (file: $COOLDOWN_UNTIL_FILE)" 0
 		# Continue execution but log the error
 	fi
 	log_message "INFO" "Cooldown period set for $minutes minutes"
@@ -390,7 +390,7 @@ check_rate_limit() {
 	recent_restarts=$(awk -v cutoff="$one_hour_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | wc -l | tr -d ' ')
 
 	if [[ "$recent_restarts" -ge "$MAX_RESTARTS_PER_HOUR" ]]; then
-		log_message "WARNING" "Rate limit exceeded: $recent_restarts restarts in last hour (max: $MAX_RESTARTS_PER_HOUR)"
+		handle_error "WARNING" "Rate limit exceeded: $recent_restarts restarts in last hour (max: $MAX_RESTARTS_PER_HOUR)"
 		return 1 # Rate limited
 	fi
 
@@ -432,14 +432,14 @@ record_restart() {
 	one_day_ago=$((timestamp - SECONDS_PER_DAY))
 	# awk filters lines where first field (timestamp) > cutoff, writes to temp file
 	if ! awk -v cutoff="$one_day_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" >"${RESTART_COUNT_FILE}.tmp" 2>/dev/null; then
-		log_message "WARNING" "Failed to filter old restart timestamps from $RESTART_COUNT_FILE"
+		handle_error "WARNING" "Failed to filter old restart timestamps from $RESTART_COUNT_FILE"
 		rm -f "${RESTART_COUNT_FILE}.tmp" 2>/dev/null || true
 		return 0 # Continue even if cleanup fails
 	fi
 
 	# Atomic move: replace original file with filtered version
 	if ! mv "${RESTART_COUNT_FILE}.tmp" "$RESTART_COUNT_FILE" 2>/dev/null; then
-		log_message "WARNING" "Failed to update restart count file $RESTART_COUNT_FILE (cleanup skipped, file may grow)"
+		handle_error "WARNING" "Failed to update restart count file $RESTART_COUNT_FILE (cleanup skipped, file may grow)"
 		rm -f "${RESTART_COUNT_FILE}.tmp" 2>/dev/null || true
 		return 0 # Continue even if cleanup fails
 	fi
@@ -478,7 +478,7 @@ validate_state_file() {
 
 	# Check file is readable
 	if [[ ! -r "$file" ]]; then
-		log_message "WARNING" "State file is not readable: $file"
+		handle_error "WARNING" "State file is not readable: $file"
 		return 1
 	fi
 
@@ -487,14 +487,14 @@ validate_state_file() {
 	integer)
 		# Should contain only digits (0-9), possibly with newlines
 		if ! grep -qE '^[0-9]+$' "$file" 2>/dev/null; then
-			log_message "WARNING" "State file corrupted (expected integer): $file"
+			handle_error "WARNING" "State file corrupted (expected integer): $file"
 			return 1
 		fi
 		;;
 	timestamp)
 		# Should contain a single Unix timestamp (digits only)
 		if ! grep -qE '^[0-9]+$' "$file" 2>/dev/null || [[ $(wc -l <"$file" 2>/dev/null || echo "0") -ne 1 ]]; then
-			log_message "WARNING" "State file corrupted (expected single timestamp): $file"
+			handle_error "WARNING" "State file corrupted (expected single timestamp): $file"
 			return 1
 		fi
 		;;
@@ -502,12 +502,12 @@ validate_state_file() {
 		# Should contain one or more Unix timestamps (one per line)
 		# Empty file is valid (no restarts recorded)
 		if [[ -s "$file" ]] && ! grep -qE '^[0-9]+$' "$file" 2>/dev/null; then
-			log_message "WARNING" "State file corrupted (expected timestamp list): $file"
+			handle_error "WARNING" "State file corrupted (expected timestamp list): $file"
 			return 1
 		fi
 		;;
 	*)
-		log_message "WARNING" "Unknown state file format: $expected_format"
+		handle_error "WARNING" "Unknown state file format: $expected_format"
 		return 1
 		;;
 	esac

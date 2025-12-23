@@ -8,6 +8,7 @@ Common issues and solutions for the UDM VPN Monitor.
 - [False Positives](#false-positives)
 - [Recovery Not Working](#recovery-not-working)
 - [Ping Checks Failing](#ping-checks-failing)
+- [Keepalive Daemon Issues](#keepalive-daemon-issues)
 - [Lockfile Issues](#lockfile-issues)
 - [Configuration Issues](#configuration-issues)
 - [Performance Issues](#performance-issues)
@@ -310,6 +311,99 @@ service cron status
 - Script auto-detects IPv4 vs IPv6
 - For IPv6, ensure `ping6` or `ping -6` works
 - Or disable ping checks if IPv6 ping is problematic
+
+---
+
+## Keepalive Daemon Issues
+
+### Symptoms
+- Keepalive daemon not starting
+- Keepalive daemon stops unexpectedly
+- Systemd service fails to start
+- Keepalive pings not being sent
+
+### Diagnosis Steps
+
+1. **Check if keepalive is enabled**:
+   ```bash
+   grep ENABLE_KEEPALIVE /data/vpn-monitor/vpn-monitor.conf
+   ```
+   Should show: `ENABLE_KEEPALIVE=1`
+
+2. **Check systemd service status**:
+   ```bash
+   systemctl status vpn-keepalive
+   ```
+   Look for active/running status or error messages.
+
+3. **Check if daemon is running manually**:
+   ```bash
+   /data/vpn-monitor/vpn-keepalive.sh status
+   ```
+   Should show: `VPN keepalive daemon is running (PID: <pid>)`
+
+4. **Check keepalive logs**:
+   ```bash
+   # Systemd journal
+   journalctl -u vpn-keepalive -f
+   
+   # Or log file
+   tail -f /data/vpn-monitor/logs/vpn-keepalive.log
+   ```
+
+5. **Check PID file**:
+   ```bash
+   cat /data/vpn-monitor/vpn-keepalive.pid
+   ps -p $(cat /data/vpn-monitor/vpn-keepalive.pid)
+   ```
+
+6. **Verify configuration**:
+   ```bash
+   grep -E "KEEPALIVE|EXTERNAL_PEER_IPS|INTERNAL_PEER_IPS" /data/vpn-monitor/vpn-monitor.conf
+   ```
+
+### Solutions
+
+1. **Service won't start**:
+   - Verify `ENABLE_KEEPALIVE=1` in config file
+   - Check systemd service file exists: `ls -l /etc/systemd/system/vpn-keepalive.service`
+   - Reload systemd: `systemctl daemon-reload`
+   - Check service file syntax: `systemctl cat vpn-keepalive`
+
+2. **Daemon stops unexpectedly**:
+   - Check logs for error messages
+   - Verify VPN peers are configured correctly
+   - Check if ping commands are available: `which ping ping6`
+   - Restart service: `systemctl restart vpn-keepalive`
+
+3. **Manual start works but systemd doesn't**:
+   - Check systemd service file paths are correct
+   - Verify systemd has permissions to execute script
+   - Check systemd logs: `journalctl -u vpn-keepalive -n 50`
+
+4. **Keepalive pings failing**:
+   - Verify `INTERNAL_PEER_IPS` or `EXTERNAL_PEER_IPS` are configured
+   - Check if VPN tunnel is actually up
+   - Test ping manually: `ping -c 1 <peer_ip>`
+   - Check firewall rules that might block ping
+
+5. **Service enabled but not starting on boot**:
+   - Enable service: `systemctl enable vpn-keepalive`
+   - Check service dependencies: `systemctl list-dependencies vpn-keepalive`
+   - Verify network-online.target is available
+
+6. **Reinstall systemd service**:
+   ```bash
+   # Stop and remove old service
+   systemctl stop vpn-keepalive
+   systemctl disable vpn-keepalive
+   rm /etc/systemd/system/vpn-keepalive.service
+   systemctl daemon-reload
+   
+   # Reinstall
+   /data/vpn-monitor/install.sh --silent
+   systemctl enable --now vpn-keepalive
+   ```
 
 ---
 

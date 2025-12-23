@@ -153,6 +153,9 @@ load_config() {
 	PING_TARGET_IP="${PING_TARGET_IP:-}"
 	PING_COUNT="${PING_COUNT:-3}"
 	PING_TIMEOUT="${PING_TIMEOUT:-2}"
+	ENABLE_KEEPALIVE="${ENABLE_KEEPALIVE:-1}"
+	KEEPALIVE_INTERVAL="${KEEPALIVE_INTERVAL:-30}"
+	KEEPALIVE_PING_COUNT="${KEEPALIVE_PING_COUNT:-1}"
 	DEBUG="${DEBUG:-0}"
 	NO_ESCALATE="${NO_ESCALATE:-0}"
 	# EXPERIMENTAL: xfrm-based per-connection recovery (disabled by default due to risks)
@@ -179,8 +182,8 @@ load_config() {
 		# Recalculate LOG_FILE path before first log message (in case STATE_DIR was set via environment)
 		recalculate_log_paths
 
-		log_message "WARNING" "Configuration file not found: $config_file"
-		log_message "WARNING" "Using default configuration values"
+		handle_error "WARNING" "Configuration file not found: $config_file"
+		handle_error "WARNING" "Using default configuration values"
 	fi
 
 	# Ensure logs directory exists after config loading (in case paths changed)
@@ -337,22 +340,22 @@ validate_config_type() {
 	integer)
 		if ! [[ "$var_value" =~ ^[0-9]+$ ]]; then
 			if [[ "$required" == "required" ]]; then
-				die "$var_name must be an integer (current value: '$var_value')"
+				handle_error "ERROR" "$var_name must be an integer (current value: '$var_value')"
 			else
 				# Apply default value for optional variables
 				if [[ -n "$default_val" ]]; then
-					log_message "WARNING" "$var_name must be an integer (current value: '$var_value'), using default: $default_val"
+					handle_error "WARNING" "$var_name must be an integer (current value: '$var_value'), using default: $default_val"
 					# Use safe indirect variable assignment instead of eval
 					declare -g "$var_name"
 					printf -v "$var_name" '%s' "$default_val"
 					var_value="$default_val"
 					# Re-validate with default value
 					if ! [[ "$var_value" =~ ^[0-9]+$ ]]; then
-						log_message "ERROR" "Default value for $var_name is also invalid, keeping invalid value"
+						handle_error "ERROR" "Default value for $var_name is also invalid, keeping invalid value" 0
 						return 1
 					fi
 				else
-					log_message "WARNING" "$var_name must be an integer (current value: '$var_value'), no default available"
+					handle_error "WARNING" "$var_name must be an integer (current value: '$var_value'), no default available"
 					return 1
 				fi
 			fi
@@ -420,13 +423,13 @@ validate_config_rule() {
 			else
 				# Apply default value for optional variables
 				if [[ -n "$default_val" ]]; then
-					log_message "WARNING" "$var_name is empty, using default: $default_val"
+					handle_error "WARNING" "$var_name is empty, using default: $default_val"
 					# Use safe indirect variable assignment instead of eval
 					declare -g "$var_name"
 					printf -v "$var_name" '%s' "$default_val"
 					var_value="$default_val"
 				else
-					log_message "WARNING" "$var_name is empty, no default available"
+					handle_error "WARNING" "$var_name is empty, no default available"
 					return 1
 				fi
 			fi
@@ -461,13 +464,13 @@ validate_config_rule() {
 			else
 				# Apply default value for optional variables
 				if [[ -n "$default_val" ]]; then
-					log_message "WARNING" "$var_name must be at least $min_val (current value: $var_value), using default: $default_val"
+					handle_error "WARNING" "$var_name must be at least $min_val (current value: $var_value), using default: $default_val"
 					# Use safe indirect variable assignment instead of eval
 					declare -g "$var_name"
 					printf -v "$var_name" '%s' "$default_val"
 					var_value="$default_val"
 				else
-					log_message "WARNING" "$var_name must be at least $min_val (current value: $var_value), no default available"
+					handle_error "WARNING" "$var_name must be at least $min_val (current value: $var_value), no default available"
 					return 1
 				fi
 			fi
@@ -481,13 +484,13 @@ validate_config_rule() {
 			else
 				# Apply default value for optional variables
 				if [[ -n "$default_val" ]]; then
-					log_message "WARNING" "$var_name must be at most $max_val (current value: $var_value), using default: $default_val"
+					handle_error "WARNING" "$var_name must be at most $max_val (current value: $var_value), using default: $default_val"
 					# Use safe indirect variable assignment instead of eval
 					declare -g "$var_name"
 					printf -v "$var_name" '%s' "$default_val"
 					var_value="$default_val"
 				else
-					log_message "WARNING" "$var_name must be at most $max_val (current value: $var_value), no default available"
+					handle_error "WARNING" "$var_name must be at most $max_val (current value: $var_value), no default available"
 					return 1
 				fi
 			fi
@@ -509,13 +512,13 @@ validate_config_rule() {
 			else
 				# Apply default value for optional variables
 				if [[ -n "$default_val" ]]; then
-					log_message "WARNING" "$var_name must be one of: $allowed_values (current value: '$var_value'), using default: $default_val"
+					handle_error "WARNING" "$var_name must be one of: $allowed_values (current value: '$var_value'), using default: $default_val"
 					# Use safe indirect variable assignment instead of eval
 					declare -g "$var_name"
 					printf -v "$var_name" '%s' "$default_val"
 					var_value="$default_val"
 				else
-					log_message "WARNING" "$var_name must be one of: $allowed_values (current value: '$var_value'), no default available"
+					handle_error "WARNING" "$var_name must be one of: $allowed_values (current value: '$var_value'), no default available"
 					return 1
 				fi
 			fi
@@ -762,7 +765,7 @@ validate_config() {
 	for peer_ip in "${external_peer_ips_array[@]}"; do
 		# Basic validation: non-empty (shouldn't happen after schema validation, but check anyway)
 		if [[ -z "$peer_ip" ]]; then
-			log_message "WARNING" "Skipping empty external peer IP"
+			handle_error "WARNING" "Skipping empty external peer IP"
 			continue
 		fi
 
@@ -779,14 +782,14 @@ validate_config() {
 		local internal_count=${#internal_peer_ips_array[@]}
 
 		if [[ $internal_count -gt 0 ]] && [[ $internal_count -ne $external_count ]]; then
-			log_message "WARNING" "INTERNAL_PEER_IPS count ($internal_count) does not match EXTERNAL_PEER_IPS count ($external_count). Only matching internal IPs will be used."
+			handle_error "WARNING" "INTERNAL_PEER_IPS count ($internal_count) does not match EXTERNAL_PEER_IPS count ($external_count). Only matching internal IPs will be used."
 		fi
 
 		# Validate internal IPs (even if count doesn't match, validate what's there)
 		for peer_ip in "${internal_peer_ips_array[@]}"; do
 			# Basic validation: non-empty
 			if [[ -z "$peer_ip" ]]; then
-				log_message "WARNING" "Skipping empty internal peer IP"
+				handle_error "WARNING" "Skipping empty internal peer IP"
 				continue
 			fi
 

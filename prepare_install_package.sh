@@ -57,10 +57,12 @@ trap cleanup EXIT
 # Main script files
 MAIN_FILES=(
 	"vpn-monitor.sh"
+	"vpn-keepalive.sh"
 	"install.sh"
 	"uninstall.sh"
 	"analyze-logs.sh"
 	"vpn-monitor.conf"
+	"vpn-keepalive.service"
 )
 
 # Library files

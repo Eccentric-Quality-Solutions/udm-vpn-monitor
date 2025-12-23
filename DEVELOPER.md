@@ -561,7 +561,12 @@ log_message "WARNING" "Optional feature unavailable"
 log_message "ERROR" "Operation failed but continuing"
 log_message "DEBUG" "Debug information"  # Only if DEBUG=1
 
-# Fatal errors
+# Unified error handling (recommended for consistency)
+handle_error "WARNING" "Optional feature unavailable, using fallback"
+handle_error "ERROR" "Critical configuration missing" 1  # Logs and exits
+handle_error "INFO" "Operation completed with minor issues"
+
+# Fatal errors (direct call)
 die "Fatal error message"  # Logs and exits with code 1
 
 # Check if command exists (logs warning if missing)
@@ -569,6 +574,15 @@ if ! warn_if_missing "swanctl"; then
     # Command not available, use fallback
 fi
 ```
+
+**`handle_error()` Function**:
+The `handle_error()` function provides a unified interface for error handling:
+- **Severity levels**: ERROR, WARNING, INFO
+- **For ERROR severity**: Logs the message and exits if exit_code is non-zero
+- **For WARNING/INFO severity**: Logs the message and continues execution
+- **Usage**: `handle_error "SEVERITY" "message" [exit_code]`
+
+This function standardizes error handling patterns and makes it easier to maintain consistent error handling across the codebase.
 
 **5. Error Handling Patterns by Function Type**
 

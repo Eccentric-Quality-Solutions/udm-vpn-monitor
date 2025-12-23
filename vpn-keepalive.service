@@ -1,0 +1,28 @@
+[Unit]
+Description=UDM VPN Keepalive Daemon
+Documentation=file://%INSTALL_DIR%/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+PIDFile=%INSTALL_DIR%/vpn-keepalive.pid
+ExecStart=%INSTALL_DIR%/vpn-keepalive.sh start
+ExecStop=%INSTALL_DIR%/vpn-keepalive.sh stop
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vpn-keepalive
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Resource limits
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target
+
