@@ -14,6 +14,12 @@ if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	# Fallback if constants.sh not found (shouldn't happen in normal operation)
 	# Only set if not already set (to avoid readonly variable errors)
 	[[ -z "${MAX_IPV6_SEGMENTS:-}" ]] && readonly MAX_IPV6_SEGMENTS=8
+	[[ -z "${MIN_IPV6_SEGMENT_HEX_DIGITS:-}" ]] && readonly MIN_IPV6_SEGMENT_HEX_DIGITS=1
+	[[ -z "${MAX_IPV6_SEGMENT_HEX_DIGITS:-}" ]] && readonly MAX_IPV6_SEGMENT_HEX_DIGITS=4
+	[[ -z "${MAX_IPV4_OCTET:-}" ]] && readonly MAX_IPV4_OCTET=255
+	[[ -z "${IPV4_OCTET_COUNT:-}" ]] && readonly IPV4_OCTET_COUNT=4
+	[[ -z "${PING_PACKET_LOSS_THRESHOLD:-}" ]] && readonly PING_PACKET_LOSS_THRESHOLD=100
+	[[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && readonly XFRM_OUTPUT_CONTEXT_LINES=10
 fi
 
 # Validate IPv4 address format
@@ -39,19 +45,22 @@ validate_ipv4() {
 		return 1
 	fi
 
-	# Validate IPv4 format pattern: 4 octets separated by dots
-	if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+	# Validate IPv4 format pattern: IPV4_OCTET_COUNT (4) octets separated by dots
+	# Each octet is 1-3 digits (0-255 range, validated separately below)
+	local octet_pattern="[0-9]{1,3}"
+	local ipv4_pattern="${octet_pattern}\\.${octet_pattern}\\.${octet_pattern}\\.${octet_pattern}"
+	if [[ ! "$ip" =~ ^${ipv4_pattern}$ ]]; then
 		return 1
 	fi
 
-	# Validate each octet is 0-255
+	# Validate each octet is 0-MAX_IPV4_OCTET
 	local IFS='.'
 	local -a octets
 	read -ra octets <<<"$ip"
 	for octet in "${octets[@]}"; do
 		# Remove leading zeros for numeric comparison (but allow "0")
 		local num=$((10#$octet))
-		if [[ $num -lt 0 ]] || [[ $num -gt 255 ]]; then
+		if [[ $num -lt 0 ]] || [[ $num -gt $MAX_IPV4_OCTET ]]; then
 			return 1
 		fi
 	done
@@ -150,8 +159,10 @@ validate_ipv6_segments() {
 		local -a segs_before
 		read -ra segs_before <<<"$before_compression"
 		for seg in "${segs_before[@]}"; do
-			# Each segment must be 1-4 hex digits
-			if [[ ! "$seg" =~ ^[0-9a-fA-F]{1,4}$ ]]; then
+			# Each segment must be MIN_IPV6_SEGMENT_HEX_DIGITS-MAX_IPV6_SEGMENT_HEX_DIGITS hex digits
+			# Build regex pattern dynamically since bash doesn't support variable interpolation in regex
+			local hex_pattern="^[0-9a-fA-F]{${MIN_IPV6_SEGMENT_HEX_DIGITS},${MAX_IPV6_SEGMENT_HEX_DIGITS}}$"
+			if [[ ! "$seg" =~ $hex_pattern ]]; then
 				return 1
 			fi
 		done
@@ -163,8 +174,10 @@ validate_ipv6_segments() {
 		local -a segs_after
 		read -ra segs_after <<<"$after_compression"
 		for seg in "${segs_after[@]}"; do
-			# Each segment must be 1-4 hex digits
-			if [[ ! "$seg" =~ ^[0-9a-fA-F]{1,4}$ ]]; then
+			# Each segment must be MIN_IPV6_SEGMENT_HEX_DIGITS-MAX_IPV6_SEGMENT_HEX_DIGITS hex digits
+			# Build regex pattern dynamically since bash doesn't support variable interpolation in regex
+			local hex_pattern="^[0-9a-fA-F]{${MIN_IPV6_SEGMENT_HEX_DIGITS},${MAX_IPV6_SEGMENT_HEX_DIGITS}}$"
+			if [[ ! "$seg" =~ $hex_pattern ]]; then
 				return 1
 			fi
 		done
@@ -475,13 +488,13 @@ check_ping_connectivity() {
 	if [[ $ping_success -eq 1 ]]; then
 		# Extract packet loss percentage
 		local packet_loss
-		packet_loss=$(echo "$ping_result" | grep -oE '[0-9]+% packet loss' | grep -oE '[0-9]+' || echo "100")
+		packet_loss=$(echo "$ping_result" | grep -oE '[0-9]+% packet loss' | grep -oE '[0-9]+' || echo "$PING_PACKET_LOSS_THRESHOLD")
 
-		if [[ "$packet_loss" -lt 100 ]]; then
+		if [[ "$packet_loss" -lt $PING_PACKET_LOSS_THRESHOLD ]]; then
 			log_message "INFO" "Ping check OK: $target_ip (${packet_loss}% packet loss)"
 			return 0
 		else
-			handle_error "WARNING" "Ping check failed: $target_ip (100% packet loss)"
+			handle_error "WARNING" "Ping check failed: $target_ip (${PING_PACKET_LOSS_THRESHOLD}% packet loss)"
 			return 1
 		fi
 	else
@@ -499,15 +512,15 @@ check_ping_connectivity() {
 #
 # Arguments:
 #   $1: Current byte count (integer from xfrm state)
-#   $2: Path to last_bytes file (stores previous byte count for comparison)
-#   $3: Peer IP address (used for logging messages)
+#   $2: Path to last_bytes file (stores previous byte count for comparison) - DEPRECATED, kept for backward compatibility
+#   $3: Peer IP address (used for state management and logging)
 #
 # Returns:
 #   0: Byte counters are valid (increasing or non-zero, first check)
 #   1: Byte counters are invalid (zero or not increasing)
 #
 # Side effects:
-#   - Updates last_bytes file if bytes are valid (writes current_bytes)
+#   - Updates last_bytes state using abstraction layer if bytes are valid
 #   - Logs INFO messages for valid counters
 #   - Logs warning messages for invalid counters
 #
@@ -517,36 +530,33 @@ check_ping_connectivity() {
 #   fi
 #
 # Note:
-#   Requires log_message function to be available (from logging.sh)
+#   Requires get_peer_state and set_peer_state from state.sh
 #   First check (last_bytes=0) always passes if current_bytes > 0
 #   Subsequent checks require current_bytes > last_bytes
+#   Uses abstraction layer for state management (file path parameter is deprecated)
 check_byte_counters() {
 	local current_bytes="$1"
-	local last_bytes_file="$2"
+	local last_bytes_file="$2" # Deprecated, kept for backward compatibility
 	local peer_ip="$3"
 
-	# Get last known bytes
-	local last_bytes=0
-	if [[ -f "$last_bytes_file" ]]; then
-		last_bytes=$(cat "$last_bytes_file" 2>/dev/null || echo "0")
-		# Validate last_bytes is numeric
-		if [[ ! "$last_bytes" =~ ^[0-9]+$ ]]; then
-			last_bytes=0
-		fi
-	fi
+	# Get last known bytes using abstraction layer
+	local last_bytes
+	last_bytes=$(get_peer_state "$peer_ip" "last_bytes" "0")
 
 	# Check if bytes are increasing or at least non-zero
 	if [[ "$current_bytes" -gt 0 ]]; then
 		# Bytes are non-zero, check if they're increasing
 		if [[ "$current_bytes" -gt "$last_bytes" ]] || [[ "$last_bytes" -eq 0 ]]; then
 			# Bytes are increasing or this is first check
-			# Atomic write: write to temp file first, then rename
-			if ! (echo "$current_bytes" >"${last_bytes_file}.tmp" && mv "${last_bytes_file}.tmp" "$last_bytes_file"); then
-				handle_error "ERROR" "Failed to update byte counter for $peer_ip (file: $last_bytes_file)" 0
-				# Continue execution but log the error
+			# Use abstraction layer for atomic write
+			if set_peer_state "$peer_ip" "last_bytes" "$current_bytes"; then
+				log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes)"
+				return 0
+			else
+				# State update failed but bytes are valid - log and continue
+				log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, state update failed)"
+				return 0
 			fi
-			log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes)"
-			return 0
 		else
 			handle_error "WARNING" "VPN suspect: SA exists but bytes not increasing (current=$current_bytes, last=$last_bytes)"
 			return 1
@@ -584,9 +594,9 @@ check_xfrm_status() {
 
 	local xfrm_output
 	# Use fixed-string matching to prevent regex pattern injection and avoid partial IP matches
-	# -A 10: show 10 lines after match (to get byte counter info)
+	# -A XFRM_OUTPUT_CONTEXT_LINES: show context lines after match (to get byte counter info)
 	# -F: fixed-string matching (treats IP address as literal, not regex pattern)
-	xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "$peer_ip" -A 10 || true)
+	xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "$peer_ip" -A "$XFRM_OUTPUT_CONTEXT_LINES" || true)
 
 	if [[ -z "$xfrm_output" ]]; then
 		handle_error "WARNING" "VPN suspect: No SA found for $peer_ip in xfrm state"
@@ -880,26 +890,22 @@ detect_failure_type() {
 		# Check byte counters if available
 		local has_routing_issue=0
 
-		# Check byte counters if last_bytes_file is provided
-		if [[ -n "$last_bytes_file" ]]; then
+		# Check byte counters using abstraction layer (peer IP is available)
+		if [[ -n "$external_peer_ip" ]]; then
 			local xfrm_output
 			# Use fixed-string matching to prevent regex pattern injection
 			# -F: fixed-string matching (treats IP address as literal, not regex pattern)
-			# -A 10: show 10 lines after match (to get byte counter info)
-			xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "$external_peer_ip" -A 10 || true)
+			# -A XFRM_OUTPUT_CONTEXT_LINES: show context lines after match (to get byte counter info)
+			xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "$external_peer_ip" -A "$XFRM_OUTPUT_CONTEXT_LINES" || true)
 			if [[ -n "$xfrm_output" ]]; then
 				local current_bytes=""
 				current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null || echo "")
 
 				if [[ -n "$current_bytes" ]] && [[ "$current_bytes" =~ ^[0-9]+$ ]]; then
 					# Successfully extracted byte counter - check if bytes are not increasing
-					local last_bytes=0
-					if [[ -f "$last_bytes_file" ]]; then
-						last_bytes=$(cat "$last_bytes_file" 2>/dev/null || echo "0")
-						if [[ ! "$last_bytes" =~ ^[0-9]+$ ]]; then
-							last_bytes=0
-						fi
-					fi
+					# Use abstraction layer to get last bytes
+					local last_bytes
+					last_bytes=$(get_peer_state "$external_peer_ip" "last_bytes" "0")
 
 					# If bytes exist but aren't increasing (and it's not the first check), it's a routing issue
 					if [[ "$current_bytes" -gt 0 ]] && [[ "$current_bytes" -le "$last_bytes" ]] && [[ "$last_bytes" -gt 0 ]]; then

@@ -6,6 +6,17 @@
 # Version: 0.0.1
 #
 
+# Source constants for magic numbers
+# shellcheck source=lib/constants.sh
+# Determine lib directory (where this file is located)
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
+	# Fallback if constants.sh not found (shouldn't happen in normal operation)
+	# Only set if not already set (to avoid readonly variable errors)
+	[[ -z "${XFRM_RECOVERY_SLEEP_SECONDS:-}" ]] && readonly XFRM_RECOVERY_SLEEP_SECONDS=3
+	[[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && readonly XFRM_OUTPUT_CONTEXT_LINES=10
+fi
+
 # Delete Security Associations for a specific peer using xfrm
 #
 # Attempts per-connection recovery by deleting SAs for a specific peer IP using the Linux kernel's
@@ -59,7 +70,7 @@ attempt_xfrm_recovery() {
 	local xfrm_output
 	# Note: Using grep -E (extended regex) instead of grep -F (fixed-string) because we need
 	# word boundary matching to avoid partial IP matches. The peer_ip is properly escaped above.
-	xfrm_output=$(ip xfrm state 2>/dev/null | grep -E "(^|[^0-9a-fA-F:])${peer_ip_escaped}([^0-9a-fA-F:]|$)" -A 20 || true)
+	xfrm_output=$(ip xfrm state 2>/dev/null | grep -E "(^|[^0-9a-fA-F:])${peer_ip_escaped}([^0-9a-fA-F:]|$)" -A "$XFRM_OUTPUT_CONTEXT_LINES" || true)
 
 	if [[ -z "$xfrm_output" ]]; then
 		log_message "INFO" "No SAs found for $peer_ip in xfrm state (may already be down)"
@@ -129,7 +140,7 @@ attempt_xfrm_recovery() {
 	if [[ $deleted_count -gt 0 ]]; then
 		log_message "INFO" "xfrm recovery: Deleted $deleted_count SA(s) for $peer_ip"
 		# Wait a moment for strongSwan to detect SA deletion and re-establish
-		sleep 3
+		sleep "$XFRM_RECOVERY_SLEEP_SECONDS"
 		return 0
 	elif [[ $failed_count -gt 0 ]]; then
 		handle_error "WARNING" "xfrm recovery: Failed to delete $failed_count SA(s) for $peer_ip"

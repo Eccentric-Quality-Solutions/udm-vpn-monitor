@@ -264,6 +264,8 @@ apply_config_default() {
 	# Check if required
 	if [[ "$required" == "required" ]] && [[ -z "$var_value" ]]; then
 		die "$var_name is required but not configured"
+		# If die doesn't exit (e.g., in tests), return error
+		return 1
 	fi
 
 	# If optional and empty, use default from schema
@@ -419,6 +421,8 @@ validate_config_rule() {
 		if [[ -z "$var_value" ]]; then
 			if [[ "$required" == "required" ]]; then
 				die "$var_name cannot be empty"
+				# If die doesn't exit (e.g., in tests), return error
+				return 1
 			else
 				# Apply default value for optional variables
 				if [[ -n "$default_val" ]]; then
@@ -460,6 +464,8 @@ validate_config_rule() {
 		if [[ "$var_type" == "integer" ]] && [[ "$var_value" -lt "$min_val" ]]; then
 			if [[ "$required" == "required" ]]; then
 				die "$var_name must be at least $min_val (current value: $var_value)"
+				# If die doesn't exit (e.g., in tests), return error
+				return 1
 			else
 				# Apply default value for optional variables
 				if [[ -n "$default_val" ]]; then
@@ -480,6 +486,8 @@ validate_config_rule() {
 		if [[ "$var_type" == "integer" ]] && [[ "$var_value" -gt "$max_val" ]]; then
 			if [[ "$required" == "required" ]]; then
 				die "$var_name must be at most $max_val (current value: $var_value)"
+				# If die doesn't exit (e.g., in tests), return error
+				return 1
 			else
 				# Apply default value for optional variables
 				if [[ -n "$default_val" ]]; then
@@ -508,6 +516,8 @@ validate_config_rule() {
 		if [[ $found -eq 0 ]]; then
 			if [[ "$required" == "required" ]]; then
 				die "$var_name must be one of: $allowed_values (current value: '$var_value')"
+				# If die doesn't exit (e.g., in tests), return error
+				return 1
 			else
 				# Apply default value for optional variables
 				if [[ -n "$default_val" ]]; then

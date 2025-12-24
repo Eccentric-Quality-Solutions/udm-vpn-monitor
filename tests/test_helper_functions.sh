@@ -64,10 +64,26 @@ source_function() {
 					fi
 					;;
 				"${LIB_DIR}/state.sh")
-					# state.sh needs logging.sh
+					# state.sh needs logging.sh and common.sh
+					# Source entire state.sh module since functions depend on each other
+					if [[ -f "${LIB_DIR}/constants.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/constants.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/common.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/common.sh" 2>/dev/null || true
+					fi
 					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
 						# shellcheck source=/dev/null
 						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+					fi
+					# Source entire state.sh to make all functions available
+					if [[ -f "${LIB_DIR}/state.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+						# Function already sourced, skip eval below
+						return 0
 					fi
 					;;
 				"${LIB_DIR}/detection.sh")
@@ -360,39 +376,16 @@ source_function() {
 	local logs_dir="${TEST_DIR}/logs"
 	mkdir -p "$logs_dir"
 
-	# Create a minimal script that sources the function
-	cat >"${TEST_DIR}/test_script.sh" <<'SCRIPT'
-#!/bin/bash
-source "${BATS_TEST_DIRNAME}/../vpn-monitor.sh" 2>/dev/null || true
+	# Set up environment variables
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
 
-LOGS_DIR="$1"
-PEER_IP="$2"
+	# Source the actual function from the library
+	source_function "get_failure_count"
 
-# Source sanitize function
-sanitize_peer_ip() {
-    echo "$1" | tr '.' '_' | tr ':' '_'
-}
-
-# Source get_failure_count function
-get_failure_count() {
-	local peer_ip="$1"
-	local peer_sanitized
-	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
-	local counter_file="${LOGS_DIR}/failure_counter_${peer_sanitized}"
-
-	if [[ -f "$counter_file" ]]; then
-		cat "$counter_file"
-	else
-		echo "0"
-	fi
-}
-
-get_failure_count "$PEER_IP"
-SCRIPT
-
-	chmod +x "${TEST_DIR}/test_script.sh"
-
-	run bash "${TEST_DIR}/test_script.sh" "$logs_dir" "192.168.1.1"
+	# Test with peer IP that has no counter file
+	run get_failure_count "192.168.1.1"
 	assert_success
 	assert_output "0"
 }
@@ -403,34 +396,15 @@ SCRIPT
 	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
 	echo "5" >"$counter_file"
 
-	cat >"${TEST_DIR}/test_script.sh" <<'SCRIPT'
-#!/bin/bash
-LOGS_DIR="$1"
-PEER_IP="$2"
+	# Set up environment variables
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
 
-sanitize_peer_ip() {
-    echo "$1" | tr '.' '_' | tr ':' '_'
-}
+	# Source the actual function from the library
+	source_function "get_failure_count"
 
-get_failure_count() {
-	local peer_ip="$1"
-	local peer_sanitized
-	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
-	local counter_file="${LOGS_DIR}/failure_counter_${peer_sanitized}"
-
-	if [[ -f "$counter_file" ]]; then
-		cat "$counter_file"
-	else
-		echo "0"
-	fi
-}
-
-get_failure_count "$PEER_IP"
-SCRIPT
-
-	chmod +x "${TEST_DIR}/test_script.sh"
-
-	run bash "${TEST_DIR}/test_script.sh" "$logs_dir" "192.168.1.1"
+	run get_failure_count "192.168.1.1"
 	assert_success
 	assert_output "5"
 }
@@ -439,53 +413,35 @@ SCRIPT
 	local logs_dir="${TEST_DIR}/logs"
 	mkdir -p "$logs_dir"
 
-	cat >"${TEST_DIR}/test_script.sh" <<'SCRIPT'
-#!/bin/bash
-LOGS_DIR="$1"
-PEER_IP="$2"
+	# Set up environment variables
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
 
-sanitize_peer_ip() {
-    echo "$1" | tr '.' '_' | tr ':' '_'
-}
-
-get_failure_count() {
-	local peer_ip="$1"
-	local peer_sanitized
-	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
-	local counter_file="${LOGS_DIR}/failure_counter_${peer_sanitized}"
-
-	if [[ -f "$counter_file" ]]; then
-		cat "$counter_file"
-	else
-		echo "0"
-	fi
-}
-
-increment_failure() {
-	local peer_ip="$1"
-	local peer_sanitized
-	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
-	local counter_file="${LOGS_DIR}/failure_counter_${peer_sanitized}"
-	local count
-	count=$(get_failure_count "$peer_ip")
-	echo "$((count + 1))" >"$counter_file"
-	echo "$((count + 1))"
-}
-
-increment_failure "$PEER_IP"
-SCRIPT
-
-	chmod +x "${TEST_DIR}/test_script.sh"
+	# Source the actual functions from the library
+	source_function "increment_failure"
+	source_function "get_failure_count"
 
 	# First increment
-	run bash "${TEST_DIR}/test_script.sh" "$logs_dir" "192.168.1.1"
+	run increment_failure "192.168.1.1"
 	assert_success
 	assert_output "1"
 
+	# Verify the file was created
+	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	assert_file_exist "$counter_file"
+	local count
+	count=$(cat "$counter_file")
+	assert [ "$count" -eq 1 ]
+
 	# Second increment
-	run bash "${TEST_DIR}/test_script.sh" "$logs_dir" "192.168.1.1"
+	run increment_failure "192.168.1.1"
 	assert_success
 	assert_output "2"
+
+	# Verify the counter was incremented
+	count=$(cat "$counter_file")
+	assert [ "$count" -eq 2 ]
 }
 
 @test "reset_failure_count resets counter to 0" {
@@ -494,32 +450,501 @@ SCRIPT
 	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
 	echo "5" >"$counter_file"
 
-	cat >"${TEST_DIR}/test_script.sh" <<'SCRIPT'
-#!/bin/bash
-LOGS_DIR="$1"
-PEER_IP="$2"
+	# Set up environment variables
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
 
-sanitize_peer_ip() {
-    echo "$1" | tr '.' '_' | tr ':' '_'
+	# Source the actual function from the library
+	source_function "reset_failure_count"
+
+	run reset_failure_count "192.168.1.1"
+	assert_success
+
+	# Verify the counter was reset
+	assert_file_exist "$counter_file"
+	local count
+	count=$(cat "$counter_file")
+	assert [ "$count" -eq 0 ]
 }
 
-reset_failure_count() {
-	local peer_ip="$1"
-	local peer_sanitized
-	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
-	local counter_file="${LOGS_DIR}/failure_counter_${peer_sanitized}"
-	echo "0" >"$counter_file"
+# ============================================================================
+# Abstraction Layer Tests (get_peer_state, set_peer_state, etc.)
+# ============================================================================
+
+@test "get_peer_state_file_path returns correct path for failure_count" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
+
+	source_function "get_peer_state_file_path"
+
+	run get_peer_state_file_path "192.168.1.1" "failure_count"
+	assert_success
+	assert_output "${logs_dir}/failure_counter_192_168_1_1"
 }
 
-reset_failure_count "$PEER_IP"
-cat "${LOGS_DIR}/failure_counter_192_168_1_1"
-SCRIPT
+@test "get_peer_state_file_path returns correct path for last_bytes" {
+	local state_dir="${TEST_DIR}"
 
-	chmod +x "${TEST_DIR}/test_script.sh"
+	LOGS_DIR="${state_dir}/logs"
+	STATE_DIR="$state_dir"
+	export LOGS_DIR STATE_DIR
 
-	run bash "${TEST_DIR}/test_script.sh" "$logs_dir" "192.168.1.1"
+	source_function "get_peer_state_file_path"
+
+	run get_peer_state_file_path "192.168.1.1" "last_bytes"
+	assert_success
+	assert_output "${state_dir}/last_bytes_192_168_1_1"
+}
+
+@test "get_peer_state_file_path handles unknown key" {
+	local state_dir="${TEST_DIR}"
+
+	LOGS_DIR="${state_dir}/logs"
+	STATE_DIR="$state_dir"
+	export LOGS_DIR STATE_DIR
+
+	source_function "get_peer_state_file_path"
+
+	run get_peer_state_file_path "192.168.1.1" "unknown_key"
+	assert_success
+	# Function logs a warning but still returns the path
+	assert_output --partial "${state_dir}/unknown_key_192_168_1_1"
+}
+
+@test "get_peer_state returns default when file missing" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
+
+	source_function "get_peer_state"
+
+	run get_peer_state "192.168.1.1" "failure_count"
 	assert_success
 	assert_output "0"
+
+	# Test with custom default
+	run get_peer_state "192.168.1.1" "failure_count" "99"
+	assert_success
+	assert_output "99"
+}
+
+@test "get_peer_state returns value from existing file" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	echo "42" >"$counter_file"
+
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
+
+	source_function "get_peer_state"
+
+	run get_peer_state "192.168.1.1" "failure_count"
+	assert_success
+	assert_output "42"
+}
+
+@test "get_peer_state handles corrupted file" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	echo "invalid-value" >"$counter_file"
+
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
+
+	source_function "get_peer_state"
+
+	run get_peer_state "192.168.1.1" "failure_count"
+	assert_success
+	# Should return default (0) for corrupted file (function logs warning)
+	assert_output --partial "0"
+	# Verify it ends with 0 (the actual return value)
+	assert [ "${output##*$'\n'}" = "0" ] || [ "$output" = "0" ]
+}
+
+@test "set_peer_state creates file with correct value" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
+
+	source_function "set_peer_state"
+
+	run set_peer_state "192.168.1.1" "failure_count" "7"
+	assert_success
+
+	# Verify file was created with correct value
+	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	assert_file_exist "$counter_file"
+	local count
+	count=$(cat "$counter_file")
+	assert [ "$count" -eq 7 ]
+}
+
+@test "set_peer_state updates existing file" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	echo "5" >"$counter_file"
+
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
+
+	source_function "set_peer_state"
+
+	run set_peer_state "192.168.1.1" "failure_count" "10"
+	assert_success
+
+	# Verify file was updated
+	local count
+	count=$(cat "$counter_file")
+	assert [ "$count" -eq 10 ]
+}
+
+@test "set_peer_state validates numeric values" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
+
+	source_function "set_peer_state"
+
+	# Should fail with invalid value
+	run set_peer_state "192.168.1.1" "failure_count" "not-a-number"
+	assert_failure
+
+	# File should not be created
+	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	assert_file_not_exist "$counter_file"
+}
+
+@test "set_peer_state works with last_bytes" {
+	local state_dir="${TEST_DIR}"
+
+	LOGS_DIR="${state_dir}/logs"
+	STATE_DIR="$state_dir"
+	export LOGS_DIR STATE_DIR
+
+	source_function "set_peer_state"
+
+	run set_peer_state "192.168.1.1" "last_bytes" "123456"
+	assert_success
+
+	# Verify file was created in STATE_DIR
+	local bytes_file="${state_dir}/last_bytes_192_168_1_1"
+	assert_file_exist "$bytes_file"
+	local bytes
+	bytes=$(cat "$bytes_file")
+	assert [ "$bytes" -eq 123456 ]
+}
+
+@test "delete_peer_state removes existing file" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	echo "5" >"$counter_file"
+
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
+
+	source_function "delete_peer_state"
+
+	run delete_peer_state "192.168.1.1" "failure_count"
+	assert_success
+
+	# File should be deleted
+	assert_file_not_exist "$counter_file"
+}
+
+@test "delete_peer_state succeeds when file missing" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
+
+	source_function "delete_peer_state"
+
+	# Should succeed even if file doesn't exist
+	run delete_peer_state "192.168.1.1" "failure_count"
+	assert_success
+}
+
+@test "cleanup_peer_state removes all peer state files" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+	local state_dir="${TEST_DIR}"
+
+	# Create both failure_count and last_bytes files
+	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	local bytes_file="${state_dir}/last_bytes_192_168_1_1"
+	echo "5" >"$counter_file"
+	echo "123456" >"$bytes_file"
+
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="$state_dir"
+	export LOGS_DIR STATE_DIR
+
+	source_function "cleanup_peer_state"
+
+	run cleanup_peer_state "192.168.1.1"
+	assert_success
+
+	# Both files should be deleted
+	assert_file_not_exist "$counter_file"
+	assert_file_not_exist "$bytes_file"
+}
+
+@test "get_peer_state and set_peer_state work together" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
+
+	source_function "get_peer_state"
+	source_function "set_peer_state"
+
+	# Set a value
+	run set_peer_state "192.168.1.1" "failure_count" "15"
+	assert_success
+
+	# Get it back
+	run get_peer_state "192.168.1.1" "failure_count"
+	assert_success
+	assert_output "15"
+}
+
+@test "abstraction layer maintains atomic writes" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
+
+	source_function "set_peer_state"
+
+	# Set a value - should use atomic write (temp file + mv)
+	run set_peer_state "192.168.1.1" "failure_count" "20"
+	assert_success
+
+	# Verify temp file doesn't exist (should have been renamed)
+	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	local temp_file="${counter_file}.tmp"
+	assert_file_not_exist "$temp_file"
+	assert_file_exist "$counter_file"
+}
+
+# ============================================================================
+# Checksum Validation Tests
+# ============================================================================
+
+@test "calculate_file_checksum calculates SHA256 checksum" {
+	local test_file="${TEST_DIR}/test_file"
+	echo "test content" >"$test_file"
+
+	source_function "calculate_file_checksum"
+
+	# Skip if checksum commands not available
+	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; then
+		skip "No checksum command available (sha256sum, shasum, or openssl)"
+	fi
+
+	run calculate_file_checksum "$test_file"
+	assert_success
+	# Checksum should be 64 hex characters (SHA256)
+	# Use grep to verify format since assert_output regex may not work
+	if ! echo "$output" | grep -qE '^[0-9a-f]{64}$'; then
+		fail "Checksum format invalid: $output (expected 64 hex characters)"
+	fi
+}
+
+@test "store_state_file_checksum creates checksum file" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+	local state_file="${logs_dir}/test_state"
+	echo "42" >"$state_file"
+
+	# Skip if checksum commands not available
+	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; then
+		skip "No checksum command available"
+	fi
+
+	source_function "store_state_file_checksum"
+
+	run store_state_file_checksum "$state_file"
+	assert_success
+
+	# Checksum file should be created
+	local checksum_file="${state_file}.checksum"
+	assert_file_exist "$checksum_file"
+}
+
+@test "validate_state_file_checksum validates correct checksum" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+	local state_file="${logs_dir}/test_state"
+	echo "42" >"$state_file"
+
+	# Skip if checksum commands not available
+	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; then
+		skip "No checksum command available"
+	fi
+
+	source_function "store_state_file_checksum"
+	source_function "validate_state_file_checksum"
+
+	# Store checksum
+	store_state_file_checksum "$state_file"
+
+	# Validate should succeed
+	run validate_state_file_checksum "$state_file"
+	assert_success
+}
+
+@test "validate_state_file_checksum detects corruption" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+	local state_file="${logs_dir}/test_state"
+	echo "42" >"$state_file"
+
+	# Skip if checksum commands not available
+	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; then
+		skip "No checksum command available"
+	fi
+
+	source_function "store_state_file_checksum"
+	source_function "validate_state_file_checksum"
+
+	# Store checksum
+	store_state_file_checksum "$state_file"
+
+	# Corrupt the file
+	echo "999" >"$state_file"
+
+	# Validate should fail
+	run validate_state_file_checksum "$state_file"
+	assert_failure
+}
+
+@test "validate_state_file_checksum returns success when checksum file missing" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+	local state_file="${logs_dir}/test_state"
+	echo "42" >"$state_file"
+
+	source_function "validate_state_file_checksum"
+
+	# Should succeed (backward compatibility - no checksum file)
+	run validate_state_file_checksum "$state_file"
+	assert_success
+}
+
+@test "set_peer_state stores checksum after write" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+
+	# Skip if checksum commands not available
+	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; then
+		skip "No checksum command available"
+	fi
+
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
+
+	source_function "set_peer_state"
+
+	run set_peer_state "192.168.1.1" "failure_count" "25"
+	assert_success
+
+	# Checksum file should be created
+	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	local checksum_file="${counter_file}.checksum"
+	assert_file_exist "$checksum_file"
+}
+
+@test "get_peer_state validates checksum before reading" {
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	echo "30" >"$counter_file"
+
+	# Skip if checksum commands not available
+	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; then
+		skip "No checksum command available"
+	fi
+
+	LOGS_DIR="$logs_dir"
+	STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR STATE_DIR
+
+	source_function "get_peer_state"
+	source_function "store_state_file_checksum"
+
+	# Store checksum
+	store_state_file_checksum "$counter_file"
+
+	# Corrupt the file
+	echo "999" >"$counter_file"
+
+	# get_peer_state should detect corruption and return default
+	run get_peer_state "192.168.1.1" "failure_count"
+	assert_success
+	# Should return default (0) due to checksum mismatch (function logs warnings)
+	assert_output --partial "0"
+	# Verify it ends with 0 (the actual return value)
+	assert [ "${output##*$'\n'}" = "0" ] || [ "$output" = "0" ]
+}
+
+@test "check_cooldown validates checksum" {
+	local state_dir="${TEST_DIR}"
+	local cooldown_file="${state_dir}/cooldown_until"
+	local future_time=$(($(date +%s) + 900))
+	echo "$future_time" >"$cooldown_file"
+
+	# Skip if checksum commands not available
+	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; then
+		skip "No checksum command available"
+	fi
+
+	STATE_DIR="$state_dir"
+	COOLDOWN_UNTIL_FILE="$cooldown_file"
+	export STATE_DIR COOLDOWN_UNTIL_FILE
+
+	source_function "check_cooldown"
+	source_function "store_state_file_checksum"
+
+	# Store checksum
+	store_state_file_checksum "$cooldown_file"
+
+	# Corrupt the file
+	echo "invalid" >"$cooldown_file"
+
+	# check_cooldown should detect corruption and remove file
+	run check_cooldown
+	assert_failure # Not in cooldown (file was removed due to corruption)
+	assert_file_not_exist "$cooldown_file"
 }
 
 @test "check_cooldown returns false when cooldown file missing" {
@@ -1017,4 +1442,864 @@ EOF
 
 	assert_success
 	assert_output "*/1 * * * *"
+}
+
+# ============================================================================
+# Tests for config.sh validation functions
+# ============================================================================
+
+@test "parse_config_schema parses complete schema string" {
+	# Source config.sh (which sources config_schema.sh)
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		# Source logging.sh first (required by config.sh)
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	run parse_config_schema "required|integer|min:1|default:5"
+
+	assert_success
+	# Check output has 4 lines
+	local line_count
+	line_count=$(echo "$output" | wc -l | tr -d ' ')
+	assert [ "$line_count" -eq 4 ]
+	# Check each component
+	local required var_type rules default_val
+	{
+		read -r required
+		read -r var_type
+		read -r rules
+		read -r default_val
+	} <<<"$output"
+	assert [ "$required" == "required" ]
+	assert [ "$var_type" == "integer" ]
+	assert [ "$rules" == "min:1" ]
+	assert [ "$default_val" == "default:5" ]
+}
+
+@test "parse_config_schema parses schema with empty rules" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	run parse_config_schema "optional|string||default:test"
+
+	assert_success
+	local required var_type rules default_val
+	{
+		read -r required
+		read -r var_type
+		read -r rules
+		read -r default_val
+	} <<<"$output"
+	assert [ "$required" == "optional" ]
+	assert [ "$var_type" == "string" ]
+	assert [ -z "$rules" ]
+	assert [ "$default_val" == "default:test" ]
+}
+
+@test "parse_config_schema parses schema without default" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	run parse_config_schema "required|string|non-empty"
+
+	assert_success
+	local required var_type rules default_val
+	{
+		read -r required
+		read -r var_type
+		read -r rules
+		read -r default_val || default_val=""
+	} <<<"$output"
+	assert [ "$required" == "required" ]
+	assert [ "$var_type" == "string" ]
+	assert [ "$rules" == "non-empty" ]
+	assert [ -z "$default_val" ]
+}
+
+@test "apply_config_default applies default to empty optional variable" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	# Set up test variable
+	TEST_VAR=""
+	run apply_config_default "TEST_VAR" "" "optional" "default_value"
+
+	assert_success
+	assert_output "default_value"
+	# Note: Variable update verification skipped because run executes in subshell
+	# The function output is verified above, which confirms the default was applied
+}
+
+@test "apply_config_default does not override existing value" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	run apply_config_default "TEST_VAR" "existing_value" "optional" "default_value"
+
+	assert_success
+	assert_output "existing_value"
+}
+
+@test "apply_config_default fails for empty required variable" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	# Mock die function to not exit
+	die() {
+		return 1
+	}
+
+	run apply_config_default "REQUIRED_VAR" "" "required" ""
+
+	assert_failure
+}
+
+@test "apply_config_default allows empty optional variable without default" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	run apply_config_default "TEST_VAR" "" "optional" ""
+
+	assert_success
+	assert_output ""
+}
+
+@test "validate_config_type validates integer type correctly" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	run validate_config_type "TEST_VAR" "123" "integer" "required" ""
+
+	assert_success
+	assert_output "123"
+}
+
+@test "validate_config_type rejects non-numeric integer value" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	# Mock handle_error - when called with ERROR severity, it calls die() which exits
+	# For testing in subshell (via run), we make handle_error exit the subshell
+	# This simulates the real behavior where die() exits the script
+	handle_error() {
+		local severity="$1"
+		local exit_code="${3:-1}"
+		if [[ "$severity" == "ERROR" ]] && [[ "$exit_code" -ne 0 ]]; then
+			# Exit the subshell (run will capture this as failure)
+			exit 1
+		fi
+		return 0
+	}
+
+	run validate_config_type "TEST_VAR" "abc" "integer" "required" ""
+
+	assert_failure
+}
+
+@test "validate_config_type applies default for invalid optional integer" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	# Mock handle_error to suppress log output
+	handle_error() {
+		return 0
+	}
+
+	run validate_config_type "TEST_VAR" "invalid" "integer" "optional" "5"
+
+	assert_success
+	assert_output "5"
+	# Note: Variable update verification skipped because run executes in subshell
+	# The function output is verified above, which confirms the default was applied
+}
+
+@test "validate_config_type accepts string type" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	run validate_config_type "TEST_VAR" "test_string" "string" "required" ""
+
+	assert_success
+	assert_output "test_string"
+}
+
+@test "validate_config_rule validates non-empty rule" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	run validate_config_rule "TEST_VAR" "non_empty_value" "string" "required" "" "non-empty"
+
+	assert_success
+	assert_output "non_empty_value"
+}
+
+@test "validate_config_rule rejects empty value with non-empty rule" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	# Mock die function
+	die() {
+		return 1
+	}
+
+	run validate_config_rule "TEST_VAR" "" "string" "required" "" "non-empty"
+
+	assert_failure
+}
+
+@test "validate_config_rule validates min rule for integer" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	run validate_config_rule "TEST_VAR" "10" "integer" "required" "" "min:5"
+
+	assert_success
+	assert_output "10"
+}
+
+@test "validate_config_rule rejects value below min" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	# Mock die function
+	die() {
+		return 1
+	}
+
+	run validate_config_rule "TEST_VAR" "3" "integer" "required" "" "min:5"
+
+	assert_failure
+}
+
+@test "validate_config_rule validates max rule for integer" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	run validate_config_rule "TEST_VAR" "5" "integer" "required" "" "max:10"
+
+	assert_success
+	assert_output "5"
+}
+
+@test "validate_config_rule rejects value above max" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	# Mock die function
+	die() {
+		return 1
+	}
+
+	run validate_config_rule "TEST_VAR" "15" "integer" "required" "" "max:10"
+
+	assert_failure
+}
+
+@test "validate_config_rule validates values rule" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	run validate_config_rule "TEST_VAR" "1" "integer" "required" "" "values:0,1"
+
+	assert_success
+	assert_output "1"
+}
+
+@test "validate_config_rule rejects value not in allowed values" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	# Mock die function
+	die() {
+		return 1
+	}
+
+	run validate_config_rule "TEST_VAR" "2" "integer" "required" "" "values:0,1"
+
+	assert_failure
+}
+
+@test "validate_config_rule validates relative min rule" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	# Set referenced variable (must be exported for subshell access)
+	export TIER1_THRESHOLD=5
+	run validate_config_rule "TIER2_THRESHOLD" "10" "integer" "required" "" "min:TIER1_THRESHOLD"
+
+	assert_success
+	assert_output "10"
+	unset TIER1_THRESHOLD
+}
+
+@test "validate_config_rules validates multiple rules" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	run validate_config_rules "TEST_VAR" "5" "integer" "required" "" "min:1,max:10"
+
+	assert_success
+	assert_output "5"
+}
+
+@test "validate_config_rules handles empty rules string" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	run validate_config_rules "TEST_VAR" "value" "string" "required" "" ""
+
+	assert_success
+	assert_output "value"
+}
+
+@test "validate_config_rules stops on first failure" {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	# Mock die function
+	die() {
+		return 1
+	}
+
+	run validate_config_rules "TEST_VAR" "3" "integer" "required" "" "min:5,max:10"
+
+	assert_failure
+}
+
+# ============================================================================
+# LOCKFILE ACQUISITION FUNCTION TESTS
+# ============================================================================
+
+# Helper function to source lockfile module and dependencies
+source_lockfile_module() {
+	# Source dependencies in order
+	# shellcheck source=/dev/null
+	source "${LIB_DIR}/constants.sh" 2>/dev/null || true
+	# shellcheck source=/dev/null
+	source "${LIB_DIR}/common.sh" 2>/dev/null || true
+	# shellcheck source=/dev/null
+	source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+	# shellcheck source=/dev/null
+	source "${LIB_DIR}/state.sh" 2>/dev/null || true
+	# shellcheck source=/dev/null
+	source "${LIB_DIR}/lockfile.sh" 2>/dev/null || true
+
+	# Set required environment variables
+	export LOCKFILE="${TEST_DIR}/test.lock"
+	export LOCKFILE_TIMEOUT="${LOCKFILE_TIMEOUT:-300}"
+	export LOG_FILE="${TEST_DIR}/test.log"
+	mkdir -p "$(dirname "$LOG_FILE")"
+}
+
+@test "acquire_lockfile_flock successfully acquires lock when available" {
+	# Skip if flock not available
+	if ! command -v flock >/dev/null 2>&1; then
+		skip "flock command not available"
+	fi
+
+	source_lockfile_module
+
+	# Test function that will be executed after lock acquisition
+	test_main_func() {
+		echo "Lock acquired, executing main function"
+		return 0
+	}
+
+	# Run acquire_lockfile_flock
+	run acquire_lockfile_flock test_main_func
+
+	assert_success
+	assert_output --partial "Lock acquired"
+	# Lockfile should be cleaned up after execution
+	assert_file_not_exist "$LOCKFILE"
+}
+
+@test "acquire_lockfile_flock detects running process and exits gracefully" {
+	# Skip if flock not available
+	if ! command -v flock >/dev/null 2>&1; then
+		skip "flock command not available"
+	fi
+
+	source_lockfile_module
+
+	# Create lockfile with current PID (simulating running process)
+	echo "$(date +%s):$$" >"$LOCKFILE"
+	touch "$LOCKFILE"
+
+	# Test function (should not be executed)
+	test_main_func() {
+		echo "This should not execute"
+		return 0
+	}
+
+	# Run acquire_lockfile_flock - should detect conflict and exit
+	run acquire_lockfile_flock test_main_func
+
+	# Should exit with code 0 (graceful exit, not error)
+	assert_success
+	# Should output warning about lockfile conflict
+	assert_output --partial "already running"
+	# Main function should not have executed
+	refute_output --partial "This should not execute"
+}
+
+@test "acquire_lockfile_flock removes stale lockfile and acquires lock" {
+	# Skip if flock not available
+	if ! command -v flock >/dev/null 2>&1; then
+		skip "flock command not available"
+	fi
+
+	source_lockfile_module
+
+	# Create stale lockfile (old timestamp, non-existent PID)
+	local old_timestamp
+	old_timestamp=$(($(date +%s) - LOCKFILE_TIMEOUT - 10))
+	echo "${old_timestamp}:99999" >"$LOCKFILE"
+	touch -d "@$old_timestamp" "$LOCKFILE" 2>/dev/null || touch "$LOCKFILE"
+
+	# Test function that will be executed after lock acquisition
+	test_main_func() {
+		echo "Lock acquired after stale removal"
+		return 0
+	}
+
+	# Run acquire_lockfile_flock
+	run acquire_lockfile_flock test_main_func
+
+	assert_success
+	assert_output --partial "Lock acquired"
+	# Lockfile should be cleaned up after execution
+	assert_file_not_exist "$LOCKFILE"
+}
+
+@test "acquire_lockfile_flock handles race condition when lockfile removed between check and acquisition" {
+	# Skip if flock not available
+	if ! command -v flock >/dev/null 2>&1; then
+		skip "flock command not available"
+	fi
+
+	source_lockfile_module
+
+	# Test function that will be executed after lock acquisition
+	test_main_func() {
+		echo "Lock acquired"
+		return 0
+	}
+
+	# Create a background process that removes lockfile after a short delay
+	# This simulates a race condition where lockfile is removed between check and acquisition
+	(
+		sleep 0.1
+		rm -f "$LOCKFILE"
+	) &
+	local bg_pid=$!
+
+	# Run acquire_lockfile_flock - should handle race condition gracefully
+	run acquire_lockfile_flock test_main_func
+
+	# Wait for background process
+	wait $bg_pid 2>/dev/null || true
+
+	assert_success
+	# Lockfile should be cleaned up
+	assert_file_not_exist "$LOCKFILE"
+}
+
+@test "acquire_lockfile_flock cleans up lockfile on function exit" {
+	# Skip if flock not available
+	if ! command -v flock >/dev/null 2>&1; then
+		skip "flock command not available"
+	fi
+
+	source_lockfile_module
+
+	# Test function that exits successfully
+	test_main_func() {
+		echo "Function executed"
+		return 0
+	}
+
+	# Run acquire_lockfile_flock
+	run acquire_lockfile_flock test_main_func
+
+	assert_success
+	# Lockfile should be cleaned up even on successful exit
+	assert_file_not_exist "$LOCKFILE"
+}
+
+@test "acquire_lockfile_flock cleans up lockfile on function error" {
+	# Skip if flock not available
+	if ! command -v flock >/dev/null 2>&1; then
+		skip "flock command not available"
+	fi
+
+	source_lockfile_module
+
+	# Test function that exits with error
+	test_main_func() {
+		echo "Function executed with error"
+		return 1
+	}
+
+	# Run acquire_lockfile_flock
+	run acquire_lockfile_flock test_main_func
+
+	# Function returns error (main_func returns 1), but lockfile should still be cleaned up
+	# Note: acquire_lockfile_flock runs in a subshell that propagates exit codes from main_func
+	# The EXIT trap ensures cleanup happens regardless of exit code
+	assert_file_not_exist "$LOCKFILE"
+}
+
+@test "acquire_lockfile_fallback successfully acquires lock when available" {
+	source_lockfile_module
+
+	# Test function that will be executed after lock acquisition
+	test_main_func() {
+		echo "Lock acquired, executing main function"
+		return 0
+	}
+
+	# Run acquire_lockfile_fallback
+	run acquire_lockfile_fallback test_main_func
+
+	assert_success
+	assert_output --partial "Lock acquired"
+	# Lockfile should be cleaned up after execution
+	assert_file_not_exist "$LOCKFILE"
+}
+
+@test "acquire_lockfile_fallback detects running process and exits gracefully" {
+	source_lockfile_module
+
+	# Create lockfile with current PID (simulating running process)
+	echo "$(date +%s):$$" >"$LOCKFILE"
+	touch "$LOCKFILE"
+
+	# Test function (should not be executed)
+	test_main_func() {
+		echo "This should not execute"
+		return 0
+	}
+
+	# Run acquire_lockfile_fallback - should detect conflict and exit
+	run acquire_lockfile_fallback test_main_func
+
+	# Should exit with code 0 (graceful exit, not error)
+	assert_success
+	# Should output warning about lockfile conflict
+	assert_output --partial "already running"
+	# Main function should not have executed
+	refute_output --partial "This should not execute"
+}
+
+@test "acquire_lockfile_fallback removes stale lockfile and acquires lock" {
+	source_lockfile_module
+
+	# Create stale lockfile (old timestamp, non-existent PID)
+	local old_timestamp
+	old_timestamp=$(($(date +%s) - LOCKFILE_TIMEOUT - 10))
+	echo "${old_timestamp}:99999" >"$LOCKFILE"
+	touch -d "@$old_timestamp" "$LOCKFILE" 2>/dev/null || touch "$LOCKFILE"
+
+	# Test function that will be executed after lock acquisition
+	test_main_func() {
+		echo "Lock acquired after stale removal"
+		return 0
+	}
+
+	# Run acquire_lockfile_fallback
+	run acquire_lockfile_fallback test_main_func
+
+	assert_success
+	assert_output --partial "Lock acquired"
+	# Lockfile should be cleaned up after execution
+	assert_file_not_exist "$LOCKFILE"
+}
+
+@test "acquire_lockfile_fallback handles race condition when lockfile created between check and acquisition" {
+	source_lockfile_module
+
+	# Test function that will be executed after lock acquisition
+	test_main_func() {
+		echo "Lock acquired"
+		return 0
+	}
+
+	# Create a background process that creates lockfile with current PID after a short delay
+	# This simulates a race condition where another process creates lockfile between check and acquisition
+	# Timing is unpredictable - either we get the lock first, or the bg process creates it first
+	(
+		sleep 0.01
+		echo "$(date +%s):$$" >"$LOCKFILE"
+		touch "$LOCKFILE"
+	) &
+	local bg_pid=$!
+
+	# Run acquire_lockfile_fallback - should handle race condition gracefully
+	run acquire_lockfile_fallback test_main_func
+
+	# Wait for background process to complete
+	wait $bg_pid 2>/dev/null || true
+	# Give a tiny bit more time for file system operations
+	sleep 0.01
+
+	# Should exit with code 0 (graceful exit, not error)
+	assert_success
+
+	# Result depends on timing - both outcomes are valid:
+	# 1. We got the lock first (before bg process created it) - lockfile should be cleaned up
+	# 2. Bg process created lockfile first - should detect conflict and exit gracefully
+	if echo "$output" | grep -q "already running"; then
+		# Detected conflict - this is valid behavior
+		refute_output --partial "Lock acquired"
+	else
+		# Successfully acquired lock - verify it was cleaned up
+		# Note: bg process may create lockfile after our cleanup, so we check before final cleanup
+		assert_output --partial "Lock acquired"
+	fi
+
+	# Clean up any remaining lockfile from background process
+	rm -f "$LOCKFILE"
+}
+
+@test "acquire_lockfile_fallback retries once when lockfile has dead PID" {
+	source_lockfile_module
+
+	# Test function that will be executed after lock acquisition
+	test_main_func() {
+		echo "Lock acquired after retry"
+		return 0
+	}
+
+	# Create lockfile with non-existent PID (will be detected as dead, not stale by time)
+	# This tests the retry logic when PID is dead but lockfile is recent
+	echo "$(date +%s):99999" >"$LOCKFILE"
+	touch "$LOCKFILE"
+
+	# Run acquire_lockfile_fallback - should detect dead PID, remove lockfile, and retry
+	run acquire_lockfile_fallback test_main_func
+
+	# Should succeed after retry
+	assert_success
+	assert_output --partial "Lock acquired"
+	# Lockfile should be cleaned up after execution
+	assert_file_not_exist "$LOCKFILE"
+}
+
+@test "acquire_lockfile_fallback cleans up lockfile on function exit" {
+	source_lockfile_module
+
+	# Test function that exits successfully
+	test_main_func() {
+		echo "Function executed"
+		return 0
+	}
+
+	# Run acquire_lockfile_fallback
+	run acquire_lockfile_fallback test_main_func
+
+	assert_success
+	# Lockfile should be cleaned up even on successful exit
+	assert_file_not_exist "$LOCKFILE"
+}
+
+@test "acquire_lockfile_fallback cleans up lockfile on function error" {
+	source_lockfile_module
+
+	# Test function that exits with error
+	test_main_func() {
+		echo "Function executed with error"
+		return 1
+	}
+
+	# Run acquire_lockfile_fallback
+	run acquire_lockfile_fallback test_main_func
+
+	# Function returns error, but lockfile should still be cleaned up by trap
+	assert_file_not_exist "$LOCKFILE"
+}
+
+@test "acquire_lockfile_fallback handles lockfile with dead PID (not stale by time)" {
+	source_lockfile_module
+
+	# Create lockfile with recent timestamp but non-existent PID
+	# This tests the case where PID is dead but lockfile is not stale by time
+	echo "$(date +%s):99999" >"$LOCKFILE"
+	touch "$LOCKFILE"
+
+	# Test function that will be executed after lock acquisition
+	test_main_func() {
+		echo "Lock acquired after dead PID removal"
+		return 0
+	}
+
+	# Run acquire_lockfile_fallback
+	run acquire_lockfile_fallback test_main_func
+
+	assert_success
+	assert_output --partial "Lock acquired"
+	# Lockfile should be cleaned up after execution
+	assert_file_not_exist "$LOCKFILE"
+}
+
+@test "acquire_lockfile_fallback handles lockfile with dead PID during atomic creation retry" {
+	source_lockfile_module
+
+	# Test function that will be executed after lock acquisition
+	test_main_func() {
+		echo "Lock acquired after retry"
+		return 0
+	}
+
+	# Create lockfile with dead PID before atomic creation attempt
+	# This tests the retry logic when create_lockfile_atomically fails
+	# and the lockfile contains a dead PID
+	echo "$(date +%s):99999" >"$LOCKFILE"
+	touch "$LOCKFILE"
+
+	# Run acquire_lockfile_fallback - should detect dead PID during retry, remove lockfile, and succeed
+	run acquire_lockfile_fallback test_main_func
+
+	# Should succeed after retry
+	assert_success
+	assert_output --partial "Lock acquired"
+	# Lockfile should be cleaned up after execution
+	assert_file_not_exist "$LOCKFILE"
 }

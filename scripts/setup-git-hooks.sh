@@ -62,4 +62,3 @@ echo ""
 echo "Successfully installed $HOOKS_INSTALLED git hook(s)."
 echo ""
 echo "Hooks will now run automatically on git operations."
-

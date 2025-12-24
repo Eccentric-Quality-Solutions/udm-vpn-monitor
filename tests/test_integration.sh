@@ -42,7 +42,8 @@ EOF
 	# Should not increment failure counter
 	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
 	if [[ -f "$failure_counter" ]]; then
-		local count=$(cat "$failure_counter")
+		local count
+		count=$(cat "$failure_counter")
 		assert [ "$count" -eq 0 ]
 	fi
 
@@ -353,7 +354,9 @@ EOF
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 
 	# Mock ping - succeeds
-	local mock_ping=$(mock_ping "192.168.1.1" "1")
+	local mock_ping
+	# shellcheck disable=SC2034 # mock_ping is used by add_mock_to_path
+	mock_ping=$(mock_ping "192.168.1.1" "1")
 	add_mock_to_path
 
 	# Create test version of script
@@ -366,7 +369,8 @@ EOF
 	# Should not increment failure counter
 	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
 	if [[ -f "$failure_counter" ]]; then
-		local count=$(cat "$failure_counter")
+		local count
+		count=$(cat "$failure_counter")
 		assert [ "$count" -eq 0 ]
 	fi
 
@@ -394,10 +398,13 @@ EOF
 	echo "5" >"$failure_counter"
 
 	# Create restart file with 3 recent restarts (at limit)
-	local now=$(date +%s)
-	echo "$now" >>"$restart_file"
-	echo "$now" >>"$restart_file"
-	echo "$now" >>"$restart_file"
+	local now
+	now=$(date +%s)
+	{
+		echo "$now"
+		echo "$now"
+		echo "$now"
+	} >>"$restart_file"
 
 	# Mock ip command - VPN down
 	local mock_ip="${TEST_DIR}/ip"
@@ -410,7 +417,8 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock ipsec
-	local mock_ipsec=$(mock_ipsec)
+	local mock_ipsec
+	mock_ipsec=$(mock_ipsec)
 	add_mock_to_path
 
 	# Create test version of script
@@ -577,13 +585,15 @@ EOF
 	assert_success
 	# Should update byte counter
 	assert_file_exist "$last_bytes_file"
-	local bytes=$(cat "$last_bytes_file")
+	local bytes
+	bytes=$(cat "$last_bytes_file")
 	assert [ "$bytes" = "2000" ]
 
 	# Should not increment failure counter
 	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
 	if [[ -f "$failure_counter" ]]; then
-		local count=$(cat "$failure_counter")
+		local count
+		count=$(cat "$failure_counter")
 		assert [ "$count" -eq 0 ]
 	fi
 
@@ -664,7 +674,8 @@ EOF
 	assert_success
 	# Failure counter should be reset to 0
 	if [[ -f "$failure_counter" ]]; then
-		local count=$(cat "$failure_counter")
+		local count
+		count=$(cat "$failure_counter")
 		assert [ "$count" -eq 0 ]
 	fi
 	# Should log recovery message
@@ -706,7 +717,8 @@ EOF
 	assert_success
 	# Failure counter should be incremented
 	if [[ -f "$failure_counter" ]]; then
-		local count=$(cat "$failure_counter")
+		local count
+		count=$(cat "$failure_counter")
 		assert [ "$count" -eq 1 ]
 	fi
 	# Should log failure

@@ -225,7 +225,7 @@ EOF
 	# Per-peer failure counters with sanitized IPs
 	local peer1_ip="192.168.1.1"
 	local peer1_sanitized="192_168_1_1"
-	local peer2_ip="10.0.0.1"
+	# Note: peer2_ip not used directly in this test, only peer2_sanitized for file paths
 	local peer2_sanitized="10_0_0_1"
 	local failure_counter1="${TEST_DIR}/logs/failure_counter_${peer1_sanitized}"
 	local failure_counter2="${TEST_DIR}/logs/failure_counter_${peer2_sanitized}"
@@ -331,7 +331,8 @@ EOF
 	echo "5" >"$failure_counter"
 
 	# Mock ip command to return SA with increasing bytes (VPN up)
-	local mock_ip=$(mock_ip_xfrm_state "$peer_ip" "1000")
+	local mock_ip
+	mock_ip=$(mock_ip_xfrm_state "$peer_ip" "1000")
 	add_mock_to_path
 
 	# Create test version of script with custom paths
@@ -486,6 +487,7 @@ EOF
 
 	# Mock ping command
 	local mock_ping
+	# shellcheck disable=SC2034 # mock_ping is used by add_mock_to_path
 	mock_ping=$(mock_ping "192.168.1.1" "1")
 	add_mock_to_path
 

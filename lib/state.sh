@@ -92,6 +92,237 @@ sanitize_peer_ip() {
 	echo "$ip" | tr '.' '_' | tr ':' '_'
 }
 
+# Get file path for a peer state key
+#
+# Returns the full file path for a per-peer state key.
+# Handles different storage locations for different state types:
+#   - failure_count: stored in LOGS_DIR
+#   - last_bytes: stored in STATE_DIR
+#
+# Arguments:
+#   $1: Peer IP address
+#   $2: State key name (e.g., "failure_count", "last_bytes")
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the full file path to stdout
+#
+# Examples:
+#   path=$(get_peer_state_file_path "203.0.113.1" "failure_count")
+#   # Returns: ${LOGS_DIR}/failure_counter_203_0_113_1
+#   path=$(get_peer_state_file_path "203.0.113.1" "last_bytes")
+#   # Returns: ${STATE_DIR}/last_bytes_203_0_113_1
+#
+# Note:
+#   Requires LOGS_DIR, STATE_DIR, and sanitize_peer_ip to be set
+#   Used internally by get_peer_state and set_peer_state
+get_peer_state_file_path() {
+	local peer_ip="$1"
+	local key="$2"
+	local peer_sanitized
+	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
+
+	case "$key" in
+	failure_count)
+		echo "${LOGS_DIR}/failure_counter_${peer_sanitized}"
+		;;
+	last_bytes)
+		echo "${STATE_DIR}/last_bytes_${peer_sanitized}"
+		;;
+	*)
+		handle_error "WARNING" "Unknown peer state key: $key" 0
+		echo "${STATE_DIR}/${key}_${peer_sanitized}"
+		;;
+	esac
+}
+
+# Get peer state value
+#
+# Unified getter for per-peer state values (failure_count, last_bytes, etc.).
+# Returns default value (0 for numeric, empty for others) if file doesn't exist.
+#
+# Arguments:
+#   $1: Peer IP address
+#   $2: State key name (e.g., "failure_count", "last_bytes")
+#   $3: Default value (optional, defaults to "0" for numeric keys)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the state value to stdout (or default if not found)
+#
+# Examples:
+#   count=$(get_peer_state "203.0.113.1" "failure_count")
+#   bytes=$(get_peer_state "203.0.113.1" "last_bytes")
+#
+# Note:
+#   Requires get_peer_state_file_path to be set
+#   Validates numeric values and returns default if corrupted
+get_peer_state() {
+	local peer_ip="$1"
+	local key="$2"
+	local default_value="${3:-0}"
+	local state_file
+	state_file=$(get_peer_state_file_path "$peer_ip" "$key")
+
+	if [[ -f "$state_file" ]]; then
+		# Validate checksum first (if checksum file exists)
+		if ! validate_state_file_checksum "$state_file"; then
+			# Checksum validation failed - treat as corrupted
+			handle_error "WARNING" "Peer state file checksum mismatch (treating as corrupted): $state_file" 0
+			echo "$default_value"
+			return 0
+		fi
+
+		local value
+		value=$(cat "$state_file" 2>/dev/null || echo "$default_value")
+		# Validate numeric keys
+		case "$key" in
+		failure_count | last_bytes)
+			if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+				handle_error "WARNING" "Corrupted peer state file (expected integer): $state_file" 0
+				echo "$default_value"
+				return 0
+			fi
+			;;
+		esac
+		echo "$value"
+	else
+		echo "$default_value"
+	fi
+}
+
+# Set peer state value
+#
+# Unified setter for per-peer state values with atomic writes.
+# Uses temporary file and mv for atomic write to prevent corruption.
+#
+# Arguments:
+#   $1: Peer IP address
+#   $2: State key name (e.g., "failure_count", "last_bytes")
+#   $3: Value to set
+#
+# Returns:
+#   0: Success
+#   1: Failed to write (logged but doesn't exit)
+#
+# Side effects:
+#   - Creates or updates per-peer state file (atomic write)
+#   - Logs errors if write fails
+#
+# Examples:
+#   set_peer_state "203.0.113.1" "failure_count" "5"
+#   set_peer_state "203.0.113.1" "last_bytes" "123456"
+#
+# Note:
+#   Requires get_peer_state_file_path to be set
+#   Uses temporary file and mv for atomic write to prevent corruption on interruption
+#   Validates numeric keys before writing
+set_peer_state() {
+	local peer_ip="$1"
+	local key="$2"
+	local value="$3"
+	local state_file
+	state_file=$(get_peer_state_file_path "$peer_ip" "$key")
+
+	# Validate numeric keys
+	case "$key" in
+	failure_count | last_bytes)
+		if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+			handle_error "ERROR" "Invalid value for $key (expected integer): $value" 0
+			return 1
+		fi
+		;;
+	esac
+
+	# Atomic write: write to temp file first, then rename
+	if ! (echo "$value" >"${state_file}.tmp" && mv "${state_file}.tmp" "$state_file"); then
+		handle_error "ERROR" "Failed to update peer state for $peer_ip (key: $key, file: $state_file)" 0
+		return 1
+	fi
+
+	# Store checksum after successful write
+	store_state_file_checksum "$state_file" || true
+
+	return 0
+}
+
+# Delete peer state value
+#
+# Removes a per-peer state file (for cleanup when peer is removed).
+#
+# Arguments:
+#   $1: Peer IP address
+#   $2: State key name (e.g., "failure_count", "last_bytes")
+#
+# Returns:
+#   0: Success (or file didn't exist)
+#   1: Failed to delete
+#
+# Side effects:
+#   - Removes per-peer state file if it exists
+#   - Removes associated checksum file if it exists
+#
+# Examples:
+#   delete_peer_state "203.0.113.1" "failure_count"
+#   delete_peer_state "203.0.113.1" "last_bytes"
+#
+# Note:
+#   Requires get_peer_state_file_path to be set
+#   Safe to call if file doesn't exist (returns 0)
+delete_peer_state() {
+	local peer_ip="$1"
+	local key="$2"
+	local state_file
+	state_file=$(get_peer_state_file_path "$peer_ip" "$key")
+	local checksum_file="${state_file}.checksum"
+
+	if [[ -f "$state_file" ]]; then
+		if ! rm -f "$state_file"; then
+			handle_error "WARNING" "Failed to delete peer state file: $state_file" 0
+			return 1
+		fi
+	fi
+
+	# Also remove checksum file if it exists
+	if [[ -f "$checksum_file" ]]; then
+		rm -f "$checksum_file" 2>/dev/null || true
+	fi
+
+	return 0
+}
+
+# Clean up state files for a removed peer
+#
+# Removes all state files associated with a peer (failure_count, last_bytes, etc.).
+# Useful when a peer is removed from configuration.
+#
+# Arguments:
+#   $1: Peer IP address
+#
+# Returns:
+#   0: Always succeeds (logs warnings but continues)
+#
+# Side effects:
+#   - Removes all per-peer state files
+#   - Logs warnings for any failures
+#
+# Examples:
+#   cleanup_peer_state "203.0.113.1"
+#
+# Note:
+#   Requires delete_peer_state to be set
+#   Safe to call even if no state files exist
+cleanup_peer_state() {
+	local peer_ip="$1"
+	delete_peer_state "$peer_ip" "failure_count"
+	delete_peer_state "$peer_ip" "last_bytes"
+	# Add other state keys here as needed
+}
+
 # Get current failure counter for a specific peer
 #
 # Reads the current consecutive failure count from the per-peer state file.
@@ -112,20 +343,12 @@ sanitize_peer_ip() {
 #   echo "Failure count: $count"
 #
 # Note:
-#   Requires LOGS_DIR and sanitize_peer_ip to be set (from config.sh and state.sh)
+#   Uses get_peer_state() abstraction layer internally
 #   Counter file: ${LOGS_DIR}/failure_counter_<sanitized_peer_ip>
 #   Returns 0 if file doesn't exist (cat fails) or is empty
 get_failure_count() {
 	local peer_ip="$1"
-	local peer_sanitized
-	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
-	local counter_file="${LOGS_DIR}/failure_counter_${peer_sanitized}"
-
-	if [[ -f "$counter_file" ]]; then
-		cat "$counter_file"
-	else
-		echo "0"
-	fi
+	get_peer_state "$peer_ip" "failure_count" "0"
 }
 
 # Increment failure counter for a specific peer
@@ -152,23 +375,19 @@ get_failure_count() {
 #   echo "Failure count incremented to: $new_count"
 #
 # Note:
-#   Requires LOGS_DIR and get_failure_count to be set (from config.sh and state.sh)
-#   Reads current count, increments by 1, writes back to file atomically
-#   Uses temporary file and mv for atomic write to prevent corruption on interruption
+#   Uses get_peer_state() and set_peer_state() abstraction layer internally
+#   Reads current count, increments by 1, writes back atomically
 increment_failure() {
 	local peer_ip="$1"
-	local peer_sanitized
-	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
-	local counter_file="${LOGS_DIR}/failure_counter_${peer_sanitized}"
 	local count
-	count=$(get_failure_count "$peer_ip")
+	count=$(get_peer_state "$peer_ip" "failure_count" "0")
 	local new_count=$((count + 1))
-	# Atomic write: write to temp file first, then rename
-	if ! (echo "$new_count" >"${counter_file}.tmp" && mv "${counter_file}.tmp" "$counter_file"); then
-		handle_error "ERROR" "Failed to update failure counter for $peer_ip" 0
-		# Continue execution but log the error
+	if set_peer_state "$peer_ip" "failure_count" "$new_count"; then
+		echo "$new_count"
+	else
+		# If set failed, return current count (already logged error)
+		echo "$count"
 	fi
-	echo "$new_count"
 }
 
 # Reset failure counter for a specific peer
@@ -192,19 +411,11 @@ increment_failure() {
 #   # Resets counter to 0 for this peer
 #
 # Note:
-#   Requires LOGS_DIR and sanitize_peer_ip to be set (from config.sh and state.sh)
+#   Uses set_peer_state() abstraction layer internally
 #   Called when VPN recovers after failures
-#   Uses temporary file and mv for atomic write to prevent corruption on interruption
 reset_failure_count() {
 	local peer_ip="$1"
-	local peer_sanitized
-	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
-	local counter_file="${LOGS_DIR}/failure_counter_${peer_sanitized}"
-	# Atomic write: write to temp file first, then rename
-	if ! (echo "0" >"${counter_file}.tmp" && mv "${counter_file}.tmp" "$counter_file"); then
-		handle_error "ERROR" "Failed to reset failure counter for $peer_ip" 0
-		# Continue execution but log the error
-	fi
+	set_peer_state "$peer_ip" "failure_count" "0" || true
 }
 
 # Get timestamp plus N minutes
@@ -295,6 +506,14 @@ check_cooldown() {
 		return 1 # Not in cooldown
 	fi
 
+	# Validate checksum if checksum file exists
+	if ! validate_state_file_checksum "$COOLDOWN_UNTIL_FILE"; then
+		# Checksum validation failed - treat as corrupted, remove file
+		handle_error "WARNING" "Cooldown file checksum mismatch (removing corrupted file): $COOLDOWN_UNTIL_FILE" 0
+		rm -f "$COOLDOWN_UNTIL_FILE" "${COOLDOWN_UNTIL_FILE}.checksum" 2>/dev/null || true
+		return 1 # Not in cooldown (file was corrupted)
+	fi
+
 	local cooldown_until
 	cooldown_until=$(cat "$COOLDOWN_UNTIL_FILE")
 	local now
@@ -345,6 +564,10 @@ set_cooldown() {
 		handle_error "ERROR" "Failed to set cooldown period (file: $COOLDOWN_UNTIL_FILE)" 0
 		# Continue execution but log the error
 	fi
+
+	# Store checksum after successful write
+	store_state_file_checksum "$COOLDOWN_UNTIL_FILE" || true
+
 	log_message "INFO" "Cooldown period set for $minutes minutes"
 }
 
@@ -382,6 +605,14 @@ check_rate_limit() {
 	# Get restart count file (format: timestamp per line)
 	if [[ ! -f "$RESTART_COUNT_FILE" ]]; then
 		return 0 # No previous restarts, allow
+	fi
+
+	# Validate checksum if checksum file exists
+	if ! validate_state_file_checksum "$RESTART_COUNT_FILE"; then
+		# Checksum validation failed - treat as corrupted, reset file
+		handle_error "WARNING" "Restart count file checksum mismatch (resetting corrupted file): $RESTART_COUNT_FILE" 0
+		rm -f "$RESTART_COUNT_FILE" "${RESTART_COUNT_FILE}.checksum" 2>/dev/null || true
+		return 0 # Allow restart (file was corrupted, assume no recent restarts)
 	fi
 
 	# Count restarts in the last hour
@@ -426,6 +657,10 @@ record_restart() {
 	timestamp=$(date +%s)
 	echo "$timestamp" >>"$RESTART_COUNT_FILE"
 
+	# Store checksum after append (before cleanup)
+	# This ensures checksum is updated even if cleanup fails
+	store_state_file_checksum "$RESTART_COUNT_FILE" || true
+
 	# Keep only last 24 hours of timestamps (cleanup old entries)
 	# Prevents restart count file from growing indefinitely
 	local one_day_ago
@@ -443,12 +678,168 @@ record_restart() {
 		rm -f "${RESTART_COUNT_FILE}.tmp" 2>/dev/null || true
 		return 0 # Continue even if cleanup fails
 	fi
+
+	# Store checksum after successful cleanup (final state)
+	store_state_file_checksum "$RESTART_COUNT_FILE" || true
+}
+
+# Calculate checksum for a file
+#
+# Calculates SHA256 checksum for a file to detect corruption.
+# Uses sha256sum if available, falls back to shasum -a 256 (macOS), then openssl.
+#
+# Arguments:
+#   $1: File path to calculate checksum for
+#
+# Returns:
+#   0: Success (checksum calculated)
+#   1: Failed to calculate checksum (command not available)
+#
+# Output:
+#   Prints checksum (hex string) to stdout, or empty string if failed
+#
+# Examples:
+#   checksum=$(calculate_file_checksum "$state_file")
+#
+# Note:
+#   Requires sha256sum, shasum, or openssl command to be available
+#   Returns empty string if checksum calculation fails
+calculate_file_checksum() {
+	local file="$1"
+	local checksum=""
+
+	if [[ ! -f "$file" ]]; then
+		return 1
+	fi
+
+	# Try sha256sum (Linux)
+	if command -v sha256sum >/dev/null 2>&1; then
+		checksum=$(sha256sum "$file" 2>/dev/null | cut -d' ' -f1)
+	# Try shasum -a 256 (macOS/BSD)
+	elif command -v shasum >/dev/null 2>&1; then
+		checksum=$(shasum -a 256 "$file" 2>/dev/null | cut -d' ' -f1)
+	# Try openssl (fallback)
+	elif command -v openssl >/dev/null 2>&1; then
+		checksum=$(openssl dgst -sha256 "$file" 2>/dev/null | cut -d' ' -f2)
+	fi
+
+	if [[ -n "$checksum" ]]; then
+		echo "$checksum"
+		return 0
+	else
+		return 1
+	fi
+}
+
+# Store checksum for a state file
+#
+# Calculates and stores SHA256 checksum in a separate .checksum file.
+# Used to detect corruption when reading state files.
+#
+# Arguments:
+#   $1: State file path
+#
+# Returns:
+#   0: Success (checksum stored)
+#   1: Failed to calculate or store checksum
+#
+# Side effects:
+#   Creates/updates .checksum file alongside state file
+#
+# Examples:
+#   store_state_file_checksum "$state_file"
+#
+# Note:
+#   Checksum file is stored as ${state_file}.checksum
+#   Uses atomic write (temp file + mv) to prevent corruption
+store_state_file_checksum() {
+	local state_file="$1"
+	local checksum_file="${state_file}.checksum"
+	local checksum
+
+	if [[ ! -f "$state_file" ]]; then
+		return 1
+	fi
+
+	checksum=$(calculate_file_checksum "$state_file")
+	if [[ -z "$checksum" ]]; then
+		# Checksum calculation failed (command not available)
+		# This is not fatal - checksum validation is optional
+		return 1
+	fi
+
+	# Atomic write: write checksum to temp file first, then rename
+	if ! (echo "$checksum" >"${checksum_file}.tmp" && mv "${checksum_file}.tmp" "$checksum_file"); then
+		handle_error "WARNING" "Failed to store checksum for state file: $state_file" 0
+		return 1
+	fi
+
+	return 0
+}
+
+# Validate checksum for a state file
+#
+# Validates that a state file's checksum matches the stored checksum.
+# Detects corruption from disk errors, power loss, etc.
+#
+# Arguments:
+#   $1: State file path to validate
+#
+# Returns:
+#   0: Checksum is valid (or checksum file doesn't exist - backward compatible)
+#   1: Checksum is invalid (file corrupted)
+#
+# Side effects:
+#   Logs warnings if checksum validation fails
+#
+# Examples:
+#   if validate_state_file_checksum "$state_file"; then
+#       echo "File is valid"
+#   fi
+#
+# Note:
+#   Returns 0 (valid) if checksum file doesn't exist (backward compatibility)
+#   Only validates if checksum file exists and checksum calculation is available
+validate_state_file_checksum() {
+	local state_file="$1"
+	local checksum_file="${state_file}.checksum"
+
+	# If checksum file doesn't exist, assume valid (backward compatibility)
+	if [[ ! -f "$checksum_file" ]]; then
+		return 0
+	fi
+
+	# If state file doesn't exist, checksum is invalid
+	if [[ ! -f "$state_file" ]]; then
+		return 1
+	fi
+
+	# Calculate current checksum
+	local current_checksum
+	current_checksum=$(calculate_file_checksum "$state_file")
+	if [[ -z "$current_checksum" ]]; then
+		# Checksum calculation not available - skip validation
+		return 0
+	fi
+
+	# Read stored checksum
+	local stored_checksum
+	stored_checksum=$(cat "$checksum_file" 2>/dev/null | tr -d '[:space:]')
+
+	# Compare checksums
+	if [[ "$current_checksum" == "$stored_checksum" ]]; then
+		return 0
+	else
+		handle_error "WARNING" "State file checksum mismatch (file may be corrupted): $state_file" 0
+		return 1
+	fi
 }
 
 # Validate state file format
 #
 # Validates that a state file exists, is readable, and contains valid format.
 # Checks for corruption and ensures file format matches expected type.
+# Also validates checksum if checksum file exists.
 #
 # Arguments:
 #   $1: State file path to validate
@@ -467,6 +858,7 @@ record_restart() {
 #
 # Note:
 #   Requires log_message to be available (from logging.sh)
+#   Validates both format and checksum (if checksum file exists)
 validate_state_file() {
 	local file="$1"
 	local expected_format="${2:-integer}"
@@ -479,6 +871,12 @@ validate_state_file() {
 	# Check file is readable
 	if [[ ! -r "$file" ]]; then
 		handle_error "WARNING" "State file is not readable: $file"
+		return 1
+	fi
+
+	# Validate checksum first (if checksum file exists)
+	if ! validate_state_file_checksum "$file"; then
+		# Checksum validation failed - file is corrupted
 		return 1
 	fi
 
@@ -554,6 +952,19 @@ validate_state() {
 			[[ -f "$counter_file" ]] || continue
 
 			if ! validate_state_file "$counter_file" "integer"; then
+				validation_failed=1
+			fi
+		done
+	fi
+
+	# Validate per-peer byte counter files (if any exist)
+	if [[ -d "$STATE_DIR" ]]; then
+		local bytes_file
+		for bytes_file in "${STATE_DIR}"/last_bytes_*; do
+			# Check if glob matched actual files
+			[[ -f "$bytes_file" ]] || continue
+
+			if ! validate_state_file "$bytes_file" "integer"; then
 				validation_failed=1
 			fi
 		done
