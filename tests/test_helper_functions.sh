@@ -1253,7 +1253,7 @@ EOF
 	assert_file_exist "$cache_file"
 	assert [ "$(cat "$cache_file")" = "site-a" ]
 
-	# Remove ipsec mock - second call should use cache
+	# Remove ipsec mock - second call should use cache (tests cache-first behavior)
 	rm -f "$mock_ipsec"
 	# Ensure STATE_DIR is still exported for second call
 	export STATE_DIR
@@ -1263,14 +1263,10 @@ EOF
 	if [[ "${output:-}" != "site-a" ]]; then
 		echo "Expected output: site-a" >&2
 		echo "Actual output: [${output:-}]" >&2
-		echo "DEBUG: STATE_DIR in test=$STATE_DIR" >&2
-		echo "DEBUG: cache_file=$cache_file" >&2
-		echo "DEBUG: cache exists=$([ -f "$cache_file" ] && echo yes || echo no)" >&2
-		if [[ -f "$cache_file" ]]; then
-			echo "DEBUG: cache content=[$(cat "$cache_file")]" >&2
-		fi
 		return 1
 	fi
+	# Verify cache was used (ipsec was removed, so cache must have been used)
+	assert_file_exist "$cache_file"
 }
 
 @test "discover_connection_name returns empty when ipsec command not available" {
@@ -1281,15 +1277,25 @@ EOF
 	PATH="/usr/bin:/bin"
 	export STATE_DIR="${TEST_DIR}"
 
+	# Ensure no cache exists from previous tests (test isolation)
+	local cache_file="${TEST_DIR}/connection_name_192_168_1_1"
+	rm -f "$cache_file"
+
 	run discover_connection_name "192.168.1.1"
 
 	assert_success
 	assert_output ""
+	# Verify no cache was created (since ipsec was unavailable)
+	assert [ ! -f "$cache_file" ]
 }
 
 @test "discover_connection_name handles ipsec status failure gracefully" {
 	source_function "discover_connection_name"
 	source_function "sanitize_peer_ip"
+
+	# Ensure no cache exists from previous tests (test isolation)
+	local cache_file="${TEST_DIR}/connection_name_192_168_1_1"
+	rm -f "$cache_file"
 
 	# Mock ipsec command - fails
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -1307,6 +1313,40 @@ EOF
 
 	assert_success
 	assert_output ""
+	# Verify no cache was created (since ipsec failed)
+	assert [ ! -f "$cache_file" ]
+}
+
+@test "discover_connection_name uses cache when ipsec unavailable (cache-first behavior)" {
+	# This test explicitly verifies the cache-first behavior fix:
+	# Cache should be checked BEFORE ipsec availability check
+	source_function "discover_connection_name"
+	source_function "sanitize_peer_ip"
+
+	STATE_DIR="${TEST_DIR}"
+	export STATE_DIR
+
+	# Pre-populate cache with a connection name
+	local cache_file="${TEST_DIR}/connection_name_192_168_1_1"
+	echo "cached-connection" >"$cache_file"
+
+	# Ensure ipsec is not in PATH (simulating ipsec unavailable)
+	PATH="/usr/bin:/bin"
+	export PATH
+
+	# Function should return cached value even though ipsec is unavailable
+	run discover_connection_name "192.168.1.1"
+
+	assert_success
+	# Manually verify output (assert_output has scoping issues)
+	if [[ "${output:-}" != "cached-connection" ]]; then
+		echo "Expected output: cached-connection" >&2
+		echo "Actual output: [${output:-}]" >&2
+		return 1
+	fi
+	# Verify cache still exists
+	assert_file_exist "$cache_file"
+	assert [ "$(cat "$cache_file")" = "cached-connection" ]
 }
 
 # ============================================================================
@@ -2302,4 +2342,79 @@ source_lockfile_module() {
 	assert_output --partial "Lock acquired"
 	# Lockfile should be cleaned up after execution
 	assert_file_not_exist "$LOCKFILE"
+}
+
+# ============================================================================
+# Constants Tests
+# ============================================================================
+
+@test "constants are properly loaded and have correct values" {
+	# Source constants.sh
+	# shellcheck source=/dev/null
+	source "${LIB_DIR}/constants.sh" 2>/dev/null || {
+		skip "constants.sh not found"
+	}
+
+	# Verify IPv4 constants
+	assert [ "$MAX_IPV4_OCTET" -eq 255 ]
+	assert [ "$IPV4_OCTET_COUNT" -eq 4 ]
+
+	# Verify IPv6 constants
+	assert [ "$MAX_IPV6_SEGMENTS" -eq 8 ]
+	assert [ "$MIN_IPV6_SEGMENT_HEX_DIGITS" -eq 1 ]
+	assert [ "$MAX_IPV6_SEGMENT_HEX_DIGITS" -eq 4 ]
+
+	# Verify ping constants
+	assert [ "$PING_PACKET_LOSS_THRESHOLD" -eq 100 ]
+
+	# Verify xfrm constants
+	assert [ "$XFRM_OUTPUT_CONTEXT_LINES" -eq 10 ]
+	assert [ "$XFRM_RECOVERY_SLEEP_SECONDS" -eq 3 ]
+
+	# Verify time constants
+	assert [ "$SECONDS_PER_HOUR" -eq 3600 ]
+	assert [ "$SECONDS_PER_DAY" -eq 86400 ]
+}
+
+@test "IPv4 validation uses MAX_IPV4_OCTET constant" {
+	# Source the function (which loads constants)
+	# shellcheck source=/dev/null
+	source_function "validate_ipv4"
+
+	# Test boundary values
+	# 255 should be valid (MAX_IPV4_OCTET)
+	run validate_ipv4 "255.255.255.255"
+	assert_success
+
+	# 256 should be invalid (> MAX_IPV4_OCTET)
+	run validate_ipv4 "256.1.1.1"
+	assert_failure
+
+	# 0 should be valid (within range)
+	run validate_ipv4 "0.0.0.0"
+	assert_success
+}
+
+@test "IPv6 validation uses hex digit constants" {
+	# Source the function (which loads constants)
+	# shellcheck source=/dev/null
+	source_function "validate_ipv6"
+
+	# Test valid IPv6 with 1-4 hex digits per segment (MIN-MAX range)
+	run validate_ipv6 "1:2:3:4:5:6:7:8"
+	assert_success
+
+	run validate_ipv6 "a:b:c:d:e:f:1:2"
+	assert_success
+
+	run validate_ipv6 "abcd:ef01:2345:6789:abcd:ef01:2345:6789"
+	assert_success
+
+	# Test invalid IPv6 with >4 hex digits per segment (> MAX_IPV6_SEGMENT_HEX_DIGITS)
+	run validate_ipv6 "12345:db8::1"
+	assert_failure
+
+	# Test invalid IPv6 with triple colon (compression format issue)
+	run validate_ipv6 "2001:db8:::1"
+	assert_failure
 }

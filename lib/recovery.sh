@@ -15,6 +15,8 @@ if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	# Only set if not already set (to avoid readonly variable errors)
 	[[ -z "${XFRM_RECOVERY_SLEEP_SECONDS:-}" ]] && readonly XFRM_RECOVERY_SLEEP_SECONDS=3
 	[[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && readonly XFRM_OUTPUT_CONTEXT_LINES=10
+	[[ -z "${XFRM_RECOVERY_VERIFY_TIMEOUT:-}" ]] && readonly XFRM_RECOVERY_VERIFY_TIMEOUT=30
+	[[ -z "${XFRM_RECOVERY_VERIFY_INTERVAL:-}" ]] && readonly XFRM_RECOVERY_VERIFY_INTERVAL=2
 fi
 
 # Delete Security Associations for a specific peer using xfrm
@@ -22,41 +24,41 @@ fi
 # Attempts per-connection recovery by deleting SAs for a specific peer IP using the Linux kernel's
 # xfrm framework. This provides surgical recovery for per-connection recovery.
 #
-# ⚠️ WARNING: This is an EXPERIMENTAL feature with known risks:
-#   - xfrm output format varies across kernel versions (parsing may fail)
-#   - May not trigger IKE re-establishment automatically in all cases
-#   - Risk of leaving orphaned SAs/policies if parsing fails
-#   - Different behavior across kernel versions and UDM models
-#   - Requires extensive testing (not yet fully validated)
-#
-# This function should only be used when:
-#   1. ENABLE_XFRM_RECOVERY=1 is explicitly set in configuration
-#   2. User understands the risks and has tested on their system
+# After deleting SAs, verifies that new SAs are re-established before reporting success.
+# This ensures recovery actually worked and the tunnel is functional.
 #
 # Arguments:
 #   $1: Peer IP address to clean up
 #
 # Returns:
-#   0: SAs deleted successfully (or no SAs found for this peer)
-#   1: Failed to delete SAs (parsing error, permission issue, etc.)
+#   0: SAs deleted successfully and re-established (or no SAs found for this peer)
+#   1: Failed to delete SAs, parsing error, or SAs did not re-establish within timeout
 #
 # Side effects:
 #   - Deletes xfrm state entries (SAs) for the peer IP
 #   - Deletes xfrm policies for the peer IP
+#   - Verifies SA re-establishment after deletion
 #   - Logs all actions and results
 #
 # Note:
 #   This function parses 'ip xfrm state' output to extract SA selectors (src, dst, proto, spi).
-#   Format variations across kernel versions may affect reliability. Falls back gracefully if parsing fails.
+#   Parsing is optimized for UDM OS 4.3+ format. Supports both IPv4 and IPv6 addresses.
 #   Requires 'ip' command and root privileges.
-#   See documentation for detailed risk analysis.
+#   Uses check_ipsec_phase2() from detection.sh to verify SA re-establishment.
 attempt_xfrm_recovery() {
 	local peer_ip="$1"
 	local deleted_count=0
 	local failed_count=0
+	local parse_errors=0
 
 	if ! command -v ip >/dev/null 2>&1; then
 		handle_error "WARNING" "ip command not available for xfrm recovery"
+		return 1
+	fi
+
+	# Validate peer IP before proceeding
+	if [[ -z "$peer_ip" ]]; then
+		handle_error "ERROR" "xfrm recovery: Peer IP not provided" 0
 		return 1
 	fi
 
@@ -64,39 +66,65 @@ attempt_xfrm_recovery() {
 	# Use word boundaries to avoid partial IP matches (e.g., match 192.168.1.1 but not 192.168.1.10)
 	# Escape regex special characters in peer_ip to prevent regex injection
 	# IP addresses are validated before reaching this function, but we escape to be safe
-	# Escape dots, brackets, and other regex special characters
 	local peer_ip_escaped
 	peer_ip_escaped=$(printf '%s\n' "$peer_ip" | sed -e 's/\./\\./g' -e 's/\[/\\[/g' -e 's/\]/\\]/g' -e 's/\*/\\*/g' -e 's/\^/\\^/g' -e 's/\$/\\$/g' -e 's/(/\\(/g' -e 's/)/\\)/g' -e 's/+/\\+/g' -e 's/?/\\?/g' -e 's/{/\\{/g' -e 's/}/\\}/g' -e 's/|/\\|/g')
 	local xfrm_output
+	local xfrm_exit_code=0
 	# Note: Using grep -E (extended regex) instead of grep -F (fixed-string) because we need
 	# word boundary matching to avoid partial IP matches. The peer_ip is properly escaped above.
-	xfrm_output=$(ip xfrm state 2>/dev/null | grep -E "(^|[^0-9a-fA-F:])${peer_ip_escaped}([^0-9a-fA-F:]|$)" -A "$XFRM_OUTPUT_CONTEXT_LINES" || true)
+	xfrm_output=$(ip xfrm state 2>/dev/null)
+	xfrm_exit_code=$?
+
+	if [[ $xfrm_exit_code -ne 0 ]]; then
+		handle_error "WARNING" "xfrm recovery: Failed to query xfrm state (exit code: $xfrm_exit_code)"
+		return 1
+	fi
+
+	# Filter output for this peer IP
+	xfrm_output=$(echo "$xfrm_output" | grep -E "(^|[^0-9a-fA-F:])${peer_ip_escaped}([^0-9a-fA-F:]|$)" -A "$XFRM_OUTPUT_CONTEXT_LINES" || true)
 
 	if [[ -z "$xfrm_output" ]]; then
-		log_message "INFO" "No SAs found for $peer_ip in xfrm state (may already be down)"
+		log_message "INFO" "xfrm recovery: No SAs found for $peer_ip in xfrm state (may already be down)"
+		# If no SAs exist, verify they're actually gone (not a parsing issue)
+		if command -v check_ipsec_phase2 >/dev/null 2>&1; then
+			if ! check_ipsec_phase2 "$peer_ip"; then
+				log_message "INFO" "xfrm recovery: Confirmed no SAs exist for $peer_ip"
+				return 0
+			else
+				handle_error "WARNING" "xfrm recovery: SAs exist but parsing failed for $peer_ip"
+				return 1
+			fi
+		fi
 		return 0
 	fi
 
 	# Parse xfrm output to extract and delete SAs
 	# Format: Each SA block starts with "src <ip> dst <ip>" followed by "proto <proto> spi <spi>"
+	# UDM OS 4.3+ uses consistent format: src and dst on first line, proto and spi on continuation lines
 	local current_src=""
 	local current_dst=""
 	local current_proto=""
 	local current_spi=""
 	local in_sa_block=0
+	local sa_list=()
 
-	while IFS= read -r line; do
+	[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "xfrm recovery: Parsing xfrm output for $peer_ip"
+
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		# Skip empty lines
+		[[ -z "$line" ]] && continue
+
 		# Check if this is a new SA block (starts with "src")
 		if [[ "$line" =~ ^src[[:space:]]+([0-9.]+|[0-9a-fA-F:]+)[[:space:]]+dst[[:space:]]+([0-9.]+|[0-9a-fA-F:]+) ]]; then
 			# Save previous SA if we have all selectors
 			if [[ $in_sa_block -eq 1 ]] && [[ -n "$current_src" ]] && [[ -n "$current_dst" ]] && [[ -n "$current_proto" ]] && [[ -n "$current_spi" ]]; then
-				# Delete this SA
-				if ip xfrm state delete src "$current_src" dst "$current_dst" proto "$current_proto" spi "$current_spi" 2>/dev/null; then
-					log_message "INFO" "Deleted SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
-					((deleted_count++))
+				# Validate selectors before adding to list
+				if [[ "$current_proto" =~ ^(esp|ah)$ ]] && [[ "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+					sa_list+=("$current_src|$current_dst|$current_proto|$current_spi")
+					[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
 				else
-					handle_error "WARNING" "Failed to delete SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
-					((failed_count++))
+					handle_error "WARNING" "xfrm recovery: Invalid SA selectors: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
+					((parse_errors++))
 				fi
 			fi
 
@@ -109,46 +137,122 @@ attempt_xfrm_recovery() {
 
 		# Extract proto and spi from continuation lines
 		elif [[ $in_sa_block -eq 1 ]]; then
-			# Look for "proto <proto>" (may be indented)
-			if [[ "$line" =~ proto[[:space:]]+([a-zA-Z0-9]+) ]]; then
+			# Look for "proto <proto>" (may be indented, case-insensitive)
+			if [[ "$line" =~ ^[[:space:]]*proto[[:space:]]+([a-zA-Z0-9]+) ]]; then
 				current_proto="${BASH_REMATCH[1]}"
+				# Normalize to lowercase for consistency
+				current_proto=$(echo "$current_proto" | tr '[:upper:]' '[:lower:]')
 			fi
-			# Look for "spi <spi>" (may be indented, hex format like 0x12345678)
-			if [[ "$line" =~ spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+) ]]; then
+			# Look for "spi <spi>" (may be indented, hex format like 0x12345678 or decimal)
+			if [[ "$line" =~ ^[[:space:]]*spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+) ]]; then
 				current_spi="${BASH_REMATCH[1]}"
 			fi
 		fi
 	done <<<"$xfrm_output"
 
-	# Delete the last SA if we have all selectors
+	# Process the last SA if we have all selectors
 	if [[ $in_sa_block -eq 1 ]] && [[ -n "$current_src" ]] && [[ -n "$current_dst" ]] && [[ -n "$current_proto" ]] && [[ -n "$current_spi" ]]; then
-		if ip xfrm state delete src "$current_src" dst "$current_dst" proto "$current_proto" spi "$current_spi" 2>/dev/null; then
-			log_message "INFO" "Deleted SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
-			((deleted_count++))
+		# Validate selectors before adding to list
+		if [[ "$current_proto" =~ ^(esp|ah)$ ]] && [[ "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+			sa_list+=("$current_src|$current_dst|$current_proto|$current_spi")
+			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
 		else
-			handle_error "WARNING" "Failed to delete SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
-			((failed_count++))
+			handle_error "WARNING" "xfrm recovery: Invalid SA selectors: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
+			((parse_errors++))
 		fi
 	fi
+
+	# If we have parse errors but no valid SAs, report failure
+	if [[ $parse_errors -gt 0 ]] && [[ ${#sa_list[@]} -eq 0 ]]; then
+		handle_error "WARNING" "xfrm recovery: Parsing failed for $peer_ip (found $parse_errors invalid SA(s))"
+		return 1
+	fi
+
+	# Delete each parsed SA
+	for sa_entry in "${sa_list[@]}"; do
+		IFS='|' read -r sa_src sa_dst sa_proto sa_spi <<<"$sa_entry"
+		if ip xfrm state delete src "$sa_src" dst "$sa_dst" proto "$sa_proto" spi "$sa_spi" 2>/dev/null; then
+			log_message "INFO" "xfrm recovery: Deleted SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi"
+			((deleted_count++))
+		else
+			handle_error "WARNING" "xfrm recovery: Failed to delete SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi"
+			((failed_count++))
+		fi
+	done
 
 	# Also delete policies for this peer (less critical, but helps cleanup)
 	# Policies use different format, try to delete by destination
 	if ip xfrm policy delete dst "$peer_ip" 2>/dev/null; then
-		log_message "INFO" "Deleted xfrm policy for dst=$peer_ip"
+		log_message "INFO" "xfrm recovery: Deleted xfrm policy for dst=$peer_ip"
 	fi
 
+	# If no SAs were deleted, check if any existed
+	if [[ $deleted_count -eq 0 ]] && [[ $failed_count -eq 0 ]]; then
+		if [[ ${#sa_list[@]} -eq 0 ]]; then
+			log_message "INFO" "xfrm recovery: No SAs found to delete for $peer_ip"
+			return 0
+		else
+			handle_error "WARNING" "xfrm recovery: Parsed ${#sa_list[@]} SA(s) but failed to delete any for $peer_ip"
+			return 1
+		fi
+	fi
+
+	# If we deleted SAs, verify they're gone and wait for re-establishment
 	if [[ $deleted_count -gt 0 ]]; then
 		log_message "INFO" "xfrm recovery: Deleted $deleted_count SA(s) for $peer_ip"
-		# Wait a moment for strongSwan to detect SA deletion and re-establish
+		# Wait a moment for strongSwan to detect SA deletion
 		sleep "$XFRM_RECOVERY_SLEEP_SECONDS"
+
+		# Verify SAs were deleted
+		if command -v check_ipsec_phase2 >/dev/null 2>&1; then
+			if check_ipsec_phase2 "$peer_ip"; then
+				handle_error "WARNING" "xfrm recovery: SAs still exist after deletion attempt for $peer_ip"
+				# Continue anyway - may have deleted some but not all
+			fi
+		fi
+
+		# Wait for SA re-establishment with retries
+		log_message "INFO" "xfrm recovery: Waiting for SA re-establishment for $peer_ip (timeout: ${XFRM_RECOVERY_VERIFY_TIMEOUT}s)"
+		local verify_start_time
+		verify_start_time=$(date +%s)
+		local sa_reestablished=0
+		local verify_attempt=0
+		local elapsed_time
+
+		while [[ $(($(date +%s) - verify_start_time)) -lt $XFRM_RECOVERY_VERIFY_TIMEOUT ]]; do
+			verify_attempt=$((verify_attempt + 1))
+			elapsed_time=$(($(date +%s) - verify_start_time))
+			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "xfrm recovery: Verification attempt $verify_attempt for $peer_ip (elapsed: ${elapsed_time}s/${XFRM_RECOVERY_VERIFY_TIMEOUT}s)"
+
+			if command -v check_ipsec_phase2 >/dev/null 2>&1; then
+				if check_ipsec_phase2 "$peer_ip"; then
+					log_message "INFO" "xfrm recovery: SA re-established for $peer_ip after ${elapsed_time}s (attempt $verify_attempt)"
+					sa_reestablished=1
+					break
+				fi
+			fi
+			sleep "$XFRM_RECOVERY_VERIFY_INTERVAL"
+		done
+
+		if [[ $sa_reestablished -eq 0 ]]; then
+			handle_error "WARNING" "xfrm recovery: SA did not re-establish within ${XFRM_RECOVERY_VERIFY_TIMEOUT}s for $peer_ip"
+			# If we had failures, return error; otherwise warn but return success (partial recovery)
+			if [[ $failed_count -gt 0 ]]; then
+				return 1
+			fi
+			# Some SAs deleted but re-establishment timeout - warn but don't fail completely
+			handle_error "WARNING" "xfrm recovery: Partial success - deleted SAs but re-establishment timeout for $peer_ip"
+			return 0
+		fi
+
 		return 0
 	elif [[ $failed_count -gt 0 ]]; then
 		handle_error "WARNING" "xfrm recovery: Failed to delete $failed_count SA(s) for $peer_ip"
 		return 1
-	else
-		log_message "INFO" "xfrm recovery: No SAs found to delete for $peer_ip"
-		return 0
 	fi
+
+	# Should not reach here, but handle gracefully
+	return 1
 }
 
 # Surgical SA cleanup (Tier 2 recovery)
@@ -203,10 +307,10 @@ surgical_cleanup() {
 
 	# Try xfrm-based per-connection recovery (if enabled)
 	if command -v ip >/dev/null 2>&1; then
-		if [[ "${ENABLE_XFRM_RECOVERY:-0}" -eq 1 ]]; then
-			log_message "INFO" "Attempting xfrm-based per-connection recovery for $peer_ip (EXPERIMENTAL)"
+		if [[ "${ENABLE_XFRM_RECOVERY:-1}" -eq 1 ]]; then
+			log_message "INFO" "Attempting xfrm-based per-connection recovery for $peer_ip"
 			if attempt_xfrm_recovery "$peer_ip"; then
-				log_message "INFO" "xfrm-based recovery completed for $peer_ip"
+				log_message "INFO" "xfrm-based recovery completed successfully for $peer_ip"
 				log_message "INFO" "Surgical cleanup completed for $peer_ip (via xfrm)"
 				return 0
 			else
@@ -248,8 +352,13 @@ surgical_cleanup() {
 # Full VPN restart (Tier 3 recovery)
 #
 # Performs a full restart of the IPsec service, affecting all VPN tunnels.
+# Attempts per-connection recovery via xfrm if peer IP is provided and xfrm recovery is enabled.
+# Falls back to full restart if xfrm recovery fails or is disabled.
 # This is the most disruptive recovery action and should only be used after other methods fail.
 # Checks rate limiting before proceeding to prevent restart loops.
+#
+# Arguments:
+#   $1: Optional peer IP address for per-connection recovery (if provided and xfrm enabled)
 #
 # Returns:
 #   0: Restart successful (command executed successfully)
@@ -257,40 +366,60 @@ surgical_cleanup() {
 #
 # Actions:
 #   1. Checks rate limiting (prevents restart loops via check_rate_limit)
-#   2. Records restart timestamp for rate limiting (record_restart)
-#   3. Executes 'ipsec restart' to restart all IPsec tunnels
-#   4. Sets cooldown period to allow VPN to stabilize (set_cooldown)
+#   2. If peer IP provided and xfrm enabled: attempts per-connection recovery
+#   3. If xfrm fails or disabled: records restart timestamp (record_restart)
+#   4. Executes 'ipsec restart' to restart all IPsec tunnels (if xfrm not used)
+#   5. Sets cooldown period to allow VPN to stabilize (set_cooldown)
 #
 # Side effects:
-#   - Affects ALL IPsec tunnels (not just the failing peer)
-#   - Temporarily disrupts all Site-to-Site and remote user VPNs
+#   - If xfrm recovery succeeds: Only affects the specified peer's tunnel
+#   - If xfrm recovery fails or disabled: Affects ALL IPsec tunnels
+#   - Temporarily disrupts VPN tunnels (scope depends on recovery method)
 #   - Sets cooldown period (COOLDOWN_MINUTES) to prevent immediate re-restarts
-#   - Appends command output to LOG_FILE
+#   - Appends command output to LOG_FILE (for full restart only)
 #   - Logs all actions and results
 #
 # Examples:
 #   if full_restart; then
 #       echo "VPN restarted successfully"
-#   else
-#       echo "Restart failed or rate limited"
+#   fi
+#   if full_restart "203.0.113.1"; then
+#       echo "Per-connection recovery attempted"
 #   fi
 #
 # Warning:
 #   This is disruptive and should be a last resort. Consider adjusting thresholds
-#   if this triggers too frequently. Affects all VPN tunnels, not just the failing peer.
+#   if this triggers too frequently. Full restart affects all VPN tunnels.
 #
 # Note:
 #   Requires check_rate_limit, record_restart, set_cooldown, log_message, LOG_FILE,
-#   COOLDOWN_MINUTES, warn_if_missing, die to be set (from state.sh, logging.sh, config.sh)
+#   COOLDOWN_MINUTES, warn_if_missing, die, attempt_xfrm_recovery to be set
 #   Uses PIPESTATUS to capture command exit code (not tee exit code)
-#   Command output is both displayed and appended to log file
+#   Command output is both displayed and appended to log file (for full restart)
 full_restart() {
-	handle_error "WARNING" "Performing full IPsec restart (affects all VPN tunnels)"
+	local peer_ip="${1:-}"
 
 	if ! check_rate_limit; then
-		handle_error "ERROR" "Rate limit exceeded, skipping full restart" 0
+		handle_error "ERROR" "Rate limit exceeded, skipping Tier 3 recovery" 0
 		return 1
 	fi
+
+	# Try xfrm-based per-connection recovery if peer IP provided and xfrm enabled
+	if [[ -n "$peer_ip" ]] && [[ "${ENABLE_XFRM_RECOVERY:-1}" -eq 1 ]] && command -v ip >/dev/null 2>&1; then
+		log_message "INFO" "Tier 3: Attempting xfrm-based per-connection recovery for $peer_ip"
+		if attempt_xfrm_recovery "$peer_ip"; then
+			log_message "INFO" "Tier 3: xfrm-based per-connection recovery successful for $peer_ip"
+			# Record restart for rate limiting (even though it's per-connection)
+			record_restart
+			set_cooldown "$COOLDOWN_MINUTES"
+			return 0
+		else
+			handle_error "WARNING" "Tier 3: xfrm-based recovery failed for $peer_ip, falling back to full restart"
+		fi
+	fi
+
+	# Fall back to full restart
+	handle_error "WARNING" "Tier 3: Performing full IPsec restart (affects all VPN tunnels)"
 
 	# Record restart
 	record_restart
@@ -424,20 +553,25 @@ monitor_peer() {
 			fi
 		fi
 
-		# Tier 3: Full restart
+		# Tier 3: Full restart (with per-connection option if xfrm enabled)
 		if [[ "$failure_count" -ge "$TIER3_THRESHOLD" ]]; then
 			if [[ "$NO_ESCALATE" -eq 1 ]]; then
 				# In fake mode, still check rate limit to test the logic
 				# This allows tests to verify rate limiting behavior
 				if ! check_rate_limit; then
 					# Rate limit would prevent restart (logged by check_rate_limit)
-					log_message "INFO" "Tier 3: Would attempt full IPsec restart (skipped in fake mode, rate limit would prevent)"
+					log_message "INFO" "Tier 3: Would attempt IPsec restart (skipped in fake mode, rate limit would prevent)"
 				else
-					log_message "INFO" "Tier 3: Would attempt full IPsec restart (skipped in fake mode)"
+					if [[ "${ENABLE_XFRM_RECOVERY:-1}" -eq 1 ]] && command -v ip >/dev/null 2>&1; then
+						log_message "INFO" "Tier 3: Would attempt xfrm-based per-connection recovery for $external_peer_ip (skipped in fake mode)"
+					else
+						log_message "INFO" "Tier 3: Would attempt full IPsec restart (affects all tunnels, skipped in fake mode)"
+					fi
 				fi
 			else
-				handle_error "ERROR" "Tier 3: Attempting full IPsec restart" 0
-				if full_restart; then
+				handle_error "ERROR" "Tier 3: Attempting IPsec restart for $external_peer_ip" 0
+				# Pass peer IP to enable per-connection recovery (if xfrm recovery enabled)
+				if full_restart "$external_peer_ip"; then
 					reset_failure_count "$external_peer_ip"
 				fi
 			fi

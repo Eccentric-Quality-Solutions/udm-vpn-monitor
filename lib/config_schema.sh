@@ -70,8 +70,8 @@ declare -A CONFIG_SCHEMA=(
 	["KEEPALIVE_PING_COUNT"]="optional|integer|min:1|max:5|default:1"
 	["DEBUG"]="optional|integer|values:0,1|default:0"
 	["NO_ESCALATE"]="optional|integer|values:0,1|default:0"
-	# EXPERIMENTAL: xfrm-based recovery (disabled by default due to risks)
-	["ENABLE_XFRM_RECOVERY"]="optional|integer|values:0,1|default:0"
+	# xfrm-based per-connection recovery (enabled by default for UDM OS 4.3+)
+	["ENABLE_XFRM_RECOVERY"]="optional|integer|values:0,1|default:1"
 	["LOCKFILE_TIMEOUT"]="optional|integer|min:60|max:3600|default:300"
 	["LOG_FILE"]="optional|string||default:"
 	["STATE_DIR"]="optional|string||default:"

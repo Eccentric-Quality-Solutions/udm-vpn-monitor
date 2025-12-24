@@ -42,3 +42,8 @@ readonly XFRM_OUTPUT_CONTEXT_LINES=10
 # Sleep delay (in seconds) after xfrm SA deletion to allow IKE re-establishment
 # Gives strongSwan time to detect SA deletion and initiate re-establishment
 readonly XFRM_RECOVERY_SLEEP_SECONDS=3
+# Maximum time (in seconds) to wait for SA re-establishment after deletion
+# Verification checks are performed with retries up to this timeout
+readonly XFRM_RECOVERY_VERIFY_TIMEOUT=30
+# Interval (in seconds) between verification retry attempts
+readonly XFRM_RECOVERY_VERIFY_INTERVAL=2

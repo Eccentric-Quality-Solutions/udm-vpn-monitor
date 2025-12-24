@@ -481,13 +481,15 @@ The system uses a three-tier recovery approach that escalates based on consecuti
 
 1. **Tier 1 (Logging)**: Logs the failure for monitoring
 2. **Tier 2 (Surgical Cleanup)**: 
-   - **Experimental option (xfrm enabled)**: Uses xfrm-based per-connection recovery via `ip xfrm state delete` (⚠️ EXPERIMENTAL, requires `ENABLE_XFRM_RECOVERY=1`)
-   - **Default (xfrm disabled or failed)**: Uses `ipsec reload` (affects all connections)
+   - **Default (xfrm enabled)**: Uses xfrm-based per-connection recovery via `ip xfrm state delete` (surgical, affects only failing tunnel)
+   - **Fallback (xfrm disabled or failed)**: Uses `ipsec reload` (affects all connections)
 3. **Tier 3 (Full Restart)**: 
-   - Uses `ipsec restart` to restart all IPsec tunnels
+   - **Default (xfrm enabled)**: Attempts xfrm-based per-connection recovery first (surgical, affects only failing tunnel)
+   - **Fallback (xfrm disabled or failed)**: Uses `ipsec restart` to restart all IPsec tunnels
 
-**Important**: Each peer IP has its own independent failure counter, allowing per-peer monitoring. However, recovery actions:
-- **Default**: Tier 2 affects all connections (uses `ipsec reload`) - **per-connection recovery is not supported by default**
+**Important**: Each peer IP has its own independent failure counter, allowing per-peer monitoring. Recovery actions:
+- **Default**: Tier 2 and Tier 3 use per-connection recovery via xfrm (affects only the failing tunnel)
+- **Fallback**: If xfrm recovery fails or is disabled, falls back to `ipsec reload`/`restart` (affects all tunnels)
 - **Experimental option**: xfrm-based per-connection recovery exists but is disabled by default (⚠️ EXPERIMENTAL, requires `ENABLE_XFRM_RECOVERY=1`)
 
 ⚠️ **Warning**: xfrm-based recovery is experimental and disabled by default. Only enable if you understand the risks and have tested on your system.

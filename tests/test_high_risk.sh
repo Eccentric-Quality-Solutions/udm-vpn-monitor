@@ -5383,8 +5383,8 @@ EOF
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
 
 	# Cached name should be used (cache takes priority over discovery)
-	# Code at lib/detection.sh:684-691 checks cache first and returns early if found
-	# Discovery (lines 694-732) only runs if cache is empty/missing
+	# Code at lib/detection.sh:694-702 checks cache first and returns early if found
+	# Discovery (lines 704-742) only runs if cache is empty/missing
 	assert_file_exist "$log_file"
 	# Verify cache file still contains cached name (not overwritten)
 	if [[ -f "$cache_file" ]]; then

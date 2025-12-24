@@ -72,8 +72,8 @@ graph TB
     
     subgraph "Recovery Layer"
         Tier1[Tier 1: Logging]
-        Tier2[Tier 2: Surgical Cleanup<br/>xfrm recovery (experimental)<br/>ipsec reload (default)<br/>All Tunnels]
-        Tier3[Tier 3: Full Restart<br/>ipsec restart<br/>Affects All Tunnels]
+        Tier2[Tier 2: Surgical Cleanup<br/>xfrm recovery (default)<br/>ipsec reload (fallback)<br/>Per-Connection]
+        Tier3[Tier 3: Full Restart<br/>xfrm recovery (default)<br/>ipsec restart (fallback)<br/>Per-Connection]
     end
     
     subgraph "Safety Mechanisms"
@@ -238,8 +238,11 @@ stateDiagram-v2
     state Tier3 {
         [*] --> CheckRateLimit
         CheckRateLimit --> RateLimited: Limit Exceeded
-        CheckRateLimit --> RecordRestart: Within Limit
-        RecordRestart --> RestartIpsec
+        CheckRateLimit --> CheckXfrm3: Within Limit
+        CheckXfrm3 --> AttemptXfrm3: Xfrm Enabled
+        CheckXfrm3 --> RestartIpsec: Xfrm Disabled
+        AttemptXfrm3 --> RestartIpsec: Failure
+        AttemptXfrm3 --> SetCooldown: Success
         RestartIpsec --> SetCooldown
         SetCooldown --> [*]
         RateLimited --> [*]
@@ -371,11 +374,12 @@ graph TB
 - **Why**: Gradual escalation prevents unnecessary disruption
 - **Tiers**: Log → Cleanup → Restart
 - **Tier 2 Details**: 
-  - Experimental: xfrm-based per-connection recovery (uses `ip xfrm state delete`) if `ENABLE_XFRM_RECOVERY=1` (disabled by default)
-  - Default: `ipsec reload` (all connections)
+  - Default: xfrm-based per-connection recovery (uses `ip xfrm state delete`) if `ENABLE_XFRM_RECOVERY=1` (enabled by default)
+  - Fallback: `ipsec reload` (all connections) if xfrm fails or disabled
 - **Tier 3 Details**: 
-  - Uses `ipsec restart` (affects all tunnels)
-- **Benefit**: Most issues resolved without full restart, with experimental per-connection recovery option available
+  - Default: xfrm-based per-connection recovery (uses `ip xfrm state delete`) if `ENABLE_XFRM_RECOVERY=1` (enabled by default)
+  - Fallback: `ipsec restart` (affects all tunnels) if xfrm fails or disabled
+- **Benefit**: Most issues resolved without full restart, with per-connection recovery enabled by default for UDM OS 4.3+
 
 ### 4. Per-Peer State Tracking
 - **Why**: Multiple peers need independent monitoring and recovery
@@ -434,8 +438,8 @@ graph TB
 2. **Logging**: All errors logged with context
 3. **Fallbacks**: 
    - Detection: Multiple methods (xfrm → ipsec)
-   - Tier 2 Recovery: xfrm recovery (experimental, if enabled) → ipsec reload (default)
-   - Tier 3 Recovery: ipsec restart
+   - Tier 2 Recovery: xfrm recovery (default, per-connection) → ipsec reload (fallback, all connections)
+   - Tier 3 Recovery: xfrm recovery (default, per-connection) → ipsec restart (fallback, all connections)
 4. **Validation**: Input validation prevents injection attacks
 5. **State Recovery**: Stale lockfiles automatically cleaned up
 6. **Graceful Degradation**: If preferred tool unavailable, falls back to alternative without failing
