@@ -24,5 +24,7 @@ These are some of the Linux utilities that we have to work with on a UDM running
 - expr
 - iptables
 - iptables-save
+- systemctl
+- systemd
 
-We do not have: logread, systemctl, swanctl
+We do not have: logread, swanctl

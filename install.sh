@@ -360,7 +360,9 @@ EOF
 # Side effects:
 #   - Copies vpn-monitor.sh to installation directory
 #   - Copies lib/ directory with all library modules to installation directory
+#   - Copies vpn-keepalive.sh to installation directory (if available)
 #   - Copies analyze-logs.sh to installation directory (if available)
+#   - Copies check-utilities.sh to installation directory (if available)
 #   - Sets executable permissions on scripts
 #   - Installs config file (may prompt user in interactive mode)
 install_scripts() {
@@ -401,6 +403,13 @@ install_scripts() {
 		cp "${INSTALL_SCRIPT_DIR}/analyze-logs.sh" "${INSTALL_DIR}/analyze-logs.sh"
 		chmod +x "${INSTALL_DIR}/analyze-logs.sh"
 		log_info "Installed analyze-logs.sh (log analysis utility)"
+	fi
+
+	# Copy utility checker script (optional utility)
+	if [[ -f "${INSTALL_SCRIPT_DIR}/check-utilities.sh" ]]; then
+		cp "${INSTALL_SCRIPT_DIR}/check-utilities.sh" "${INSTALL_DIR}/check-utilities.sh"
+		chmod +x "${INSTALL_DIR}/check-utilities.sh"
+		log_info "Installed check-utilities.sh (utility availability checker)"
 	fi
 
 	# Handle config file installation
@@ -880,6 +889,87 @@ verify_installation() {
 	fi
 }
 
+# Validate configuration after installation
+#
+# Checks if EXTERNAL_PEER_IPS is configured in the config file.
+# If empty and not in silent mode, prompts the user to configure it.
+# This helps catch configuration issues early during installation.
+#
+# Returns:
+#   0: Configuration is valid (or silent mode)
+#   1: Configuration is invalid (EXTERNAL_PEER_IPS is empty)
+#
+# Side effects:
+#   - May prompt user for EXTERNAL_PEER_IPS if empty and not in silent mode
+#   - Logs warnings if configuration is invalid
+validate_config_after_install() {
+	local config_file="${INSTALL_DIR}/${CONFIG_NAME}"
+
+	# Skip validation in silent mode or if config file doesn't exist
+	if [[ $SILENT -eq 1 ]] || [[ ! -f "$config_file" ]]; then
+		return 0
+	fi
+
+	# Extract EXTERNAL_PEER_IPS value from config file
+	local external_peer_ips
+	external_peer_ips=$(grep -E "^EXTERNAL_PEER_IPS=" "$config_file" 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "")
+
+	# Trim whitespace
+	external_peer_ips=$(echo "$external_peer_ips" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+
+	# Check if EXTERNAL_PEER_IPS is empty
+	if [[ -z "$external_peer_ips" ]]; then
+		echo ""
+		log_warn "⚠️  CONFIGURATION REQUIRED: EXTERNAL_PEER_IPS is not set"
+		echo ""
+		log_info "EXTERNAL_PEER_IPS is required for the VPN monitor to work."
+		log_info "This should be the external/public IP address(es) of your remote VPN gateway(s)."
+		echo ""
+		if [[ $INTERACTIVE -eq 0 ]]; then
+			# Not in interactive mode, but config is empty - prompt user
+			read -p "Enter EXTERNAL_PEER_IPS now? (yes/no) [yes]: " -r
+			echo ""
+			if [[ -z "$REPLY" ]] || [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]] || [[ $REPLY =~ ^[Yy]$ ]]; then
+				local peer_ips
+				read -p "EXTERNAL_PEER_IPS (space-separated IP addresses): " peer_ips
+				if [[ -n "$peer_ips" ]]; then
+					# Escape special characters for sed replacement string (security: prevent command injection)
+					# In sed replacement strings, we need to escape: & (matched text) and \ (escape)
+					# Also escape the delimiter | if it appears in the value
+					local peer_ips_escaped
+					peer_ips_escaped=$(printf '%s\n' "$peer_ips" | sed 's/\\/\\\\/g' | sed 's/&/\\&/g' | sed 's/|/\\|/g')
+
+					# Update config file with provided IPs
+					if grep -q "^EXTERNAL_PEER_IPS=" "$config_file"; then
+						# Update existing line using escaped value
+						# Use | as delimiter to avoid conflicts with / in IP addresses
+						sed -i "s|^EXTERNAL_PEER_IPS=.*|EXTERNAL_PEER_IPS=\"${peer_ips_escaped}\"|" "$config_file"
+					else
+						# Add new line (no escaping needed for echo, but use original value)
+						echo "EXTERNAL_PEER_IPS=\"${peer_ips}\"" >>"$config_file"
+					fi
+					log_info "EXTERNAL_PEER_IPS updated in configuration file"
+					log_info "Note: IP addresses will be validated when the monitor runs"
+					return 0
+				else
+					log_warn "No IP addresses provided. Please configure EXTERNAL_PEER_IPS manually."
+					return 1
+				fi
+			else
+				log_info "Skipping configuration. Please edit ${config_file} manually."
+				return 1
+			fi
+		else
+			# Interactive mode already handled this, but config is still empty
+			log_warn "EXTERNAL_PEER_IPS is still empty after interactive configuration."
+			log_warn "Please edit ${config_file} and set EXTERNAL_PEER_IPS before running the monitor."
+			return 1
+		fi
+	fi
+
+	return 0
+}
+
 # Display next steps
 #
 # Displays post-installation instructions to the user.
@@ -904,10 +994,10 @@ display_next_steps() {
 	echo "  2. Set EXTERNAL_PEER_IPS to your remote VPN endpoint external/public IP address(es)"
 	echo "  3. Optionally set INTERNAL_PEER_IPS to your remote VPN endpoint internal/private IP address(es)"
 	echo ""
-	echo "  3. Test the script manually:"
+	echo "  4. Test the script manually:"
 	echo "     ${INSTALL_DIR}/${SCRIPT_NAME}"
 	echo ""
-	echo "  4. Monitor the log file:"
+	echo "  5. Monitor the log file:"
 	echo "     tail -f ${INSTALL_DIR}/logs/vpn-monitor.log"
 	echo ""
 	if [[ $SKIP_CRON -eq 1 ]]; then
@@ -922,10 +1012,22 @@ display_next_steps() {
 			echo "  - Cron job installed (if not skipped)"
 			echo ""
 		else
-			log_warn "IMPORTANT: Persistence Notes"
+			echo ""
+			log_warn "⚠️  IMPORTANT: Cron Job Persistence"
+			log_warn "═══════════════════════════════════════════════════════════════"
+			echo "  Cron jobs may be wiped during UniFi OS upgrades."
+			echo "  If monitoring stops after an upgrade, re-run this installer:"
+			echo "    ./install.sh --silent"
+			echo ""
+			echo "  Or manually restore the cron job:"
+			echo "    crontab -e"
+			echo "    # Add: $(grep CRON_SCHEDULE "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "*/1 * * * *") ${INSTALL_DIR}/${SCRIPT_NAME} >> ${INSTALL_DIR}/cron.log 2>&1"
+			log_warn "═══════════════════════════════════════════════════════════════"
+			echo ""
+			log_info "Persistence Notes:"
 			echo "  - Scripts survive reboots (stored in /data/)"
-			echo "  - Cron jobs may be wiped during UniFi OS upgrades"
-			echo "  - Re-run this installer after upgrades if monitoring stops"
+			echo "  - Configuration files persist across reboots"
+			echo "  - Log files persist across reboots"
 			echo ""
 		fi
 	fi
@@ -1186,6 +1288,9 @@ main() {
 	check_udm
 	create_install_dir
 	install_scripts
+
+	# Validate configuration after installation
+	validate_config_after_install
 
 	# Setup cron only if not skipped
 	if [[ $SKIP_CRON -eq 0 ]]; then

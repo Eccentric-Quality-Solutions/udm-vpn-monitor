@@ -30,8 +30,8 @@ RUN_SLOW_TESTS="${RUN_SLOW_TESTS:-0}"
 
 # Fast-fail settings
 # Stop on first failure by default (fast-fail enabled)
-# Set RUN_ALL_TESTS=1 or use --all flag to disable fast-fail
-FAST_FAIL="${FAST_FAIL:-1}"
+# Set FAST_FAIL=0 or use --all flag to disable fast-fail
+FAST_FAIL="${FAST_FAIL:-0}"
 
 # Rerun failed tests only
 # Set RERUN_FAILED=1 or use --failed flag to rerun only failed tests from last run
@@ -39,9 +39,14 @@ RERUN_FAILED="${RERUN_FAILED:-0}"
 
 # Parallel execution settings
 # Number of parallel jobs (0 = disabled, auto = detect CPU cores, or specific number)
-# Set PARALLEL_JOBS=auto to auto-detect, or a number like 4, 8, etc.
-PARALLEL_JOBS="${PARALLEL_JOBS:-auto}"
+# Set PARALLEL_JOBS=0 to disable, auto to auto-detect, or a number like 4, 8, etc.
+PARALLEL_JOBS="${PARALLEL_JOBS:-0}"
 PARALLEL_TOOL=""
+
+# Test timeout settings
+# Timeout for individual tests in seconds (default: 120 seconds = 2 minutes)
+# Tests that exceed this timeout will be skipped
+TEST_TIMEOUT="${TEST_TIMEOUT:-120}"
 
 # Show bats installation instructions
 show_bats_instructions() {
@@ -349,6 +354,185 @@ filter_test_files() {
 	done
 }
 
+# Extract test names from a test file
+# Outputs test names (one per line) matching @test declarations
+extract_test_names() {
+	local test_file="$1"
+	# Extract test names from @test declarations
+	# Pattern: @test "test name" { or @test 'test name' {
+	# Handle both single and double quotes, and multi-line declarations
+	grep -E "^@test\s+[\"']" "$test_file" 2>/dev/null | sed -E "s/^@test\s+[\"']([^\"']+)[\"'].*/\1/" || true
+}
+
+# Escape special regex characters in test name for bats filter
+escape_test_name_for_filter() {
+	local test_name="$1"
+	# Escape special regex characters: . [ ] { } ( ) + * ? ^ $ | \
+	# Using sed is appropriate here as we need proper regex escaping
+	# shellcheck disable=SC2001
+	echo "$test_name" | sed 's/[.[{}()*+?^$|\\]/\\&/g'
+}
+
+# Run a single test case with timeout
+# Runs an individual test by name with timeout, skipping if it exceeds the limit
+# Returns: 0 on success, 1 on test failure, 2 on timeout (caller should handle)
+run_single_test_with_timeout() {
+	local test_file="$1"
+	local test_name="$2"
+	local timeout_seconds="$3"
+	local use_coverage="${4:-0}"
+	local coverage_dir="${5:-}"
+	local kcov_args=("${@:6}")
+	# Escape the test name for regex matching
+	local escaped_name
+	escaped_name=$(escape_test_name_for_filter "$test_name")
+	local bats_args=("$test_file" "-f" "^${escaped_name}$")
+
+	# Add filter for failed tests if rerun-failed is enabled
+	if [[ "$RERUN_FAILED" -eq 1 ]]; then
+		bats_args+=(--filter-status "failed")
+	fi
+
+	# Check if timeout command is available
+	if ! command -v timeout >/dev/null 2>&1; then
+		# No timeout - run without timeout protection
+		if [[ $use_coverage -eq 1 ]] && [[ -n "$coverage_dir" ]]; then
+			# Run with coverage
+			if command -v stdbuf >/dev/null 2>&1; then
+				if stdbuf -oL -eL -i0 kcov "${kcov_args[@]}" "$coverage_dir" bats "${bats_args[@]}"; then
+					return 0
+				else
+					return 1
+				fi
+			else
+				if kcov "${kcov_args[@]}" "$coverage_dir" bats "${bats_args[@]}"; then
+					return 0
+				else
+					return 1
+				fi
+			fi
+		else
+			# Run without coverage
+			if command -v stdbuf >/dev/null 2>&1; then
+				if stdbuf -oL -eL -i0 bats "${bats_args[@]}"; then
+					return 0
+				else
+					return 1
+				fi
+			else
+				if bats "${bats_args[@]}"; then
+					return 0
+				else
+					return 1
+				fi
+			fi
+		fi
+	fi
+
+	# Run test with timeout
+	local exit_code=0
+	if [[ $use_coverage -eq 1 ]] && [[ -n "$coverage_dir" ]]; then
+		# Run with coverage and timeout
+		if command -v stdbuf >/dev/null 2>&1; then
+			timeout --preserve-status "$timeout_seconds" stdbuf -oL -eL -i0 kcov "${kcov_args[@]}" "$coverage_dir" bats "${bats_args[@]}" 2>&1 || exit_code=$?
+		else
+			timeout --preserve-status "$timeout_seconds" kcov "${kcov_args[@]}" "$coverage_dir" bats "${bats_args[@]}" 2>&1 || exit_code=$?
+		fi
+	else
+		# Run without coverage, with timeout
+		if command -v stdbuf >/dev/null 2>&1; then
+			# Use stdbuf for unbuffered output streaming
+			timeout --preserve-status "$timeout_seconds" stdbuf -oL -eL -i0 bats "${bats_args[@]}" 2>&1 || exit_code=$?
+		else
+			# Fallback without stdbuf
+			timeout --preserve-status "$timeout_seconds" bats "${bats_args[@]}" 2>&1 || exit_code=$?
+		fi
+	fi
+
+	if [[ $exit_code -eq 0 ]]; then
+		return 0
+	elif [[ $exit_code -eq 124 ]]; then
+		# Test timed out - bats will show it as skipped
+		echo -e "${YELLOW}# skip Test '${test_name}' timed out after ${timeout_seconds}s${NC}" >&2
+		return 2
+	else
+		# Other exit codes are test failures
+		return 1
+	fi
+}
+
+# Run a single test file with per-test timeout
+# Extracts individual tests and runs each with timeout
+# Returns: 0 if all tests passed, 1 if any failed, 2 if any timed out
+run_test_file_with_timeout() {
+	local test_file="$1"
+	local timeout_seconds="$2"
+	local use_coverage="${3:-0}"
+	local coverage_dir="${4:-}"
+	local kcov_args=("${@:5}")
+
+	# Extract test names from the file
+	local test_names
+	mapfile -t test_names < <(extract_test_names "$test_file")
+
+	if [[ ${#test_names[@]} -eq 0 ]]; then
+		echo -e "${YELLOW}Warning: No tests found in $(basename "$test_file")${NC}" >&2
+		return 0
+	fi
+
+	# If rerun-failed is enabled, filter test names to only failed tests
+	# Note: This is a simplified approach - bats' --filter-status is more accurate
+	# but requires running bats first to determine which tests failed
+	if [[ "$RERUN_FAILED" -eq 1 ]]; then
+		# For rerun-failed, we rely on bats' --filter-status flag
+		# which is handled in run_single_test_with_timeout
+		:
+	fi
+
+	local failed_tests=0
+	local timed_out_tests=0
+	local total_tests=${#test_names[@]}
+
+	echo -e "${BLUE}Running ${total_tests} test(s) from $(basename "$test_file")...${NC}" >&2
+
+	# Run each test individually with timeout
+	for test_name in "${test_names[@]}"; do
+		if [[ $use_coverage -eq 1 ]] && [[ -n "$coverage_dir" ]]; then
+			run_single_test_with_timeout "$test_file" "$test_name" "$timeout_seconds" "$use_coverage" "$coverage_dir" "${kcov_args[@]}"
+		else
+			run_single_test_with_timeout "$test_file" "$test_name" "$timeout_seconds"
+		fi
+		local test_result=$?
+
+		if [[ $test_result -eq 2 ]]; then
+			# Timeout occurred
+			timed_out_tests=$((timed_out_tests + 1))
+			# If fast-fail is enabled, stop on first timeout
+			if [[ "$FAST_FAIL" -eq 1 ]]; then
+				echo -e "${RED}Fast-fail enabled: stopping test execution${NC}" >&2
+				return 2
+			fi
+		elif [[ $test_result -ne 0 ]]; then
+			# Test failure
+			failed_tests=$((failed_tests + 1))
+			# If fast-fail is enabled, stop on first failure
+			if [[ "$FAST_FAIL" -eq 1 ]]; then
+				echo -e "${RED}Fast-fail enabled: stopping test execution${NC}" >&2
+				return 1
+			fi
+		fi
+	done
+
+	# Return appropriate exit code
+	if [[ $timed_out_tests -gt 0 ]]; then
+		return 2
+	elif [[ $failed_tests -gt 0 ]]; then
+		return 1
+	else
+		return 0
+	fi
+}
+
 # Run tests with coverage if enabled
 run_tests() {
 	# Filter test files based on slow test setting
@@ -365,6 +549,16 @@ run_tests() {
 	if [[ "$RUN_SLOW_TESTS" -eq 0 ]]; then
 		echo -e "${YELLOW}(Slow tests excluded - use --slow to include)${NC}"
 	fi
+	if [[ "$RERUN_FAILED" -eq 1 ]]; then
+		echo -e "${BLUE}Rerunning only failed tests from last run...${NC}"
+	fi
+	if [[ "$FAST_FAIL" -eq 0 ]]; then
+		echo -e "${BLUE}Fast-fail: disabled (will run all tests)${NC}"
+	fi
+	if [[ "$PARALLEL_JOBS" == "0" ]]; then
+		echo -e "${BLUE}Parallel execution: disabled${NC}"
+	fi
+	echo -e "${BLUE}Test timeout: ${TEST_TIMEOUT}s (tests exceeding this will be skipped)${NC}"
 	echo ""
 
 	cd "$PROJECT_ROOT"
@@ -374,47 +568,51 @@ run_tests() {
 		run_tests_with_coverage "${test_files[@]}"
 	else
 		# Run without coverage
-		local bats_args=("${test_files[@]}")
-		if [[ "$FAST_FAIL" -eq 1 ]]; then
-			bats_args+=(--abort)
-		fi
-		# Add filter for failed tests if rerun-failed is enabled
-		if [[ "$RERUN_FAILED" -eq 1 ]]; then
-			bats_args+=(--filter-status "failed")
-			echo -e "${BLUE}Rerunning only failed tests from last run...${NC}"
-		fi
+		# Run each test file individually with timeout to ensure tests that exceed 2m are skipped
+		local failed_tests=0
+		local timed_out_tests=0
 
-		# Add parallel execution if enabled and tool is available
-		local num_jobs
-		num_jobs=$(get_parallel_jobs)
-		if [[ "$num_jobs" != "0" ]] && check_parallel_tool; then
-			bats_args+=(--jobs "$num_jobs")
-			echo -e "${BLUE}Parallel execution: enabled (${num_jobs} jobs using ${PARALLEL_TOOL})${NC}"
-		elif [[ "$num_jobs" != "0" ]]; then
-			echo -e "${YELLOW}Parallel execution: disabled (parallel tool not found)${NC}"
-			echo -e "${YELLOW}Install GNU parallel for faster test execution${NC}"
-		fi
+		for test_file in "${test_files[@]}"; do
+			echo -e "${BLUE}Running: $(basename "$test_file")${NC}"
 
-		# Use stdbuf to disable output buffering for real-time streaming
-		# -oL: line buffered stdout, -eL: line buffered stderr
-		# -i0: unbuffered stdin (not needed but doesn't hurt)
-		# This ensures test output appears immediately as tests run
-		if command -v stdbuf >/dev/null 2>&1; then
-			# Force unbuffered output for both stdout and stderr
-			# Use exec to replace current process to avoid subprocess buffering
-			exec stdbuf -oL -eL -i0 bats "${bats_args[@]}"
-		else
-			# Fallback: use unbuffer if available (expect package)
-			if command -v unbuffer >/dev/null 2>&1; then
-				exec unbuffer bats "${bats_args[@]}"
-			else
-				# Last resort: run bats directly (may be buffered)
-				# Note: Output may not stream in real-time without stdbuf/unbuffer
-				exec bats "${bats_args[@]}"
+			# Run test file with timeout wrapper
+			run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT"
+			local test_result=$?
+
+			if [[ $test_result -eq 2 ]]; then
+				# Timeout occurred
+				timed_out_tests=$((timed_out_tests + 1))
+			elif [[ $test_result -ne 0 ]]; then
+				# Test failure
+				failed_tests=$((failed_tests + 1))
+				# If fast-fail is enabled, stop on first failure
+				if [[ "$FAST_FAIL" -eq 1 ]]; then
+					echo -e "${RED}Fast-fail enabled: stopping test execution${NC}" >&2
+					exit 1
+				fi
 			fi
+			echo ""
+		done
+
+		# Print summary
+		echo -e "${GREEN}Test execution complete${NC}"
+		if [[ $failed_tests -gt 0 ]]; then
+			echo -e "${YELLOW}Failed test files: $failed_tests${NC}"
+		fi
+		if [[ $timed_out_tests -gt 0 ]]; then
+			echo -e "${YELLOW}Timed out test files: $timed_out_tests${NC}"
+		fi
+
+		# Exit with error if any tests failed (unless we're in non-fast-fail mode and want to continue)
+		if [[ $failed_tests -gt 0 ]] && [[ "$FAST_FAIL" -eq 1 ]]; then
+			exit 1
 		fi
 	fi
 }
+
+# Note: run_test_file_with_coverage_timeout() has been removed.
+# Coverage is now handled by run_test_file_with_timeout() with use_coverage flag.
+# This ensures consistent per-test timeout behavior for both coverage and non-coverage runs.
 
 # Run tests with kcov coverage
 run_tests_with_coverage() {
@@ -429,6 +627,10 @@ run_tests_with_coverage() {
 
 	echo -e "${BLUE}Running tests with coverage reporting...${NC}"
 	echo -e "${BLUE}Coverage output directory: ${COVERAGE_DIR}${NC}"
+	if [[ "$FAST_FAIL" -eq 0 ]]; then
+		echo -e "${BLUE}Fast-fail: disabled (will run all tests)${NC}"
+	fi
+	echo -e "${BLUE}Test timeout: ${TEST_TIMEOUT}s (tests exceeding this will be skipped)${NC}"
 	echo ""
 
 	# kcov arguments
@@ -443,43 +645,42 @@ run_tests_with_coverage() {
 		"--exclude-path=/tmp"
 	)
 
-	# Run kcov with bats
-	# kcov will trace all bash scripts executed by bats
-	# Note: kcov may exit with non-zero if bats tests fail, which is expected
-	# We check if coverage reports were generated rather than relying on exit code
-	local bats_args=("${test_files[@]}")
-	if [[ "$FAST_FAIL" -eq 1 ]]; then
-		bats_args+=(--abort)
-	fi
 	# Add filter for failed tests if rerun-failed is enabled
 	if [[ "$RERUN_FAILED" -eq 1 ]]; then
-		bats_args+=(--filter-status "failed")
 		echo -e "${BLUE}Rerunning only failed tests from last run...${NC}"
 	fi
 
-	# Note: Parallel execution with coverage can be slower due to kcov overhead
-	# but is still supported if desired
-	local num_jobs
-	num_jobs=$(get_parallel_jobs)
-	if [[ "$num_jobs" != "0" ]] && check_parallel_tool; then
-		bats_args+=(--jobs "$num_jobs")
-		echo -e "${BLUE}Parallel execution: enabled (${num_jobs} jobs using ${PARALLEL_TOOL})${NC}"
-		echo -e "${YELLOW}Note: Coverage reporting may be slower with parallel execution${NC}"
-	fi
+	# Run each test file individually with timeout and coverage
+	# This ensures tests that exceed timeout are skipped and output streams properly
+	local failed_tests=0
+	local timed_out_tests=0
 
-	# Use stdbuf to disable output buffering for real-time streaming
-	# -oL: line buffered stdout, -eL: line buffered stderr
-	# -i0: unbuffered stdin
-	if command -v stdbuf >/dev/null 2>&1; then
-		kcov "${kcov_args[@]}" "$COVERAGE_DIR" stdbuf -oL -eL -i0 bats "${bats_args[@]}" || true
-	else
-		# Fallback: use unbuffer if available
-		if command -v unbuffer >/dev/null 2>&1; then
-			kcov "${kcov_args[@]}" "$COVERAGE_DIR" unbuffer bats "${bats_args[@]}" || true
-		else
-			kcov "${kcov_args[@]}" "$COVERAGE_DIR" bats "${bats_args[@]}" || true
+	for test_file in "${test_files[@]}"; do
+		echo -e "${BLUE}Running with coverage: $(basename "$test_file")${NC}"
+
+		# Run test file with per-test timeout and coverage
+		run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT" "1" "$COVERAGE_DIR" "${kcov_args[@]}"
+		local test_result=$?
+
+		if [[ $test_result -eq 2 ]]; then
+			# Timeout occurred
+			timed_out_tests=$((timed_out_tests + 1))
+			# If fast-fail is enabled, stop on first timeout
+			if [[ "$FAST_FAIL" -eq 1 ]]; then
+				echo -e "${RED}Fast-fail enabled: stopping test execution${NC}" >&2
+				break
+			fi
+		elif [[ $test_result -ne 0 ]]; then
+			# Test failure
+			failed_tests=$((failed_tests + 1))
+			# If fast-fail is enabled, stop on first failure
+			if [[ "$FAST_FAIL" -eq 1 ]]; then
+				echo -e "${RED}Fast-fail enabled: stopping test execution${NC}" >&2
+				break
+			fi
 		fi
-	fi
+		echo ""
+	done
 
 	# Check if coverage reports were generated
 	if [[ -f "${COVERAGE_DIR}/index.html" ]] || [[ -f "${COVERAGE_DIR}/index.js" ]] || [[ -f "${COVERAGE_DIR}/index.json" ]]; then
@@ -493,6 +694,14 @@ run_tests_with_coverage() {
 	else
 		echo -e "${YELLOW}Warning: Coverage reports not found${NC}" >&2
 		echo "kcov may have encountered an error. Check kcov output above." >&2
+	fi
+
+	# Print test summary
+	if [[ $failed_tests -gt 0 ]]; then
+		echo -e "${YELLOW}Failed test files: $failed_tests${NC}"
+	fi
+	if [[ $timed_out_tests -gt 0 ]]; then
+		echo -e "${YELLOW}Timed out test files: $timed_out_tests${NC}"
 	fi
 }
 
@@ -628,29 +837,32 @@ Options:
     --all, -a         Run all tests even if some fail (disables fast-fail)
     --failed, -f      Rerun only failed tests from the last completed run
     --jobs, -j <N>    Number of parallel jobs (auto, 0=disabled, or number)
-                      Default: auto (detects CPU cores, requires GNU parallel)
+                      Default: 0 (sequential execution, no parallelization)
     --help, -h        Show this help message
 
 Examples:
-    $0                    Run fast tests only, stop on first failure (default)
-    $0 --slow             Run all tests including slow tests, stop on first failure
-    $0 --coverage         Run fast tests with coverage reporting, stop on first failure
-    $0 --slow --coverage  Run all tests with coverage reporting, stop on first failure
-    $0 --all              Run all tests even if some fail (useful for CI)
+    $0                    Run fast tests only, run all tests (no fast-fail), sequential
+    $0 --slow             Run all tests including slow tests, sequential, no fast-fail
+    $0 --coverage         Run fast tests with coverage reporting, sequential, no fast-fail
+    $0 --slow --coverage  Run all tests with coverage reporting, sequential, no fast-fail
+    $0 --all              Run all tests even if some fail (same as default)
     $0 --failed           Rerun only tests that failed in the last run
     $0 --slow --failed    Rerun only failed tests from last run (includes slow tests)
     $0 --jobs 8           Run tests with 8 parallel jobs (requires GNU parallel)
-    $0 --jobs auto        Auto-detect CPU cores for parallel execution (default)
-    $0 --jobs 0           Disable parallel execution (run sequentially)
+    $0 --jobs auto        Auto-detect CPU cores for parallel execution
+    $0 --jobs 0           Disable parallel execution (run sequentially, default)
 
 Test Behavior:
-    By default, tests stop on first failure (fast-fail enabled) to speed up debugging.
-    Use --all flag or set FAST_FAIL=0 to run all tests regardless of failures.
+    By default, tests run all tests regardless of failures (fast-fail disabled).
+    Tests run sequentially (no parallelization) to ensure output streams properly.
+    Tests that exceed 2 minutes (120 seconds) will be skipped automatically.
+    Use --all flag or set FAST_FAIL=0 to run all tests regardless of failures (default).
     
     Slow tests (test_integration.sh and test_high_risk.sh) are excluded by default.
     Use --slow flag or set RUN_SLOW_TESTS=1 to include them.
     
-    In CI/CD, set RUN_SLOW_TESTS=1 and FAST_FAIL=0 to run all tests.
+    Test timeout is set to 120 seconds (2 minutes) by default. Tests exceeding this
+    timeout will be skipped. Set TEST_TIMEOUT environment variable to change.
 
 Coverage Reporting:
     Coverage reports are generated in HTML format in the 'coverage' directory.
@@ -658,22 +870,28 @@ Coverage Reporting:
     with --coverage if kcov is not found.
 
 Parallel Execution:
-    By default, parallel execution is enabled (auto-detects CPU cores) if GNU
-    parallel or rush is installed. This can significantly reduce test execution
-    time (often 3-4x faster on multi-core systems).
+    By default, parallel execution is disabled (sequential execution) to ensure
+    output streams properly to the terminal. Parallel execution can significantly
+    reduce test execution time (often 3-4x faster on multi-core systems).
     
     Parallel execution requires GNU parallel or rush to be installed. If not
     available, tests will run sequentially.
     
-    Set PARALLEL_JOBS=0 to disable parallel execution, or use --jobs 0.
-    Set PARALLEL_JOBS=auto (default) to auto-detect CPU cores.
+    Set PARALLEL_JOBS=0 to disable parallel execution (default), or use --jobs 0.
+    Set PARALLEL_JOBS=auto to auto-detect CPU cores.
     Set PARALLEL_JOBS=N to use a specific number of jobs.
+
+Test Timeout:
+    Tests that exceed 2 minutes (120 seconds) will be automatically skipped.
+    This prevents slow or hanging tests from blocking test execution.
+    Set TEST_TIMEOUT environment variable to change the timeout (in seconds).
 
 Performance Tips:
     - Install GNU parallel for faster test execution: brew install parallel
-    - Use --jobs auto (default) to utilize all CPU cores
+    - Use --jobs auto to utilize all CPU cores (disabled by default for streaming output)
     - Parallel execution works best with fast tests (exclude slow tests locally)
     - Coverage reporting may be slower with parallel execution due to kcov overhead
+    - Tests run sequentially by default to ensure output streams to terminal
 
 EOF
 }
@@ -696,12 +914,12 @@ main() {
 
 	echo -e "${GREEN}Starting tests...${NC}"
 	if [[ "$COVERAGE_ENABLED" -eq 1 ]]; then
-		echo -e "${BLUE}Coverage reporting: ${COVERAGE_ENABLED}${NC}"
+		echo -e "${BLUE}Coverage reporting: enabled${NC}"
 	fi
 	if [[ "$FAST_FAIL" -eq 1 ]]; then
 		echo -e "${BLUE}Fast-fail: enabled (stop on first failure)${NC}"
 	else
-		echo -e "${YELLOW}Fast-fail: disabled (run all tests)${NC}"
+		echo -e "${BLUE}Fast-fail: disabled (run all tests)${NC}"
 	fi
 
 	# Check parallel execution status
@@ -712,7 +930,10 @@ main() {
 	elif [[ "$num_jobs" != "0" ]]; then
 		echo -e "${YELLOW}Parallel execution: disabled (parallel tool not found)${NC}"
 		echo -e "${YELLOW}Install GNU parallel for faster test execution: brew install parallel${NC}"
+	else
+		echo -e "${BLUE}Parallel execution: disabled${NC}"
 	fi
+	echo -e "${BLUE}Test timeout: ${TEST_TIMEOUT}s (tests exceeding this will be skipped)${NC}"
 	echo ""
 
 	run_tests

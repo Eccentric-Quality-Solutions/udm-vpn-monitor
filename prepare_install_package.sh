@@ -61,6 +61,7 @@ MAIN_FILES=(
 	"install.sh"
 	"uninstall.sh"
 	"analyze-logs.sh"
+	"check-utilities.sh"
 	"vpn-monitor.conf"
 	"vpn-keepalive.service"
 )
