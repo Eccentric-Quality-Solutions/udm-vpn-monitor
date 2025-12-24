@@ -247,6 +247,7 @@ service cron status
 - Ping checks always fail
 - Logs show "Ping check failed" warnings
 - VPN is working but ping fails
+- "Route not found on br0" or "Failed to add route" messages in logs
 
 ### Diagnosis Steps
 
@@ -259,15 +260,34 @@ service cron status
 2. **Check ping target configuration**:
    ```bash
    grep PING_TARGET_IP /data/vpn-monitor/vpn-monitor.conf
+   grep INTERNAL_PEER_IPS /data/vpn-monitor/vpn-monitor.conf
    ```
    If empty, uses peer IP (external IP, may not be pingable).
 
-3. **Check firewall rules**:
+3. **Check LOCAL_UDM_IP configuration** (if using INTERNAL_PEER_IPS):
+   ```bash
+   grep LOCAL_UDM_IP /data/vpn-monitor/vpn-monitor.conf
+   ```
+   Should be set to your local UDM's internal IP address (e.g., "192.168.1.1").
+
+4. **Check if route exists on br0**:
+   ```bash
+   ip addr show br0 | grep <LOCAL_UDM_IP>
+   ```
+   Should show the IP address configured on br0 interface.
+
+5. **Test ping with source IP** (if LOCAL_UDM_IP is configured):
+   ```bash
+   ping -I <LOCAL_UDM_IP> <INTERNAL_PEER_IP> -c 3
+   ```
+   This tests the same ping command the script uses.
+
+6. **Check firewall rules**:
    - Ping may be blocked by firewall
    - ICMP may be disabled
    - Check firewall logs
 
-4. **Check ping command availability**:
+7. **Check ping command availability**:
    ```bash
    which ping
    ping -V
@@ -280,10 +300,21 @@ service cron status
 - Monitor relies only on byte counters
 
 **If ping target is wrong**:
-- Configure `PING_TARGET_IP` to an internal/private IP on remote network
-- Example: `PING_TARGET_IP="192.168.100.1"`
-- This verifies end-to-end connectivity through tunnel
-- See [README.md Configuration section](README.md#configuration) for PING_TARGET_IP details
+- Configure `INTERNAL_PEER_IPS` to internal/private IPs on remote network
+- Example: `INTERNAL_PEER_IPS="192.168.100.1"`
+- See [README.md Configuration section](README.md#configuration) for INTERNAL_PEER_IPS details
+
+**If LOCAL_UDM_IP is not configured**:
+- Set `LOCAL_UDM_IP` to your local UDM's internal IP address
+- Example: `LOCAL_UDM_IP="192.168.1.1"`
+- The installer will attempt to auto-detect this from br0 if not set
+- You can manually detect it: `ip addr show br0 | grep "inet " | awk '{print $2}' | cut -d/ -f1`
+
+**If route addition fails**:
+- Check if you have root privileges (required for `ip addr add`)
+- Manually add route: `ip addr add <LOCAL_UDM_IP>/32 dev br0`
+- Verify route exists: `ip addr show br0 | grep <LOCAL_UDM_IP>`
+- The script will automatically re-add the route when needed (route is temporary and lost on reboot)
 
 **If ping command not available**:
 - Install ping: `apt-get install iputils-ping`

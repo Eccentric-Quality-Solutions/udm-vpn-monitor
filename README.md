@@ -155,6 +155,12 @@ The install package (recommended) includes all required files with proper direct
    INTERNAL_PEER_IPS="192.168.100.1 192.168.200.1"
    ```
    
+   If using `INTERNAL_PEER_IPS` for ping checks, also set `LOCAL_UDM_IP` to your local UDM's internal IP address:
+   ```bash
+   LOCAL_UDM_IP="192.168.1.1"
+   ```
+   The installer will attempt to auto-detect this from the br0 interface if not configured.
+   
    **Important**: Use the external/public IP address that the VPN tunnel is established with, not the internal/private IP address. The script checks IPsec Security Associations (SAs) which are identified by external IP addresses. If `INTERNAL_PEER_IPS` is not set, ping checks will use `EXTERNAL_PEER_IPS` instead.
 
 5. **Test manually**:
@@ -185,6 +191,7 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 |-----------|-------------|---------|
 | `EXTERNAL_PEER_IPS` | Space-separated list of remote VPN endpoint **external/public** IPs | (required) |
 | `INTERNAL_PEER_IPS` | Space-separated list of remote VPN endpoint **internal/private** IPs (for ping checks, optional) | "" |
+| `LOCAL_UDM_IP` | Local UDM internal IP address (required when `ENABLE_PING_CHECK=1` and `INTERNAL_PEER_IPS` is set) | "" |
 | `VPN_NAME` | VPN identifier for logging | "Site-to-Site VPN" |
 | `TIER1_THRESHOLD` | Failures before logging starts | 1 |
 | `TIER2_THRESHOLD` | Failures before surgical cleanup | 3 |
@@ -194,7 +201,8 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `CRON_SCHEDULE` | Cron schedule for check frequency (cron format) | "*/1 * * * *" |
 | `LOCKFILE_TIMEOUT` | Lockfile timeout in seconds (detects hung processes) | 300 |
 | `ENABLE_PING_CHECK` | Enable ping connectivity verification (0 or 1) | 1 |
-| `PING_TARGET_IP` | **Internal/private** IP to ping through tunnel (empty = use peer external IP) | "" |
+| `LOCAL_UDM_IP` | Local UDM internal IP address (required when `ENABLE_PING_CHECK=1` and `INTERNAL_PEER_IPS` is set). Used as source IP for ping checks. The script automatically adds this IP to br0 if needed. | "" |
+| `PING_TARGET_IP` | **Internal/private** IP to ping through tunnel (DEPRECATED - use `INTERNAL_PEER_IPS` instead, empty = use peer external IP) | "" |
 | `PING_COUNT` | Number of ping packets to send | 3 |
 | `PING_TIMEOUT` | Ping timeout per packet (seconds) | 2 |
 | `ENABLE_KEEPALIVE` | Enable VPN keepalive daemon (0 or 1, see [Keepalive Daemon](#keepalive-daemon)) | 0 |

@@ -25,6 +25,7 @@
    nano /data/vpn-monitor/vpn-monitor.conf
    # Set EXTERNAL_PEER_IPS="203.0.113.1"
    # Optionally set INTERNAL_PEER_IPS="192.168.100.1" for ping checks
+   # If using INTERNAL_PEER_IPS, also set LOCAL_UDM_IP="192.168.1.1" (installer will auto-detect if not set)
    ```
    For complete configuration options, see the [Configuration section in README.md](README.md#configuration).
 

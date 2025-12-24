@@ -493,13 +493,165 @@ extract_spi() {
 	return 0
 }
 
+# Get local UDM IP address from configuration
+#
+# Retrieves and validates the LOCAL_UDM_IP configuration value.
+# This is the internal IP address of the local UDM device used as source IP for ping checks.
+#
+# Returns:
+#   0: LOCAL_UDM_IP is configured and valid
+#   1: LOCAL_UDM_IP is not configured or invalid
+#
+# Output:
+#   Prints LOCAL_UDM_IP to stdout if configured and valid, empty string otherwise
+#
+# Side effects:
+#   - Logs warnings if LOCAL_UDM_IP is not configured
+#
+# Note:
+#   Requires LOCAL_UDM_IP to be set in configuration
+#   Validates IP address format using validate_ip_address()
+get_local_udm_ip() {
+	if [[ -z "${LOCAL_UDM_IP:-}" ]]; then
+		return 1
+	fi
+
+	# Validate IP address format
+	if ! validate_ip_address "$LOCAL_UDM_IP"; then
+		handle_error "WARNING" "Invalid LOCAL_UDM_IP format: $LOCAL_UDM_IP"
+		return 1
+	fi
+
+	echo "$LOCAL_UDM_IP"
+	return 0
+}
+
+# Get local UDM IP for ping source
+#
+# Retrieves LOCAL_UDM_IP for use as ping source IP.
+# Returns empty string if not configured (ping will work without -I flag).
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints LOCAL_UDM_IP to stdout if configured and valid, empty string otherwise
+#
+# Note:
+#   Helper function to avoid code duplication
+#   Returns empty string if LOCAL_UDM_IP not configured (graceful degradation)
+get_local_ip_for_ping() {
+	local local_ip=""
+	if local_ip=$(get_local_udm_ip 2>/dev/null); then
+		echo "$local_ip"
+	else
+		echo ""
+	fi
+	return 0
+}
+
+# Check if route (IP address) exists on br0 interface
+#
+# Checks if a specific IP address is already configured on the br0 interface.
+# Used to determine if route needs to be added before pinging.
+#
+# Arguments:
+#   $1: IP address to check (IPv4 format, e.g., "192.168.1.1")
+#
+# Returns:
+#   0: Route exists (IP address is on br0)
+#   1: Route does not exist or check failed
+#
+# Note:
+#   Uses 'ip addr show br0' to check for IP address
+#   Requires 'ip' command to be available
+check_route_exists() {
+	local local_ip="$1"
+
+	if [[ -z "$local_ip" ]]; then
+		return 1
+	fi
+
+	if ! command -v ip >/dev/null 2>&1; then
+		return 1
+	fi
+
+	# Check if IP address exists on br0 interface
+	# Format: "inet 192.168.1.1/32" or "inet 192.168.1.1/24" etc.
+	if ip addr show br0 2>/dev/null | grep -q "inet ${local_ip}/"; then
+		return 0
+	fi
+
+	return 1
+}
+
+# Add route (IP address) to br0 interface if needed
+#
+# Adds the local UDM IP address to the br0 interface using 'ip addr add'.
+# This enables ping connectivity between UDM devices at each end of S2S VPN tunnels.
+# The route is temporary (not persistent across reboots).
+#
+# Arguments:
+#   $1: IP address to add (IPv4 format, e.g., "192.168.1.1")
+#
+# Returns:
+#   0: Route added successfully or already exists
+#   1: Failed to add route
+#
+# Side effects:
+#   - Adds IP address to br0 interface: ip addr add <local_ip>/32 dev br0
+#   - Logs actions and results
+#
+# Note:
+#   Idempotent - safe to call multiple times
+#   If route already exists, command will fail but function returns success
+#   Requires 'ip' command and root privileges
+add_route_if_needed() {
+	local local_ip="$1"
+
+	if [[ -z "$local_ip" ]]; then
+		handle_error "WARNING" "Cannot add route: LOCAL_UDM_IP is not configured"
+		return 1
+	fi
+
+	if ! command -v ip >/dev/null 2>&1; then
+		handle_error "WARNING" "Cannot add route: ip command not available"
+		return 1
+	fi
+
+	# Check if route already exists
+	if check_route_exists "$local_ip"; then
+		log_message "INFO" "Route already exists on br0: $local_ip/32"
+		return 0
+	fi
+
+	# Add route: ip addr add <local_ip>/32 dev br0
+	log_message "INFO" "Adding route to br0: $local_ip/32"
+	if ip addr add "${local_ip}/32" dev br0 2>/dev/null; then
+		log_message "INFO" "Route added successfully: $local_ip/32 on br0"
+		return 0
+	else
+		# Check if error is "File exists" (route already present, race condition)
+		if check_route_exists "$local_ip"; then
+			log_message "INFO" "Route exists on br0 (added by another process): $local_ip/32"
+			return 0
+		fi
+
+		# Other error occurred
+		handle_error "WARNING" "Failed to add route to br0: $local_ip/32"
+		return 1
+	fi
+}
+
 # Check connectivity via ping
 #
 # Verifies end-to-end connectivity through the VPN tunnel by pinging a target IP.
 # This complements xfrm state checks by confirming actual traffic can flow.
+# Automatically manages route (IP address on br0) if needed before pinging.
 #
 # Arguments:
 #   $1: Target IP address to ping (IPv4 or IPv6)
+#   $2: Local IP address to use as source (optional, from LOCAL_UDM_IP config)
 #
 # Returns:
 #   0: Ping successful (packet loss < 100%)
@@ -508,18 +660,21 @@ extract_spi() {
 # Configuration:
 #   Uses PING_COUNT and PING_TIMEOUT from config file
 #   Automatically detects IPv4 vs IPv6 and uses appropriate ping command
+#   Uses LOCAL_UDM_IP as source IP if provided
 #
 # Note:
 #   Tries multiple ping command formats for compatibility (Linux/BSD)
 #   Requires log_message, PING_COUNT, PING_TIMEOUT to be set
+#   If local_ip is provided, uses ping -I flag and manages route on br0
 check_ping_connectivity() {
 	local target_ip="$1"
+	local local_ip="${2:-}"
 	local ping_count="${PING_COUNT:-3}"
 	local ping_timeout="${PING_TIMEOUT:-2}"
 
 	# Validate ping target
 	if [[ -z "$target_ip" ]]; then
-		handle_error "WARNING" "Ping check enabled but PING_TARGET_IP not configured"
+		handle_error "WARNING" "Ping check enabled but target IP not configured"
 		return 1
 	fi
 
@@ -529,6 +684,18 @@ check_ping_connectivity() {
 		return 1
 	fi
 
+	# If local_ip is provided, manage route on br0 before pinging
+	if [[ -n "$local_ip" ]]; then
+		# Check if route exists, add if needed
+		if ! check_route_exists "$local_ip"; then
+			log_message "INFO" "Route not found on br0, attempting to add: $local_ip/32"
+			if ! add_route_if_needed "$local_ip"; then
+				handle_error "WARNING" "Failed to add route for ping check, continuing anyway"
+				# Continue with ping attempt - it may still work or fail naturally
+			fi
+		fi
+	fi
+
 	# Determine ping command based on IP version
 	# Some systems have separate ping6, others use ping -6
 	local ping_cmd
@@ -536,13 +703,25 @@ check_ping_connectivity() {
 	if [[ "$target_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
 		# IPv4
 		ping_cmd="ping"
+		# Add -I flag if local_ip is provided
+		if [[ -n "$local_ip" ]]; then
+			ping_args=(-I "$local_ip")
+		fi
 	else
 		# IPv6
 		if command -v ping6 >/dev/null 2>&1; then
 			ping_cmd="ping6"
+			# Add -I flag if local_ip is provided (ping6 uses -I for source interface/IP)
+			if [[ -n "$local_ip" ]]; then
+				ping_args=(-I "$local_ip")
+			fi
 		elif ping -6 >/dev/null 2>&1; then
 			ping_cmd="ping"
 			ping_args=(-6)
+			# Add -I flag if local_ip is provided
+			if [[ -n "$local_ip" ]]; then
+				ping_args=(-6 -I "$local_ip")
+			fi
 		else
 			handle_error "WARNING" "IPv6 ping not available"
 			return 1
@@ -552,6 +731,7 @@ check_ping_connectivity() {
 	# Perform ping check
 	# Try Linux-style ping first (-W for timeout), fallback to BSD-style (-w)
 	# -c: count of packets, -q: quiet (summary only), -W/-w: timeout per packet
+	# -I: source IP address (if local_ip provided)
 	local ping_result
 	local ping_success=0
 
@@ -572,15 +752,28 @@ check_ping_connectivity() {
 		packet_loss=$(echo "$ping_result" | grep -oE '[0-9]+% packet loss' | grep -oE '[0-9]+' || echo "$PING_PACKET_LOSS_THRESHOLD")
 
 		if [[ "$packet_loss" -lt $PING_PACKET_LOSS_THRESHOLD ]]; then
-			log_message "INFO" "Ping check OK: $target_ip (${packet_loss}% packet loss)"
+			if [[ -n "$local_ip" ]]; then
+				log_message "INFO" "Ping check OK: $target_ip from $local_ip (${packet_loss}% packet loss)"
+			else
+				log_message "INFO" "Ping check OK: $target_ip (${packet_loss}% packet loss)"
+			fi
 			return 0
 		else
-			handle_error "WARNING" "Ping check failed: $target_ip (${PING_PACKET_LOSS_THRESHOLD}% packet loss)"
+			if [[ -n "$local_ip" ]]; then
+				handle_error "WARNING" "Ping check failed: $target_ip from $local_ip (${PING_PACKET_LOSS_THRESHOLD}% packet loss)"
+			else
+				handle_error "WARNING" "Ping check failed: $target_ip (${PING_PACKET_LOSS_THRESHOLD}% packet loss)"
+			fi
 			return 1
 		fi
 	else
 		# Ping command failed
-		handle_error "WARNING" "Ping check failed: $target_ip (ping command error or timeout)"
+		# If route was added but ping still failed, this indicates a tunnel issue
+		if [[ -n "$local_ip" ]]; then
+			handle_error "WARNING" "Ping check failed: $target_ip from $local_ip (ping command error or timeout)"
+		else
+			handle_error "WARNING" "Ping check failed: $target_ip (ping command error or timeout)"
+		fi
 		return 1
 	fi
 }
@@ -1029,9 +1222,13 @@ check_ping_if_enabled() {
 	# Determine ping target: use PING_TARGET_IP if configured (backward compatibility), otherwise use provided IP
 	local ping_target="${PING_TARGET_IP:-$ping_ip}"
 
+	# Get local UDM IP for ping source (if configured)
+	local local_ip
+	local_ip=$(get_local_ip_for_ping)
+
 	if [[ $vpn_ok -eq 1 ]]; then
 		# SA exists, verify connectivity with ping check
-		if ! check_ping_connectivity "$ping_target"; then
+		if ! check_ping_connectivity "$ping_target" "$local_ip"; then
 			# SA exists but ping failed - tunnel may be broken
 			handle_error "WARNING" "VPN SA exists but ping check failed for $ping_target - tunnel may not be routing traffic"
 			# Don't fail completely - SA exists, but mark as suspect
@@ -1042,7 +1239,7 @@ check_ping_if_enabled() {
 		fi
 	else
 		# SA doesn't exist, but try ping anyway to see if there's any connectivity
-		if check_ping_connectivity "$ping_target"; then
+		if check_ping_connectivity "$ping_target" "$local_ip"; then
 			handle_error "WARNING" "Ping check passed but no SA found - tunnel may be down but connectivity exists via other route"
 		fi
 		# Note: If ping fails when SA doesn't exist, check_ping_connectivity already logs the failure
@@ -1208,7 +1405,10 @@ detect_failure_type() {
 		# Check ping if enabled and internal IP provided
 		# Only check ping if we haven't already detected a routing issue from byte counters
 		if [[ $has_routing_issue -eq 0 ]] && [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
-			if ! check_ping_connectivity "$internal_peer_ip" 2>/dev/null; then
+			# Get local UDM IP for ping source (if configured)
+			local local_ip
+			local_ip=$(get_local_ip_for_ping)
+			if ! check_ping_connectivity "$internal_peer_ip" "$local_ip" 2>/dev/null; then
 				has_routing_issue=1
 			fi
 		fi

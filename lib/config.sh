@@ -150,6 +150,7 @@ load_config() {
 	MAX_RESTARTS_PER_HOUR="${MAX_RESTARTS_PER_HOUR:-3}"
 	LOCKFILE_TIMEOUT="${LOCKFILE_TIMEOUT:-$LOCKFILE_TIMEOUT_DEFAULT}"
 	ENABLE_PING_CHECK="${ENABLE_PING_CHECK:-1}"
+	LOCAL_UDM_IP="${LOCAL_UDM_IP:-}"
 	PING_TARGET_IP="${PING_TARGET_IP:-}"
 	PING_COUNT="${PING_COUNT:-3}"
 	PING_TIMEOUT="${PING_TIMEOUT:-2}"
@@ -804,6 +805,19 @@ validate_config() {
 				die "Invalid internal peer IP format: $peer_ip"
 			fi
 		done
+
+		# Validate LOCAL_UDM_IP is configured when ping checks are enabled with internal IPs
+		if [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
+			if [[ -z "${LOCAL_UDM_IP:-}" ]]; then
+				handle_error "WARNING" "LOCAL_UDM_IP is not configured but ENABLE_PING_CHECK=1 and INTERNAL_PEER_IPS is set"
+				handle_error "WARNING" "LOCAL_UDM_IP is required for ping checks with INTERNAL_PEER_IPS. Ping checks may fail without it."
+			else
+				# Validate LOCAL_UDM_IP format
+				if ! validate_ip_address "$LOCAL_UDM_IP"; then
+					die "Invalid LOCAL_UDM_IP format: $LOCAL_UDM_IP"
+				fi
+			fi
+		fi
 	fi
 
 	# Validate file paths are writable (if they exist)

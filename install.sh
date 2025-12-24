@@ -889,6 +889,147 @@ verify_installation() {
 	fi
 }
 
+# Detect local UDM IP from br0 interface
+#
+# Attempts to auto-detect the local UDM internal IP address from the br0 interface.
+# Used during installation to help configure LOCAL_UDM_IP if not manually set.
+#
+# Returns:
+#   0: IP address detected and printed to stdout
+#   1: Failed to detect IP address
+#
+# Output:
+#   Prints detected IP address to stdout if found, empty string otherwise
+#
+# Note:
+#   Uses 'ip addr show br0' to extract the first IPv4 address
+#   Requires 'ip' command to be available
+detect_local_udm_ip() {
+	if ! command -v ip >/dev/null 2>&1; then
+		return 1
+	fi
+
+	# Get first IPv4 address from br0 interface
+	# Format: "inet 192.168.1.1/24" -> extract "192.168.1.1"
+	local br0_ip
+	br0_ip=$(ip addr show br0 2>/dev/null | grep -oE 'inet [0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1 | awk '{print $2}')
+
+	if [[ -n "$br0_ip" ]]; then
+		echo "$br0_ip"
+		return 0
+	fi
+
+	return 1
+}
+
+# Check and setup routes for ping connectivity
+#
+# Verifies that LOCAL_UDM_IP is configured and route exists on br0 interface.
+# If LOCAL_UDM_IP is not configured, attempts auto-detection from br0.
+# Adds route if needed and tests ping connectivity.
+#
+# Returns:
+#   0: Route setup successful (or not needed)
+#   1: Route setup failed
+#
+# Side effects:
+#   - May update config file with detected LOCAL_UDM_IP
+#   - Adds route to br0 interface if needed
+#   - Tests ping connectivity to first INTERNAL_PEER_IP
+check_and_setup_routes() {
+	# Only proceed if ping checks are enabled and internal peer IPs are configured
+	if [[ "${ENABLE_PING_CHECK:-0}" -ne 1 ]]; then
+		return 0
+	fi
+
+	# Check if INTERNAL_PEER_IPS is configured
+	if [[ -z "${INTERNAL_PEER_IPS:-}" ]]; then
+		# No internal peer IPs configured - route setup not needed
+		return 0
+	fi
+
+	log_info "Checking route setup for ping connectivity..."
+
+	# Get LOCAL_UDM_IP from config
+	local local_udm_ip="${LOCAL_UDM_IP:-}"
+
+	# If LOCAL_UDM_IP is not configured, attempt auto-detection
+	if [[ -z "$local_udm_ip" ]]; then
+		log_info "LOCAL_UDM_IP not configured, attempting auto-detection from br0 interface..."
+		if local_udm_ip=$(detect_local_udm_ip 2>/dev/null); then
+			log_info "Auto-detected LOCAL_UDM_IP: $local_udm_ip"
+			# Update config file with detected IP
+			local config_file="${INSTALL_DIR}/${CONFIG_NAME}"
+			if [[ -f "$config_file" ]]; then
+				# Escape special characters for sed replacement
+				local local_udm_ip_escaped
+				local_udm_ip_escaped=$(printf '%s\n' "$local_udm_ip" | sed 's/\\/\\\\/g' | sed 's/&/\\&/g' | sed 's/|/\\|/g')
+				if grep -q "^LOCAL_UDM_IP=" "$config_file"; then
+					# Update existing line
+					sed -i "s|^LOCAL_UDM_IP=.*|LOCAL_UDM_IP=\"${local_udm_ip_escaped}\"|" "$config_file"
+				else
+					# Add new line after ENABLE_PING_CHECK
+					sed -i "/^ENABLE_PING_CHECK=/a LOCAL_UDM_IP=\"${local_udm_ip}\"" "$config_file"
+				fi
+				log_info "Updated config file with LOCAL_UDM_IP: $local_udm_ip"
+			fi
+		else
+			log_warn "Failed to auto-detect LOCAL_UDM_IP from br0 interface"
+			log_warn "Please configure LOCAL_UDM_IP manually in ${INSTALL_DIR}/${CONFIG_NAME}"
+			return 1
+		fi
+	fi
+
+	# Validate LOCAL_UDM_IP format (basic check)
+	if [[ ! "$local_udm_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+		log_warn "Invalid LOCAL_UDM_IP format: $local_udm_ip"
+		return 1
+	fi
+
+	# Check if route exists, add if needed
+	if ! command -v ip >/dev/null 2>&1; then
+		log_warn "ip command not available, cannot check/add route"
+		return 1
+	fi
+
+	# Check if route exists on br0
+	if ip addr show br0 2>/dev/null | grep -q "inet ${local_udm_ip}/"; then
+		log_info "Route already exists on br0: $local_udm_ip/32"
+	else
+		log_info "Adding route to br0: $local_udm_ip/32"
+		if ip addr add "${local_udm_ip}/32" dev br0 2>/dev/null; then
+			log_info "Route added successfully: $local_udm_ip/32 on br0"
+		else
+			# Check if route was added by another process (race condition)
+			if ip addr show br0 2>/dev/null | grep -q "inet ${local_udm_ip}/"; then
+				log_info "Route exists on br0 (added by another process): $local_udm_ip/32"
+			else
+				log_warn "Failed to add route to br0: $local_udm_ip/32"
+				log_warn "You may need to add it manually: ip addr add $local_udm_ip/32 dev br0"
+				return 1
+			fi
+		fi
+	fi
+
+	# Test ping connectivity to first internal peer IP
+	local IFS=' '
+	local -a internal_peer_ips_array
+	read -ra internal_peer_ips_array <<<"$INTERNAL_PEER_IPS"
+	if [[ ${#internal_peer_ips_array[@]} -gt 0 ]] && [[ -n "${internal_peer_ips_array[0]}" ]]; then
+		local first_internal_ip="${internal_peer_ips_array[0]}"
+		log_info "Testing ping connectivity to $first_internal_ip from $local_udm_ip..."
+		if ping -I "$local_udm_ip" -c 1 -W 2 "$first_internal_ip" >/dev/null 2>&1; then
+			log_info "Ping test successful: $first_internal_ip is reachable from $local_udm_ip"
+		else
+			log_warn "Ping test failed: $first_internal_ip is not reachable from $local_udm_ip"
+			log_warn "This may be normal if the VPN tunnel is not yet established"
+			log_warn "The route has been added and will be used during monitoring"
+		fi
+	fi
+
+	return 0
+}
+
 # Validate configuration after installation
 #
 # Checks if EXTERNAL_PEER_IPS is configured in the config file.
@@ -1291,6 +1432,18 @@ main() {
 
 	# Validate configuration after installation
 	validate_config_after_install
+
+	# Check and setup routes for ping connectivity (if ping checks enabled)
+	# Load config values needed for route setup
+	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
+		# Source config to get ENABLE_PING_CHECK, INTERNAL_PEER_IPS, LOCAL_UDM_IP
+		# shellcheck source=/dev/null
+		source "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null || true
+		ENABLE_PING_CHECK="${ENABLE_PING_CHECK:-1}"
+		INTERNAL_PEER_IPS="${INTERNAL_PEER_IPS:-}"
+		LOCAL_UDM_IP="${LOCAL_UDM_IP:-}"
+		check_and_setup_routes || log_warn "Route setup completed with warnings (ping checks may not work until LOCAL_UDM_IP is configured)"
+	fi
 
 	# Setup cron only if not skipped
 	if [[ $SKIP_CRON -eq 0 ]]; then
