@@ -954,3 +954,266 @@ wait_for_file() {
 		sleep "$sleep_interval"
 	done
 }
+
+# ============================================================================
+# Test Setup Helper Functions - Reduce Duplication Across Tests
+# ============================================================================
+
+# Create a test config file with common settings
+#
+# Creates a vpn-monitor.conf file with customizable settings.
+# Provides sensible defaults for common test scenarios.
+#
+# Arguments:
+#   $1: Path to config file (default: ${TEST_DIR}/vpn-monitor.conf)
+#   $2: EXTERNAL_PEER_IPS value (default: "192.168.1.1")
+#   $3+: Additional config variables as KEY="VALUE" pairs
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created config file
+#
+# Example:
+#   setup_test_config "${TEST_DIR}/vpn-monitor.conf" "192.168.1.1 10.0.0.1" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3'
+setup_test_config() {
+	local config_file="${1:-${TEST_DIR}/vpn-monitor.conf}"
+	local peer_ips="${2:-192.168.1.1}"
+	shift 2 || true
+	local extra_config=("$@")
+
+	mkdir -p "$(dirname "$config_file")"
+
+	cat >"$config_file" <<EOF
+EXTERNAL_PEER_IPS="${peer_ips}"
+VPN_NAME="Test VPN"
+TIER1_THRESHOLD=1
+TIER2_THRESHOLD=3
+TIER3_THRESHOLD=5
+COOLDOWN_MINUTES=15
+MAX_RESTARTS_PER_HOUR=3
+LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
+STATE_DIR="${TEST_DIR}"
+CRON_SCHEDULE="*/1 * * * *"
+LOCKFILE_TIMEOUT=300
+ENABLE_PING_CHECK=1
+PING_TARGET_IP=""
+PING_COUNT=3
+PING_TIMEOUT=2
+DEBUG=0
+EOF
+
+	# Add any extra config variables
+	for config_var in "${extra_config[@]}"; do
+		if [[ -n "$config_var" ]]; then
+			echo "$config_var" >>"$config_file"
+		fi
+	done
+
+	echo "$config_file"
+}
+
+# Set up test environment variables
+#
+# Sets up common environment variables used by tests (LOGS_DIR, STATE_DIR, etc.).
+# Creates necessary directories.
+#
+# Arguments:
+#   $1: State directory path (default: ${TEST_DIR})
+#   $2: Logs directory path (default: ${STATE_DIR}/logs)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Creates directories
+#   - Exports LOGS_DIR, STATE_DIR, LOCKFILE, LOG_FILE, RESTART_COUNT_FILE, COOLDOWN_UNTIL_FILE
+setup_test_environment() {
+	local state_dir="${1:-${TEST_DIR}}"
+	local logs_dir="${2:-${state_dir}/logs}"
+
+	mkdir -p "$logs_dir"
+	mkdir -p "$state_dir"
+
+	export STATE_DIR="$state_dir"
+	export LOGS_DIR="$logs_dir"
+	export LOCKFILE="${state_dir}/vpn-monitor.lock"
+	export LOG_FILE="${logs_dir}/vpn-monitor.log"
+	export RESTART_COUNT_FILE="${logs_dir}/restart_count"
+	export COOLDOWN_UNTIL_FILE="${state_dir}/cooldown_until"
+}
+
+# Set up complete VPN monitor test environment
+#
+# Creates config file, test script, and sets up environment variables.
+# This is a convenience function that combines common setup steps.
+#
+# Arguments:
+#   $1: Peer IPs (default: "192.168.1.1")
+#   $2: State directory (default: ${TEST_DIR})
+#   $3+: Additional config variables as KEY="VALUE" pairs
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Sets global variables: TEST_CONFIG_FILE, TEST_SCRIPT, STATE_DIR, LOGS_DIR
+#
+# Side effects:
+#   - Creates config file
+#   - Creates test script
+#   - Sets up environment variables
+setup_test_vpn_monitor() {
+	local peer_ips="${1:-192.168.1.1}"
+	local state_dir="${2:-${TEST_DIR}}"
+	shift 2 || true
+	local extra_config=("$@")
+
+	local vpn_monitor_script="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
+
+	# Set up environment
+	setup_test_environment "$state_dir"
+
+	# Create config file
+	TEST_CONFIG_FILE="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_config "$TEST_CONFIG_FILE" "$peer_ips" "${extra_config[@]}"
+
+	# Create test script
+	TEST_SCRIPT=$(create_test_vpn_monitor_script \
+		"$vpn_monitor_script" \
+		"${TEST_DIR}/vpn-monitor.sh" \
+		"$TEST_CONFIG_FILE" \
+		"$STATE_DIR" \
+		"$LOG_FILE")
+
+	export TEST_CONFIG_FILE TEST_SCRIPT
+}
+
+# Set up state files for testing
+#
+# Creates common state files used in tests (failure counters, byte counters, etc.).
+#
+# Arguments:
+#   $1: Peer IP address
+#   $2: Failure count (default: 0)
+#   $3: Last bytes value (default: 0)
+#   $4: SPI value (optional)
+#   $5: Cooldown until timestamp (optional, 0 to skip)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Creates failure counter file
+#   - Creates last_bytes file
+#   - Creates SPI file (if provided)
+#   - Creates cooldown file (if timestamp provided)
+setup_state_files() {
+	local peer_ip="$1"
+	local failure_count="${2:-0}"
+	local last_bytes="${3:-0}"
+	local spi="${4:-}"
+	local cooldown_until="${5:-}"
+
+	# Sanitize peer IP for file names
+	local sanitized_ip
+	sanitized_ip=$(echo "$peer_ip" | tr '.' '_' | tr ':' '_')
+
+	# Ensure directories exist
+	mkdir -p "${LOGS_DIR:-${TEST_DIR}/logs}"
+	mkdir -p "${STATE_DIR:-${TEST_DIR}}"
+
+	# Set up failure counter
+	if [[ -n "$peer_ip" ]]; then
+		local failure_counter="${LOGS_DIR:-${TEST_DIR}/logs}/failure_counter_${sanitized_ip}"
+		echo "$failure_count" >"$failure_counter"
+	fi
+
+	# Set up byte counter
+	# Create bytes file if peer_ip is set AND (last_bytes is non-zero OR failure_count > 0)
+	if [[ -n "$peer_ip" ]] && ([[ "$last_bytes" != "0" ]] || [[ "$failure_count" -gt 0 ]]); then
+		local bytes_file="${STATE_DIR:-${TEST_DIR}}/last_bytes_${sanitized_ip}"
+		echo "$last_bytes" >"$bytes_file"
+	fi
+
+	# Set up SPI file
+	if [[ -n "$spi" ]] && [[ -n "$peer_ip" ]]; then
+		local spi_file="${STATE_DIR:-${TEST_DIR}}/spi_${sanitized_ip}"
+		echo "$spi" >"$spi_file"
+	fi
+
+	# Set up cooldown file
+	if [[ -n "$cooldown_until" ]] && [[ "$cooldown_until" != "0" ]]; then
+		local cooldown_file="${STATE_DIR:-${TEST_DIR}}/cooldown_until"
+		echo "$cooldown_until" >"$cooldown_file"
+	fi
+}
+
+# Check if checksum command is available
+#
+# Checks for availability of sha256sum, shasum, or openssl commands.
+# Used to skip tests that require checksum functionality.
+#
+# Returns:
+#   0: Checksum command available
+#   1: No checksum command available
+check_checksum_command_available() {
+	if command -v sha256sum >/dev/null 2>&1 ||
+		command -v shasum >/dev/null 2>&1 ||
+		command -v openssl >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
+# Set up complete mock VPN environment
+#
+# Creates mock ip, ipsec, and ping commands and adds them to PATH.
+# This is a convenience function for tests that need multiple mocks.
+#
+# Arguments:
+#   $1: Peer IP for ip xfrm mock (default: "192.168.1.1")
+#   $2: Bytes value for ip xfrm mock (default: 1000)
+#   $3: SPI value for ip xfrm mock (default: 0x12345678)
+#   $4: Ping target IP (optional, creates ping mock if provided)
+#   $5: Ping success flag (default: 1, set to 0 for ping failure)
+#   $6: Create ipsec mock (default: 1, set to 0 to skip)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Creates mock commands in TEST_DIR
+#   - Adds TEST_DIR to PATH
+#   - Sets MOCK_IP, MOCK_PING, MOCK_IPSEC variables
+setup_mock_vpn_environment() {
+	local peer_ip="${1:-192.168.1.1}"
+	local bytes="${2:-1000}"
+	local spi="${3:-0x12345678}"
+	local ping_target="${4:-}"
+	local ping_success="${5:-1}"
+	local create_ipsec="${6:-1}"
+
+	# Create mock ip command
+	MOCK_IP=$(mock_ip_xfrm_state "$peer_ip" "$bytes" "$spi")
+	mv "$MOCK_IP" "${TEST_DIR}/ip" 2>/dev/null || true
+	MOCK_IP="${TEST_DIR}/ip"
+
+	# Create mock ping if requested
+	if [[ -n "$ping_target" ]]; then
+		MOCK_PING=$(mock_ping "$ping_target" "$ping_success")
+		mv "$MOCK_PING" "${TEST_DIR}/ping" 2>/dev/null || true
+		MOCK_PING="${TEST_DIR}/ping"
+	fi
+
+	# Create mock ipsec if requested
+	if [[ "$create_ipsec" == "1" ]]; then
+		MOCK_IPSEC=$(mock_ipsec)
+	fi
+
+	# Add mocks to PATH
+	add_mock_to_path
+
+	export MOCK_IP MOCK_PING MOCK_IPSEC
+}

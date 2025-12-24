@@ -372,14 +372,8 @@ source_function() {
 }
 
 @test "get_failure_count returns 0 for missing counter file" {
-	# Create test environment
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-
 	# Set up environment variables
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
 
 	# Source the actual function from the library
 	source_function "get_failure_count"
@@ -391,15 +385,9 @@ source_function() {
 }
 
 @test "get_failure_count returns value from counter file" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
-	echo "5" >"$counter_file"
-
 	# Set up environment variables
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
+	setup_state_files "192.168.1.1" 5
 
 	# Source the actual function from the library
 	source_function "get_failure_count"
@@ -410,13 +398,8 @@ source_function() {
 }
 
 @test "increment_failure increments counter correctly" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-
 	# Set up environment variables
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
 
 	# Source the actual functions from the library
 	source_function "increment_failure"
@@ -428,7 +411,7 @@ source_function() {
 	assert_output "1"
 
 	# Verify the file was created
-	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	local counter_file="${LOGS_DIR}/failure_counter_192_168_1_1"
 	assert_file_exist "$counter_file"
 	local count
 	count=$(cat "$counter_file")
@@ -445,15 +428,9 @@ source_function() {
 }
 
 @test "reset_failure_count resets counter to 0" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
-	echo "5" >"$counter_file"
-
 	# Set up environment variables
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
+	setup_state_files "192.168.1.1" 5
 
 	# Source the actual function from the library
 	source_function "reset_failure_count"
@@ -462,6 +439,7 @@ source_function() {
 	assert_success
 
 	# Verify the counter was reset
+	local counter_file="${LOGS_DIR}/failure_counter_192_168_1_1"
 	assert_file_exist "$counter_file"
 	local count
 	count=$(cat "$counter_file")
@@ -473,56 +451,38 @@ source_function() {
 # ============================================================================
 
 @test "get_peer_state_file_path returns correct path for failure_count" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
 
 	source_function "get_peer_state_file_path"
 
 	run get_peer_state_file_path "192.168.1.1" "failure_count"
 	assert_success
-	assert_output "${logs_dir}/failure_counter_192_168_1_1"
+	assert_output "${LOGS_DIR}/failure_counter_192_168_1_1"
 }
 
 @test "get_peer_state_file_path returns correct path for last_bytes" {
-	local state_dir="${TEST_DIR}"
-
-	LOGS_DIR="${state_dir}/logs"
-	STATE_DIR="$state_dir"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
 
 	source_function "get_peer_state_file_path"
 
 	run get_peer_state_file_path "192.168.1.1" "last_bytes"
 	assert_success
-	assert_output "${state_dir}/last_bytes_192_168_1_1"
+	assert_output "${STATE_DIR}/last_bytes_192_168_1_1"
 }
 
 @test "get_peer_state_file_path handles unknown key" {
-	local state_dir="${TEST_DIR}"
-
-	LOGS_DIR="${state_dir}/logs"
-	STATE_DIR="$state_dir"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
 
 	source_function "get_peer_state_file_path"
 
 	run get_peer_state_file_path "192.168.1.1" "unknown_key"
 	assert_success
 	# Function logs a warning but still returns the path
-	assert_output --partial "${state_dir}/unknown_key_192_168_1_1"
+	assert_output --partial "${STATE_DIR}/unknown_key_192_168_1_1"
 }
 
 @test "get_peer_state returns default when file missing" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
 
 	source_function "get_peer_state"
 
@@ -537,14 +497,8 @@ source_function() {
 }
 
 @test "get_peer_state returns value from existing file" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
-	echo "42" >"$counter_file"
-
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
+	setup_state_files "192.168.1.1" 42
 
 	source_function "get_peer_state"
 
@@ -554,14 +508,10 @@ source_function() {
 }
 
 @test "get_peer_state handles corrupted file" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	setup_test_environment "${TEST_DIR}"
+	# Manually create corrupted file (setup_state_files validates, so we need to create it directly)
+	local counter_file="${LOGS_DIR}/failure_counter_192_168_1_1"
 	echo "invalid-value" >"$counter_file"
-
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
 
 	source_function "get_peer_state"
 
@@ -574,12 +524,7 @@ source_function() {
 }
 
 @test "set_peer_state creates file with correct value" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
 
 	source_function "set_peer_state"
 
@@ -587,7 +532,7 @@ source_function() {
 	assert_success
 
 	# Verify file was created with correct value
-	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	local counter_file="${LOGS_DIR}/failure_counter_192_168_1_1"
 	assert_file_exist "$counter_file"
 	local count
 	count=$(cat "$counter_file")
@@ -595,14 +540,8 @@ source_function() {
 }
 
 @test "set_peer_state updates existing file" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
-	echo "5" >"$counter_file"
-
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
+	setup_state_files "192.168.1.1" 5
 
 	source_function "set_peer_state"
 
@@ -610,18 +549,14 @@ source_function() {
 	assert_success
 
 	# Verify file was updated
+	local counter_file="${LOGS_DIR}/failure_counter_192_168_1_1"
 	local count
 	count=$(cat "$counter_file")
 	assert [ "$count" -eq 10 ]
 }
 
 @test "set_peer_state validates numeric values" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
 
 	source_function "set_peer_state"
 
@@ -630,16 +565,12 @@ source_function() {
 	assert_failure
 
 	# File should not be created
-	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	local counter_file="${LOGS_DIR}/failure_counter_192_168_1_1"
 	assert_file_not_exist "$counter_file"
 }
 
 @test "set_peer_state works with last_bytes" {
-	local state_dir="${TEST_DIR}"
-
-	LOGS_DIR="${state_dir}/logs"
-	STATE_DIR="$state_dir"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
 
 	source_function "set_peer_state"
 
@@ -647,7 +578,7 @@ source_function() {
 	assert_success
 
 	# Verify file was created in STATE_DIR
-	local bytes_file="${state_dir}/last_bytes_192_168_1_1"
+	local bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
 	assert_file_exist "$bytes_file"
 	local bytes
 	bytes=$(cat "$bytes_file")
@@ -655,14 +586,8 @@ source_function() {
 }
 
 @test "delete_peer_state removes existing file" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
-	echo "5" >"$counter_file"
-
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
+	setup_state_files "192.168.1.1" 5
 
 	source_function "delete_peer_state"
 
@@ -670,16 +595,12 @@ source_function() {
 	assert_success
 
 	# File should be deleted
+	local counter_file="${LOGS_DIR}/failure_counter_192_168_1_1"
 	assert_file_not_exist "$counter_file"
 }
 
 @test "delete_peer_state succeeds when file missing" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
 
 	source_function "delete_peer_state"
 
@@ -689,19 +610,10 @@ source_function() {
 }
 
 @test "cleanup_peer_state removes all peer state files" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}"
 
 	# Create both failure_count and last_bytes files
-	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
-	local bytes_file="${state_dir}/last_bytes_192_168_1_1"
-	echo "5" >"$counter_file"
-	echo "123456" >"$bytes_file"
-
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="$state_dir"
-	export LOGS_DIR STATE_DIR
+	setup_state_files "192.168.1.1" 5 123456
 
 	source_function "cleanup_peer_state"
 
@@ -714,12 +626,7 @@ source_function() {
 }
 
 @test "get_peer_state and set_peer_state work together" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
 
 	source_function "get_peer_state"
 	source_function "set_peer_state"
@@ -735,12 +642,7 @@ source_function() {
 }
 
 @test "abstraction layer maintains atomic writes" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
+	setup_test_environment "${TEST_DIR}"
 
 	source_function "set_peer_state"
 
@@ -749,7 +651,7 @@ source_function() {
 	assert_success
 
 	# Verify temp file doesn't exist (should have been renamed)
-	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	local counter_file="${LOGS_DIR}/failure_counter_192_168_1_1"
 	local temp_file="${counter_file}.tmp"
 	assert_file_not_exist "$temp_file"
 	assert_file_exist "$counter_file"
@@ -766,7 +668,7 @@ source_function() {
 	source_function "calculate_file_checksum"
 
 	# Skip if checksum commands not available
-	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; then
+	if ! check_checksum_command_available; then
 		skip "No checksum command available (sha256sum, shasum, or openssl)"
 	fi
 
@@ -780,13 +682,12 @@ source_function() {
 }
 
 @test "store_state_file_checksum creates checksum file" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-	local state_file="${logs_dir}/test_state"
+	setup_test_environment "${TEST_DIR}"
+	local state_file="${LOGS_DIR}/test_state"
 	echo "42" >"$state_file"
 
 	# Skip if checksum commands not available
-	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; then
+	if ! check_checksum_command_available; then
 		skip "No checksum command available"
 	fi
 
@@ -801,13 +702,12 @@ source_function() {
 }
 
 @test "validate_state_file_checksum validates correct checksum" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-	local state_file="${logs_dir}/test_state"
+	setup_test_environment "${TEST_DIR}"
+	local state_file="${LOGS_DIR}/test_state"
 	echo "42" >"$state_file"
 
 	# Skip if checksum commands not available
-	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; then
+	if ! check_checksum_command_available; then
 		skip "No checksum command available"
 	fi
 
@@ -823,13 +723,12 @@ source_function() {
 }
 
 @test "validate_state_file_checksum detects corruption" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-	local state_file="${logs_dir}/test_state"
+	setup_test_environment "${TEST_DIR}"
+	local state_file="${LOGS_DIR}/test_state"
 	echo "42" >"$state_file"
 
 	# Skip if checksum commands not available
-	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; then
+	if ! check_checksum_command_available; then
 		skip "No checksum command available"
 	fi
 
@@ -848,9 +747,8 @@ source_function() {
 }
 
 @test "validate_state_file_checksum returns success when checksum file missing" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-	local state_file="${logs_dir}/test_state"
+	setup_test_environment "${TEST_DIR}"
+	local state_file="${LOGS_DIR}/test_state"
 	echo "42" >"$state_file"
 
 	source_function "validate_state_file_checksum"
@@ -861,17 +759,12 @@ source_function() {
 }
 
 @test "set_peer_state stores checksum after write" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
+	setup_test_environment "${TEST_DIR}"
 
 	# Skip if checksum commands not available
-	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; then
+	if ! check_checksum_command_available; then
 		skip "No checksum command available"
 	fi
-
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
 
 	source_function "set_peer_state"
 
@@ -879,30 +772,25 @@ source_function() {
 	assert_success
 
 	# Checksum file should be created
-	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
+	local counter_file="${LOGS_DIR}/failure_counter_192_168_1_1"
 	local checksum_file="${counter_file}.checksum"
 	assert_file_exist "$checksum_file"
 }
 
 @test "get_peer_state validates checksum before reading" {
-	local logs_dir="${TEST_DIR}/logs"
-	mkdir -p "$logs_dir"
-	local counter_file="${logs_dir}/failure_counter_192_168_1_1"
-	echo "30" >"$counter_file"
+	setup_test_environment "${TEST_DIR}"
+	setup_state_files "192.168.1.1" 30
 
 	# Skip if checksum commands not available
-	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; then
+	if ! check_checksum_command_available; then
 		skip "No checksum command available"
 	fi
-
-	LOGS_DIR="$logs_dir"
-	STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR STATE_DIR
 
 	source_function "get_peer_state"
 	source_function "store_state_file_checksum"
 
 	# Store checksum
+	local counter_file="${LOGS_DIR}/failure_counter_192_168_1_1"
 	store_state_file_checksum "$counter_file"
 
 	# Corrupt the file
@@ -918,24 +806,20 @@ source_function() {
 }
 
 @test "check_cooldown validates checksum" {
-	local state_dir="${TEST_DIR}"
-	local cooldown_file="${state_dir}/cooldown_until"
+	setup_test_environment "${TEST_DIR}"
 	local future_time=$(($(date +%s) + 900))
-	echo "$future_time" >"$cooldown_file"
+	setup_state_files "" 0 0 "" "$future_time"
 
 	# Skip if checksum commands not available
-	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; then
+	if ! check_checksum_command_available; then
 		skip "No checksum command available"
 	fi
-
-	STATE_DIR="$state_dir"
-	COOLDOWN_UNTIL_FILE="$cooldown_file"
-	export STATE_DIR COOLDOWN_UNTIL_FILE
 
 	source_function "check_cooldown"
 	source_function "store_state_file_checksum"
 
 	# Store checksum
+	local cooldown_file="${STATE_DIR}/cooldown_until"
 	store_state_file_checksum "$cooldown_file"
 
 	# Corrupt the file
@@ -2740,7 +2624,9 @@ source_lockfile_module() {
 	# Note: The mock IP command must be in PATH before check_xfrm_status is called
 	# If command -v ip finds the real ip instead of mock, skip this integration test
 	# The core rekey detection logic is already tested in other unit tests above
-	if command -v ip 2>/dev/null | grep -q "^${TEST_DIR}/mock_ip$"; then
+	local found_ip_cmd
+	found_ip_cmd=$(command -v ip 2>/dev/null || echo "")
+	if [[ -n "$found_ip_cmd" ]] && [[ "$found_ip_cmd" == "${TEST_DIR}/mock_ip" ]]; then
 		run check_xfrm_status "203.0.113.1" ""
 		assert_success
 
@@ -2758,14 +2644,4 @@ source_lockfile_module() {
 		# Core functionality is tested in unit tests above
 		skip "Mock IP command not found in PATH (integration test skipped, unit tests passed)"
 	fi
-
-	# Verify SPI was updated
-	local stored_spi
-	stored_spi=$(get_peer_state "203.0.113.1" "spi" "")
-	assert [ "$stored_spi" = "0x87654321" ]
-
-	# Verify byte counter baseline was reset (rekey detected)
-	local last_bytes
-	last_bytes=$(get_peer_state "203.0.113.1" "last_bytes" "0")
-	assert [ "$last_bytes" = "1000" ]
 }

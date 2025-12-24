@@ -654,7 +654,7 @@ If you're still experiencing issues:
 2. **Enable debug mode**: `DEBUG=1` in config
 3. **Run manually**: `/data/vpn-monitor/vpn-monitor.sh` (not --fake)
 4. **Review documentation**: [README.md](README.md)
-5. **Check code review**: [CODE_REVIEW.md](CODE_REVIEW.md) for known issues
+5. **Check architectural review**: [ARCHITECTURAL_REVIEW.md](ARCHITECTURAL_REVIEW.md) for code quality analysis and known issues
 
 ## Reporting Issues
 
