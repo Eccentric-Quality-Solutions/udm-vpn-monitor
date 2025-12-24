@@ -63,15 +63,13 @@ attempt_xfrm_recovery() {
 	fi
 
 	# Get all xfrm state entries for this peer IP
-	# Use word boundaries to avoid partial IP matches (e.g., match 192.168.1.1 but not 192.168.1.10)
-	# Escape regex special characters in peer_ip to prevent regex injection
-	# IP addresses are validated before reaching this function, but we escape to be safe
-	local peer_ip_escaped
-	peer_ip_escaped=$(printf '%s\n' "$peer_ip" | sed -e 's/\./\\./g' -e 's/\[/\\[/g' -e 's/\]/\\]/g' -e 's/\*/\\*/g' -e 's/\^/\\^/g' -e 's/\$/\\$/g' -e 's/(/\\(/g' -e 's/)/\\)/g' -e 's/+/\\+/g' -e 's/?/\\?/g' -e 's/{/\\{/g' -e 's/}/\\}/g' -e 's/|/\\|/g')
+	# Match on "dst $peer_ip" pattern which appears at the start of each SA entry
+	# This ensures we capture complete SA blocks for proper deletion
+	# Use fixed-string matching to prevent regex pattern injection
+	# Word boundary protection: The "dst " prefix and space after IP provide natural boundaries
+	# (e.g., "dst 192.168.1.1" won't match "dst 192.168.1.10" due to exact string matching)
 	local xfrm_output
 	local xfrm_exit_code=0
-	# Note: Using grep -E (extended regex) instead of grep -F (fixed-string) because we need
-	# word boundary matching to avoid partial IP matches. The peer_ip is properly escaped above.
 	xfrm_output=$(ip xfrm state 2>/dev/null)
 	xfrm_exit_code=$?
 
@@ -80,8 +78,11 @@ attempt_xfrm_recovery() {
 		return 1
 	fi
 
-	# Filter output for this peer IP
-	xfrm_output=$(echo "$xfrm_output" | grep -E "(^|[^0-9a-fA-F:])${peer_ip_escaped}([^0-9a-fA-F:]|$)" -A "$XFRM_OUTPUT_CONTEXT_LINES" || true)
+	# Filter output for this peer IP by matching "dst $peer_ip" pattern
+	# -F: fixed-string matching (treats IP address as literal, not regex pattern)
+	#     This provides word boundary protection: exact string match prevents partial IP matches
+	# -A XFRM_OUTPUT_CONTEXT_LINES: show context lines after match (to get complete SA block)
+	xfrm_output=$(echo "$xfrm_output" | grep -F "dst $peer_ip" -A "$XFRM_OUTPUT_CONTEXT_LINES" || true)
 
 	if [[ -z "$xfrm_output" ]]; then
 		log_message "INFO" "xfrm recovery: No SAs found for $peer_ip in xfrm state (may already be down)"

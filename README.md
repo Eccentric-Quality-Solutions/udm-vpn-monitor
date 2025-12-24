@@ -202,7 +202,6 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `LOCKFILE_TIMEOUT` | Lockfile timeout in seconds (detects hung processes) | 300 |
 | `ENABLE_PING_CHECK` | Enable ping connectivity verification (0 or 1) | 1 |
 | `LOCAL_UDM_IP` | Local UDM internal IP address (required when `ENABLE_PING_CHECK=1` and `INTERNAL_PEER_IPS` is set). Used as source IP for ping checks. The script automatically adds this IP to br0 if needed. | "" |
-| `PING_TARGET_IP` | **Internal/private** IP to ping through tunnel (DEPRECATED - use `INTERNAL_PEER_IPS` instead, empty = use peer external IP) | "" |
 | `PING_COUNT` | Number of ping packets to send | 3 |
 | `PING_TIMEOUT` | Ping timeout per packet (seconds) | 2 |
 | `ENABLE_KEEPALIVE` | Enable VPN keepalive daemon (0 or 1, see [Keepalive Daemon](#keepalive-daemon)) | 0 |

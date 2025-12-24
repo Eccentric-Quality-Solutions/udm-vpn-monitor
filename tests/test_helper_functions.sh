@@ -2492,7 +2492,7 @@ source_lockfile_module() {
 	set_peer_state "203.0.113.1" "last_bytes" "5000" || true
 
 	# Check with new SPI (rekey) and new bytes
-	run check_byte_counters "1000" "" "203.0.113.1" "0x87654321"
+	run check_byte_counters "1000" "203.0.113.1" "0x87654321"
 	assert_success
 
 	# Verify byte counter baseline was reset and updated
@@ -2522,7 +2522,7 @@ source_lockfile_module() {
 	set_peer_state "203.0.113.1" "last_bytes" "5000" || true
 
 	# Check with new SPI (rekey) but bytes=0
-	run check_byte_counters "0" "" "203.0.113.1" "0x87654321"
+	run check_byte_counters "0" "203.0.113.1" "0x87654321"
 	assert_failure
 
 	# Verify byte counter baseline was reset (rekey detected)
@@ -2566,7 +2566,7 @@ source_lockfile_module() {
 
 	# Check VPN status (skip if mock not found in PATH)
 	if command -v ip 2>/dev/null | grep -q "^${TEST_DIR}/mock_ip$"; then
-		run check_xfrm_status "203.0.113.1" ""
+		run check_xfrm_status "203.0.113.1"
 		assert_success
 
 		# Verify SPI was stored
@@ -2627,7 +2627,7 @@ source_lockfile_module() {
 	local found_ip_cmd
 	found_ip_cmd=$(command -v ip 2>/dev/null || echo "")
 	if [[ -n "$found_ip_cmd" ]] && [[ "$found_ip_cmd" == "${TEST_DIR}/mock_ip" ]]; then
-		run check_xfrm_status "203.0.113.1" ""
+		run check_xfrm_status "203.0.113.1"
 		assert_success
 
 		# Verify SPI was updated

@@ -271,7 +271,7 @@ EOF
 }
 
 @test "vpn-monitor.sh handles ping check when enabled" {
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'PING_TARGET_IP="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=2'
+	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=2'
 	setup_mock_vpn_environment "192.168.1.1" 1000 "0x12345678" "192.168.1.1" 1
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake

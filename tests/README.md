@@ -323,7 +323,7 @@ Tests VPN detection edge cases, byte counter handling, and fallback mechanisms:
 - ✅ First check (no previous bytes) - should accept any non-zero value
 - ✅ Byte counter increases but very slowly
 - ✅ Byte counter jumps dramatically (counter reset on remote side)
-- ✅ Ping check enabled but PING_TARGET_IP not set
+- ✅ Ping check enabled but INTERNAL_PEER_IPS not set
 - ✅ Ping command hangs (timeout handling)
 - ✅ Ping target is unreachable but command succeeds
 

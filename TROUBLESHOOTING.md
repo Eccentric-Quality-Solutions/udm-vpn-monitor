@@ -124,7 +124,7 @@ service cron status
 
 3. **Check ping connectivity**:
    ```bash
-   ping -c 3 <PING_TARGET_IP>
+   ping -c 3 <INTERNAL_PEER_IP>
    ```
    If ping fails, that's why ping check is failing.
 
@@ -150,7 +150,7 @@ service cron status
 **If ping checks are failing**:
 - Ping may be blocked by firewall
 - Disable ping checks: `ENABLE_PING_CHECK=0`
-- Or configure `PING_TARGET_IP` to a reachable IP
+- Or configure `INTERNAL_PEER_IPS` to a reachable IP
 
 **If thresholds are too low**:
 - Increase thresholds in config:
@@ -253,13 +253,12 @@ service cron status
 
 1. **Test ping manually**:
    ```bash
-   ping -c 3 <PING_TARGET_IP>
+   ping -c 3 <INTERNAL_PEER_IP>
    ```
    If this fails, ping is blocked or target is unreachable.
 
 2. **Check ping target configuration**:
    ```bash
-   grep PING_TARGET_IP /data/vpn-monitor/vpn-monitor.conf
    grep INTERNAL_PEER_IPS /data/vpn-monitor/vpn-monitor.conf
    ```
    If empty, uses peer IP (external IP, may not be pingable).

@@ -159,7 +159,6 @@ create_interactive_config() {
 	local default_cron_schedule="*/1 * * * *"
 	local default_lockfile_timeout=300
 	local default_enable_ping=1
-	local default_ping_target=""
 	local default_ping_count=3
 	local default_ping_timeout=2
 	local default_debug=0
@@ -197,9 +196,6 @@ create_interactive_config() {
 
 	local enable_ping
 	enable_ping=$(prompt_config_value "ENABLE_PING_CHECK" "$default_enable_ping" "Enable ping connectivity check (0 or 1)")
-
-	local ping_target
-	ping_target=$(prompt_config_value "PING_TARGET_IP" "$default_ping_target" "Ping target IP (DEPRECATED - use INTERNAL_PEER_IPS instead, empty to skip)")
 
 	local ping_count
 	ping_count=$(prompt_config_value "PING_COUNT" "$default_ping_count" "Ping count (number of packets)")
@@ -268,9 +264,6 @@ LOCKFILE_TIMEOUT=${lockfile_timeout}
 # Ping connectivity check
 ENABLE_PING_CHECK=${enable_ping}
 
-# Ping target IP address (internal/private IP on remote network)
-PING_TARGET_IP="${ping_target}"
-
 # Ping count (number of packets to send)
 PING_COUNT=${ping_count}
 
@@ -338,7 +331,6 @@ STATE_DIR="${INSTALL_DIR}"
 CRON_SCHEDULE="*/1 * * * *"
 LOCKFILE_TIMEOUT=300
 ENABLE_PING_CHECK=1
-PING_TARGET_IP=""
 PING_COUNT=3
 PING_TIMEOUT=2
 ENABLE_KEEPALIVE=1

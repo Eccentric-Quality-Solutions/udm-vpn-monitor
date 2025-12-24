@@ -63,7 +63,6 @@ declare -A CONFIG_SCHEMA=(
 	["VPN_NAME"]="optional|string||default:Site-to-Site VPN"
 	["ENABLE_PING_CHECK"]="optional|integer|values:0,1|default:1"
 	["LOCAL_UDM_IP"]="optional|string||default:"
-	["PING_TARGET_IP"]="optional|string||default:"
 	["PING_COUNT"]="optional|integer|min:1|max:10|default:3"
 	["PING_TIMEOUT"]="optional|integer|min:1|max:30|default:2"
 	["ENABLE_KEEPALIVE"]="optional|integer|values:0,1|default:1"

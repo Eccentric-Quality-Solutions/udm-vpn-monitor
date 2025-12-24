@@ -760,7 +760,7 @@ Example:
 #
 # Note:
 #   Requires validate_ip_address, sanitize_peer_ip, log_message, STATE_DIR,
-#   ENABLE_PING_CHECK, PING_TARGET_IP to be set.
+#   ENABLE_PING_CHECK to be set.
 #   Automatically detects available tools (xfrm, ipsec) and uses
 #   appropriate fallbacks for compatibility across different UDM configurations.
 check_vpn_status() {

@@ -1262,12 +1262,11 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: ping check enabled but PING_TARGET_IP not set" {
+@test "high-risk: ping check enabled but INTERNAL_PEER_IPS not set" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
 ENABLE_PING_CHECK=1
-PING_TARGET_IP=""
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -4856,7 +4855,7 @@ EOF
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
 ENABLE_PING_CHECK=1
-PING_TARGET_IP="2001:db8::1"
+INTERNAL_PEER_IPS="2001:db8::1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -4900,7 +4899,7 @@ EOF
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
 ENABLE_PING_CHECK=1
-PING_TARGET_IP="192.168.1.1"
+INTERNAL_PEER_IPS="192.168.1.1"
 PING_COUNT=3
 PING_TIMEOUT=1
 EOF
@@ -4940,7 +4939,7 @@ EOF
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
 ENABLE_PING_CHECK=1
-PING_TARGET_IP="192.168.1.1"
+INTERNAL_PEER_IPS="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
