@@ -131,6 +131,9 @@ get_peer_state_file_path() {
 	last_bytes)
 		echo "${STATE_DIR}/last_bytes_${peer_sanitized}"
 		;;
+	spi)
+		echo "${STATE_DIR}/spi_${peer_sanitized}"
+		;;
 	*)
 		handle_error "WARNING" "Unknown peer state key: $key" 0
 		echo "${STATE_DIR}/${key}_${peer_sanitized}"
@@ -188,6 +191,14 @@ get_peer_state() {
 				return 0
 			fi
 			;;
+		spi)
+			# SPI can be hex (0x...) or decimal format
+			if [[ ! "$value" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+				handle_error "WARNING" "Corrupted peer state file (expected SPI format): $state_file" 0
+				echo "$default_value"
+				return 0
+			fi
+			;;
 		esac
 		echo "$value"
 	else
@@ -236,10 +247,17 @@ set_peer_state() {
 			return 1
 		fi
 		;;
+	spi)
+		# SPI can be hex (0x...) or decimal format
+		if [[ ! "$value" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]] && [[ -n "$value" ]]; then
+			handle_error "ERROR" "Invalid value for $key (expected SPI format): $value" 0
+			return 1
+		fi
+		;;
 	esac
 
 	# Atomic write: write to temp file first, then rename
-	if ! (echo "$value" >"${state_file}.tmp" && mv "${state_file}.tmp" "$state_file"); then
+	if ! atomic_write_file "$state_file" "$value"; then
 		handle_error "ERROR" "Failed to update peer state for $peer_ip (key: $key, file: $state_file)" 0
 		return 1
 	fi
@@ -320,6 +338,7 @@ cleanup_peer_state() {
 	local peer_ip="$1"
 	delete_peer_state "$peer_ip" "failure_count"
 	delete_peer_state "$peer_ip" "last_bytes"
+	delete_peer_state "$peer_ip" "spi"
 	# Add other state keys here as needed
 }
 
@@ -560,7 +579,7 @@ set_cooldown() {
 	local cooldown_until
 	cooldown_until=$(get_timestamp_plus_minutes "$minutes")
 	# Atomic write: write to temp file first, then rename
-	if ! (echo "$cooldown_until" >"${COOLDOWN_UNTIL_FILE}.tmp" && mv "${COOLDOWN_UNTIL_FILE}.tmp" "$COOLDOWN_UNTIL_FILE"); then
+	if ! atomic_write_file "$COOLDOWN_UNTIL_FILE" "$cooldown_until"; then
 		handle_error "ERROR" "Failed to set cooldown period (file: $COOLDOWN_UNTIL_FILE)" 0
 		# Continue execution but log the error
 	fi
@@ -769,7 +788,7 @@ store_state_file_checksum() {
 	fi
 
 	# Atomic write: write checksum to temp file first, then rename
-	if ! (echo "$checksum" >"${checksum_file}.tmp" && mv "${checksum_file}.tmp" "$checksum_file"); then
+	if ! atomic_write_file "$checksum_file" "$checksum"; then
 		handle_error "WARNING" "Failed to store checksum for state file: $state_file" 0
 		return 1
 	fi

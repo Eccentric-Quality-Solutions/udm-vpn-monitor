@@ -808,19 +808,19 @@ validate_config() {
 
 	# Validate file paths are writable (if they exist)
 	# Check STATE_DIR is writable
-	if [[ -d "$STATE_DIR" ]] && [[ ! -w "$STATE_DIR" ]]; then
+	if directory_exists "$STATE_DIR" && ! directory_writable "$STATE_DIR"; then
 		die "STATE_DIR is not writable: $STATE_DIR"
 	fi
 
 	# Check LOGS_DIR is writable (if it exists)
-	if [[ -d "$LOGS_DIR" ]] && [[ ! -w "$LOGS_DIR" ]]; then
+	if directory_exists "$LOGS_DIR" && ! directory_writable "$LOGS_DIR"; then
 		die "LOGS_DIR is not writable: $LOGS_DIR"
 	fi
 
 	# Check LOG_FILE parent directory is writable (if it exists)
 	local log_file_dir
 	log_file_dir=$(dirname "$LOG_FILE")
-	if [[ -d "$log_file_dir" ]] && [[ ! -w "$log_file_dir" ]]; then
+	if directory_exists "$log_file_dir" && ! directory_writable "$log_file_dir"; then
 		die "LOG_FILE directory is not writable: $log_file_dir"
 	fi
 

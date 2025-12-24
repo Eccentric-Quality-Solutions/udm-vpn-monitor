@@ -2,6 +2,10 @@
 
 This guide provides information for developers contributing to the UDM VPN Monitor project, including tooling setup, development workflows, and code quality standards.
 
+> **Note**: This guide focuses on **development setup** (tooling, git hooks, testing). For general installation instructions for end users, see the [Installation section in README.md](README.md#installation).
+
+> **Important**: The prerequisites listed in this guide are for **development** (building, testing, contributing code). For **runtime requirements** (what's needed to run the VPN monitor on a UDM), see the [Requirements section in README.md](README.md#requirements).
+
 ## Getting Started
 
 ### First Time Setup
@@ -48,78 +52,44 @@ This guide provides information for developers contributing to the UDM VPN Monit
    All tests should pass. If not, check tool installation.
 
 6. **Read the architecture documentation**
-   - Start with [ARCHITECTURE.md](ARCHITECTURE.md) to understand system design
-   - Review [CODE_REVIEW.md](CODE_REVIEW.md) for code quality analysis and improvement areas
-   - Check [ENHANCEMENTS.md](ENHANCEMENTS.md) for planned features
+   - Start with [ARCHITECTURE.md](ARCHITECTURE.md) to understand system design, component interactions, and technical implementation
+   - Review [Architecture Decision Records](docs/adr/README.md) to understand design decisions
+   - Review [ARCHITECTURAL_REVIEW.md](ARCHITECTURAL_REVIEW.md) for code quality analysis and improvement areas
+   - Check [TODO.md](TODO.md) for planned features
 
 7. **Understand the codebase structure**
    - **Main Script**: `vpn-monitor.sh` - Entry point, orchestrates monitoring
-   - **Detection**: `check_vpn_status()` - Checks VPN health using xfrm, ipsec with automatic fallback
-   - **Recovery**: `surgical_cleanup()`, `full_restart()` - Recovery actions (Tier 2, Tier 3) with tool availability detection
-   - **State Management**: Per-peer failure counters and byte tracking
    - **Library Modules**: Modular architecture with dedicated modules in `lib/` directory
-     - `lib/common.sh` - Shared utilities (logging, validation)
-     - `lib/detection.sh` - VPN detection logic
-     - `lib/recovery.sh` - Recovery action implementations
-     - `lib/config.sh` - Configuration management
-     - And more (see ARCHITECTURE.md for complete list)
+     - See [ARCHITECTURE.md](ARCHITECTURE.md) "Modular Library Architecture" section for complete module documentation
+     - See [ADR-0005](docs/adr/0005-modular-library-architecture.md) for design decision rationale
 
 8. **Pick a small issue to start**
-   - Check [CODE_REVIEW.md](CODE_REVIEW.md) for improvement recommendations
-   - Look for "good first issue" labels
+   - Check [ARCHITECTURAL_REVIEW.md](ARCHITECTURAL_REVIEW.md) for improvement recommendations
+   - Review [TODO.md](TODO.md) for planned features
    - Start with documentation improvements or small refactorings
 
 ### Understanding the Codebase
 
-**Key Components:**
+For comprehensive architecture information including:
+- System architecture and component interactions
+- Detection method flow and implementation details
+- Recovery tier flow and technical details
+- State management and file structure
+- Code flow diagrams
+- Library module documentation
 
-- **`vpn-monitor.sh`**: Main monitoring script
-  - Entry point: `main()` function
-  - Orchestrates: Configuration loading → State initialization → Peer monitoring → Recovery actions
-  - Lockfile protection prevents concurrent execution
+See [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Detection Logic** (`check_vpn_status()`):
-  - Primary: `ip xfrm state` - Checks Security Associations and byte counters
-  - Fallback: `ipsec status` - Checks via ipsec command
-  - Optional: Ping connectivity check
+For design decisions and rationale behind architectural choices, see [Architecture Decision Records](docs/adr/README.md).
 
-- **Recovery Actions**:
-  - **Tier 1**: Logging only (after `TIER1_THRESHOLD` failures)
-  - **Tier 2**: Surgical cleanup
-    - **Experimental**: xfrm-based per-connection recovery (requires `ENABLE_XFRM_RECOVERY=1`, disabled by default)
-    - **Default**: `ipsec reload` (all connections)
-  - **Tier 3**: Full restart
-    - Uses: `ipsec restart` (affects all tunnels)
+**Testing:**
 
-- **State Management**:
-  - Per-peer failure counters: `logs/failure_counter_<peer_ip>`
-  - Per-peer byte counters: `last_bytes_<peer_ip>`
-  - Rate limiting: `logs/restart_count`
-  - Cooldown: `cooldown_until`
+For comprehensive testing documentation including test structure, writing new tests, coverage reporting, and CI/CD integration, see [tests/README.md](tests/README.md).
 
-**Code Flow:**
-
-```
-Cron Trigger
-  → Lockfile Check
-  → Load Configuration
-  → Initialize State
-  → Check Cooldown
-  → For Each Peer IP:
-      → Validate IP
-      → Check VPN Status (detection)
-      → If Failed: Increment Counter
-      → Escalate Recovery (Tier 1/2/3)
-      → If OK: Reset Counter
-  → Release Lockfile
-```
-
-**Testing Strategy:**
-
-- **Unit Tests**: `tests/test_vpn_monitor.sh` - Test individual functions
-- **Integration Tests**: `tests/test_integration.sh` - Test full workflows
-- **High-Risk Tests**: `tests/test_high_risk.sh` - Test critical paths
-- **Coverage**: Run with `--coverage` flag to generate reports
+**Quick reference:**
+- Run all tests: `./tests/run_tests.sh`
+- Run with coverage: `./tests/run_tests.sh --coverage`
+- Run specific test file: `bats tests/test_vpn_monitor.sh`
 
 ### Common Development Tasks
 
@@ -153,6 +123,8 @@ For a complete list of documentation files and their descriptions, see the [Docu
 All source files include comprehensive in-code function documentation with function purpose, parameters, return values, side effects, examples, and notes. When reading the codebase, refer to function documentation blocks for detailed information about each function's behavior, parameters, and usage.
 
 ## Development Tooling
+
+> **Note**: These are **development prerequisites** for contributing to the project. For runtime requirements (what's needed to run the VPN monitor on a UDM), see the [Requirements section in README.md](README.md#requirements).
 
 This project uses several tools for code quality, testing, and formatting. All tools should be installed before contributing code.
 
@@ -380,7 +352,9 @@ shellcheck *.sh lib/*.sh tests/*.sh
 
 ### 2. Running Tests
 
-Always run tests before committing:
+Always run tests before committing. For comprehensive testing documentation including all test options, parallel execution, and test categories, see [tests/README.md](tests/README.md).
+
+**Quick workflow commands:**
 
 ```bash
 # Run all tests
@@ -391,10 +365,9 @@ Always run tests before committing:
 
 # Run specific test file
 bats tests/test_vpn_monitor.sh
-
-# Run specific test
-bats tests/test_vpn_monitor.sh -t "test name pattern"
 ```
+
+See [tests/README.md](tests/README.md) for complete testing documentation including test structure, writing new tests, coverage reporting, and CI/CD integration.
 
 ### 3. CI/CD Pipeline
 
@@ -855,20 +828,6 @@ Fixes #123
 
 This repository includes a pre-commit hook that runs code quality checks and automatically regenerates the installer package (`udm-vpn-monitor-installer.zip`) before each commit. This ensures code quality and that the installer package is always up-to-date with the current codebase.
 
-**What the hook does:**
-
-1. **Code Quality Checks** (if tools are installed):
-   - Runs ShellCheck on staged shell scripts to catch errors and security issues
-   - Checks code formatting with shfmt on staged shell scripts
-   - Blocks commit if errors are found (with helpful error messages)
-   - Warns if ShellCheck or shfmt are not installed (but allows commit to proceed)
-
-2. **Package Regeneration**:
-   - Automatically regenerates `udm-vpn-monitor-installer.zip` with current codebase
-   - Adds the updated package file to the commit
-
-**Note**: The hook will warn if ShellCheck or shfmt are not installed, but will still proceed with package regeneration. For best results and to catch issues early, install both tools (see [Required Tools](#required-tools) above).
-
 **Setup:**
 
 The hooks are stored in `scripts/hooks/` (version controlled) and must be installed to `.git/hooks/`:
@@ -926,7 +885,15 @@ udm-vpn-monitor/
 ├── vpn-monitor.conf          # Configuration template
 ├── prepare_install_package.sh # Creates installer package
 ├── lib/
-│   └── common.sh            # Shared library functions
+│   ├── common.sh            # Shared utilities (logging, validation)
+│   ├── config.sh            # Configuration loading and validation
+│   ├── config_schema.sh     # Configuration schema definitions
+│   ├── constants.sh          # Named constants for magic numbers
+│   ├── detection.sh          # VPN detection logic
+│   ├── lockfile.sh           # Lockfile management
+│   ├── logging.sh            # Centralized logging functionality
+│   ├── recovery.sh           # Recovery action implementations
+│   └── state.sh              # State file management
 ├── scripts/
 │   ├── hooks/               # Git hooks (version controlled)
 │   │   └── pre-commit       # Pre-commit hook
@@ -939,9 +906,12 @@ udm-vpn-monitor/
 │   └── generate_coverage_report.sh
 ├── README.md                 # User documentation
 ├── ARCHITECTURE.md           # Architecture documentation
+├── ARCHITECTURAL_REVIEW.md   # Code quality analysis and recommendations
 ├── CHANGELOG.md              # Version history
 ├── DEVELOPER.md              # This file
-└── ENHANCEMENTS.md           # Future enhancements
+├── QUICK_START.md            # 5-minute setup guide
+├── TODO.md                   # Planned features and improvements
+└── TROUBLESHOOTING.md        # Troubleshooting guide
 ```
 
 ## Contributing
@@ -995,6 +965,8 @@ If tests fail:
 3. Verify test environment setup
 4. Check `tests/test_helper.bash` for helper functions
 
+For comprehensive troubleshooting guidance and test failure diagnosis, see [tests/README.md](tests/README.md).
+
 ### Formatting Issues
 
 If shfmt makes unexpected changes:
@@ -1016,6 +988,7 @@ If shfmt makes unexpected changes:
 
 - Check existing documentation in this repository
 - Review [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions
-- Review [ENHANCEMENTS.md](ENHANCEMENTS.md) for planned features
+- Review [ARCHITECTURAL_REVIEW.md](ARCHITECTURAL_REVIEW.md) for code quality analysis
+- Review [TODO.md](TODO.md) for planned features
 - Open an issue on GitHub for bugs or questions
 

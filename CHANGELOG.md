@@ -2,13 +2,19 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
-## [Unreleased]
+## [Unreleased] - 2025-12-23
 
 ### Added
+- **VPN Keepalive Daemon**: `vpn-keepalive.sh` and `vpn-keepalive.service` - Optional background daemon that sends periodic ping traffic through VPN tunnels to prevent idle timeout and keep tunnels alive
+- **Architectural Review Document**: `ARCHITECTURAL_REVIEW.md` - Comprehensive architectural review with security analysis, reliability recommendations, and code quality assessments
+- **Utility Availability Checker**: `check-utilities.sh` - Script to verify which Linux utilities are available on UDM OS for troubleshooting and compatibility checking
+- **Pre-commit Git Hook**: `scripts/hooks/pre-commit` - Automated code quality checks (shellcheck, shfmt) and install package regeneration before commits
+- **State Checksum Validation**: Added checksum validation for state files to detect corruption and ensure data integrity
 - **Development Environment Setup Script**: `scripts/setup-dev-env.sh` - Automatically configures PATH for development tools (shfmt, shellcheck) whether installed via apt or Homebrew
 - **IPsec Fallback for Tier 2 Recovery**
 - **CI/CD Pipeline**: GitHub Actions workflow for automated testing and validation
 - **Log Analysis Tool**: `analyze-logs.sh` script for analyzing VPN failure patterns and recovery success rates
+- **Experimental Per-Tunnel xfrm Recovery**: Per-tunnel recovery capability using xfrm (disabled by default, requires `ENABLE_XFRM_RECOVERY=1`)
 - **Modular Library Architecture**: Complete refactoring into modular library components:
   - `lib/common.sh` - Shared logging and utility functions across scripts
   - `lib/config.sh` - Configuration loading and validation with schema support
@@ -57,14 +63,18 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 - **Lockfile Handling**: Dedicated `lib/lockfile.sh` module with improved stale lockfile detection and atomic operations
 - **Configuration Management**: New schema-based validation system with type checking, range validation, and default value application
 - **Code Formatting**: Applied shfmt formatting to all shell scripts for consistent style
+- **IP Address Matching**: Changed from regex-based to fixed-string matching (`grep -F`) for IP address handling in detection to prevent regex injection and improve performance
+- **Test Execution**: Tests now fail fast and stream output to terminal for better CI/CD feedback; added ability to rerun only failing tests
+- **Installer Validation**: Installation script now fails immediately when executed with invalid flags instead of continuing
 
 ### Fixed
 - **Security**: Added proper IP address validation to prevent injection attacks
-- **Lockfile Race Conditions**: Improved atomic lockfile creation and cleanup
+- **Lockfile Race Conditions**: Improved atomic lockfile creation and cleanup; fixed additional race conditions
 - **Exit Code Handling**: Fixed PIPESTATUS capture in pipe commands
 - **Crontab Removal**: Fixed issue where uninstall could remove all cron jobs
 - **Log Path Handling**: Improved log file path recalculation after config changes
 - **Process Detection**: Better handling of stale processes and lockfiles
+- **Error Handling**: Standardized error handling patterns across all modules
 
 ### Improved
 - **Code Quality**: Reduced code duplication by 20+ blocks, improved maintainability and readability with dedicated library modules
@@ -74,14 +84,18 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 - **Documentation**: 
   - Enhanced all function documentation across entire codebase with consistent format (Arguments, Returns, Side effects, Examples, Notes)
   - Updated README.md, DEVELOPER.md, and ARCHITECTURE.md with improved structure and content
+  - Added architectural review document with comprehensive analysis and recommendations
+- **State Management**: Abstracted state file operations with improved checksum validation and atomic write patterns
+- **Test Quality**: Improved test helper functions for better xfrm testing and per-tunnel reboot scenarios
 
 ### Removed
+- **swanctl Dependency**: Removed attempts to install unsupported swanctl utility on UDM OS
 - **scp-files.sh**: Removed helper script for file transfer (replaced by install package method)
 - **Dead Code**: Removed unused `LAST_RESTART_FILE` variable
 - **Ineffective Operations**: Removed `ip xfrm state delete` commands that required full selectors
 - **Generated Reports**: Removed generated report files from repository (reports/vpn-monitor-analysis.csv, reports/vpn-monitor-report.txt) - these are now generated on-demand by analyze-logs.sh
 
-## [0.0.1] - 2025-12-16
+## [0.0.1] - 2025-12-15
 
 ### Added
 - Initial release of UDM VPN Monitor

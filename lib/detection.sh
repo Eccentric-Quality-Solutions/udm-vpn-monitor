@@ -22,6 +22,20 @@ if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	[[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && readonly XFRM_OUTPUT_CONTEXT_LINES=10
 fi
 
+# Source common utility functions
+# shellcheck source=lib/common.sh
+source "${LIB_DIR}/common.sh" 2>/dev/null || {
+	# Fallback if common.sh not found - define minimal version
+	atomic_write_file() {
+		local file="$1"
+		local content="$2"
+		if ! (echo "$content" >"${file}.tmp" && mv "${file}.tmp" "$file"); then
+			return 1
+		fi
+		return 0
+	}
+}
+
 # Validate IPv4 address format
 #
 # Validates that an IP address is properly formatted as IPv4.
@@ -412,6 +426,73 @@ extract_byte_counter() {
 	return 0
 }
 
+# Extract SPI (Security Parameter Index) from xfrm output
+#
+# Parses the output of 'ip xfrm state' to extract the SPI value.
+# SPI uniquely identifies a Security Association and changes when SA rekeys.
+# Handles hex format (0x12345678) and decimal format.
+#
+# Arguments:
+#   $1: xfrm output text (from 'ip xfrm state' command, may be multi-line)
+#
+# Returns:
+#   0: SPI successfully extracted and printed
+#   1: SPI not found or invalid format
+#
+# Output:
+#   Prints the SPI value to stdout if found (hex format preserved, e.g., "0x12345678" or "12345678")
+#
+# Examples:
+#   spi=$(extract_spi "$xfrm_output")
+#   if [[ $? -eq 0 ]]; then
+#       echo "SPI: $spi"
+#   fi
+#
+# Note:
+#   Uses regex pattern matching to extract SPI from "proto <proto> spi <spi>" line
+#   SPI format can be hex (0x12345678) or decimal (12345678)
+#   Returns SPI in original format (hex or decimal)
+extract_spi() {
+	local xfrm_output="$1"
+	local spi=""
+
+	# Find the line containing "spi" (may be indented)
+	# Format examples:
+	#   "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+	#   "    proto esp spi 12345678 reqid 1 mode tunnel"
+	local spi_line
+	spi_line=$(echo "$xfrm_output" | grep -i "spi" | head -1)
+
+	if [[ -z "$spi_line" ]]; then
+		return 1
+	fi
+
+	# Extract SPI value (hex format: 0x[0-9a-fA-F]+ or decimal: [0-9]+)
+	# Pattern matches: optional whitespace, "spi", whitespace, then hex or decimal value
+	if [[ "$spi_line" =~ ^[[:space:]]*proto[[:space:]]+[a-zA-Z0-9]+[[:space:]]+spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+) ]]; then
+		spi="${BASH_REMATCH[1]}"
+	elif [[ "$spi_line" =~ ^[[:space:]]*spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+) ]]; then
+		# Fallback: match "spi" directly if proto pattern doesn't match
+		spi="${BASH_REMATCH[1]}"
+	else
+		# Fallback: try sed pattern matching
+		spi=$(echo "$spi_line" | sed -n 's/.*[[:space:]]spi[[:space:]]*\(0x[0-9a-fA-F]\+\|[0-9]\+\)[[:space:]].*/\1/p' 2>/dev/null || echo "")
+	fi
+
+	# Validate extracted value
+	if [[ -z "$spi" ]]; then
+		return 1
+	fi
+
+	# Validate format: must be hex (0x...) or decimal (all digits)
+	if [[ ! "$spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+		return 1
+	fi
+
+	echo "$spi"
+	return 0
+}
+
 # Check connectivity via ping
 #
 # Verifies end-to-end connectivity through the VPN tunnel by pinging a target IP.
@@ -504,28 +585,169 @@ check_ping_connectivity() {
 	fi
 }
 
+# Check if SA rekey occurred (read-only check)
+#
+# Checks if IPsec SA rekey occurred by comparing current SPI with stored SPI.
+# This is a read-only check that does not modify state.
+# Used for failure type detection without side effects.
+#
+# Arguments:
+#   $1: Current SPI value (from xfrm output, hex or decimal format)
+#   $2: Peer IP address (used for state lookup)
+#
+# Returns:
+#   0: Rekey detected (SPI changed)
+#   1: No rekey (SPI unchanged or first check)
+#
+# Side effects:
+#   None (read-only check)
+#
+# Examples:
+#   if check_sa_rekey_occurred "$current_spi" "$peer_ip"; then
+#       echo "SA rekey occurred"
+#   fi
+#
+# Note:
+#   Requires get_peer_state from state.sh
+#   This function does NOT reset byte counter baseline or update SPI
+#   Use detect_sa_rekey() if you need to handle rekey (reset baseline, update SPI)
+check_sa_rekey_occurred() {
+	local current_spi="$1"
+	local peer_ip="$2"
+
+	# Validate SPI format
+	if [[ -z "$current_spi" ]] || [[ ! "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+		return 1
+	fi
+
+	# Get last known SPI using abstraction layer
+	# Use a sentinel value to detect if SPI was actually stored
+	# get_peer_state with empty default returns "0" if file doesn't exist
+	# So we check if the file exists first, or use a sentinel value
+	local last_spi
+	local spi_file
+	spi_file=$(get_peer_state_file_path "$peer_ip" "spi")
+	if [[ ! -f "$spi_file" ]]; then
+		# No SPI file exists - no rekey
+		return 1
+	fi
+	last_spi=$(get_peer_state "$peer_ip" "spi" "")
+
+	# If last_spi is empty or "0" and file doesn't exist, no rekey
+	# But we already checked file existence above, so if we get here, SPI exists
+	if [[ -z "$last_spi" ]] || [[ "$last_spi" == "0" ]]; then
+		# SPI file exists but value is empty/0 - treat as no stored SPI
+		return 1
+	fi
+
+	# Compare SPI values
+	if [[ "$current_spi" != "$last_spi" ]]; then
+		# SPI changed - rekey occurred
+		return 0
+	fi
+
+	# SPI unchanged - no rekey
+	return 1
+}
+
+# Detect SA rekey event
+#
+# Detects IPsec SA rekey by comparing current SPI with stored SPI.
+# When SA rekeys, SPI changes but peer IP remains the same.
+# On rekey detection, resets byte counter baseline to prevent false positives.
+#
+# Arguments:
+#   $1: Current SPI value (from xfrm output, hex or decimal format)
+#   $2: Peer IP address (used for state management and logging)
+#
+# Returns:
+#   0: Rekey detected (SPI changed)
+#   1: No rekey (SPI unchanged or first check)
+#
+# Side effects:
+#   - Updates stored SPI if different from current
+#   - Resets byte counter baseline to 0 on rekey detection
+#   - Logs rekey events for monitoring
+#
+# Examples:
+#   if detect_sa_rekey "$current_spi" "$peer_ip"; then
+#       echo "SA rekey detected"
+#   fi
+#
+# Note:
+#   Requires get_peer_state and set_peer_state from state.sh
+#   First check (no stored SPI) always returns 1 (no rekey)
+#   When SPI changes, resets last_bytes to 0 to allow new baseline
+detect_sa_rekey() {
+	local current_spi="$1"
+	local peer_ip="$2"
+
+	# Validate SPI format
+	if [[ -z "$current_spi" ]] || [[ ! "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+		return 1
+	fi
+
+	# Get last known SPI using abstraction layer
+	# Check if SPI file exists first to distinguish between "no file" and "file with value"
+	local last_spi
+	local spi_file
+	spi_file=$(get_peer_state_file_path "$peer_ip" "spi")
+	if [[ ! -f "$spi_file" ]]; then
+		# No SPI file exists - store current SPI and return (no rekey)
+		set_peer_state "$peer_ip" "spi" "$current_spi" || true
+		return 1
+	fi
+	last_spi=$(get_peer_state "$peer_ip" "spi" "")
+
+	# If last_spi is empty or "0", treat as no stored SPI (shouldn't happen if file exists, but be safe)
+	if [[ -z "$last_spi" ]] || [[ "$last_spi" == "0" ]]; then
+		set_peer_state "$peer_ip" "spi" "$current_spi" || true
+		return 1
+	fi
+
+	# Compare SPI values
+	if [[ "$current_spi" != "$last_spi" ]]; then
+		# SPI changed - rekey detected
+		log_message "INFO" "SA rekey detected for $peer_ip: SPI changed from $last_spi to $current_spi"
+
+		# Reset byte counter baseline to 0 (allows new baseline after rekey)
+		set_peer_state "$peer_ip" "last_bytes" "0" || true
+
+		# Update stored SPI
+		set_peer_state "$peer_ip" "spi" "$current_spi" || true
+
+		return 0
+	fi
+
+	# SPI unchanged - no rekey
+	return 1
+}
+
 # Check byte counters for VPN status
 #
 # Validates that byte counters are increasing or at least non-zero.
 # Updates the last_bytes file with current byte count if valid.
 # This ensures VPN is actively passing traffic (bytes increasing) or at least has traffic history.
+# Detects SA rekey events before checking bytes to prevent false positives.
 #
 # Arguments:
 #   $1: Current byte count (integer from xfrm state)
 #   $2: Path to last_bytes file (stores previous byte count for comparison) - DEPRECATED, kept for backward compatibility
 #   $3: Peer IP address (used for state management and logging)
+#   $4: Current SPI value (optional, used for rekey detection)
 #
 # Returns:
-#   0: Byte counters are valid (increasing or non-zero, first check)
+#   0: Byte counters are valid (increasing or non-zero, first check, or after rekey)
 #   1: Byte counters are invalid (zero or not increasing)
 #
 # Side effects:
 #   - Updates last_bytes state using abstraction layer if bytes are valid
+#   - Detects SA rekey if SPI provided and resets byte counter baseline
 #   - Logs INFO messages for valid counters
 #   - Logs warning messages for invalid counters
 #
 # Examples:
-#   if check_byte_counters "$current_bytes" "$last_bytes_file" "$peer_ip"; then
+#   if check_byte_counters "$current_bytes" "$last_bytes_file" "$peer_ip" "$current_spi"; then
 #       echo "VPN is passing traffic"
 #   fi
 #
@@ -533,11 +755,34 @@ check_ping_connectivity() {
 #   Requires get_peer_state and set_peer_state from state.sh
 #   First check (last_bytes=0) always passes if current_bytes > 0
 #   Subsequent checks require current_bytes > last_bytes
+#   If rekey detected, byte counter baseline is reset and check passes
 #   Uses abstraction layer for state management (file path parameter is deprecated)
 check_byte_counters() {
 	local current_bytes="$1"
 	local last_bytes_file="$2" # Deprecated, kept for backward compatibility
 	local peer_ip="$3"
+	local current_spi="${4:-}"
+
+	# Check for SA rekey if SPI is provided
+	if [[ -n "$current_spi" ]]; then
+		if detect_sa_rekey "$current_spi" "$peer_ip"; then
+			# Rekey detected - byte counter baseline was reset to 0
+			# Treat this as first check (allow any non-zero bytes)
+			local last_bytes
+			last_bytes=$(get_peer_state "$peer_ip" "last_bytes" "0")
+			if [[ "$current_bytes" -gt 0 ]]; then
+				# Bytes are non-zero after rekey - update baseline
+				if set_peer_state "$peer_ip" "last_bytes" "$current_bytes"; then
+					log_message "INFO" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset)"
+					return 0
+				else
+					log_message "INFO" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset, state update failed)"
+					return 0
+				fi
+			fi
+			# If bytes are 0 after rekey, continue to normal check below
+		fi
+	fi
 
 	# Get last known bytes using abstraction layer
 	local last_bytes
@@ -603,11 +848,20 @@ check_xfrm_status() {
 		return 1
 	fi
 
+	# Extract SPI for rekey detection
+	local current_spi=""
+	current_spi=$(extract_spi "$xfrm_output" 2>/dev/null || echo "")
+
 	# Check if we have byte counters
 	local current_bytes
 	if current_bytes=$(extract_byte_counter "$xfrm_output"); then
 		# Successfully extracted byte counter - validate it
-		if check_byte_counters "$current_bytes" "$last_bytes_file" "$peer_ip"; then
+		# Pass SPI to check_byte_counters for rekey detection
+		if check_byte_counters "$current_bytes" "$last_bytes_file" "$peer_ip" "$current_spi"; then
+			# Update stored SPI if we have it (even if rekey not detected)
+			if [[ -n "$current_spi" ]]; then
+				set_peer_state "$peer_ip" "spi" "$current_spi" || true
+			fi
 			return 0
 		else
 			# SA exists but byte counters are suspect
@@ -615,6 +869,10 @@ check_xfrm_status() {
 		fi
 	else
 		# SA exists but no byte counter info (or extraction failed)
+		# Still update SPI if available for tracking
+		if [[ -n "$current_spi" ]]; then
+			set_peer_state "$peer_ip" "spi" "$current_spi" || true
+		fi
 		log_message "INFO" "VPN OK: SA exists for $peer_ip (no byte counter info)"
 		return 0
 	fi
@@ -835,13 +1093,15 @@ check_ipsec_phase2() {
 # Detect VPN failure type
 #
 # Determines the specific type of VPN failure by checking IPsec Phase 2 SAs and traffic flow.
-# Categorizes failures into two main types:
+# Categorizes failures into main types:
 #   - "tunnel_down": IPsec Phase 2 SA doesn't exist (tunnel not established)
 #   - "routing_issue": Phase 2 SA exists but traffic isn't flowing (byte counters/ping issues)
+#   - "rekey": SA rekey detected (SPI changed, not a failure but logged for monitoring)
 #   - "unknown": Unable to determine failure type (fallback)
 #
 # Note:
 #   If Phase 2 SA doesn't exist, the tunnel is down (could be Phase 1 or Phase 2 issue, but we can't distinguish).
+#   SA rekey is detected by SPI changes and is not treated as a failure.
 #
 # Arguments:
 #   $1: External peer IP address (used for SA checks)
@@ -853,7 +1113,7 @@ check_ipsec_phase2() {
 #   1: Unable to determine failure type
 #
 # Output:
-#   Prints failure type to stdout: "tunnel_down", "routing_issue", or "unknown"
+#   Prints failure type to stdout: "tunnel_down", "routing_issue", "rekey", or "unknown"
 #
 # Side effects:
 #   - Logs debug messages about failure type detection
@@ -863,10 +1123,11 @@ check_ipsec_phase2() {
 #   case "$failure_type" in
 #       "tunnel_down") echo "VPN tunnel is down" ;;
 #       "routing_issue") echo "Routing issue detected" ;;
+#       "rekey") echo "SA rekey detected" ;;
 #   esac
 #
 # Note:
-#   Requires check_ipsec_phase2, check_byte_counters, check_ping_connectivity
+#   Requires check_ipsec_phase2, check_byte_counters, check_ping_connectivity, detect_sa_rekey
 #   External IP is used for SA checks, internal IP is used for ping checks
 detect_failure_type() {
 	local external_peer_ip="$1"
@@ -886,7 +1147,33 @@ detect_failure_type() {
 		echo "tunnel_down"
 		return 0
 	elif [[ $ipsec_phase2_up -eq 1 ]]; then
-		# Phase 2 SA exists - tunnel is established, check for routing issues
+		# Phase 2 SA exists - tunnel is established, check for rekey first
+		# Check for SA rekey by comparing SPI
+		if [[ -n "$external_peer_ip" ]]; then
+			local xfrm_output
+			# Use fixed-string matching to prevent regex pattern injection
+			# -F: fixed-string matching (treats IP address as literal, not regex pattern)
+			# -A XFRM_OUTPUT_CONTEXT_LINES: show context lines after match (to get SPI info)
+			xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "$external_peer_ip" -A "$XFRM_OUTPUT_CONTEXT_LINES" || true)
+			if [[ -n "$xfrm_output" ]]; then
+				local current_spi=""
+				current_spi=$(extract_spi "$xfrm_output" 2>/dev/null || echo "")
+
+				# Check for rekey if SPI is available (read-only check)
+				if [[ -n "$current_spi" ]]; then
+					if check_sa_rekey_occurred "$current_spi" "$external_peer_ip" 2>/dev/null; then
+						# Rekey detected - not a failure, but log for monitoring
+						# Note: We use read-only check here since detect_failure_type is called
+						# after VPN check failed. The actual rekey handling (baseline reset)
+						# should have happened in check_byte_counters during the check.
+						echo "rekey"
+						return 0
+					fi
+				fi
+			fi
+		fi
+
+		# Phase 2 SA exists and no rekey detected - check for routing issues
 		# Check byte counters if available
 		local has_routing_issue=0
 
@@ -961,7 +1248,7 @@ detect_failure_type() {
 #   1: No failure type stored (or file doesn't exist)
 #
 # Output:
-#   Prints failure type to stdout: "tunnel_down", "routing_issue", or "unknown"
+#   Prints failure type to stdout: "tunnel_down", "routing_issue", "rekey", or "unknown"
 #
 # Examples:
 #   failure_type=$(get_failure_type "203.0.113.1")
@@ -972,6 +1259,7 @@ detect_failure_type() {
 # Note:
 #   Requires sanitize_peer_ip and STATE_DIR to be set
 #   Failure type is stored in: ${STATE_DIR}/failure_type_<sanitized_peer_ip>
+#   Note: "rekey" is not a failure type but is stored for monitoring purposes
 get_failure_type() {
 	local peer_ip="$1"
 	local peer_sanitized
@@ -1048,15 +1336,22 @@ check_vpn_status() {
 	check_ping_if_enabled "$vpn_ok" "$ping_ip"
 
 	# If VPN check failed, detect and log the failure type
+	# Also check for rekey events (which are not failures but should be logged)
 	if [[ $vpn_ok -eq 0 ]]; then
 		local failure_type
 		failure_type=$(detect_failure_type "$external_peer_ip" "$internal_peer_ip" "$last_bytes_file" 2>/dev/null || echo "unknown")
 
 		# Store failure type in state file for recovery actions
 		local failure_type_file="${STATE_DIR}/failure_type_${peer_sanitized}"
-		echo "$failure_type" >"${failure_type_file}.tmp" 2>/dev/null && mv "${failure_type_file}.tmp" "$failure_type_file" 2>/dev/null || true
+		atomic_write_file "$failure_type_file" "$failure_type" 2>/dev/null || true
 
 		case "$failure_type" in
+		"rekey")
+			# Rekey detected - not a failure, but log for monitoring
+			# Rekey is already logged in detect_sa_rekey, but we mark VPN as OK
+			log_message "INFO" "SA rekey detected for $external_peer_ip (not a failure)"
+			vpn_ok=1
+			;;
 		"tunnel_down")
 			handle_error "WARNING" "VPN failure type: Tunnel down (no Phase 2 SA found) for $external_peer_ip"
 			;;

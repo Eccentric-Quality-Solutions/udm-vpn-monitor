@@ -184,11 +184,11 @@ validate_args() {
 					die "File or directory does not exist: $1"
 				fi
 				# If it's a file, check if it's readable
-				if [[ -f "$1" ]] && [[ ! -r "$1" ]]; then
+				if [[ -f "$1" ]] && ! file_exists_and_readable "$1"; then
 					die "File is not readable: $1"
 				fi
 				# If it's a directory, check if it's accessible
-				if [[ -d "$1" ]] && [[ ! -x "$1" ]]; then
+				if directory_exists "$1" && [[ ! -x "$1" ]]; then
 					die "Directory is not accessible: $1"
 				fi
 			else

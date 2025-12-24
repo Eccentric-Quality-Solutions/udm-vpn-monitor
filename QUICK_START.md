@@ -1,73 +1,44 @@
 # Quick Start Guide
 
+> **Note**: This is a condensed quick start guide. For complete installation instructions, including all installation options and flag descriptions, see the [Installation section in README.md](README.md#installation).
+
 ## 5-Minute Setup
 
-1. Copy files to UDM:
+**Prerequisites**: UniFi Dream Machine (UDM/UDM-Pro/UDM-SE), UniFi OS 4.3+, SSH access, root/sudo access. For complete requirements, see [Requirements section in README.md](README.md#requirements).
+
+1. **Create install package and transfer to UDM**:
    ```bash
-   # Option 1: Use the install package (recommended - preserves directory structure)
-   ./prepare_install_package.sh              # Creates zip file
+   ./prepare_install_package.sh
    scp udm-vpn-monitor-installer.zip root@<UDM_IP>:/tmp/
-   ssh root@<UDM_IP>
-   cd /tmp && unzip udm-vpn-monitor-installer.zip
-   
-   # Option 2: Use wildcards (copies all .sh and .conf files)
-   scp *.sh *.conf root@<UDM_IP>:/tmp/
    ```
 
-2. Install:
+2. **SSH into UDM and install**:
    ```bash
    ssh root@<UDM_IP>
-   cd /tmp
+   cd /tmp && unzip udm-vpn-monitor-installer.zip
    chmod +x install.sh
    ./install.sh --interactive
    ```
 
-3. Configure peer IPs:
+3. **Configure peer IPs**:
    ```bash
    nano /data/vpn-monitor/vpn-monitor.conf
    # Set EXTERNAL_PEER_IPS="203.0.113.1"
    # Optionally set INTERNAL_PEER_IPS="192.168.100.1" for ping checks
    ```
+   For complete configuration options, see the [Configuration section in README.md](README.md#configuration).
 
-4. Test:
+4. **Test**:
    ```bash
    /data/vpn-monitor/vpn-monitor.sh --fake
    ```
 
-5. Monitor logs:
+5. **Monitor logs**:
    ```bash
    tail -f /data/vpn-monitor/logs/vpn-monitor.log
    ```
 
 That's it! The monitor runs automatically via cron.
-
----
-
-## Detailed Instructions
-
-For complete installation instructions, including all installation options and flag descriptions, see the [Installation section in README.md](README.md#installation).
-
-### Prerequisites
-
-- UniFi Dream Machine (UDM/UDM-Pro/UDM-SE)
-- UniFi OS 4.3 or later
-- SSH access enabled
-- Root/sudo access
-
-For complete requirements details, see the [Requirements section in README.md](README.md#requirements).
-
-### Quick Installation Summary
-
-1. **Transfer files**: 
-   - **Recommended**: Use install package: `./prepare_install_package.sh` then `scp udm-vpn-monitor-installer.zip root@<UDM_IP>:/tmp/` and extract
-   - Or use wildcards: `scp *.sh *.conf root@<UDM_IP>:/tmp/` (note: also requires copying `lib/` directory)
-2. **SSH into UDM**: `ssh root@<UDM_IP>`
-3. **Run installer**: `cd /tmp && chmod +x install.sh && ./install.sh --interactive`
-4. **Configure EXTERNAL_PEER_IPS**: Edit `/data/vpn-monitor/vpn-monitor.conf` and set `EXTERNAL_PEER_IPS` to your remote VPN gateway's **external/public IP address(es)**. Optionally set `INTERNAL_PEER_IPS` for ping checks.
-5. **Test**: `/data/vpn-monitor/vpn-monitor.sh --fake`
-6. **Monitor**: `tail -f /data/vpn-monitor/logs/vpn-monitor.log`
-
-**Note**: Use external/public IP addresses (not internal/private IPs) for `PEER_IPS`. See [README.md Configuration section](README.md#configuration) for details.
 
 ## Next Steps
 
@@ -100,15 +71,27 @@ For comprehensive troubleshooting guides, see [TROUBLESHOOTING.md](TROUBLESHOOTI
 
 ## Uninstallation
 
-For complete uninstallation instructions, see the [Uninstallation section in README.md](README.md#uninstallation).
+For complete uninstallation instructions, see [Uninstallation section in README.md](README.md#uninstallation).
 
 **Quick uninstall:**
 
 ```bash
-/tmp/uninstall.sh
+# Transfer uninstall script if not already present
+scp uninstall.sh root@<UDM_IP>:/tmp/
+
+# SSH into UDM and run uninstaller
+ssh root@<UDM_IP>
+cd /tmp
+chmod +x uninstall.sh
+./uninstall.sh
 ```
 
-Or manually remove the cron entry and `/data/vpn-monitor` directory.
+**Non-interactive mode:**
+```bash
+./uninstall.sh --yes
+```
+
+Or manually remove the cron entry (`crontab -e`) and `/data/vpn-monitor` directory.
 
 ## What Happens Next?
 
@@ -118,8 +101,10 @@ Once installed, the monitor will:
 2. **Log failures** when VPN check fails
 3. **Escalate recovery** based on failure count:
    - **Tier 1** (after 1 failure): Logging only
-   - **Tier 2** (after 3 failures): Surgical cleanup (reload connection)
+   - **Tier 2** (after 3 failures): Surgical cleanup
    - **Tier 3** (after 5 failures): Full IPsec restart
+   
+   See the [Recovery Behavior section in README.md](README.md#-important-recovery-behavior) for complete details on recovery behavior, including which actions affect all tunnels vs per-connection recovery options. For technical implementation details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 4. **Track failures per peer** independently (multiple VPNs supported)
 5. **Rate limit restarts** to prevent loops (max 3 per hour)
@@ -145,12 +130,7 @@ All actions are logged to `/data/vpn-monitor/logs/vpn-monitor.log`.
 
 For complete configuration options, descriptions, and examples, see the [Configuration section in README.md](README.md#configuration).
 
-**Key settings:**
+**Essential settings:**
 - `EXTERNAL_PEER_IPS` - **Required**: External/public IPs of remote VPN gateways
 - `INTERNAL_PEER_IPS` - **Optional**: Internal/private IPs for ping checks (uses EXTERNAL_PEER_IPS if not set)
-- `TIER1_THRESHOLD` - Failures before logging (default: 1)
-- `TIER2_THRESHOLD` - Failures before surgical cleanup (default: 3)
-- `TIER3_THRESHOLD` - Failures before full restart (default: 5)
-- `COOLDOWN_MINUTES` - Minutes to wait after restart (default: 15)
-- `ENABLE_PING_CHECK` - Enable ping connectivity check (default: 1)
 

@@ -194,3 +194,87 @@ ensure_file_exists() {
 get_unix_timestamp() {
 	date +%s
 }
+
+# Check if directory exists
+#
+# Verifies that a directory exists. This is a common pattern used throughout
+# the codebase to check directory existence before operations.
+#
+# Arguments:
+#   $1: Directory path to check
+#
+# Returns:
+#   0: Directory exists
+#   1: Directory does not exist
+#
+# Examples:
+#   if directory_exists "$STATE_DIR"; then
+#       # process directory
+#   fi
+#
+# Note:
+#   Uses [[ -d "$1" ]] test internally
+directory_exists() {
+	[[ -d "$1" ]]
+}
+
+# Check if directory exists and is writable
+#
+# Verifies that a directory exists and is writable. This is a common pattern
+# used throughout the codebase to validate directory permissions before writing.
+# Only checks writability if the directory exists (returns 1 if directory doesn't exist).
+#
+# Arguments:
+#   $1: Directory path to check
+#
+# Returns:
+#   0: Directory exists and is writable
+#   1: Directory does not exist or is not writable
+#
+# Examples:
+#   if directory_writable "$STATE_DIR"; then
+#       # write to directory
+#   fi
+#
+# Note:
+#   Uses [[ -d "$1" ]] && [[ -w "$1" ]] test internally
+#   Returns 1 if directory doesn't exist (doesn't check writability of non-existent dirs)
+directory_writable() {
+	[[ -d "$1" ]] && [[ -w "$1" ]]
+}
+
+# Atomic file write
+#
+# Writes content to a file atomically using a temporary file pattern.
+# This ensures file integrity by writing to a temp file first, then renaming.
+# Prevents partial writes from being visible if the operation is interrupted.
+#
+# Arguments:
+#   $1: Target file path
+#   $2: Content to write (can be multi-line)
+#
+# Returns:
+#   0: File written successfully
+#   1: Failed to write file
+#
+# Side effects:
+#   Creates temporary file ${file}.tmp, then renames it to target file
+#   Removes temporary file on success
+#
+# Examples:
+#   if atomic_write_file "$state_file" "$value"; then
+#       echo "State updated successfully"
+#   fi
+#
+# Note:
+#   Uses pattern: echo "$content" >"${file}.tmp" && mv "${file}.tmp" "$file"
+#   This ensures atomic operation - either full write succeeds or file remains unchanged
+atomic_write_file() {
+	local file="$1"
+	local content="$2"
+
+	if ! (echo "$content" >"${file}.tmp" && mv "${file}.tmp" "$file"); then
+		return 1
+	fi
+	return 0
+}
