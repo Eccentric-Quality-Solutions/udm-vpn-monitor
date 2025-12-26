@@ -5,6 +5,16 @@
 #
 # Version: 0.0.1
 #
+# This module provides shared utility functions used throughout the codebase to reduce duplication:
+# - File operations: file_exists_and_readable(), ensure_file_exists(), atomic_write_file()
+# - Directory operations: directory_exists(), directory_writable()
+# - Timestamp operations: get_unix_timestamp()
+# - Logging: log_info(), log_warn(), log_error()
+# - System checks: check_root()
+#
+# All modules should use these shared functions instead of duplicating logic.
+# See ARCHITECTURAL_REVIEW.md section 8.3 for code duplication reduction guidelines.
+#
 
 # Colors for output
 RED='\033[0;31m'
@@ -124,7 +134,7 @@ check_root() {
 #
 # Examples:
 #   if file_exists_and_readable "$config_file"; then
-#       source "$config_file"
+#       safe_parse_config_file "$config_file"  # Use safe parser, not source
 #   fi
 file_exists_and_readable() {
 	[[ -f "$1" ]] && [[ -r "$1" ]]

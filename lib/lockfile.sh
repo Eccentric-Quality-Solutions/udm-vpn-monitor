@@ -106,7 +106,7 @@ create_lockfile_atomically() {
 	# set -C: noclobber mode - prevents overwriting existing file (atomic check-and-create)
 	if (
 		set -C
-		echo "$(date +%s):$$" >"$lockfile"
+		echo "$(get_unix_timestamp):$$" >"$lockfile"
 	) 2>/dev/null; then
 		return 0 # Success
 	else
@@ -144,7 +144,7 @@ check_lockfile_stale() {
 	local lockfile_mtime
 	local now
 
-	now=$(date +%s)
+	now=$(get_unix_timestamp)
 	lockfile_mtime=$(get_file_mtime "$LOCKFILE")
 
 	if [[ $lockfile_mtime -eq 0 ]]; then
@@ -340,7 +340,7 @@ acquire_lockfile_flock() {
 		fi
 
 		# Lock acquired successfully, write timestamp:pid to lockfile for timeout checking
-		echo "$(date +%s):$$" >"$LOCKFILE"
+		echo "$(get_unix_timestamp):$$" >"$LOCKFILE"
 
 		# Run main function
 		"$main_func" "$@"

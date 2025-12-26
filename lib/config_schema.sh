@@ -73,11 +73,19 @@ declare -A CONFIG_SCHEMA=(
 	["NO_ESCALATE"]="optional|integer|values:0,1|default:0"
 	# xfrm-based per-connection recovery (enabled by default for UDM OS 4.3+)
 	["ENABLE_XFRM_RECOVERY"]="optional|integer|values:0,1|default:1"
+	# Recovery verification timeout (seconds) - maximum time to wait for recovery verification
+	["RECOVERY_VERIFY_TIMEOUT"]="optional|integer|min:10|max:300|default:30"
 	["LOCKFILE_TIMEOUT"]="optional|integer|min:60|max:3600|default:300"
 	["LOG_FILE"]="optional|string||default:"
 	["STATE_DIR"]="optional|string||default:"
 	["LOGS_DIR"]="optional|string||default:"
 	["CRON_SCHEDULE"]="optional|string||default:*/1 * * * *"
+	# Network partition detection (enabled by default)
+	["ENABLE_NETWORK_PARTITION_CHECK"]="optional|integer|values:0,1|default:1"
+	["NETWORK_PARTITION_DNS_SERVER"]="optional|string||default:8.8.8.8"
+	["NETWORK_PARTITION_DNS_HOSTNAME"]="optional|string||default:google.com"
+	["NETWORK_PARTITION_DNS_TIMEOUT"]="optional|integer|min:1|max:10|default:2"
+	["NETWORK_PARTITION_INTERFACES"]="optional|string||default:br0,eth0"
 )
 
 # Get schema for a configuration variable

@@ -34,6 +34,8 @@ Architecture Decision Records are documents that capture important architectural
 | [ADR-0018](0018-centralized-logging-module.md) | Centralized Logging Module | Accepted |
 | [ADR-0019](0019-byte-counter-detection-method.md) | Byte Counter Detection Method | Accepted |
 | [ADR-0020](0020-sa-rekey-detection-and-handling.md) | SA Rekey Detection and Handling | Accepted |
+| [ADR-0021](0021-bats-testing-framework.md) | BATS Testing Framework | Accepted |
+| [ADR-0022](0022-phase-1-detection-deferred.md) | Phase 1 Detection Deferred | Accepted |
 
 ## ADR Format
 

@@ -12,6 +12,7 @@ readonly LOCKFILE_TIMEOUT_DEFAULT=300
 
 # Time conversion constants (in seconds)
 # Used for time-based calculations throughout the codebase
+readonly SECONDS_PER_MINUTE=60
 readonly SECONDS_PER_HOUR=3600
 readonly SECONDS_PER_DAY=86400
 
@@ -28,6 +29,8 @@ readonly MAX_IPV6_SEGMENT_HEX_DIGITS=4
 readonly MAX_IPV4_OCTET=255
 # Number of octets in an IPv4 address
 readonly IPV4_OCTET_COUNT=4
+# CIDR notation for single host (used when adding IP addresses to interfaces)
+readonly IPV4_CIDR_SINGLE_HOST=32
 
 # Ping check constants
 # Packet loss threshold for ping failure (100% = complete failure)
@@ -47,3 +50,20 @@ readonly XFRM_RECOVERY_SLEEP_SECONDS=3
 readonly XFRM_RECOVERY_VERIFY_TIMEOUT=30
 # Interval (in seconds) between verification retry attempts
 readonly XFRM_RECOVERY_VERIFY_INTERVAL=2
+# Maximum interval (in seconds) for exponential backoff during recovery verification
+# Used to cap the exponential backoff interval growth
+readonly XFRM_RECOVERY_MAX_INTERVAL=16
+
+# Traffic pattern analysis constants
+# Minimum time window (in seconds) required to calculate meaningful traffic rate
+# Used to distinguish idle but healthy tunnels from broken tunnels
+readonly TRAFFIC_PATTERN_MIN_WINDOW_SECONDS=60
+# Maximum number of historical samples to keep for traffic pattern analysis
+# Older samples are automatically pruned to prevent unbounded growth
+readonly TRAFFIC_PATTERN_MAX_SAMPLES=20
+# Minimum traffic rate (bytes per second) to consider tunnel as actively passing traffic
+# Below this rate, tunnel is considered idle (but may still be healthy if ping works)
+readonly TRAFFIC_PATTERN_MIN_RATE_BYTES_PER_SEC=1
+# Idle detection timeout (in seconds) - if no traffic for this duration, consider idle
+# Idle tunnels are healthy if ping checks pass, broken if ping fails
+readonly TRAFFIC_PATTERN_IDLE_TIMEOUT_SECONDS=300

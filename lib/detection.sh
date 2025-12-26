@@ -18,23 +18,18 @@ if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	[[ -z "${MAX_IPV6_SEGMENT_HEX_DIGITS:-}" ]] && readonly MAX_IPV6_SEGMENT_HEX_DIGITS=4
 	[[ -z "${MAX_IPV4_OCTET:-}" ]] && readonly MAX_IPV4_OCTET=255
 	[[ -z "${IPV4_OCTET_COUNT:-}" ]] && readonly IPV4_OCTET_COUNT=4
+	[[ -z "${IPV4_CIDR_SINGLE_HOST:-}" ]] && readonly IPV4_CIDR_SINGLE_HOST=32
 	[[ -z "${PING_PACKET_LOSS_THRESHOLD:-}" ]] && readonly PING_PACKET_LOSS_THRESHOLD=100
 	[[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && readonly XFRM_OUTPUT_CONTEXT_LINES=10
+	[[ -z "${TRAFFIC_PATTERN_MIN_WINDOW_SECONDS:-}" ]] && readonly TRAFFIC_PATTERN_MIN_WINDOW_SECONDS=60
+	[[ -z "${TRAFFIC_PATTERN_MAX_SAMPLES:-}" ]] && readonly TRAFFIC_PATTERN_MAX_SAMPLES=20
+	[[ -z "${TRAFFIC_PATTERN_MIN_RATE_BYTES_PER_SEC:-}" ]] && readonly TRAFFIC_PATTERN_MIN_RATE_BYTES_PER_SEC=1
+	[[ -z "${TRAFFIC_PATTERN_IDLE_TIMEOUT_SECONDS:-}" ]] && readonly TRAFFIC_PATTERN_IDLE_TIMEOUT_SECONDS=300
 fi
 
 # Source common utility functions
 # shellcheck source=lib/common.sh
-source "${LIB_DIR}/common.sh" 2>/dev/null || {
-	# Fallback if common.sh not found - define minimal version
-	atomic_write_file() {
-		local file="$1"
-		local content="$2"
-		if ! (echo "$content" >"${file}.tmp" && mv "${file}.tmp" "$file"); then
-			return 1
-		fi
-		return 0
-	}
-}
+source "${LIB_DIR}/common.sh"
 
 # Validate IPv4 address format
 #
@@ -577,7 +572,7 @@ check_route_exists() {
 	fi
 
 	# Check if IP address exists on br0 interface
-	# Format: "inet 192.168.1.1/32" or "inet 192.168.1.1/24" etc.
+	# Format: "inet 192.168.1.1/${IPV4_CIDR_SINGLE_HOST}" or "inet 192.168.1.1/24" etc.
 	if ip addr show br0 2>/dev/null | grep -q "inet ${local_ip}/"; then
 		return 0
 	fi
@@ -599,7 +594,7 @@ check_route_exists() {
 #   1: Failed to add route
 #
 # Side effects:
-#   - Adds IP address to br0 interface: ip addr add <local_ip>/32 dev br0
+#   - Adds IP address to br0 interface: ip addr add <local_ip>/${IPV4_CIDR_SINGLE_HOST} dev br0
 #   - Logs actions and results
 #
 # Note:
@@ -621,24 +616,24 @@ add_route_if_needed() {
 
 	# Check if route already exists
 	if check_route_exists "$local_ip"; then
-		log_message "INFO" "Route already exists on br0: $local_ip/32"
+		log_message "INFO" "Route already exists on br0: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
 		return 0
 	fi
 
-	# Add route: ip addr add <local_ip>/32 dev br0
-	log_message "INFO" "Adding route to br0: $local_ip/32"
-	if ip addr add "${local_ip}/32" dev br0 2>/dev/null; then
-		log_message "INFO" "Route added successfully: $local_ip/32 on br0"
+	# Add route: ip addr add <local_ip>/${IPV4_CIDR_SINGLE_HOST} dev br0
+	log_message "INFO" "Adding route to br0: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
+	if ip addr add "${local_ip}/${IPV4_CIDR_SINGLE_HOST}" dev br0 2>/dev/null; then
+		log_message "INFO" "Route added successfully: $local_ip/${IPV4_CIDR_SINGLE_HOST} on br0"
 		return 0
 	else
 		# Check if error is "File exists" (route already present, race condition)
 		if check_route_exists "$local_ip"; then
-			log_message "INFO" "Route exists on br0 (added by another process): $local_ip/32"
+			log_message "INFO" "Route exists on br0 (added by another process): $local_ip/${IPV4_CIDR_SINGLE_HOST}"
 			return 0
 		fi
 
 		# Other error occurred
-		handle_error "WARNING" "Failed to add route to br0: $local_ip/32"
+		handle_error "WARNING" "Failed to add route to br0: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
 		return 1
 	fi
 }
@@ -688,7 +683,7 @@ check_ping_connectivity() {
 	if [[ -n "$local_ip" ]]; then
 		# Check if route exists, add if needed
 		if ! check_route_exists "$local_ip"; then
-			log_message "INFO" "Route not found on br0, attempting to add: $local_ip/32"
+			log_message "INFO" "Route not found on br0, attempting to add: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
 			if ! add_route_if_needed "$local_ip"; then
 				handle_error "WARNING" "Failed to add route for ping check, continuing anyway"
 				# Continue with ping attempt - it may still work or fail naturally
@@ -918,23 +913,27 @@ detect_sa_rekey() {
 
 # Check byte counters for VPN status
 #
-# Validates that byte counters are increasing or at least non-zero.
+# Validates that byte counters indicate healthy VPN tunnel using enhanced traffic pattern analysis.
+# Tracks traffic patterns over time, calculates traffic rate (bytes/second), and distinguishes
+# "idle but healthy" from "broken" using ping checks.
 # Updates the last_bytes file with current byte count if valid.
-# This ensures VPN is actively passing traffic (bytes increasing) or at least has traffic history.
 # Detects SA rekey events before checking bytes to prevent false positives.
 #
 # Arguments:
 #   $1: Current byte count (integer from xfrm state)
 #   $2: Peer IP address (used for state management and logging)
 #   $3: Current SPI value (optional, used for rekey detection)
+#   $4: Internal peer IP address (optional, used for ping checks on idle detection)
 #
 # Returns:
-#   0: Byte counters are valid (increasing or non-zero, first check, or after rekey)
-#   1: Byte counters are invalid (zero or not increasing)
+#   0: Byte counters are valid (traffic flowing, idle but healthy, first check, or after rekey)
+#   1: Byte counters are invalid (zero or broken tunnel)
 #
 # Side effects:
 #   - Updates last_bytes state using abstraction layer if bytes are valid
+#   - Stores traffic pattern samples for rate calculation
 #   - Detects SA rekey if SPI provided and resets byte counter baseline
+#   - Marks idle tunnels and suggests keepalive if needed
 #   - Logs INFO messages for valid counters
 #   - Logs warning messages for invalid counters
 #
@@ -944,26 +943,32 @@ detect_sa_rekey() {
 #   fi
 #
 # Note:
-#   Requires get_peer_state and set_peer_state from state.sh
+#   Requires get_peer_state, set_peer_state, store_traffic_sample, calculate_traffic_rate from state.sh
+#   Requires check_ping_connectivity from detection.sh
 #   First check (last_bytes=0) always passes if current_bytes > 0
-#   Subsequent checks require current_bytes > last_bytes
+#   Subsequent checks use traffic rate analysis and ping checks for idle detection
 #   If rekey detected, byte counter baseline is reset and check passes
 #   Uses abstraction layer for state management
 check_byte_counters() {
 	local current_bytes="$1"
 	local peer_ip="$2"
 	local current_spi="${3:-}"
+	local internal_peer_ip="${4:-}"
 
 	# Check for SA rekey if SPI is provided
 	if [[ -n "$current_spi" ]]; then
 		if detect_sa_rekey "$current_spi" "$peer_ip"; then
 			# Rekey detected - byte counter baseline was reset to 0
+			# Clear traffic history and idle state (rekey resets everything)
+			delete_peer_state "$peer_ip" "traffic_history" || true
+			delete_peer_state "$peer_ip" "idle_detected" || true
 			# Treat this as first check (allow any non-zero bytes)
 			local last_bytes
 			last_bytes=$(get_peer_state "$peer_ip" "last_bytes" "0")
 			if [[ "$current_bytes" -gt 0 ]]; then
-				# Bytes are non-zero after rekey - update baseline
+				# Bytes are non-zero after rekey - update baseline and store sample
 				if set_peer_state "$peer_ip" "last_bytes" "$current_bytes"; then
+					store_traffic_sample "$peer_ip" "$current_bytes" || true
 					log_message "INFO" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset)"
 					return 0
 				else
@@ -979,37 +984,151 @@ check_byte_counters() {
 	local last_bytes
 	last_bytes=$(get_peer_state "$peer_ip" "last_bytes" "0")
 
-	# Check if bytes are increasing or at least non-zero
+	# Store current sample for traffic pattern analysis
 	if [[ "$current_bytes" -gt 0 ]]; then
-		# Bytes are non-zero, check if they're increasing
-		if [[ "$current_bytes" -gt "$last_bytes" ]] || [[ "$last_bytes" -eq 0 ]]; then
-			# Bytes are increasing or this is first check
-			# Use abstraction layer for atomic write
-			if set_peer_state "$peer_ip" "last_bytes" "$current_bytes"; then
-				log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes)"
-				return 0
-			else
-				# State update failed but bytes are valid - log and continue
-				log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, state update failed)"
-				return 0
-			fi
+		store_traffic_sample "$peer_ip" "$current_bytes" || true
+	fi
+
+	# Check if bytes are zero
+	if [[ "$current_bytes" -eq 0 ]]; then
+		# Zero bytes - check if this is first check or if we've had traffic before
+		if [[ "$last_bytes" -eq 0 ]]; then
+			# First check with zero bytes - may be idle or broken, but can't tell yet
+			handle_error "WARNING" "VPN suspect: SA exists but bytes=0 (first check, may be idle)"
+			return 1
 		else
-			handle_error "WARNING" "VPN suspect: SA exists but bytes not increasing (current=$current_bytes, last=$last_bytes)"
+			# Bytes dropped to zero after previously having traffic - likely broken
+			handle_error "WARNING" "VPN suspect: SA exists but bytes dropped to 0 (was $last_bytes)"
 			return 1
 		fi
-	else
-		handle_error "WARNING" "VPN suspect: SA exists but bytes=0"
-		return 1
 	fi
+
+	# Bytes are non-zero - analyze traffic pattern
+	# Check if bytes are increasing (simple check first)
+	if [[ "$current_bytes" -gt "$last_bytes" ]] || [[ "$last_bytes" -eq 0 ]]; then
+		# Bytes are increasing or this is first check - definitely healthy
+		if set_peer_state "$peer_ip" "last_bytes" "$current_bytes"; then
+			# Clear idle state if set (traffic is flowing again)
+			delete_peer_state "$peer_ip" "idle_detected" || true
+			log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, traffic flowing)"
+			return 0
+		else
+			log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, state update failed)"
+			return 0
+		fi
+	fi
+
+	# Bytes are not increasing (static or decreased)
+	# Use traffic pattern analysis to distinguish idle from broken
+	local traffic_rate
+	traffic_rate=$(calculate_traffic_rate "$peer_ip" "${TRAFFIC_PATTERN_MIN_WINDOW_SECONDS:-60}" 2>/dev/null || echo "")
+
+	if [[ -n "$traffic_rate" ]] && [[ "$traffic_rate" -ge "${TRAFFIC_PATTERN_MIN_RATE_BYTES_PER_SEC:-1}" ]]; then
+		# Traffic rate is above minimum threshold - tunnel is healthy (traffic flowing)
+		if set_peer_state "$peer_ip" "last_bytes" "$current_bytes"; then
+			delete_peer_state "$peer_ip" "idle_detected" || true
+			log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes, rate=${traffic_rate} bytes/sec (traffic flowing)"
+			return 0
+		fi
+	fi
+
+	# Traffic rate is low or cannot be calculated - may be idle
+	# Check if tunnel has been idle for extended period
+	local samples
+	samples=$(get_traffic_samples "$peer_ip" "${TRAFFIC_PATTERN_IDLE_TIMEOUT_SECONDS:-300}")
+	local sample_count
+	sample_count=$(echo "$samples" | wc -l | tr -d ' ')
+
+	if [[ "$sample_count" -ge 2 ]]; then
+		# Have enough samples to check idle duration
+		local oldest_sample
+		local newest_sample
+		oldest_sample=$(echo "$samples" | head -1)
+		newest_sample=$(echo "$samples" | tail -1)
+
+		# Parse oldest sample
+		local oldest_timestamp
+		if [[ "$oldest_sample" =~ ^([0-9]+):([0-9]+)$ ]]; then
+			oldest_timestamp="${BASH_REMATCH[1]}"
+		else
+			# Invalid format, skip this check
+			oldest_timestamp=""
+		fi
+
+		# Parse newest sample
+		local newest_timestamp
+		if [[ "$newest_sample" =~ ^([0-9]+):([0-9]+)$ ]]; then
+			newest_timestamp="${BASH_REMATCH[1]}"
+		else
+			# Invalid format, skip this check
+			newest_timestamp=""
+		fi
+
+		# Only proceed if both timestamps were parsed successfully
+		if [[ -n "$oldest_timestamp" ]] && [[ -n "$newest_timestamp" ]]; then
+			local idle_duration=$((newest_timestamp - oldest_timestamp))
+			if [[ $idle_duration -ge "${TRAFFIC_PATTERN_IDLE_TIMEOUT_SECONDS:-300}" ]]; then
+				# Tunnel has been idle for extended period - use ping to check if healthy
+				local is_idle_healthy=0
+				if [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
+					local local_ip
+					local_ip=$(get_local_ip_for_ping)
+					if check_ping_connectivity "$internal_peer_ip" "$local_ip" 2>/dev/null; then
+						# Ping succeeds - tunnel is idle but healthy
+						is_idle_healthy=1
+						set_peer_state "$peer_ip" "idle_detected" "1" || true
+						log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (idle but healthy, ping check passed)"
+						# Check keepalive status and suggest action if needed
+						if [[ "${ENABLE_KEEPALIVE:-0}" -ne 1 ]]; then
+							log_message "INFO" "Consider enabling ENABLE_KEEPALIVE=1 in config to prevent idle tunnel timeouts"
+						else
+							# Keepalive is enabled - check if daemon is running
+							local keepalive_pidfile="${STATE_DIR:-/data/vpn-monitor}/vpn-keepalive.pid"
+							if [[ ! -f "$keepalive_pidfile" ]] || ! kill -0 "$(cat "$keepalive_pidfile" 2>/dev/null)" 2>/dev/null; then
+								log_message "INFO" "Keepalive is enabled but daemon is not running - consider starting: vpn-keepalive.sh start"
+							fi
+						fi
+						return 0
+					fi
+				fi
+
+				if [[ $is_idle_healthy -eq 0 ]]; then
+					# Idle and ping failed (or ping check disabled) - likely broken
+					local ping_status="disabled"
+					if [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
+						ping_status="failed"
+					fi
+					handle_error "WARNING" "VPN suspect: SA exists but idle for ${idle_duration}s, bytes=$current_bytes (ping check: $ping_status)"
+					return 1
+				fi
+			fi
+		fi
+	fi
+
+	# Insufficient data for traffic pattern analysis - use simple heuristic
+	# If bytes are static but non-zero, and we don't have enough history, be conservative
+	if [[ "$current_bytes" -eq "$last_bytes" ]] && [[ "$current_bytes" -gt 0 ]]; then
+		# Static bytes - may be idle, but can't determine without more data
+		# Update state and log warning
+		if set_peer_state "$peer_ip" "last_bytes" "$current_bytes"; then
+			handle_error "WARNING" "VPN suspect: SA exists but bytes not increasing (current=$current_bytes, last=$last_bytes, may be idle)"
+			return 1
+		fi
+	fi
+
+	# Bytes decreased (shouldn't happen except during rekey, which is handled above)
+	handle_error "WARNING" "VPN suspect: SA exists but bytes decreased (current=$current_bytes, last=$last_bytes)"
+	return 1
 }
 
 # Check VPN status using ip xfrm state
 #
 # Checks for Security Association (SA) existence using ip xfrm state command.
-# Validates byte counters if available.
+# Validates byte counters if available using enhanced traffic pattern analysis.
 #
 # Arguments:
-#   $1: Peer IP address
+#   $1: External peer IP address (used for xfrm state checks)
+#   $2: Internal peer IP address (optional, used for ping checks in idle detection)
 #
 # Returns:
 #   0: SA found and valid
@@ -1019,6 +1138,7 @@ check_byte_counters() {
 #   - Logs debug/warning messages
 check_xfrm_status() {
 	local peer_ip="$1"
+	local internal_peer_ip="${2:-}"
 
 	# Try ip xfrm state first (most reliable)
 	# xfrm = Linux IPsec framework - shows Security Associations (SAs) and byte counters
@@ -1046,9 +1166,9 @@ check_xfrm_status() {
 	# Check if we have byte counters
 	local current_bytes
 	if current_bytes=$(extract_byte_counter "$xfrm_output"); then
-		# Successfully extracted byte counter - validate it
-		# Pass SPI to check_byte_counters for rekey detection
-		if check_byte_counters "$current_bytes" "$peer_ip" "$current_spi"; then
+		# Successfully extracted byte counter - validate it using enhanced traffic pattern analysis
+		# Pass SPI and internal IP to check_byte_counters for rekey detection and idle detection
+		if check_byte_counters "$current_bytes" "$peer_ip" "$current_spi" "$internal_peer_ip"; then
 			# Update stored SPI if we have it (even if rekey not detected)
 			if [[ -n "$current_spi" ]]; then
 				set_peer_state "$peer_ip" "spi" "$current_spi" || true
@@ -1141,7 +1261,7 @@ discover_connection_name() {
 	local cache_file="${STATE_DIR}/connection_name_${peer_sanitized}"
 
 	# Check cache first - use cached value if available, even if ipsec is not available
-	if [[ -f "$cache_file" ]]; then
+	if file_exists_and_readable "$cache_file"; then
 		connection_name=$(cat "$cache_file" 2>/dev/null || echo "")
 		if [[ -n "$connection_name" ]]; then
 			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "Using cached connection name '$connection_name' for $peer_ip"
@@ -1464,7 +1584,7 @@ get_failure_type() {
 	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
 	local failure_type_file="${STATE_DIR}/failure_type_${peer_sanitized}"
 
-	if [[ -f "$failure_type_file" ]]; then
+	if file_exists_and_readable "$failure_type_file"; then
 		local failure_type
 		failure_type=$(cat "$failure_type_file" 2>/dev/null | head -1 | tr -d '\n\r ' || echo "unknown")
 		if [[ -n "$failure_type" ]]; then
@@ -1520,7 +1640,8 @@ check_vpn_status() {
 	peer_sanitized=$(sanitize_peer_ip "$external_peer_ip")
 
 	# Try detection methods in order of reliability (use external IP for xfrm)
-	if check_xfrm_status "$external_peer_ip"; then
+	# Pass internal IP to check_xfrm_status for idle detection via ping checks
+	if check_xfrm_status "$external_peer_ip" "$internal_peer_ip"; then
 		vpn_ok=1
 	elif check_ipsec_status "$external_peer_ip"; then
 		vpn_ok=1
@@ -1562,4 +1683,175 @@ check_vpn_status() {
 
 	# Return 0 if OK, 1 if failed (invert vpn_ok: 1 becomes 0, 0 becomes 1)
 	return $((1 - vpn_ok))
+}
+
+# Check if default route exists
+#
+# Verifies that a default route exists in the routing table.
+# A missing default route indicates network partition (no internet connectivity).
+#
+# Returns:
+#   0: Default route exists
+#   1: Default route not found or check failed
+#
+# Note:
+#   Uses 'ip route show default' to check for default route
+#   Requires 'ip' command to be available
+check_default_route() {
+	if ! command -v ip >/dev/null 2>&1; then
+		return 1
+	fi
+
+	# Check if default route exists
+	# ip route show default returns 0 if route exists, 1 if not found
+	if ip route show default >/dev/null 2>&1; then
+		return 0
+	fi
+
+	return 1
+}
+
+# Check DNS resolution
+#
+# Verifies DNS resolution by querying a public DNS server.
+# DNS failure indicates network partition (no internet connectivity).
+#
+# Arguments:
+#   $1: DNS server to query (optional, defaults to 8.8.8.8)
+#   $2: Hostname to resolve (optional, defaults to google.com)
+#   $3: Timeout in seconds (optional, defaults to 2)
+#
+# Returns:
+#   0: DNS resolution successful
+#   1: DNS resolution failed or check unavailable
+#
+# Note:
+#   Uses 'dig' command if available, falls back to 'nslookup'
+#   Requires 'dig' or 'nslookup' command to be available
+check_dns_resolution() {
+	local dns_server="${1:-8.8.8.8}"
+	local hostname="${2:-google.com}"
+	local timeout="${3:-2}"
+
+	# Try dig first (more reliable)
+	if command -v dig >/dev/null 2>&1; then
+		# Use timeout to limit wait time
+		# +timeout=N sets timeout in seconds, +tries=1 limits retries
+		if timeout "$timeout" dig "@${dns_server}" "$hostname" +timeout="$timeout" +tries=1 +short >/dev/null 2>&1; then
+			return 0
+		fi
+	fi
+
+	# Fallback to nslookup
+	if command -v nslookup >/dev/null 2>&1; then
+		if timeout "$timeout" nslookup "$hostname" "$dns_server" >/dev/null 2>&1; then
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+# Check critical network interfaces are up
+#
+# Verifies that critical network interfaces (br0, eth0) are in UP state.
+# Down interfaces indicate network partition.
+#
+# Arguments:
+#   $1: Comma-separated list of interfaces to check (optional, defaults to "br0,eth0")
+#
+# Returns:
+#   0: All critical interfaces are UP
+#   1: One or more critical interfaces are DOWN or check failed
+#
+# Note:
+#   Uses 'ip link show' to check interface state
+#   Requires 'ip' command to be available
+check_interface_state() {
+	local interfaces="${1:-br0,eth0}"
+	local IFS=','
+	local -a interface_array
+	read -ra interface_array <<<"$interfaces"
+
+	if ! command -v ip >/dev/null 2>&1; then
+		return 1
+	fi
+
+	# Check each interface
+	for interface in "${interface_array[@]}"; do
+		# Trim whitespace using parameter expansion (consistent with codebase style)
+		interface="${interface#"${interface%%[![:space:]]*}"}"
+		interface="${interface%"${interface##*[![:space:]]}"}"
+		if [[ -z "$interface" ]]; then
+			continue
+		fi
+
+		# Check if interface exists and is UP
+		# ip link show <interface> returns 0 if interface exists
+		# grep "state UP" checks if interface is UP
+		if ! ip link show "$interface" 2>/dev/null | grep -q "state UP"; then
+			return 1
+		fi
+	done
+
+	return 0
+}
+
+# Check for network partition
+#
+# Performs multiple checks to detect network partition:
+# 1. Default route exists
+# 2. DNS resolution works
+# 3. Critical interfaces are UP
+#
+# If any check fails, network is considered partitioned.
+#
+# Arguments:
+#   $1: DNS server to use for DNS check (optional, defaults to 8.8.8.8)
+#   $2: Hostname to resolve for DNS check (optional, defaults to google.com)
+#   $3: DNS timeout in seconds (optional, defaults to 2)
+#   $4: Comma-separated list of interfaces to check (optional, defaults to "br0,eth0")
+#
+# Returns:
+#   0: Network is healthy (all checks passed)
+#   1: Network is partitioned (one or more checks failed)
+#
+# Side effects:
+#   - Logs debug messages about which checks passed/failed
+#
+# Note:
+#   Requires check_default_route, check_dns_resolution, check_interface_state,
+#   log_message to be set
+#   All checks must pass for network to be considered healthy
+check_network_partition() {
+	local dns_server="${1:-8.8.8.8}"
+	local hostname="${2:-google.com}"
+	local dns_timeout="${3:-2}"
+	local interfaces="${4:-br0,eth0}"
+	local partition_detected=0
+
+	# Check default route
+	if ! check_default_route; then
+		log_message "WARNING" "Network partition detected: default route not found"
+		partition_detected=1
+	fi
+
+	# Check DNS resolution
+	if ! check_dns_resolution "$dns_server" "$hostname" "$dns_timeout"; then
+		log_message "WARNING" "Network partition detected: DNS resolution failed (server: $dns_server, hostname: $hostname)"
+		partition_detected=1
+	fi
+
+	# Check interface state
+	if ! check_interface_state "$interfaces"; then
+		log_message "WARNING" "Network partition detected: one or more critical interfaces are DOWN (checked: $interfaces)"
+		partition_detected=1
+	fi
+
+	# If all checks passed, network is healthy
+	if [[ $partition_detected -eq 0 ]]; then
+		return 0
+	fi
+
+	return 1
 }

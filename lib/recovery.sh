@@ -17,7 +17,205 @@ if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	[[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && readonly XFRM_OUTPUT_CONTEXT_LINES=10
 	[[ -z "${XFRM_RECOVERY_VERIFY_TIMEOUT:-}" ]] && readonly XFRM_RECOVERY_VERIFY_TIMEOUT=30
 	[[ -z "${XFRM_RECOVERY_VERIFY_INTERVAL:-}" ]] && readonly XFRM_RECOVERY_VERIFY_INTERVAL=2
+	[[ -z "${XFRM_RECOVERY_MAX_INTERVAL:-}" ]] && readonly XFRM_RECOVERY_MAX_INTERVAL=16
 fi
+
+# Source detection functions for byte counter and SA checks
+# shellcheck source=lib/detection.sh
+source "${LIB_DIR}/detection.sh" 2>/dev/null || {
+	# Fallback if detection.sh not found
+	check_ipsec_phase2() { return 1; }
+	extract_byte_counter() { return 1; }
+	check_byte_counters() { return 1; }
+}
+
+# Count Security Associations for a peer IP
+#
+# Counts the number of Security Associations (SAs) for a specific peer IP
+# by parsing xfrm state output. Each SA block starts with "src <ip> dst <ip>".
+#
+# Arguments:
+#   $1: Peer IP address to count SAs for
+#
+# Returns:
+#   0: Successfully counted SAs (count printed to stdout)
+#   1: Failed to query xfrm state or parse output
+#
+# Output:
+#   Prints SA count (integer) to stdout if successful
+#
+# Examples:
+#   sa_count=$(count_sas_for_peer "203.0.113.1")
+#   if [[ $? -eq 0 ]]; then
+#       echo "Found $sa_count SA(s)"
+#   fi
+#
+# Note:
+#   Requires 'ip' command to be available
+#   Uses fixed-string matching to prevent regex pattern injection
+count_sas_for_peer() {
+	local peer_ip="$1"
+
+	if ! command -v ip >/dev/null 2>&1; then
+		return 1
+	fi
+
+	local xfrm_output
+	xfrm_output=$(ip xfrm state 2>/dev/null)
+	local xfrm_exit_code=$?
+
+	if [[ $xfrm_exit_code -ne 0 ]]; then
+		return 1
+	fi
+
+	# Count SA blocks by matching lines that start with "src" and contain "dst $peer_ip"
+	# Each SA block starts with "src <ip> dst <ip>" on a line
+	# Use fixed-string matching (-F) for safety, then filter for lines starting with "src"
+	local sa_count
+	sa_count=$(echo "$xfrm_output" | grep -F "dst $peer_ip" | grep -cE "^[[:space:]]*src" || echo "0")
+
+	# Validate count is numeric
+	if [[ ! "$sa_count" =~ ^[0-9]+$ ]]; then
+		return 1
+	fi
+
+	echo "$sa_count"
+	return 0
+}
+
+# Verify byte counters resume after recovery
+#
+# Verifies that byte counters are present and non-zero after recovery action.
+# This ensures the tunnel is not only established but also passing traffic.
+#
+# Arguments:
+#   $1: Peer IP address to verify
+#
+# Returns:
+#   0: Byte counters are present and non-zero (or not available but SA exists)
+#   1: Byte counters are zero or unavailable (tunnel may not be passing traffic)
+#
+# Side effects:
+#   - Logs byte counter status
+#
+# Examples:
+#   if verify_byte_counters_resume "203.0.113.1"; then
+#       echo "Byte counters verified"
+#   fi
+#
+# Note:
+#   Requires extract_byte_counter from detection.sh
+#   If byte counters are not available, returns success if SA exists (graceful degradation)
+verify_byte_counters_resume() {
+	local peer_ip="$1"
+	local xfrm_output
+
+	if ! command -v ip >/dev/null 2>&1; then
+		return 1
+	fi
+
+	# Get xfrm output for this peer
+	xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "dst $peer_ip" -A "$XFRM_OUTPUT_CONTEXT_LINES" || true)
+
+	if [[ -z "$xfrm_output" ]]; then
+		return 1
+	fi
+
+	# Extract byte counter
+	local current_bytes
+	if current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null); then
+		if [[ "$current_bytes" -gt 0 ]]; then
+			log_message "INFO" "Recovery verification: Byte counters resumed for $peer_ip (bytes=$current_bytes)"
+			return 0
+		else
+			handle_error "WARNING" "Recovery verification: Byte counters are zero for $peer_ip (tunnel may not be passing traffic)"
+			return 1
+		fi
+	else
+		# Byte counters not available, but SA exists - log and return success
+		log_message "INFO" "Recovery verification: Byte counters not available for $peer_ip (SA exists, verification limited)"
+		return 0
+	fi
+}
+
+# Verify IPsec connections are active
+#
+# Verifies that IPsec connections are active (not just that command succeeded).
+# Checks that connections exist in ipsec status output for all configured peers.
+#
+# Arguments:
+#   $1: Space-separated list of peer IPs to verify (optional, uses EXTERNAL_PEER_IPS if not provided)
+#
+# Returns:
+#   0: All connections are active
+#   1: One or more connections are not active or verification failed
+#
+# Side effects:
+#   - Logs connection status for each peer
+#
+# Examples:
+#   if verify_ipsec_connections_active; then
+#       echo "All connections active"
+#   fi
+#   if verify_ipsec_connections_active "203.0.113.1 198.51.100.1"; then
+#       echo "All specified connections active"
+#   fi
+#
+# Note:
+#   Requires ipsec command to be available
+#   If EXTERNAL_PEER_IPS is not set and no peer IPs provided, returns success (no peers to verify)
+verify_ipsec_connections_active() {
+	local peer_ips="${1:-${EXTERNAL_PEER_IPS:-}}"
+
+	if ! command -v ipsec >/dev/null 2>&1; then
+		handle_error "WARNING" "Recovery verification: ipsec command not available for connection verification"
+		return 1
+	fi
+
+	if [[ -z "$peer_ips" ]]; then
+		# No peers to verify
+		return 0
+	fi
+
+	# Get ipsec status output
+	local ipsec_output
+	ipsec_output=$(ipsec status 2>/dev/null)
+	local ipsec_exit_code=$?
+
+	if [[ $ipsec_exit_code -ne 0 ]]; then
+		handle_error "WARNING" "Recovery verification: Failed to query ipsec status (exit code: $ipsec_exit_code)"
+		return 1
+	fi
+
+	# Parse peer IPs into array
+	local IFS=' '
+	local -a peer_ips_array
+	read -ra peer_ips_array <<<"$peer_ips"
+
+	local all_active=1
+	local active_count=0
+	local total_count=${#peer_ips_array[@]}
+
+	for peer_ip in "${peer_ips_array[@]}"; do
+		# Check if peer IP appears in ipsec status output
+		# Use fixed-string matching for safety
+		if echo "$ipsec_output" | grep -qF "$peer_ip"; then
+			((active_count++))
+			log_message "INFO" "Recovery verification: Connection active for $peer_ip"
+		else
+			all_active=0
+			handle_error "WARNING" "Recovery verification: Connection not found for $peer_ip"
+		fi
+	done
+
+	if [[ $all_active -eq 1 ]]; then
+		log_message "INFO" "Recovery verification: All $total_count connection(s) are active"
+		return 0
+	else
+		handle_error "WARNING" "Recovery verification: Only $active_count/$total_count connection(s) are active"
+		return 1
+	fi
+}
 
 # Delete Security Associations for a specific peer using xfrm
 #
@@ -212,31 +410,65 @@ attempt_xfrm_recovery() {
 			fi
 		fi
 
-		# Wait for SA re-establishment with retries
-		log_message "INFO" "xfrm recovery: Waiting for SA re-establishment for $peer_ip (timeout: ${XFRM_RECOVERY_VERIFY_TIMEOUT}s)"
+		# Wait for SA re-establishment with retries using exponential backoff
+		# Use configurable timeout if available, otherwise fall back to constant
+		local verify_timeout="${RECOVERY_VERIFY_TIMEOUT:-${XFRM_RECOVERY_VERIFY_TIMEOUT:-30}}"
+		local base_interval="${XFRM_RECOVERY_VERIFY_INTERVAL:-2}"
+		local max_interval="${XFRM_RECOVERY_MAX_INTERVAL:-16}"
+		local current_interval=$base_interval
+
+		log_message "INFO" "xfrm recovery: Waiting for SA re-establishment for $peer_ip (timeout: ${verify_timeout}s)"
 		local verify_start_time
-		verify_start_time=$(date +%s)
+		verify_start_time=$(get_unix_timestamp)
 		local sa_reestablished=0
 		local verify_attempt=0
 		local elapsed_time
+		local sa_count=0
+		local byte_counter_status="unknown"
 
-		while [[ $(($(date +%s) - verify_start_time)) -lt $XFRM_RECOVERY_VERIFY_TIMEOUT ]]; do
+		while [[ $(($(get_unix_timestamp) - verify_start_time)) -lt $verify_timeout ]]; do
 			verify_attempt=$((verify_attempt + 1))
-			elapsed_time=$(($(date +%s) - verify_start_time))
-			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "xfrm recovery: Verification attempt $verify_attempt for $peer_ip (elapsed: ${elapsed_time}s/${XFRM_RECOVERY_VERIFY_TIMEOUT}s)"
+			elapsed_time=$(($(get_unix_timestamp) - verify_start_time))
 
+			# Check if SA is re-established
 			if command -v check_ipsec_phase2 >/dev/null 2>&1; then
 				if check_ipsec_phase2 "$peer_ip"; then
-					log_message "INFO" "xfrm recovery: SA re-established for $peer_ip after ${elapsed_time}s (attempt $verify_attempt)"
+					# SA re-established - verify byte counters and get SA count
 					sa_reestablished=1
+
+					# Count SAs for logging
+					if sa_count=$(count_sas_for_peer "$peer_ip" 2>/dev/null); then
+						log_message "INFO" "xfrm recovery: SA re-established for $peer_ip after ${elapsed_time}s (attempt $verify_attempt, SA count: $sa_count)"
+					else
+						log_message "INFO" "xfrm recovery: SA re-established for $peer_ip after ${elapsed_time}s (attempt $verify_attempt)"
+					fi
+
+					# Verify byte counters resume
+					if verify_byte_counters_resume "$peer_ip" 2>/dev/null; then
+						byte_counter_status="resumed"
+					else
+						byte_counter_status="zero_or_unavailable"
+						handle_error "WARNING" "xfrm recovery: SA re-established but byte counters not verified for $peer_ip"
+					fi
+
+					log_message "INFO" "xfrm recovery: Verification complete for $peer_ip (duration: ${elapsed_time}s, SA count: ${sa_count}, byte counters: ${byte_counter_status})"
 					break
 				fi
 			fi
-			sleep "$XFRM_RECOVERY_VERIFY_INTERVAL"
+
+			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "xfrm recovery: Verification attempt $verify_attempt for $peer_ip (elapsed: ${elapsed_time}s/${verify_timeout}s, next interval: ${current_interval}s)"
+
+			# Exponential backoff: double interval each attempt, capped at max_interval
+			sleep "$current_interval"
+			current_interval=$((current_interval * 2))
+			if [[ $current_interval -gt $max_interval ]]; then
+				current_interval=$max_interval
+			fi
 		done
 
 		if [[ $sa_reestablished -eq 0 ]]; then
-			handle_error "WARNING" "xfrm recovery: SA did not re-establish within ${XFRM_RECOVERY_VERIFY_TIMEOUT}s for $peer_ip"
+			elapsed_time=$(($(get_unix_timestamp) - verify_start_time))
+			handle_error "WARNING" "xfrm recovery: SA did not re-establish within ${verify_timeout}s for $peer_ip (verification duration: ${elapsed_time}s, attempts: $verify_attempt)"
 			# If we had failures, return error; otherwise warn but return success (partial recovery)
 			if [[ $failed_count -gt 0 ]]; then
 				return 1
@@ -428,19 +660,40 @@ surgical_cleanup() {
 		;;
 	"ipsec_reload")
 		log_message "INFO" "Attempting ipsec reload (affects all tunnels)"
+		local reload_start_time
+		reload_start_time=$(get_unix_timestamp)
+		local command_succeeded=0
 		if ipsec reload >/dev/null 2>&1; then
+			command_succeeded=1
 			log_message "INFO" "Successfully reloaded IPsec connections via ipsec reload"
 		else
 			local reload_exit_code=$?
 			handle_error "WARNING" "ipsec reload failed (exit code: ${reload_exit_code}), attempting ipsec restart"
-			if ! ipsec restart >/dev/null 2>&1; then
+			if ipsec restart >/dev/null 2>&1; then
+				command_succeeded=1
+				log_message "INFO" "Successfully restarted IPsec service via ipsec restart"
+			else
 				local restart_exit_code=$?
 				handle_error "ERROR" "ipsec restart also failed (exit code: ${restart_exit_code})" 0
-			else
-				log_message "INFO" "Successfully restarted IPsec service via ipsec restart"
 			fi
 		fi
-		log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback)"
+
+		# Verify connections are active after reload/restart
+		if [[ $command_succeeded -eq 1 ]]; then
+			# Wait a moment for connections to re-establish
+			sleep "$XFRM_RECOVERY_SLEEP_SECONDS"
+
+			# Verify connections are active (not just that command succeeded)
+			if verify_ipsec_connections_active; then
+				local reload_duration=$(($(get_unix_timestamp) - reload_start_time))
+				log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback, verification: connections active, duration: ${reload_duration}s)"
+			else
+				local reload_duration=$(($(get_unix_timestamp) - reload_start_time))
+				handle_error "WARNING" "Surgical cleanup completed for $peer_ip (via ipsec fallback, verification: some connections not active, duration: ${reload_duration}s)"
+			fi
+		else
+			log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback, verification skipped due to command failure)"
+		fi
 		;;
 	*)
 		handle_error "ERROR" "Unknown recovery strategy: $RECOVERY_STRATEGY" 0
@@ -538,6 +791,8 @@ full_restart() {
 		record_restart
 
 		log_message "INFO" "Executing ipsec restart (affects all tunnels)"
+		local restart_start_time
+		restart_start_time=$(get_unix_timestamp)
 		# Capture exit code explicitly to avoid PIPESTATUS being cleared
 		# PIPESTATUS[0] = exit code of first command in pipe (ipsec), not tee
 		ipsec restart 2>&1 | tee -a "$LOG_FILE"
@@ -546,6 +801,52 @@ full_restart() {
 			handle_error "ERROR" "Failed to restart IPsec service (exit code: $ipsec_exit_code)" 0
 			return 1
 		fi
+
+		# Wait a moment for connections to re-establish
+		sleep "$XFRM_RECOVERY_SLEEP_SECONDS"
+
+		# Verify all connections restored and byte counters resume
+		local verify_start_time
+		verify_start_time=$(get_unix_timestamp)
+		local connections_verified=0
+		local byte_counters_verified=0
+
+		# Verify connections are active (not just that command succeeded)
+		if verify_ipsec_connections_active; then
+			connections_verified=1
+		else
+			handle_error "WARNING" "Tier 3: Some connections not active after ipsec restart"
+		fi
+
+		# Verify byte counters resume for all configured peers
+		if [[ -n "${EXTERNAL_PEER_IPS:-}" ]]; then
+			local IFS=' '
+			local -a peer_ips_array
+			read -ra peer_ips_array <<<"$EXTERNAL_PEER_IPS"
+			local peers_with_bytes=0
+			local total_peers=${#peer_ips_array[@]}
+
+			for peer_ip in "${peer_ips_array[@]}"; do
+				if verify_byte_counters_resume "$peer_ip" 2>/dev/null; then
+					((peers_with_bytes++))
+				fi
+			done
+
+			if [[ $peers_with_bytes -eq $total_peers ]]; then
+				byte_counters_verified=1
+				log_message "INFO" "Tier 3: Byte counters resumed for all $total_peers peer(s)"
+			else
+				handle_error "WARNING" "Tier 3: Byte counters resumed for only $peers_with_bytes/$total_peers peer(s)"
+			fi
+		else
+			# No peers configured - skip byte counter verification
+			byte_counters_verified=1
+			log_message "INFO" "Tier 3: Byte counter verification skipped (no peers configured)"
+		fi
+
+		local restart_duration=$(($(get_unix_timestamp) - restart_start_time))
+		local verify_duration=$(($(get_unix_timestamp) - verify_start_time))
+		log_message "INFO" "Tier 3: Full IPsec restart completed (duration: ${restart_duration}s, verification: ${verify_duration}s, connections: ${connections_verified}, byte counters: ${byte_counters_verified})"
 		;;
 	*)
 		handle_error "ERROR" "Unknown recovery strategy: $RECOVERY_STRATEGY" 0
@@ -625,6 +926,17 @@ monitor_peer() {
 		fi
 		return 0
 	else
+		# VPN check failed - check if network is partitioned first
+		# If network is partitioned, don't attempt VPN recovery (will fail anyway)
+		if [[ "${ENABLE_NETWORK_PARTITION_CHECK:-1}" -eq 1 ]]; then
+			local partition_state
+			partition_state=$(get_network_partition_state)
+			if [[ "$partition_state" -eq 1 ]]; then
+				log_message "INFO" "Skipping VPN recovery for $external_peer_ip - network is partitioned"
+				return 0
+			fi
+		fi
+
 		# VPN check failed
 		failure_count=$(increment_failure "$external_peer_ip")
 

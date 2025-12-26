@@ -2506,6 +2506,7 @@ source_lockfile_module() {
 	# Verify IPv4 constants
 	assert [ "$MAX_IPV4_OCTET" -eq 255 ]
 	assert [ "$IPV4_OCTET_COUNT" -eq 4 ]
+	assert [ "$IPV4_CIDR_SINGLE_HOST" -eq 32 ]
 
 	# Verify IPv6 constants
 	assert [ "$MAX_IPV6_SEGMENTS" -eq 8 ]
@@ -2518,8 +2519,12 @@ source_lockfile_module() {
 	# Verify xfrm constants
 	assert [ "$XFRM_OUTPUT_CONTEXT_LINES" -eq 10 ]
 	assert [ "$XFRM_RECOVERY_SLEEP_SECONDS" -eq 3 ]
+	assert [ "$XFRM_RECOVERY_VERIFY_TIMEOUT" -eq 30 ]
+	assert [ "$XFRM_RECOVERY_VERIFY_INTERVAL" -eq 2 ]
+	assert [ "$XFRM_RECOVERY_MAX_INTERVAL" -eq 16 ]
 
 	# Verify time constants
+	assert [ "$SECONDS_PER_MINUTE" -eq 60 ]
 	assert [ "$SECONDS_PER_HOUR" -eq 3600 ]
 	assert [ "$SECONDS_PER_DAY" -eq 86400 ]
 }

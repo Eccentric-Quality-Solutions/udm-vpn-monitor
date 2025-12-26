@@ -36,6 +36,7 @@ For detailed recovery tier flow diagrams and technical implementation, see the [
 
 - **Robust Detection**: Uses `ip xfrm state` byte counters to detect actual VPN traffic flow
 - **Connectivity Verification**: Optional ping checks verify end-to-end tunnel connectivity
+- **Network Partition Detection**: Automatically detects when local network connectivity is down and skips VPN checks until connectivity is restored
 - **Tiered Recovery**: Escalates from logging → surgical SA cleanup → full restart
 - **VPN Keepalive Daemon**: Optional background daemon sends periodic pings to prevent idle VPN tunnels from timing out
 - **Safety Controls**: Lockfiles with timeout detection, cooldown timers, and rate limiting prevent restart loops
@@ -209,6 +210,11 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `KEEPALIVE_PING_COUNT` | Number of ping packets per keepalive ping (1-5) | 1 |
 | `DEBUG` | Enable verbose logging (0 or 1) | 0 |
 | `ENABLE_XFRM_RECOVERY` | Enable xfrm-based per-connection recovery (0 or 1, enabled by default for UDM OS 4.3+) | 1 |
+| `ENABLE_NETWORK_PARTITION_CHECK` | Enable network partition detection (0 or 1). When enabled, checks default route, DNS resolution, and interface state before VPN checks. If network is partitioned, VPN checks are skipped. | 1 |
+| `NETWORK_PARTITION_DNS_SERVER` | DNS server to query for network partition detection | "8.8.8.8" |
+| `NETWORK_PARTITION_DNS_HOSTNAME` | Hostname to resolve for network partition detection | "google.com" |
+| `NETWORK_PARTITION_DNS_TIMEOUT` | DNS query timeout in seconds (1-10) | 2 |
+| `NETWORK_PARTITION_INTERFACES` | Comma-separated list of interfaces to check (e.g., "br0,eth0") | "br0,eth0" |
 
 
 **Cron Schedule Examples:**

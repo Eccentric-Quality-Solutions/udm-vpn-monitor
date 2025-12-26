@@ -423,16 +423,19 @@ validate_monitor_state() {
 #
 # Iterates through configured peer IPs and monitors each one.
 # Validates configuration before processing to ensure EXTERNAL_PEER_IPS is set correctly.
+# Checks for network partition before VPN checks - if network is partitioned, skips VPN monitoring.
 # Skips empty peer IPs with a warning.
 # Uses EXTERNAL_PEER_IPS for xfrm state checks and INTERNAL_PEER_IPS for ping checks.
 #
 # Returns:
-#   0: All peers are healthy (all monitor_peer calls succeeded)
+#   0: All peers are healthy (all monitor_peer calls succeeded) or network is partitioned (skipped VPN checks)
 #   1: One or more peers have issues (at least one monitor_peer call failed)
 #
 # Side effects:
 #   - Validates configuration via validate_config()
-#   - Calls monitor_peer() for each peer IP pair (external, internal)
+#   - Checks network partition status (if enabled)
+#   - Updates network partition state file
+#   - Calls monitor_peer() for each peer IP pair (external, internal) if network is healthy
 #   - Logs warnings for empty peer IPs (skips them)
 #   - Enables debug output if DEBUG=1
 #
@@ -442,7 +445,8 @@ validate_monitor_state() {
 #   fi
 #
 # Note:
-#   Requires validate_config, monitor_peer, log_message, EXTERNAL_PEER_IPS, INTERNAL_PEER_IPS, DEBUG to be set
+#   Requires validate_config, monitor_peer, log_message, check_network_partition,
+#   get_network_partition_state, set_network_partition_state, EXTERNAL_PEER_IPS, INTERNAL_PEER_IPS, DEBUG to be set
 #   EXTERNAL_PEER_IPS should be space-separated list of external/public IP addresses
 #   INTERNAL_PEER_IPS should be space-separated list of internal/private IP addresses (optional)
 process_peer_ips() {
@@ -454,6 +458,36 @@ process_peer_ips() {
 		echo "DEBUG: INTERNAL_PEER_IPS (value: '${INTERNAL_PEER_IPS}')" >&2
 	fi
 	validate_config
+
+	# Check for network partition before VPN checks (if enabled)
+	if [[ "${ENABLE_NETWORK_PARTITION_CHECK:-1}" -eq 1 ]]; then
+		local dns_server="${NETWORK_PARTITION_DNS_SERVER:-8.8.8.8}"
+		local dns_hostname="${NETWORK_PARTITION_DNS_HOSTNAME:-google.com}"
+		local dns_timeout="${NETWORK_PARTITION_DNS_TIMEOUT:-2}"
+		local interfaces="${NETWORK_PARTITION_INTERFACES:-br0,eth0}"
+
+		# Get current partition state once (DRY principle)
+		local prev_partition_state
+		prev_partition_state=$(get_network_partition_state)
+
+		if check_network_partition "$dns_server" "$dns_hostname" "$dns_timeout" "$interfaces"; then
+			# Network is healthy - check if it was previously partitioned
+			if [[ "$prev_partition_state" -eq 1 ]]; then
+				log_message "INFO" "Network connectivity restored - resuming VPN monitoring"
+				set_network_partition_state 0
+			fi
+		else
+			# Network is partitioned - skip VPN checks
+			if [[ "$prev_partition_state" -eq 0 ]]; then
+				log_message "WARNING" "Network partition detected - skipping VPN checks until connectivity restored"
+				set_network_partition_state 1
+			else
+				log_message "INFO" "Network still partitioned - VPN checks skipped"
+			fi
+			# Return success since we're intentionally skipping checks
+			return 0
+		fi
+	fi
 
 	# Process each peer IP
 	# Convert space-separated string to array to avoid word splitting and globbing

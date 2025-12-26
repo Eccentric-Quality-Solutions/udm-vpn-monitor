@@ -653,8 +653,8 @@ EOF
 
 	# Should fail gracefully when file doesn't exist
 	assert_file_exist "$log_file"
-	# Should log error about failed source
-	assert_file_contains "$log_file" "Failed to source" || assert_file_contains "$log_file" "ERROR" || assert_file_contains "$log_file" "configuration"
+	# Should log error about failed parse
+	assert_file_contains "$log_file" "Failed to parse" || assert_file_contains "$log_file" "ERROR" || assert_file_contains "$log_file" "configuration"
 
 	remove_mock_from_path
 }

@@ -19,6 +19,7 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${LIB_DIR}/constants.sh" 2>/dev/null || {
 	# Fallback if constants.sh not found (shouldn't happen in normal operation)
 	readonly LOCKFILE_TIMEOUT_DEFAULT=300
+	readonly SECONDS_PER_MINUTE=60
 	readonly SECONDS_PER_HOUR=3600
 	readonly SECONDS_PER_DAY=86400
 	readonly MAX_IPV6_SEGMENTS=8
@@ -26,12 +27,7 @@ source "${LIB_DIR}/constants.sh" 2>/dev/null || {
 
 # Source common utility functions
 # shellcheck source=lib/common.sh
-source "${LIB_DIR}/common.sh" 2>/dev/null || {
-	# Fallback if common.sh not found - define minimal version
-	file_exists_and_readable() {
-		[[ -f "$1" ]] && [[ -r "$1" ]]
-	}
-}
+source "${LIB_DIR}/common.sh"
 
 # Source configuration schema
 # shellcheck source=lib/config_schema.sh
@@ -120,10 +116,135 @@ recalculate_log_paths() {
 #   Requires log_message function to be available (from logging.sh)
 #   Default values are read from config_schema.sh (single source of truth)
 
+# Safely parse configuration file
+#
+# Parses a configuration file line by line, extracting only valid variable assignments.
+# This function prevents arbitrary code execution by:
+#   - Only allowing simple variable assignments (VAR=value or VAR="value")
+#   - Validating variable names against CONFIG_SCHEMA whitelist
+#   - Using safe assignment methods (printf -v) instead of sourcing
+#   - Rejecting any lines that contain code execution patterns
+#
+# Arguments:
+#   $1: Path to configuration file
+#
+# Returns:
+#   0: Configuration parsed successfully
+#   1: Configuration file contains invalid or dangerous content (exits script)
+#
+# Side effects:
+#   - Sets global configuration variables via safe indirect assignment (declare -g + printf -v)
+#   - Calls die() if invalid content is detected (exits script)
+#
+# Security:
+#   This function prevents arbitrary code execution by:
+#   - Only parsing lines matching VAR=value or VAR="value" patterns
+#   - Validating variable names against CONFIG_SCHEMA whitelist
+#   - Rejecting lines with backticks, $(), eval, source, or other code execution patterns
+#   - Using printf -v for safe variable assignment (no code execution)
+#
+# Examples:
+#   safe_parse_config_file "/data/vpn-monitor/vpn-monitor.conf"
+#   # Parses config file and sets variables safely
+#
+# Note:
+#   Requires CONFIG_SCHEMA to be defined (from config_schema.sh)
+#   Requires die function to be available (from logging.sh)
+#   Comments (lines starting with #) and empty lines are ignored
+safe_parse_config_file() {
+	local config_file="$1"
+	local line_num=0
+	local line
+	local var_name
+	local var_value
+
+	# Read config file line by line
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		line_num=$((line_num + 1))
+
+		# Skip empty lines
+		if [[ -z "${line// /}" ]]; then
+			continue
+		fi
+
+		# Skip comment lines (lines starting with #)
+		if [[ "$line" =~ ^[[:space:]]*# ]]; then
+			continue
+		fi
+
+		# Remove leading/trailing whitespace
+		line="${line#"${line%%[![:space:]]*}"}"
+		line="${line%"${line##*[![:space:]]}"}"
+
+		# Skip empty lines after trimming
+		if [[ -z "$line" ]]; then
+			continue
+		fi
+
+		# Security check: Reject lines with dangerous patterns that could execute code
+		# Check for backticks, command substitution, eval, source, etc.
+		if [[ "$line" =~ [\`\$\(] ]] || [[ "$line" =~ (eval|source|exec|\.\s*\/) ]]; then
+			die "Configuration file contains dangerous content at line $line_num: $line"
+			return 1
+		fi
+
+		# Parse variable assignment: VAR=value or VAR="value" or VAR='value'
+		# Extract variable name and value using a more robust approach
+		# First, check if line matches VAR=value pattern (with optional quotes and trailing comment)
+		if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+			var_name="${BASH_REMATCH[1]}"
+			local assignment="${BASH_REMATCH[2]}"
+
+			# Remove trailing comment if present
+			assignment="${assignment%%#*}"
+			# Remove trailing whitespace after removing comment
+			assignment="${assignment%"${assignment##*[![:space:]]}"}"
+
+			# Parse value (quoted or unquoted)
+			if [[ "$assignment" =~ ^\"(.*)\"$ ]]; then
+				# Double-quoted value (may be empty)
+				var_value="${BASH_REMATCH[1]}"
+			elif [[ "$assignment" =~ ^\'(.*)\'$ ]]; then
+				# Single-quoted value (may be empty)
+				var_value="${BASH_REMATCH[1]}"
+			elif [[ -z "$assignment" ]]; then
+				# Empty unquoted value
+				var_value=""
+			elif [[ "$assignment" =~ ^[^[:space:]#]+$ ]]; then
+				# Unquoted value (no spaces, no quotes, no comment markers)
+				var_value="$assignment"
+			else
+				# Invalid value format (has spaces but not quoted, or other issues)
+				die "Invalid configuration line $line_num: $line (value must be quoted if it contains spaces)"
+				return 1
+			fi
+		else
+			# Invalid line format (doesn't match VAR=value pattern)
+			die "Invalid configuration line $line_num: $line (expected VAR=value or VAR=\"value\")"
+			return 1
+		fi
+
+		# Validate variable name is in schema whitelist
+		if ! get_config_schema "$var_name" >/dev/null 2>&1; then
+			# Variable not in schema - reject it for security
+			# This prevents setting arbitrary variables that could be used for code injection
+			die "Unknown configuration variable '$var_name' at line $line_num (not in schema whitelist)"
+			return 1
+		fi
+
+		# Safely assign variable value using printf -v (no code execution)
+		# Use declare -g to ensure variable is in global scope
+		declare -g "$var_name"
+		printf -v "$var_name" '%s' "$var_value"
+	done <"$config_file"
+
+	return 0
+}
+
 # Apply default values from schema
 #
 # Sets default values for all configuration variables from the schema definition.
-# This ensures variables have values before config file is sourced, allowing scripts
+# This ensures variables have values before config file is parsed, allowing scripts
 # to reference config variables safely. Defaults are read from config_schema.sh,
 # making it the single source of truth for default values.
 #
@@ -181,7 +302,7 @@ apply_schema_defaults() {
 #
 # Loads configuration variables from the config file if it exists.
 # Sets default values for all configuration variables from the schema.
-# Validates configuration file readability and syntax.
+# Validates configuration file readability and safely parses it without code execution.
 #
 # Arguments:
 #   $1: Path to configuration file
@@ -191,10 +312,15 @@ apply_schema_defaults() {
 #   1: Configuration file error (exits script)
 #
 # Side effects:
-#   - Sources configuration file to set variables
+#   - Safely parses configuration file to set variables (no code execution)
 #   - Updates LOG_FILE and LOGS_DIR paths
 #   - Calls log_message (requires logging.sh to be sourced)
 #   - Exits script on error
+#
+# Security:
+#   This function uses safe_parse_config_file() instead of source to prevent arbitrary
+#   code execution. Only whitelisted variables from CONFIG_SCHEMA can be set, and only
+#   simple variable assignments are allowed (no command substitution, eval, etc.).
 #
 # Note:
 #   Requires log_message function to be available (from logging.sh)
@@ -203,21 +329,18 @@ load_config() {
 	local config_file="$1"
 
 	# Set default configuration values from schema
-	# This ensures variables have values before config file is sourced,
+	# This ensures variables have values before config file is parsed,
 	# allowing scripts to reference config variables safely.
 	# Defaults are read from config_schema.sh, making it the single source of truth.
 	apply_schema_defaults
 
-	# Load configuration if it exists
-	if [[ -f "$config_file" ]]; then
-		# Validate config file is readable
-		if ! file_exists_and_readable "$config_file"; then
-			die "Configuration file is not readable: $config_file"
-		fi
-		# shellcheck source=/dev/null
-		# Source config file to load user-defined variables (overrides defaults)
-		if ! source "$config_file" 2>&1; then
-			die "Failed to source configuration file: $config_file"
+	# Load configuration if it exists and is readable
+	if file_exists_and_readable "$config_file"; then
+		# Safely parse config file instead of sourcing (prevents arbitrary code execution)
+		# Only whitelisted variables from CONFIG_SCHEMA can be set
+		# Only simple variable assignments are allowed (VAR=value or VAR="value")
+		if ! safe_parse_config_file "$config_file"; then
+			die "Failed to parse configuration file: $config_file"
 		fi
 
 		# Recalculate LOG_FILE path before first log message (in case LOG_FILE was overridden in config)
@@ -225,6 +348,12 @@ load_config() {
 
 		log_message "INFO" "Configuration loaded from: $config_file"
 	else
+		# File doesn't exist or isn't readable
+		# Check if file exists but isn't readable (for better error message)
+		if [[ -f "$config_file" ]]; then
+			die "Configuration file is not readable: $config_file"
+		fi
+
 		# Recalculate LOG_FILE path before first log message (in case STATE_DIR was set via environment)
 		recalculate_log_paths
 

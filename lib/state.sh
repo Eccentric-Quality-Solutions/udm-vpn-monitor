@@ -13,6 +13,7 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	# Fallback if constants.sh not found (shouldn't happen in normal operation)
 	# Only set if not already set (to avoid readonly variable errors)
+	[[ -z "${SECONDS_PER_MINUTE:-}" ]] && readonly SECONDS_PER_MINUTE=60
 	[[ -z "${SECONDS_PER_HOUR:-}" ]] && readonly SECONDS_PER_HOUR=3600
 	[[ -z "${SECONDS_PER_DAY:-}" ]] && readonly SECONDS_PER_DAY=86400
 fi
@@ -39,6 +40,7 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 #
 # State files:
 #   - RESTART_COUNT_FILE: Tracks restart timestamps for rate limiting (created here)
+#   - NETWORK_PARTITION_STATE_FILE: Tracks network partition status (created here)
 #   - Per-peer failure counters: Created on-demand as failure_counter_<peer_ip>
 #   - Per-peer byte counters: Created on-demand as last_bytes_<peer_ip>
 #
@@ -47,6 +49,7 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 #
 # Side effects:
 #   - Creates RESTART_COUNT_FILE with default value "0" if it doesn't exist
+#   - Creates NETWORK_PARTITION_STATE_FILE with default value "0" if it doesn't exist
 #   - Logs warning if file creation fails (but doesn't exit)
 #
 # Examples:
@@ -54,11 +57,17 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 #   # Ensures restart count file exists before use
 #
 # Note:
-#   Requires RESTART_COUNT_FILE, ensure_file_exists, and log_message to be set
+#   Requires RESTART_COUNT_FILE, NETWORK_PARTITION_STATE_FILE, ensure_file_exists, and log_message to be set
 #   Per-peer files are created on-demand by increment_failure and check_byte_counters
 init_state() {
 	if ! ensure_file_exists "$RESTART_COUNT_FILE" "0"; then
 		handle_error "WARNING" "Failed to create restart count file"
+	fi
+	# Initialize network partition state file (0 = healthy, 1 = partitioned)
+	local network_partition_file
+	network_partition_file=$(get_network_partition_state_file)
+	if ! ensure_file_exists "$network_partition_file" "0"; then
+		handle_error "WARNING" "Failed to create network partition state file"
 	fi
 	# Per-peer failure counters and byte counters are created on-demand
 }
@@ -134,6 +143,12 @@ get_peer_state_file_path() {
 	spi)
 		echo "${STATE_DIR}/spi_${peer_sanitized}"
 		;;
+	traffic_history)
+		echo "${STATE_DIR}/traffic_history_${peer_sanitized}"
+		;;
+	idle_detected)
+		echo "${STATE_DIR}/idle_detected_${peer_sanitized}"
+		;;
 	*)
 		handle_error "WARNING" "Unknown peer state key: $key" 0
 		echo "${STATE_DIR}/${key}_${peer_sanitized}"
@@ -171,11 +186,12 @@ get_peer_state() {
 	local state_file
 	state_file=$(get_peer_state_file_path "$peer_ip" "$key")
 
-	if [[ -f "$state_file" ]]; then
+	if file_exists_and_readable "$state_file"; then
 		# Validate checksum first (if checksum file exists)
 		if ! validate_state_file_checksum "$state_file"; then
-			# Checksum validation failed - treat as corrupted
-			handle_error "WARNING" "Peer state file checksum mismatch (treating as corrupted): $state_file" 0
+			# Checksum validation failed - treat as corrupted, backup and reset
+			handle_error "WARNING" "Peer state file checksum mismatch (recovering corrupted file): $state_file" 0
+			recover_corrupted_state_file "$state_file" "$default_value" "integer"
 			echo "$default_value"
 			return 0
 		fi
@@ -186,7 +202,8 @@ get_peer_state() {
 		case "$key" in
 		failure_count | last_bytes)
 			if [[ ! "$value" =~ ^[0-9]+$ ]]; then
-				handle_error "WARNING" "Corrupted peer state file (expected integer): $state_file" 0
+				handle_error "WARNING" "Corrupted peer state file (recovering): $state_file" 0
+				recover_corrupted_state_file "$state_file" "$default_value" "integer"
 				echo "$default_value"
 				return 0
 			fi
@@ -194,7 +211,8 @@ get_peer_state() {
 		spi)
 			# SPI can be hex (0x...) or decimal format
 			if [[ ! "$value" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
-				handle_error "WARNING" "Corrupted peer state file (expected SPI format): $state_file" 0
+				handle_error "WARNING" "Corrupted peer state file (recovering): $state_file" 0
+				recover_corrupted_state_file "$state_file" "$default_value" "integer"
 				echo "$default_value"
 				return 0
 			fi
@@ -339,7 +357,223 @@ cleanup_peer_state() {
 	delete_peer_state "$peer_ip" "failure_count"
 	delete_peer_state "$peer_ip" "last_bytes"
 	delete_peer_state "$peer_ip" "spi"
+	delete_peer_state "$peer_ip" "traffic_history"
+	delete_peer_state "$peer_ip" "idle_detected"
 	# Add other state keys here as needed
+}
+
+# Store traffic pattern sample
+#
+# Stores a historical byte counter value with timestamp for traffic pattern analysis.
+# Format: timestamp:bytes (one sample per line)
+# Automatically prunes old samples to prevent unbounded growth.
+#
+# Arguments:
+#   $1: Peer IP address
+#   $2: Byte count (integer)
+#   $3: Timestamp (Unix epoch seconds, optional, defaults to current time)
+#
+# Returns:
+#   0: Success
+#   1: Failed to store sample
+#
+# Side effects:
+#   - Appends sample to traffic history file
+#   - Prunes old samples if count exceeds TRAFFIC_PATTERN_MAX_SAMPLES
+#
+# Examples:
+#   store_traffic_sample "203.0.113.1" "123456"
+#   store_traffic_sample "203.0.113.1" "123456" "$(date +%s)"
+#
+# Note:
+#   Requires get_peer_state_file_path, TRAFFIC_PATTERN_MAX_SAMPLES to be set
+#   Samples are stored in format: timestamp:bytes
+store_traffic_sample() {
+	local peer_ip="$1"
+	local bytes="$2"
+	local timestamp="${3:-$(date +%s)}"
+	local history_file
+	history_file=$(get_peer_state_file_path "$peer_ip" "traffic_history")
+
+	# Validate inputs
+	if [[ ! "$bytes" =~ ^[0-9]+$ ]] || [[ ! "$timestamp" =~ ^[0-9]+$ ]]; then
+		handle_error "WARNING" "Invalid traffic sample data (bytes: $bytes, timestamp: $timestamp)" 0
+		return 1
+	fi
+
+	# Append new sample (format: timestamp:bytes)
+	if ! echo "${timestamp}:${bytes}" >>"$history_file" 2>/dev/null; then
+		handle_error "WARNING" "Failed to store traffic sample for $peer_ip" 0
+		return 1
+	fi
+
+	# Prune old samples if count exceeds maximum
+	local line_count
+	line_count=$(wc -l <"$history_file" 2>/dev/null || echo "0")
+	if [[ "$line_count" -gt "${TRAFFIC_PATTERN_MAX_SAMPLES:-20}" ]]; then
+		# Keep only the most recent samples
+		local temp_file
+		temp_file=$(mktemp 2>/dev/null || echo "${history_file}.tmp")
+		if tail -n "${TRAFFIC_PATTERN_MAX_SAMPLES:-20}" "$history_file" >"$temp_file" 2>/dev/null; then
+			mv "$temp_file" "$history_file" 2>/dev/null || rm -f "$temp_file" 2>/dev/null || true
+		else
+			rm -f "$temp_file" 2>/dev/null || true
+		fi
+	fi
+
+	return 0
+}
+
+# Get traffic pattern samples
+#
+# Retrieves historical traffic pattern samples for a peer.
+# Returns samples sorted by timestamp (oldest first).
+#
+# Arguments:
+#   $1: Peer IP address
+#   $2: Maximum age in seconds (optional, filters out samples older than this)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints samples to stdout (format: timestamp:bytes, one per line)
+#   Empty output if no samples exist
+#
+# Examples:
+#   samples=$(get_traffic_samples "203.0.113.1")
+#   recent_samples=$(get_traffic_samples "203.0.113.1" "300")
+#
+# Note:
+#   Requires get_peer_state_file_path to be set
+#   Samples are sorted by timestamp (oldest first)
+get_traffic_samples() {
+	local peer_ip="$1"
+	local max_age="${2:-}"
+	local history_file
+	history_file=$(get_peer_state_file_path "$peer_ip" "traffic_history")
+
+	if [[ ! -f "$history_file" ]] || [[ ! -r "$history_file" ]]; then
+		return 0
+	fi
+
+	local current_time
+	current_time=$(date +%s)
+
+	# Read samples, filter by age if specified, and sort by timestamp
+	local line
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		# Skip empty lines
+		[[ -z "$line" ]] && continue
+
+		# Parse timestamp:bytes format
+		if [[ "$line" =~ ^([0-9]+):([0-9]+)$ ]]; then
+			local sample_timestamp="${BASH_REMATCH[1]}"
+			local sample_bytes="${BASH_REMATCH[2]}"
+
+			# Filter by age if specified
+			if [[ -n "$max_age" ]] && [[ "$max_age" =~ ^[0-9]+$ ]]; then
+				local age=$((current_time - sample_timestamp))
+				if [[ $age -gt "$max_age" ]]; then
+					continue
+				fi
+			fi
+
+			# Output sample
+			echo "${sample_timestamp}:${sample_bytes}"
+		fi
+	done <"$history_file" | sort -t: -k1 -n
+
+	return 0
+}
+
+# Calculate traffic rate from samples
+#
+# Calculates bytes per second from historical traffic samples.
+# Uses oldest and newest samples within the time window to calculate rate.
+#
+# Arguments:
+#   $1: Peer IP address
+#   $2: Minimum time window in seconds (optional, defaults to TRAFFIC_PATTERN_MIN_WINDOW_SECONDS)
+#
+# Returns:
+#   0: Rate calculated successfully
+#   1: Insufficient data or calculation failed
+#
+# Output:
+#   Prints traffic rate (bytes per second) to stdout if successful
+#
+# Examples:
+#   rate=$(calculate_traffic_rate "203.0.113.1")
+#   rate=$(calculate_traffic_rate "203.0.113.1" "120")
+#
+# Note:
+#   Requires get_traffic_samples, TRAFFIC_PATTERN_MIN_WINDOW_SECONDS to be set
+#   Returns empty string if insufficient data
+calculate_traffic_rate() {
+	local peer_ip="$1"
+	local min_window="${2:-${TRAFFIC_PATTERN_MIN_WINDOW_SECONDS:-60}}"
+	local samples
+	samples=$(get_traffic_samples "$peer_ip")
+
+	if [[ -z "$samples" ]]; then
+		return 1
+	fi
+
+	# Count samples
+	local sample_count
+	sample_count=$(echo "$samples" | wc -l | tr -d ' ')
+
+	# Need at least 2 samples to calculate rate
+	if [[ "$sample_count" -lt 2 ]]; then
+		return 1
+	fi
+
+	# Get oldest and newest samples
+	local oldest_sample
+	local newest_sample
+	oldest_sample=$(echo "$samples" | head -1)
+	newest_sample=$(echo "$samples" | tail -1)
+
+	# Parse oldest sample
+	local oldest_timestamp
+	local oldest_bytes
+	if [[ "$oldest_sample" =~ ^([0-9]+):([0-9]+)$ ]]; then
+		oldest_timestamp="${BASH_REMATCH[1]}"
+		oldest_bytes="${BASH_REMATCH[2]}"
+	else
+		return 1
+	fi
+
+	# Parse newest sample
+	local newest_timestamp
+	local newest_bytes
+	if [[ "$newest_sample" =~ ^([0-9]+):([0-9]+)$ ]]; then
+		newest_timestamp="${BASH_REMATCH[1]}"
+		newest_bytes="${BASH_REMATCH[2]}"
+	else
+		return 1
+	fi
+
+	# Calculate time difference
+	local time_diff=$((newest_timestamp - oldest_timestamp))
+	if [[ $time_diff -lt "$min_window" ]]; then
+		# Insufficient time window
+		return 1
+	fi
+
+	# Calculate byte difference
+	local byte_diff=$((newest_bytes - oldest_bytes))
+	if [[ $byte_diff -lt 0 ]]; then
+		# Bytes decreased (rekey or counter reset) - cannot calculate rate
+		return 1
+	fi
+
+	# Calculate rate (bytes per second)
+	local rate=$((byte_diff / time_diff))
+	echo "$rate"
+
+	return 0
 }
 
 # Get current failure counter for a specific peer
@@ -437,6 +671,129 @@ reset_failure_count() {
 	set_peer_state "$peer_ip" "failure_count" "0" || true
 }
 
+# Get network partition state file path
+#
+# Returns the full file path for the network partition state file.
+# Uses NETWORK_PARTITION_STATE_FILE if set, otherwise defaults to ${STATE_DIR}/network_partition_state.
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the full file path to stdout
+#
+# Examples:
+#   state_file=$(get_network_partition_state_file)
+#   # Returns: ${STATE_DIR}/network_partition_state (or NETWORK_PARTITION_STATE_FILE if set)
+#
+# Note:
+#   Requires STATE_DIR to be set
+#   Used internally by get_network_partition_state and set_network_partition_state
+get_network_partition_state_file() {
+	echo "${NETWORK_PARTITION_STATE_FILE:-${STATE_DIR}/network_partition_state}"
+}
+
+# Get network partition state
+#
+# Retrieves the current network partition state (0 = healthy, 1 = partitioned).
+# Network partition state is global (not per-peer) since network issues affect all peers.
+# Validates checksum and file format, recovering corrupted files automatically.
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints "0" if network is healthy, "1" if partitioned
+#
+# Examples:
+#   partition_state=$(get_network_partition_state)
+#   if [[ "$partition_state" -eq 1 ]]; then
+#       echo "Network is partitioned"
+#   fi
+#
+# Note:
+#   Requires get_network_partition_state_file to be set
+#   Returns "0" (healthy) if file doesn't exist or is corrupted
+#   Uses checksum validation and automatic recovery for corrupted files
+get_network_partition_state() {
+	local state_file
+	state_file=$(get_network_partition_state_file)
+
+	if file_exists_and_readable "$state_file"; then
+		# Validate checksum first (if checksum file exists)
+		if ! validate_state_file_checksum "$state_file"; then
+			# Checksum validation failed - treat as corrupted, backup and recover
+			handle_error "WARNING" "Network partition state file checksum mismatch (recovering): $state_file" 0
+			recover_corrupted_state_file "$state_file" "0" "integer"
+			echo "0"
+			return 0
+		fi
+
+		local value
+		value=$(cat "$state_file" 2>/dev/null || echo "0")
+		# Validate value (must be 0 or 1)
+		if [[ "$value" =~ ^[01]$ ]]; then
+			echo "$value"
+		else
+			# Corrupted file, backup and recover
+			handle_error "WARNING" "Network partition state file corrupted (recovering): $state_file" 0
+			recover_corrupted_state_file "$state_file" "0" "integer"
+			echo "0"
+		fi
+	else
+		echo "0"
+	fi
+}
+
+# Set network partition state
+#
+# Sets the network partition state (0 = healthy, 1 = partitioned).
+# Network partition state is global (not per-peer) since network issues affect all peers.
+# Uses atomic writes and stores checksum for corruption detection.
+#
+# Arguments:
+#   $1: State value (0 = healthy, 1 = partitioned)
+#
+# Returns:
+#   0: Success
+#   1: Invalid value or write failed
+#
+# Side effects:
+#   - Updates network partition state file (atomic write)
+#   - Stores checksum for corruption detection
+#   - State file: ${STATE_DIR}/network_partition_state
+#
+# Examples:
+#   set_network_partition_state 1  # Mark network as partitioned
+#   set_network_partition_state 0  # Mark network as healthy
+#
+# Note:
+#   Requires get_network_partition_state_file to be set
+#   Validates value is 0 or 1 before writing
+#   Stores checksum after successful write for corruption detection
+set_network_partition_state() {
+	local state_value="$1"
+	local state_file
+	state_file=$(get_network_partition_state_file)
+
+	# Validate value (must be 0 or 1)
+	if [[ ! "$state_value" =~ ^[01]$ ]]; then
+		handle_error "ERROR" "Invalid network partition state value (expected 0 or 1): $state_value" 0
+		return 1
+	fi
+
+	# Atomic write
+	if ! atomic_write_file "$state_file" "$state_value"; then
+		handle_error "ERROR" "Failed to update network partition state file: $state_file" 0
+		return 1
+	fi
+
+	# Store checksum after successful write
+	store_state_file_checksum "$state_file" || true
+
+	return 0
+}
+
 # Get timestamp plus N minutes
 #
 # Returns a Unix timestamp (seconds since epoch) that is N minutes in the future.
@@ -458,12 +815,12 @@ reset_failure_count() {
 #
 # Note:
 #   Tries Linux date format first (-d "+N minutes"), then BSD/macOS (-v+"N"M)
-#   Falls back to manual calculation if both fail: $(date +%s) + minutes * 60
+#   Falls back to manual calculation if both fail: $(get_unix_timestamp) + minutes * SECONDS_PER_MINUTE
 get_timestamp_plus_minutes() {
 	local minutes="$1"
 	# Try Linux date format first, then BSD/macOS, fallback to manual calculation
 	# +%s: output as seconds since epoch
-	date -d "+${minutes} minutes" +%s 2>/dev/null || date -v+"${minutes}"M +%s 2>/dev/null || echo $(($(date +%s) + minutes * 60))
+	date -d "+${minutes} minutes" +%s 2>/dev/null || date -v+"${minutes}"M +%s 2>/dev/null || echo $(($(get_unix_timestamp) + minutes * SECONDS_PER_MINUTE))
 }
 
 # Get file modification time as timestamp
@@ -527,16 +884,16 @@ check_cooldown() {
 
 	# Validate checksum if checksum file exists
 	if ! validate_state_file_checksum "$COOLDOWN_UNTIL_FILE"; then
-		# Checksum validation failed - treat as corrupted, remove file
-		handle_error "WARNING" "Cooldown file checksum mismatch (removing corrupted file): $COOLDOWN_UNTIL_FILE" 0
-		rm -f "$COOLDOWN_UNTIL_FILE" "${COOLDOWN_UNTIL_FILE}.checksum" 2>/dev/null || true
+		# Checksum validation failed - treat as corrupted, backup and remove file
+		handle_error "WARNING" "Cooldown file checksum mismatch (recovering corrupted file): $COOLDOWN_UNTIL_FILE" 0
+		recover_corrupted_state_file "$COOLDOWN_UNTIL_FILE" "" "timestamp"
 		return 1 # Not in cooldown (file was corrupted)
 	fi
 
 	local cooldown_until
 	cooldown_until=$(cat "$COOLDOWN_UNTIL_FILE")
 	local now
-	now=$(date +%s)
+	now=$(get_unix_timestamp)
 
 	if [[ "$now" -lt "$cooldown_until" ]]; then
 		local remaining
@@ -617,7 +974,7 @@ set_cooldown() {
 #   Counts filtered lines with wc -l
 check_rate_limit() {
 	local now
-	now=$(date +%s)
+	now=$(get_unix_timestamp)
 	local one_hour_ago
 	one_hour_ago=$((now - SECONDS_PER_HOUR))
 
@@ -628,9 +985,9 @@ check_rate_limit() {
 
 	# Validate checksum if checksum file exists
 	if ! validate_state_file_checksum "$RESTART_COUNT_FILE"; then
-		# Checksum validation failed - treat as corrupted, reset file
-		handle_error "WARNING" "Restart count file checksum mismatch (resetting corrupted file): $RESTART_COUNT_FILE" 0
-		rm -f "$RESTART_COUNT_FILE" "${RESTART_COUNT_FILE}.checksum" 2>/dev/null || true
+		# Checksum validation failed - treat as corrupted, backup and reset file
+		handle_error "WARNING" "Restart count file checksum mismatch (recovering corrupted file): $RESTART_COUNT_FILE" 0
+		recover_corrupted_state_file "$RESTART_COUNT_FILE" "" "timestamp_list"
 		return 0 # Allow restart (file was corrupted, assume no recent restarts)
 	fi
 
@@ -673,7 +1030,7 @@ check_rate_limit() {
 #   Atomic update via temp file and mv with error handling
 record_restart() {
 	local timestamp
-	timestamp=$(date +%s)
+	timestamp=$(get_unix_timestamp)
 	echo "$timestamp" >>"$RESTART_COUNT_FILE"
 
 	# Store checksum after append (before cleanup)
@@ -791,6 +1148,122 @@ store_state_file_checksum() {
 	if ! atomic_write_file "$checksum_file" "$checksum"; then
 		handle_error "WARNING" "Failed to store checksum for state file: $state_file" 0
 		return 1
+	fi
+
+	return 0
+}
+
+# Backup corrupted state file
+#
+# Creates a backup of a corrupted state file before resetting it.
+# Backup file is named with pattern: ${state_file}.corrupted.<timestamp>
+# Also backs up associated checksum file if it exists.
+#
+# Arguments:
+#   $1: State file path to backup
+#
+# Returns:
+#   0: Success (backup created or file doesn't exist)
+#   1: Failed to create backup
+#
+# Side effects:
+#   - Creates backup file: ${state_file}.corrupted.<timestamp>
+#   - Creates backup checksum file: ${state_file}.checksum.corrupted.<timestamp> (if checksum exists)
+#   - Logs backup creation
+#
+# Examples:
+#   backup_corrupted_state_file "$state_file"
+#   # Creates: state_file.corrupted.1703616000
+#
+# Note:
+#   Uses get_unix_timestamp() for backup filename timestamp
+#   Backup files can be used for forensic analysis or manual recovery
+backup_corrupted_state_file() {
+	local state_file="$1"
+	local timestamp
+	timestamp=$(get_unix_timestamp)
+	local backup_file="${state_file}.corrupted.${timestamp}"
+	local checksum_file="${state_file}.checksum"
+	local backup_checksum_file="${checksum_file}.corrupted.${timestamp}"
+
+	# If file doesn't exist, nothing to backup
+	if [[ ! -f "$state_file" ]]; then
+		return 0
+	fi
+
+	# Create backup of state file
+	if ! cp "$state_file" "$backup_file" 2>/dev/null; then
+		handle_error "WARNING" "Failed to backup corrupted state file: $state_file" 0
+		return 1
+	fi
+
+	# Create backup of checksum file if it exists
+	if [[ -f "$checksum_file" ]]; then
+		cp "$checksum_file" "$backup_checksum_file" 2>/dev/null || true
+	fi
+
+	handle_error "INFO" "Backed up corrupted state file: $state_file -> $backup_file" 0
+	return 0
+}
+
+# Recover corrupted state file
+#
+# Backs up a corrupted state file and resets it to a default value.
+# This function should be called when corruption is detected to preserve
+# the corrupted file for analysis while resetting to a safe default.
+#
+# Arguments:
+#   $1: State file path to recover
+#   $2: Default value to set (optional, defaults to empty string which removes file)
+#   $3: Expected format type for validation ("integer", "timestamp", "timestamp_list") (optional)
+#
+# Returns:
+#   0: Success (file backed up and reset)
+#   1: Failed to backup or reset
+#
+# Side effects:
+#   - Creates backup of corrupted file (see backup_corrupted_state_file)
+#   - Resets file to default value (or removes if default is empty)
+#   - Removes checksum file if file is removed
+#   - Logs recovery action
+#
+# Examples:
+#   recover_corrupted_state_file "$counter_file" "0" "integer"
+#   # Backs up corrupted file, then sets to "0"
+#
+#   recover_corrupted_state_file "$cooldown_file" ""
+#   # Backs up corrupted file, then removes it
+#
+# Note:
+#   If default value is empty string, file is removed instead of reset
+#   Checksum file is also removed if file is removed
+recover_corrupted_state_file() {
+	local state_file="$1"
+	local default_value="${2:-}"
+	local expected_format="${3:-integer}"
+
+	# Backup corrupted file first
+	if ! backup_corrupted_state_file "$state_file"; then
+		handle_error "WARNING" "Failed to backup corrupted file before recovery: $state_file" 0
+		# Continue with recovery even if backup fails
+	fi
+
+	# Reset file to default value
+	if [[ -z "$default_value" ]]; then
+		# Remove file if default is empty
+		rm -f "$state_file" "${state_file}.checksum" 2>/dev/null || true
+		handle_error "INFO" "Recovered corrupted state file by removal: $state_file" 0
+	else
+		# Set file to default value using atomic write
+		if ! atomic_write_file "$state_file" "$default_value"; then
+			handle_error "ERROR" "Failed to reset corrupted state file: $state_file" 0
+			return 1
+		fi
+
+		# Store checksum for new file
+		store_state_file_checksum "$state_file" || true
+
+		handle_error "INFO" "Recovered corrupted state file by reset to default: $state_file (value: $default_value)" 0
 	fi
 
 	return 0
@@ -935,23 +1408,28 @@ validate_state_file() {
 # Validate all state files
 #
 # Validates all state files used by the VPN monitor for readability and format.
-# Checks restart count file, cooldown file, and per-peer failure counters.
+# Checks restart count file, cooldown file, network partition state file, and per-peer failure counters.
+# Automatically recovers corrupted files by backing them up and resetting to defaults.
 #
 # Returns:
-#   0: All state files are valid
-#   1: One or more state files are invalid
+#   0: All state files are valid (or successfully recovered)
+#   1: One or more state files are invalid and recovery failed
 #
 # Side effects:
-#   Logs warnings for corrupted state files
+#   - Logs warnings for corrupted state files
+#   - Backs up corrupted files before recovery
+#   - Resets corrupted files to safe defaults
 #
 # Note:
-#   Requires RESTART_COUNT_FILE, COOLDOWN_UNTIL_FILE, LOGS_DIR, and log_message
+#   Requires RESTART_COUNT_FILE, COOLDOWN_UNTIL_FILE, LOGS_DIR, STATE_DIR, and log_message
 validate_state() {
 	local validation_failed=0
 
 	# Validate restart count file (timestamp list)
 	if [[ -f "$RESTART_COUNT_FILE" ]]; then
 		if ! validate_state_file "$RESTART_COUNT_FILE" "timestamp_list"; then
+			handle_error "WARNING" "Restart count file corrupted, recovering: $RESTART_COUNT_FILE" 0
+			recover_corrupted_state_file "$RESTART_COUNT_FILE" "" "timestamp_list"
 			validation_failed=1
 		fi
 	fi
@@ -959,31 +1437,48 @@ validate_state() {
 	# Validate cooldown file (single timestamp)
 	if [[ -f "$COOLDOWN_UNTIL_FILE" ]]; then
 		if ! validate_state_file "$COOLDOWN_UNTIL_FILE" "timestamp"; then
+			handle_error "WARNING" "Cooldown file corrupted, recovering: $COOLDOWN_UNTIL_FILE" 0
+			recover_corrupted_state_file "$COOLDOWN_UNTIL_FILE" "" "timestamp"
+			validation_failed=1
+		fi
+	fi
+
+	# Validate network partition state file
+	local network_partition_file
+	network_partition_file=$(get_network_partition_state_file)
+	if [[ -f "$network_partition_file" ]]; then
+		if ! validate_state_file "$network_partition_file" "integer"; then
+			handle_error "WARNING" "Network partition state file corrupted, recovering: $network_partition_file" 0
+			recover_corrupted_state_file "$network_partition_file" "0" "integer"
 			validation_failed=1
 		fi
 	fi
 
 	# Validate per-peer failure counter files (if any exist)
-	if [[ -d "$LOGS_DIR" ]]; then
+	if directory_exists "$LOGS_DIR"; then
 		local counter_file
 		for counter_file in "${LOGS_DIR}"/failure_counter_*; do
 			# Check if glob matched actual files
 			[[ -f "$counter_file" ]] || continue
 
 			if ! validate_state_file "$counter_file" "integer"; then
+				handle_error "WARNING" "Failure counter file corrupted, recovering: $counter_file" 0
+				recover_corrupted_state_file "$counter_file" "0" "integer"
 				validation_failed=1
 			fi
 		done
 	fi
 
 	# Validate per-peer byte counter files (if any exist)
-	if [[ -d "$STATE_DIR" ]]; then
+	if directory_exists "$STATE_DIR"; then
 		local bytes_file
 		for bytes_file in "${STATE_DIR}"/last_bytes_*; do
 			# Check if glob matched actual files
 			[[ -f "$bytes_file" ]] || continue
 
 			if ! validate_state_file "$bytes_file" "integer"; then
+				handle_error "WARNING" "Byte counter file corrupted, recovering: $bytes_file" 0
+				recover_corrupted_state_file "$bytes_file" "0" "integer"
 				validation_failed=1
 			fi
 		done
