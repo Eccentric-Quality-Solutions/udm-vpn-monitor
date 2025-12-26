@@ -1,10 +1,7 @@
 #!/usr/bin/env bats
 #
-# High-risk tests: Configuration Loading and Validation
-# Tests critical paths and error handling scenarios that could cause production failures
-#
-# This file is part of the high-risk test suite, split from test_high_risk.sh
-# for better organization and maintainability.
+# Tests for Configuration Loading and Validation
+# Tests critical paths and error handling scenarios
 
 load test_helper
 
@@ -12,10 +9,11 @@ load test_helper
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # ============================================================================
-# 2. CONFIGURATION LOADING AND VALIDATION TESTS
+# CONFIGURATION LOADING AND VALIDATION TESTS
 # ============================================================================
 
-@test "high-risk: config file contains syntax errors" {
+# bats test_tags=category:high-risk,priority:high
+@test "config file contains syntax errors" {
 	# Test verifies that the script handles configuration files with syntax errors gracefully.
 	# Expected: Script detects syntax error during config loading and logs error message without crashing.
 	# Importance: Syntax errors can occur from manual editing or file corruption; script must handle them robustly.
@@ -42,7 +40,8 @@ EOF
 	assert_file_contains "$log_file" "Failed to source configuration file" || assert_file_contains "$log_file" "ERROR"
 }
 
-@test "high-risk: config file is unreadable" {
+# bats test_tags=category:high-risk,priority:high
+@test "config file is unreadable" {
 	# Test verifies that the script handles unreadable configuration files gracefully.
 	# Expected: Script detects permission issue and logs error message without crashing.
 	# Importance: Permission issues can occur from incorrect file ownership or chmod operations; script must handle gracefully.
@@ -53,6 +52,8 @@ EOF
 
 	# Make config file unreadable
 	chmod 000 "$config_file"
+	# Verify permissions were set correctly
+	assert_file_permission 000 "$config_file"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -73,7 +74,8 @@ EOF
 	chmod 644 "$config_file" 2>/dev/null || true
 }
 
-@test "high-risk: config file is a directory" {
+# bats test_tags=category:high-risk,priority:high
+@test "config file is a directory" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Create directory instead of file
 	mkdir -p "$config_file"
@@ -93,7 +95,7 @@ EOF
 	assert_file_exist "$log_file"
 }
 
-@test "high-risk: LOG_FILE override in config recalculates LOGS_DIR" {
+@test "LOG_FILE override in config recalculates LOGS_DIR" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -128,7 +130,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: negative threshold values in config" {
+# bats test_tags=category:high-risk,priority:high
+@test "negative threshold values in config" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -165,7 +168,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: threshold values out of order" {
+# bats test_tags=category:high-risk,priority:high
+@test "threshold values out of order" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -203,10 +207,11 @@ EOF
 }
 
 # ============================================================================
-# 2.3 CONFIGURATION VARIABLE VALIDATION TESTS
+# CONFIGURATION VARIABLE VALIDATION TESTS
 # ============================================================================
 
-@test "high-risk: invalid COOLDOWN_MINUTES (negative)" {
+# bats test_tags=category:high-risk,priority:high
+@test "invalid COOLDOWN_MINUTES (negative)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -232,7 +237,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: invalid COOLDOWN_MINUTES (zero)" {
+# bats test_tags=category:high-risk,priority:high
+@test "invalid COOLDOWN_MINUTES (zero)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -257,7 +263,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: invalid MAX_RESTARTS_PER_HOUR (negative)" {
+# bats test_tags=category:high-risk,priority:high
+@test "invalid MAX_RESTARTS_PER_HOUR (negative)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -282,7 +289,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: invalid MAX_RESTARTS_PER_HOUR (zero)" {
+# bats test_tags=category:high-risk,priority:high
+@test "invalid MAX_RESTARTS_PER_HOUR (zero)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -307,7 +315,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: invalid LOCKFILE_TIMEOUT (negative)" {
+# bats test_tags=category:high-risk,priority:high
+@test "invalid LOCKFILE_TIMEOUT (negative)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -332,7 +341,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: invalid LOCKFILE_TIMEOUT (zero)" {
+# bats test_tags=category:high-risk,priority:high
+@test "invalid LOCKFILE_TIMEOUT (zero)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -357,7 +367,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: invalid PING_COUNT (negative)" {
+# bats test_tags=category:high-risk,priority:high
+@test "invalid PING_COUNT (negative)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -382,7 +393,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: invalid PING_COUNT (zero)" {
+# bats test_tags=category:high-risk,priority:high
+@test "invalid PING_COUNT (zero)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -407,7 +419,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: invalid PING_TIMEOUT (negative)" {
+# bats test_tags=category:high-risk,priority:high
+@test "invalid PING_TIMEOUT (negative)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -432,7 +445,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: invalid PING_TIMEOUT (zero)" {
+# bats test_tags=category:high-risk,priority:high
+@test "invalid PING_TIMEOUT (zero)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -458,10 +472,11 @@ EOF
 }
 
 # ============================================================================
-# 2.3 CONFIGURATION VARIABLE VALIDATION - VERY LARGE VALUES
+# CONFIGURATION VARIABLE VALIDATION - VERY LARGE VALUES
 # ============================================================================
 
-@test "high-risk: invalid COOLDOWN_MINUTES (very large)" {
+# bats test_tags=category:high-risk,priority:high
+@test "invalid COOLDOWN_MINUTES (very large)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -487,7 +502,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: invalid MAX_RESTARTS_PER_HOUR (very large)" {
+# bats test_tags=category:high-risk,priority:high
+@test "invalid MAX_RESTARTS_PER_HOUR (very large)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -512,7 +528,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: invalid PING_COUNT (very large)" {
+# bats test_tags=category:high-risk,priority:high
+@test "invalid PING_COUNT (very large)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -538,10 +555,10 @@ EOF
 }
 
 # ============================================================================
-# 2.2 CONFIGURATION PATH OVERRIDES
+# CONFIGURATION PATH OVERRIDES
 # ============================================================================
 
-@test "high-risk: STATE_DIR override to non-existent directory creates it" {
+@test "STATE_DIR override to non-existent directory creates it" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local custom_state_dir="${TEST_DIR}/custom-state-dir"
 	cat >"$config_file" <<EOF
@@ -575,10 +592,10 @@ EOF
 }
 
 # ============================================================================
-# 2.4 ENVIRONMENT VARIABLE OVERRIDES
+# ENVIRONMENT VARIABLE OVERRIDES
 # ============================================================================
 
-@test "high-risk: environment variable overrides config file value" {
+@test "environment variable overrides config file value" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="10.0.0.1"
@@ -607,7 +624,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: environment variable sets invalid value" {
+# bats test_tags=category:high-risk,priority:high
+@test "environment variable sets invalid value" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -634,7 +652,7 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: multiple environment variables override config" {
+@test "multiple environment variables override config" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="10.0.0.1"
@@ -666,10 +684,10 @@ EOF
 }
 
 # ============================================================================
-# 2.2 CONFIGURATION PATH OVERRIDES
+# CONFIGURATION PATH OVERRIDES
 # ============================================================================
 
-@test "high-risk: STATE_DIR override in config updates all dependent paths" {
+@test "STATE_DIR override in config updates all dependent paths" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local custom_state_dir="${TEST_DIR}/custom-state"
 	cat >"$config_file" <<EOF
@@ -712,7 +730,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: LOG_FILE override to read-only directory" {
+# bats test_tags=category:high-risk,priority:high
+@test "LOG_FILE override to read-only directory" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local readonly_log_dir="${TEST_DIR}/readonly-logs"
 	cat >"$config_file" <<EOF
@@ -746,7 +765,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: STATE_DIR override to read-only directory" {
+# bats test_tags=category:high-risk,priority:high
+@test "STATE_DIR override to read-only directory" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local readonly_state_dir="${TEST_DIR}/readonly-state"
 	cat >"$config_file" <<EOF

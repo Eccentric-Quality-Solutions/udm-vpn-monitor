@@ -146,6 +146,7 @@ source_function() {
 	return 1
 }
 
+# bats test_tags=category:unit
 @test "get_formatted_timestamp returns valid timestamp format" {
 	# Test verifies that get_formatted_timestamp function returns timestamp in correct format.
 	# Expected: Function returns timestamp in YYYY-MM-DD HH:MM:SS format.
@@ -157,14 +158,11 @@ source_function() {
 	run get_formatted_timestamp
 
 	assert_success
-	# Check format: YYYY-MM-DD HH:MM:SS
-	# Use grep to check regex pattern since assert_output doesn't support --regexp
-	if ! echo "$output" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$'; then
-		echo "Output '$output' doesn't match timestamp format" >&2
-		return 1
-	fi
+	# Check format: YYYY-MM-DD HH:MM:SS using regex
+	assert_output --regexp '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$'
 }
 
+# bats test_tags=category:unit
 @test "ensure_directory_exists creates directory when missing" {
 	# Test verifies that ensure_directory_exists function creates directories that don't exist.
 	# Expected: Function creates the specified directory if it doesn't exist, with appropriate error handling.
@@ -180,6 +178,7 @@ source_function() {
 	assert_dir_exist "$test_dir"
 }
 
+# bats test_tags=category:unit
 @test "sanitize_peer_ip converts dots to underscores" {
 	# Test verifies that sanitize_peer_ip function converts IPv4 addresses to filesystem-safe format.
 	# Expected: Function converts dots to underscores to create valid filenames for state files.
@@ -193,6 +192,7 @@ source_function() {
 	assert_output "192_168_1_1"
 }
 
+# bats test_tags=category:unit
 @test "sanitize_peer_ip handles IPv6 addresses" {
 	# Test verifies that sanitize_peer_ip function correctly handles IPv6 addresses for filesystem naming.
 	# Expected: Function converts colons to underscores to create valid filenames for IPv6 peer state files.
@@ -206,6 +206,7 @@ source_function() {
 	assert_output "2001_db8__1"
 }
 
+# bats test_tags=category:unit
 @test "extract_lockfile_pid extracts PID from lockfile" {
 	# Test verifies that extract_lockfile_pid function correctly parses process ID from lockfile format.
 	# Expected: Function extracts PID from lockfile containing timestamp:pid format.
@@ -222,6 +223,7 @@ source_function() {
 	assert_output "12345"
 }
 
+# bats test_tags=category:unit
 @test "extract_lockfile_pid returns empty for missing lockfile" {
 	# Test verifies that extract_lockfile_pid function handles missing lockfiles gracefully.
 	# Expected: Function returns success with empty output when lockfile doesn't exist.
@@ -239,6 +241,7 @@ source_function() {
 	fi
 }
 
+# bats test_tags=category:unit
 @test "is_process_running returns true for current process" {
 	# Test verifies that is_process_running function correctly identifies running processes.
 	# Expected: Function returns success when checking if current process PID is running.
@@ -252,6 +255,7 @@ source_function() {
 	assert_success
 }
 
+# bats test_tags=category:unit
 @test "is_process_running returns false for non-existent PID" {
 	# Test verifies that is_process_running function correctly identifies non-existent processes.
 	# Expected: Function returns failure when checking a PID that doesn't exist in the process table.
@@ -265,6 +269,7 @@ source_function() {
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "is_process_running returns false for empty PID" {
 	# Test verifies that is_process_running function handles empty PID input gracefully.
 	# Expected: Function returns failure when PID is empty or invalid, preventing errors.
@@ -277,6 +282,7 @@ source_function() {
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "get_timestamp_plus_minutes adds minutes correctly" {
 	# Test verifies that get_timestamp_plus_minutes function correctly calculates future timestamps.
 	# Expected: Function adds specified minutes to current timestamp and returns Unix timestamp.
@@ -297,6 +303,7 @@ source_function() {
 	assert [ $((future - expected)) -le 5 ]
 }
 
+# bats test_tags=category:unit
 @test "get_file_mtime returns modification time" {
 	# Test verifies that get_file_mtime function correctly retrieves file modification timestamp.
 	# Expected: Function returns Unix timestamp representing file's last modification time.
@@ -311,13 +318,11 @@ source_function() {
 
 	run get_file_mtime "$test_file"
 	assert_success
-	# Should return a Unix timestamp (numeric)
-	if ! echo "$output" | grep -qE '^[0-9]+$'; then
-		echo "Output '$output' is not a valid timestamp" >&2
-		return 1
-	fi
+	# Should return a Unix timestamp (numeric) - use regex for pattern matching
+	assert_output --regexp '^[0-9]+$'
 }
 
+# bats test_tags=category:unit
 @test "validate_ip_address accepts valid IPv4 addresses" {
 	# Test verifies that validate_ip_address function correctly accepts valid IPv4 addresses.
 	# Expected: Function returns success (exit code 0) for valid IPv4 addresses in various ranges.
@@ -336,6 +341,7 @@ source_function() {
 	assert_success
 }
 
+# bats test_tags=category:unit
 @test "validate_ip_address rejects invalid IPv4 addresses" {
 	# Test verifies that validate_ip_address function correctly rejects invalid IPv4 addresses.
 	# Expected: Function returns failure (exit code 1) for invalid formats including out-of-range octets.
@@ -357,6 +363,7 @@ source_function() {
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "validate_ip_address accepts valid IPv6 addresses" {
 	# Test verifies that validate_ip_address function correctly accepts valid IPv6 addresses.
 	# Expected: Function returns success (exit code 0) for valid IPv6 addresses in various formats.
@@ -375,6 +382,7 @@ source_function() {
 	assert_success
 }
 
+# bats test_tags=category:unit
 @test "validate_ip_address rejects invalid IPv6 addresses" {
 	# Test verifies that validate_ip_address function correctly rejects invalid IPv6 address formats.
 	# Expected: Function returns failure (exit code 1) for invalid IPv6 formats including malformed addresses.
@@ -393,6 +401,7 @@ source_function() {
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "extract_byte_counter extracts bytes from xfrm output" {
 	# Test verifies that extract_byte_counter function correctly parses byte count from xfrm output.
 	# Expected: Function extracts numeric byte count from "lifetime current" line in xfrm state output.
@@ -408,6 +417,7 @@ source_function() {
 	assert_output "123456"
 }
 
+# bats test_tags=category:unit
 @test "extract_byte_counter handles missing lifetime line" {
 	# Test verifies that extract_byte_counter function handles xfrm output without lifetime line gracefully.
 	# Expected: Function returns failure when lifetime line is missing from xfrm output.
@@ -422,6 +432,7 @@ source_function() {
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "get_failure_count returns 0 for missing counter file" {
 	# Test verifies that get_failure_count function returns 0 when counter file doesn't exist.
 	# Expected: Function returns 0 (default value) for peers that haven't experienced failures yet.
@@ -438,6 +449,7 @@ source_function() {
 	assert_output "0"
 }
 
+# bats test_tags=category:unit
 @test "get_failure_count returns value from counter file" {
 	# Test verifies that get_failure_count function correctly reads failure count from existing counter file.
 	# Expected: Function reads and returns the numeric value stored in the per-peer failure counter file.
@@ -454,6 +466,7 @@ source_function() {
 	assert_output "5"
 }
 
+# bats test_tags=category:unit
 @test "increment_failure increments counter correctly" {
 	# Test verifies that increment_failure function correctly increments failure counter files.
 	# Expected: Function reads current counter value, increments it by 1, and writes back atomically.
@@ -487,6 +500,7 @@ source_function() {
 	assert [ "$count" -eq 2 ]
 }
 
+# bats test_tags=category:unit
 @test "reset_failure_count resets counter to 0" {
 	# Test verifies that reset_failure_count function correctly resets failure counter to zero.
 	# Expected: Function writes 0 to the failure counter file when VPN recovers successfully.
@@ -513,6 +527,7 @@ source_function() {
 # Abstraction Layer Tests (get_peer_state, set_peer_state, etc.)
 # ============================================================================
 
+# bats test_tags=category:unit
 @test "get_peer_state_file_path returns correct path for failure_count" {
 	# Test verifies that get_peer_state_file_path function returns correct file path for failure_count state.
 	# Expected: Function constructs path using logs directory and sanitized peer IP for failure counter file.
@@ -526,6 +541,7 @@ source_function() {
 	assert_output "${LOGS_DIR}/failure_counter_192_168_1_1"
 }
 
+# bats test_tags=category:unit
 @test "get_peer_state_file_path returns correct path for last_bytes" {
 	# Test verifies that get_peer_state_file_path function returns correct file path for last_bytes state.
 	# Expected: Function constructs path using state directory and sanitized peer IP for byte counter file.
@@ -539,6 +555,7 @@ source_function() {
 	assert_output "${STATE_DIR}/last_bytes_192_168_1_1"
 }
 
+# bats test_tags=category:unit
 @test "get_peer_state_file_path handles unknown key" {
 	# Test verifies that get_peer_state_file_path function handles unknown state keys gracefully.
 	# Expected: Function logs warning but still returns constructed path for unknown keys.
@@ -553,6 +570,7 @@ source_function() {
 	assert_output --partial "${STATE_DIR}/unknown_key_192_168_1_1"
 }
 
+# bats test_tags=category:unit
 @test "get_peer_state returns default when file missing" {
 	# Test verifies that get_peer_state function returns default value when state file doesn't exist.
 	# Expected: Function returns default value (0 or custom) for peers that haven't been initialized yet.
@@ -571,6 +589,7 @@ source_function() {
 	assert_output "99"
 }
 
+# bats test_tags=category:unit
 @test "get_peer_state returns value from existing file" {
 	# Test verifies that get_peer_state function correctly reads values from existing state files.
 	# Expected: Function reads and returns the numeric value stored in the per-peer state file.
@@ -585,6 +604,7 @@ source_function() {
 	assert_output "42"
 }
 
+# bats test_tags=category:unit
 @test "get_peer_state handles corrupted file" {
 	# Test verifies that get_peer_state function handles corrupted state files gracefully.
 	# Expected: Function returns default value (0) and logs warning when state file contains invalid data.
@@ -599,11 +619,13 @@ source_function() {
 	run get_peer_state "192.168.1.1" "failure_count"
 	assert_success
 	# Should return default (0) for corrupted file (function logs warning)
-	assert_output --partial "0"
 	# Verify it ends with 0 (the actual return value)
 	assert [ "${output##*$'\n'}" = "0" ] || [ "$output" = "0" ]
+	# Use assert_equal for exact value comparison
+	assert_equal "${output##*$'\n'}" "0" || assert_equal "$output" "0"
 }
 
+# bats test_tags=category:unit
 @test "set_peer_state creates file with correct value" {
 	# Test verifies that set_peer_state function creates state files with correct values.
 	# Expected: Function creates per-peer state file and writes the specified numeric value atomically.
@@ -623,6 +645,7 @@ source_function() {
 	assert [ "$count" -eq 7 ]
 }
 
+# bats test_tags=category:unit
 @test "set_peer_state updates existing file" {
 	# Test verifies that set_peer_state function correctly updates existing state files.
 	# Expected: Function overwrites existing state file with new value, maintaining atomic write operations.
@@ -642,6 +665,7 @@ source_function() {
 	assert [ "$count" -eq 10 ]
 }
 
+# bats test_tags=category:unit
 @test "set_peer_state validates numeric values" {
 	# Test verifies that set_peer_state function validates that values are numeric before writing.
 	# Expected: Function rejects non-numeric values and returns failure to prevent corrupted state files.
@@ -659,6 +683,7 @@ source_function() {
 	assert_file_not_exist "$counter_file"
 }
 
+# bats test_tags=category:unit
 @test "set_peer_state works with last_bytes" {
 	setup_test_environment "${TEST_DIR}"
 
@@ -675,6 +700,7 @@ source_function() {
 	assert [ "$bytes" -eq 123456 ]
 }
 
+# bats test_tags=category:unit
 @test "delete_peer_state removes existing file" {
 	setup_test_environment "${TEST_DIR}"
 	setup_state_files "192.168.1.1" 5
@@ -689,6 +715,7 @@ source_function() {
 	assert_file_not_exist "$counter_file"
 }
 
+# bats test_tags=category:unit
 @test "delete_peer_state succeeds when file missing" {
 	setup_test_environment "${TEST_DIR}"
 
@@ -699,6 +726,7 @@ source_function() {
 	assert_success
 }
 
+# bats test_tags=category:unit
 @test "cleanup_peer_state removes all peer state files" {
 	setup_test_environment "${TEST_DIR}"
 
@@ -715,6 +743,7 @@ source_function() {
 	assert_file_not_exist "$bytes_file"
 }
 
+# bats test_tags=category:unit
 @test "get_peer_state and set_peer_state work together" {
 	setup_test_environment "${TEST_DIR}"
 
@@ -731,6 +760,7 @@ source_function() {
 	assert_output "15"
 }
 
+# bats test_tags=category:unit
 @test "abstraction layer maintains atomic writes" {
 	setup_test_environment "${TEST_DIR}"
 
@@ -751,6 +781,7 @@ source_function() {
 # Checksum Validation Tests
 # ============================================================================
 
+# bats test_tags=category:unit
 @test "calculate_file_checksum calculates SHA256 checksum" {
 	local test_file="${TEST_DIR}/test_file"
 	echo "test content" >"$test_file"
@@ -764,13 +795,11 @@ source_function() {
 
 	run calculate_file_checksum "$test_file"
 	assert_success
-	# Checksum should be 64 hex characters (SHA256)
-	# Use grep to verify format since assert_output regex may not work
-	if ! echo "$output" | grep -qE '^[0-9a-f]{64}$'; then
-		fail "Checksum format invalid: $output (expected 64 hex characters)"
-	fi
+	# Checksum should be 64 hex characters (SHA256) - use regex for pattern matching
+	assert_output --regexp '^[0-9a-f]{64}$'
 }
 
+# bats test_tags=category:unit
 @test "store_state_file_checksum creates checksum file" {
 	setup_test_environment "${TEST_DIR}"
 	local state_file="${LOGS_DIR}/test_state"
@@ -791,6 +820,7 @@ source_function() {
 	assert_file_exist "$checksum_file"
 }
 
+# bats test_tags=category:unit
 @test "validate_state_file_checksum validates correct checksum" {
 	setup_test_environment "${TEST_DIR}"
 	local state_file="${LOGS_DIR}/test_state"
@@ -812,6 +842,7 @@ source_function() {
 	assert_success
 }
 
+# bats test_tags=category:unit
 @test "validate_state_file_checksum detects corruption" {
 	setup_test_environment "${TEST_DIR}"
 	local state_file="${LOGS_DIR}/test_state"
@@ -836,6 +867,7 @@ source_function() {
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "validate_state_file_checksum returns success when checksum file missing" {
 	setup_test_environment "${TEST_DIR}"
 	local state_file="${LOGS_DIR}/test_state"
@@ -848,6 +880,7 @@ source_function() {
 	assert_success
 }
 
+# bats test_tags=category:unit
 @test "set_peer_state stores checksum after write" {
 	setup_test_environment "${TEST_DIR}"
 
@@ -867,6 +900,7 @@ source_function() {
 	assert_file_exist "$checksum_file"
 }
 
+# bats test_tags=category:unit
 @test "get_peer_state validates checksum before reading" {
 	setup_test_environment "${TEST_DIR}"
 	setup_state_files "192.168.1.1" 30
@@ -890,11 +924,13 @@ source_function() {
 	run get_peer_state "192.168.1.1" "failure_count"
 	assert_success
 	# Should return default (0) due to checksum mismatch (function logs warnings)
-	assert_output --partial "0"
 	# Verify it ends with 0 (the actual return value)
 	assert [ "${output##*$'\n'}" = "0" ] || [ "$output" = "0" ]
+	# Use assert_equal for exact value comparison
+	assert_equal "${output##*$'\n'}" "0" || assert_equal "$output" "0"
 }
 
+# bats test_tags=category:unit
 @test "check_cooldown validates checksum" {
 	setup_test_environment "${TEST_DIR}"
 	local future_time=$(($(date +%s) + 900))
@@ -921,6 +957,7 @@ source_function() {
 	assert_file_not_exist "$cooldown_file"
 }
 
+# bats test_tags=category:unit
 @test "check_cooldown returns false when cooldown file missing" {
 	local state_dir="${TEST_DIR}"
 
@@ -961,6 +998,7 @@ SCRIPT
 	assert_failure # Not in cooldown
 }
 
+# bats test_tags=category:unit
 @test "check_cooldown returns true when in cooldown period" {
 	local state_dir="${TEST_DIR}"
 	local cooldown_file="${state_dir}/cooldown_until"
@@ -999,6 +1037,7 @@ SCRIPT
 	assert_success # In cooldown
 }
 
+# bats test_tags=category:unit
 @test "check_rate_limit allows restart when under limit" {
 	local logs_dir="${TEST_DIR}/logs"
 	mkdir -p "$logs_dir"
@@ -1038,6 +1077,7 @@ SCRIPT
 	assert_success # Under limit
 }
 
+# bats test_tags=category:unit
 @test "check_rate_limit blocks restart when over limit" {
 	local logs_dir="${TEST_DIR}/logs"
 	mkdir -p "$logs_dir"
@@ -1084,6 +1124,7 @@ SCRIPT
 	assert_failure # Over limit
 }
 
+# bats test_tags=category:unit
 @test "record_restart appends timestamp to restart file" {
 	# Test verifies that record_restart function appends current timestamp to restart count file.
 	# Expected: Function writes Unix timestamp to restart file, enabling rate limit calculations.
@@ -1110,17 +1151,15 @@ SCRIPT
 
 	run bash "${TEST_DIR}/test_script.sh" "$restart_file"
 	assert_success
-	# Should contain a timestamp (numeric)
-	if ! echo "$output" | grep -qE '^[0-9]+$'; then
-		echo "Output '$output' is not a valid timestamp" >&2
-		return 1
-	fi
+	# Should contain a timestamp (numeric) - use regex for pattern matching
+	assert_output --regexp '^[0-9]+$'
 }
 
 # ============================================================================
 # Tests for discover_connection_name function (ipsec-based discovery)
 # ============================================================================
 
+# bats test_tags=category:unit
 @test "discover_connection_name extracts connection name from ipsec status (libreswan format)" {
 	# Test verifies that discover_connection_name function correctly parses connection names from libreswan ipsec status output.
 	# Expected: Function extracts connection name (e.g., "site-a") from ipsec status output matching peer IP.
@@ -1147,6 +1186,7 @@ EOF
 	assert_output "site-a"
 }
 
+# bats test_tags=category:unit
 @test "discover_connection_name extracts connection name from ipsec status (strongswan format)" {
 	# Test verifies that discover_connection_name function correctly parses connection names from strongswan ipsec status output.
 	# Expected: Function extracts connection name from strongswan format output, supporting multiple IPsec implementations.
@@ -1173,6 +1213,7 @@ EOF
 	assert_output "site-a"
 }
 
+# bats test_tags=category:unit
 @test "discover_connection_name returns empty string when connection not found" {
 	# Test verifies that discover_connection_name function returns empty string when peer IP is not found in ipsec status.
 	# Expected: Function returns empty string when no connection matches the peer IP, indicating connection not established.
@@ -1198,6 +1239,7 @@ EOF
 	assert_output ""
 }
 
+# bats test_tags=category:unit
 @test "discover_connection_name caches connection name" {
 	# Test verifies that discover_connection_name function caches discovered connection names to avoid repeated ipsec calls.
 	# Expected: Function writes connection name to cache file on first discovery and uses cache on subsequent calls.
@@ -1240,7 +1282,8 @@ EOF
 		return 1
 	fi
 	assert_file_exist "$cache_file"
-	assert [ "$(cat "$cache_file")" = "site-a" ]
+	# Use assert_equal for better error messages
+	assert_equal "$(cat "$cache_file")" "site-a"
 
 	# Remove ipsec mock - second call should use cache (tests cache-first behavior)
 	rm -f "$mock_ipsec"
@@ -1258,6 +1301,7 @@ EOF
 	assert_file_exist "$cache_file"
 }
 
+# bats test_tags=category:unit
 @test "discover_connection_name returns empty when ipsec command not available" {
 	source_function "discover_connection_name"
 	source_function "sanitize_peer_ip"
@@ -1278,6 +1322,7 @@ EOF
 	assert [ ! -f "$cache_file" ]
 }
 
+# bats test_tags=category:unit
 @test "discover_connection_name handles ipsec status failure gracefully" {
 	source_function "discover_connection_name"
 	source_function "sanitize_peer_ip"
@@ -1306,6 +1351,7 @@ EOF
 	assert [ ! -f "$cache_file" ]
 }
 
+# bats test_tags=category:unit
 @test "discover_connection_name uses cache when ipsec unavailable (cache-first behavior)" {
 	# This test explicitly verifies the cache-first behavior fix:
 	# Cache should be checked BEFORE ipsec availability check
@@ -1335,13 +1381,15 @@ EOF
 	fi
 	# Verify cache still exists
 	assert_file_exist "$cache_file"
-	assert [ "$(cat "$cache_file")" = "cached-connection" ]
+	# Use assert_equal for better error messages
+	assert_equal "$(cat "$cache_file")" "cached-connection"
 }
 
 # ============================================================================
 # Tests for config_schema.sh functions
 # ============================================================================
 
+# bats test_tags=category:unit
 @test "get_config_schema returns schema for existing variable" {
 	# Source config_schema.sh
 	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
@@ -1356,6 +1404,7 @@ EOF
 	assert_output --partial "string"
 }
 
+# bats test_tags=category:unit
 @test "get_config_schema returns failure for non-existent variable" {
 	# Source config_schema.sh
 	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
@@ -1368,6 +1417,7 @@ EOF
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "is_config_required returns true for required variable" {
 	# Source config_schema.sh
 	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
@@ -1380,6 +1430,7 @@ EOF
 	assert_success
 }
 
+# bats test_tags=category:unit
 @test "is_config_required returns false for optional variable" {
 	# Source config_schema.sh
 	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
@@ -1392,6 +1443,7 @@ EOF
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "is_config_required returns false for unknown variable" {
 	# Source config_schema.sh
 	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
@@ -1404,6 +1456,7 @@ EOF
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "get_config_default returns default value for variable with default" {
 	# Source config_schema.sh
 	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
@@ -1417,6 +1470,7 @@ EOF
 	assert_output "Site-to-Site VPN"
 }
 
+# bats test_tags=category:unit
 @test "get_config_default returns empty string for variable without default" {
 	# Source config_schema.sh
 	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
@@ -1435,6 +1489,7 @@ EOF
 	fi
 }
 
+# bats test_tags=category:unit
 @test "get_config_default returns failure for non-existent variable" {
 	# Source config_schema.sh
 	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
@@ -1447,6 +1502,7 @@ EOF
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "get_config_default handles integer defaults correctly" {
 	# Source config_schema.sh
 	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
@@ -1460,6 +1516,7 @@ EOF
 	assert_output "1"
 }
 
+# bats test_tags=category:unit
 @test "get_config_default handles cron schedule defaults correctly" {
 	# Source config_schema.sh
 	if [[ -f "${LIB_DIR}/config_schema.sh" ]]; then
@@ -1473,6 +1530,7 @@ EOF
 	assert_output "*/1 * * * *"
 }
 
+# bats test_tags=category:unit
 @test "apply_schema_defaults reads defaults from schema (single source of truth)" {
 	# Source config.sh (which sources config_schema.sh)
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
@@ -1497,41 +1555,37 @@ EOF
 
 	# Verify defaults from schema are applied
 	# Test a few key defaults from schema (using variables without spaces first)
-	assert [ "$ENABLE_PING_CHECK" = "1" ]
-	assert [ "$PING_COUNT" = "3" ]
-	assert [ "$PING_TIMEOUT" = "2" ]
-	assert [ "$ENABLE_KEEPALIVE" = "1" ]
-	assert [ "$KEEPALIVE_INTERVAL" = "30" ]
-	assert [ "$KEEPALIVE_PING_COUNT" = "1" ]
-	assert [ "$DEBUG" = "0" ]
-	assert [ "$NO_ESCALATE" = "0" ]
-	assert [ "$ENABLE_XFRM_RECOVERY" = "1" ]
-	assert [ "$LOCKFILE_TIMEOUT" = "300" ]
+	# Use assert_equal for better error messages
+	assert_equal "$ENABLE_PING_CHECK" "1"
+	assert_equal "$PING_COUNT" "3"
+	assert_equal "$PING_TIMEOUT" "2"
+	assert_equal "$ENABLE_KEEPALIVE" "1"
+	assert_equal "$KEEPALIVE_INTERVAL" "30"
+	assert_equal "$KEEPALIVE_PING_COUNT" "1"
+	assert_equal "$DEBUG" "0"
+	assert_equal "$NO_ESCALATE" "0"
+	assert_equal "$ENABLE_XFRM_RECOVERY" "1"
+	assert_equal "$LOCKFILE_TIMEOUT" "300"
 
-	# Test VPN_NAME (has spaces, use direct comparison to avoid assert quoting issues)
-	if [ "$VPN_NAME" != "Site-to-Site VPN" ]; then
-		echo "VPN_NAME mismatch: expected 'Site-to-Site VPN', got '$VPN_NAME'" >&2
-		return 1
-	fi
+	# Test VPN_NAME (has spaces) - use assert_equal for better error messages
+	assert_equal "$VPN_NAME" "Site-to-Site VPN"
 
-	# Test CRON_SCHEDULE (has spaces and special chars)
-	if [ "$CRON_SCHEDULE" != "*/1 * * * *" ]; then
-		echo "CRON_SCHEDULE mismatch: expected '*/1 * * * *', got '$CRON_SCHEDULE'" >&2
-		return 1
-	fi
+	# Test CRON_SCHEDULE (has spaces and special chars) - use assert_equal for better error messages
+	assert_equal "$CRON_SCHEDULE" "*/1 * * * *"
 
 	# Verify backward compatibility defaults for required variables
-	assert [ "$TIER1_THRESHOLD" = "1" ]
-	assert [ "$TIER2_THRESHOLD" = "3" ]
-	assert [ "$TIER3_THRESHOLD" = "5" ]
-	assert [ "$COOLDOWN_MINUTES" = "15" ]
-	assert [ "$MAX_RESTARTS_PER_HOUR" = "3" ]
+	assert_equal "$TIER1_THRESHOLD" "1"
+	assert_equal "$TIER2_THRESHOLD" "3"
+	assert_equal "$TIER3_THRESHOLD" "5"
+	assert_equal "$COOLDOWN_MINUTES" "15"
+	assert_equal "$MAX_RESTARTS_PER_HOUR" "3"
 }
 
 # ============================================================================
 # Tests for config.sh validation functions
 # ============================================================================
 
+# bats test_tags=category:unit
 @test "parse_config_schema parses complete schema string" {
 	# Source config.sh (which sources config_schema.sh)
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
@@ -1559,12 +1613,14 @@ EOF
 		read -r rules
 		read -r default_val
 	} <<<"$output"
-	assert [ "$required" == "required" ]
-	assert [ "$var_type" == "integer" ]
-	assert [ "$rules" == "min:1" ]
-	assert [ "$default_val" == "default:5" ]
+	# Use assert_equal for better error messages
+	assert_equal "$required" "required"
+	assert_equal "$var_type" "integer"
+	assert_equal "$rules" "min:1"
+	assert_equal "$default_val" "default:5"
 }
 
+# bats test_tags=category:unit
 @test "parse_config_schema parses schema with empty rules" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1585,12 +1641,14 @@ EOF
 		read -r rules
 		read -r default_val
 	} <<<"$output"
-	assert [ "$required" == "optional" ]
-	assert [ "$var_type" == "string" ]
+	# Use assert_equal for better error messages
+	assert_equal "$required" "optional"
+	assert_equal "$var_type" "string"
 	assert [ -z "$rules" ]
-	assert [ "$default_val" == "default:test" ]
+	assert_equal "$default_val" "default:test"
 }
 
+# bats test_tags=category:unit
 @test "parse_config_schema parses schema without default" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1611,12 +1669,14 @@ EOF
 		read -r rules
 		read -r default_val || default_val=""
 	} <<<"$output"
-	assert [ "$required" == "required" ]
-	assert [ "$var_type" == "string" ]
-	assert [ "$rules" == "non-empty" ]
+	# Use assert_equal for better error messages
+	assert_equal "$required" "required"
+	assert_equal "$var_type" "string"
+	assert_equal "$rules" "non-empty"
 	assert [ -z "$default_val" ]
 }
 
+# bats test_tags=category:unit
 @test "apply_config_default applies default to empty optional variable" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1637,6 +1697,7 @@ EOF
 	# The function output is verified above, which confirms the default was applied
 }
 
+# bats test_tags=category:unit
 @test "apply_config_default does not override existing value" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1653,6 +1714,7 @@ EOF
 	assert_output "existing_value"
 }
 
+# bats test_tags=category:unit
 @test "apply_config_default fails for empty required variable" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1673,6 +1735,7 @@ EOF
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "apply_config_default allows empty optional variable without default" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1689,6 +1752,7 @@ EOF
 	assert_output ""
 }
 
+# bats test_tags=category:unit
 @test "validate_config_type validates integer type correctly" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1705,6 +1769,7 @@ EOF
 	assert_output "123"
 }
 
+# bats test_tags=category:unit
 @test "validate_config_type rejects non-numeric integer value" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1733,6 +1798,7 @@ EOF
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "validate_config_type applies default for invalid optional integer" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1756,6 +1822,7 @@ EOF
 	# The function output is verified above, which confirms the default was applied
 }
 
+# bats test_tags=category:unit
 @test "validate_config_type accepts string type" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1772,6 +1839,7 @@ EOF
 	assert_output "test_string"
 }
 
+# bats test_tags=category:unit
 @test "validate_config_rule validates non-empty rule" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1788,6 +1856,7 @@ EOF
 	assert_output "non_empty_value"
 }
 
+# bats test_tags=category:unit
 @test "validate_config_rule rejects empty value with non-empty rule" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1808,6 +1877,7 @@ EOF
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "validate_config_rule validates min rule for integer" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1824,6 +1894,7 @@ EOF
 	assert_output "10"
 }
 
+# bats test_tags=category:unit
 @test "validate_config_rule rejects value below min" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1844,6 +1915,7 @@ EOF
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "validate_config_rule validates max rule for integer" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1860,6 +1932,7 @@ EOF
 	assert_output "5"
 }
 
+# bats test_tags=category:unit
 @test "validate_config_rule rejects value above max" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1880,6 +1953,7 @@ EOF
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "validate_config_rule validates values rule" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1896,6 +1970,7 @@ EOF
 	assert_output "1"
 }
 
+# bats test_tags=category:unit
 @test "validate_config_rule rejects value not in allowed values" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1916,6 +1991,7 @@ EOF
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "validate_config_rule validates relative min rule" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1935,6 +2011,7 @@ EOF
 	unset TIER1_THRESHOLD
 }
 
+# bats test_tags=category:unit
 @test "validate_config_rules validates multiple rules" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1951,6 +2028,7 @@ EOF
 	assert_output "5"
 }
 
+# bats test_tags=category:unit
 @test "validate_config_rules handles empty rules string" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1967,6 +2045,7 @@ EOF
 	assert_output "value"
 }
 
+# bats test_tags=category:unit
 @test "validate_config_rules stops on first failure" {
 	if [[ -f "${LIB_DIR}/config.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -2012,6 +2091,7 @@ source_lockfile_module() {
 	mkdir -p "$(dirname "$LOG_FILE")"
 }
 
+# bats test_tags=category:unit
 @test "acquire_lockfile_flock successfully acquires lock when available" {
 	# Skip if flock not available
 	if ! command -v flock >/dev/null 2>&1; then
@@ -2035,6 +2115,7 @@ source_lockfile_module() {
 	assert_file_not_exist "$LOCKFILE"
 }
 
+# bats test_tags=category:unit
 @test "acquire_lockfile_flock detects running process and exits gracefully" {
 	# Skip if flock not available
 	if ! command -v flock >/dev/null 2>&1; then
@@ -2064,6 +2145,7 @@ source_lockfile_module() {
 	refute_output --partial "This should not execute"
 }
 
+# bats test_tags=category:unit
 @test "acquire_lockfile_flock removes stale lockfile and acquires lock" {
 	# Skip if flock not available
 	if ! command -v flock >/dev/null 2>&1; then
@@ -2093,6 +2175,7 @@ source_lockfile_module() {
 	assert_file_not_exist "$LOCKFILE"
 }
 
+# bats test_tags=category:unit
 @test "acquire_lockfile_flock handles race condition when lockfile removed between check and acquisition" {
 	# Skip if flock not available
 	if ! command -v flock >/dev/null 2>&1; then
@@ -2126,6 +2209,7 @@ source_lockfile_module() {
 	assert_file_not_exist "$LOCKFILE"
 }
 
+# bats test_tags=category:unit
 @test "acquire_lockfile_flock cleans up lockfile on function exit" {
 	# Test verifies that acquire_lockfile_flock function cleans up lockfile when wrapped function exits successfully.
 	# Expected: Lockfile is removed after function execution completes, even on successful exit.
@@ -2151,6 +2235,7 @@ source_lockfile_module() {
 	assert_file_not_exist "$LOCKFILE"
 }
 
+# bats test_tags=category:unit
 @test "acquire_lockfile_flock cleans up lockfile on function error" {
 	# Test verifies that acquire_lockfile_flock function cleans up lockfile even when wrapped function exits with error.
 	# Expected: Lockfile is removed after function execution completes, regardless of exit code.
@@ -2177,6 +2262,7 @@ source_lockfile_module() {
 	assert_file_not_exist "$LOCKFILE"
 }
 
+# bats test_tags=category:unit
 @test "acquire_lockfile_fallback successfully acquires lock when available" {
 	source_lockfile_module
 
@@ -2195,6 +2281,7 @@ source_lockfile_module() {
 	assert_file_not_exist "$LOCKFILE"
 }
 
+# bats test_tags=category:unit
 @test "acquire_lockfile_fallback detects running process and exits gracefully" {
 	source_lockfile_module
 
@@ -2219,6 +2306,7 @@ source_lockfile_module() {
 	refute_output --partial "This should not execute"
 }
 
+# bats test_tags=category:unit
 @test "acquire_lockfile_fallback removes stale lockfile and acquires lock" {
 	source_lockfile_module
 
@@ -2243,6 +2331,7 @@ source_lockfile_module() {
 	assert_file_not_exist "$LOCKFILE"
 }
 
+# bats test_tags=category:unit
 @test "acquire_lockfile_fallback handles race condition when lockfile created between check and acquisition" {
 	source_lockfile_module
 
@@ -2289,6 +2378,7 @@ source_lockfile_module() {
 	rm -f "$LOCKFILE"
 }
 
+# bats test_tags=category:unit
 @test "acquire_lockfile_fallback retries once when lockfile has dead PID" {
 	source_lockfile_module
 
@@ -2313,6 +2403,7 @@ source_lockfile_module() {
 	assert_file_not_exist "$LOCKFILE"
 }
 
+# bats test_tags=category:unit
 @test "acquire_lockfile_fallback cleans up lockfile on function exit" {
 	source_lockfile_module
 
@@ -2330,6 +2421,7 @@ source_lockfile_module() {
 	assert_file_not_exist "$LOCKFILE"
 }
 
+# bats test_tags=category:unit
 @test "acquire_lockfile_fallback cleans up lockfile on function error" {
 	source_lockfile_module
 
@@ -2346,6 +2438,7 @@ source_lockfile_module() {
 	assert_file_not_exist "$LOCKFILE"
 }
 
+# bats test_tags=category:unit
 @test "acquire_lockfile_fallback handles lockfile with dead PID (not stale by time)" {
 	source_lockfile_module
 
@@ -2369,6 +2462,7 @@ source_lockfile_module() {
 	assert_file_not_exist "$LOCKFILE"
 }
 
+# bats test_tags=category:unit
 @test "acquire_lockfile_fallback handles lockfile with dead PID during atomic creation retry" {
 	source_lockfile_module
 
@@ -2398,6 +2492,7 @@ source_lockfile_module() {
 # Constants Tests
 # ============================================================================
 
+# bats test_tags=category:unit
 @test "constants are properly loaded and have correct values" {
 	# Test verifies that constants.sh file defines all required constants with correct values.
 	# Expected: All constants (IPv4/IPv6 limits, ping thresholds, xfrm settings, time conversions) are defined correctly.
@@ -2429,6 +2524,7 @@ source_lockfile_module() {
 	assert [ "$SECONDS_PER_DAY" -eq 86400 ]
 }
 
+# bats test_tags=category:unit
 @test "IPv4 validation uses MAX_IPV4_OCTET constant" {
 	# Source the function (which loads constants)
 	# shellcheck source=/dev/null
@@ -2448,6 +2544,7 @@ source_lockfile_module() {
 	assert_success
 }
 
+# bats test_tags=category:unit
 @test "IPv6 validation uses hex digit constants" {
 	# Source the function (which loads constants)
 	# shellcheck source=/dev/null
@@ -2476,6 +2573,7 @@ source_lockfile_module() {
 # SA Rekey Detection Tests
 # ============================================================================
 
+# bats test_tags=category:unit
 @test "extract_spi extracts hex SPI from xfrm output" {
 	# Source the function
 	# shellcheck source=/dev/null
@@ -2490,6 +2588,7 @@ source_lockfile_module() {
 	assert_output "0x12345678"
 }
 
+# bats test_tags=category:unit
 @test "extract_spi extracts decimal SPI from xfrm output" {
 	# Source the function
 	# shellcheck source=/dev/null
@@ -2504,6 +2603,7 @@ source_lockfile_module() {
 	assert_output "305419896"
 }
 
+# bats test_tags=category:unit
 @test "extract_spi handles missing SPI line" {
 	# Source the function
 	# shellcheck source=/dev/null
@@ -2517,6 +2617,7 @@ source_lockfile_module() {
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "check_sa_rekey_occurred returns false on first check (no stored SPI)" {
 	# Set up environment
 	STATE_DIR="${TEST_DIR}"
@@ -2544,6 +2645,7 @@ source_lockfile_module() {
 	assert [ "$status" -eq 1 ]
 }
 
+# bats test_tags=category:unit
 @test "check_sa_rekey_occurred returns false when SPI unchanged" {
 	# Set up environment
 	STATE_DIR="${TEST_DIR}"
@@ -2563,6 +2665,7 @@ source_lockfile_module() {
 	assert_failure
 }
 
+# bats test_tags=category:unit
 @test "check_sa_rekey_occurred returns true when SPI changed" {
 	# Set up environment
 	STATE_DIR="${TEST_DIR}"
@@ -2582,6 +2685,7 @@ source_lockfile_module() {
 	assert_success
 }
 
+# bats test_tags=category:unit
 @test "detect_sa_rekey stores SPI on first check" {
 	# Set up environment
 	STATE_DIR="${TEST_DIR}"
@@ -2608,9 +2712,11 @@ source_lockfile_module() {
 	# Verify SPI was stored
 	local stored_spi
 	stored_spi=$(get_peer_state "203.0.113.1" "spi" "")
-	assert [ "$stored_spi" = "0x12345678" ]
+	# Use assert_equal for better error messages
+	assert_equal "$stored_spi" "0x12345678"
 }
 
+# bats test_tags=category:unit
 @test "detect_sa_rekey detects rekey and resets byte counter baseline" {
 	# Set up environment
 	STATE_DIR="${TEST_DIR}"
@@ -2635,14 +2741,17 @@ source_lockfile_module() {
 	# Verify SPI was updated
 	local stored_spi
 	stored_spi=$(get_peer_state "203.0.113.1" "spi" "")
-	assert [ "$stored_spi" = "0x87654321" ]
+	# Use assert_equal for better error messages
+	assert_equal "$stored_spi" "0x87654321"
 
 	# Verify byte counter baseline was reset
 	local last_bytes
 	last_bytes=$(get_peer_state "203.0.113.1" "last_bytes" "0")
-	assert [ "$last_bytes" = "0" ]
+	# Use assert_equal for better error messages
+	assert_equal "$last_bytes" "0"
 }
 
+# bats test_tags=category:unit
 @test "check_byte_counters detects rekey before checking bytes" {
 	# Set up environment
 	STATE_DIR="${TEST_DIR}"
@@ -2667,14 +2776,17 @@ source_lockfile_module() {
 	# Verify byte counter baseline was reset and updated
 	local last_bytes
 	last_bytes=$(get_peer_state "203.0.113.1" "last_bytes" "0")
-	assert [ "$last_bytes" = "1000" ]
+	# Use assert_equal for better error messages
+	assert_equal "$last_bytes" "1000"
 
 	# Verify SPI was updated
 	local stored_spi
 	stored_spi=$(get_peer_state "203.0.113.1" "spi" "")
-	assert [ "$stored_spi" = "0x87654321" ]
+	# Use assert_equal for better error messages
+	assert_equal "$stored_spi" "0x87654321"
 }
 
+# bats test_tags=category:unit
 @test "check_byte_counters handles bytes=0 after rekey" {
 	# Set up environment
 	STATE_DIR="${TEST_DIR}"
@@ -2697,9 +2809,11 @@ source_lockfile_module() {
 	# Verify byte counter baseline was reset (rekey detected)
 	local last_bytes
 	last_bytes=$(get_peer_state "203.0.113.1" "last_bytes" "0")
-	assert [ "$last_bytes" = "0" ]
+	# Use assert_equal for better error messages
+	assert_equal "$last_bytes" "0"
 }
 
+# bats test_tags=category:unit
 @test "check_xfrm_status extracts and tracks SPI" {
 	# Set up environment
 	STATE_DIR="${TEST_DIR}"
@@ -2731,7 +2845,8 @@ source_lockfile_module() {
 	assert_file_exist "${TEST_DIR}/mock_ip"
 	run "${TEST_DIR}/mock_ip" xfrm state
 	assert_success
-	assert_output --partial "203.0.113.1"
+	# Use regex to verify IP address format
+	assert_output --regexp '203\.0\.113\.1'
 
 	# Check VPN status (skip if mock not found in PATH)
 	if command -v ip 2>/dev/null | grep -q "^${TEST_DIR}/mock_ip$"; then
@@ -2741,12 +2856,14 @@ source_lockfile_module() {
 		# Verify SPI was stored
 		local stored_spi
 		stored_spi=$(get_peer_state "203.0.113.1" "spi" "")
-		assert [ "$stored_spi" = "0xABCDEF12" ]
+		# Use assert_equal for better error messages
+		assert_equal "$stored_spi" "0xABCDEF12"
 	else
 		skip "Mock IP command not found in PATH (integration test skipped)"
 	fi
 }
 
+# bats test_tags=category:unit
 @test "check_xfrm_status detects rekey when SPI changes" {
 	# Set up environment
 	STATE_DIR="${TEST_DIR}"
@@ -2787,7 +2904,8 @@ source_lockfile_module() {
 	assert_file_exist "${TEST_DIR}/mock_ip"
 	run "${TEST_DIR}/mock_ip" xfrm state
 	assert_success
-	assert_output --partial "203.0.113.1"
+	# Use regex to verify IP address format
+	assert_output --regexp '203\.0\.113\.1'
 
 	# Check VPN status - should detect rekey and reset baseline
 	# Note: The mock IP command must be in PATH before check_xfrm_status is called
@@ -2802,12 +2920,14 @@ source_lockfile_module() {
 		# Verify SPI was updated
 		local stored_spi
 		stored_spi=$(get_peer_state "203.0.113.1" "spi" "")
-		assert [ "$stored_spi" = "0x87654321" ]
+		# Use assert_equal for better error messages
+		assert_equal "$stored_spi" "0x87654321"
 
 		# Verify byte counter baseline was reset (rekey detected)
 		local last_bytes
 		last_bytes=$(get_peer_state "203.0.113.1" "last_bytes" "0")
-		assert [ "$last_bytes" = "1000" ]
+		# Use assert_equal for better error messages
+		assert_equal "$last_bytes" "1000"
 	else
 		# Mock not found in PATH - skip integration test
 		# Core functionality is tested in unit tests above
@@ -2819,6 +2939,7 @@ source_lockfile_module() {
 # Tests for recovery.sh - select_recovery_strategy function
 # ============================================================================
 
+# bats test_tags=category:unit
 @test "select_recovery_strategy selects xfrm strategy when peer IP provided and xfrm enabled" {
 	if [[ -f "${LIB_DIR}/recovery.sh" ]]; then
 		# Source dependencies
@@ -2845,14 +2966,16 @@ source_lockfile_module() {
 	# Test strategy selection (call directly, not with run, so global variables persist)
 	select_recovery_strategy "203.0.113.1" 2
 
-	assert [ "$RECOVERY_STRATEGY" = "xfrm" ]
-	assert [ "$RECOVERY_COMMAND" = "attempt_xfrm_recovery" ]
-	assert [ "$RECOVERY_IMPACT" = "per-connection" ]
-	assert [ "$RECOVERY_AVAILABLE" = "1" ]
+	# Use assert_equal for better error messages
+	assert_equal "$RECOVERY_STRATEGY" "xfrm"
+	assert_equal "$RECOVERY_COMMAND" "attempt_xfrm_recovery"
+	assert_equal "$RECOVERY_IMPACT" "per-connection"
+	assert_equal "$RECOVERY_AVAILABLE" "1"
 
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit
 @test "select_recovery_strategy selects ipsec_reload for tier 2 when xfrm disabled" {
 	if [[ -f "${LIB_DIR}/recovery.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -2881,18 +3004,16 @@ source_lockfile_module() {
 	# Test strategy selection (call directly, not with run, so global variables persist)
 	select_recovery_strategy "203.0.113.1" 2
 
-	assert [ "$RECOVERY_STRATEGY" = "ipsec_reload" ]
-	# Use direct comparison for values with spaces
-	if [ "$RECOVERY_COMMAND" != "ipsec reload" ]; then
-		echo "RECOVERY_COMMAND mismatch: expected 'ipsec reload', got '$RECOVERY_COMMAND'" >&2
-		return 1
-	fi
-	assert [ "$RECOVERY_IMPACT" = "all-tunnels" ]
-	assert [ "$RECOVERY_AVAILABLE" = "1" ]
+	# Use assert_equal for better error messages
+	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload"
+	assert_equal "$RECOVERY_COMMAND" "ipsec reload"
+	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
+	assert_equal "$RECOVERY_AVAILABLE" "1"
 
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit
 @test "select_recovery_strategy selects ipsec_restart for tier 3" {
 	if [[ -f "${LIB_DIR}/recovery.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -2921,18 +3042,16 @@ source_lockfile_module() {
 	# Test strategy selection (call directly, not with run, so global variables persist)
 	select_recovery_strategy "" 3
 
-	assert [ "$RECOVERY_STRATEGY" = "ipsec_restart" ]
-	# Use direct comparison for values with spaces
-	if [ "$RECOVERY_COMMAND" != "ipsec restart" ]; then
-		echo "RECOVERY_COMMAND mismatch: expected 'ipsec restart', got '$RECOVERY_COMMAND'" >&2
-		return 1
-	fi
-	assert [ "$RECOVERY_IMPACT" = "all-tunnels" ]
-	assert [ "$RECOVERY_AVAILABLE" = "1" ]
+	# Use assert_equal for better error messages
+	assert_equal "$RECOVERY_STRATEGY" "ipsec_restart"
+	assert_equal "$RECOVERY_COMMAND" "ipsec restart"
+	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
+	assert_equal "$RECOVERY_AVAILABLE" "1"
 
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit
 @test "select_recovery_strategy selects ipsec_reload when no peer IP provided" {
 	if [[ -f "${LIB_DIR}/recovery.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -2961,18 +3080,16 @@ source_lockfile_module() {
 	# Test strategy selection (no peer IP, call directly so global variables persist)
 	select_recovery_strategy "" 2
 
-	assert [ "$RECOVERY_STRATEGY" = "ipsec_reload" ]
-	# Use direct comparison for values with spaces
-	if [ "$RECOVERY_COMMAND" != "ipsec reload" ]; then
-		echo "RECOVERY_COMMAND mismatch: expected 'ipsec reload', got '$RECOVERY_COMMAND'" >&2
-		return 1
-	fi
-	assert [ "$RECOVERY_IMPACT" = "all-tunnels" ]
-	assert [ "$RECOVERY_AVAILABLE" = "1" ]
+	# Use assert_equal for better error messages
+	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload"
+	assert_equal "$RECOVERY_COMMAND" "ipsec reload"
+	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
+	assert_equal "$RECOVERY_AVAILABLE" "1"
 
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit
 @test "select_recovery_strategy returns unavailable when no commands available" {
 	if [[ -f "${LIB_DIR}/recovery.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -3005,10 +3122,12 @@ source_lockfile_module() {
 	# Restore PATH
 	PATH="$original_path"
 
-	assert [ "$RECOVERY_STRATEGY" = "unavailable" ]
-	assert [ "$RECOVERY_AVAILABLE" = "0" ]
+	# Use assert_equal for better error messages
+	assert_equal "$RECOVERY_STRATEGY" "unavailable"
+	assert_equal "$RECOVERY_AVAILABLE" "0"
 }
 
+# bats test_tags=category:unit
 @test "select_recovery_strategy rejects invalid tier" {
 	if [[ -f "${LIB_DIR}/recovery.sh" ]]; then
 		if [[ -f "${LIB_DIR}/logging.sh" ]]; then

@@ -1,10 +1,7 @@
 #!/usr/bin/env bats
 #
-# High-risk tests: Error Handling During Critical Operations
-# Tests critical paths and error handling scenarios that could cause production failures
-#
-# This file is part of the high-risk test suite, split from test_high_risk.sh
-# for better organization and maintainability.
+# Tests for Error Handling During Critical Operations
+# Tests critical paths and error handling scenarios
 
 load test_helper
 
@@ -12,10 +9,11 @@ load test_helper
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # ============================================================================
-# 7.3 ERROR HANDLING DURING CRITICAL OPERATIONS
+# ERROR HANDLING DURING CRITICAL OPERATIONS
 # ============================================================================
 
-@test "high-risk: error during state file write" {
+# bats test_tags=category:high-risk,priority:high
+@test "error during state file write" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -50,11 +48,8 @@ EOF
 	remove_mock_from_path
 }
 
-# ============================================================================
-# 7.3 ERROR HANDLING DURING CRITICAL OPERATIONS (continued)
-# ============================================================================
-
-@test "high-risk: error during recovery action (should log and continue)" {
+# bats test_tags=category:high-risk,priority:high
+@test "error during recovery action (should log and continue)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -110,11 +105,8 @@ EOF
 	remove_mock_from_path
 }
 
-# ============================================================================
-# 7.3 ERROR HANDLING DURING CRITICAL OPERATIONS (continued)
-# ============================================================================
-
-@test "high-risk: error during VPN check (should log and continue)" {
+# bats test_tags=category:high-risk,priority:high
+@test "error during VPN check (should log and continue)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -148,3 +140,4 @@ EOF
 
 	remove_mock_from_path
 }
+

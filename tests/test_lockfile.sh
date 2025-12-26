@@ -1,10 +1,7 @@
 #!/usr/bin/env bats
 #
-# High-risk tests: Lockfile Management
-# Tests critical paths and error handling scenarios that could cause production failures
-#
-# This file is part of the high-risk test suite, split from test_high_risk.sh
-# for better organization and maintainability.
+# Tests for Lockfile Management
+# Tests critical paths and error handling scenarios
 
 load test_helper
 
@@ -15,7 +12,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # 1. LOCKFILE MANAGEMENT TESTS
 # ============================================================================
 
-@test "high-risk: lockfile cleanup on script exit" {
+# bats test_tags=category:high-risk,priority:high
+@test "lockfile cleanup on script exit" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -45,7 +43,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: lockfile cleanup on script error" {
+# bats test_tags=category:high-risk,priority:high
+@test "lockfile cleanup on script error" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="invalid-ip-format"
@@ -73,7 +72,8 @@ EOF
 	fi
 }
 
-@test "high-risk: lockfile contains invalid format" {
+# bats test_tags=category:high-risk,priority:high
+@test "lockfile contains invalid format" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -105,7 +105,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: lockfile timestamp at timeout boundary" {
+# bats test_tags=category:high-risk,priority:high
+@test "lockfile timestamp at timeout boundary" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -141,7 +142,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: lockfile acquisition prevents concurrent execution" {
+# bats test_tags=category:high-risk,priority:high
+@test "lockfile acquisition prevents concurrent execution" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -179,7 +181,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: lockfile acquisition uses flock when available" {
+# bats test_tags=category:high-risk,priority:high
+@test "lockfile acquisition uses flock when available" {
 	# Skip if flock not available
 	if ! command -v flock >/dev/null 2>&1; then
 		skip "flock command not available"
@@ -214,7 +217,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: lockfile acquisition falls back when flock unavailable" {
+# bats test_tags=category:high-risk,priority:high
+@test "lockfile acquisition falls back when flock unavailable" {
 	# Temporarily hide flock command
 	local test_bin="${TEST_DIR}/bin"
 	mkdir -p "$test_bin"
@@ -266,7 +270,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: lockfile switching between flock and fallback modes" {
+# bats test_tags=category:high-risk,priority:high
+@test "lockfile switching between flock and fallback modes" {
 	# This test verifies correct behavior when switching between flock and fallback lockfile mechanisms
 	# Different locking mechanisms have different failure modes, so it's critical to ensure
 	# they can interoperate correctly when the system switches modes
@@ -378,7 +383,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: lockfile cleanup on SIGTERM" {
+# bats test_tags=category:high-risk,priority:high
+@test "lockfile cleanup on SIGTERM" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -419,7 +425,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: multiple processes attempting to acquire lock simultaneously (flock path)" {
+# bats test_tags=category:high-risk,priority:high
+@test "multiple processes attempting to acquire lock simultaneously (flock path)" {
 	# Skip if flock not available
 	if ! command -v flock >/dev/null 2>&1; then
 		skip "flock command not available"
@@ -480,7 +487,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: multiple processes attempting to acquire lock simultaneously (fallback path)" {
+# bats test_tags=category:high-risk,priority:high
+@test "multiple processes attempting to acquire lock simultaneously (fallback path)" {
 	# Temporarily hide flock command to force fallback path
 	local test_bin="${TEST_DIR}/bin"
 	mkdir -p "$test_bin"
@@ -565,7 +573,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: lockfile removed between check and creation (TOCTOU race)" {
+# bats test_tags=category:high-risk,priority:high
+@test "lockfile removed between check and creation (TOCTOU race)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -617,7 +626,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: PID reuse scenario (old PID reused, lockfile appears valid but process is different)" {
+# bats test_tags=category:high-risk,priority:high
+@test "PID reuse scenario (old PID reused, lockfile appears valid but process is different)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -673,7 +683,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: script crashes - lockfile should be detected as stale on next run" {
+# bats test_tags=category:high-risk,priority:high
+@test "script crashes - lockfile should be detected as stale on next run" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -729,7 +740,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: trap handlers properly clean up lockfile in all exit scenarios" {
+# bats test_tags=category:high-risk,priority:high
+@test "trap handlers properly clean up lockfile in all exit scenarios" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -792,7 +804,8 @@ EOF
 # 1.3 STALE LOCKFILE EDGE CASES (continued)
 # ============================================================================
 
-@test "high-risk: lockfile file modification time cannot be read (permission issues)" {
+# bats test_tags=category:high-risk,priority:high
+@test "lockfile file modification time cannot be read (permission issues)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -839,7 +852,8 @@ EOF
 # 1.3 STALE LOCKFILE EDGE CASES (continued)
 # ============================================================================
 
-@test "high-risk: lockfile exists but PID belongs to different user (permission denied on kill -0)" {
+# bats test_tags=category:high-risk,priority:high
+@test "lockfile exists but PID belongs to different user (permission denied on kill -0)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -886,7 +900,8 @@ EOF
 # 1.3 STALE LOCKFILE EDGE CASES (continued)
 # ============================================================================
 
-@test "high-risk: lockfile exists but PID is zombie process" {
+# bats test_tags=category:high-risk,priority:high
+@test "lockfile exists but PID is zombie process" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"

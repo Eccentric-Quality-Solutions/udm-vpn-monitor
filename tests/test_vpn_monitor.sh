@@ -8,6 +8,7 @@ load test_helper
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh exists and is executable" {
 	# Test verifies that the VPN monitor script file exists and has execute permissions.
 	# Expected: Script file is present and executable.
@@ -16,6 +17,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_file_executable "$VPN_MONITOR_SCRIPT"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh shows help with --help flag" {
 	# Test verifies that the script displays usage information when --help flag is provided.
 	# Expected: Script outputs usage information including "--fake" flag description.
@@ -26,6 +28,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_output --partial "--fake"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh shows help with -h flag" {
 	# Test verifies that the script displays usage information when -h short flag is provided.
 	# Expected: Script outputs usage information.
@@ -35,6 +38,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_output --partial "Usage:"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh exits with error if EXTERNAL_PEER_IPS not configured" {
 	# Test verifies that the script validates required configuration and exits with error
 	# when EXTERNAL_PEER_IPS is missing or empty.
@@ -61,6 +65,7 @@ EOF
 	assert_output --partial "EXTERNAL_PEER_IPS is required but not configured"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh creates state directory if missing" {
 	# Test verifies that the script automatically creates the state directory if it doesn't exist.
 	# Expected: State directory is created during script initialization.
@@ -75,6 +80,7 @@ EOF
 	assert_dir_exist "$state_dir"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh initializes state files" {
 	# Test verifies that the script creates necessary state files during initialization.
 	# Expected: restart_count file is created in logs directory.
@@ -90,6 +96,7 @@ EOF
 	assert_file_exist "${LOGS_DIR}/restart_count"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh creates log file" {
 	# Test verifies that the script creates the log file for recording execution events.
 	# Expected: Log file is created in the logs directory.
@@ -102,6 +109,7 @@ EOF
 	assert_file_exist "$LOG_FILE"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh logs script start" {
 	# Test verifies that the script logs a start message when execution begins.
 	# Expected: Log file contains "VPN monitor script started" message.
@@ -114,6 +122,7 @@ EOF
 	assert_file_contains "$LOG_FILE" "VPN monitor script started"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh handles --fake flag" {
 	# Test verifies that the script correctly handles the --fake flag for testing mode.
 	# Expected: Script logs fake mode message and disables tier escalation actions.
@@ -126,6 +135,7 @@ EOF
 	assert_file_contains "$LOG_FILE" "fake mode"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh validates peer IP format" {
 	# Test verifies that the script validates peer IP addresses and handles invalid formats gracefully.
 	# Expected: Script handles invalid IP format without crashing, may log warning or exit early.
@@ -143,6 +153,7 @@ EOF
 	fi
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh rejects dangerous characters in peer IP" {
 	# Test verifies that the script rejects peer IPs containing shell injection characters.
 	# Expected: Script detects invalid IP format and logs error message, preventing command injection.
@@ -155,6 +166,7 @@ EOF
 	assert_file_contains "$LOG_FILE" "Invalid peer IP format"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh handles multiple peer IPs" {
 	# Test verifies that the script correctly processes multiple peer IP addresses from configuration.
 	# Expected: Script runs successfully and processes all configured peer IPs.
@@ -167,6 +179,7 @@ EOF
 	assert_file_exist "$LOG_FILE"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh maintains independent failure counters per peer" {
 	# Test verifies that each peer IP maintains its own independent failure counter.
 	# Expected: Each peer has a separate counter file that increments independently based on that peer's status.
@@ -208,6 +221,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh increments failure counter on failure" {
 	# Test verifies that the script increments the failure counter when VPN check detects a failure.
 	# Expected: Per-peer failure counter file is created and incremented when VPN is down.
@@ -228,6 +242,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh resets failure counter on success" {
 	# Test verifies that the script resets the failure counter to 0 when VPN check succeeds.
 	# Expected: Failure counter is reset to 0 when VPN is healthy, clearing previous failure history.
@@ -251,6 +266,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh respects cooldown period" {
 	# Test verifies that the script exits early when a cooldown period is active after recovery actions.
 	# Expected: Script detects cooldown period and exits without performing checks or actions.
@@ -264,6 +280,7 @@ EOF
 	assert_file_contains "$LOG_FILE" "cooldown period"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh handles lockfile timeout" {
 	# Test verifies that the script handles stale lockfiles that exceed the timeout period.
 	# Expected: Script detects stale lockfile (older than LOCKFILE_TIMEOUT) and handles it appropriately.
@@ -283,6 +300,7 @@ EOF
 	assert_file_exist "$LOG_FILE"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh prevents concurrent execution with lockfile" {
 	# Test verifies that the script uses lockfiles to prevent multiple instances from running simultaneously.
 	# Expected: Script detects existing lockfile and either waits or exits to prevent concurrent execution.
@@ -300,6 +318,7 @@ EOF
 	assert_file_exist "$LOG_FILE"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh loads configuration from file" {
 	# Test verifies that the script successfully loads configuration variables from the config file.
 	# Expected: Script reads config file and logs successful configuration load message.
@@ -312,6 +331,7 @@ EOF
 	assert_file_contains "$LOG_FILE" "Configuration loaded"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh uses default config if file missing" {
 	# Test verifies that the script handles missing configuration file gracefully and uses defaults.
 	# Expected: Script logs warning about missing config file and continues with default values.
@@ -332,6 +352,7 @@ EOF
 	assert_file_contains "$log_file" "Configuration file not found"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh handles ping check when enabled" {
 	# Test verifies that the script performs ping checks when ENABLE_PING_CHECK is enabled in configuration.
 	# Expected: Script executes ping checks to internal peer IPs as an additional VPN health verification method.
@@ -347,6 +368,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh handles debug mode" {
 	# Test verifies that the script enables debug logging when DEBUG=1 is set in configuration.
 	# Expected: Script enables verbose debug output for troubleshooting script behavior.
@@ -362,6 +384,7 @@ EOF
 	# May or may not have DEBUG entries depending on execution path
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh checks cron persistence" {
 	# Test verifies that the script checks for cron job persistence to ensure scheduled execution.
 	# Expected: Script verifies cron entry exists and may warn if cron job is missing.
@@ -382,6 +405,7 @@ EOF
 # Tests for main execution flow functions (initialize_monitor, validate_monitor_state, process_peer_ips)
 # ============================================================================
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh initialize_monitor logs script start in normal mode" {
 	# Test verifies that initialize_monitor function logs script start message in normal execution mode.
 	# Expected: Log contains "VPN monitor script started" message but not fake mode message.
@@ -399,6 +423,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh initialize_monitor logs script start in fake mode" {
 	# Test verifies that initialize_monitor function correctly identifies and logs fake mode operation.
 	# Expected: Log contains fake mode message and tier escalation disabled notification.
@@ -416,6 +441,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh initialize_monitor initializes state files" {
 	# Test verifies that initialize_monitor function creates necessary state files during initialization.
 	# Expected: restart_count file is created in logs directory during script startup.
@@ -432,6 +458,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh validate_monitor_state exits when in cooldown period" {
 	# Test verifies that validate_monitor_state function detects active cooldown and exits early.
 	# Expected: Script exits early with success status and logs cooldown period message.
@@ -447,6 +474,7 @@ EOF
 	assert_file_contains "$LOG_FILE" "Script exiting"
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh validate_monitor_state continues when not in cooldown" {
 	# Test verifies that validate_monitor_state function allows script execution when cooldown period has expired.
 	# Expected: Script continues normal execution without cooldown-related exit messages.
@@ -465,6 +493,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh validate_monitor_state checks cron persistence on first run" {
 	# Test verifies that validate_monitor_state function checks for cron job persistence on first execution.
 	# Expected: Script verifies cron entry exists and may warn if missing, only checking once per installation.
@@ -487,6 +516,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh process_peer_ips processes single peer" {
 	# Test verifies that process_peer_ips function correctly processes a single peer IP address.
 	# Expected: Script processes the peer IP and performs VPN status check, logging peer information.
@@ -505,6 +535,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh process_peer_ips processes multiple peers" {
 	# Test verifies that process_peer_ips function correctly processes multiple peer IP addresses.
 	# Expected: Script processes all configured peer IPs and performs VPN status checks for each.
@@ -536,6 +567,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh process_peer_ips skips empty peer IP" {
 	# Test verifies that process_peer_ips function handles empty peer IP entries gracefully.
 	# Expected: Script skips empty peer IPs (from extra whitespace) and logs warning message.
@@ -552,6 +584,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit
 @test "vpn-monitor.sh process_peer_ips validates configuration" {
 	# Test verifies that process_peer_ips function validates configuration before processing peers.
 	# Expected: Script exits with failure status when EXTERNAL_PEER_IPS is empty or missing.

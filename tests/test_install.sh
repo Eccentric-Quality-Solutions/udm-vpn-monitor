@@ -8,6 +8,7 @@ load test_helper
 # Path to the install script
 INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 
+# bats test_tags=category:unit
 @test "install.sh exists and is executable" {
 	# Test verifies that the install script file exists and has execute permissions.
 	# Expected: Install script file is present and executable.
@@ -16,6 +17,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	assert_file_executable "$INSTALL_SCRIPT"
 }
 
+# bats test_tags=category:unit
 @test "install.sh shows help with --help flag" {
 	# Test verifies that the install script displays usage information when --help flag is provided.
 	# Expected: Script outputs usage information including all available options.
@@ -29,12 +31,14 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	assert_output --partial "--dev"
 }
 
+# bats test_tags=category:unit
 @test "install.sh shows help with -h flag" {
 	run bash "$INSTALL_SCRIPT" -h
 	assert_success
 	assert_output --partial "Usage:"
 }
 
+# bats test_tags=category:unit
 @test "install.sh requires root in non-dev mode" {
 	# Test verifies that the install script enforces root requirement for production installations.
 	# Expected: Script exits with failure status and displays error message when run without root privileges.
@@ -46,6 +50,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	assert_output --partial "must be run as root"
 }
 
+# bats test_tags=category:unit
 @test "install.sh skips root check in dev mode" {
 	# Test verifies that the install script bypasses root requirement when --dev flag is used.
 	# Expected: Script runs successfully in dev mode without root privileges for testing purposes.
@@ -64,6 +69,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	assert_success
 }
 
+# bats test_tags=category:unit
 @test "install.sh creates installation directory in dev mode" {
 	# Test verifies that the install script creates the installation directory during installation.
 	# Expected: Installation directory is created in the configured location (default or custom path).
@@ -84,6 +90,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	assert_dir_exist "${TEST_DIR}/vpn-monitor"
 }
 
+# bats test_tags=category:unit
 @test "install.sh installs scripts in dev mode" {
 	# Test verifies that the install script copies all required scripts and config files to installation directory.
 	# Expected: Scripts and config files are installed with correct permissions in the installation directory.
@@ -100,12 +107,17 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	run bash "$test_install" --dev --silent --no-cron
 	assert_success
 
-	# Check scripts were installed
+	# Check scripts were installed with correct permissions
 	assert_file_exist "${TEST_DIR}/vpn-monitor/vpn-monitor.sh"
 	assert_file_executable "${TEST_DIR}/vpn-monitor/vpn-monitor.sh"
+	# Verify script has executable permissions (755 is typical for scripts)
+	assert_file_permission 755 "${TEST_DIR}/vpn-monitor/vpn-monitor.sh"
 	assert_file_exist "${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
+	# Verify config file has readable permissions (644 is typical for config files)
+	assert_file_permission 644 "${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
 }
 
+# bats test_tags=category:unit
 @test "install.sh creates default config if template missing" {
 	# Test verifies that the install script creates default configuration file when template is missing.
 	# Expected: Default config file is created with required variables when source config template doesn't exist.
@@ -127,6 +139,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "VPN_NAME"
 }
 
+# bats test_tags=category:unit
 @test "install.sh preserves existing config in silent mode" {
 	# Test verifies that the install script preserves existing configuration during re-installation in silent mode.
 	# Expected: Custom configuration values are preserved when reinstalling without --overwrite-conf flag.
@@ -155,6 +168,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "CUSTOM_VALUE=test"
 }
 
+# bats test_tags=category:unit
 @test "install.sh overwrites config with --overwrite-conf flag" {
 	# Test verifies that the install script overwrites existing configuration when --overwrite-conf flag is used.
 	# Expected: Existing config file is replaced with template config, removing any custom values.
@@ -183,6 +197,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	refute_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "CUSTOM_VALUE=test"
 }
 
+# bats test_tags=category:unit
 @test "install.sh skips cron setup with --no-cron flag" {
 	# Test verifies that the install script skips cron job creation when --no-cron flag is provided.
 	# Expected: Script completes installation without creating cron entry when --no-cron flag is used.
@@ -206,6 +221,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	fi
 }
 
+# bats test_tags=category:unit
 @test "install.sh sets up cron job when not skipped" {
 	# Test verifies that the install script creates cron job for scheduled execution when not disabled.
 	# Expected: Script creates cron entry with default or configured schedule for automated monitoring.
@@ -246,6 +262,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
 }
 
+# bats test_tags=category:unit
 @test "install.sh uses cron schedule from config" {
 	# Test verifies that the install script uses CRON_SCHEDULE from configuration file for cron job.
 	# Expected: Script creates cron entry with custom schedule from config file instead of default schedule.
@@ -291,6 +308,7 @@ EOF
 	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
 }
 
+# bats test_tags=category:unit
 @test "install.sh verifies installation" {
 	# Test verifies that the install script performs post-installation verification checks.
 	# Expected: Script verifies that all required files are installed and outputs success message.
@@ -311,6 +329,7 @@ EOF
 	assert_output --partial "Installation verified successfully"
 }
 
+# bats test_tags=category:unit
 @test "install.sh handles missing source script gracefully" {
 	# Test verifies that the install script handles missing source files gracefully with clear error messages.
 	# Expected: Script exits with failure status and displays error message when required source files are missing.
@@ -329,6 +348,7 @@ EOF
 	assert_output --partial "Source file not found"
 }
 
+# bats test_tags=category:unit
 @test "install.sh fails with invalid arguments" {
 	cd "$TEST_DIR"
 
@@ -350,6 +370,7 @@ EOF
 	assert_output --partial "--dev"
 }
 
+# bats test_tags=category:unit
 @test "install.sh fails with invalid arguments and shows help message" {
 	cd "$TEST_DIR"
 
@@ -367,6 +388,7 @@ EOF
 	assert_output --partial "Usage:"
 }
 
+# bats test_tags=category:unit
 @test "install.sh validates flag combinations" {
 	cd "$TEST_DIR"
 

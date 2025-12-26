@@ -1,10 +1,7 @@
 #!/usr/bin/env bats
 #
-# High-risk tests: Connection Name Discovery and Caching
-# Tests critical paths and error handling scenarios that could cause production failures
-#
-# This file is part of the high-risk test suite, split from test_high_risk.sh
-# for better organization and maintainability.
+# Tests for Connection Name Discovery and Caching
+# Tests critical paths and error handling scenarios
 
 load test_helper
 
@@ -12,10 +9,11 @@ load test_helper
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # ============================================================================
-# 5.2 CONNECTION NAME CACHING EDGE CASES
+# CONNECTION NAME CACHING EDGE CASES
 # ============================================================================
 
-@test "high-risk: cache file is a directory" {
+# bats test_tags=category:high-risk,priority:high
+@test "cache file is a directory" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -45,7 +43,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: cache file corrupted (contains invalid data)" {
+# bats test_tags=category:high-risk,priority:high
+@test "cache file corrupted (contains invalid data)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -76,7 +75,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: cache file permissions prevent write" {
+# bats test_tags=category:high-risk,priority:high
+@test "cache file permissions prevent write" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -108,7 +108,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: cache file permissions prevent read" {
+# bats test_tags=category:high-risk,priority:high
+@test "cache file permissions prevent read" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -140,11 +141,8 @@ EOF
 	remove_mock_from_path
 }
 
-# ============================================================================
-# 5.2 CONNECTION NAME CACHING EDGE CASES (continued)
-# ============================================================================
-
-@test "high-risk: cached connection name becomes invalid" {
+# bats test_tags=category:high-risk,priority:high
+@test "cached connection name becomes invalid" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -186,10 +184,11 @@ EOF
 }
 
 # ============================================================================
-# 5.1 CONNECTION NAME DISCOVERY EDGE CASES (continued)
+# CONNECTION NAME DISCOVERY EDGE CASES
 # ============================================================================
 
-@test "high-risk: connection name discovery during VPN failure (no active SA)" {
+# bats test_tags=category:high-risk,priority:high
+@test "connection name discovery during VPN failure (no active SA)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -230,7 +229,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: discovery happens when both config and cache unavailable" {
+# bats test_tags=category:high-risk,priority:high
+@test "discovery happens when both config and cache unavailable" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -282,10 +282,10 @@ EOF
 }
 
 # ============================================================================
-# 5.3 CONNECTION NAME PRIORITY
+# CONNECTION NAME PRIORITY
 # ============================================================================
 
-@test "high-risk: cached connection name takes priority over discovery" {
+@test "cached connection name takes priority over discovery" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -327,8 +327,10 @@ EOF
 	if [[ -f "$cache_file" ]]; then
 		local cached_name
 		cached_name=$(cat "$cache_file" 2>/dev/null || echo "")
-		assert [ "$cached_name" == "cached-connection-name" ]
+		# Use assert_equal for better error messages
+		assert_equal "$cached_name" "cached-connection-name"
 	fi
 
 	remove_mock_from_path
 }
+

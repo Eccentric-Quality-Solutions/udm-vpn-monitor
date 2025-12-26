@@ -142,6 +142,12 @@ load bats-assert/load.bash
 - `--index N` for `assert_line` to check specific line numbers
 - Standard input support with `-` flag
 
+**Our Usage**: We extensively use advanced bats-assert features throughout our test suite (112 instances across 6 files):
+- `assert_output --regexp` for pattern matching (dates, IPs, numbers, percentages)
+- `assert_line` for specific output line validation
+- `assert_equal` for precise value comparisons (replacing manual if statements)
+- `assert_regex` for variable pattern validation
+
 ### bats-file
 
 **Purpose**: Provides filesystem-related assertions and utilities.
@@ -193,7 +199,16 @@ load bats-file/load.bash
 Our project uses BATS extensively with **389 tests** across multiple test files:
 
 - `test_helper_functions.sh`: 119 unit tests for helper functions
-- `test_high_risk.sh`: 127 tests for critical paths and error handling
+- High-risk test suite (124 tests split into modular files):
+  - `test_config.sh`: 26 tests for configuration loading and validation
+  - `test_lockfile.sh`: 18 tests for lockfile management
+  - `test_detection.sh`: 15 tests for VPN status detection
+  - `test_recovery.sh`: 36 tests for recovery actions and rate limiting
+  - `test_state.sh`: 8 tests for state file management
+  - `test_logging.sh`: 8 tests for logging failure scenarios
+  - `test_connection.sh`: 8 tests for connection name discovery and caching
+  - `test_errors.sh`: 3 tests for error handling during critical operations
+  - `test_main.sh`: 2 tests for main execution edge cases
 - `test_integration.sh`: 18 integration tests
 - `test_vpn_monitor.sh`: 33 tests for main script
 - `test_install.sh`: 18 installation tests
@@ -223,7 +238,7 @@ We have a comprehensive `test_helper.bash` file that provides:
 
 Our `run_tests.sh` script provides comprehensive test execution capabilities:
 
-- **Test Filtering**: Fast vs. slow tests (slow tests excluded by default). Fast tests (244 tests) run by default, while slow tests (145 tests including integration and high-risk scenarios) can be included with `--slow` flag.
+- **Test Filtering**: Fast vs. slow tests (slow tests excluded by default). Fast tests (244 tests) run by default, while slow tests (142 tests including integration and high-risk scenarios) can be included with `--slow` flag. High-risk tests are split into modular files (`test_config.sh`, `test_lockfile.sh`, `test_detection.sh`, `test_recovery.sh`, `test_state.sh`, `test_logging.sh`, `test_connection.sh`, `test_errors.sh`, `test_main.sh`) for better organization and maintainability.
 
 - **Coverage Reporting**: Integration with kcov for code coverage. Generate coverage reports with `--coverage` flag. Coverage reports are generated in HTML format in the `coverage` directory.
 
@@ -261,6 +276,28 @@ load test_helper  # Loads bats-support, bats-assert, and bats-file
 }
 ```
 
+**1a. Advanced Assertions**:
+We use advanced bats-assert features for precise validation:
+```bash
+@test "analyze logs extracts failures correctly" {
+    run bash "$ANALYZE_LOGS_SCRIPT" -l "$log_file" -o "$TEST_DIR"
+    assert_success
+    # Use regex for numeric patterns with word boundaries
+    assert_output --regexp 'Total Failures: [0-9]+\b'
+    # Use assert_line for specific output lines
+    assert_line --partial "Analyzing log file:"
+}
+
+@test "recovery strategy selection" {
+    select_recovery_strategy "203.0.113.1" 2
+    # Use assert_equal for precise value comparisons
+    assert_equal "$RECOVERY_STRATEGY" "xfrm"
+    assert_equal "$RECOVERY_COMMAND" "attempt_xfrm_recovery"
+    # Use assert_regex for pattern validation
+    assert_regex "$failure_count" '^[1-9][0-9]*$'
+}
+```
+
 **2. Mock Usage**:
 ```bash
 @test "test with mocks" {
@@ -290,6 +327,96 @@ We use concise conditional skipping patterns in our tests:
 ```
 This pattern is used in `test_install.sh` and `test_uninstall.sh` for tests that require specific conditions to be met.
 
+**5. Test Tagging for High-Risk Tests**:
+Our high-risk test suite uses BATS test tags to mark critical tests:
+```bash
+# bats test_tags=priority:high
+@test "config file contains syntax errors" {
+    # Test implementation for critical path
+}
+```
+These tests are organized into modular files (`test_config.sh`, `test_lockfile.sh`, `test_detection.sh`, `test_recovery.sh`, `test_state.sh`, `test_logging.sh`, `test_connection.sh`, `test_errors.sh`, `test_main.sh`) and are recognized by the test runner as slow tests that require the `--slow` flag. This modular approach improves maintainability and makes it easier to focus on specific areas when debugging or enhancing tests.
+
+**6. Advanced bats-assert Usage**:
+Our test suite extensively uses advanced bats-assert features (112 instances across 6 files) for precise validation:
+```bash
+@test "validates numeric output with regex" {
+    run analyze_logs.sh --log-file "$log_file"
+    assert_success
+    # Regex patterns for flexible matching
+    assert_output --regexp 'Total Failures: [0-9]+\b'
+    assert_output --regexp 'Recovery Success Rate:.*%'
+}
+
+@test "validates specific output lines" {
+    run prepare_package.sh --tar
+    assert_success
+    # Check specific lines in output
+    assert_line --partial "tar -xzf"
+    assert_line --partial "udm-vpn-monitor-installer.tar.gz"
+}
+
+@test "compares values precisely" {
+    select_recovery_strategy "192.168.1.1" 2
+    # Precise value comparison with better error messages
+    assert_equal "$RECOVERY_STRATEGY" "xfrm"
+    assert_equal "$stored_spi" "0x12345678"
+}
+
+@test "validates variable patterns" {
+    local count=$(grep -c "FAILURE" "$csv_file")
+    # Pattern validation for variables
+    assert_regex "$count" '^[1-9][0-9]*$'
+    assert_output --regexp '^[0-9]+$'  # Timestamp validation
+}
+```
+This approach provides more precise assertions, better error messages, and more maintainable test code.
+
+**7. Comprehensive bats-file Assertions**:
+Our test suite uses comprehensive bats-file assertions for thorough filesystem testing:
+```bash
+@test "verifies file permissions after setting them" {
+    chmod 444 "$state_file"
+    # Verify permissions were set correctly
+    assert_file_permission 444 "$state_file"
+}
+
+@test "verifies empty files" {
+    touch "$failure_counter"
+    # Verify file is empty
+    assert_file_empty "$failure_counter"
+}
+
+@test "verifies log files have content" {
+    echo "Initial log entry" >"$log_file"
+    # Verify log file has content
+    assert_file_not_empty "$log_file"
+}
+
+@test "verifies installed files have correct permissions" {
+    run bash "$install_script" --dev --silent --no-cron
+    assert_success
+    # Verify script has executable permissions (755)
+    assert_file_permission 755 "${TEST_DIR}/vpn-monitor/vpn-monitor.sh"
+    # Verify config file has readable permissions (644)
+    assert_file_permission 644 "${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
+}
+
+@test "verifies symlink targets" {
+    ln -sf "$real_dir" "$symlink_dir"
+    # Verify symlink points to correct target
+    assert_symlink_to "$real_dir" "$symlink_dir"
+}
+```
+
+We use these assertions across multiple test files:
+- **Permission checks** (`assert_file_permission`): Used in `test_state.sh`, `test_logging.sh`, `test_config.sh`, `test_analyze_logs.sh`, and `test_install.sh` to verify file permissions after setting them
+- **Empty file checks** (`assert_file_empty`): Used in `test_state.sh`, `test_detection.sh`, and `test_analyze_logs.sh` to verify empty files
+- **Non-empty file checks** (`assert_file_not_empty`): Used in `test_logging.sh` and `test_analyze_logs.sh` to verify log files have content
+- **Symlink checks** (`assert_symlink_to`): Used in `test_logging.sh` to verify symlink targets
+
+This comprehensive approach to filesystem testing ensures better validation of file attributes and clearer test intent.
+
 ## Current Usage Patterns
 
 ### Strengths
@@ -298,94 +425,20 @@ This pattern is used in `test_install.sh` and `test_uninstall.sh` for tests that
 2. **Good Isolation**: Each test gets a clean environment via `setup()`/`teardown()`
 3. **Mock Infrastructure**: Well-developed mocking system for system commands
 4. **Standard Helper Libraries**: Uses bats-support, bats-assert, and bats-file for consistent, well-maintained assertions
-5. **Custom Helper Functions**: Project-specific helpers that build on standard libraries reduce test duplication
-6. **Coverage Integration**: kcov integration for code coverage reporting
+5. **Advanced Assertions**: Extensive use of advanced bats-assert features (112 instances) including regex matching, `assert_line`, `assert_equal`, and `assert_regex` for precise test validation and better error messages
+6. **Comprehensive File Assertions**: Extensive use of bats-file assertions including `assert_file_permission`, `assert_file_empty`, `assert_file_not_empty`, and `assert_symlink_to` for thorough filesystem testing across multiple test files
+7. **Custom Helper Functions**: Project-specific helpers that build on standard libraries reduce test duplication
+8. **Coverage Integration**: kcov integration for code coverage reporting
 
 ### Areas for Improvement
 
-1. **Test Organization**: Some tests could benefit from better grouping/organization
-2. **Parallel Execution**: Implemented but disabled by default for output streaming; can be enabled with `--jobs` flag when needed
-3. **Test Tags**: Not using BATS test tags for filtering/organization (available in BATS 1.8.0+)
-4. **Documentation**: Tests could benefit from more inline documentation
+1. **Test Organization**: ✅ **Improved** - High-risk tests have been split into modular files for better organization
+2. **Parallel Execution**: ✅ **Implemented** - Available but disabled by default for output streaming; can be enabled with `--jobs` flag when needed
+3. **Test Tags**: ✅ **Implemented** - High-risk tests use `bats test_tags=priority:high` for tagging
+4. **Advanced bats-assert Features**: ✅ **Implemented** - 112 instances upgraded across 6 test files using regex matching, `assert_line`, `assert_equal`, and `assert_regex`
+5. **Comprehensive bats-file Assertions**: ✅ **Implemented** - Enhanced file assertions added across multiple test files including permission, emptiness, and symlink checks
+6. **Documentation**: Tests could benefit from more inline documentation
 
-## Recommendations for Better Usage
-
-### 1. Leverage More bats-assert Features
-
-**Current**: We use basic assertions (`assert_success`, `assert_output --partial`)
-
-**Recommendation**: Use more advanced features:
-
-```bash
-# Use regex matching for flexible output validation
-assert_output --regexp '^VPN monitor.*started.*\d{4}-\d{2}-\d{2}'
-
-# Use assert_line for specific line checks
-run bash script.sh
-assert_line --index 0 "First line"
-assert_line --partial "error"  # Check any line contains "error"
-
-# Use assert_equal for value comparisons
-assert_equal "$actual_value" "$expected_value"
-
-# Use assert_regex for pattern matching
-assert_regex "$variable" '^[0-9]+$'
-```
-
-**Benefits**:
-- More precise test assertions
-- Better error messages when tests fail
-- More readable test code
-
-### 2. Utilize More bats-file Assertions
-
-**Current**: We use basic file existence checks
-
-**Recommendation**: Use more comprehensive file assertions:
-
-```bash
-# Check file permissions
-assert_file_permission 755 "/path/to/script"
-
-# Check file ownership
-assert_file_owner "root" "/path/to/file"
-
-# Check file size
-assert_file_size_equals 1024 "/path/to/file"
-
-# Check file emptiness
-assert_file_empty "/path/to/log"  # or assert_file_not_empty
-
-# Check symlinks
-assert_symlink_to "/actual/path" "/symlink/path"
-```
-
-**Benefits**:
-- More thorough file system testing
-- Better validation of file attributes
-- Clearer test intent
-
-### 3. Use Test Tags for Organization
-
-**BATS 1.8.0+** supports test tags for filtering:
-
-```bash
-# bats test_tags=category:integration,priority:high
-@test "critical integration test" {
-    # test code
-}
-
-# Run only high-priority tests
-bats --filter-tags priority:high tests/
-
-# Run integration tests
-bats --filter-tags category:integration tests/
-```
-
-**Benefits**:
-- Better test organization
-- Flexible test filtering
-- Easier test maintenance
 
 ### 4. Parallel Execution
 
@@ -414,28 +467,6 @@ PARALLEL_JOBS=0 ./tests/run_tests.sh
 **Requirements**: GNU parallel or rush must be installed. The test runner automatically detects and uses available tools.
 
 **Note**: Parallel execution is disabled by default to ensure output streams properly to the terminal for real-time feedback during development. Enable it when you need faster test runs and can tolerate buffered output.
-
-### 6. Improve Test Documentation
-
-**Recommendation**: Add more descriptive test names and comments:
-
-```bash
-# Instead of:
-@test "test function" {
-
-# Use:
-@test "check_xfrm_status detects VPN failure when byte counter stops increasing" {
-    # Test verifies that the detection function correctly identifies
-    # VPN failures by monitoring byte counter changes over time.
-    # Expected: Function returns failure status when bytes don't increase
-    # for 3 consecutive checks.
-}
-```
-
-**Benefits**:
-- Self-documenting tests
-- Easier debugging when tests fail
-- Better understanding of test intent
 
 ## Community Resources
 
@@ -549,14 +580,18 @@ BATS is a powerful testing framework for Bash scripts. Our current implementatio
 - **Total Tests**: 389 tests
 - **Test Coverage**: 46.9% (1141/2433 lines)
 - **Fast Tests**: 244 tests (run by default)
-- **Slow Tests**: 145 tests (integration and high-risk, excluded by default)
-- **Test Files**: 8 test files covering unit, integration, and high-risk scenarios
+- **Slow Tests**: 142 tests (integration and high-risk, excluded by default)
+- **Test Files**: 16 test files covering unit, integration, and high-risk scenarios
+- **High-Risk Tests**: 124 tests split across 9 modular files for better organization:
+  - Configuration, lockfile, detection, recovery, state, logging, connection, errors, and main execution
 
 ### Key Features Implemented
 
 Our test suite leverages BATS best practices and includes:
 
 - **Standardized helper libraries** (bats-support, bats-assert, bats-file) for consistent test patterns
+- **Advanced bats-assert features** - 112 instances using `assert_output --regexp`, `assert_line`, `assert_equal`, and `assert_regex` for precise assertions and better error messages
+- **Comprehensive bats-file assertions** - Extensive use of `assert_file_permission`, `assert_file_empty`, `assert_file_not_empty`, and `assert_symlink_to` for thorough filesystem testing
 - **Temporary directory management** using `temp_make` and `temp_del` from bats-file
 - **Parallel execution support** via GNU parallel or rush (disabled by default for output streaming)
 - **Per-test timeout handling** (2 minutes default) to prevent hanging tests
@@ -565,15 +600,6 @@ Our test suite leverages BATS best practices and includes:
 - **CI/CD integration** via GitHub Actions for automatic test execution
 - **Test fixtures** for reusable VPN scenario setup
 - **BATS Extended Syntax** for concise conditional skipping
-
-### Future Improvements
-
-Areas where we can continue to enhance our test suite:
-
-1. **Using test tags** - Implement BATS test tags (BATS 1.8.0+) for better test organization and filtering
-2. **Improving test documentation** - Add more descriptive test names and inline comments for better maintainability
-3. **Leveraging more bats-assert features** - Use advanced features like regex matching, `assert_line`, and `assert_equal` more extensively
-4. **Utilizing more bats-file assertions** - Use file permission, ownership, and size assertions for more thorough filesystem testing
-
-By continuing to implement these recommendations, we can make our test suite more maintainable, faster, and more comprehensive while following BATS best practices and community standards.
+- **Modular test organization** with high-risk tests split into focused files for better maintainability
+- **Test tagging** using `bats test_tags=priority:high` for high-risk tests
 

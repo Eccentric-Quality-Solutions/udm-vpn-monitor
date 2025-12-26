@@ -32,6 +32,7 @@ EXPECTED_LIB_FILES=(
 	"lib/state.sh"
 )
 
+# bats test_tags=category:unit
 @test "prepare_install_package.sh exists and is executable" {
 	# Test verifies that the prepare_install_package script file exists and has execute permissions.
 	# Expected: Prepare install package script file is present and executable.
@@ -40,6 +41,7 @@ EXPECTED_LIB_FILES=(
 	assert_file_executable "$PREPARE_SCRIPT"
 }
 
+# bats test_tags=category:unit
 @test "prepare_install_package.sh shows help with --help flag" {
 	# Test verifies that the prepare_install_package script displays usage information when --help flag is provided.
 	# Expected: Script outputs usage information including all available options and package formats.
@@ -51,12 +53,14 @@ EXPECTED_LIB_FILES=(
 	assert_output --partial "Options:"
 }
 
+# bats test_tags=category:unit
 @test "prepare_install_package.sh shows help with -h flag" {
 	run bash "$PREPARE_SCRIPT" -h
 	assert_success
 	assert_output --partial "Usage:"
 }
 
+# bats test_tags=category:unit
 @test "prepare_install_package.sh rejects unknown options" {
 	run bash "$PREPARE_SCRIPT" --unknown-option
 	assert_failure
@@ -64,6 +68,7 @@ EXPECTED_LIB_FILES=(
 	assert_output --partial "--help"
 }
 
+# bats test_tags=category:unit
 @test "prepare_install_package.sh creates zip file by default" {
 	# Test verifies that the prepare_install_package script creates ZIP archive by default.
 	# Expected: Script creates ZIP file containing all required installation files in project root.
@@ -86,6 +91,7 @@ EXPECTED_LIB_FILES=(
 	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
 }
 
+# bats test_tags=category:unit
 @test "prepare_install_package.sh creates tar.gz file with --tar option" {
 	# Test verifies that the prepare_install_package script creates tar.gz archive when --tar option is used.
 	# Expected: Script creates tar.gz file instead of ZIP when --tar flag is provided.
@@ -113,6 +119,7 @@ EXPECTED_LIB_FILES=(
 	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.tar.gz"
 }
 
+# bats test_tags=category:unit
 @test "prepare_install_package.sh includes all required main files in zip" {
 	# Test verifies that the prepare_install_package script includes all required main files in the package.
 	# Expected: ZIP archive contains all main scripts (vpn-monitor.sh, install.sh, uninstall.sh, etc.).
@@ -138,6 +145,7 @@ EXPECTED_LIB_FILES=(
 	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
 }
 
+# bats test_tags=category:unit
 @test "prepare_install_package.sh includes all required library files in zip" {
 	# Test verifies that the prepare_install_package script includes all required library files in the ZIP archive.
 	# Expected: ZIP archive contains all library files from lib/ directory required for script execution.
@@ -166,6 +174,7 @@ EXPECTED_LIB_FILES=(
 	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
 }
 
+# bats test_tags=category:unit
 @test "prepare_install_package.sh includes all required files in tar.gz" {
 	# Test verifies that the prepare_install_package script includes all required files when creating tar.gz archive.
 	# Expected: tar.gz archive contains all main files and library files, matching ZIP archive contents.
@@ -199,6 +208,7 @@ EXPECTED_LIB_FILES=(
 	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.tar.gz"
 }
 
+# bats test_tags=category:unit
 @test "prepare_install_package.sh creates package with actual project files" {
 	cd "$PROJECT_ROOT"
 
@@ -236,27 +246,31 @@ EXPECTED_LIB_FILES=(
 	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
 }
 
+# bats test_tags=category:unit
 @test "prepare_install_package.sh output shows correct extraction command for zip" {
 	cd "$PROJECT_ROOT"
 
 	run bash "$PREPARE_SCRIPT"
 	assert_success
 
-	assert_output --partial "unzip"
-	assert_output --partial "udm-vpn-monitor-installer.zip"
+	# Use assert_line for checking specific output lines
+	assert_line --partial "unzip"
+	assert_line --partial "udm-vpn-monitor-installer.zip"
 
 	# Clean up
 	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
 }
 
+# bats test_tags=category:unit
 @test "prepare_install_package.sh output shows correct extraction command for tar.gz" {
 	cd "$PROJECT_ROOT"
 
 	run bash "$PREPARE_SCRIPT" --tar
 	assert_success
 
-	assert_output --partial "tar -xzf"
-	assert_output --partial "udm-vpn-monitor-installer.tar.gz"
+	# Use assert_line for checking specific output lines
+	assert_line --partial "tar -xzf"
+	assert_line --partial "udm-vpn-monitor-installer.tar.gz"
 
 	# Clean up
 	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.tar.gz"

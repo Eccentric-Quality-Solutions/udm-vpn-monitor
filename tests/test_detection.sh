@@ -1,9 +1,8 @@
 #!/usr/bin/env bats
 #
-# High-risk tests: VPN Status Detection
-# Tests critical paths and error handling scenarios that could cause production failures
-#
-# This file is part of the high-risk test suite, split from test_high_risk.sh
+# Tests for VPN Status Detection
+# Tests critical paths and error handling scenarios
+
 # for better organization and maintainability.
 
 load test_helper
@@ -15,7 +14,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # 3. VPN STATUS DETECTION TESTS
 # ============================================================================
 
-@test "high-risk: xfrm SA exists but byte counter is exactly 0" {
+# bats test_tags=category:high-risk,priority:high
+@test "xfrm SA exists but byte counter is exactly 0" {
 	# Test verifies that the detection function correctly identifies VPN failures when xfrm SA exists
 	# but byte counter is exactly 0, indicating no traffic has passed through the tunnel.
 	# Expected: Function detects bytes=0 as suspect condition and may mark VPN as failed.
@@ -55,7 +55,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: xfrm SA exists but byte counter decreases" {
+# bats test_tags=category:high-risk,priority:high
+@test "xfrm SA exists but byte counter decreases" {
 	# Test verifies that the detection function correctly identifies VPN failures when byte counter
 	# decreases between checks, which could indicate counter wrap-around or VPN re-establishment.
 	# Expected: Function detects bytes not increasing and may mark VPN as suspect or failed.
@@ -99,7 +100,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: xfrm SA exists but byte counter stays same" {
+# bats test_tags=category:high-risk,priority:high
+@test "xfrm SA exists but byte counter stays same" {
 	# Test verifies that the detection function correctly identifies VPN failures when byte counter
 	# remains unchanged between checks, indicating no traffic is passing through the tunnel.
 	# Expected: Function detects bytes not increasing and marks VPN as suspect or failed.
@@ -143,7 +145,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: byte counter file corrupted" {
+# bats test_tags=category:high-risk,priority:high
+@test "byte counter file corrupted" {
 	# Test verifies that the script handles corrupted byte counter files gracefully without crashing.
 	# Expected: Script treats corrupted file as 0 or resets it, continuing normal operation.
 	# Importance: File corruption can occur due to disk errors or manual editing; script must handle it robustly.
@@ -178,7 +181,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: byte counter file contains negative number" {
+# bats test_tags=category:high-risk,priority:high
+@test "byte counter file contains negative number" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -210,7 +214,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: byte counter file is empty" {
+# bats test_tags=category:high-risk,priority:high
+@test "byte counter file is empty" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -223,6 +228,8 @@ EOF
 
 	# Create empty byte counter file
 	touch "$last_bytes_file"
+	# Verify file is empty
+	assert_file_empty "$last_bytes_file"
 
 	# Mock ip command - VPN healthy
 	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
@@ -242,7 +249,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: all detection methods unavailable" {
+# bats test_tags=category:high-risk,priority:high
+@test "all detection methods unavailable" {
 	# Test verifies that the script handles the edge case where all VPN detection methods (ip xfrm, ipsec)
 	# are unavailable on the system without crashing.
 	# Expected: Script handles missing detection tools gracefully, may log warnings or exit early.
@@ -278,7 +286,8 @@ EOF
 	fi
 }
 
-@test "high-risk: xfrm output contains multiple lifetime lines" {
+# bats test_tags=category:high-risk,priority:high
+@test "xfrm output contains multiple lifetime lines" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -316,7 +325,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: ping check enabled but INTERNAL_PEER_IPS not set" {
+# bats test_tags=category:high-risk,priority:high
+@test "ping check enabled but INTERNAL_PEER_IPS not set" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -353,7 +363,8 @@ EOF
 # 3.3 FALLBACK CHAIN EDGE CASES
 # ============================================================================
 
-@test "high-risk: ipsec returns error exit code but has output" {
+# bats test_tags=category:high-risk,priority:high
+@test "ipsec returns error exit code but has output" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -396,7 +407,8 @@ EOF
 # 3.3 FALLBACK CHAIN EDGE CASES (continued)
 # ============================================================================
 
-@test "high-risk: tool availability detection (command -v) fails" {
+# bats test_tags=category:high-risk,priority:high
+@test "tool availability detection (command -v) fails" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -441,7 +453,8 @@ EOF
 # 3.4 PING CHECK EDGE CASES
 # ============================================================================
 
-@test "high-risk: ping command not available (ping6 vs ping -6 detection)" {
+# bats test_tags=category:high-risk,priority:high
+@test "ping command not available (ping6 vs ping -6 detection)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -485,7 +498,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: ping command hangs (timeout handling)" {
+# bats test_tags=category:high-risk,priority:high
+@test "ping command hangs (timeout handling)" {
 	# Test verifies that the script handles ping commands that hang indefinitely without blocking execution.
 	# Expected: Script uses timeout mechanism to prevent ping from blocking script execution indefinitely.
 	# Importance: Network issues can cause ping to hang; script must handle this to remain responsive.
@@ -528,7 +542,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: ping target is unreachable but command succeeds (weird network state)" {
+# bats test_tags=category:high-risk,priority:high
+@test "ping target is unreachable but command succeeds (weird network state)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -573,7 +588,8 @@ EOF
 # 3.3 FALLBACK CHAIN EDGE CASES (continued)
 # ============================================================================
 
-@test "high-risk: ipsec command hangs (timeout scenario - status check)" {
+# bats test_tags=category:high-risk,priority:high
+@test "ipsec command hangs (timeout scenario - status check)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"

@@ -1,10 +1,7 @@
 #!/usr/bin/env bats
 #
-# High-risk tests: Logging Failure Scenarios
-# Tests critical paths and error handling scenarios that could cause production failures
-#
-# This file is part of the high-risk test suite, split from test_high_risk.sh
-# for better organization and maintainability.
+# Tests for Logging Failure Scenarios
+# Tests critical paths and error handling scenarios
 
 load test_helper
 
@@ -12,10 +9,11 @@ load test_helper
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # ============================================================================
-# 7.1 LOGGING FAILURE SCENARIOS
+# LOGGING FAILURE SCENARIOS
 # ============================================================================
 
-@test "high-risk: log file is a directory" {
+# bats test_tags=category:high-risk,priority:high
+@test "log file is a directory" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -44,11 +42,8 @@ EOF
 	remove_mock_from_path
 }
 
-# ============================================================================
-# 7.1 LOGGING FAILURE SCENARIOS
-# ============================================================================
-
-@test "high-risk: log file permissions prevent write" {
+# bats test_tags=category:high-risk,priority:high
+@test "log file permissions prevent write" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -61,6 +56,8 @@ EOF
 	# Create log file and make it read-only (prevents write)
 	touch "$log_file"
 	chmod 444 "$log_file"
+	# Verify permissions were set correctly
+	assert_file_permission 444 "$log_file"
 
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
@@ -80,11 +77,8 @@ EOF
 	remove_mock_from_path
 }
 
-# ============================================================================
-# 7.1 LOGGING FAILURE SCENARIOS (continued)
-# ============================================================================
-
-@test "high-risk: log directory becomes read-only during execution" {
+# bats test_tags=category:high-risk,priority:high
+@test "log directory becomes read-only during execution" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -103,6 +97,8 @@ EOF
 
 	# Make log directory read-only before execution
 	chmod 555 "${TEST_DIR}/logs"
+	# Verify permissions were set correctly
+	assert_file_permission 555 "${TEST_DIR}/logs"
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
 
@@ -114,7 +110,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: log file becomes read-only during execution" {
+# bats test_tags=category:high-risk,priority:high
+@test "log file becomes read-only during execution" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -127,6 +124,8 @@ EOF
 	# Create log file and make it read-only
 	touch "$log_file"
 	chmod 444 "$log_file"
+	# Verify permissions were set correctly
+	assert_file_permission 444 "$log_file"
 
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
@@ -145,7 +144,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: log directory deleted during execution" {
+# bats test_tags=category:high-risk,priority:high
+@test "log directory deleted during execution" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -174,10 +174,10 @@ EOF
 }
 
 # ============================================================================
-# 7.2 LOG PATH EDGE CASES
+# LOG PATH EDGE CASES
 # ============================================================================
 
-@test "high-risk: LOG_FILE path contains symlinks" {
+@test "LOG_FILE path contains symlinks" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local symlink_log_dir="${TEST_DIR}/symlink-logs"
 	local real_log_dir="${TEST_DIR}/real-logs"
@@ -207,6 +207,8 @@ EOF
 	assert_file_exist "$log_file"
 	# Verify log file was created in real directory (via symlink)
 	if [[ -L "$symlink_log_dir" ]]; then
+		# Verify symlink points to correct target
+		assert_symlink_to "$real_log_dir" "$symlink_log_dir"
 		local real_log_file="${real_log_dir}/vpn-monitor.log"
 		# Log file should exist in real directory
 		[[ -f "$real_log_file" ]] || [[ -f "$log_file" ]]
@@ -218,7 +220,7 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: LOG_FILE path contains special characters" {
+@test "LOG_FILE path contains special characters" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local special_log_dir="${TEST_DIR}/logs-with-special-chars"
 	cat >"$config_file" <<EOF
@@ -250,11 +252,8 @@ EOF
 	remove_mock_from_path
 }
 
-# ============================================================================
-# 7.1 LOGGING FAILURE SCENARIOS (continued)
-# ============================================================================
-
-@test "high-risk: disk full scenario (log write fails)" {
+# bats test_tags=category:high-risk,priority:high
+@test "disk full scenario (log write fails)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -267,10 +266,14 @@ EOF
 	# Create log file initially (simulates some writes succeeded)
 	touch "$log_file"
 	echo "Initial log entry" >"$log_file"
+	# Verify log file has content
+	assert_file_not_empty "$log_file"
 
 	# Make log directory read-only to simulate disk full (prevents new writes)
 	# This simulates the scenario where disk becomes full during execution
 	chmod 555 "${TEST_DIR}/logs"
+	# Verify permissions were set correctly
+	assert_file_permission 555 "${TEST_DIR}/logs"
 
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")

@@ -43,6 +43,11 @@ RERUN_FAILED="${RERUN_FAILED:-0}"
 PARALLEL_JOBS="${PARALLEL_JOBS:-0}"
 PARALLEL_TOOL=""
 
+# Test tag filtering settings
+# Filter tests by tags (e.g., "category:unit", "priority:high", "category:integration,priority:high")
+# Set FILTER_TAGS to filter tests by tags using bats --filter-tags
+FILTER_TAGS="${FILTER_TAGS:-}"
+
 # Test timeout settings
 # Timeout for individual tests in seconds (default: 120 seconds = 2 minutes)
 # Tests that exceed this timeout will be skipped
@@ -338,8 +343,18 @@ filter_test_files() {
 		filename=$(basename "$test_file")
 
 		# Check if this is a slow test file
-		# Slow tests are: test_integration.sh and test_high_risk*.sh files
-		if [[ "$filename" == "test_integration.sh" ]] || [[ "$filename" == test_high_risk*.sh ]]; then
+		# Slow tests are: test_integration.sh and high-risk test files (test_config.sh, test_lockfile.sh, etc.)
+		# These were split from test_high_risk.sh for better organization
+		if [[ "$filename" == "test_integration.sh" ]] ||
+			[[ "$filename" == "test_config.sh" ]] ||
+			[[ "$filename" == "test_lockfile.sh" ]] ||
+			[[ "$filename" == "test_detection.sh" ]] ||
+			[[ "$filename" == "test_recovery.sh" ]] ||
+			[[ "$filename" == "test_state.sh" ]] ||
+			[[ "$filename" == "test_logging.sh" ]] ||
+			[[ "$filename" == "test_connection.sh" ]] ||
+			[[ "$filename" == "test_errors.sh" ]] ||
+			[[ "$filename" == "test_main.sh" ]]; then
 			# Include slow tests only if RUN_SLOW_TESTS is enabled
 			if [[ "$RUN_SLOW_TESTS" -eq 1 ]]; then
 				echo "$test_file"
@@ -391,6 +406,11 @@ run_single_test_with_timeout() {
 	# Add filter for failed tests if rerun-failed is enabled
 	if [[ "$RERUN_FAILED" -eq 1 ]]; then
 		bats_args+=(--filter-status "failed")
+	fi
+
+	# Add tag filter if specified
+	if [[ -n "$FILTER_TAGS" ]]; then
+		bats_args+=(--filter-tags "$FILTER_TAGS")
 	fi
 
 	# Check if timeout command is available
@@ -533,6 +553,138 @@ run_test_file_with_timeout() {
 	fi
 }
 
+# Run tests sequentially (without coverage)
+run_tests_sequential() {
+	local test_files=("$@")
+	local failed_tests=0
+	local timed_out_tests=0
+
+	for test_file in "${test_files[@]}"; do
+		echo -e "${BLUE}Running: $(basename "$test_file")${NC}"
+
+		# Run test file with timeout wrapper
+		run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT"
+		local test_result=$?
+
+		if [[ $test_result -eq 2 ]]; then
+			# Timeout occurred
+			timed_out_tests=$((timed_out_tests + 1))
+		elif [[ $test_result -ne 0 ]]; then
+			# Test failure
+			failed_tests=$((failed_tests + 1))
+			# If fast-fail is enabled, stop on first failure
+			if [[ "$FAST_FAIL" -eq 1 ]]; then
+				echo -e "${RED}Fast-fail enabled: stopping test execution${NC}" >&2
+				return 1
+			fi
+		fi
+		echo ""
+	done
+
+	# Return results via global variables (bash limitation)
+	export SEQUENTIAL_FAILED=$failed_tests
+	export SEQUENTIAL_TIMED_OUT=$timed_out_tests
+	return 0
+}
+
+# Run tests in parallel (without coverage)
+run_tests_parallel() {
+	local num_jobs="$1"
+	shift
+	local test_files=("$@")
+	local failed_tests=0
+	local timed_out_tests=0
+	local temp_dir
+	temp_dir=$(mktemp -d) || {
+		echo -e "${RED}Error: Failed to create temporary directory${NC}" >&2
+		exit 1
+	}
+	local results_file="${temp_dir}/results"
+	local failed_file="${temp_dir}/failed"
+	local timeout_file="${temp_dir}/timeout"
+
+	# Initialize result files
+	: >"$results_file"
+	: >"$failed_file"
+	: >"$timeout_file"
+
+	# Export function and variables for parallel execution
+	export -f run_test_file_with_timeout
+	export -f run_single_test_with_timeout
+	export -f extract_test_names
+	export -f escape_test_name_for_filter
+	export TEST_TIMEOUT
+	export RERUN_FAILED
+	export FILTER_TAGS
+	export PROJECT_ROOT
+
+	# Create a function that parallel can call
+	parallel_test_runner() {
+		local test_file="$1"
+		local test_name
+		test_name=$(basename "$test_file")
+		echo -e "${BLUE}Running: ${test_name}${NC}" >&2
+
+		run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT"
+		local test_result=$?
+
+		# Write result to file
+		echo "${test_file}:${test_result}" >>"$results_file"
+
+		if [[ $test_result -eq 2 ]]; then
+			echo "$test_file" >>"$timeout_file"
+		elif [[ $test_result -ne 0 ]]; then
+			echo "$test_file" >>"$failed_file"
+		fi
+
+		return $test_result
+	}
+	export -f parallel_test_runner
+	export results_file
+	export timeout_file
+	export failed_file
+
+	# Run tests in parallel using GNU parallel or rush
+	if [[ "$PARALLEL_TOOL" == "parallel" ]]; then
+		# Use GNU parallel
+		# --tag: Tag output with job ID
+		# --line-buffer: Print output as soon as it's available (may still be buffered)
+		# --halt now,fail=1: Stop immediately if fast-fail is enabled and any job fails
+		if [[ "$FAST_FAIL" -eq 1 ]]; then
+			parallel --tag --line-buffer -j "$num_jobs" --halt now,fail=1 parallel_test_runner ::: "${test_files[@]}" || true
+		else
+			parallel --tag --line-buffer -j "$num_jobs" parallel_test_runner ::: "${test_files[@]}" || true
+		fi
+	elif [[ "$PARALLEL_TOOL" == "rush" ]]; then
+		# Use rush
+		# -j: Number of parallel jobs
+		# -v: Verbose output
+		# --halt now,fail=1: Stop immediately if fast-fail is enabled
+		printf '%s\n' "${test_files[@]}" |
+			if [[ "$FAST_FAIL" -eq 1 ]]; then
+				rush -j "$num_jobs" -v 'parallel_test_runner {}' --halt now,fail=1 || true
+			else
+				rush -j "$num_jobs" -v 'parallel_test_runner {}' || true
+			fi
+	fi
+
+	# Count results
+	if [[ -f "$failed_file" ]]; then
+		failed_tests=$(wc -l <"$failed_file" | tr -d ' ')
+	fi
+	if [[ -f "$timeout_file" ]]; then
+		timed_out_tests=$(wc -l <"$timeout_file" | tr -d ' ')
+	fi
+
+	# Cleanup
+	rm -rf "$temp_dir"
+
+	# Return results via global variables
+	export PARALLEL_FAILED=$failed_tests
+	export PARALLEL_TIMED_OUT=$timed_out_tests
+	return 0
+}
+
 # Run tests with coverage if enabled
 run_tests() {
 	# Filter test files based on slow test setting
@@ -552,6 +704,9 @@ run_tests() {
 	if [[ "$RERUN_FAILED" -eq 1 ]]; then
 		echo -e "${BLUE}Rerunning only failed tests from last run...${NC}"
 	fi
+	if [[ -n "$FILTER_TAGS" ]]; then
+		echo -e "${BLUE}Filtering tests by tags: ${FILTER_TAGS}${NC}"
+	fi
 	if [[ "$FAST_FAIL" -eq 0 ]]; then
 		echo -e "${BLUE}Fast-fail: disabled (will run all tests)${NC}"
 	fi
@@ -568,31 +723,29 @@ run_tests() {
 		run_tests_with_coverage "${test_files[@]}"
 	else
 		# Run without coverage
-		# Run each test file individually with timeout to ensure tests that exceed 2m are skipped
+		# Check if parallel execution should be used
+		local num_jobs
+		num_jobs=$(get_parallel_jobs)
+		local use_parallel=0
+
+		if [[ "$num_jobs" != "0" ]] && check_parallel_tool; then
+			use_parallel=1
+		fi
+
 		local failed_tests=0
 		local timed_out_tests=0
 
-		for test_file in "${test_files[@]}"; do
-			echo -e "${BLUE}Running: $(basename "$test_file")${NC}"
-
-			# Run test file with timeout wrapper
-			run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT"
-			local test_result=$?
-
-			if [[ $test_result -eq 2 ]]; then
-				# Timeout occurred
-				timed_out_tests=$((timed_out_tests + 1))
-			elif [[ $test_result -ne 0 ]]; then
-				# Test failure
-				failed_tests=$((failed_tests + 1))
-				# If fast-fail is enabled, stop on first failure
-				if [[ "$FAST_FAIL" -eq 1 ]]; then
-					echo -e "${RED}Fast-fail enabled: stopping test execution${NC}" >&2
-					exit 1
-				fi
-			fi
-			echo ""
-		done
+		if [[ $use_parallel -eq 1 ]]; then
+			# Run tests in parallel
+			run_tests_parallel "$num_jobs" "${test_files[@]}"
+			failed_tests=${PARALLEL_FAILED:-0}
+			timed_out_tests=${PARALLEL_TIMED_OUT:-0}
+		else
+			# Run tests sequentially
+			run_tests_sequential "${test_files[@]}"
+			failed_tests=${SEQUENTIAL_FAILED:-0}
+			timed_out_tests=${SEQUENTIAL_TIMED_OUT:-0}
+		fi
 
 		# Print summary
 		echo -e "${GREEN}Test execution complete${NC}"
@@ -603,8 +756,9 @@ run_tests() {
 			echo -e "${YELLOW}Timed out test files: $timed_out_tests${NC}"
 		fi
 
-		# Exit with error if any tests failed (unless we're in non-fast-fail mode and want to continue)
-		if [[ $failed_tests -gt 0 ]] && [[ "$FAST_FAIL" -eq 1 ]]; then
+		# Exit with error if any tests failed
+		# Note: FAST_FAIL only controls whether to stop early, not the exit code
+		if [[ $failed_tests -gt 0 ]]; then
 			exit 1
 		fi
 	fi
@@ -613,6 +767,160 @@ run_tests() {
 # Note: run_test_file_with_coverage_timeout() has been removed.
 # Coverage is now handled by run_test_file_with_timeout() with use_coverage flag.
 # This ensures consistent per-test timeout behavior for both coverage and non-coverage runs.
+
+# Run tests sequentially (with coverage)
+run_tests_sequential_with_coverage() {
+	local coverage_dir="$1"
+	shift
+	# kcov_args are always exactly 6 arguments: --include-path and 5 --exclude-path args
+	local kcov_args=("$1" "$2" "$3" "$4" "$5" "$6")
+	shift 6
+	# Remaining arguments are test files
+	local test_files=("$@")
+
+	local failed_tests=0
+	local timed_out_tests=0
+
+	for test_file in "${test_files[@]}"; do
+		echo -e "${BLUE}Running with coverage: $(basename "$test_file")${NC}"
+
+		# Run test file with per-test timeout and coverage
+		run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT" "1" "$coverage_dir" "${kcov_args[@]}"
+		local test_result=$?
+
+		if [[ $test_result -eq 2 ]]; then
+			# Timeout occurred
+			timed_out_tests=$((timed_out_tests + 1))
+			# If fast-fail is enabled, stop on first timeout
+			if [[ "$FAST_FAIL" -eq 1 ]]; then
+				echo -e "${RED}Fast-fail enabled: stopping test execution${NC}" >&2
+				return 1
+			fi
+		elif [[ $test_result -ne 0 ]]; then
+			# Test failure
+			failed_tests=$((failed_tests + 1))
+			# If fast-fail is enabled, stop on first failure
+			if [[ "$FAST_FAIL" -eq 1 ]]; then
+				echo -e "${RED}Fast-fail enabled: stopping test execution${NC}" >&2
+				return 1
+			fi
+		fi
+		echo ""
+	done
+
+	# Return results via global variables
+	export SEQUENTIAL_COV_FAILED=$failed_tests
+	export SEQUENTIAL_COV_TIMED_OUT=$timed_out_tests
+	return 0
+}
+
+# Run tests in parallel (with coverage)
+run_tests_parallel_with_coverage() {
+	local num_jobs="$1"
+	local coverage_dir="$2"
+	shift 2
+	# kcov_args are always exactly 6 arguments: --include-path and 5 --exclude-path args
+	local kcov_args=("$1" "$2" "$3" "$4" "$5" "$6")
+	shift 6
+	# Remaining arguments are test files
+	local test_files=("$@")
+	local failed_tests=0
+	local timed_out_tests=0
+	local temp_dir
+	temp_dir=$(mktemp -d) || {
+		echo -e "${RED}Error: Failed to create temporary directory${NC}" >&2
+		exit 1
+	}
+	local results_file="${temp_dir}/results"
+	local failed_file="${temp_dir}/failed"
+	local timeout_file="${temp_dir}/timeout"
+
+	# Initialize result files
+	: >"$results_file"
+	: >"$failed_file"
+	: >"$timeout_file"
+
+	# Export function and variables for parallel execution
+	export -f run_test_file_with_timeout
+	export -f run_single_test_with_timeout
+	export -f extract_test_names
+	export -f escape_test_name_for_filter
+	export TEST_TIMEOUT
+	export RERUN_FAILED
+	export FILTER_TAGS
+	export PROJECT_ROOT
+	export COVERAGE_DIR="$coverage_dir"
+
+	# Create a function that parallel can call
+	parallel_test_runner_with_coverage() {
+		local test_file="$1"
+		local test_name
+		test_name=$(basename "$test_file")
+		echo -e "${BLUE}Running with coverage: ${test_name}${NC}" >&2
+
+		# Reconstruct kcov_args array (bash limitation with parallel)
+		local kcov_args_array=(
+			"--include-path=${PROJECT_ROOT}"
+			"--exclude-path=${PROJECT_ROOT}/tests"
+			"--exclude-path=${PROJECT_ROOT}/coverage"
+			"--exclude-path=${PROJECT_ROOT}/.git"
+			"--exclude-path=/usr"
+			"--exclude-path=/tmp"
+		)
+
+		run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT" "1" "$COVERAGE_DIR" "${kcov_args_array[@]}"
+		local test_result=$?
+
+		# Write result to file
+		echo "${test_file}:${test_result}" >>"$results_file"
+
+		if [[ $test_result -eq 2 ]]; then
+			echo "$test_file" >>"$timeout_file"
+		elif [[ $test_result -ne 0 ]]; then
+			echo "$test_file" >>"$failed_file"
+		fi
+
+		return $test_result
+	}
+	export -f parallel_test_runner_with_coverage
+	export results_file
+	export timeout_file
+	export failed_file
+
+	# Run tests in parallel using GNU parallel or rush
+	if [[ "$PARALLEL_TOOL" == "parallel" ]]; then
+		# Use GNU parallel
+		if [[ "$FAST_FAIL" -eq 1 ]]; then
+			parallel --tag --line-buffer -j "$num_jobs" --halt now,fail=1 parallel_test_runner_with_coverage ::: "${test_files[@]}" || true
+		else
+			parallel --tag --line-buffer -j "$num_jobs" parallel_test_runner_with_coverage ::: "${test_files[@]}" || true
+		fi
+	elif [[ "$PARALLEL_TOOL" == "rush" ]]; then
+		# Use rush
+		printf '%s\n' "${test_files[@]}" |
+			if [[ "$FAST_FAIL" -eq 1 ]]; then
+				rush -j "$num_jobs" -v 'parallel_test_runner_with_coverage {}' --halt now,fail=1 || true
+			else
+				rush -j "$num_jobs" -v 'parallel_test_runner_with_coverage {}' || true
+			fi
+	fi
+
+	# Count results
+	if [[ -f "$failed_file" ]]; then
+		failed_tests=$(wc -l <"$failed_file" | tr -d ' ')
+	fi
+	if [[ -f "$timeout_file" ]]; then
+		timed_out_tests=$(wc -l <"$timeout_file" | tr -d ' ')
+	fi
+
+	# Cleanup
+	rm -rf "$temp_dir"
+
+	# Return results via global variables
+	export PARALLEL_COV_FAILED=$failed_tests
+	export PARALLEL_COV_TIMED_OUT=$timed_out_tests
+	return 0
+}
 
 # Run tests with kcov coverage
 run_tests_with_coverage() {
@@ -650,37 +958,29 @@ run_tests_with_coverage() {
 		echo -e "${BLUE}Rerunning only failed tests from last run...${NC}"
 	fi
 
-	# Run each test file individually with timeout and coverage
-	# This ensures tests that exceed timeout are skipped and output streams properly
+	# Check if parallel execution should be used
+	local num_jobs
+	num_jobs=$(get_parallel_jobs)
+	local use_parallel=0
+
+	if [[ "$num_jobs" != "0" ]] && check_parallel_tool; then
+		use_parallel=1
+	fi
+
 	local failed_tests=0
 	local timed_out_tests=0
 
-	for test_file in "${test_files[@]}"; do
-		echo -e "${BLUE}Running with coverage: $(basename "$test_file")${NC}"
-
-		# Run test file with per-test timeout and coverage
-		run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT" "1" "$COVERAGE_DIR" "${kcov_args[@]}"
-		local test_result=$?
-
-		if [[ $test_result -eq 2 ]]; then
-			# Timeout occurred
-			timed_out_tests=$((timed_out_tests + 1))
-			# If fast-fail is enabled, stop on first timeout
-			if [[ "$FAST_FAIL" -eq 1 ]]; then
-				echo -e "${RED}Fast-fail enabled: stopping test execution${NC}" >&2
-				break
-			fi
-		elif [[ $test_result -ne 0 ]]; then
-			# Test failure
-			failed_tests=$((failed_tests + 1))
-			# If fast-fail is enabled, stop on first failure
-			if [[ "$FAST_FAIL" -eq 1 ]]; then
-				echo -e "${RED}Fast-fail enabled: stopping test execution${NC}" >&2
-				break
-			fi
-		fi
-		echo ""
-	done
+	if [[ $use_parallel -eq 1 ]]; then
+		# Run tests in parallel with coverage
+		run_tests_parallel_with_coverage "$num_jobs" "$COVERAGE_DIR" "${kcov_args[@]}" "${test_files[@]}"
+		failed_tests=${PARALLEL_COV_FAILED:-0}
+		timed_out_tests=${PARALLEL_COV_TIMED_OUT:-0}
+	else
+		# Run tests sequentially with coverage
+		run_tests_sequential_with_coverage "$COVERAGE_DIR" "${kcov_args[@]}" "${test_files[@]}"
+		failed_tests=${SEQUENTIAL_COV_FAILED:-0}
+		timed_out_tests=${SEQUENTIAL_COV_TIMED_OUT:-0}
+	fi
 
 	# Check if coverage reports were generated
 	if [[ -f "${COVERAGE_DIR}/index.html" ]] || [[ -f "${COVERAGE_DIR}/index.js" ]] || [[ -f "${COVERAGE_DIR}/index.json" ]]; then
@@ -702,6 +1002,12 @@ run_tests_with_coverage() {
 	fi
 	if [[ $timed_out_tests -gt 0 ]]; then
 		echo -e "${YELLOW}Timed out test files: $timed_out_tests${NC}"
+	fi
+
+	# Exit with error if any tests failed
+	# Note: FAST_FAIL only controls whether to stop early, not the exit code
+	if [[ $failed_tests -gt 0 ]]; then
+		exit 1
 	fi
 }
 
@@ -811,6 +1117,15 @@ parse_args() {
 			PARALLEL_JOBS="$2"
 			shift 2
 			;;
+		--filter-tags | -t)
+			if [[ -z "${2:-}" ]]; then
+				echo -e "${RED}Error: --filter-tags requires a value${NC}" >&2
+				echo "Use --filter-tags category:unit or --filter-tags priority:high" >&2
+				exit 1
+			fi
+			FILTER_TAGS="$2"
+			shift 2
+			;;
 		--help | -h)
 			show_help
 			exit 0
@@ -832,25 +1147,30 @@ UDM VPN Monitor Test Runner
 Usage: $0 [OPTIONS]
 
 Options:
-    --coverage, -c    Enable test coverage reporting (requires kcov)
-    --slow, -s        Include slow tests (integration and high-risk tests)
-    --all, -a         Run all tests even if some fail (disables fast-fail)
-    --failed, -f      Rerun only failed tests from the last completed run
-    --jobs, -j <N>    Number of parallel jobs (auto, 0=disabled, or number)
-                      Default: 0 (sequential execution, no parallelization)
-    --help, -h        Show this help message
+    --coverage, -c         Enable test coverage reporting (requires kcov)
+    --slow, -s             Include slow tests (integration and high-risk tests)
+    --all, -a              Run all tests even if some fail (disables fast-fail)
+    --failed, -f           Rerun only failed tests from the last completed run
+    --jobs, -j <N>         Number of parallel jobs (auto, 0=disabled, or number)
+                           Default: 0 (sequential execution, no parallelization)
+    --filter-tags, -t <T>  Filter tests by tags (e.g., category:unit, priority:high)
+                           Supports multiple tags: category:integration,priority:high
+    --help, -h             Show this help message
 
 Examples:
-    $0                    Run fast tests only, run all tests (no fast-fail), sequential
-    $0 --slow             Run all tests including slow tests, sequential, no fast-fail
-    $0 --coverage         Run fast tests with coverage reporting, sequential, no fast-fail
-    $0 --slow --coverage  Run all tests with coverage reporting, sequential, no fast-fail
-    $0 --all              Run all tests even if some fail (same as default)
-    $0 --failed           Rerun only tests that failed in the last run
-    $0 --slow --failed    Rerun only failed tests from last run (includes slow tests)
-    $0 --jobs 8           Run tests with 8 parallel jobs (requires GNU parallel)
-    $0 --jobs auto        Auto-detect CPU cores for parallel execution
-    $0 --jobs 0           Disable parallel execution (run sequentially, default)
+    $0                              Run fast tests only, run all tests (no fast-fail), sequential
+    $0 --slow                       Run all tests including slow tests, sequential, no fast-fail
+    $0 --coverage                   Run fast tests with coverage reporting, sequential, no fast-fail
+    $0 --slow --coverage            Run all tests with coverage reporting, sequential, no fast-fail
+    $0 --all                        Run all tests even if some fail (same as default)
+    $0 --failed                     Rerun only tests that failed in the last run
+    $0 --slow --failed              Rerun only failed tests from last run (includes slow tests)
+    $0 --jobs 8                     Run tests with 8 parallel jobs (requires GNU parallel)
+    $0 --jobs auto                  Auto-detect CPU cores for parallel execution
+    $0 --jobs 0                     Disable parallel execution (run sequentially, default)
+    $0 --filter-tags category:unit  Run only unit tests
+    $0 --filter-tags priority:high  Run only high-priority tests
+    $0 --filter-tags category:integration,priority:high  Run integration tests with high priority
 
 Test Behavior:
     By default, tests run all tests regardless of failures (fast-fail disabled).
@@ -858,7 +1178,9 @@ Test Behavior:
     Tests that exceed 2 minutes (120 seconds) will be skipped automatically.
     Use --all flag or set FAST_FAIL=0 to run all tests regardless of failures (default).
     
-    Slow tests (test_integration.sh and test_high_risk*.sh files) are excluded by default.
+    Slow tests (test_integration.sh and high-risk test files: test_config.sh, test_lockfile.sh,
+    test_detection.sh, test_recovery.sh, test_state.sh, test_logging.sh, test_connection.sh,
+    test_errors.sh, test_main.sh) are excluded by default.
     Use --slow flag or set RUN_SLOW_TESTS=1 to include them.
     
     Test timeout is set to 120 seconds (2 minutes) by default. Tests exceeding this
@@ -880,6 +1202,24 @@ Parallel Execution:
     Set PARALLEL_JOBS=0 to disable parallel execution (default), or use --jobs 0.
     Set PARALLEL_JOBS=auto to auto-detect CPU cores.
     Set PARALLEL_JOBS=N to use a specific number of jobs.
+
+Test Tag Filtering:
+    Tests can be filtered by tags using --filter-tags option. Tags are defined in test
+    files using the format: # bats test_tags=category:unit,priority:high
+    
+    Available categories:
+    - category:unit - Unit tests (fast tests)
+    - category:integration - Integration tests
+    - category:high-risk - High-risk edge case tests
+    
+    Available priorities:
+    - priority:high - High-priority critical tests
+    
+    Examples:
+    - Run only unit tests: --filter-tags category:unit
+    - Run only high-priority tests: --filter-tags priority:high
+    - Run integration tests with high priority: --filter-tags category:integration,priority:high
+    - Multiple tags can be combined with commas
 
 Test Timeout:
     Tests that exceed 2 minutes (120 seconds) will be automatically skipped.

@@ -1,9 +1,8 @@
 #!/usr/bin/env bats
 #
-# High-risk tests: State File Management
-# Tests critical paths and error handling scenarios that could cause production failures
-#
-# This file is part of the high-risk test suite, split from test_high_risk.sh
+# Tests for State File Management
+# Tests critical paths and error handling scenarios
+
 # for better organization and maintainability.
 
 load test_helper
@@ -15,7 +14,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # 6.1 STATE FILE CORRUPTION AND RECOVERY
 # ============================================================================
 
-@test "high-risk: failure counter file corrupted (non-numeric)" {
+# bats test_tags=category:high-risk,priority:high
+@test "failure counter file corrupted (non-numeric)" {
 	# Test verifies that the script handles corrupted failure counter files containing non-numeric values.
 	# Expected: Script treats corrupted file as 0 or resets it, continuing normal operation without crashing.
 	# Importance: File corruption can occur due to disk errors or manual editing; script must handle it robustly.
@@ -47,7 +47,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: failure counter file contains negative number" {
+# bats test_tags=category:high-risk,priority:high
+@test "failure counter file contains negative number" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -76,7 +77,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: failure counter file is empty" {
+# bats test_tags=category:high-risk,priority:high
+@test "failure counter file is empty" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -89,6 +91,8 @@ EOF
 
 	# Create empty failure counter file
 	touch "$failure_counter"
+	# Verify file is empty
+	assert_file_empty "$failure_counter"
 
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
@@ -125,7 +129,8 @@ EOF
 # 6.1 STATE FILE CORRUPTION - COOLDOWN FILE
 # ============================================================================
 
-@test "high-risk: cooldown file corrupted (invalid timestamp)" {
+# bats test_tags=category:high-risk,priority:high
+@test "cooldown file corrupted (invalid timestamp)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -158,7 +163,8 @@ EOF
 # 6.2 CONCURRENT STATE ACCESS - PERMISSIONS
 # ============================================================================
 
-@test "high-risk: state file permissions prevent write" {
+# bats test_tags=category:high-risk,priority:high
+@test "state file permissions prevent write" {
 	# Test verifies that the script handles read-only state files gracefully when attempting to update counters.
 	# Expected: Script logs error about write failure but continues execution without crashing.
 	# Importance: Permission issues can occur due to incorrect file ownership or chmod operations; script must handle gracefully.
@@ -175,6 +181,8 @@ EOF
 	# Create failure counter file and make it read-only (prevents write)
 	echo "3" >"$failure_counter"
 	chmod 444 "$failure_counter"
+	# Verify permissions were set correctly
+	assert_file_permission 444 "$failure_counter"
 
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
@@ -193,7 +201,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: state file permissions prevent read" {
+# bats test_tags=category:high-risk,priority:high
+@test "state file permissions prevent read" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -207,6 +216,8 @@ EOF
 	# Create failure counter file and make it unreadable (prevents read)
 	echo "3" >"$failure_counter"
 	chmod 000 "$failure_counter"
+	# Verify permissions were set correctly
+	assert_file_permission 000 "$failure_counter"
 
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
@@ -225,7 +236,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: state file deleted during script execution" {
+# bats test_tags=category:high-risk,priority:high
+@test "state file deleted during script execution" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -262,7 +274,8 @@ EOF
 # 6.2 CONCURRENT STATE ACCESS
 # ============================================================================
 
-@test "high-risk: state file modified during script execution (lockfile should prevent this)" {
+# bats test_tags=category:high-risk,priority:high
+@test "state file modified during script execution (lockfile should prevent this)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"

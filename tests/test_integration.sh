@@ -12,6 +12,7 @@ load fixtures/vpn_cooldown
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
+# bats test_tags=category:integration
 @test "integration: VPN healthy - no action taken" {
 	# Test verifies the complete monitoring flow when VPN is healthy and functioning normally.
 	# Expected: Script runs successfully, detects healthy VPN, and does not increment failure counter.
@@ -33,6 +34,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	remove_mock_from_path
 }
 
+# bats test_tags=category:integration
 @test "integration: VPN down - Tier 1 logging triggered" {
 	# Test verifies the complete monitoring flow when VPN fails for the first time, triggering Tier 1 action.
 	# Expected: Script increments failure counter, logs Tier 1 message, and exits with failure status.
@@ -56,6 +58,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	remove_mock_from_path
 }
 
+# bats test_tags=category:integration
 @test "integration: VPN down - Tier 2 surgical cleanup triggered" {
 	# Test verifies the complete monitoring flow when VPN fails reach Tier 2 threshold, triggering surgical cleanup.
 	# Expected: Script executes ipsec reload command and logs Tier 2 action when failure count reaches threshold.
@@ -83,6 +86,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:integration
 @test "integration: VPN down - Tier 3 full restart triggered" {
 	# Test verifies the complete monitoring flow when VPN failures reach Tier 3 threshold, triggering full restart.
 	# Expected: Script executes ipsec restart command and logs Tier 3 action when failure count reaches threshold.
@@ -103,6 +107,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:integration
 @test "integration: VPN recovery after failures - counter reset" {
 	# Test verifies the complete monitoring flow when VPN recovers after previous failures.
 	# Expected: Script detects healthy VPN, resets failure counter to 0, and exits successfully.
@@ -125,6 +130,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:integration
 @test "integration: Multiple peers - independent failure tracking" {
 	# Test verifies that multiple peer IPs are monitored independently with separate failure counters.
 	# Expected: Each peer maintains its own failure counter; failures in one peer don't affect others.
@@ -172,6 +178,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:integration
 @test "integration: Ping check enabled - VPN SA exists but ping fails" {
 	# Test verifies that ping check correctly identifies VPN failures even when xfrm SA exists.
 	# Expected: Script detects ping failure and logs warning, potentially marking VPN as failed.
@@ -194,6 +201,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:integration
 @test "integration: Ping check enabled - VPN SA exists and ping succeeds" {
 	# Test verifies that ping check correctly validates VPN health when both SA exists and ping succeeds.
 	# Expected: Script detects healthy VPN via both xfrm SA and ping check, does not increment failure counter.
@@ -216,6 +224,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:integration
 @test "integration: Rate limiting prevents excessive restarts" {
 	# Test verifies that rate limiting mechanism prevents excessive IPsec restarts when limit is reached.
 	# Expected: Script detects restart limit exceeded and skips restart action, preventing system overload.
@@ -245,6 +254,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:integration
 @test "integration: Cooldown period prevents immediate restart" {
 	# Test verifies that cooldown mechanism prevents immediate restart attempts after recovery actions.
 	# Expected: Script exits early when cooldown period is active, preventing excessive recovery actions.
@@ -260,6 +270,7 @@ EOF
 
 # However, per-connection recovery IS available via xfrm (experimental, opt-in via ENABLE_XFRM_RECOVERY=1).
 # Connection names discovered from ipsec status are for logging only, not for recovery.
+# bats test_tags=category:integration
 @test "integration: Tier 2 recovery uses ipsec reload (default behavior)" {
 	setup_vpn_down_fixture "192.168.1.1" 3 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
 
@@ -288,6 +299,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:integration
 @test "integration: Byte counter tracking - bytes not increasing detected" {
 	# Test verifies that the script correctly detects VPN failures when byte counters remain unchanged.
 	# Expected: Script detects bytes not increasing and logs warning, incrementing failure counter.
@@ -303,6 +315,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:integration
 @test "integration: Byte counter tracking - bytes increasing detected as healthy" {
 	# Test verifies that the script correctly identifies healthy VPN when byte counters are increasing.
 	# Expected: Script detects increasing bytes, updates last_bytes file, and does not increment failure counter.
@@ -318,7 +331,8 @@ EOF
 	assert_file_exist "$last_bytes_file"
 	local bytes
 	bytes=$(cat "$last_bytes_file")
-	assert [ "$bytes" = "2000" ]
+	# Use assert_equal for better error messages
+	assert_equal "$bytes" "2000"
 
 	# Should not increment failure counter
 	local failure_counter="${LOGS_DIR}/failure_counter_192_168_1_1"
@@ -331,6 +345,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:integration
 @test "integration: Fallback to ipsec status when xfrm unavailable" {
 	# Test verifies that the script falls back to ipsec status when xfrm command is unavailable.
 	# Expected: Script detects xfrm unavailable, uses ipsec status as fallback, and continues monitoring.
@@ -362,6 +377,7 @@ EOF
 # Tests for monitor_peer() function behavior
 # ============================================================================
 
+# bats test_tags=category:integration
 @test "integration: monitor_peer resets failure counter when VPN recovers" {
 	# Test verifies that monitor_peer function resets failure counter when VPN health is restored.
 	# Expected: Function detects healthy VPN, resets failure counter to 0, and logs recovery message.
@@ -385,6 +401,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:integration
 @test "integration: monitor_peer increments failure counter on VPN failure" {
 	# Test verifies that monitor_peer function increments failure counter when VPN check detects failure.
 	# Expected: Function increments per-peer failure counter and logs failure message when VPN is down.
@@ -407,6 +424,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:integration
 @test "integration: monitor_peer tier escalation in fake mode skips actions" {
 	# Test verifies that monitor_peer function skips actual recovery actions when running in fake mode.
 	# Expected: Function logs what actions would be taken but does not execute recovery commands in fake mode.
@@ -423,6 +441,7 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:integration
 @test "integration: monitor_peer tier escalation triggers at correct thresholds" {
 	# Test verifies that monitor_peer function triggers tier escalation actions at configured thresholds.
 	# Expected: Function triggers Tier 1, Tier 2, and Tier 3 actions when failure count reaches respective thresholds.

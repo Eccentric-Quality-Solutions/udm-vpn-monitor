@@ -1,9 +1,8 @@
 #!/usr/bin/env bats
 #
-# High-risk tests: Recovery Actions and Rate Limiting
-# Tests critical paths and error handling scenarios that could cause production failures
-#
-# This file is part of the high-risk test suite, split from test_high_risk.sh
+# Tests for Recovery Actions and Rate Limiting
+# Tests critical paths and error handling scenarios
+
 # for better organization and maintainability.
 
 load test_helper
@@ -15,7 +14,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # 4. RECOVERY ACTIONS TESTS
 # ============================================================================
 
-@test "high-risk: surgical cleanup uses ipsec reload (default behavior, affects all tunnels)" {
+# bats test_tags=category:high-risk,priority:high
+@test "surgical cleanup uses ipsec reload (default behavior, affects all tunnels)" {
 	# Test verifies that Tier 2 recovery action triggers ipsec reload command for surgical cleanup.
 	# Expected: Script executes "ipsec reload" when failure count reaches Tier 2 threshold.
 	# Importance: ipsec reload affects all VPN tunnels, which is the default surgical cleanup behavior.
@@ -75,7 +75,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: surgical cleanup uses ipsec reload (default behavior)" {
+# bats test_tags=category:high-risk,priority:high
+@test "surgical cleanup uses ipsec reload (default behavior)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -131,7 +132,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: surgical cleanup fails - error handling" {
+# bats test_tags=category:high-risk,priority:high
+@test "surgical cleanup fails - error handling" {
 	# Test verifies that the script handles failures of surgical cleanup (ipsec reload) gracefully.
 	# Expected: Script logs error about reload failure but continues execution without crashing.
 	# Importance: Recovery actions can fail due to system issues; script must handle failures robustly.
@@ -186,7 +188,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: full restart with ipsec command" {
+# bats test_tags=category:high-risk,priority:high
+@test "full restart with ipsec command" {
 	# Test verifies that Tier 3 recovery action triggers full IPsec restart when failure count reaches threshold.
 	# Expected: Script executes "ipsec restart" command when failure count reaches Tier 3 threshold.
 	# Importance: Full restart is the most aggressive recovery action and should only trigger after multiple failures.
@@ -247,7 +250,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: full restart fails - error handling" {
+# bats test_tags=category:high-risk,priority:high
+@test "full restart fails - error handling" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -301,7 +305,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: full restart when ipsec unavailable" {
+# bats test_tags=category:high-risk,priority:high
+@test "full restart when ipsec unavailable" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -346,7 +351,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: rate limit file corrupted" {
+# bats test_tags=category:high-risk,priority:high
+@test "rate limit file corrupted" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -397,7 +403,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: config file attempts command injection via variable" {
+# bats test_tags=category:high-risk,priority:high
+@test "config file attempts command injection via variable" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Attempt command injection via EXTERNAL_PEER_IPS
 	cat >"$config_file" <<'EOF'
@@ -427,7 +434,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: xfrm command fails with permission denied" {
+# bats test_tags=category:high-risk,priority:high
+@test "xfrm command fails with permission denied" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -462,7 +470,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: byte counter file is directory" {
+# bats test_tags=category:high-risk,priority:high
+@test "byte counter file is directory" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -493,7 +502,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: verify correct behavior when switching between flock and fallback modes" {
+# bats test_tags=category:high-risk,priority:high
+@test "verify correct behavior when switching between flock and fallback modes" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -550,7 +560,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: config file sources external commands (security risk)" {
+# bats test_tags=category:high-risk,priority:high
+@test "config file sources external commands (security risk)" {
 	# This test verifies that config files that attempt to source external files
 	# or execute commands are handled appropriately
 	# Security risk: If config files can source arbitrary files, an attacker could
@@ -648,7 +659,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: config file contains null bytes or invalid characters" {
+# bats test_tags=category:high-risk,priority:high
+@test "config file contains null bytes or invalid characters" {
 	# This test verifies that config files with null bytes or invalid characters
 	# are handled gracefully without causing crashes or security issues
 
@@ -715,7 +727,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: xfrm output format variations (different Linux kernel versions)" {
+# bats test_tags=category:high-risk,priority:high
+@test "xfrm output format variations (different Linux kernel versions)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -753,7 +766,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: xfrm returns multiple SAs for same peer IP (which one is checked?)" {
+# bats test_tags=category:high-risk,priority:high
+@test "xfrm returns multiple SAs for same peer IP (which one is checked?)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -792,7 +806,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: xfrm output contains malformed byte counter line" {
+# bats test_tags=category:high-risk,priority:high
+@test "xfrm output contains malformed byte counter line" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -827,7 +842,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: first check (no previous bytes) - should accept any non-zero value" {
+# bats test_tags=category:high-risk,priority:high
+@test "first check (no previous bytes) - should accept any non-zero value" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -861,7 +877,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: byte counter increases but very slowly (within normal variance)" {
+# bats test_tags=category:high-risk,priority:high
+@test "byte counter increases but very slowly (within normal variance)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -893,7 +910,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: byte counter jumps dramatically (counter reset on remote side)" {
+# bats test_tags=category:high-risk,priority:high
+@test "byte counter jumps dramatically (counter reset on remote side)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -924,7 +942,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: multiple peers failing simultaneously - verify independent cleanup" {
+# bats test_tags=category:high-risk,priority:high
+@test "multiple peers failing simultaneously - verify independent cleanup" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1 10.0.0.1"
@@ -984,7 +1003,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: full restart with ipsec command (success case)" {
+# bats test_tags=category:high-risk,priority:high
+@test "full restart with ipsec command (success case)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -1042,7 +1062,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: full restart with ipsec command fails (error handling)" {
+# bats test_tags=category:high-risk,priority:high
+@test "full restart with ipsec command fails (error handling)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -1096,7 +1117,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: restart succeeds but VPN doesn't recover (cooldown still set)" {
+# bats test_tags=category:high-risk,priority:high
+@test "restart succeeds but VPN doesn't recover (cooldown still set)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -1153,7 +1175,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: restart fails but cooldown is still set (should it be?)" {
+# bats test_tags=category:high-risk,priority:high
+@test "restart fails but cooldown is still set (should it be?)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -1209,7 +1232,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: PIPESTATUS handling when restart command fails in pipe" {
+# bats test_tags=category:high-risk,priority:high
+@test "PIPESTATUS handling when restart command fails in pipe" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -1264,7 +1288,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: recovery action partially succeeds (e.g., ipsec reload starts but fails mid-way)" {
+# bats test_tags=category:high-risk,priority:high
+@test "recovery action partially succeeds (e.g., ipsec reload starts but fails mid-way)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -1328,7 +1353,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: recovery action succeeds but VPN still fails on next check" {
+# bats test_tags=category:high-risk,priority:high
+@test "recovery action succeeds but VPN still fails on next check" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -1389,7 +1415,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: recovery action fails and failure counter continues incrementing" {
+# bats test_tags=category:high-risk,priority:high
+@test "recovery action fails and failure counter continues incrementing" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -1454,7 +1481,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: multiple recovery actions triggered simultaneously (multiple peers)" {
+# bats test_tags=category:high-risk,priority:high
+@test "multiple recovery actions triggered simultaneously (multiple peers)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1 10.0.0.1"
@@ -1519,7 +1547,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: recovery action during cooldown period (should be prevented)" {
+# bats test_tags=category:high-risk,priority:high
+@test "recovery action during cooldown period (should be prevented)" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -1579,7 +1608,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: restart command hangs (timeout scenario - not currently handled)" {
+# bats test_tags=category:high-risk,priority:high
+@test "restart command hangs (timeout scenario - not currently handled)" {
 	# Note: This test documents that timeout handling is not currently implemented
 	# The script will hang if restart command hangs - this is a known limitation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
@@ -1654,7 +1684,8 @@ EOF
 # 4.4 RATE LIMITING EDGE CASES
 # ============================================================================
 
-@test "high-risk: rate limit file is empty" {
+# bats test_tags=category:high-risk,priority:high
+@test "rate limit file is empty" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -1701,7 +1732,8 @@ EOF
 	remove_mock_from_path
 }
 
-@test "high-risk: rate limit file is a directory" {
+# bats test_tags=category:high-risk,priority:high
+@test "rate limit file is a directory" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -1781,7 +1813,8 @@ EOF
 # 4.4 RATE LIMITING EDGE CASES - CLEANUP TEST
 # ============================================================================
 
-@test "high-risk: restart count cleanup removes old entries after 24 hours" {
+# bats test_tags=category:high-risk,priority:high
+@test "restart count cleanup removes old entries after 24 hours" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -1855,7 +1888,8 @@ EOF
 # 10.2 RECOVERY SUCCESS VERIFICATION
 # ============================================================================
 
-@test "high-risk: recovery succeeds but byte counters do not increase immediately" {
+# bats test_tags=category:high-risk,priority:high
+@test "recovery succeeds but byte counters do not increase immediately" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -1898,7 +1932,8 @@ EOF
 # 10.1 COMPLEX FAILURE SCENARIOS
 # ============================================================================
 
-@test "high-risk: VPN fails, reaches Tier 3, restart fails, then recovers naturally" {
+# bats test_tags=category:high-risk,priority:high
+@test "VPN fails, reaches Tier 3, restart fails, then recovers naturally" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"

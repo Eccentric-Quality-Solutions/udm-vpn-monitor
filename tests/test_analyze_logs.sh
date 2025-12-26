@@ -43,6 +43,7 @@ create_sample_log_file() {
 EOF
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh exists and is executable" {
 	# Test verifies that the analyze-logs script file exists and has execute permissions.
 	# Expected: Analyze-logs script file is present and executable.
@@ -51,6 +52,7 @@ EOF
 	assert_file_executable "$ANALYZE_LOGS_SCRIPT"
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh shows help with --help flag" {
 	# Test verifies that the analyze-logs script displays usage information when --help flag is provided.
 	# Expected: Script outputs usage information including all available options and flags.
@@ -64,12 +66,14 @@ EOF
 	assert_output --partial "--report"
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh shows help with -h flag" {
 	run bash "$ANALYZE_LOGS_SCRIPT" -h
 	assert_success
 	assert_output --partial "Usage:"
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh exits with error if log file not found" {
 	# Test verifies that the analyze-logs script validates log file existence before processing.
 	# Expected: Script exits with failure status and displays error message when log file doesn't exist.
@@ -82,6 +86,7 @@ EOF
 	assert_output --partial "Log file not found"
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh exits with error if log file not readable" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "$(dirname "$log_file")"
@@ -97,12 +102,15 @@ EOF
 	assert_output --partial "Log file not readable"
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh parses log file and extracts failures" {
 	# Test verifies that the analyze-logs script correctly parses log files and extracts failure events.
 	# Expected: Script identifies VPN failure events from log entries and calculates failure statistics.
 	# Importance: Failure analysis helps identify patterns and troubleshoot VPN reliability issues.
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	create_sample_log_file "$log_file"
+	# Verify log file has content
+	assert_file_not_empty "$log_file"
 
 	run bash "$ANALYZE_LOGS_SCRIPT" -l "$log_file" -o "$TEST_DIR"
 
@@ -112,6 +120,7 @@ EOF
 	assert_output --partial "Failures per Day:"
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh extracts recoveries from log file" {
 	# Test verifies that the analyze-logs script correctly identifies VPN recovery events from logs.
 	# Expected: Script extracts recovery events and calculates recovery success rate statistics.
@@ -126,6 +135,7 @@ EOF
 	assert_output --partial "Recovery Success Rate:"
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh extracts tier actions from log file" {
 	# Test verifies that the analyze-logs script correctly identifies tier escalation actions from logs.
 	# Expected: Script extracts Tier 1, Tier 2, and Tier 3 actions and includes statistics in report file.
@@ -144,6 +154,7 @@ EOF
 	assert_file_contains "$report_file" "Tier 3 (Full Restart):"
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh generates text report file" {
 	# Test verifies that the analyze-logs script generates a formatted text report file with analysis results.
 	# Expected: Script creates report file containing summary statistics, failure counts, and recovery information.
@@ -162,6 +173,7 @@ EOF
 	assert_file_contains "$report_file" "Total Recoveries:"
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh generates CSV export file" {
 	# Test verifies that the analyze-logs script generates CSV export file with structured log analysis data.
 	# Expected: Script creates CSV file with columns for timestamps, event types, peer IPs, and failure/recovery counts.
@@ -179,6 +191,7 @@ EOF
 	assert_file_contains "$csv_file" "RECOVERY"
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh CSV contains failure events" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local csv_file="${TEST_DIR}/vpn-monitor-analysis.csv"
@@ -190,9 +203,13 @@ EOF
 	# Check CSV contains failure entries
 	local failure_count
 	failure_count=$(grep -c "FAILURE" "$csv_file" || echo "0")
+	# Use assert_equal for numeric comparison with better error messages
 	assert [ "$failure_count" -gt 0 ]
+	# Verify it's a positive integer using regex
+	assert_regex "$failure_count" '^[1-9][0-9]*$'
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh CSV contains recovery events" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local csv_file="${TEST_DIR}/vpn-monitor-analysis.csv"
@@ -205,8 +222,11 @@ EOF
 	local recovery_count
 	recovery_count=$(grep -c "RECOVERY" "$csv_file" || echo "0")
 	assert [ "$recovery_count" -gt 0 ]
+	# Verify it's a positive integer using regex
+	assert_regex "$recovery_count" '^[1-9][0-9]*$'
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh CSV contains tier action events" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local csv_file="${TEST_DIR}/vpn-monitor-analysis.csv"
@@ -223,6 +243,7 @@ EOF
 	assert_file_contains "$csv_file" "TIER3_COMPLETE"
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh filters events by date range" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	# Create log with events on different dates
@@ -238,9 +259,10 @@ EOF
 
 	assert_success
 	# Should only find 1 failure (from Jan 15)
-	assert_output --partial "Total Failures: 1"
+	assert_output --regexp 'Total Failures: 1\b'
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh filters events by date range (start to end)" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	# Create log with events on different dates
@@ -256,21 +278,25 @@ EOF
 
 	assert_success
 	# Should find 2 failures (Jan 15 and Jan 20)
-	assert_output --partial "Total Failures: 2"
+	assert_output --regexp 'Total Failures: 2\b'
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh handles empty log file gracefully" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "$(dirname "$log_file")"
 	touch "$log_file"
+	# Verify file is empty
+	assert_file_empty "$log_file"
 
 	run bash "$ANALYZE_LOGS_SCRIPT" -l "$log_file" -o "$TEST_DIR"
 
 	assert_success
-	assert_output --partial "Total Failures: 0"
-	assert_output --partial "Total Recoveries: 0"
+	assert_output --regexp 'Total Failures: 0\b'
+	assert_output --regexp 'Total Recoveries: 0\b'
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh handles log file with only initialization messages" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "$(dirname "$log_file")"
@@ -282,9 +308,10 @@ EOF
 	run bash "$ANALYZE_LOGS_SCRIPT" -l "$log_file" -o "$TEST_DIR"
 
 	assert_success
-	assert_output --partial "Total Failures: 0"
+	assert_output --regexp 'Total Failures: 0\b'
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh calculates recovery success rate correctly" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	create_sample_log_file "$log_file"
@@ -293,9 +320,10 @@ EOF
 
 	assert_success
 	# Should calculate recovery success rate (recoveries / failures * 100)
-	assert_output --partial "Recovery Success Rate:"
+	assert_output --regexp 'Recovery Success Rate:.*%'
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh calculates tier success rates" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	create_sample_log_file "$log_file"
@@ -304,9 +332,10 @@ EOF
 
 	assert_success
 	# Should show tier success rates
-	assert_output --partial "Success Rate:"
+	assert_output --regexp 'Success Rate:.*%'
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh creates output directory if missing" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local output_dir="${TEST_DIR}/reports"
@@ -318,6 +347,7 @@ EOF
 	assert_dir_exist "$output_dir"
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh uses default log file location" {
 	# Create log file in default location relative to script
 	local script_dir
@@ -337,6 +367,7 @@ EOF
 	assert [ "${status:-}" -ge 0 ]
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh verbose mode shows progress messages" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	create_sample_log_file "$log_file"
@@ -344,11 +375,12 @@ EOF
 	run bash "$ANALYZE_LOGS_SCRIPT" -l "$log_file" -o "$TEST_DIR" -v
 
 	assert_success
-	assert_output --partial "Analyzing log file:"
-	assert_output --partial "Generating text report:"
-	assert_output --partial "Generating CSV export:"
+	assert_line --partial "Analyzing log file:"
+	assert_line --partial "Generating text report:"
+	assert_line --partial "Generating CSV export:"
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh handles invalid date range format" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	create_sample_log_file "$log_file"
@@ -359,6 +391,7 @@ EOF
 	assert_output --partial "Invalid date range format"
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh extracts peer IPs from log messages" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	create_sample_log_file "$log_file"
@@ -370,8 +403,12 @@ EOF
 	# CSV should contain peer IPs
 	assert_file_contains "$csv_file" "192.168.1.1"
 	assert_file_contains "$csv_file" "198.51.100.1"
+	# Verify IP format using regex
+	run grep -E '192\.168\.1\.1|198\.51\.100\.1' "$csv_file"
+	assert_success
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh text report includes event timeline" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local report_file="${TEST_DIR}/vpn-monitor-report.txt"
@@ -385,6 +422,7 @@ EOF
 	assert_file_contains "$report_file" "RECOVERY:"
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh handles multiple peer IPs correctly" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "$(dirname "$log_file")"
@@ -402,8 +440,12 @@ EOF
 	# Should track both peer IPs
 	assert_file_contains "$csv_file" "192.168.1.1"
 	assert_file_contains "$csv_file" "198.51.100.1"
+	# Verify IP format using regex
+	run grep -E '192\.168\.1\.1|198\.51\.100\.1' "$csv_file"
+	assert_success
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh calculates failures per day" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	create_sample_log_file "$log_file"
@@ -414,6 +456,7 @@ EOF
 	assert_output --partial "Failures per Day:"
 }
 
+# bats test_tags=category:unit
 @test "analyze-logs.sh report includes analysis period information" {
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local report_file="${TEST_DIR}/vpn-monitor-report.txt"
@@ -423,7 +466,10 @@ EOF
 
 	assert_success
 	assert_file_contains "$report_file" "Analysis Period:"
+	# Verify date format in First Event and Last Event
 	assert_file_contains "$report_file" "First Event:"
 	assert_file_contains "$report_file" "Last Event:"
-	assert_file_contains "$report_file" "Days Analyzed:"
+	# Verify Days Analyzed contains a number
+	run grep -E 'Days Analyzed:.*[0-9]+' "$report_file"
+	assert_success
 }
