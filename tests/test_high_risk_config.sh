@@ -16,6 +16,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # ============================================================================
 
 @test "high-risk: config file contains syntax errors" {
+	# Test verifies that the script handles configuration files with syntax errors gracefully.
+	# Expected: Script detects syntax error during config loading and logs error message without crashing.
+	# Importance: Syntax errors can occur from manual editing or file corruption; script must handle them robustly.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Create config with syntax error (unclosed quote)
 	cat >"$config_file" <<'EOF'
@@ -40,6 +43,9 @@ EOF
 }
 
 @test "high-risk: config file is unreadable" {
+	# Test verifies that the script handles unreadable configuration files gracefully.
+	# Expected: Script detects permission issue and logs error message without crashing.
+	# Importance: Permission issues can occur from incorrect file ownership or chmod operations; script must handle gracefully.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"

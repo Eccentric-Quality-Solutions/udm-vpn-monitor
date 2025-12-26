@@ -9,11 +9,17 @@ load test_helper
 INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 
 @test "install.sh exists and is executable" {
+	# Test verifies that the install script file exists and has execute permissions.
+	# Expected: Install script file is present and executable.
+	# Importance: Ensures the installation script can be run directly without requiring bash explicitly.
 	assert_file_exist "$INSTALL_SCRIPT"
 	assert_file_executable "$INSTALL_SCRIPT"
 }
 
 @test "install.sh shows help with --help flag" {
+	# Test verifies that the install script displays usage information when --help flag is provided.
+	# Expected: Script outputs usage information including all available options.
+	# Importance: Ensures users can access help documentation for script usage and available options.
 	run bash "$INSTALL_SCRIPT" --help
 	assert_success
 	assert_output --partial "Usage:"
@@ -30,16 +36,20 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 }
 
 @test "install.sh requires root in non-dev mode" {
+	# Test verifies that the install script enforces root requirement for production installations.
+	# Expected: Script exits with failure status and displays error message when run without root privileges.
+	# Importance: Production installations require root access to install files and configure system services.
 	# Skip if actually running as root (can't test non-root requirement)
-	if [[ $EUID -eq 0 ]]; then
-		skip "Cannot test root requirement when running as root"
-	fi
+	[[ $EUID -eq 0 ]] && skip "Cannot test root requirement when running as root"
 	run bash "$INSTALL_SCRIPT" --silent --no-cron
 	assert_failure
 	assert_output --partial "must be run as root"
 }
 
 @test "install.sh skips root check in dev mode" {
+	# Test verifies that the install script bypasses root requirement when --dev flag is used.
+	# Expected: Script runs successfully in dev mode without root privileges for testing purposes.
+	# Importance: Dev mode allows testing installation logic without requiring root access.
 	cd "$TEST_DIR"
 
 	# Create source files with install.sh and lib directory
@@ -55,6 +65,9 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 }
 
 @test "install.sh creates installation directory in dev mode" {
+	# Test verifies that the install script creates the installation directory during installation.
+	# Expected: Installation directory is created in the configured location (default or custom path).
+	# Importance: Installation directory is required for storing scripts, config, and state files.
 	cd "$TEST_DIR"
 
 	# Create source files with install.sh and lib directory
@@ -72,6 +85,9 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 }
 
 @test "install.sh installs scripts in dev mode" {
+	# Test verifies that the install script copies all required scripts and config files to installation directory.
+	# Expected: Scripts and config files are installed with correct permissions in the installation directory.
+	# Importance: Ensures all necessary files are present and executable for the VPN monitor to function.
 	cd "$TEST_DIR"
 
 	# Create source files with install.sh and lib directory
@@ -91,6 +107,9 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 }
 
 @test "install.sh creates default config if template missing" {
+	# Test verifies that the install script creates default configuration file when template is missing.
+	# Expected: Default config file is created with required variables when source config template doesn't exist.
+	# Importance: Ensures installation succeeds even without config template, providing usable defaults.
 	cd "$TEST_DIR"
 
 	# Create source files with install.sh and lib directory (without config)
@@ -109,6 +128,9 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 }
 
 @test "install.sh preserves existing config in silent mode" {
+	# Test verifies that the install script preserves existing configuration during re-installation in silent mode.
+	# Expected: Custom configuration values are preserved when reinstalling without --overwrite-conf flag.
+	# Importance: Prevents loss of user customizations during script updates or re-installations.
 	cd "$TEST_DIR"
 
 	# Create source files with install.sh and lib directory
@@ -134,6 +156,9 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 }
 
 @test "install.sh overwrites config with --overwrite-conf flag" {
+	# Test verifies that the install script overwrites existing configuration when --overwrite-conf flag is used.
+	# Expected: Existing config file is replaced with template config, removing any custom values.
+	# Importance: Allows administrators to reset configuration to defaults when needed.
 	cd "$TEST_DIR"
 
 	# Create source files with install.sh and lib directory
@@ -159,6 +184,9 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 }
 
 @test "install.sh skips cron setup with --no-cron flag" {
+	# Test verifies that the install script skips cron job creation when --no-cron flag is provided.
+	# Expected: Script completes installation without creating cron entry when --no-cron flag is used.
+	# Importance: Allows installation without automatic scheduling, useful for manual execution or systemd services.
 	cd "$TEST_DIR"
 
 	# Create source files with install.sh and lib directory
@@ -179,6 +207,9 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 }
 
 @test "install.sh sets up cron job when not skipped" {
+	# Test verifies that the install script creates cron job for scheduled execution when not disabled.
+	# Expected: Script creates cron entry with default or configured schedule for automated monitoring.
+	# Importance: Cron job ensures VPN monitoring runs automatically on schedule without manual intervention.
 	cd "$TEST_DIR"
 
 	# Create source files with install.sh and lib directory
@@ -216,6 +247,9 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 }
 
 @test "install.sh uses cron schedule from config" {
+	# Test verifies that the install script uses CRON_SCHEDULE from configuration file for cron job.
+	# Expected: Script creates cron entry with custom schedule from config file instead of default schedule.
+	# Importance: Allows administrators to customize monitoring frequency based on their requirements.
 	cd "$TEST_DIR"
 
 	# Create source files with install.sh and lib directory
@@ -258,6 +292,9 @@ EOF
 }
 
 @test "install.sh verifies installation" {
+	# Test verifies that the install script performs post-installation verification checks.
+	# Expected: Script verifies that all required files are installed and outputs success message.
+	# Importance: Installation verification ensures installation completed successfully and files are accessible.
 	cd "$TEST_DIR"
 
 	# Create source files with install.sh and lib directory
@@ -275,6 +312,9 @@ EOF
 }
 
 @test "install.sh handles missing source script gracefully" {
+	# Test verifies that the install script handles missing source files gracefully with clear error messages.
+	# Expected: Script exits with failure status and displays error message when required source files are missing.
+	# Importance: Clear error messages help diagnose installation issues when source files are not found.
 	cd "$TEST_DIR"
 
 	# Create source files with install.sh and lib directory (but no vpn-monitor.sh)

@@ -16,6 +16,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # ============================================================================
 
 @test "high-risk: failure counter file corrupted (non-numeric)" {
+	# Test verifies that the script handles corrupted failure counter files containing non-numeric values.
+	# Expected: Script treats corrupted file as 0 or resets it, continuing normal operation without crashing.
+	# Importance: File corruption can occur due to disk errors or manual editing; script must handle it robustly.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -156,6 +159,9 @@ EOF
 # ============================================================================
 
 @test "high-risk: state file permissions prevent write" {
+	# Test verifies that the script handles read-only state files gracefully when attempting to update counters.
+	# Expected: Script logs error about write failure but continues execution without crashing.
+	# Importance: Permission issues can occur due to incorrect file ownership or chmod operations; script must handle gracefully.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"

@@ -33,11 +33,17 @@ EXPECTED_LIB_FILES=(
 )
 
 @test "prepare_install_package.sh exists and is executable" {
+	# Test verifies that the prepare_install_package script file exists and has execute permissions.
+	# Expected: Prepare install package script file is present and executable.
+	# Importance: Ensures the package preparation script can be run directly for creating distribution packages.
 	assert_file_exist "$PREPARE_SCRIPT"
 	assert_file_executable "$PREPARE_SCRIPT"
 }
 
 @test "prepare_install_package.sh shows help with --help flag" {
+	# Test verifies that the prepare_install_package script displays usage information when --help flag is provided.
+	# Expected: Script outputs usage information including all available options and package formats.
+	# Importance: Ensures users can access help documentation for script usage and available package formats.
 	run bash "$PREPARE_SCRIPT" --help
 	assert_success
 	assert_output --partial "Usage:"
@@ -59,6 +65,9 @@ EXPECTED_LIB_FILES=(
 }
 
 @test "prepare_install_package.sh creates zip file by default" {
+	# Test verifies that the prepare_install_package script creates ZIP archive by default.
+	# Expected: Script creates ZIP file containing all required installation files in project root.
+	# Importance: ZIP format is the default distribution format for easy deployment on UDM systems.
 	cd "$PROJECT_ROOT"
 
 	# Run script from project root
@@ -78,6 +87,9 @@ EXPECTED_LIB_FILES=(
 }
 
 @test "prepare_install_package.sh creates tar.gz file with --tar option" {
+	# Test verifies that the prepare_install_package script creates tar.gz archive when --tar option is used.
+	# Expected: Script creates tar.gz file instead of ZIP when --tar flag is provided.
+	# Importance: Provides alternative package format for systems that prefer tar.gz over ZIP archives.
 	cd "$PROJECT_ROOT"
 
 	# Run script from project root with --tar option
@@ -102,6 +114,9 @@ EXPECTED_LIB_FILES=(
 }
 
 @test "prepare_install_package.sh includes all required main files in zip" {
+	# Test verifies that the prepare_install_package script includes all required main files in the package.
+	# Expected: ZIP archive contains all main scripts (vpn-monitor.sh, install.sh, uninstall.sh, etc.).
+	# Importance: Ensures installation package contains all necessary files for complete installation.
 	cd "$PROJECT_ROOT"
 
 	# Run script to create zip
@@ -124,6 +139,9 @@ EXPECTED_LIB_FILES=(
 }
 
 @test "prepare_install_package.sh includes all required library files in zip" {
+	# Test verifies that the prepare_install_package script includes all required library files in the ZIP archive.
+	# Expected: ZIP archive contains all library files from lib/ directory required for script execution.
+	# Importance: Library file inclusion ensures installation package contains all dependencies for VPN monitor functionality.
 	cd "$PROJECT_ROOT"
 
 	# Run script to create zip
@@ -149,6 +167,9 @@ EXPECTED_LIB_FILES=(
 }
 
 @test "prepare_install_package.sh includes all required files in tar.gz" {
+	# Test verifies that the prepare_install_package script includes all required files when creating tar.gz archive.
+	# Expected: tar.gz archive contains all main files and library files, matching ZIP archive contents.
+	# Importance: Ensures both package formats contain complete installation files for distribution flexibility.
 	cd "$PROJECT_ROOT"
 
 	# Run script with --tar option

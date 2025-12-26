@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+#
+# Test fixture: VPN Cooldown Scenario
+#
+# Sets up a test environment where the VPN is in a cooldown period.
+# During cooldown, the monitor should not take action even if VPN fails.
+#
+# Arguments:
+#   $1: Peer IP address (default: "192.168.1.1")
+#   $2: Failure count (default: 5, typically high enough to trigger cooldown)
+#   $3: Cooldown duration in seconds (default: 900 = 15 minutes)
+#   $4+: Additional config variables as KEY="VALUE" pairs
+#
+# Side effects:
+#   - Sets up test VPN monitor environment
+#   - Creates state files with failure count and cooldown timestamp
+#   - Sets TEST_CONFIG_FILE, TEST_SCRIPT, STATE_DIR, LOGS_DIR variables
+#
+# Example:
+#   setup_vpn_cooldown_fixture "192.168.1.1"
+#   # VPN in cooldown for 15 minutes
+#
+#   setup_vpn_cooldown_fixture "192.168.1.1" 5 3600
+#   # VPN in cooldown for 1 hour
+setup_vpn_cooldown_fixture() {
+	local peer_ip="${1:-192.168.1.1}"
+	local failure_count="${2:-5}"
+	local cooldown_duration="${3:-900}"
+	shift 3 || true
+	local extra_config=("$@")
+
+	# Calculate cooldown until timestamp (current time + duration)
+	local cooldown_until
+	cooldown_until=$(($(date +%s) + cooldown_duration))
+
+	# Set up test VPN monitor with config
+	setup_test_vpn_monitor "$peer_ip" "${TEST_DIR}" "${extra_config[@]}"
+
+	# Set up state files with failure count and cooldown timestamp
+	setup_state_files "$peer_ip" "$failure_count" 0 "" "$cooldown_until"
+}
+

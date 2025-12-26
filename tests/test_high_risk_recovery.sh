@@ -16,6 +16,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # ============================================================================
 
 @test "high-risk: surgical cleanup uses ipsec reload (default behavior, affects all tunnels)" {
+	# Test verifies that Tier 2 recovery action triggers ipsec reload command for surgical cleanup.
+	# Expected: Script executes "ipsec reload" when failure count reaches Tier 2 threshold.
+	# Importance: ipsec reload affects all VPN tunnels, which is the default surgical cleanup behavior.
+	# Note: This may impact other VPN tunnels, not just the failing one.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -128,6 +132,9 @@ EOF
 }
 
 @test "high-risk: surgical cleanup fails - error handling" {
+	# Test verifies that the script handles failures of surgical cleanup (ipsec reload) gracefully.
+	# Expected: Script logs error about reload failure but continues execution without crashing.
+	# Importance: Recovery actions can fail due to system issues; script must handle failures robustly.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -180,6 +187,9 @@ EOF
 }
 
 @test "high-risk: full restart with ipsec command" {
+	# Test verifies that Tier 3 recovery action triggers full IPsec restart when failure count reaches threshold.
+	# Expected: Script executes "ipsec restart" command when failure count reaches Tier 3 threshold.
+	# Importance: Full restart is the most aggressive recovery action and should only trigger after multiple failures.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"

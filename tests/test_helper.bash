@@ -3,137 +3,12 @@
 # Test helper functions for UDM VPN Monitor tests
 # Provides common utilities for test scripts
 
-# Load bats helper functions if available (optional)
-# These provide additional assertion functions but tests work without them
-# Helpers are located in the tests directory alongside test files
-if [[ -d "${BATS_TEST_DIRNAME}/bats-support" ]]; then
-	load "${BATS_TEST_DIRNAME}/bats-support/load.bash" 2>/dev/null || true
-fi
-if [[ -d "${BATS_TEST_DIRNAME}/bats-assert" ]]; then
-	load "${BATS_TEST_DIRNAME}/bats-assert/load.bash" 2>/dev/null || true
-fi
-if [[ -d "${BATS_TEST_DIRNAME}/bats-file" ]]; then
-	load "${BATS_TEST_DIRNAME}/bats-file/load.bash" 2>/dev/null || true
-fi
-
-# Fallback implementations for standard bats functions
-# Bats-core doesn't provide these by default (they're in bats-assert)
-# So we always define our own versions that work with or without bats-assert
-
-assert_success() {
-	if [[ "${status:-}" -ne 0 ]]; then
-		echo "Expected success but got exit code ${status:-unknown}" >&2
-		if [[ -n "${output:-}" ]]; then
-			echo "Output: $output" >&2
-		fi
-		return 1
-	fi
-}
-
-assert_failure() {
-	if [[ "${status:-0}" -eq 0 ]]; then
-		echo "Expected failure but got exit code 0" >&2
-		if [[ -n "${output:-}" ]]; then
-			echo "Output: $output" >&2
-		fi
-		return 1
-	fi
-}
-
-assert_output() {
-	local pattern=""
-	local use_partial=0
-
-	# Parse arguments - handle --partial flag
-	if [[ "$1" == "--partial" ]]; then
-		use_partial=1
-		pattern="${2:-}"
-	elif [[ "${2:-}" == "--partial" ]]; then
-		use_partial=1
-		pattern="$1"
-	else
-		pattern="${1:-}"
-	fi
-
-	# Handle empty output case - if pattern is also empty, that's a match
-	if [[ -z "${output:-}" ]]; then
-		if [[ -z "$pattern" ]]; then
-			# Both output and pattern are empty - this is a match
-			return 0
-		else
-			# Output is empty but pattern is not - mismatch
-			echo "Expected output to contain: $pattern" >&2
-			echo "Actual output: (empty)" >&2
-			return 1
-		fi
-	fi
-
-	if [[ $use_partial -eq 1 ]]; then
-		# Use grep -F for fixed strings and -- to prevent --pattern from being interpreted as option
-		if ! echo "$output" | grep -Fq -- "$pattern"; then
-			echo "Expected output to contain: $pattern" >&2
-			echo "Actual output: $output" >&2
-			return 1
-		fi
-	else
-		if [[ "$output" != "$pattern" ]]; then
-			echo "Expected output: $pattern" >&2
-			echo "Actual output: $output" >&2
-			return 1
-		fi
-	fi
-}
-
-refute_output() {
-	local pattern=""
-	local use_partial=0
-
-	# Parse arguments - handle --partial flag
-	if [[ "$1" == "--partial" ]]; then
-		use_partial=1
-		pattern="${2:-}"
-	elif [[ "${2:-}" == "--partial" ]]; then
-		use_partial=1
-		pattern="$1"
-	else
-		pattern="${1:-}"
-	fi
-
-	if [[ -z "${output:-}" ]]; then
-		return 0 # Empty output doesn't contain pattern
-	fi
-
-	if [[ $use_partial -eq 1 ]]; then
-		# Use grep -F for fixed strings and -- to prevent --pattern from being interpreted as option
-		if echo "$output" | grep -Fq -- "$pattern"; then
-			echo "Expected output to not contain: $pattern" >&2
-			echo "Actual output: $output" >&2
-			return 1
-		fi
-	else
-		if [[ "$output" == "$pattern" ]]; then
-			echo "Expected output to not equal: $pattern" >&2
-			echo "Actual output: $output" >&2
-			return 1
-		fi
-	fi
-}
-
-fail() {
-	local message="${1:-Test failed}"
-	echo "$message" >&2
-	return 1
-}
-
-assert() {
-	if ! eval "$@"; then
-		echo "Assertion failed: $*" >&2
-		return 1
-	fi
-}
-
-# Test directory for temporary files
-TEST_TMPDIR="${BATS_TEST_TMPDIR:-/tmp/bats-test-$$}"
+# Load bats helper libraries
+# Standardize on helper library functions for consistent test patterns,
+# better error messages, and easier maintenance
+load "${BATS_TEST_DIRNAME}/bats-support/load.bash"
+load "${BATS_TEST_DIRNAME}/bats-assert/load.bash"
+load "${BATS_TEST_DIRNAME}/bats-file/load.bash"
 
 # Setup function run before each test
 #
@@ -141,14 +16,14 @@ TEST_TMPDIR="${BATS_TEST_TMPDIR:-/tmp/bats-test-$$}"
 # Creates a clean test environment with temporary directories and mock structures.
 #
 # Side effects:
-#   - Creates TEST_DIR for this test
+#   - Creates TEST_DIR for this test using temp_make
 #   - Creates MOCK_DATA_DIR and MOCK_INSTALL_DIR
 #   - Saves original PWD and HOME
 #   - Sets TEST_DIR, MOCK_DATA_DIR, MOCK_INSTALL_DIR environment variables
 setup() {
-	# Create temporary directory for this test
-	TEST_DIR="${TEST_TMPDIR}/test-$$-${BATS_TEST_NUMBER}"
-	mkdir -p "$TEST_DIR"
+	# Create temporary directory for this test using bats-file's temp_make
+	# This provides consistent temporary directory handling and better cleanup
+	TEST_DIR="$(temp_make --prefix 'vpn-monitor-')"
 
 	# Create mock directories
 	MOCK_DATA_DIR="${TEST_DIR}/data"
@@ -174,13 +49,17 @@ setup() {
 # Cleans up test environment and restores original state.
 #
 # Side effects:
-#   - Removes TEST_DIR and all contents
+#   - Removes TEST_DIR and all contents using temp_del
 #   - Restores original working directory
 #   - Removes test cron entries containing "test-vpn-monitor"
+#
+# Note: Set BATSLIB_TEMP_PRESERVE_ON_FAILURE=1 to preserve temp directories
+#       for debugging when tests fail
 teardown() {
-	# Clean up test directory
-	if [[ -d "$TEST_DIR" ]]; then
-		rm -rf "$TEST_DIR"
+	# Clean up test directory using bats-file's temp_del
+	# This provides better cleanup handling and respects BATSLIB_TEMP_PRESERVE_ON_FAILURE
+	if [[ -n "$TEST_DIR" ]] && [[ -d "$TEST_DIR" ]]; then
+		temp_del "$TEST_DIR"
 	fi
 
 	# Restore original directory
@@ -326,103 +205,9 @@ mock_non_udm_system() {
 	fi
 }
 
-# Fallback assertions if helper libraries not available
-if ! type assert_file_exist >/dev/null 2>&1; then
-	# Basic file existence assertion
-	#
-	# Verifies that a file exists. Fails the test if file doesn't exist.
-	#
-	# Arguments:
-	#   $1: Path to file to check
-	#
-	# Returns:
-	#   0: File exists
-	#   1: File doesn't exist (fails test)
-	assert_file_exist() {
-		local file="$1"
-		if [[ ! -f "$file" ]]; then
-			fail "File does not exist: $file"
-		fi
-	}
-
-	# Basic directory existence assertion
-	#
-	# Verifies that a directory exists. Fails the test if directory doesn't exist.
-	#
-	# Arguments:
-	#   $1: Path to directory to check
-	#
-	# Returns:
-	#   0: Directory exists
-	#   1: Directory doesn't exist (fails test)
-	assert_dir_exist() {
-		local dir="$1"
-		if [[ ! -d "$dir" ]]; then
-			fail "Directory does not exist: $dir"
-		fi
-	}
-
-	# Basic directory non-existence assertion
-	#
-	# Verifies that a directory does NOT exist. Fails the test if directory exists.
-	#
-	# Arguments:
-	#   $1: Path to directory to check
-	#
-	# Returns:
-	#   0: Directory doesn't exist
-	#   1: Directory exists (fails test)
-	assert_dir_not_exist() {
-		local dir="$1"
-		if [[ -d "$dir" ]]; then
-			fail "Directory should not exist: $dir"
-		fi
-	}
-
-	# Basic file non-existence assertion
-	#
-	# Verifies that a file does NOT exist. Fails the test if file exists.
-	#
-	# Arguments:
-	#   $1: Path to file to check
-	#
-	# Returns:
-	#   0: File doesn't exist
-	#   1: File exists (fails test)
-	assert_file_not_exist() {
-		local file="$1"
-		if [[ -f "$file" ]]; then
-			fail "File should not exist: $file"
-		fi
-	}
-
-	# Basic file contains assertion
-	#
-	# Verifies that a file contains a specific pattern (fixed string match).
-	# Fails the test if pattern is not found or file doesn't exist.
-	#
-	# Arguments:
-	#   $1: Path to file to check
-	#   $2: Pattern to search for (fixed string, not regex)
-	#
-	# Returns:
-	#   0: Pattern found in file
-	#   1: Pattern not found or file doesn't exist (fails test)
-	assert_file_contains() {
-		local file="$1"
-		local pattern="$2"
-		if [[ ! -f "$file" ]]; then
-			fail "File does not exist: $file"
-		fi
-		if ! grep -Fq -- "$pattern" "$file"; then
-			fail "File does not contain pattern: $pattern"
-		fi
-	}
-
-fi
-
-# Always define refute_file_contains (needed even if bats-file is loaded)
-# bats-file may provide it, but we ensure it's available with consistent behavior
+# Custom helper: refute_file_contains
+# bats-file doesn't provide this function, so we define it here
+# Uses fixed string matching (grep -F) for consistency with our test patterns
 if ! type refute_file_contains >/dev/null 2>&1; then
 	# Refute file contains assertion
 	#
@@ -696,9 +481,7 @@ assert_log_contains() {
 	local log_file="$1"
 	local pattern="$2"
 
-	if [[ ! -f "$log_file" ]]; then
-		fail "Log file does not exist: $log_file"
-	fi
+	assert_file_exist "$log_file"
 
 	run grep -Fq -- "$pattern" "$log_file"
 	assert_success "Log file should contain: $pattern"
@@ -1215,3 +998,31 @@ setup_mock_vpn_environment() {
 
 	export MOCK_IP MOCK_PING MOCK_IPSEC
 }
+
+# ============================================================================
+# Test Fixtures - Reusable Test Scenarios
+# ============================================================================
+#
+# Test fixtures provide reusable setup functions for common test scenarios.
+# They combine multiple setup steps into single function calls, reducing
+# duplication and ensuring consistent test environments.
+#
+# Available fixtures (load in tests with: load fixtures/fixture_name):
+#   - fixtures/vpn_active.bash: VPN is active and healthy
+#   - fixtures/vpn_down.bash: VPN is down (no SA found)
+#   - fixtures/vpn_failing.bash: VPN has recorded failures
+#   - fixtures/vpn_cooldown.bash: VPN is in cooldown period
+#
+# Example usage:
+#   # Load test helper (includes fixtures documentation)
+#   load test_helper
+#
+#   # Load specific fixture
+#   load fixtures/vpn_active
+#
+#   @test "test with active VPN" {
+#       setup_vpn_active_fixture "192.168.1.1"
+#       # Test code here
+#   }
+#
+# See tests/fixtures/ directory for fixture implementations and documentation.

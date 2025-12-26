@@ -16,6 +16,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # ============================================================================
 
 @test "high-risk: xfrm SA exists but byte counter is exactly 0" {
+	# Test verifies that the detection function correctly identifies VPN failures when xfrm SA exists
+	# but byte counter is exactly 0, indicating no traffic has passed through the tunnel.
+	# Expected: Function detects bytes=0 as suspect condition and may mark VPN as failed.
+	# Importance: Zero byte counter indicates VPN tunnel is established but not passing traffic, a failure condition.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -52,6 +56,10 @@ EOF
 }
 
 @test "high-risk: xfrm SA exists but byte counter decreases" {
+	# Test verifies that the detection function correctly identifies VPN failures when byte counter
+	# decreases between checks, which could indicate counter wrap-around or VPN re-establishment.
+	# Expected: Function detects bytes not increasing and may mark VPN as suspect or failed.
+	# Importance: Decreasing byte counters indicate abnormal VPN state that requires investigation.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -92,6 +100,10 @@ EOF
 }
 
 @test "high-risk: xfrm SA exists but byte counter stays same" {
+	# Test verifies that the detection function correctly identifies VPN failures when byte counter
+	# remains unchanged between checks, indicating no traffic is passing through the tunnel.
+	# Expected: Function detects bytes not increasing and marks VPN as suspect or failed.
+	# Importance: Stagnant byte counters indicate VPN tunnel is not passing traffic, a critical failure condition.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -132,6 +144,9 @@ EOF
 }
 
 @test "high-risk: byte counter file corrupted" {
+	# Test verifies that the script handles corrupted byte counter files gracefully without crashing.
+	# Expected: Script treats corrupted file as 0 or resets it, continuing normal operation.
+	# Importance: File corruption can occur due to disk errors or manual editing; script must handle it robustly.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -228,6 +243,10 @@ EOF
 }
 
 @test "high-risk: all detection methods unavailable" {
+	# Test verifies that the script handles the edge case where all VPN detection methods (ip xfrm, ipsec)
+	# are unavailable on the system without crashing.
+	# Expected: Script handles missing detection tools gracefully, may log warnings or exit early.
+	# Importance: Ensures script fails gracefully in environments where required tools are missing.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
@@ -467,6 +486,9 @@ EOF
 }
 
 @test "high-risk: ping command hangs (timeout handling)" {
+	# Test verifies that the script handles ping commands that hang indefinitely without blocking execution.
+	# Expected: Script uses timeout mechanism to prevent ping from blocking script execution indefinitely.
+	# Importance: Network issues can cause ping to hang; script must handle this to remain responsive.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"

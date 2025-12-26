@@ -72,6 +72,7 @@ jobs:
       - name: Run tests
         env:
           RUN_SLOW_TESTS: 1
+          PARALLEL_JOBS: 4  # Enable parallel execution for faster test runs
         run: |
           ./tests/run_tests.sh
 
@@ -138,6 +139,7 @@ jobs:
       - name: Run tests with coverage
         env:
           RUN_SLOW_TESTS: 1
+          PARALLEL_JOBS: 4  # Enable parallel execution for faster test runs
         run: |
           ./tests/run_tests.sh --coverage
 

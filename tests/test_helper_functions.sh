@@ -147,6 +147,9 @@ source_function() {
 }
 
 @test "get_formatted_timestamp returns valid timestamp format" {
+	# Test verifies that get_formatted_timestamp function returns timestamp in correct format.
+	# Expected: Function returns timestamp in YYYY-MM-DD HH:MM:SS format.
+	# Importance: Timestamp formatting is used throughout logging and must be consistent.
 	# Source the function
 	source_function "get_formatted_timestamp"
 
@@ -163,6 +166,9 @@ source_function() {
 }
 
 @test "ensure_directory_exists creates directory when missing" {
+	# Test verifies that ensure_directory_exists function creates directories that don't exist.
+	# Expected: Function creates the specified directory if it doesn't exist, with appropriate error handling.
+	# Importance: Directory creation is essential for state files, logs, and other runtime data storage.
 	local test_dir="${TEST_DIR}/new_dir"
 
 	# Source the function
@@ -175,6 +181,9 @@ source_function() {
 }
 
 @test "sanitize_peer_ip converts dots to underscores" {
+	# Test verifies that sanitize_peer_ip function converts IPv4 addresses to filesystem-safe format.
+	# Expected: Function converts dots to underscores to create valid filenames for state files.
+	# Importance: IP sanitization enables per-peer state file naming without filesystem issues.
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "sanitize_peer_ip"
@@ -185,6 +194,9 @@ source_function() {
 }
 
 @test "sanitize_peer_ip handles IPv6 addresses" {
+	# Test verifies that sanitize_peer_ip function correctly handles IPv6 addresses for filesystem naming.
+	# Expected: Function converts colons to underscores to create valid filenames for IPv6 peer state files.
+	# Importance: IPv6 support requires proper sanitization to handle longer addresses with colons.
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "sanitize_peer_ip"
@@ -195,6 +207,9 @@ source_function() {
 }
 
 @test "extract_lockfile_pid extracts PID from lockfile" {
+	# Test verifies that extract_lockfile_pid function correctly parses process ID from lockfile format.
+	# Expected: Function extracts PID from lockfile containing timestamp:pid format.
+	# Importance: PID extraction is used to verify if lockfile process is still running or stale.
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "extract_lockfile_pid"
@@ -208,6 +223,9 @@ source_function() {
 }
 
 @test "extract_lockfile_pid returns empty for missing lockfile" {
+	# Test verifies that extract_lockfile_pid function handles missing lockfiles gracefully.
+	# Expected: Function returns success with empty output when lockfile doesn't exist.
+	# Importance: Missing lockfile handling prevents errors when checking for stale locks.
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "extract_lockfile_pid"
@@ -222,6 +240,9 @@ source_function() {
 }
 
 @test "is_process_running returns true for current process" {
+	# Test verifies that is_process_running function correctly identifies running processes.
+	# Expected: Function returns success when checking if current process PID is running.
+	# Importance: Process existence checking is used to verify if lockfile PIDs are still active.
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "is_process_running"
@@ -232,6 +253,9 @@ source_function() {
 }
 
 @test "is_process_running returns false for non-existent PID" {
+	# Test verifies that is_process_running function correctly identifies non-existent processes.
+	# Expected: Function returns failure when checking a PID that doesn't exist in the process table.
+	# Importance: Non-existent PID detection enables identification of stale lockfiles from terminated processes.
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "is_process_running"
@@ -242,6 +266,9 @@ source_function() {
 }
 
 @test "is_process_running returns false for empty PID" {
+	# Test verifies that is_process_running function handles empty PID input gracefully.
+	# Expected: Function returns failure when PID is empty or invalid, preventing errors.
+	# Importance: Empty PID handling prevents script crashes when lockfile parsing fails.
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "is_process_running"
@@ -251,6 +278,9 @@ source_function() {
 }
 
 @test "get_timestamp_plus_minutes adds minutes correctly" {
+	# Test verifies that get_timestamp_plus_minutes function correctly calculates future timestamps.
+	# Expected: Function adds specified minutes to current timestamp and returns Unix timestamp.
+	# Importance: Timestamp calculation is used for cooldown periods and rate limiting calculations.
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "get_timestamp_plus_minutes"
@@ -268,6 +298,9 @@ source_function() {
 }
 
 @test "get_file_mtime returns modification time" {
+	# Test verifies that get_file_mtime function correctly retrieves file modification timestamp.
+	# Expected: Function returns Unix timestamp representing file's last modification time.
+	# Importance: File modification time checking enables stale file detection and cache invalidation.
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "get_file_mtime"
@@ -286,6 +319,9 @@ source_function() {
 }
 
 @test "validate_ip_address accepts valid IPv4 addresses" {
+	# Test verifies that validate_ip_address function correctly accepts valid IPv4 addresses.
+	# Expected: Function returns success (exit code 0) for valid IPv4 addresses in various ranges.
+	# Importance: IP validation prevents command injection and ensures only valid IPs are processed.
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "validate_ip_address"
@@ -301,6 +337,9 @@ source_function() {
 }
 
 @test "validate_ip_address rejects invalid IPv4 addresses" {
+	# Test verifies that validate_ip_address function correctly rejects invalid IPv4 addresses.
+	# Expected: Function returns failure (exit code 1) for invalid formats including out-of-range octets.
+	# Importance: IP validation prevents command injection attacks and ensures data integrity.
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "validate_ip_address"
@@ -319,6 +358,9 @@ source_function() {
 }
 
 @test "validate_ip_address accepts valid IPv6 addresses" {
+	# Test verifies that validate_ip_address function correctly accepts valid IPv6 addresses.
+	# Expected: Function returns success (exit code 0) for valid IPv6 addresses in various formats.
+	# Importance: IPv6 support enables monitoring of IPv6 VPN tunnels and future-proofs the application.
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "validate_ip_address"
@@ -334,6 +376,9 @@ source_function() {
 }
 
 @test "validate_ip_address rejects invalid IPv6 addresses" {
+	# Test verifies that validate_ip_address function correctly rejects invalid IPv6 address formats.
+	# Expected: Function returns failure (exit code 1) for invalid IPv6 formats including malformed addresses.
+	# Importance: IPv6 validation prevents errors and ensures only properly formatted addresses are processed.
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "validate_ip_address"
@@ -349,6 +394,9 @@ source_function() {
 }
 
 @test "extract_byte_counter extracts bytes from xfrm output" {
+	# Test verifies that extract_byte_counter function correctly parses byte count from xfrm output.
+	# Expected: Function extracts numeric byte count from "lifetime current" line in xfrm state output.
+	# Importance: Byte counter extraction is critical for VPN health monitoring via traffic detection.
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "extract_byte_counter"
@@ -361,6 +409,9 @@ source_function() {
 }
 
 @test "extract_byte_counter handles missing lifetime line" {
+	# Test verifies that extract_byte_counter function handles xfrm output without lifetime line gracefully.
+	# Expected: Function returns failure when lifetime line is missing from xfrm output.
+	# Importance: Error handling prevents script crashes when xfrm output format is unexpected or malformed.
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "extract_byte_counter"
@@ -372,6 +423,9 @@ source_function() {
 }
 
 @test "get_failure_count returns 0 for missing counter file" {
+	# Test verifies that get_failure_count function returns 0 when counter file doesn't exist.
+	# Expected: Function returns 0 (default value) for peers that haven't experienced failures yet.
+	# Importance: Default value handling ensures new peers start with zero failure count.
 	# Set up environment variables
 	setup_test_environment "${TEST_DIR}"
 
@@ -385,6 +439,9 @@ source_function() {
 }
 
 @test "get_failure_count returns value from counter file" {
+	# Test verifies that get_failure_count function correctly reads failure count from existing counter file.
+	# Expected: Function reads and returns the numeric value stored in the per-peer failure counter file.
+	# Importance: Failure count retrieval is essential for tier escalation logic and recovery decisions.
 	# Set up environment variables
 	setup_test_environment "${TEST_DIR}"
 	setup_state_files "192.168.1.1" 5
@@ -398,6 +455,9 @@ source_function() {
 }
 
 @test "increment_failure increments counter correctly" {
+	# Test verifies that increment_failure function correctly increments failure counter files.
+	# Expected: Function reads current counter value, increments it by 1, and writes back atomically.
+	# Importance: Failure counters track consecutive failures to trigger tiered recovery actions.
 	# Set up environment variables
 	setup_test_environment "${TEST_DIR}"
 
@@ -428,6 +488,9 @@ source_function() {
 }
 
 @test "reset_failure_count resets counter to 0" {
+	# Test verifies that reset_failure_count function correctly resets failure counter to zero.
+	# Expected: Function writes 0 to the failure counter file when VPN recovers successfully.
+	# Importance: Counter reset clears failure history when VPN recovers, preventing false escalation.
 	# Set up environment variables
 	setup_test_environment "${TEST_DIR}"
 	setup_state_files "192.168.1.1" 5
@@ -451,6 +514,9 @@ source_function() {
 # ============================================================================
 
 @test "get_peer_state_file_path returns correct path for failure_count" {
+	# Test verifies that get_peer_state_file_path function returns correct file path for failure_count state.
+	# Expected: Function constructs path using logs directory and sanitized peer IP for failure counter file.
+	# Importance: Consistent path generation ensures state files are stored in predictable locations.
 	setup_test_environment "${TEST_DIR}"
 
 	source_function "get_peer_state_file_path"
@@ -461,6 +527,9 @@ source_function() {
 }
 
 @test "get_peer_state_file_path returns correct path for last_bytes" {
+	# Test verifies that get_peer_state_file_path function returns correct file path for last_bytes state.
+	# Expected: Function constructs path using state directory and sanitized peer IP for byte counter file.
+	# Importance: Byte counter file paths enable tracking of VPN traffic for health monitoring.
 	setup_test_environment "${TEST_DIR}"
 
 	source_function "get_peer_state_file_path"
@@ -471,6 +540,9 @@ source_function() {
 }
 
 @test "get_peer_state_file_path handles unknown key" {
+	# Test verifies that get_peer_state_file_path function handles unknown state keys gracefully.
+	# Expected: Function logs warning but still returns constructed path for unknown keys.
+	# Importance: Unknown key handling allows extensibility while maintaining backward compatibility.
 	setup_test_environment "${TEST_DIR}"
 
 	source_function "get_peer_state_file_path"
@@ -482,6 +554,9 @@ source_function() {
 }
 
 @test "get_peer_state returns default when file missing" {
+	# Test verifies that get_peer_state function returns default value when state file doesn't exist.
+	# Expected: Function returns default value (0 or custom) for peers that haven't been initialized yet.
+	# Importance: Default value handling ensures new peers start with appropriate initial state values.
 	setup_test_environment "${TEST_DIR}"
 
 	source_function "get_peer_state"
@@ -497,6 +572,9 @@ source_function() {
 }
 
 @test "get_peer_state returns value from existing file" {
+	# Test verifies that get_peer_state function correctly reads values from existing state files.
+	# Expected: Function reads and returns the numeric value stored in the per-peer state file.
+	# Importance: State retrieval is essential for reading failure counts, byte counters, and other peer state.
 	setup_test_environment "${TEST_DIR}"
 	setup_state_files "192.168.1.1" 42
 
@@ -508,6 +586,9 @@ source_function() {
 }
 
 @test "get_peer_state handles corrupted file" {
+	# Test verifies that get_peer_state function handles corrupted state files gracefully.
+	# Expected: Function returns default value (0) and logs warning when state file contains invalid data.
+	# Importance: Corrupted file handling prevents script crashes and allows recovery from data corruption.
 	setup_test_environment "${TEST_DIR}"
 	# Manually create corrupted file (setup_state_files validates, so we need to create it directly)
 	local counter_file="${LOGS_DIR}/failure_counter_192_168_1_1"
@@ -524,6 +605,9 @@ source_function() {
 }
 
 @test "set_peer_state creates file with correct value" {
+	# Test verifies that set_peer_state function creates state files with correct values.
+	# Expected: Function creates per-peer state file and writes the specified numeric value atomically.
+	# Importance: State file creation enables tracking of peer-specific data like failure counts and byte counters.
 	setup_test_environment "${TEST_DIR}"
 
 	source_function "set_peer_state"
@@ -540,6 +624,9 @@ source_function() {
 }
 
 @test "set_peer_state updates existing file" {
+	# Test verifies that set_peer_state function correctly updates existing state files.
+	# Expected: Function overwrites existing state file with new value, maintaining atomic write operations.
+	# Importance: State updates enable tracking changes in failure counts and other peer-specific metrics.
 	setup_test_environment "${TEST_DIR}"
 	setup_state_files "192.168.1.1" 5
 
@@ -556,6 +643,9 @@ source_function() {
 }
 
 @test "set_peer_state validates numeric values" {
+	# Test verifies that set_peer_state function validates that values are numeric before writing.
+	# Expected: Function rejects non-numeric values and returns failure to prevent corrupted state files.
+	# Importance: Validation prevents invalid data from being written to state files, maintaining data integrity.
 	setup_test_environment "${TEST_DIR}"
 
 	source_function "set_peer_state"
@@ -995,6 +1085,9 @@ SCRIPT
 }
 
 @test "record_restart appends timestamp to restart file" {
+	# Test verifies that record_restart function appends current timestamp to restart count file.
+	# Expected: Function writes Unix timestamp to restart file, enabling rate limit calculations.
+	# Importance: Restart timestamps enable rate limiting to prevent excessive IPsec restarts.
 	local logs_dir="${TEST_DIR}/logs"
 	mkdir -p "$logs_dir"
 	local restart_file="${logs_dir}/restart_count"
@@ -1029,6 +1122,9 @@ SCRIPT
 # ============================================================================
 
 @test "discover_connection_name extracts connection name from ipsec status (libreswan format)" {
+	# Test verifies that discover_connection_name function correctly parses connection names from libreswan ipsec status output.
+	# Expected: Function extracts connection name (e.g., "site-a") from ipsec status output matching peer IP.
+	# Importance: Connection name discovery enables logging and potential per-connection recovery actions.
 	source_function "discover_connection_name"
 	source_function "sanitize_peer_ip"
 
@@ -1052,6 +1148,9 @@ EOF
 }
 
 @test "discover_connection_name extracts connection name from ipsec status (strongswan format)" {
+	# Test verifies that discover_connection_name function correctly parses connection names from strongswan ipsec status output.
+	# Expected: Function extracts connection name from strongswan format output, supporting multiple IPsec implementations.
+	# Importance: Multi-implementation support ensures connection discovery works across different IPsec distributions.
 	source_function "discover_connection_name"
 	source_function "sanitize_peer_ip"
 
@@ -1075,6 +1174,9 @@ EOF
 }
 
 @test "discover_connection_name returns empty string when connection not found" {
+	# Test verifies that discover_connection_name function returns empty string when peer IP is not found in ipsec status.
+	# Expected: Function returns empty string when no connection matches the peer IP, indicating connection not established.
+	# Importance: Empty return value indicates VPN connection is not active, enabling appropriate error handling.
 	source_function "discover_connection_name"
 	source_function "sanitize_peer_ip"
 
@@ -1097,6 +1199,9 @@ EOF
 }
 
 @test "discover_connection_name caches connection name" {
+	# Test verifies that discover_connection_name function caches discovered connection names to avoid repeated ipsec calls.
+	# Expected: Function writes connection name to cache file on first discovery and uses cache on subsequent calls.
+	# Importance: Caching reduces overhead of repeated ipsec status calls and improves performance during monitoring.
 	# Match test 27 pattern: call source_function first
 	source_function "discover_connection_name"
 	source_function "sanitize_peer_ip"
@@ -2022,6 +2127,9 @@ source_lockfile_module() {
 }
 
 @test "acquire_lockfile_flock cleans up lockfile on function exit" {
+	# Test verifies that acquire_lockfile_flock function cleans up lockfile when wrapped function exits successfully.
+	# Expected: Lockfile is removed after function execution completes, even on successful exit.
+	# Importance: Ensures lockfiles are properly cleaned up to prevent blocking future script executions.
 	# Skip if flock not available
 	if ! command -v flock >/dev/null 2>&1; then
 		skip "flock command not available"
@@ -2044,6 +2152,9 @@ source_lockfile_module() {
 }
 
 @test "acquire_lockfile_flock cleans up lockfile on function error" {
+	# Test verifies that acquire_lockfile_flock function cleans up lockfile even when wrapped function exits with error.
+	# Expected: Lockfile is removed after function execution completes, regardless of exit code.
+	# Importance: Ensures lockfiles are always cleaned up via EXIT trap, preventing permanent blocking on errors.
 	# Skip if flock not available
 	if ! command -v flock >/dev/null 2>&1; then
 		skip "flock command not available"
@@ -2288,6 +2399,9 @@ source_lockfile_module() {
 # ============================================================================
 
 @test "constants are properly loaded and have correct values" {
+	# Test verifies that constants.sh file defines all required constants with correct values.
+	# Expected: All constants (IPv4/IPv6 limits, ping thresholds, xfrm settings, time conversions) are defined correctly.
+	# Importance: Constants ensure consistent validation limits and configuration values across the application.
 	# Source constants.sh
 	# shellcheck source=/dev/null
 	source "${LIB_DIR}/constants.sh" 2>/dev/null || {

@@ -44,11 +44,17 @@ EOF
 }
 
 @test "analyze-logs.sh exists and is executable" {
+	# Test verifies that the analyze-logs script file exists and has execute permissions.
+	# Expected: Analyze-logs script file is present and executable.
+	# Importance: Ensures the log analysis script can be run directly for troubleshooting and reporting.
 	assert_file_exist "$ANALYZE_LOGS_SCRIPT"
 	assert_file_executable "$ANALYZE_LOGS_SCRIPT"
 }
 
 @test "analyze-logs.sh shows help with --help flag" {
+	# Test verifies that the analyze-logs script displays usage information when --help flag is provided.
+	# Expected: Script outputs usage information including all available options and flags.
+	# Importance: Ensures users can access help documentation for script usage and available options.
 	run bash "$ANALYZE_LOGS_SCRIPT" --help
 	assert_success
 	assert_output --partial "Usage:"
@@ -65,6 +71,9 @@ EOF
 }
 
 @test "analyze-logs.sh exits with error if log file not found" {
+	# Test verifies that the analyze-logs script validates log file existence before processing.
+	# Expected: Script exits with failure status and displays error message when log file doesn't exist.
+	# Importance: Prevents script from attempting to analyze non-existent files and provides clear error feedback.
 	local log_file="${TEST_DIR}/nonexistent.log"
 
 	run bash "$ANALYZE_LOGS_SCRIPT" -l "$log_file"
@@ -89,6 +98,9 @@ EOF
 }
 
 @test "analyze-logs.sh parses log file and extracts failures" {
+	# Test verifies that the analyze-logs script correctly parses log files and extracts failure events.
+	# Expected: Script identifies VPN failure events from log entries and calculates failure statistics.
+	# Importance: Failure analysis helps identify patterns and troubleshoot VPN reliability issues.
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	create_sample_log_file "$log_file"
 
@@ -101,6 +113,9 @@ EOF
 }
 
 @test "analyze-logs.sh extracts recoveries from log file" {
+	# Test verifies that the analyze-logs script correctly identifies VPN recovery events from logs.
+	# Expected: Script extracts recovery events and calculates recovery success rate statistics.
+	# Importance: Recovery analysis helps evaluate effectiveness of recovery actions and VPN stability.
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	create_sample_log_file "$log_file"
 
@@ -112,6 +127,9 @@ EOF
 }
 
 @test "analyze-logs.sh extracts tier actions from log file" {
+	# Test verifies that the analyze-logs script correctly identifies tier escalation actions from logs.
+	# Expected: Script extracts Tier 1, Tier 2, and Tier 3 actions and includes statistics in report file.
+	# Importance: Tier action analysis helps understand escalation patterns and recovery action effectiveness.
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local report_file="${TEST_DIR}/vpn-monitor-report.txt"
 	create_sample_log_file "$log_file"
@@ -127,6 +145,9 @@ EOF
 }
 
 @test "analyze-logs.sh generates text report file" {
+	# Test verifies that the analyze-logs script generates a formatted text report file with analysis results.
+	# Expected: Script creates report file containing summary statistics, failure counts, and recovery information.
+	# Importance: Text reports provide human-readable analysis of VPN monitoring logs for troubleshooting and reporting.
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local report_file="${TEST_DIR}/vpn-monitor-report.txt"
 	create_sample_log_file "$log_file"
@@ -142,6 +163,9 @@ EOF
 }
 
 @test "analyze-logs.sh generates CSV export file" {
+	# Test verifies that the analyze-logs script generates CSV export file with structured log analysis data.
+	# Expected: Script creates CSV file with columns for timestamps, event types, peer IPs, and failure/recovery counts.
+	# Importance: CSV export enables data analysis in spreadsheet applications and automated reporting systems.
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local csv_file="${TEST_DIR}/vpn-monitor-analysis.csv"
 	create_sample_log_file "$log_file"
