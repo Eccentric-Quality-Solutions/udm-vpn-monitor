@@ -32,6 +32,8 @@ Architecture Decision Records are documents that capture important architectural
 | [ADR-0016](0016-state-file-location-data-vpn-monitor.md) | State File Location (/data/vpn-monitor/) | Accepted |
 | [ADR-0017](0017-bash-scripting-language.md) | Bash Scripting Language | Accepted |
 | [ADR-0018](0018-centralized-logging-module.md) | Centralized Logging Module | Accepted |
+| [ADR-0019](0019-byte-counter-detection-method.md) | Byte Counter Detection Method | Accepted |
+| [ADR-0020](0020-sa-rekey-detection-and-handling.md) | SA Rekey Detection and Handling | Accepted |
 
 ## ADR Format
 

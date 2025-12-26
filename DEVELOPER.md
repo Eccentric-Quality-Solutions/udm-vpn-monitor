@@ -584,7 +584,7 @@ check_vpn_status() {
 ```bash
 # Log errors/warnings, return error codes
 surgical_cleanup() {
-    if [[ "${ENABLE_XFRM_RECOVERY:-0}" -eq 1 ]]; then
+    if [[ "${ENABLE_XFRM_RECOVERY:-1}" -eq 1 ]]; then
         if ! attempt_xfrm_recovery "$peer_ip"; then
             log_message "WARNING" "xfrm recovery failed, falling back"
             # Try fallback

@@ -14,7 +14,7 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 - **IPsec Fallback for Tier 2 Recovery**
 - **CI/CD Pipeline**: GitHub Actions workflow for automated testing and validation
 - **Log Analysis Tool**: `analyze-logs.sh` script for analyzing VPN failure patterns and recovery success rates
-- **Experimental Per-Tunnel xfrm Recovery**: Per-tunnel recovery capability using xfrm (disabled by default, requires `ENABLE_XFRM_RECOVERY=1`)
+- **Per-Tunnel xfrm Recovery**: Per-tunnel recovery capability using xfrm (enabled by default for UDM OS 4.3+, `ENABLE_XFRM_RECOVERY=1`)
 - **Modular Library Architecture**: Complete refactoring into modular library components:
   - `lib/common.sh` - Shared logging and utility functions across scripts
   - `lib/config.sh` - Configuration loading and validation with schema support

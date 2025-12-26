@@ -554,9 +554,9 @@ setup_cron() {
 	fi
 
 	local cron_entry
-	cron_entry="${cron_schedule} ${INSTALL_DIR}/${SCRIPT_NAME} >> ${INSTALL_DIR}/cron.log 2>&1"
+	cron_entry="${cron_schedule} ${INSTALL_DIR}/${SCRIPT_NAME} >> ${INSTALL_DIR}/logs/cron.log 2>&1"
 
-	# Note: cron.log will be created automatically on first cron run.
+	# Note: cron.log will be created automatically on first cron run in the logs directory.
 	# Log rotation is configured via logrotate (see install_logrotate_config function).
 
 	# Check if cron entry already exists
@@ -725,18 +725,19 @@ enable_and_start_keepalive_service() {
 	return 0
 }
 
-# Install logrotate configuration for cron.log
+# Install logrotate configuration for application logs
 #
-# Creates a logrotate configuration file to manage cron.log rotation.
-# Rotates cron.log daily, keeps 7 days of logs, compresses old logs.
-# Only installs in production mode (not dev mode) and if logrotate is available.
+# Creates a logrotate configuration file to manage log rotation for both
+# cron.log and vpn-monitor.log. Rotates logs daily, keeps 7 days of logs,
+# compresses old logs. Only installs in production mode (not dev mode) and
+# if logrotate is available.
 #
 # Returns:
 #   0: Logrotate config installed successfully (or skipped if not applicable)
 #   1: Failed to install logrotate config
 #
 # Side effects:
-#   Creates /etc/logrotate.d/vpn-monitor-cron if logrotate is available
+#   Creates /etc/logrotate.d/vpn-monitor if logrotate is available
 install_logrotate_config() {
 	# Skip in dev mode (logrotate configs are system-wide)
 	if [[ $DEV_MODE -eq 1 ]]; then
@@ -747,26 +748,27 @@ install_logrotate_config() {
 	# Check if logrotate is available
 	if ! command -v logrotate >/dev/null 2>&1; then
 		log_warn "logrotate not found, skipping log rotation configuration"
-		log_warn "cron.log will grow indefinitely without manual rotation"
+		log_warn "Log files will grow indefinitely without manual rotation"
 		return 0
 	fi
 
 	# Check if we have write access to /etc/logrotate.d
 	if [[ ! -w /etc/logrotate.d ]]; then
 		log_warn "Cannot write to /etc/logrotate.d, skipping log rotation configuration"
-		log_warn "cron.log will grow indefinitely without manual rotation"
+		log_warn "Log files will grow indefinitely without manual rotation"
 		return 0
 	fi
 
-	local logrotate_config="/etc/logrotate.d/vpn-monitor-cron"
+	local logrotate_config="/etc/logrotate.d/vpn-monitor"
 
-	log_info "Installing logrotate configuration for cron.log..."
+	log_info "Installing logrotate configuration for application logs..."
 
-	# Create logrotate configuration
+	# Create logrotate configuration for both log files
 	cat >"$logrotate_config" <<EOF
-# UDM VPN Monitor - cron.log rotation
+# UDM VPN Monitor - Log rotation
 # Automatically rotated by logrotate
-${INSTALL_DIR}/cron.log {
+# Rotates both cron.log and vpn-monitor.log daily, keeps 7 days of compressed logs
+${INSTALL_DIR}/logs/*.log {
     daily
     rotate 7
     compress
@@ -784,7 +786,7 @@ EOF
 	# Verify the config file was created
 	if [[ -f "$logrotate_config" ]]; then
 		log_info "Logrotate configuration installed: $logrotate_config"
-		log_info "cron.log will be rotated daily, keeping 7 days of compressed logs"
+		log_info "Log files will be rotated daily, keeping 7 days of compressed logs"
 		return 0
 	else
 		log_error "Failed to create logrotate configuration"
@@ -1154,7 +1156,7 @@ display_next_steps() {
 			echo ""
 			echo "  Or manually restore the cron job:"
 			echo "    crontab -e"
-			echo "    # Add: $(grep CRON_SCHEDULE "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "*/1 * * * *") ${INSTALL_DIR}/${SCRIPT_NAME} >> ${INSTALL_DIR}/cron.log 2>&1"
+			echo "    # Add: $(grep CRON_SCHEDULE "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "*/1 * * * *") ${INSTALL_DIR}/${SCRIPT_NAME} >> ${INSTALL_DIR}/logs/cron.log 2>&1"
 			log_warn "═══════════════════════════════════════════════════════════════"
 			echo ""
 			log_info "Persistence Notes:"
@@ -1440,7 +1442,7 @@ main() {
 	# Setup cron only if not skipped
 	if [[ $SKIP_CRON -eq 0 ]]; then
 		setup_cron
-		# Install logrotate configuration for cron.log
+		# Install logrotate configuration for application logs
 		install_logrotate_config
 	else
 		log_info "Skipping cron setup (--no-cron flag used)"

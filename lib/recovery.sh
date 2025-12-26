@@ -256,6 +256,102 @@ attempt_xfrm_recovery() {
 	return 1
 }
 
+# Select recovery strategy based on peer IP and tier
+#
+# Centralizes recovery strategy selection logic, determining the best recovery
+# approach based on configuration, peer IP availability, and tier level.
+# Returns recovery plan information via global variables for easy access.
+#
+# Arguments:
+#   $1: Peer IP address (optional, required for per-connection recovery)
+#   $2: Tier level (2 for surgical cleanup, 3 for full restart)
+#
+# Returns:
+#   0: Strategy selected successfully
+#   1: Invalid tier or no strategy available
+#
+# Output (via global variables):
+#   RECOVERY_STRATEGY: Strategy name ("xfrm", "ipsec_reload", "ipsec_restart")
+#   RECOVERY_COMMAND: Command to execute (function name or command)
+#   RECOVERY_IMPACT: Impact description ("per-connection" or "all-tunnels")
+#   RECOVERY_AVAILABLE: Whether recovery is available (1) or not (0)
+#
+# Strategy selection logic:
+#   1. If peer IP provided and xfrm recovery enabled and ip command available:
+#      - Strategy: "xfrm" (per-connection recovery)
+#      - Command: attempt_xfrm_recovery function
+#      - Impact: "per-connection"
+#   2. If tier 2 and ipsec command available:
+#      - Strategy: "ipsec_reload" (affects all tunnels)
+#      - Command: "ipsec reload" with fallback to "ipsec restart"
+#      - Impact: "all-tunnels"
+#   3. If tier 3 and ipsec command available:
+#      - Strategy: "ipsec_restart" (affects all tunnels)
+#      - Command: "ipsec restart"
+#      - Impact: "all-tunnels"
+#   4. Otherwise:
+#      - Strategy: unavailable
+#      - Command: empty
+#      - Impact: empty
+#
+# Examples:
+#   select_recovery_strategy "203.0.113.1" 2
+#   # Sets RECOVERY_STRATEGY="xfrm", RECOVERY_COMMAND="attempt_xfrm_recovery", RECOVERY_IMPACT="per-connection"
+#
+#   select_recovery_strategy "" 2
+#   # Sets RECOVERY_STRATEGY="ipsec_reload", RECOVERY_COMMAND="ipsec reload", RECOVERY_IMPACT="all-tunnels"
+#
+# Note:
+#   Requires ENABLE_XFRM_RECOVERY configuration variable
+#   Checks for command availability (ip, ipsec) before selecting strategy
+select_recovery_strategy() {
+	local peer_ip="${1:-}"
+	local tier="${2:-2}"
+
+	# Initialize return variables (declare as global)
+	declare -g RECOVERY_STRATEGY=""
+	declare -g RECOVERY_COMMAND=""
+	declare -g RECOVERY_IMPACT=""
+	declare -g RECOVERY_AVAILABLE=0
+
+	# Validate tier
+	if [[ "$tier" != "2" ]] && [[ "$tier" != "3" ]]; then
+		handle_error "ERROR" "Invalid tier: $tier (must be 2 or 3)" 0
+		return 1
+	fi
+
+	# Strategy 1: xfrm-based per-connection recovery (if peer IP provided and enabled)
+	if [[ -n "$peer_ip" ]] && [[ "${ENABLE_XFRM_RECOVERY:-1}" -eq 1 ]] && command -v ip >/dev/null 2>&1; then
+		declare -g RECOVERY_STRATEGY="xfrm"
+		declare -g RECOVERY_COMMAND="attempt_xfrm_recovery"
+		declare -g RECOVERY_IMPACT="per-connection"
+		declare -g RECOVERY_AVAILABLE=1
+		return 0
+	fi
+
+	# Strategy 2: ipsec reload (Tier 2) or ipsec restart (Tier 3)
+	if command -v ipsec >/dev/null 2>&1; then
+		if [[ "$tier" == "2" ]]; then
+			declare -g RECOVERY_STRATEGY="ipsec_reload"
+			declare -g RECOVERY_COMMAND="ipsec reload"
+			declare -g RECOVERY_IMPACT="all-tunnels"
+		else
+			declare -g RECOVERY_STRATEGY="ipsec_restart"
+			declare -g RECOVERY_COMMAND="ipsec restart"
+			declare -g RECOVERY_IMPACT="all-tunnels"
+		fi
+		declare -g RECOVERY_AVAILABLE=1
+		return 0
+	fi
+
+	# No strategy available
+	declare -g RECOVERY_STRATEGY="unavailable"
+	declare -g RECOVERY_COMMAND=""
+	declare -g RECOVERY_IMPACT=""
+	declare -g RECOVERY_AVAILABLE=0
+	return 1
+}
+
 # Surgical SA cleanup (Tier 2 recovery)
 #
 # Attempts to clean up specific Security Associations for a peer by reloading IPsec configuration.
@@ -306,25 +402,31 @@ surgical_cleanup() {
 	fi
 	log_message "INFO" "Attempting surgical SA cleanup for $peer_display"
 
-	# Try xfrm-based per-connection recovery (if enabled)
-	if command -v ip >/dev/null 2>&1; then
-		if [[ "${ENABLE_XFRM_RECOVERY:-1}" -eq 1 ]]; then
-			log_message "INFO" "Attempting xfrm-based per-connection recovery for $peer_ip"
-			if attempt_xfrm_recovery "$peer_ip"; then
-				log_message "INFO" "xfrm-based recovery completed successfully for $peer_ip"
-				log_message "INFO" "Surgical cleanup completed for $peer_ip (via xfrm)"
-				return 0
-			else
-				# xfrm recovery failed - fall back to ipsec reload
-				handle_error "WARNING" "xfrm-based recovery failed, falling back to ipsec reload (affects all tunnels)"
-			fi
-		else
-			log_message "INFO" "xfrm recovery disabled (ENABLE_XFRM_RECOVERY=0), using ipsec reload fallback (affects all tunnels)"
-		fi
+	# Select recovery strategy
+	if ! select_recovery_strategy "$peer_ip" 2; then
+		# No recovery strategy available
+		warn_if_missing "ip"
+		warn_if_missing "ipsec"
+		handle_error "ERROR" "No recovery strategy available for Tier 2 recovery" 0
+		return 0
 	fi
 
-	# Fall back to ipsec reload
-	if command -v ipsec >/dev/null 2>&1; then
+	# Execute selected strategy
+	case "$RECOVERY_STRATEGY" in
+	"xfrm")
+		log_message "INFO" "Attempting xfrm-based per-connection recovery for $peer_ip"
+		if attempt_xfrm_recovery "$peer_ip"; then
+			log_message "INFO" "xfrm-based recovery completed successfully for $peer_ip"
+			log_message "INFO" "Surgical cleanup completed for $peer_ip (via xfrm)"
+			return 0
+		else
+			# xfrm recovery failed - fall back to ipsec reload
+			handle_error "WARNING" "xfrm-based recovery failed, falling back to ipsec reload (affects all tunnels)"
+			# Re-select strategy for fallback (without peer IP to force ipsec reload)
+			select_recovery_strategy "" 2
+		fi
+		;;
+	"ipsec_reload")
 		log_message "INFO" "Attempting ipsec reload (affects all tunnels)"
 		if ipsec reload >/dev/null 2>&1; then
 			log_message "INFO" "Successfully reloaded IPsec connections via ipsec reload"
@@ -339,12 +441,12 @@ surgical_cleanup() {
 			fi
 		fi
 		log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback)"
-	else
-		# Neither command available
-		warn_if_missing "ip"
-		warn_if_missing "ipsec"
-		handle_error "ERROR" "Neither ip nor ipsec command available for Tier 2 recovery" 0
-	fi
+		;;
+	*)
+		handle_error "ERROR" "Unknown recovery strategy: $RECOVERY_STRATEGY" 0
+		return 0
+		;;
+	esac
 
 	# Always return 0 (function always succeeds - cleanup commands attempted, errors are logged)
 	return 0
@@ -405,8 +507,17 @@ full_restart() {
 		return 1
 	fi
 
-	# Try xfrm-based per-connection recovery if peer IP provided and xfrm enabled
-	if [[ -n "$peer_ip" ]] && [[ "${ENABLE_XFRM_RECOVERY:-1}" -eq 1 ]] && command -v ip >/dev/null 2>&1; then
+	# Select recovery strategy
+	if ! select_recovery_strategy "$peer_ip" 3; then
+		# No recovery strategy available
+		warn_if_missing "ip"
+		warn_if_missing "ipsec"
+		die "No recovery strategy available for Tier 3 recovery"
+	fi
+
+	# Execute selected strategy
+	case "$RECOVERY_STRATEGY" in
+	"xfrm")
 		log_message "INFO" "Tier 3: Attempting xfrm-based per-connection recovery for $peer_ip"
 		if attempt_xfrm_recovery "$peer_ip"; then
 			log_message "INFO" "Tier 3: xfrm-based per-connection recovery successful for $peer_ip"
@@ -416,18 +527,16 @@ full_restart() {
 			return 0
 		else
 			handle_error "WARNING" "Tier 3: xfrm-based recovery failed for $peer_ip, falling back to full restart"
+			# Re-select strategy for fallback (without peer IP to force ipsec restart)
+			select_recovery_strategy "" 3
 		fi
-	fi
+		;;
+	"ipsec_restart")
+		handle_error "WARNING" "Tier 3: Performing full IPsec restart (affects all VPN tunnels)"
 
-	# Fall back to full restart
-	handle_error "WARNING" "Tier 3: Performing full IPsec restart (affects all VPN tunnels)"
+		# Record restart
+		record_restart
 
-	# Record restart
-	record_restart
-
-	# Perform restart
-	# Check for ipsec command
-	if command -v ipsec >/dev/null 2>&1; then
 		log_message "INFO" "Executing ipsec restart (affects all tunnels)"
 		# Capture exit code explicitly to avoid PIPESTATUS being cleared
 		# PIPESTATUS[0] = exit code of first command in pipe (ipsec), not tee
@@ -437,11 +546,12 @@ full_restart() {
 			handle_error "ERROR" "Failed to restart IPsec service (exit code: $ipsec_exit_code)" 0
 			return 1
 		fi
-	else
-		# ipsec command missing
-		warn_if_missing "ipsec"
-		die "ipsec command not available"
-	fi
+		;;
+	*)
+		handle_error "ERROR" "Unknown recovery strategy: $RECOVERY_STRATEGY" 0
+		return 1
+		;;
+	esac
 
 	log_message "INFO" "Full IPsec restart completed"
 	set_cooldown "$COOLDOWN_MINUTES"
@@ -563,8 +673,13 @@ monitor_peer() {
 					# Rate limit would prevent restart (logged by check_rate_limit)
 					log_message "INFO" "Tier 3: Would attempt IPsec restart (skipped in fake mode, rate limit would prevent)"
 				else
-					if [[ "${ENABLE_XFRM_RECOVERY:-1}" -eq 1 ]] && command -v ip >/dev/null 2>&1; then
-						log_message "INFO" "Tier 3: Would attempt xfrm-based per-connection recovery for $external_peer_ip (skipped in fake mode)"
+					# Use strategy selection to determine what would be done
+					if select_recovery_strategy "$external_peer_ip" 3; then
+						if [[ "$RECOVERY_STRATEGY" == "xfrm" ]]; then
+							log_message "INFO" "Tier 3: Would attempt xfrm-based per-connection recovery for $external_peer_ip (skipped in fake mode)"
+						else
+							log_message "INFO" "Tier 3: Would attempt full IPsec restart (affects all tunnels, skipped in fake mode)"
+						fi
 					else
 						log_message "INFO" "Tier 3: Would attempt full IPsec restart (affects all tunnels, skipped in fake mode)"
 					fi

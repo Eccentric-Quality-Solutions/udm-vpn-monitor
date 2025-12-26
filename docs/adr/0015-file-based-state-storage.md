@@ -41,7 +41,7 @@ We will use file-based state storage with plain text files in `/data/vpn-monitor
 - **State File Types**:
   - Per-peer failure counters: `logs/failure_counter_<peer_ip>`
   - Per-peer byte counters: `last_bytes_<peer_ip>`
-  - Restart timestamps: `logs/restart_count`
+  - Restart timestamps: `logs/restart_count` (Unix timestamps of Tier 3 recovery actions only: full IPsec restarts and successful xfrm-based per-connection recovery)
   - Cooldown expiration: `cooldown_until`
 - **File Format**: Plain text with simple value storage
 - **Atomic Operations**: Write-tmp-move pattern ensures atomic updates

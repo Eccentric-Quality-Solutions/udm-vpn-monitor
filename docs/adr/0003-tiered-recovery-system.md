@@ -34,13 +34,12 @@ We will implement a three-tier recovery system that escalates based on consecuti
 - **Complexity**: Requires tracking failure counts and tier logic
 - **Recovery Delay**: Multiple failures required before recovery actions
 - **Fallback Impact**: When xfrm recovery fails, fallback affects all tunnels
-- **Experimental Option**: Per-connection xfrm recovery is experimental and disabled by default
 
 ## Implementation Details
 - **Tier 1**: Logs failure with context (peer IP, failure type, failure count)
-- **Tier 2 Default**: Uses `ip xfrm state delete` for per-connection recovery (if `ENABLE_XFRM_RECOVERY=1`)
+- **Tier 2 Default**: Uses `ip xfrm state delete` for per-connection recovery (enabled by default, `ENABLE_XFRM_RECOVERY=1`)
 - **Tier 2 Fallback**: Uses `ipsec reload` (affects all connections) if xfrm disabled or fails
-- **Tier 3 Default**: Attempts xfrm-based per-connection recovery first (if `ENABLE_XFRM_RECOVERY=1`)
+- **Tier 3 Default**: Attempts xfrm-based per-connection recovery first (enabled by default, `ENABLE_XFRM_RECOVERY=1`)
 - **Tier 3 Fallback**: Uses `ipsec restart` (affects all tunnels) if xfrm disabled or fails
 - **Rate Limiting**: Tier 3 actions are rate-limited to prevent restart loops
 - **Cooldown Period**: After Tier 3 actions, system enters cooldown to allow stabilization

@@ -81,7 +81,7 @@ remove_cron() {
 
 # Remove logrotate configuration
 #
-# Removes the logrotate configuration file for cron.log rotation.
+# Removes the logrotate configuration file for application log rotation.
 # Only removes if the file exists and we have write access.
 #
 # Returns:
@@ -89,9 +89,9 @@ remove_cron() {
 #   1: Failed to remove logrotate config
 #
 # Side effects:
-#   Removes /etc/logrotate.d/vpn-monitor-cron if it exists
+#   Removes /etc/logrotate.d/vpn-monitor if it exists
 remove_logrotate_config() {
-	local logrotate_config="/etc/logrotate.d/vpn-monitor-cron"
+	local logrotate_config="/etc/logrotate.d/vpn-monitor"
 
 	if [[ -f "$logrotate_config" ]]; then
 		log_info "Removing logrotate configuration..."
@@ -325,7 +325,7 @@ verify_uninstallation() {
 	fi
 
 	# Check logrotate config is gone
-	local logrotate_config="/etc/logrotate.d/vpn-monitor-cron"
+	local logrotate_config="/etc/logrotate.d/vpn-monitor"
 	if [[ -f "$logrotate_config" ]]; then
 		log_error "Logrotate configuration still exists: $logrotate_config"
 		errors=$((errors + 1))

@@ -37,9 +37,13 @@ We will implement:
 
 ## Implementation Details
 - **Rate Limiting**:
-  - Tracks restart timestamps in `logs/restart_count` file
+  - Tracks restart timestamps in `logs/restart_count` file (Unix timestamps, one per line)
+  - Records Tier 3 recovery actions only:
+    - Full IPsec restarts (`ipsec restart`) that affect all tunnels
+    - Successful xfrm-based per-connection recovery (when enabled)
+    - Does NOT record Tier 1 (logging) or Tier 2 (surgical cleanup) actions
+  - Automatically cleans up entries older than 24 hours
   - Default limit: `MAX_RESTARTS_PER_HOUR=3` (configurable)
-  - Applies only to Tier 3 (full restart) actions
   - Checks restart count in last hour before allowing Tier 3 action
 - **Cooldown Period**:
   - Tracks cooldown expiration in `cooldown_until` file

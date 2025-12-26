@@ -32,32 +32,33 @@
 #   ["TIER2_THRESHOLD"]="required|integer|min:TIER1_THRESHOLD"
 #   ["ENABLE_PING_CHECK"]="optional|integer|values:0,1|default:1"
 #
-# NOTE: Default values are defined in TWO places:
-# 1. In lib/config.sh (load_config function) - For backward compatibility
-# 2. Here in CONFIG_SCHEMA - For schema-based validation and correction
+# NOTE: Default values are defined in THIS file (CONFIG_SCHEMA) as the single source of truth.
+# The load_config() function in lib/config.sh reads defaults from this schema using
+# get_config_default(), ensuring consistency and eliminating duplication.
 #
-# IMPORTANT: Default values MUST match between both locations.
-# Schema defaults take precedence during validation and will override
-# load_config() defaults if they differ. To change defaults, update BOTH:
-#   - lib/config.sh (load_config function)
-#   - This file (CONFIG_SCHEMA array)
+# IMPORTANT: To change defaults, update ONLY this file (CONFIG_SCHEMA array).
+# The load_config() function will automatically use the updated defaults.
 #
-# Purpose of dual defaults:
-#   - load_config() defaults: Early initialization, backward compatibility
-#   - Schema defaults: Validation, correction of invalid values, consistency
+# Purpose:
+#   - Single source of truth for all default values
+#   - Early initialization in load_config() reads from schema
+#   - Validation and correction also use schema defaults
+#   - Ensures consistency across the codebase
 declare -A CONFIG_SCHEMA=(
 	# Required configuration
+	# NOTE: Required variables have backward compatibility defaults for old config files
+	# These defaults are applied in load_config() but validation still requires them to be set
 	["EXTERNAL_PEER_IPS"]="required|string|non-empty"
 	["INTERNAL_PEER_IPS"]="optional|string||default:"
-	["TIER1_THRESHOLD"]="required|integer|min:1"
+	["TIER1_THRESHOLD"]="required|integer|min:1|default:1"
 	# NOTE: TIER2_THRESHOLD has relative validation (depends on TIER1_THRESHOLD)
 	# Validation order is handled safely - see validate_config_schema() documentation
-	["TIER2_THRESHOLD"]="required|integer|min:TIER1_THRESHOLD"
+	["TIER2_THRESHOLD"]="required|integer|min:TIER1_THRESHOLD|default:3"
 	# NOTE: TIER3_THRESHOLD has relative validation (depends on TIER2_THRESHOLD)
 	# Validation order is handled safely - see validate_config_schema() documentation
-	["TIER3_THRESHOLD"]="required|integer|min:TIER2_THRESHOLD"
-	["COOLDOWN_MINUTES"]="required|integer|min:1|max:1440"
-	["MAX_RESTARTS_PER_HOUR"]="required|integer|min:1|max:60"
+	["TIER3_THRESHOLD"]="required|integer|min:TIER2_THRESHOLD|default:5"
+	["COOLDOWN_MINUTES"]="required|integer|min:1|max:1440|default:15"
+	["MAX_RESTARTS_PER_HOUR"]="required|integer|min:1|max:60|default:3"
 
 	# Optional configuration with defaults
 	["VPN_NAME"]="optional|string||default:Site-to-Site VPN"

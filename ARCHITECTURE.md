@@ -102,8 +102,8 @@ graph TB
     
     subgraph "Recovery Layer"
         Tier1[Tier 1: Logging]
-        Tier2[Tier 2: Surgical Cleanup<br/>ipsec reload (default)<br/>xfrm recovery (experimental)<br/>Per-Connection]
-        Tier3[Tier 3: Full Restart<br/>ipsec restart (always)<br/>xfrm recovery (experimental)<br/>Per-Connection]
+        Tier2[Tier 2: Surgical Cleanup<br/>xfrm recovery (default)<br/>ipsec reload (fallback)<br/>Per-Connection]
+        Tier3[Tier 3: Full Restart<br/>xfrm recovery (default)<br/>ipsec restart (fallback)<br/>Per-Connection]
     end
     
     subgraph "Safety Mechanisms"
@@ -296,8 +296,8 @@ stateDiagram-v2
     
     state Tier2 {
         [*] --> CheckXfrm{Xfrm Recovery<br/>Enabled?}
-        CheckXfrm -->|Yes| AttemptXfrm[xfrm recovery<br/>Per-Connection<br/>Experimental]
-        CheckXfrm -->|No| ReloadIpsec[ipsec reload<br/>All Connections<br/>Default]
+        CheckXfrm -->|Yes| AttemptXfrm[xfrm recovery<br/>Per-Connection<br/>Default]
+        CheckXfrm -->|No| ReloadIpsec[ipsec reload<br/>All Connections<br/>Fallback]
         AttemptXfrm -->|Success| [*]
         AttemptXfrm -->|Failure| ReloadIpsec
         ReloadIpsec --> [*]
@@ -377,7 +377,7 @@ State files are organized into two categories:
 
 **System-Wide State Files** (shared across all peers):
 - `cooldown_until`: Cooldown expiration timestamp (prevents immediate re-restarts)
-- `logs/restart_count`: Timestamps of all restarts (for rate limiting)
+- `logs/restart_count`: Unix timestamps of Tier 3 recovery actions (one timestamp per line, for rate limiting) - see [Rate Limiting](#rate-limiting-logsrestart_count) section below for details
 - `vpn-monitor.lock`: Lockfile for execution control (format: `timestamp:pid` for timeout detection)
 - `.cron_checked`: Flag file to prevent repeated cron persistence checks
 
@@ -436,9 +436,13 @@ Each peer's monitoring and recovery actions operate completely independently.
 
 **Rate Limiting** (`logs/restart_count`):
 - **Purpose**: Prevents restart loops if VPN has persistent issues
-- **Mechanism**: Tracks timestamps of all restarts
+- **Mechanism**: Tracks Unix timestamps (one per line) of Tier 3 recovery actions only
+  - Records full IPsec restarts (`ipsec restart`) that affect all tunnels
+  - Also records successful xfrm-based per-connection recovery (when enabled)
+  - Does NOT record Tier 1 (logging) or Tier 2 (surgical cleanup) actions
+  - Automatically cleans up entries older than 24 hours
 - **Limit**: Configurable via `MAX_RESTARTS_PER_HOUR` (default: 3 restarts per hour)
-- **Behavior**: If limit exceeded, recovery actions are skipped until rate limit window expires
+- **Behavior**: If limit exceeded, Tier 3 recovery actions are skipped until rate limit window expires
 
 **Lockfile** (`vpn-monitor.lock`):
 - **Purpose**: Prevents concurrent script execution
@@ -487,7 +491,7 @@ For implementation details, see the [`lib/state.sh`](#libstatesh) module documen
 ├── logs/                       # Logs directory
 │   ├── vpn-monitor.log         # Main log file
 │   ├── failure_counter_<peer_ip>  # Per-peer failure count (sanitized IP in filename)
-│   └── restart_count           # Timestamps of all restarts
+│   └── restart_count           # Unix timestamps of Tier 3 recovery actions (one per line)
 │
 ├── State Files:
 ├── cooldown_until              # Cooldown expiration timestamp
@@ -714,14 +718,12 @@ graph TB
 - **Why**: Gradual escalation prevents unnecessary disruption
 - **Tiers**: Log → Cleanup → Restart
 - **Tier 2 Details**: 
-  - Default: `ipsec reload` (affects all connections) - per-connection recovery is not supported by default
-  - Experimental option: xfrm-based per-connection recovery (uses `ip xfrm state delete`) if `ENABLE_XFRM_RECOVERY=1` (disabled by default, experimental)
-  - Fallback: Falls back to `ipsec reload` if xfrm recovery fails
+  - Default: xfrm-based per-connection recovery (uses `ip xfrm state delete`) if `ENABLE_XFRM_RECOVERY=1` (enabled by default for UDM OS 4.3+) - affects only the failing tunnel
+  - Fallback: Falls back to `ipsec reload` (affects all connections) if xfrm recovery fails or is disabled
 - **Tier 3 Details**: 
-  - Always uses `ipsec restart` (affects all tunnels) regardless of configuration
-  - Experimental option: xfrm-based per-connection recovery attempted first if `ENABLE_XFRM_RECOVERY=1` (disabled by default, experimental)
-  - Falls back to `ipsec restart` if xfrm recovery fails or is disabled
-- **Benefit**: Most issues resolved without full restart. Per-connection recovery is available as an experimental option but disabled by default due to documented risks.
+  - Default: xfrm-based per-connection recovery attempted first if `ENABLE_XFRM_RECOVERY=1` (enabled by default for UDM OS 4.3+) - affects only the failing tunnel
+  - Fallback: Falls back to `ipsec restart` (affects all tunnels) if xfrm recovery fails or is disabled
+- **Benefit**: Most issues resolved without full restart. Per-connection recovery is enabled by default, providing surgical recovery that affects only the failing tunnel.
 
 ### 4. Per-Peer State Tracking
 - **Why**: Multiple peers need independent monitoring and recovery

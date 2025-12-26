@@ -1271,8 +1271,10 @@ check_ipsec_phase2() {
 
 	local xfrm_output
 	# Use fixed-string matching to prevent regex pattern injection and avoid partial IP matches
+	# Match on "dst $peer_ip" pattern which appears at the start of each SA entry
+	# This ensures we match the complete SA entry and avoid partial IP matches
 	# -F: fixed-string matching (treats IP address as literal, not regex pattern)
-	xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "$peer_ip" || true)
+	xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "dst $peer_ip" || true)
 
 	if [[ -n "$xfrm_output" ]]; then
 		return 0

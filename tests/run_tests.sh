@@ -338,8 +338,8 @@ filter_test_files() {
 		filename=$(basename "$test_file")
 
 		# Check if this is a slow test file
-		# Slow tests are: test_integration.sh and test_high_risk.sh
-		if [[ "$filename" == "test_integration.sh" ]] || [[ "$filename" == "test_high_risk.sh" ]]; then
+		# Slow tests are: test_integration.sh and test_high_risk*.sh files
+		if [[ "$filename" == "test_integration.sh" ]] || [[ "$filename" == test_high_risk*.sh ]]; then
 			# Include slow tests only if RUN_SLOW_TESTS is enabled
 			if [[ "$RUN_SLOW_TESTS" -eq 1 ]]; then
 				echo "$test_file"
@@ -858,7 +858,7 @@ Test Behavior:
     Tests that exceed 2 minutes (120 seconds) will be skipped automatically.
     Use --all flag or set FAST_FAIL=0 to run all tests regardless of failures (default).
     
-    Slow tests (test_integration.sh and test_high_risk.sh) are excluded by default.
+    Slow tests (test_integration.sh and test_high_risk*.sh files) are excluded by default.
     Use --slow flag or set RUN_SLOW_TESTS=1 to include them.
     
     Test timeout is set to 120 seconds (2 minutes) by default. Tests exceeding this

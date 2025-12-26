@@ -374,67 +374,141 @@ calculate_statistics() {
 	local total_tier3_completed=${#TIER3_COMPLETED[@]}
 
 	# Calculate date range from log data
+	# Find the earliest and latest timestamps across all events
 	local first_date=""
 	local last_date=""
-	if [[ ${#FAILURES[@]} -gt 0 ]]; then
-		first_date="${FAILURES[0]%%|*}"
-		last_date="${FAILURES[-1]%%|*}"
-	fi
-	if [[ ${#RECOVERIES[@]} -gt 0 ]]; then
-		local recovery_first="${RECOVERIES[0]%%|*}"
-		local recovery_last="${RECOVERIES[-1]%%|*}"
-		if [[ -z "$first_date" ]] || [[ "$recovery_first" < "$first_date" ]]; then
-			first_date="$recovery_first"
-		fi
-		if [[ -z "$last_date" ]] || [[ "$recovery_last" > "$last_date" ]]; then
-			last_date="$recovery_last"
-		fi
+
+	# Collect all timestamps and find min/max
+	local all_timestamps=()
+	local i
+	for i in "${!FAILURES[@]}"; do
+		local timestamp="${FAILURES[$i]%%|*}"
+		all_timestamps+=("$timestamp")
+	done
+	for i in "${!RECOVERIES[@]}"; do
+		local timestamp="${RECOVERIES[$i]%%|*}"
+		all_timestamps+=("$timestamp")
+	done
+
+	# Find earliest and latest timestamps
+	if [[ ${#all_timestamps[@]} -gt 0 ]]; then
+		# Sort timestamps to find actual first and last
+		IFS=$'\n' sorted_timestamps=($(printf '%s\n' "${all_timestamps[@]}" | sort))
+		unset IFS
+		first_date="${sorted_timestamps[0]}"
+		last_date="${sorted_timestamps[-1]}"
 	fi
 
 	# Calculate time span in days
 	local days=0
 	if [[ -n "$first_date" ]] && [[ -n "$last_date" ]]; then
+		# Extract date part (YYYY-MM-DD) from timestamp
+		local start_date="${first_date%% *}"
+		local end_date="${last_date%% *}"
+
 		# Convert dates to seconds since epoch and calculate difference
-		local start_sec=$(date -d "${first_date%% *}" +%s 2>/dev/null || echo "0")
-		local end_sec=$(date -d "${last_date%% *}" +%s 2>/dev/null || echo "0")
+		local start_sec=$(date -d "$start_date" +%s 2>/dev/null || echo "0")
+		local end_sec=$(date -d "$end_date" +%s 2>/dev/null || echo "0")
+
 		if [[ $start_sec -gt 0 ]] && [[ $end_sec -gt 0 ]]; then
 			local diff_sec=$((end_sec - start_sec))
-			days=$((diff_sec / 86400))
-			# Round up if there's any remainder
-			if [[ $((diff_sec % 86400)) -gt 0 ]]; then
-				days=$((days + 1))
+			# Calculate days (always at least 1 if there's any difference)
+			if [[ $diff_sec -ge 0 ]]; then
+				days=$((diff_sec / 86400))
+				# Round up if there's any remainder (so even same-day shows as 1 day)
+				if [[ $((diff_sec % 86400)) -gt 0 ]] || [[ $days -eq 0 ]]; then
+					days=$((days + 1))
+				fi
+			else
+				# Negative difference shouldn't happen, but handle it
+				days=1
 			fi
 			# Minimum 1 day
 			[[ $days -lt 1 ]] && days=1
 		else
+			# Date parsing failed, default to 1 day
 			days=1
 		fi
 	else
+		# No timestamps found, default to 1 day
 		days=1
 	fi
 
 	# Calculate failure frequency (per day)
+	# Use awk for floating point division (more reliable than bc)
 	FAILURES_PER_DAY=0
-	if [[ $days -gt 0 ]]; then
-		FAILURES_PER_DAY=$(echo "scale=2; $total_failures / $days" | bc 2>/dev/null || echo "0")
+	if [[ $days -gt 0 ]] && [[ $total_failures -gt 0 ]]; then
+		# Try awk first (more common than bc)
+		if command -v awk >/dev/null 2>&1; then
+			FAILURES_PER_DAY=$(awk "BEGIN {printf \"%.2f\", $total_failures / $days}" 2>/dev/null)
+		fi
+		# Fallback to bc if awk failed or not available
+		if [[ -z "$FAILURES_PER_DAY" ]] || [[ "$FAILURES_PER_DAY" == "0" ]] || [[ "$FAILURES_PER_DAY" == "" ]]; then
+			if command -v bc >/dev/null 2>&1; then
+				FAILURES_PER_DAY=$(echo "scale=2; $total_failures / $days" | bc 2>/dev/null)
+			fi
+		fi
+		# Final fallback: use bash integer division with manual decimal
+		if [[ -z "$FAILURES_PER_DAY" ]] || [[ "$FAILURES_PER_DAY" == "0" ]] || [[ "$FAILURES_PER_DAY" == "" ]]; then
+			local int_part=$((total_failures / days))
+			local remainder=$((total_failures % days))
+			# Calculate decimal part (multiply remainder by 100, divide by days, round)
+			local decimal_part=$(((remainder * 100) / days))
+			FAILURES_PER_DAY="${int_part}.${decimal_part}"
+		fi
+		# Ensure we have a valid value
+		[[ -z "$FAILURES_PER_DAY" ]] && FAILURES_PER_DAY="0"
 	fi
 
 	# Calculate recovery success rate
 	RECOVERY_SUCCESS_RATE=0
-	if [[ $total_failures -gt 0 ]]; then
-		RECOVERY_SUCCESS_RATE=$(echo "scale=2; ($total_recoveries * 100) / $total_failures" | bc 2>/dev/null || echo "0")
+	if [[ $total_failures -gt 0 ]] && [[ $total_recoveries -gt 0 ]]; then
+		# Use awk first (more common than bc)
+		if command -v awk >/dev/null 2>&1; then
+			RECOVERY_SUCCESS_RATE=$(awk "BEGIN {printf \"%.2f\", ($total_recoveries * 100) / $total_failures}" 2>/dev/null)
+		fi
+		# Fallback to bash integer math if awk failed
+		if [[ -z "$RECOVERY_SUCCESS_RATE" ]] || [[ "$RECOVERY_SUCCESS_RATE" == "0" ]] || [[ "$RECOVERY_SUCCESS_RATE" == "" ]]; then
+			local int_part=$(((total_recoveries * 100) / total_failures))
+			local remainder=$(((total_recoveries * 100) % total_failures))
+			local decimal_part=$(((remainder * 100) / total_failures))
+			RECOVERY_SUCCESS_RATE="${int_part}.${decimal_part}"
+		fi
+		[[ -z "$RECOVERY_SUCCESS_RATE" ]] && RECOVERY_SUCCESS_RATE="0"
 	fi
 
 	# Calculate tier 2 success rate
 	TIER2_SUCCESS_RATE=0
-	if [[ $total_tier2 -gt 0 ]]; then
-		TIER2_SUCCESS_RATE=$(echo "scale=2; ($total_tier2_completed * 100) / $total_tier2" | bc 2>/dev/null || echo "0")
+	if [[ $total_tier2 -gt 0 ]] && [[ $total_tier2_completed -gt 0 ]]; then
+		# Use awk first (more common than bc)
+		if command -v awk >/dev/null 2>&1; then
+			TIER2_SUCCESS_RATE=$(awk "BEGIN {printf \"%.2f\", ($total_tier2_completed * 100) / $total_tier2}" 2>/dev/null)
+		fi
+		# Fallback to bash integer math if awk failed
+		if [[ -z "$TIER2_SUCCESS_RATE" ]] || [[ "$TIER2_SUCCESS_RATE" == "0" ]] || [[ "$TIER2_SUCCESS_RATE" == "" ]]; then
+			local int_part=$(((total_tier2_completed * 100) / total_tier2))
+			local remainder=$(((total_tier2_completed * 100) % total_tier2))
+			local decimal_part=$(((remainder * 100) / total_tier2))
+			TIER2_SUCCESS_RATE="${int_part}.${decimal_part}"
+		fi
+		[[ -z "$TIER2_SUCCESS_RATE" ]] && TIER2_SUCCESS_RATE="0"
 	fi
 
 	# Calculate tier 3 success rate
 	TIER3_SUCCESS_RATE=0
-	if [[ $total_tier3 -gt 0 ]]; then
-		TIER3_SUCCESS_RATE=$(echo "scale=2; ($total_tier3_completed * 100) / $total_tier3" | bc 2>/dev/null || echo "0")
+	if [[ $total_tier3 -gt 0 ]] && [[ $total_tier3_completed -gt 0 ]]; then
+		# Use awk first (more common than bc)
+		if command -v awk >/dev/null 2>&1; then
+			TIER3_SUCCESS_RATE=$(awk "BEGIN {printf \"%.2f\", ($total_tier3_completed * 100) / $total_tier3}" 2>/dev/null)
+		fi
+		# Fallback to bash integer math if awk failed
+		if [[ -z "$TIER3_SUCCESS_RATE" ]] || [[ "$TIER3_SUCCESS_RATE" == "0" ]] || [[ "$TIER3_SUCCESS_RATE" == "" ]]; then
+			local int_part=$(((total_tier3_completed * 100) / total_tier3))
+			local remainder=$(((total_tier3_completed * 100) % total_tier3))
+			local decimal_part=$(((remainder * 100) / total_tier3))
+			TIER3_SUCCESS_RATE="${int_part}.${decimal_part}"
+		fi
+		[[ -z "$TIER3_SUCCESS_RATE" ]] && TIER3_SUCCESS_RATE="0"
 	fi
 
 	STATS_FIRST_DATE="$first_date"

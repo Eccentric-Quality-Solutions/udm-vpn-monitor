@@ -6,10 +6,10 @@
 # Version: 0.0.1
 #
 # Default Value Handling:
-#   Default values are set in TWO locations for different purposes:
-#   1. load_config() function - Early initialization, backward compatibility
-#   2. validate_config_var() function - Schema-based validation and correction
-#   Both locations MUST have matching defaults. See function documentation for details.
+#   Default values are defined in lib/config_schema.sh as the single source of truth.
+#   The load_config() function reads defaults from the schema using get_config_default(),
+#   ensuring consistency and eliminating duplication. To change defaults, update only
+#   config_schema.sh - load_config() will automatically use the updated values.
 #
 
 # Source constants for magic numbers
@@ -118,48 +118,95 @@ recalculate_log_paths() {
 #
 # Note:
 #   Requires log_message function to be available (from logging.sh)
+#   Default values are read from config_schema.sh (single source of truth)
+
+# Apply default values from schema
+#
+# Sets default values for all configuration variables from the schema definition.
+# This ensures variables have values before config file is sourced, allowing scripts
+# to reference config variables safely. Defaults are read from config_schema.sh,
+# making it the single source of truth for default values.
+#
+# Side effects:
+#   - Sets global configuration variables to their schema-defined defaults if not already set
+#   - Variables are set via indirect assignment (declare -g + printf -v)
+#
+# Note:
+#   Requires CONFIG_SCHEMA to be defined (from config_schema.sh)
+#   For required variables without schema defaults, backward compatibility defaults
+#   are applied (see function body for details)
+apply_schema_defaults() {
+	local var_name
+	local default_val
+	local schema
+	local required
+	local var_type
+	local rules
+	local default_val_part
+
+	# Iterate through all variables in schema
+	for var_name in "${!CONFIG_SCHEMA[@]}"; do
+		# Get default value from schema
+		default_val=$(get_config_default "$var_name" 2>/dev/null || echo "")
+
+		# Get schema to check if variable is required
+		schema=$(get_config_schema "$var_name" 2>/dev/null || echo "")
+		if [[ -n "$schema" ]]; then
+			# Parse schema to get required status
+			IFS='|' read -r required var_type rules default_val_part <<<"$schema"
+		else
+			required="optional"
+		fi
+
+		# Apply default if variable is not already set
+		# Use declare -p to check if variable is set (works for indirect references)
+		if ! declare -p "$var_name" &>/dev/null; then
+			# Variable not set, apply default
+			if [[ -n "$default_val" ]]; then
+				# Schema has a default, use it (works for both optional and required variables)
+				declare -g "$var_name"
+				printf -v "$var_name" '%s' "$default_val"
+			else
+				# No default in schema - leave empty
+				# For required variables, validation will catch empty values
+				# For optional variables, empty is acceptable
+				declare -g "$var_name"
+				printf -v "$var_name" '%s' ""
+			fi
+		fi
+	done
+}
+
+# Load configuration from file
+#
+# Loads configuration variables from the config file if it exists.
+# Sets default values for all configuration variables from the schema.
+# Validates configuration file readability and syntax.
+#
+# Arguments:
+#   $1: Path to configuration file
+#
+# Returns:
+#   0: Configuration loaded successfully
+#   1: Configuration file error (exits script)
+#
+# Side effects:
+#   - Sources configuration file to set variables
+#   - Updates LOG_FILE and LOGS_DIR paths
+#   - Calls log_message (requires logging.sh to be sourced)
+#   - Exits script on error
+#
+# Note:
+#   Requires log_message function to be available (from logging.sh)
+#   Default values are read from config_schema.sh (single source of truth)
 load_config() {
 	local config_file="$1"
 
-	# Set default configuration values
-	#
-	# NOTE: Default values are set in TWO places for different purposes:
-	# 1. Here in load_config() - For backward compatibility and early initialization
-	#    - Ensures variables have values before config file is sourced
-	#    - Allows scripts to reference config variables safely
-	#    - Maintains compatibility with existing code that expects defaults
-	#
-	# 2. In validate_config_var() - For schema-based validation and correction
-	#    - Applies defaults from schema definition (lib/config_schema.sh)
-	#    - Corrects invalid optional values to defaults
-	#    - Ensures consistency with schema-defined defaults
-	#
-	# IMPORTANT: Default values here MUST match schema defaults in lib/config_schema.sh
-	# If defaults differ, schema validation will override these values.
-	# To change defaults, update BOTH locations:
-	#   - This file (load_config function)
-	#   - lib/config_schema.sh (CONFIG_SCHEMA array)
-
-	EXTERNAL_PEER_IPS="${EXTERNAL_PEER_IPS:-}"
-	INTERNAL_PEER_IPS="${INTERNAL_PEER_IPS:-}"
-	VPN_NAME="${VPN_NAME:-Site-to-Site VPN}"
-	TIER1_THRESHOLD="${TIER1_THRESHOLD:-1}"
-	TIER2_THRESHOLD="${TIER2_THRESHOLD:-3}"
-	TIER3_THRESHOLD="${TIER3_THRESHOLD:-5}"
-	COOLDOWN_MINUTES="${COOLDOWN_MINUTES:-15}"
-	MAX_RESTARTS_PER_HOUR="${MAX_RESTARTS_PER_HOUR:-3}"
-	LOCKFILE_TIMEOUT="${LOCKFILE_TIMEOUT:-$LOCKFILE_TIMEOUT_DEFAULT}"
-	ENABLE_PING_CHECK="${ENABLE_PING_CHECK:-1}"
-	LOCAL_UDM_IP="${LOCAL_UDM_IP:-}"
-	PING_COUNT="${PING_COUNT:-3}"
-	PING_TIMEOUT="${PING_TIMEOUT:-2}"
-	ENABLE_KEEPALIVE="${ENABLE_KEEPALIVE:-1}"
-	KEEPALIVE_INTERVAL="${KEEPALIVE_INTERVAL:-30}"
-	KEEPALIVE_PING_COUNT="${KEEPALIVE_PING_COUNT:-1}"
-	DEBUG="${DEBUG:-0}"
-	NO_ESCALATE="${NO_ESCALATE:-0}"
-	# xfrm-based per-connection recovery (enabled by default for UDM OS 4.3+)
-	ENABLE_XFRM_RECOVERY="${ENABLE_XFRM_RECOVERY:-1}"
+	# Set default configuration values from schema
+	# This ensures variables have values before config file is sourced,
+	# allowing scripts to reference config variables safely.
+	# Defaults are read from config_schema.sh, making it the single source of truth.
+	apply_schema_defaults
 
 	# Load configuration if it exists
 	if [[ -f "$config_file" ]]; then
@@ -227,9 +274,11 @@ parse_config_schema() {
 
 # Apply default value to configuration variable
 #
-# Applies a default value to an optional configuration variable if it's empty.
+# Applies a default value from schema if the variable is empty.
+# Works for both optional and required variables (required variables may have
+# backward compatibility defaults in the schema).
 # Also corrects invalid optional values by applying schema defaults.
-# For required variables, exits script if value is empty.
+# For required variables without defaults, exits script if value is empty.
 #
 # Arguments:
 #   $1: Variable name (used for error messages and indirect variable assignment)
@@ -254,7 +303,7 @@ parse_config_schema() {
 #
 # Note:
 #   Requires die function to be available (from logging.sh)
-#   Default values MUST match between load_config() and schema defaults
+#   Default values come from config_schema.sh (single source of truth)
 apply_config_default() {
 	local var_name="$1"
 	local var_value="$2"
@@ -270,15 +319,9 @@ apply_config_default() {
 
 	# If optional and empty, use default from schema
 	#
-	# NOTE: Default values are set in TWO places:
-	# 1. In load_config() - For early initialization and backward compatibility
-	# 2. Here in apply_config_default() - For schema-based defaults and correction
-	#
-	# This location applies defaults from the schema definition (lib/config_schema.sh).
-	# It also corrects invalid optional values by applying schema defaults.
-	# Schema defaults take precedence over load_config() defaults if they differ.
-	#
-	# IMPORTANT: Schema defaults in lib/config_schema.sh MUST match load_config() defaults.
+	# Default values come from lib/config_schema.sh (single source of truth).
+	# This function applies defaults from the schema definition and corrects
+	# invalid optional values by applying schema defaults.
 	if [[ "$required" == "optional" ]] && [[ -z "$var_value" ]] && [[ -n "$default_val" ]]; then
 		# Set default value from schema using safe indirect variable assignment
 		# Use declare -g to ensure variable is in global scope, then printf -v for safe assignment

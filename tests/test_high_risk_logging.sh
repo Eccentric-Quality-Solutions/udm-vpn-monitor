@@ -1,0 +1,291 @@
+#!/usr/bin/env bats
+#
+# High-risk tests: Logging Failure Scenarios
+# Tests critical paths and error handling scenarios that could cause production failures
+#
+# This file is part of the high-risk test suite, split from test_high_risk.sh
+# for better organization and maintainability.
+
+load test_helper
+
+# Path to the VPN monitor script
+VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
+
+# ============================================================================
+# 7.1 LOGGING FAILURE SCENARIOS
+# ============================================================================
+
+@test "high-risk: log file is a directory" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+EXTERNAL_PEER_IPS="192.168.1.1"
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	# Create log file as a directory
+	rm -rf "$log_file" 2>/dev/null || true
+	mkdir -p "$log_file"
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	add_mock_to_path
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+
+	# Should handle directory gracefully (output to stderr)
+	# Log file won't exist as a file, but script should not crash
+
+	remove_mock_from_path
+}
+
+# ============================================================================
+# 7.1 LOGGING FAILURE SCENARIOS
+# ============================================================================
+
+@test "high-risk: log file permissions prevent write" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+EXTERNAL_PEER_IPS="192.168.1.1"
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	# Create log file and make it read-only (prevents write)
+	touch "$log_file"
+	chmod 444 "$log_file"
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	add_mock_to_path
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+
+	# Should handle read-only log file gracefully (should output to stderr)
+	# Script should not crash even if log writes fail
+	# Note: We can't easily verify stderr output in this test, but script should continue
+
+	# Restore permissions for cleanup
+	chmod 644 "$log_file" 2>/dev/null || true
+	remove_mock_from_path
+}
+
+# ============================================================================
+# 7.1 LOGGING FAILURE SCENARIOS (continued)
+# ============================================================================
+
+@test "high-risk: log directory becomes read-only during execution" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+EXTERNAL_PEER_IPS="192.168.1.1"
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	add_mock_to_path
+
+	# Make log directory read-only before execution
+	chmod 555 "${TEST_DIR}/logs"
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+
+	# Should handle read-only log directory gracefully (should output to stderr)
+	# Script should not crash even if log writes fail
+
+	# Restore permissions for cleanup
+	chmod 755 "${TEST_DIR}/logs" 2>/dev/null || true
+	remove_mock_from_path
+}
+
+@test "high-risk: log file becomes read-only during execution" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+EXTERNAL_PEER_IPS="192.168.1.1"
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	# Create log file and make it read-only
+	touch "$log_file"
+	chmod 444 "$log_file"
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	add_mock_to_path
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+
+	# Should handle read-only log file gracefully (should output to stderr)
+	# Script should not crash even if log writes fail
+
+	# Restore permissions for cleanup
+	chmod 644 "$log_file" 2>/dev/null || true
+	remove_mock_from_path
+}
+
+@test "high-risk: log directory deleted during execution" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+EXTERNAL_PEER_IPS="192.168.1.1"
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	add_mock_to_path
+
+	# Delete log directory before execution (simulates deletion during execution)
+	rm -rf "${TEST_DIR}/logs"
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+
+	# Should handle deleted log directory gracefully (should recreate or output to stderr)
+	# Script should not crash even if log directory is missing
+
+	remove_mock_from_path
+}
+
+# ============================================================================
+# 7.2 LOG PATH EDGE CASES
+# ============================================================================
+
+@test "high-risk: LOG_FILE path contains symlinks" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	local symlink_log_dir="${TEST_DIR}/symlink-logs"
+	local real_log_dir="${TEST_DIR}/real-logs"
+	cat >"$config_file" <<EOF
+EXTERNAL_PEER_IPS="192.168.1.1"
+LOG_FILE="${symlink_log_dir}/vpn-monitor.log"
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	# Create real log directory and symlink to it
+	mkdir -p "$real_log_dir"
+	ln -sf "$real_log_dir" "$symlink_log_dir"
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	add_mock_to_path
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	# Should handle symlink path gracefully (should write to real directory)
+	assert_file_exist "$log_file"
+	# Verify log file was created in real directory (via symlink)
+	if [[ -L "$symlink_log_dir" ]]; then
+		local real_log_file="${real_log_dir}/vpn-monitor.log"
+		# Log file should exist in real directory
+		[[ -f "$real_log_file" ]] || [[ -f "$log_file" ]]
+	fi
+
+	# Cleanup
+	rm -f "$symlink_log_dir" 2>/dev/null || true
+	rm -rf "$real_log_dir" 2>/dev/null || true
+	remove_mock_from_path
+}
+
+@test "high-risk: LOG_FILE path contains special characters" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	local special_log_dir="${TEST_DIR}/logs-with-special-chars"
+	cat >"$config_file" <<EOF
+EXTERNAL_PEER_IPS="192.168.1.1"
+LOG_FILE="${special_log_dir}/vpn-monitor.log"
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	# Create log directory with special characters in path
+	mkdir -p "$special_log_dir"
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	add_mock_to_path
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+
+	# Should handle special characters in path gracefully
+	assert_file_exist "$log_file"
+
+	# Cleanup
+	rm -rf "$special_log_dir" 2>/dev/null || true
+	remove_mock_from_path
+}
+
+# ============================================================================
+# 7.1 LOGGING FAILURE SCENARIOS (continued)
+# ============================================================================
+
+@test "high-risk: disk full scenario (log write fails)" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+EXTERNAL_PEER_IPS="192.168.1.1"
+EOF
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	# Create log file initially (simulates some writes succeeded)
+	touch "$log_file"
+	echo "Initial log entry" >"$log_file"
+
+	# Make log directory read-only to simulate disk full (prevents new writes)
+	# This simulates the scenario where disk becomes full during execution
+	chmod 555 "${TEST_DIR}/logs"
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	add_mock_to_path
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+
+	# Should handle disk full scenario gracefully (should output to stderr)
+	# Script should not crash even if log writes fail
+	# Code at lib/logging.sh:94-100 handles write failures gracefully
+
+	# Restore permissions for cleanup
+	chmod 755 "${TEST_DIR}/logs" 2>/dev/null || true
+	remove_mock_from_path
+}

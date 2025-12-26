@@ -26,5 +26,9 @@ These are some of the Linux utilities that we have to work with on a UDM running
 - iptables-save
 - systemctl
 - systemd
+- logrotate
 
-We do not have: logread, swanctl
+We do not have:
+- logread
+- swanctl
+- bc (use awk for floating-point math instead)

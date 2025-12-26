@@ -29,11 +29,11 @@ Common issues and solutions for the UDM VPN Monitor.
    ```bash
    crontab -l | grep vpn-monitor
    ```
-   Should show: `*/1 * * * * /data/vpn-monitor/vpn-monitor.sh >> /data/vpn-monitor/cron.log 2>&1`
+   Should show: `*/1 * * * * /data/vpn-monitor/vpn-monitor.sh >> /data/vpn-monitor/logs/cron.log 2>&1`
 
 2. **Check cron.log for errors**:
    ```bash
-   tail -f /data/vpn-monitor/cron.log
+   tail -f /data/vpn-monitor/logs/cron.log
    ```
    Look for error messages or permission issues.
 
@@ -205,7 +205,7 @@ service cron status
    ```bash
    cat /data/vpn-monitor/logs/restart_count
    ```
-   If too many restarts in last hour, rate limiting may block recovery.
+   This file contains Unix timestamps (one per line) of Tier 3 recovery actions (full IPsec restarts and successful xfrm-based per-connection recovery). If too many restarts occurred in the last hour (default: max 3), rate limiting may block further Tier 3 recovery actions.
 
 6. **Check cooldown period**:
    ```bash

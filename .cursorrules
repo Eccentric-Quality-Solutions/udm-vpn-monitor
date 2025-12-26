@@ -1,4 +1,13 @@
+
+- Don't assume we need backwards compatibility, this app is currently only used in a single deployment. In most cases we can move forward without maintaining backwards compatibility and just reinstall the app on the applicable UDMs. Do ask before ignoring backwards compatibility but don't assume it is necessary.
+
+## Linting and Formatting
 - shfmt and shellcheck have been installed using brew
+
+## Testing
 - Always make sure when running tests that they stream output to the terminal and aren't buffered
-- You are really bad at knowing the date. When hardcoding dates use the local system date.\
-- Whenever you run tests and a test is slow, make sure to mark it as such.
+- Whenever you run tests and a test is slow, make sure to tag it as such.
+
+## Documenting Knowledge
+- You are really bad at knowing the date. When hardcoding dates use the local system date.
+- When you learn new things about coding for this project - e.g. the way BATS works or commands that aren't available for use on UDM OS, make sure to update a document with your learnings then use that document to inform future coding decisions.

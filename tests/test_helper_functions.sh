@@ -1368,6 +1368,61 @@ EOF
 	assert_output "*/1 * * * *"
 }
 
+@test "apply_schema_defaults reads defaults from schema (single source of truth)" {
+	# Source config.sh (which sources config_schema.sh)
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		# Source logging.sh first (required by config.sh)
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+
+	# Unset all config variables to test defaults
+	# Use both unset and explicit empty assignment to ensure variables are truly unset
+	unset EXTERNAL_PEER_IPS INTERNAL_PEER_IPS VPN_NAME TIER1_THRESHOLD TIER2_THRESHOLD TIER3_THRESHOLD 2>/dev/null || true
+	unset COOLDOWN_MINUTES MAX_RESTARTS_PER_HOUR LOCKFILE_TIMEOUT ENABLE_PING_CHECK LOCAL_UDM_IP 2>/dev/null || true
+	unset PING_COUNT PING_TIMEOUT ENABLE_KEEPALIVE KEEPALIVE_INTERVAL KEEPALIVE_PING_COUNT 2>/dev/null || true
+	unset DEBUG NO_ESCALATE ENABLE_XFRM_RECOVERY LOG_FILE STATE_DIR LOGS_DIR CRON_SCHEDULE 2>/dev/null || true
+
+	# Call apply_schema_defaults directly
+	apply_schema_defaults
+
+	# Verify defaults from schema are applied
+	# Test a few key defaults from schema (using variables without spaces first)
+	assert [ "$ENABLE_PING_CHECK" = "1" ]
+	assert [ "$PING_COUNT" = "3" ]
+	assert [ "$PING_TIMEOUT" = "2" ]
+	assert [ "$ENABLE_KEEPALIVE" = "1" ]
+	assert [ "$KEEPALIVE_INTERVAL" = "30" ]
+	assert [ "$KEEPALIVE_PING_COUNT" = "1" ]
+	assert [ "$DEBUG" = "0" ]
+	assert [ "$NO_ESCALATE" = "0" ]
+	assert [ "$ENABLE_XFRM_RECOVERY" = "1" ]
+	assert [ "$LOCKFILE_TIMEOUT" = "300" ]
+
+	# Test VPN_NAME (has spaces, use direct comparison to avoid assert quoting issues)
+	if [ "$VPN_NAME" != "Site-to-Site VPN" ]; then
+		echo "VPN_NAME mismatch: expected 'Site-to-Site VPN', got '$VPN_NAME'" >&2
+		return 1
+	fi
+
+	# Test CRON_SCHEDULE (has spaces and special chars)
+	if [ "$CRON_SCHEDULE" != "*/1 * * * *" ]; then
+		echo "CRON_SCHEDULE mismatch: expected '*/1 * * * *', got '$CRON_SCHEDULE'" >&2
+		return 1
+	fi
+
+	# Verify backward compatibility defaults for required variables
+	assert [ "$TIER1_THRESHOLD" = "1" ]
+	assert [ "$TIER2_THRESHOLD" = "3" ]
+	assert [ "$TIER3_THRESHOLD" = "5" ]
+	assert [ "$COOLDOWN_MINUTES" = "15" ]
+	assert [ "$MAX_RESTARTS_PER_HOUR" = "3" ]
+}
+
 # ============================================================================
 # Tests for config.sh validation functions
 # ============================================================================
@@ -2644,4 +2699,223 @@ source_lockfile_module() {
 		# Core functionality is tested in unit tests above
 		skip "Mock IP command not found in PATH (integration test skipped, unit tests passed)"
 	fi
+}
+
+# ============================================================================
+# Tests for recovery.sh - select_recovery_strategy function
+# ============================================================================
+
+@test "select_recovery_strategy selects xfrm strategy when peer IP provided and xfrm enabled" {
+	if [[ -f "${LIB_DIR}/recovery.sh" ]]; then
+		# Source dependencies
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		if [[ -f "${LIB_DIR}/config.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/config.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
+	fi
+
+	# Set up environment
+	ENABLE_XFRM_RECOVERY=1
+	# Mock ip command available
+	local mock_ip="${TEST_DIR}/ip"
+	echo '#!/bin/bash' >"$mock_ip"
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# Test strategy selection (call directly, not with run, so global variables persist)
+	select_recovery_strategy "203.0.113.1" 2
+
+	assert [ "$RECOVERY_STRATEGY" = "xfrm" ]
+	assert [ "$RECOVERY_COMMAND" = "attempt_xfrm_recovery" ]
+	assert [ "$RECOVERY_IMPACT" = "per-connection" ]
+	assert [ "$RECOVERY_AVAILABLE" = "1" ]
+
+	remove_mock_from_path
+}
+
+@test "select_recovery_strategy selects ipsec_reload for tier 2 when xfrm disabled" {
+	if [[ -f "${LIB_DIR}/recovery.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		if [[ -f "${LIB_DIR}/config.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/config.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
+	fi
+
+	# Clear variables from previous tests
+	unset RECOVERY_STRATEGY RECOVERY_COMMAND RECOVERY_IMPACT RECOVERY_AVAILABLE
+
+	# Set up environment
+	ENABLE_XFRM_RECOVERY=0
+	# Mock ipsec command available
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	echo '#!/bin/bash' >"$mock_ipsec"
+	chmod +x "$mock_ipsec"
+	add_mock_to_path
+
+	# Test strategy selection (call directly, not with run, so global variables persist)
+	select_recovery_strategy "203.0.113.1" 2
+
+	assert [ "$RECOVERY_STRATEGY" = "ipsec_reload" ]
+	# Use direct comparison for values with spaces
+	if [ "$RECOVERY_COMMAND" != "ipsec reload" ]; then
+		echo "RECOVERY_COMMAND mismatch: expected 'ipsec reload', got '$RECOVERY_COMMAND'" >&2
+		return 1
+	fi
+	assert [ "$RECOVERY_IMPACT" = "all-tunnels" ]
+	assert [ "$RECOVERY_AVAILABLE" = "1" ]
+
+	remove_mock_from_path
+}
+
+@test "select_recovery_strategy selects ipsec_restart for tier 3" {
+	if [[ -f "${LIB_DIR}/recovery.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		if [[ -f "${LIB_DIR}/config.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/config.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
+	fi
+
+	# Clear variables from previous tests
+	unset RECOVERY_STRATEGY RECOVERY_COMMAND RECOVERY_IMPACT RECOVERY_AVAILABLE
+
+	# Set up environment
+	ENABLE_XFRM_RECOVERY=0
+	# Mock ipsec command available
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	echo '#!/bin/bash' >"$mock_ipsec"
+	chmod +x "$mock_ipsec"
+	add_mock_to_path
+
+	# Test strategy selection (call directly, not with run, so global variables persist)
+	select_recovery_strategy "" 3
+
+	assert [ "$RECOVERY_STRATEGY" = "ipsec_restart" ]
+	# Use direct comparison for values with spaces
+	if [ "$RECOVERY_COMMAND" != "ipsec restart" ]; then
+		echo "RECOVERY_COMMAND mismatch: expected 'ipsec restart', got '$RECOVERY_COMMAND'" >&2
+		return 1
+	fi
+	assert [ "$RECOVERY_IMPACT" = "all-tunnels" ]
+	assert [ "$RECOVERY_AVAILABLE" = "1" ]
+
+	remove_mock_from_path
+}
+
+@test "select_recovery_strategy selects ipsec_reload when no peer IP provided" {
+	if [[ -f "${LIB_DIR}/recovery.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		if [[ -f "${LIB_DIR}/config.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/config.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
+	fi
+
+	# Clear variables from previous tests
+	unset RECOVERY_STRATEGY RECOVERY_COMMAND RECOVERY_IMPACT RECOVERY_AVAILABLE
+
+	# Set up environment
+	ENABLE_XFRM_RECOVERY=1
+	# Mock ipsec command available
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	echo '#!/bin/bash' >"$mock_ipsec"
+	chmod +x "$mock_ipsec"
+	add_mock_to_path
+
+	# Test strategy selection (no peer IP, call directly so global variables persist)
+	select_recovery_strategy "" 2
+
+	assert [ "$RECOVERY_STRATEGY" = "ipsec_reload" ]
+	# Use direct comparison for values with spaces
+	if [ "$RECOVERY_COMMAND" != "ipsec reload" ]; then
+		echo "RECOVERY_COMMAND mismatch: expected 'ipsec reload', got '$RECOVERY_COMMAND'" >&2
+		return 1
+	fi
+	assert [ "$RECOVERY_IMPACT" = "all-tunnels" ]
+	assert [ "$RECOVERY_AVAILABLE" = "1" ]
+
+	remove_mock_from_path
+}
+
+@test "select_recovery_strategy returns unavailable when no commands available" {
+	if [[ -f "${LIB_DIR}/recovery.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		if [[ -f "${LIB_DIR}/config.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/config.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
+	fi
+
+	# Clear variables from previous tests
+	unset RECOVERY_STRATEGY RECOVERY_COMMAND RECOVERY_IMPACT RECOVERY_AVAILABLE
+
+	# Set up environment - no commands available
+	ENABLE_XFRM_RECOVERY=1
+	remove_mock_from_path
+
+	# Create a minimal PATH that doesn't include system commands
+	# This ensures ip and ipsec are not found
+	local original_path="$PATH"
+	PATH="${TEST_DIR}"
+
+	# Test strategy selection (call directly so global variables persist)
+	select_recovery_strategy "203.0.113.1" 2 || true
+
+	# Restore PATH
+	PATH="$original_path"
+
+	assert [ "$RECOVERY_STRATEGY" = "unavailable" ]
+	assert [ "$RECOVERY_AVAILABLE" = "0" ]
+}
+
+@test "select_recovery_strategy rejects invalid tier" {
+	if [[ -f "${LIB_DIR}/recovery.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		if [[ -f "${LIB_DIR}/config.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/config.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
+	fi
+
+	# Mock handle_error to not exit
+	handle_error() {
+		:
+	}
+
+	# Test invalid tier
+	run select_recovery_strategy "203.0.113.1" 1
+
+	assert_failure
 }
