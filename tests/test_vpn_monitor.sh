@@ -4,6 +4,10 @@
 # Tests monitoring functionality, tier escalation, and recovery actions
 
 load test_helper
+load fixtures/vpn_active
+load fixtures/vpn_down
+load fixtures/vpn_failing
+load fixtures/vpn_cooldown
 
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
@@ -247,9 +251,10 @@ EOF
 	# Test verifies that the script resets the failure counter to 0 when VPN check succeeds.
 	# Expected: Failure counter is reset to 0 when VPN is healthy, clearing previous failure history.
 	# Importance: Ensures recovery actions are only triggered for consecutive failures, not transient issues.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
-	setup_state_files "192.168.1.1" 5
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+
+	# Set initial failure count
+	setup_state_files "192.168.1.1" 5 1000
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -271,8 +276,7 @@ EOF
 	# Test verifies that the script exits early when a cooldown period is active after recovery actions.
 	# Expected: Script detects cooldown period and exits without performing checks or actions.
 	# Importance: Cooldown prevents excessive recovery actions and allows time for VPN to stabilize.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'COOLDOWN_MINUTES=15'
-	setup_state_files "192.168.1.1" 0 0 "" $(($(date +%s) + 900))
+	setup_vpn_cooldown_fixture "192.168.1.1" 0 900 'COOLDOWN_MINUTES=15'
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -357,7 +361,9 @@ EOF
 	# Test verifies that the script performs ping checks when ENABLE_PING_CHECK is enabled in configuration.
 	# Expected: Script executes ping checks to internal peer IPs as an additional VPN health verification method.
 	# Importance: Ping checks provide an additional layer of VPN connectivity verification beyond xfrm state checks.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=2'
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "0x12345678" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=2'
+
+	# Mock ping
 	setup_mock_vpn_environment "192.168.1.1" 1000 "0x12345678" "192.168.1.1" 1
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
@@ -410,8 +416,7 @@ EOF
 	# Test verifies that initialize_monitor function logs script start message in normal execution mode.
 	# Expected: Log contains "VPN monitor script started" message but not fake mode message.
 	# Importance: Ensures proper logging distinguishes between normal and test modes.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -428,8 +433,7 @@ EOF
 	# Test verifies that initialize_monitor function correctly identifies and logs fake mode operation.
 	# Expected: Log contains fake mode message and tier escalation disabled notification.
 	# Importance: Fake mode logging helps distinguish test runs from production execution in logs.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -446,8 +450,7 @@ EOF
 	# Test verifies that initialize_monitor function creates necessary state files during initialization.
 	# Expected: restart_count file is created in logs directory during script startup.
 	# Importance: State file initialization ensures proper tracking of restart history from first run.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -463,8 +466,7 @@ EOF
 	# Test verifies that validate_monitor_state function detects active cooldown and exits early.
 	# Expected: Script exits early with success status and logs cooldown period message.
 	# Importance: Cooldown mechanism prevents excessive recovery actions and allows VPN stabilization time.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'COOLDOWN_MINUTES=15'
-	setup_state_files "192.168.1.1" 0 0 "" $(($(date +%s) + 900))
+	setup_vpn_cooldown_fixture "192.168.1.1" 0 900 'COOLDOWN_MINUTES=15'
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -479,9 +481,10 @@ EOF
 	# Test verifies that validate_monitor_state function allows script execution when cooldown period has expired.
 	# Expected: Script continues normal execution without cooldown-related exit messages.
 	# Importance: Ensures script resumes normal monitoring after cooldown period expires.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'COOLDOWN_MINUTES=15'
-	setup_state_files "192.168.1.1" 0 0 "" $(($(date +%s) - 900))
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'COOLDOWN_MINUTES=15'
+
+	# Set expired cooldown timestamp
+	setup_state_files "192.168.1.1" 0 1000 "" $(($(date +%s) - 900))
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -498,8 +501,7 @@ EOF
 	# Test verifies that validate_monitor_state function checks for cron job persistence on first execution.
 	# Expected: Script verifies cron entry exists and may warn if missing, only checking once per installation.
 	# Importance: Ensures script continues to run on schedule and alerts if cron job is removed.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
 	# Remove cron entry if it exists
 	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
@@ -521,8 +523,7 @@ EOF
 	# Test verifies that process_peer_ips function correctly processes a single peer IP address.
 	# Expected: Script processes the peer IP and performs VPN status check, logging peer information.
 	# Importance: Core functionality test ensures single-peer monitoring works correctly.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 

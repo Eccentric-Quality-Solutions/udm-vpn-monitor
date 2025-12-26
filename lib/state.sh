@@ -143,9 +143,6 @@ get_peer_state_file_path() {
 	spi)
 		echo "${STATE_DIR}/spi_${peer_sanitized}"
 		;;
-	traffic_history)
-		echo "${STATE_DIR}/traffic_history_${peer_sanitized}"
-		;;
 	idle_detected)
 		echo "${STATE_DIR}/idle_detected_${peer_sanitized}"
 		;;
@@ -187,15 +184,6 @@ get_peer_state() {
 	state_file=$(get_peer_state_file_path "$peer_ip" "$key")
 
 	if file_exists_and_readable "$state_file"; then
-		# Validate checksum first (if checksum file exists)
-		if ! validate_state_file_checksum "$state_file"; then
-			# Checksum validation failed - treat as corrupted, backup and reset
-			handle_error "WARNING" "Peer state file checksum mismatch (recovering corrupted file): $state_file" 0
-			recover_corrupted_state_file "$state_file" "$default_value" "integer"
-			echo "$default_value"
-			return 0
-		fi
-
 		local value
 		value=$(cat "$state_file" 2>/dev/null || echo "$default_value")
 		# Validate numeric keys
@@ -280,9 +268,6 @@ set_peer_state() {
 		return 1
 	fi
 
-	# Store checksum after successful write
-	store_state_file_checksum "$state_file" || true
-
 	return 0
 }
 
@@ -300,7 +285,6 @@ set_peer_state() {
 #
 # Side effects:
 #   - Removes per-peer state file if it exists
-#   - Removes associated checksum file if it exists
 #
 # Examples:
 #   delete_peer_state "203.0.113.1" "failure_count"
@@ -314,18 +298,12 @@ delete_peer_state() {
 	local key="$2"
 	local state_file
 	state_file=$(get_peer_state_file_path "$peer_ip" "$key")
-	local checksum_file="${state_file}.checksum"
 
 	if [[ -f "$state_file" ]]; then
 		if ! rm -f "$state_file"; then
 			handle_error "WARNING" "Failed to delete peer state file: $state_file" 0
 			return 1
 		fi
-	fi
-
-	# Also remove checksum file if it exists
-	if [[ -f "$checksum_file" ]]; then
-		rm -f "$checksum_file" 2>/dev/null || true
 	fi
 
 	return 0
@@ -357,223 +335,8 @@ cleanup_peer_state() {
 	delete_peer_state "$peer_ip" "failure_count"
 	delete_peer_state "$peer_ip" "last_bytes"
 	delete_peer_state "$peer_ip" "spi"
-	delete_peer_state "$peer_ip" "traffic_history"
 	delete_peer_state "$peer_ip" "idle_detected"
 	# Add other state keys here as needed
-}
-
-# Store traffic pattern sample
-#
-# Stores a historical byte counter value with timestamp for traffic pattern analysis.
-# Format: timestamp:bytes (one sample per line)
-# Automatically prunes old samples to prevent unbounded growth.
-#
-# Arguments:
-#   $1: Peer IP address
-#   $2: Byte count (integer)
-#   $3: Timestamp (Unix epoch seconds, optional, defaults to current time)
-#
-# Returns:
-#   0: Success
-#   1: Failed to store sample
-#
-# Side effects:
-#   - Appends sample to traffic history file
-#   - Prunes old samples if count exceeds TRAFFIC_PATTERN_MAX_SAMPLES
-#
-# Examples:
-#   store_traffic_sample "203.0.113.1" "123456"
-#   store_traffic_sample "203.0.113.1" "123456" "$(date +%s)"
-#
-# Note:
-#   Requires get_peer_state_file_path, TRAFFIC_PATTERN_MAX_SAMPLES to be set
-#   Samples are stored in format: timestamp:bytes
-store_traffic_sample() {
-	local peer_ip="$1"
-	local bytes="$2"
-	local timestamp="${3:-$(date +%s)}"
-	local history_file
-	history_file=$(get_peer_state_file_path "$peer_ip" "traffic_history")
-
-	# Validate inputs
-	if [[ ! "$bytes" =~ ^[0-9]+$ ]] || [[ ! "$timestamp" =~ ^[0-9]+$ ]]; then
-		handle_error "WARNING" "Invalid traffic sample data (bytes: $bytes, timestamp: $timestamp)" 0
-		return 1
-	fi
-
-	# Append new sample (format: timestamp:bytes)
-	if ! echo "${timestamp}:${bytes}" >>"$history_file" 2>/dev/null; then
-		handle_error "WARNING" "Failed to store traffic sample for $peer_ip" 0
-		return 1
-	fi
-
-	# Prune old samples if count exceeds maximum
-	local line_count
-	line_count=$(wc -l <"$history_file" 2>/dev/null || echo "0")
-	if [[ "$line_count" -gt "${TRAFFIC_PATTERN_MAX_SAMPLES:-20}" ]]; then
-		# Keep only the most recent samples
-		local temp_file
-		temp_file=$(mktemp 2>/dev/null || echo "${history_file}.tmp")
-		if tail -n "${TRAFFIC_PATTERN_MAX_SAMPLES:-20}" "$history_file" >"$temp_file" 2>/dev/null; then
-			mv "$temp_file" "$history_file" 2>/dev/null || rm -f "$temp_file" 2>/dev/null || true
-		else
-			rm -f "$temp_file" 2>/dev/null || true
-		fi
-	fi
-
-	return 0
-}
-
-# Get traffic pattern samples
-#
-# Retrieves historical traffic pattern samples for a peer.
-# Returns samples sorted by timestamp (oldest first).
-#
-# Arguments:
-#   $1: Peer IP address
-#   $2: Maximum age in seconds (optional, filters out samples older than this)
-#
-# Returns:
-#   0: Always succeeds
-#
-# Output:
-#   Prints samples to stdout (format: timestamp:bytes, one per line)
-#   Empty output if no samples exist
-#
-# Examples:
-#   samples=$(get_traffic_samples "203.0.113.1")
-#   recent_samples=$(get_traffic_samples "203.0.113.1" "300")
-#
-# Note:
-#   Requires get_peer_state_file_path to be set
-#   Samples are sorted by timestamp (oldest first)
-get_traffic_samples() {
-	local peer_ip="$1"
-	local max_age="${2:-}"
-	local history_file
-	history_file=$(get_peer_state_file_path "$peer_ip" "traffic_history")
-
-	if [[ ! -f "$history_file" ]] || [[ ! -r "$history_file" ]]; then
-		return 0
-	fi
-
-	local current_time
-	current_time=$(date +%s)
-
-	# Read samples, filter by age if specified, and sort by timestamp
-	local line
-	while IFS= read -r line || [[ -n "$line" ]]; do
-		# Skip empty lines
-		[[ -z "$line" ]] && continue
-
-		# Parse timestamp:bytes format
-		if [[ "$line" =~ ^([0-9]+):([0-9]+)$ ]]; then
-			local sample_timestamp="${BASH_REMATCH[1]}"
-			local sample_bytes="${BASH_REMATCH[2]}"
-
-			# Filter by age if specified
-			if [[ -n "$max_age" ]] && [[ "$max_age" =~ ^[0-9]+$ ]]; then
-				local age=$((current_time - sample_timestamp))
-				if [[ $age -gt "$max_age" ]]; then
-					continue
-				fi
-			fi
-
-			# Output sample
-			echo "${sample_timestamp}:${sample_bytes}"
-		fi
-	done <"$history_file" | sort -t: -k1 -n
-
-	return 0
-}
-
-# Calculate traffic rate from samples
-#
-# Calculates bytes per second from historical traffic samples.
-# Uses oldest and newest samples within the time window to calculate rate.
-#
-# Arguments:
-#   $1: Peer IP address
-#   $2: Minimum time window in seconds (optional, defaults to TRAFFIC_PATTERN_MIN_WINDOW_SECONDS)
-#
-# Returns:
-#   0: Rate calculated successfully
-#   1: Insufficient data or calculation failed
-#
-# Output:
-#   Prints traffic rate (bytes per second) to stdout if successful
-#
-# Examples:
-#   rate=$(calculate_traffic_rate "203.0.113.1")
-#   rate=$(calculate_traffic_rate "203.0.113.1" "120")
-#
-# Note:
-#   Requires get_traffic_samples, TRAFFIC_PATTERN_MIN_WINDOW_SECONDS to be set
-#   Returns empty string if insufficient data
-calculate_traffic_rate() {
-	local peer_ip="$1"
-	local min_window="${2:-${TRAFFIC_PATTERN_MIN_WINDOW_SECONDS:-60}}"
-	local samples
-	samples=$(get_traffic_samples "$peer_ip")
-
-	if [[ -z "$samples" ]]; then
-		return 1
-	fi
-
-	# Count samples
-	local sample_count
-	sample_count=$(echo "$samples" | wc -l | tr -d ' ')
-
-	# Need at least 2 samples to calculate rate
-	if [[ "$sample_count" -lt 2 ]]; then
-		return 1
-	fi
-
-	# Get oldest and newest samples
-	local oldest_sample
-	local newest_sample
-	oldest_sample=$(echo "$samples" | head -1)
-	newest_sample=$(echo "$samples" | tail -1)
-
-	# Parse oldest sample
-	local oldest_timestamp
-	local oldest_bytes
-	if [[ "$oldest_sample" =~ ^([0-9]+):([0-9]+)$ ]]; then
-		oldest_timestamp="${BASH_REMATCH[1]}"
-		oldest_bytes="${BASH_REMATCH[2]}"
-	else
-		return 1
-	fi
-
-	# Parse newest sample
-	local newest_timestamp
-	local newest_bytes
-	if [[ "$newest_sample" =~ ^([0-9]+):([0-9]+)$ ]]; then
-		newest_timestamp="${BASH_REMATCH[1]}"
-		newest_bytes="${BASH_REMATCH[2]}"
-	else
-		return 1
-	fi
-
-	# Calculate time difference
-	local time_diff=$((newest_timestamp - oldest_timestamp))
-	if [[ $time_diff -lt "$min_window" ]]; then
-		# Insufficient time window
-		return 1
-	fi
-
-	# Calculate byte difference
-	local byte_diff=$((newest_bytes - oldest_bytes))
-	if [[ $byte_diff -lt 0 ]]; then
-		# Bytes decreased (rekey or counter reset) - cannot calculate rate
-		return 1
-	fi
-
-	# Calculate rate (bytes per second)
-	local rate=$((byte_diff / time_diff))
-	echo "$rate"
-
-	return 0
 }
 
 # Get current failure counter for a specific peer
@@ -697,7 +460,7 @@ get_network_partition_state_file() {
 #
 # Retrieves the current network partition state (0 = healthy, 1 = partitioned).
 # Network partition state is global (not per-peer) since network issues affect all peers.
-# Validates checksum and file format, recovering corrupted files automatically.
+# Validates file format, recovering corrupted files automatically.
 #
 # Returns:
 #   0: Always succeeds
@@ -714,21 +477,12 @@ get_network_partition_state_file() {
 # Note:
 #   Requires get_network_partition_state_file to be set
 #   Returns "0" (healthy) if file doesn't exist or is corrupted
-#   Uses checksum validation and automatic recovery for corrupted files
+#   Uses automatic recovery for corrupted files
 get_network_partition_state() {
 	local state_file
 	state_file=$(get_network_partition_state_file)
 
 	if file_exists_and_readable "$state_file"; then
-		# Validate checksum first (if checksum file exists)
-		if ! validate_state_file_checksum "$state_file"; then
-			# Checksum validation failed - treat as corrupted, backup and recover
-			handle_error "WARNING" "Network partition state file checksum mismatch (recovering): $state_file" 0
-			recover_corrupted_state_file "$state_file" "0" "integer"
-			echo "0"
-			return 0
-		fi
-
 		local value
 		value=$(cat "$state_file" 2>/dev/null || echo "0")
 		# Validate value (must be 0 or 1)
@@ -749,7 +503,7 @@ get_network_partition_state() {
 #
 # Sets the network partition state (0 = healthy, 1 = partitioned).
 # Network partition state is global (not per-peer) since network issues affect all peers.
-# Uses atomic writes and stores checksum for corruption detection.
+# Uses atomic writes for safe file operations.
 #
 # Arguments:
 #   $1: State value (0 = healthy, 1 = partitioned)
@@ -760,7 +514,6 @@ get_network_partition_state() {
 #
 # Side effects:
 #   - Updates network partition state file (atomic write)
-#   - Stores checksum for corruption detection
 #   - State file: ${STATE_DIR}/network_partition_state
 #
 # Examples:
@@ -770,7 +523,6 @@ get_network_partition_state() {
 # Note:
 #   Requires get_network_partition_state_file to be set
 #   Validates value is 0 or 1 before writing
-#   Stores checksum after successful write for corruption detection
 set_network_partition_state() {
 	local state_value="$1"
 	local state_file
@@ -787,9 +539,6 @@ set_network_partition_state() {
 		handle_error "ERROR" "Failed to update network partition state file: $state_file" 0
 		return 1
 	fi
-
-	# Store checksum after successful write
-	store_state_file_checksum "$state_file" || true
 
 	return 0
 }
@@ -882,14 +631,6 @@ check_cooldown() {
 		return 1 # Not in cooldown
 	fi
 
-	# Validate checksum if checksum file exists
-	if ! validate_state_file_checksum "$COOLDOWN_UNTIL_FILE"; then
-		# Checksum validation failed - treat as corrupted, backup and remove file
-		handle_error "WARNING" "Cooldown file checksum mismatch (recovering corrupted file): $COOLDOWN_UNTIL_FILE" 0
-		recover_corrupted_state_file "$COOLDOWN_UNTIL_FILE" "" "timestamp"
-		return 1 # Not in cooldown (file was corrupted)
-	fi
-
 	local cooldown_until
 	cooldown_until=$(cat "$COOLDOWN_UNTIL_FILE")
 	local now
@@ -941,9 +682,6 @@ set_cooldown() {
 		# Continue execution but log the error
 	fi
 
-	# Store checksum after successful write
-	store_state_file_checksum "$COOLDOWN_UNTIL_FILE" || true
-
 	log_message "INFO" "Cooldown period set for $minutes minutes"
 }
 
@@ -981,14 +719,6 @@ check_rate_limit() {
 	# Get restart count file (format: timestamp per line)
 	if [[ ! -f "$RESTART_COUNT_FILE" ]]; then
 		return 0 # No previous restarts, allow
-	fi
-
-	# Validate checksum if checksum file exists
-	if ! validate_state_file_checksum "$RESTART_COUNT_FILE"; then
-		# Checksum validation failed - treat as corrupted, backup and reset file
-		handle_error "WARNING" "Restart count file checksum mismatch (recovering corrupted file): $RESTART_COUNT_FILE" 0
-		recover_corrupted_state_file "$RESTART_COUNT_FILE" "" "timestamp_list"
-		return 0 # Allow restart (file was corrupted, assume no recent restarts)
 	fi
 
 	# Count restarts in the last hour
@@ -1033,10 +763,6 @@ record_restart() {
 	timestamp=$(get_unix_timestamp)
 	echo "$timestamp" >>"$RESTART_COUNT_FILE"
 
-	# Store checksum after append (before cleanup)
-	# This ensures checksum is updated even if cleanup fails
-	store_state_file_checksum "$RESTART_COUNT_FILE" || true
-
 	# Keep only last 24 hours of timestamps (cleanup old entries)
 	# Prevents restart count file from growing indefinitely
 	local one_day_ago
@@ -1054,110 +780,12 @@ record_restart() {
 		rm -f "${RESTART_COUNT_FILE}.tmp" 2>/dev/null || true
 		return 0 # Continue even if cleanup fails
 	fi
-
-	# Store checksum after successful cleanup (final state)
-	store_state_file_checksum "$RESTART_COUNT_FILE" || true
-}
-
-# Calculate checksum for a file
-#
-# Calculates SHA256 checksum for a file to detect corruption.
-# Uses sha256sum if available, falls back to shasum -a 256 (macOS), then openssl.
-#
-# Arguments:
-#   $1: File path to calculate checksum for
-#
-# Returns:
-#   0: Success (checksum calculated)
-#   1: Failed to calculate checksum (command not available)
-#
-# Output:
-#   Prints checksum (hex string) to stdout, or empty string if failed
-#
-# Examples:
-#   checksum=$(calculate_file_checksum "$state_file")
-#
-# Note:
-#   Requires sha256sum, shasum, or openssl command to be available
-#   Returns empty string if checksum calculation fails
-calculate_file_checksum() {
-	local file="$1"
-	local checksum=""
-
-	if [[ ! -f "$file" ]]; then
-		return 1
-	fi
-
-	# Try sha256sum (Linux)
-	if command -v sha256sum >/dev/null 2>&1; then
-		checksum=$(sha256sum "$file" 2>/dev/null | cut -d' ' -f1)
-	# Try shasum -a 256 (macOS/BSD)
-	elif command -v shasum >/dev/null 2>&1; then
-		checksum=$(shasum -a 256 "$file" 2>/dev/null | cut -d' ' -f1)
-	# Try openssl (fallback)
-	elif command -v openssl >/dev/null 2>&1; then
-		checksum=$(openssl dgst -sha256 "$file" 2>/dev/null | cut -d' ' -f2)
-	fi
-
-	if [[ -n "$checksum" ]]; then
-		echo "$checksum"
-		return 0
-	else
-		return 1
-	fi
-}
-
-# Store checksum for a state file
-#
-# Calculates and stores SHA256 checksum in a separate .checksum file.
-# Used to detect corruption when reading state files.
-#
-# Arguments:
-#   $1: State file path
-#
-# Returns:
-#   0: Success (checksum stored)
-#   1: Failed to calculate or store checksum
-#
-# Side effects:
-#   Creates/updates .checksum file alongside state file
-#
-# Examples:
-#   store_state_file_checksum "$state_file"
-#
-# Note:
-#   Checksum file is stored as ${state_file}.checksum
-#   Uses atomic write (temp file + mv) to prevent corruption
-store_state_file_checksum() {
-	local state_file="$1"
-	local checksum_file="${state_file}.checksum"
-	local checksum
-
-	if [[ ! -f "$state_file" ]]; then
-		return 1
-	fi
-
-	checksum=$(calculate_file_checksum "$state_file")
-	if [[ -z "$checksum" ]]; then
-		# Checksum calculation failed (command not available)
-		# This is not fatal - checksum validation is optional
-		return 1
-	fi
-
-	# Atomic write: write checksum to temp file first, then rename
-	if ! atomic_write_file "$checksum_file" "$checksum"; then
-		handle_error "WARNING" "Failed to store checksum for state file: $state_file" 0
-		return 1
-	fi
-
-	return 0
 }
 
 # Backup corrupted state file
 #
 # Creates a backup of a corrupted state file before resetting it.
 # Backup file is named with pattern: ${state_file}.corrupted.<timestamp>
-# Also backs up associated checksum file if it exists.
 #
 # Arguments:
 #   $1: State file path to backup
@@ -1168,7 +796,6 @@ store_state_file_checksum() {
 #
 # Side effects:
 #   - Creates backup file: ${state_file}.corrupted.<timestamp>
-#   - Creates backup checksum file: ${state_file}.checksum.corrupted.<timestamp> (if checksum exists)
 #   - Logs backup creation
 #
 # Examples:
@@ -1183,8 +810,6 @@ backup_corrupted_state_file() {
 	local timestamp
 	timestamp=$(get_unix_timestamp)
 	local backup_file="${state_file}.corrupted.${timestamp}"
-	local checksum_file="${state_file}.checksum"
-	local backup_checksum_file="${checksum_file}.corrupted.${timestamp}"
 
 	# If file doesn't exist, nothing to backup
 	if [[ ! -f "$state_file" ]]; then
@@ -1195,11 +820,6 @@ backup_corrupted_state_file() {
 	if ! cp "$state_file" "$backup_file" 2>/dev/null; then
 		handle_error "WARNING" "Failed to backup corrupted state file: $state_file" 0
 		return 1
-	fi
-
-	# Create backup of checksum file if it exists
-	if [[ -f "$checksum_file" ]]; then
-		cp "$checksum_file" "$backup_checksum_file" 2>/dev/null || true
 	fi
 
 	handle_error "INFO" "Backed up corrupted state file: $state_file -> $backup_file" 0
@@ -1224,7 +844,6 @@ backup_corrupted_state_file() {
 # Side effects:
 #   - Creates backup of corrupted file (see backup_corrupted_state_file)
 #   - Resets file to default value (or removes if default is empty)
-#   - Removes checksum file if file is removed
 #   - Logs recovery action
 #
 # Examples:
@@ -1236,7 +855,6 @@ backup_corrupted_state_file() {
 #
 # Note:
 #   If default value is empty string, file is removed instead of reset
-#   Checksum file is also removed if file is removed
 recover_corrupted_state_file() {
 	local state_file="$1"
 	local default_value="${2:-}"
@@ -1251,7 +869,7 @@ recover_corrupted_state_file() {
 	# Reset file to default value
 	if [[ -z "$default_value" ]]; then
 		# Remove file if default is empty
-		rm -f "$state_file" "${state_file}.checksum" 2>/dev/null || true
+		rm -f "$state_file" 2>/dev/null || true
 		handle_error "INFO" "Recovered corrupted state file by removal: $state_file" 0
 	else
 		# Set file to default value using atomic write
@@ -1260,78 +878,16 @@ recover_corrupted_state_file() {
 			return 1
 		fi
 
-		# Store checksum for new file
-		store_state_file_checksum "$state_file" || true
-
 		handle_error "INFO" "Recovered corrupted state file by reset to default: $state_file (value: $default_value)" 0
 	fi
 
 	return 0
 }
 
-# Validate checksum for a state file
-#
-# Validates that a state file's checksum matches the stored checksum.
-# Detects corruption from disk errors, power loss, etc.
-#
-# Arguments:
-#   $1: State file path to validate
-#
-# Returns:
-#   0: Checksum is valid (or checksum file doesn't exist - backward compatible)
-#   1: Checksum is invalid (file corrupted)
-#
-# Side effects:
-#   Logs warnings if checksum validation fails
-#
-# Examples:
-#   if validate_state_file_checksum "$state_file"; then
-#       echo "File is valid"
-#   fi
-#
-# Note:
-#   Returns 0 (valid) if checksum file doesn't exist (backward compatibility)
-#   Only validates if checksum file exists and checksum calculation is available
-validate_state_file_checksum() {
-	local state_file="$1"
-	local checksum_file="${state_file}.checksum"
-
-	# If checksum file doesn't exist, assume valid (backward compatibility)
-	if [[ ! -f "$checksum_file" ]]; then
-		return 0
-	fi
-
-	# If state file doesn't exist, checksum is invalid
-	if [[ ! -f "$state_file" ]]; then
-		return 1
-	fi
-
-	# Calculate current checksum
-	local current_checksum
-	current_checksum=$(calculate_file_checksum "$state_file")
-	if [[ -z "$current_checksum" ]]; then
-		# Checksum calculation not available - skip validation
-		return 0
-	fi
-
-	# Read stored checksum
-	local stored_checksum
-	stored_checksum=$(cat "$checksum_file" 2>/dev/null | tr -d '[:space:]')
-
-	# Compare checksums
-	if [[ "$current_checksum" == "$stored_checksum" ]]; then
-		return 0
-	else
-		handle_error "WARNING" "State file checksum mismatch (file may be corrupted): $state_file" 0
-		return 1
-	fi
-}
-
 # Validate state file format
 #
 # Validates that a state file exists, is readable, and contains valid format.
 # Checks for corruption and ensures file format matches expected type.
-# Also validates checksum if checksum file exists.
 #
 # Arguments:
 #   $1: State file path to validate
@@ -1350,7 +906,6 @@ validate_state_file_checksum() {
 #
 # Note:
 #   Requires log_message to be available (from logging.sh)
-#   Validates both format and checksum (if checksum file exists)
 validate_state_file() {
 	local file="$1"
 	local expected_format="${2:-integer}"
@@ -1363,12 +918,6 @@ validate_state_file() {
 	# Check file is readable
 	if [[ ! -r "$file" ]]; then
 		handle_error "WARNING" "State file is not readable: $file"
-		return 1
-	fi
-
-	# Validate checksum first (if checksum file exists)
-	if ! validate_state_file_checksum "$file"; then
-		# Checksum validation failed - file is corrupted
 		return 1
 	fi
 

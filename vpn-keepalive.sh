@@ -137,8 +137,8 @@ start_daemon() {
 		die "EXTERNAL_PEER_IPS not configured - cannot start keepalive"
 	fi
 
-	# Parse peer IPs
-	local IFS=','
+	# Parse peer IPs (space-separated, consistent with vpn-monitor.sh)
+	local IFS=' '
 	local -a external_ips
 	read -ra external_ips <<<"$EXTERNAL_PEER_IPS"
 

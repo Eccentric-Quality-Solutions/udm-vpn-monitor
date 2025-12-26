@@ -2,7 +2,27 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
-## [Unreleased] - 2025-12-23
+## [Unreleased] - 2025-12-26
+
+### Changed
+- **Simplified Byte Counter Detection**: Replaced complex traffic pattern analysis with simple heuristics in `check_byte_counters()`:
+  - Removed historical sample storage, automatic pruning, and rate calculations
+  - Now uses simple logic: bytes increasing = healthy, bytes not increasing + ping fails = broken
+  - Maintains ping-based idle detection for static byte counters
+  - Reduces complexity and improves maintainability for single-deployment use case
+
+### Removed
+- **State File Checksum Validation**: Removed SHA256 checksum validation for state files:
+  - Removed `calculate_file_checksum()`, `store_state_file_checksum()`, and `validate_state_file_checksum()` functions
+  - Removed all checksum validation calls from state file operations
+  - Removed checksum file handling from `delete_peer_state()` and `backup_corrupted_state_file()`
+  - State file corruption detection now relies on format validation only
+  - Simplifies codebase for single-deployment scenario where checksum overhead is unnecessary
+- **Traffic Pattern Analysis Functions**: Removed complex traffic pattern analysis functionality:
+  - Removed `store_traffic_sample()`, `get_traffic_samples()`, and `calculate_traffic_rate()` functions
+  - Removed `traffic_history` state key handling
+  - Removed `TRAFFIC_PATTERN_*` constants from `lib/constants.sh`
+  - Replaced with simpler byte counter heuristics (see Changed section above)
 
 ### Added
 - **VPN Keepalive Daemon**: `vpn-keepalive.sh` and `vpn-keepalive.service` - Optional background daemon that sends periodic ping traffic through VPN tunnels to prevent idle timeout and keep tunnels alive
@@ -10,11 +30,16 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 - **Utility Availability Checker**: `check-utilities.sh` - Script to verify which Linux utilities are available on UDM OS for troubleshooting and compatibility checking
 - **Pre-commit Git Hook**: `scripts/hooks/pre-commit` - Automated code quality checks (shellcheck, shfmt) and install package regeneration before commits
 - **State Checksum Validation**: Added checksum validation for state files to detect corruption and ensure data integrity
+- **State File Corruption Recovery**: Automatic detection and recovery of corrupted state files with safe defaults and backup creation
 - **Development Environment Setup Script**: `scripts/setup-dev-env.sh` - Automatically configures PATH for development tools (shfmt, shellcheck) whether installed via apt or Homebrew
 - **IPsec Fallback for Tier 2 Recovery**
 - **CI/CD Pipeline**: GitHub Actions workflow for automated testing and validation
 - **Log Analysis Tool**: `analyze-logs.sh` script for analyzing VPN failure patterns and recovery success rates
 - **Per-Tunnel xfrm Recovery**: Per-tunnel recovery capability using xfrm (enabled by default for UDM OS 4.3+, `ENABLE_XFRM_RECOVERY=1`)
+- **SA Rekey Detection**: Automatic detection of IPsec SA rekey events by tracking SPI (Security Parameter Index) changes to prevent false positives during normal rekey operations
+- **Network Partition Detection**: Checks for local network connectivity issues (default route, DNS resolution, interface status) before assuming VPN failure, preventing unnecessary recovery actions during network outages
+- **Traffic Pattern Analysis**: Enhanced idle VPN detection using traffic rate calculation and historical byte counter samples to distinguish healthy idle tunnels from broken tunnels
+- **Automatic Route Management**: Automatically adds and re-adds routes to allow UDM pings to remote networks through VPN tunnels
 - **Modular Library Architecture**: Complete refactoring into modular library components:
   - `lib/common.sh` - Shared logging and utility functions across scripts
   - `lib/config.sh` - Configuration loading and validation with schema support
@@ -59,13 +84,18 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
   - Major refactoring with improved error handling, configuration management, and dev mode support
   - Removed file reorganization code (`reorganize_lib_files()` function) as the install package now preserves the correct directory structure automatically. The script now expects the `lib/` directory to be present from package extraction.
 - **Uninstallation Script**: Improved crontab removal logic (preserves other cron jobs) and added logrotate configuration removal
-- **Log Analysis Script**: Enhanced function documentation and improved error handling
+- **Log Analysis Script**: Enhanced function documentation and improved error handling; removed dependency on `bc` utility (not available on UDM OS)
+- **Log Rotation**: Extended logrotate configuration to rotate application logs (not just cron logs); moved cron logs into `/logs` subdirectory
 - **Lockfile Handling**: Dedicated `lib/lockfile.sh` module with improved stale lockfile detection and atomic operations
-- **Configuration Management**: New schema-based validation system with type checking, range validation, and default value application
+- **Configuration Management**: New schema-based validation system with type checking, range validation, and default value application; centralized config values in schema
+- **Recovery Selection Logic**: Centralized recovery strategy selection logic for better maintainability
 - **Code Formatting**: Applied shfmt formatting to all shell scripts for consistent style
 - **IP Address Matching**: Changed from regex-based to fixed-string matching (`grep -F`) for IP address handling in detection to prevent regex injection and improve performance
 - **Test Execution**: Tests now fail fast and stream output to terminal for better CI/CD feedback; added ability to rerun only failing tests
+- **Test Framework**: Migrated to use BATS functionality to replace custom testing functions; use test fixtures to DRY up test code; improved BATS CI integration
 - **Installer Validation**: Installation script now fails immediately when executed with invalid flags instead of continuing
+- **State File Parsing**: Improved safe parsing of state files with validation and error handling
+- **Constants Centralization**: Consolidated magic numbers into named constants in `lib/constants.sh`
 
 ### Fixed
 - **Security**: Added proper IP address validation to prevent injection attacks
@@ -75,18 +105,24 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 - **Log Path Handling**: Improved log file path recalculation after config changes
 - **Process Detection**: Better handling of stale processes and lockfiles
 - **Error Handling**: Standardized error handling patterns across all modules
+- **Byte Counter Detection**: Fixed bug causing byte counters to always show as none during checks
+- **Detection Logic**: Fixed bug in detection logic that was causing incorrect failure detection
+- **Dependency Issues**: Removed dependency on `bc` utility in `analyze-logs.sh` (not available on UDM OS)
 
 ### Improved
-- **Code Quality**: Reduced code duplication by 20+ blocks, improved maintainability and readability with dedicated library modules
+- **Code Quality**: Reduced code duplication by 20+ blocks, improved maintainability and readability with dedicated library modules; extracted duplicated code patterns (e.g., `file_exists_and_readable` function)
 - **Modular Architecture**: Complete separation of functionality into dedicated modules with single responsibility per module
-- **Test Coverage**: Significantly expanded test suite covering edge cases and high-risk scenarios
+- **Test Coverage**: Significantly expanded test suite covering edge cases and high-risk scenarios; improved test helpers for better xfrm testing and per-tunnel reboot scenarios
 - **Error Messages**: More descriptive error messages and logging throughout all modules
 - **Documentation**: 
   - Enhanced all function documentation across entire codebase with consistent format (Arguments, Returns, Side effects, Examples, Notes)
   - Updated README.md, DEVELOPER.md, and ARCHITECTURE.md with improved structure and content
   - Added architectural review document with comprehensive analysis and recommendations
-- **State Management**: Abstracted state file operations with improved checksum validation and atomic write patterns
-- **Test Quality**: Improved test helper functions for better xfrm testing and per-tunnel reboot scenarios
+  - Added ADRs (Architecture Decision Records) documenting key design decisions
+- **State Management**: Abstracted state file operations with improved checksum validation and atomic write patterns; added state file corruption recovery with automatic backup and safe defaults
+- **Idle VPN Handling**: Enhanced idle VPN detection using traffic pattern analysis (traffic rate calculation, historical samples) to distinguish healthy idle tunnels from broken tunnels; improved ping-based verification for idle tunnels
+- **False Positive Prevention**: SA rekey detection prevents false positives during normal IPsec rekey operations; network partition detection prevents unnecessary VPN recovery during local network outages
+- **Recovery Verification**: Added verification of VPN recovery after restart to ensure recovery actions are effective
 
 ### Removed
 - **swanctl Dependency**: Removed attempts to install unsupported swanctl utility on UDM OS
@@ -94,6 +130,8 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 - **Dead Code**: Removed unused `LAST_RESTART_FILE` variable
 - **Ineffective Operations**: Removed `ip xfrm state delete` commands that required full selectors
 - **Generated Reports**: Removed generated report files from repository (reports/vpn-monitor-analysis.csv, reports/vpn-monitor-report.txt) - these are now generated on-demand by analyze-logs.sh
+- **Deprecated Configuration**: Removed deprecated `PING_TARGET_IP` configuration variable (replaced by `INTERNAL_PEER_IPS`)
+- **Deprecated State Files**: Removed deprecated `last_bytes_file` state file format (replaced by abstracted state management in `lib/state.sh`)
 
 ## [0.0.1] - 2025-12-15
 

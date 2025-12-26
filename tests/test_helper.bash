@@ -761,7 +761,8 @@ wait_for_file() {
 #   setup_test_config "${TEST_DIR}/vpn-monitor.conf" "192.168.1.1 10.0.0.1" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3'
 setup_test_config() {
 	local config_file="${1:-${TEST_DIR}/vpn-monitor.conf}"
-	local peer_ips="${2:-192.168.1.1}"
+	# Use ${2-} instead of ${2:-} to allow empty strings to pass through
+	local peer_ips="${2-192.168.1.1}"
 	shift 2 || true
 	local extra_config=("$@")
 
@@ -782,17 +783,57 @@ LOCKFILE_TIMEOUT=300
 ENABLE_PING_CHECK=1
 PING_COUNT=3
 PING_TIMEOUT=2
+ENABLE_NETWORK_PARTITION_CHECK=0
 DEBUG=0
 EOF
 
 	# Add any extra config variables
 	for config_var in "${extra_config[@]}"; do
 		if [[ -n "$config_var" ]]; then
-			echo "$config_var" >>"$config_file"
+			# Ensure config_var is in KEY=VALUE format, not just a bare value
+			if [[ "$config_var" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+				echo "$config_var" >>"$config_file"
+			else
+				# Skip bare values that aren't in KEY=VALUE format
+				# This prevents bare IP addresses or other values from being written
+				continue
+			fi
 		fi
 	done
 
 	echo "$config_file"
+}
+
+# Set up test config with recovery settings disabled
+#
+# Creates a test configuration file with recovery-related settings disabled.
+# This is commonly needed for tests that need ipsec reload/restart to be triggered
+# instead of xfrm recovery, or tests that need network partition checks disabled.
+#
+# Arguments:
+#   $1: Config file path (optional, defaults to ${TEST_DIR}/vpn-monitor.conf)
+#   $2: Peer IPs (optional, defaults to "192.168.1.1")
+#   $3+: Additional config variables as KEY="VALUE" pairs
+#
+# Returns:
+#   Prints config file path to stdout
+#
+# Side effects:
+#   - Creates config file with ENABLE_XFRM_RECOVERY=0 and ENABLE_NETWORK_PARTITION_CHECK=0
+#
+# Example:
+#   setup_test_config_with_recovery_disabled "${TEST_DIR}/vpn-monitor.conf" "192.168.1.1" 'TIER1_THRESHOLD=1'
+setup_test_config_with_recovery_disabled() {
+	local config_file="${1:-${TEST_DIR}/vpn-monitor.conf}"
+	local peer_ips="${2-192.168.1.1}"
+	shift 2 || true
+	local extra_config=("$@")
+
+	# Call setup_test_config with recovery settings disabled
+	setup_test_config "$config_file" "$peer_ips" \
+		'ENABLE_XFRM_RECOVERY=0' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0' \
+		"${extra_config[@]}"
 }
 
 # Set up test environment variables
@@ -846,7 +887,10 @@ setup_test_environment() {
 #   - Creates test script
 #   - Sets up environment variables
 setup_test_vpn_monitor() {
-	local peer_ips="${1:-192.168.1.1}"
+	# Use ${1-} instead of ${1:-} to allow empty strings to pass through
+	# ${1:-default} uses default if $1 is unset OR empty
+	# ${1-default} uses default only if $1 is unset (allows empty string)
+	local peer_ips="${1-192.168.1.1}"
 	local state_dir="${2:-${TEST_DIR}}"
 	shift 2 || true
 	local extra_config=("$@")
@@ -929,23 +973,6 @@ setup_state_files() {
 		local cooldown_file="${STATE_DIR:-${TEST_DIR}}/cooldown_until"
 		echo "$cooldown_until" >"$cooldown_file"
 	fi
-}
-
-# Check if checksum command is available
-#
-# Checks for availability of sha256sum, shasum, or openssl commands.
-# Used to skip tests that require checksum functionality.
-#
-# Returns:
-#   0: Checksum command available
-#   1: No checksum command available
-check_checksum_command_available() {
-	if command -v sha256sum >/dev/null 2>&1 ||
-		command -v shasum >/dev/null 2>&1 ||
-		command -v openssl >/dev/null 2>&1; then
-		return 0
-	fi
-	return 1
 }
 
 # Set up complete mock VPN environment

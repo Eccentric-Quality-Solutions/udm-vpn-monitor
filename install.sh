@@ -313,6 +313,7 @@ install_config_file() {
 	# Non-interactive mode: copy template or create default
 	if [[ -f "${INSTALL_SCRIPT_DIR}/${CONFIG_NAME}" ]]; then
 		cp "${INSTALL_SCRIPT_DIR}/${CONFIG_NAME}" "${INSTALL_DIR}/${CONFIG_NAME}"
+		chmod 644 "${INSTALL_DIR}/${CONFIG_NAME}"
 		log_info "Installed ${CONFIG_NAME} (please customize it)"
 	else
 		log_warn "Config template not found, creating default"
@@ -363,7 +364,7 @@ install_scripts() {
 	# Copy main script
 	if [[ -f "${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}" ]]; then
 		cp "${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}" "${INSTALL_DIR}/${SCRIPT_NAME}"
-		chmod +x "${INSTALL_DIR}/${SCRIPT_NAME}"
+		chmod 755 "${INSTALL_DIR}/${SCRIPT_NAME}"
 		log_info "Installed ${SCRIPT_NAME}"
 	else
 		log_error "Source file not found: ${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}"
@@ -386,21 +387,21 @@ install_scripts() {
 	# Copy keepalive script (optional utility)
 	if [[ -f "${INSTALL_SCRIPT_DIR}/vpn-keepalive.sh" ]]; then
 		cp "${INSTALL_SCRIPT_DIR}/vpn-keepalive.sh" "${INSTALL_DIR}/vpn-keepalive.sh"
-		chmod +x "${INSTALL_DIR}/vpn-keepalive.sh"
+		chmod 755 "${INSTALL_DIR}/vpn-keepalive.sh"
 		log_info "Installed vpn-keepalive.sh"
 	fi
 
 	# Copy log analysis script (optional utility)
 	if [[ -f "${INSTALL_SCRIPT_DIR}/analyze-logs.sh" ]]; then
 		cp "${INSTALL_SCRIPT_DIR}/analyze-logs.sh" "${INSTALL_DIR}/analyze-logs.sh"
-		chmod +x "${INSTALL_DIR}/analyze-logs.sh"
+		chmod 755 "${INSTALL_DIR}/analyze-logs.sh"
 		log_info "Installed analyze-logs.sh (log analysis utility)"
 	fi
 
 	# Copy utility checker script (optional utility)
 	if [[ -f "${INSTALL_SCRIPT_DIR}/check-utilities.sh" ]]; then
 		cp "${INSTALL_SCRIPT_DIR}/check-utilities.sh" "${INSTALL_DIR}/check-utilities.sh"
-		chmod +x "${INSTALL_DIR}/check-utilities.sh"
+		chmod 755 "${INSTALL_DIR}/check-utilities.sh"
 		log_info "Installed check-utilities.sh (utility availability checker)"
 	fi
 

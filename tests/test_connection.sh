@@ -4,6 +4,8 @@
 # Tests critical paths and error handling scenarios
 
 load test_helper
+load fixtures/vpn_active
+load fixtures/vpn_down
 
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
@@ -31,8 +33,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
@@ -63,8 +64,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
@@ -94,8 +94,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
@@ -127,8 +126,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
@@ -202,8 +200,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN is down (no SA)
-	mock_ip_xfrm_state "192.168.1.1" "0" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 0
 
 	# Mock ipsec status to return no active SA
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -333,4 +330,3 @@ EOF
 
 	remove_mock_from_path
 }
-

@@ -159,22 +159,16 @@ check_cron_persistence() {
 #   Conflicting flags: --help/--version cannot be used together or with --fake
 #   File paths are checked for existence and readability/accessibility
 validate_args() {
-	local help_seen=0
-	local version_seen=0
-	local fake_seen=0
 	local unknown_args=()
 
 	# Check for conflicts and unknown arguments
+	# Note: --help and --version are handled early (lines 43-64) and exit before this function is called
+	# So we only need to validate --fake and unknown arguments here
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--help | -h)
-			help_seen=1
-			;;
-		--version | -v)
-			version_seen=1
-			;;
 		--fake)
-			fake_seen=1
+			# --fake flag is valid, no conflict checking needed since --help/--version exit early
+			shift
 			;;
 		*)
 			# Check if argument looks like a file path
@@ -194,23 +188,10 @@ validate_args() {
 			else
 				unknown_args+=("$1")
 			fi
+			shift
 			;;
 		esac
-		shift
 	done
-
-	# Check for conflicting flags (help and version are mutually exclusive with others)
-	if [[ $help_seen -eq 1 ]] && [[ $version_seen -eq 1 ]]; then
-		die "Conflicting flags: --help and --version cannot be used together"
-	fi
-
-	if [[ $help_seen -eq 1 ]] && [[ $fake_seen -eq 1 ]]; then
-		die "Conflicting flags: --help and --fake cannot be used together"
-	fi
-
-	if [[ $version_seen -eq 1 ]] && [[ $fake_seen -eq 1 ]]; then
-		die "Conflicting flags: --version and --fake cannot be used together"
-	fi
 
 	# Report unknown arguments
 	if [[ ${#unknown_args[@]} -gt 0 ]]; then
@@ -226,58 +207,40 @@ validate_args() {
 #
 # Processes command-line arguments and sets corresponding global flags.
 # Validates arguments before processing to catch conflicts early.
-# Handles help and version flags by displaying information and exiting.
 #
 # Arguments:
 #   $@: Command-line arguments to parse
 #
 # Supported options:
 #   --fake: Enable fake mode (NO_ESCALATE=1) - runs checks but doesn't escalate tiers
-#   --help, -h: Display help message and exit with code 0
-#   --version, -v: Display version information and exit with code 0
 #
 # Returns:
-#   0: Always succeeds (exits with 0 for --help/--version, continues otherwise)
+#   0: Always succeeds
 #
 # Side effects:
 #   - Sets NO_ESCALATE flag if --fake is provided
 #   - Logs fake mode enablement if --fake is used
-#   - Exits script with code 0 for --help/--version
 #
 # Examples:
 #   parse_args "$@"
-#   # Processes arguments, sets flags, may exit for --help/--version
+#   # Processes arguments, sets flags
 #
 # Note:
-#   Requires validate_args, log_message, and SCRIPT_VERSION to be set
-#   Unknown arguments are handled by validate_args (warnings logged)
+#   --help and --version are handled early (lines 43-64) and exit before this function is called.
+#   Requires validate_args, log_message, and SCRIPT_VERSION to be set.
+#   Unknown arguments are handled by validate_args (warnings logged).
 parse_args() {
 	# Validate arguments first
 	validate_args "$@"
 
 	# Process arguments
+	# Note: --help and --version are handled early (lines 43-64) and exit before this function is called
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--fake)
 			NO_ESCALATE=1
 			log_message "INFO" "Fake mode enabled: tier escalation disabled"
 			shift
-			;;
-		--help | -h)
-			echo "Usage: $0 [OPTIONS]"
-			echo ""
-			echo "UDM VPN Monitor v${SCRIPT_VERSION:-0.0.1}"
-			echo ""
-			echo "Options:"
-			echo "  --fake     Run checks and log failures but don't escalate tiers"
-			echo "  --help     Show this help message"
-			echo "  --version  Show version information"
-			echo ""
-			exit 0
-			;;
-		--version | -v)
-			echo "UDM VPN Monitor v${SCRIPT_VERSION:-0.0.1}"
-			exit 0
 			;;
 		*)
 			# Unknown arguments already handled by validate_args
@@ -457,6 +420,8 @@ process_peer_ips() {
 		echo "DEBUG: Validating EXTERNAL_PEER_IPS (value: '${EXTERNAL_PEER_IPS}')" >&2
 		echo "DEBUG: INTERNAL_PEER_IPS (value: '${INTERNAL_PEER_IPS}')" >&2
 	fi
+
+	# Validate configuration (includes EXTERNAL_PEER_IPS validation via schema)
 	validate_config
 
 	# Check for network partition before VPN checks (if enabled)

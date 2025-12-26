@@ -7,6 +7,7 @@
 ## Testing
 - Always make sure when running tests that they stream output to the terminal and aren't buffered
 - Whenever you run tests and a test is slow, make sure to tag it as such.
+- When creating tests take advantage of BATS built-in functionality and the test fixtures we've created.
 
 ## Documenting Knowledge
 - You are really bad at knowing the date. When hardcoding dates use the local system date.

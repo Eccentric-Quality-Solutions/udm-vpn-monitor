@@ -510,15 +510,18 @@ load test_helper
 
 The `test_helper.bash` file provides many useful functions:
 
-- `create_mock_config()` - Create a test config file
-- `create_mock_vpn_monitor_script()` - Create a mock script
-- `mock_root()` / `mock_non_root()` - Mock user permissions
-- `mock_udm_system()` / `mock_non_udm_system()` - Mock system environment
-- `assert_cron_entry_exists()` / `assert_cron_entry_not_exists()` - Check cron entries
+- `setup_test_config()` - Create a test config file with common settings
+- `create_test_vpn_monitor_script()` - Create a test version of the VPN monitor script
+- `create_test_install_setup()` - Set up test installation environment
+- `assert_file_executable()` - Assert that a file exists and is executable
+- `create_test_cron_entry()` - Create a test cron entry
 - `assert_log_contains()` / `assert_log_not_contains()` - Check log files
 - `mock_ip_xfrm_state()` - Mock `ip xfrm state` output
 - `mock_ping()` - Mock ping command
 - `mock_ipsec()` - Mock ipsec command
+- `setup_test_vpn_monitor()` - Set up complete VPN monitor test environment
+- `setup_state_files()` - Set up state files for testing
+- `setup_mock_vpn_environment()` - Set up mock VPN environment
 
 ### Best Practices
 

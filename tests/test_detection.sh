@@ -6,6 +6,9 @@
 # for better organization and maintainability.
 
 load test_helper
+load fixtures/vpn_active
+load fixtures/vpn_down
+load fixtures/vpn_failing
 
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
@@ -23,6 +26,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
+ENABLE_NETWORK_PARTITION_CHECK=0
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -64,6 +68,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
+ENABLE_NETWORK_PARTITION_CHECK=0
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -106,41 +111,13 @@ EOF
 	# remains unchanged between checks, indicating no traffic is passing through the tunnel.
 	# Expected: Function detects bytes not increasing and marks VPN as suspect or failed.
 	# Importance: Stagnant byte counters indicate VPN tunnel is not passing traffic, a critical failure condition.
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-EOF
+	setup_vpn_failing_fixture "192.168.1.1" 0 1000 1000
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local last_bytes_file="${state_dir}/last_bytes_192_168_1_1"
-
-	# Set initial byte count
-	echo "1000" >"$last_bytes_file"
-
-	# Mock ip command - bytes stay same
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 1000 bytes, 10 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
-	add_mock_to_path
-
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	# Should detect bytes not increasing
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "bytes not increasing" || assert_file_contains "$log_file" "suspect"
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "bytes not increasing" || assert_file_contains "$LOG_FILE" "suspect"
 
 	remove_mock_from_path
 }
@@ -150,101 +127,64 @@ EOF
 	# Test verifies that the script handles corrupted byte counter files gracefully without crashing.
 	# Expected: Script treats corrupted file as 0 or resets it, continuing normal operation.
 	# Importance: File corruption can occur due to disk errors or manual editing; script must handle it robustly.
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local last_bytes_file="${state_dir}/last_bytes_192_168_1_1"
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
 	# Create corrupted byte counter file (non-numeric)
+	local last_bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
 	echo "invalid-value" >"$last_bytes_file"
 
-	# Mock ip command - VPN healthy
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
-	add_mock_to_path
-
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	# Should handle corrupted file gracefully (treat as 0 or reset)
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
 @test "byte counter file contains negative number" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local last_bytes_file="${state_dir}/last_bytes_192_168_1_1"
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
 	# Create byte counter file with negative number
+	local last_bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
 	echo "-1000" >"$last_bytes_file"
 
-	# Mock ip command - VPN healthy
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
-	add_mock_to_path
-
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	# Should handle negative value gracefully
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
 @test "byte counter file is empty" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-EOF
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local last_bytes_file="${state_dir}/last_bytes_192_168_1_1"
-
-	# Create empty byte counter file
+	# Clear byte counter file to test empty file handling
+	local last_bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
+	# Remove file if it exists (from fixture setup), then create empty file
+	rm -f "$last_bytes_file"
 	touch "$last_bytes_file"
-	# Verify file is empty
+	# Verify file is empty before script runs
 	assert_file_empty "$last_bytes_file"
 
-	# Mock ip command - VPN healthy
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
-	add_mock_to_path
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
-
-	# Should handle empty file gracefully (treat as 0)
+	# Should handle empty file gracefully (treat as 0, then update with current bytes)
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
+	# File should be updated with current bytes value (not remain empty)
+	# The script treats empty file as 0, then updates it with current bytes from mock (2000)
+	assert_file_exist "$last_bytes_file"
+	# File should contain a numeric value (current bytes from mock)
+	local file_content
+	file_content=$(cat "$last_bytes_file")
+	if [[ ! "$file_content" =~ ^[0-9]+$ ]]; then
+		fail "Byte counter file should contain numeric value, got: $file_content"
+	fi
 
 	remove_mock_from_path
 }
@@ -258,6 +198,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
+ENABLE_NETWORK_PARTITION_CHECK=0
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -291,6 +232,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
+ENABLE_NETWORK_PARTITION_CHECK=0
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -327,34 +269,18 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "ping check enabled but INTERNAL_PEER_IPS not set" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-ENABLE_PING_CHECK=1
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-
-	# Mock ip command - VPN appears up
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1'
 
 	# Mock ping - should use peer IP
 	local mock_ping
 	mock_ping=$(mock_ping "192.168.1.1" "1")
 	add_mock_to_path
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	# Should use peer IP for ping check
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -365,21 +291,7 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "ipsec returns error exit code but has output" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	# Mock ip command - VPN down (no xfrm state)
-	mock_ip_xfrm_state "192.168.1.1" "0" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_vpn_down_fixture "192.168.1.1" 0
 
 	# Mock ipsec - returns error code but has output containing peer IP
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -394,11 +306,11 @@ EOF
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" || true
 
 	# Should handle error code gracefully and still process output
 	# Output contains peer IP, so should detect VPN as OK
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -412,6 +324,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
+ENABLE_NETWORK_PARTITION_CHECK=0
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -455,22 +368,7 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "ping command not available (ping6 vs ping -6 detection)" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-ENABLE_PING_CHECK=1
-INTERNAL_PEER_IPS="2001:db8::1"
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="2001:db8::1"'
 
 	# Mock command to fail for ping (simulates ping not available)
 	local mock_command="${TEST_DIR}/command"
@@ -489,11 +387,11 @@ EOF
 
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake || true
 
 	# Should handle missing ping command gracefully (should log warning but continue)
 	# Code at lib/detection.sh:433-436 handles ping command not available
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -503,24 +401,7 @@ EOF
 	# Test verifies that the script handles ping commands that hang indefinitely without blocking execution.
 	# Expected: Script uses timeout mechanism to prevent ping from blocking script execution indefinitely.
 	# Importance: Network issues can cause ping to hang; script must handle this to remain responsive.
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-ENABLE_PING_CHECK=1
-INTERNAL_PEER_IPS="192.168.1.1"
-PING_COUNT=3
-PING_TIMEOUT=1
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=1'
 
 	# Mock ping to hang (simulates timeout)
 	local mock_ping="${TEST_DIR}/ping"
@@ -533,33 +414,18 @@ EOF
 	chmod +x "$mock_ping"
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run timeout 5 bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run timeout 5 bash "$TEST_SCRIPT" --fake || true
 
 	# Should handle ping timeout gracefully (should log error but continue)
 	# Code at lib/detection.sh:465-473 handles ping timeouts
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
 @test "ping target is unreachable but command succeeds (weird network state)" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-ENABLE_PING_CHECK=1
-INTERNAL_PEER_IPS="192.168.1.1"
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="192.168.1.1"'
 
 	# Mock ping to return success but 100% packet loss (weird network state)
 	local mock_ping="${TEST_DIR}/ping"
@@ -575,11 +441,11 @@ EOF
 	chmod +x "$mock_ping"
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake || true
 
 	# Should handle 100% packet loss gracefully (should log warning but continue)
 	# Code at lib/detection.sh:477-485 handles packet loss detection
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -590,20 +456,7 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "ipsec command hangs (timeout scenario - status check)" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	mock_ip_xfrm_state "192.168.1.1" "0" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_vpn_down_fixture "192.168.1.1" 0
 
 	# Mock ipsec status to hang (simulates timeout)
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -619,11 +472,11 @@ EOF
 	add_mock_to_path
 
 	# Run with timeout to prevent test from hanging
-	PATH="${TEST_DIR}:${PATH}" run timeout 5 bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run timeout 5 bash "$TEST_SCRIPT" --fake || true
 
 	# Should handle ipsec status hang gracefully (should timeout and continue)
 	# Code at lib/detection.sh:636 uses ipsec status with 2>/dev/null
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }

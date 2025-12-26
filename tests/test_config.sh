@@ -4,6 +4,7 @@
 # Tests critical paths and error handling scenarios
 
 load test_helper
+load fixtures/vpn_active
 
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
@@ -112,8 +113,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
 	# Run script
@@ -933,8 +933,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
 	# Script should parse valid config file successfully

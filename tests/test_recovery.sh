@@ -6,6 +6,10 @@
 # for better organization and maintainability.
 
 load test_helper
+load fixtures/vpn_active
+load fixtures/vpn_down
+load fixtures/vpn_failing
+load fixtures/vpn_cooldown
 
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
@@ -20,31 +24,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script executes "ipsec reload" when failure count reaches Tier 2 threshold.
 	# Importance: ipsec reload affects all VPN tunnels, which is the default surgical cleanup behavior.
 	# Note: This may impact other VPN tunnels, not just the failing one.
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
-
-	# Set failure count to Tier 2 threshold
-	echo "3" >"$failure_counter"
-
-	# Mock ip command - VPN down
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ip"
+	# Disable xfrm recovery to force ipsec reload (xfrm recovery is tried first if enabled)
+	setup_vpn_down_fixture "192.168.1.1" 3 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Mock ipsec - track reload call
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -58,72 +39,11 @@ EOF
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script"
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT"
 
 	# Should use ipsec reload (affects all tunnels)
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "ipsec reload"
-	if [[ -f /tmp/ipsec_called.txt ]]; then
-		assert_file_exist /tmp/ipsec_called.txt
-		rm -f /tmp/ipsec_called.txt
-	fi
-
-	remove_mock_from_path
-}
-
-# bats test_tags=category:high-risk,priority:high
-@test "surgical cleanup uses ipsec reload (default behavior)" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
-
-	# Set failure count to Tier 2 threshold
-	echo "3" >"$failure_counter"
-
-	# Mock ip command - VPN down
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ip"
-
-	# Mock ipsec - track reload call
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    echo "ipsec-reload-called" > /tmp/ipsec_called.txt
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
-	add_mock_to_path
-
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script"
-
-	# Should use ipsec reload (affects all tunnels)
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "ipsec reload"
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "ipsec reload"
 	if [[ -f /tmp/ipsec_called.txt ]]; then
 		assert_file_exist /tmp/ipsec_called.txt
 		rm -f /tmp/ipsec_called.txt
@@ -137,31 +57,7 @@ EOF
 	# Test verifies that the script handles failures of surgical cleanup (ipsec reload) gracefully.
 	# Expected: Script logs error about reload failure but continues execution without crashing.
 	# Importance: Recovery actions can fail due to system issues; script must handle failures robustly.
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
-
-	# Set failure count to Tier 2 threshold
-	echo "3" >"$failure_counter"
-
-	# Mock ip command - VPN down
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ip"
+	setup_vpn_down_fixture "192.168.1.1" 3 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
 
 	# Mock ipsec - reload fails
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -175,14 +71,10 @@ EOF
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script"
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT"
 
 	# Should handle error gracefully (not crash)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Script should continue execution
 
 	remove_mock_from_path
@@ -193,33 +85,7 @@ EOF
 	# Test verifies that Tier 3 recovery action triggers full IPsec restart when failure count reaches threshold.
 	# Expected: Script executes "ipsec restart" command when failure count reaches Tier 3 threshold.
 	# Importance: Full restart is the most aggressive recovery action and should only trigger after multiple failures.
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_HOUR=10
-COOLDOWN_MINUTES=1
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
-
-	# Set failure count to Tier 3 threshold
-	echo "5" >"$failure_counter"
-
-	# Mock ip command - VPN down
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ip"
+	setup_vpn_down_fixture "192.168.1.1" 5 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
 
 	# Mock ipsec - track if called
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -233,15 +99,11 @@ EOF
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script"
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT"
 
 	# Should call ipsec restart
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "full IPsec restart" || assert_file_contains "$log_file" "Tier 3"
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "full IPsec restart" || assert_file_contains "$LOG_FILE" "Tier 3"
 	if [[ -f /tmp/ipsec_called.txt ]]; then
 		assert_file_exist /tmp/ipsec_called.txt
 		rm -f /tmp/ipsec_called.txt
@@ -252,33 +114,7 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "full restart fails - error handling" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_HOUR=10
-COOLDOWN_MINUTES=1
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
-
-	# Set failure count to Tier 3 threshold
-	echo "5" >"$failure_counter"
-
-	# Mock ip command - VPN down
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ip"
+	setup_vpn_down_fixture "192.168.1.1" 5 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
 
 	# Mock ipsec - fails
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -292,112 +128,47 @@ EOF
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" || true
 
 	# Should handle error gracefully
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "Failed to restart" || assert_file_contains "$log_file" "ERROR"
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "Failed to restart" || assert_file_contains "$LOG_FILE" "ERROR"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
 @test "full restart when ipsec unavailable" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_HOUR=10
-COOLDOWN_MINUTES=1
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
-
-	# Set failure count to Tier 3 threshold
-	echo "5" >"$failure_counter"
-
-	# Mock ip command - VPN down
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ip"
-	add_mock_to_path
+	setup_vpn_down_fixture "192.168.1.1" 5 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
 
 	# Don't create ipsec mock (unavailable)
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" || true
 
 	# Should handle unavailable commands gracefully
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "not available" || assert_file_contains "$log_file" "ERROR"
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "not available" || assert_file_contains "$LOG_FILE" "ERROR"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
 @test "rate limit file corrupted" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_HOUR=3
-COOLDOWN_MINUTES=1
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local restart_file="${TEST_DIR}/logs/restart_count"
-	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
+	setup_vpn_down_fixture "192.168.1.1" 5 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'MAX_RESTARTS_PER_HOUR=3' 'COOLDOWN_MINUTES=1'
 
 	# Create corrupted restart file (non-numeric)
+	local restart_file="${LOGS_DIR}/restart_count"
 	echo "invalid-timestamp" >"$restart_file"
-
-	# Set failure count to Tier 3 threshold
-	echo "5" >"$failure_counter"
-
-	# Mock ip command - VPN down
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ip"
 
 	# Mock ipsec
 	local mock_ipsec
 	mock_ipsec=$(mock_ipsec)
 	add_mock_to_path
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" || true
 
 	# Should handle corrupted file gracefully
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Script should either skip rate limit check or handle error
 
 	remove_mock_from_path
@@ -405,29 +176,24 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "config file attempts command injection via variable" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Attempt command injection via EXTERNAL_PEER_IPS
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1; echo 'injected' > /tmp/injection_test"
 EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "${TEST_DIR}" "${TEST_DIR}/logs/vpn-monitor.log")
 
 	# Mock ip command
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
 
 	# Should reject invalid IP format (command injection should be caught by IP validation)
-	assert_file_exist "$log_file"
+	assert_file_exist "${TEST_DIR}/logs/vpn-monitor.log"
 	# Injection should not execute - IP validation should catch it
 	assert_file_not_exist "/tmp/injection_test"
 
@@ -436,14 +202,7 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "xfrm command fails with permission denied" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
 	# Mock ip command that fails
 	local mock_ip="${TEST_DIR}/ip"
@@ -457,14 +216,10 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	# Should fallback to ipsec status
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Should handle xfrm failure gracefully
 
 	remove_mock_from_path
@@ -472,60 +227,30 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "byte counter file is directory" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-EOF
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local last_bytes_file="${state_dir}/last_bytes_192_168_1_1"
-
-	# Create directory instead of file
+	# Create directory instead of file (remove file first if it exists from fixture)
+	local last_bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
+	rm -f "$last_bytes_file"
 	mkdir -p "$last_bytes_file"
 
-	# Mock ip command - VPN healthy
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
-	add_mock_to_path
-
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake || true
 
 	# Should handle directory gracefully (may fail to write, but shouldn't crash)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
 @test "verify correct behavior when switching between flock and fallback modes" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-EOF
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
-
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	# Mock ip command - VPN healthy
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
-	add_mock_to_path
+	local lockfile="${STATE_DIR}/vpn-monitor.lock"
 
 	# Test 1: Run with flock available (if available)
 	if command -v flock >/dev/null 2>&1; then
-		PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+		PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 		assert_success
 		assert_file_not_exist "$lockfile"
 	fi
@@ -547,14 +272,14 @@ EOF
 		path_without_flock="/bin:/usr/bin:${path_without_flock}"
 	fi
 
-	PATH="${TEST_DIR}:${path_without_flock}" run bash "$test_script" --fake
+	PATH="${TEST_DIR}:${path_without_flock}" run bash "$TEST_SCRIPT" --fake
 	assert_success
 	assert_file_not_exist "$lockfile"
 
 	# Test 3: Switch modes during execution (simulate flock becoming unavailable)
 	# This tests that the script handles mode detection correctly
 	rm -f "$lockfile"
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	remove_mock_from_path
@@ -573,8 +298,7 @@ EOF
 	local state_dir="${TEST_DIR}"
 
 	# Mock ip command
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
 	# Test 1: Config file attempts to source external file
@@ -670,8 +394,7 @@ EOF
 	local state_dir="${TEST_DIR}"
 
 	# Mock ip command
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
 	# Test 1: Config file with null bytes (should be handled gracefully)
@@ -847,6 +570,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 EXTERNAL_PEER_IPS="192.168.1.1"
+ENABLE_NETWORK_PARTITION_CHECK=0
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -858,8 +582,7 @@ EOF
 	rm -f "$last_bytes_file"
 
 	# Mock ip command - VPN healthy with non-zero bytes
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
 	# Create test version of script
@@ -893,8 +616,7 @@ EOF
 	echo "1000" >"$last_bytes_file"
 
 	# Mock ip command - bytes increased very slowly (only 1 byte)
-	mock_ip_xfrm_state "192.168.1.1" "1001" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 1001
 	add_mock_to_path
 
 	# Create test version of script
@@ -926,8 +648,7 @@ EOF
 	echo "1000000" >"$last_bytes_file"
 
 	# Mock ip command - bytes jumped dramatically lower (counter reset)
-	mock_ip_xfrm_state "192.168.1.1" "100" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 100
 	add_mock_to_path
 
 	# Create test version of script
@@ -1004,130 +725,14 @@ EOF
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "full restart with ipsec command (success case)" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_HOUR=10
-COOLDOWN_MINUTES=1
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
-
-	# Set failure count to Tier 3 threshold
-	echo "5" >"$failure_counter"
-
-	# Mock ip command - VPN down
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ip"
-
-	# Mock ipsec - track if called
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    echo "ipsec-restart-called" > /tmp/ipsec_restart.txt
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
-	add_mock_to_path
-
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script"
-
-	# Should use ipsec for restart
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "ipsec restart"
-	if [[ -f /tmp/ipsec_restart.txt ]]; then
-		assert_file_exist /tmp/ipsec_restart.txt
-		rm -f /tmp/ipsec_restart.txt
-	fi
-
-	remove_mock_from_path
-}
-
-# bats test_tags=category:high-risk,priority:high
-@test "full restart with ipsec command fails (error handling)" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_HOUR=10
-COOLDOWN_MINUTES=1
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
-
-	# Set failure count to Tier 3 threshold
-	echo "5" >"$failure_counter"
-
-	# Mock ip command - VPN down
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ip"
-
-	# Mock ipsec - fails
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    echo "ipsec restart failed" >&2
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ipsec"
-	add_mock_to_path
-
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" || true
-
-	# Should handle error gracefully
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "Failed" || assert_file_contains "$log_file" "ERROR"
-
-	remove_mock_from_path
-}
-
-# bats test_tags=category:high-risk,priority:high
 @test "restart succeeds but VPN doesn't recover (cooldown still set)" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_HOUR=10
-COOLDOWN_MINUTES=1
-EOF
+	local config_file
+	config_file=$(setup_test_config_with_recovery_disabled "${TEST_DIR}/vpn-monitor.conf" "192.168.1.1" \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3' \
+		'TIER3_THRESHOLD=5' \
+		'MAX_RESTARTS_PER_HOUR=10' \
+		'COOLDOWN_MINUTES=1')
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -1234,15 +839,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "PIPESTATUS handling when restart command fails in pipe" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_HOUR=10
-COOLDOWN_MINUTES=1
-EOF
+	local config_file
+	config_file=$(setup_test_config_with_recovery_disabled "${TEST_DIR}/vpn-monitor.conf" "192.168.1.1" \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3' \
+		'TIER3_THRESHOLD=5' \
+		'MAX_RESTARTS_PER_HOUR=10' \
+		'COOLDOWN_MINUTES=1')
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -1296,6 +899,8 @@ EXTERNAL_PEER_IPS="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
+ENABLE_XFRM_RECOVERY=0
+ENABLE_NETWORK_PARTITION_CHECK=0
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1355,13 +960,11 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "recovery action succeeds but VPN still fails on next check" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	local config_file
+	config_file=$(setup_test_config_with_recovery_disabled "${TEST_DIR}/vpn-monitor.conf" "192.168.1.1" \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3' \
+		'TIER3_THRESHOLD=5')
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -1417,13 +1020,11 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "recovery action fails and failure counter continues incrementing" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	local config_file
+	config_file=$(setup_test_config_with_recovery_disabled "${TEST_DIR}/vpn-monitor.conf" "192.168.1.1" \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3' \
+		'TIER3_THRESHOLD=5')
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -1483,13 +1084,11 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "multiple recovery actions triggered simultaneously (multiple peers)" {
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1 10.0.0.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	local config_file
+	config_file=$(setup_test_config_with_recovery_disabled "${TEST_DIR}/vpn-monitor.conf" "192.168.1.1 10.0.0.1" \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3' \
+		'TIER3_THRESHOLD=5')
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -1708,8 +1307,7 @@ EOF
 	# Set failure count to Tier 3 threshold
 	echo "5" >"$failure_counter"
 
-	mock_ip_xfrm_state "192.168.1.1" "0" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 0
 
 	local mock_ipsec="${TEST_DIR}/ipsec"
 	cat >"$mock_ipsec" <<'EOF'
@@ -1757,8 +1355,7 @@ EOF
 	# Set failure count to Tier 3 threshold
 	echo "5" >"$failure_counter"
 
-	mock_ip_xfrm_state "192.168.1.1" "0" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 0
 
 	local mock_ipsec="${TEST_DIR}/ipsec"
 	cat >"$mock_ipsec" <<'EOF'
@@ -1781,38 +1378,6 @@ EOF
 	remove_mock_from_path
 }
 
-# ============================================================================
-# 6.1 STATE FILE CORRUPTION AND RECOVERY
-# ============================================================================
-
-# ============================================================================
-# 7.1 LOGGING FAILURE SCENARIOS
-# ============================================================================
-
-# ============================================================================
-# 2.3 CONFIGURATION VARIABLE VALIDATION - VERY LARGE VALUES
-# ============================================================================
-
-# ============================================================================
-# 4.4 RATE LIMITING EDGE CASES - TIMESTAMP HANDLING
-# ============================================================================
-
-# ============================================================================
-# 6.1 STATE FILE CORRUPTION - COOLDOWN FILE
-# ============================================================================
-
-# ============================================================================
-# 4.4 RATE LIMITING EDGE CASES - CLEANUP TEST
-# ============================================================================
-
-# ============================================================================
-# 4.4 RATE LIMITING EDGE CASES - TIMESTAMP HANDLING
-# ============================================================================
-
-# ============================================================================
-# 4.4 RATE LIMITING EDGE CASES - CLEANUP TEST
-# ============================================================================
-
 # bats test_tags=category:high-risk,priority:high
 @test "restart count cleanup removes old entries after 24 hours" {
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
@@ -1823,6 +1388,8 @@ TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
 MAX_RESTARTS_PER_HOUR=10
 COOLDOWN_MINUTES=1
+ENABLE_XFRM_RECOVERY=0
+ENABLE_NETWORK_PARTITION_CHECK=0
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1844,8 +1411,7 @@ EOF
 	# Set failure count to Tier 3 threshold
 	echo "5" >"$failure_counter"
 
-	mock_ip_xfrm_state "192.168.1.1" "0" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 0
 
 	local mock_ipsec="${TEST_DIR}/ipsec"
 	cat >"$mock_ipsec" <<'EOF'
@@ -1915,8 +1481,7 @@ EOF
 
 	# Mock ip command - VPN is up (SA exists) but byte counters haven't increased yet
 	# Return same byte count as last_bytes (simulates no new traffic after recovery)
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" || true
@@ -1942,6 +1507,8 @@ TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
 MAX_RESTARTS_PER_HOUR=10
 COOLDOWN_MINUTES=1
+ENABLE_XFRM_RECOVERY=0
+ENABLE_NETWORK_PARTITION_CHECK=0
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1957,8 +1524,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN is down initially (no SA)
-	mock_ip_xfrm_state "192.168.1.1" "0" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 0
 
 	# Mock ipsec restart to fail (simulates restart failure)
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -1982,8 +1548,7 @@ EOF
 	assert_file_exist "$log_file"
 
 	# Now simulate natural recovery: VPN comes back up (SA exists)
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "192.168.1.1" 1000
 
 	# Second run: VPN recovers naturally (should reset failure count)
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" || true

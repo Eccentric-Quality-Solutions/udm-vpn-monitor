@@ -21,10 +21,6 @@ if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	[[ -z "${IPV4_CIDR_SINGLE_HOST:-}" ]] && readonly IPV4_CIDR_SINGLE_HOST=32
 	[[ -z "${PING_PACKET_LOSS_THRESHOLD:-}" ]] && readonly PING_PACKET_LOSS_THRESHOLD=100
 	[[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && readonly XFRM_OUTPUT_CONTEXT_LINES=10
-	[[ -z "${TRAFFIC_PATTERN_MIN_WINDOW_SECONDS:-}" ]] && readonly TRAFFIC_PATTERN_MIN_WINDOW_SECONDS=60
-	[[ -z "${TRAFFIC_PATTERN_MAX_SAMPLES:-}" ]] && readonly TRAFFIC_PATTERN_MAX_SAMPLES=20
-	[[ -z "${TRAFFIC_PATTERN_MIN_RATE_BYTES_PER_SEC:-}" ]] && readonly TRAFFIC_PATTERN_MIN_RATE_BYTES_PER_SEC=1
-	[[ -z "${TRAFFIC_PATTERN_IDLE_TIMEOUT_SECONDS:-}" ]] && readonly TRAFFIC_PATTERN_IDLE_TIMEOUT_SECONDS=300
 fi
 
 # Source common utility functions
@@ -913,9 +909,8 @@ detect_sa_rekey() {
 
 # Check byte counters for VPN status
 #
-# Validates that byte counters indicate healthy VPN tunnel using enhanced traffic pattern analysis.
-# Tracks traffic patterns over time, calculates traffic rate (bytes/second), and distinguishes
-# "idle but healthy" from "broken" using ping checks.
+# Validates that byte counters indicate healthy VPN tunnel using simple heuristics.
+# Uses simple logic: bytes increasing = healthy, bytes not increasing + ping fails = broken.
 # Updates the last_bytes file with current byte count if valid.
 # Detects SA rekey events before checking bytes to prevent false positives.
 #
@@ -931,7 +926,6 @@ detect_sa_rekey() {
 #
 # Side effects:
 #   - Updates last_bytes state using abstraction layer if bytes are valid
-#   - Stores traffic pattern samples for rate calculation
 #   - Detects SA rekey if SPI provided and resets byte counter baseline
 #   - Marks idle tunnels and suggests keepalive if needed
 #   - Logs INFO messages for valid counters
@@ -943,10 +937,9 @@ detect_sa_rekey() {
 #   fi
 #
 # Note:
-#   Requires get_peer_state, set_peer_state, store_traffic_sample, calculate_traffic_rate from state.sh
+#   Requires get_peer_state, set_peer_state from state.sh
 #   Requires check_ping_connectivity from detection.sh
-#   First check (last_bytes=0) always passes if current_bytes > 0
-#   Subsequent checks use traffic rate analysis and ping checks for idle detection
+#   Uses simple heuristics: bytes increasing = healthy, bytes not increasing + ping fails = broken
 #   If rekey detected, byte counter baseline is reset and check passes
 #   Uses abstraction layer for state management
 check_byte_counters() {
@@ -959,16 +952,14 @@ check_byte_counters() {
 	if [[ -n "$current_spi" ]]; then
 		if detect_sa_rekey "$current_spi" "$peer_ip"; then
 			# Rekey detected - byte counter baseline was reset to 0
-			# Clear traffic history and idle state (rekey resets everything)
-			delete_peer_state "$peer_ip" "traffic_history" || true
+			# Clear idle state (rekey resets everything)
 			delete_peer_state "$peer_ip" "idle_detected" || true
 			# Treat this as first check (allow any non-zero bytes)
 			local last_bytes
 			last_bytes=$(get_peer_state "$peer_ip" "last_bytes" "0")
 			if [[ "$current_bytes" -gt 0 ]]; then
-				# Bytes are non-zero after rekey - update baseline and store sample
+				# Bytes are non-zero after rekey - update baseline
 				if set_peer_state "$peer_ip" "last_bytes" "$current_bytes"; then
-					store_traffic_sample "$peer_ip" "$current_bytes" || true
 					log_message "INFO" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset)"
 					return 0
 				else
@@ -984,11 +975,6 @@ check_byte_counters() {
 	local last_bytes
 	last_bytes=$(get_peer_state "$peer_ip" "last_bytes" "0")
 
-	# Store current sample for traffic pattern analysis
-	if [[ "$current_bytes" -gt 0 ]]; then
-		store_traffic_sample "$peer_ip" "$current_bytes" || true
-	fi
-
 	# Check if bytes are zero
 	if [[ "$current_bytes" -eq 0 ]]; then
 		# Zero bytes - check if this is first check or if we've had traffic before
@@ -1003,8 +989,7 @@ check_byte_counters() {
 		fi
 	fi
 
-	# Bytes are non-zero - analyze traffic pattern
-	# Check if bytes are increasing (simple check first)
+	# Bytes are non-zero - check if increasing
 	if [[ "$current_bytes" -gt "$last_bytes" ]] || [[ "$last_bytes" -eq 0 ]]; then
 		# Bytes are increasing or this is first check - definitely healthy
 		if set_peer_state "$peer_ip" "last_bytes" "$current_bytes"; then
@@ -1018,113 +1003,42 @@ check_byte_counters() {
 		fi
 	fi
 
-	# Bytes are not increasing (static or decreased)
-	# Use traffic pattern analysis to distinguish idle from broken
-	local traffic_rate
-	traffic_rate=$(calculate_traffic_rate "$peer_ip" "${TRAFFIC_PATTERN_MIN_WINDOW_SECONDS:-60}" 2>/dev/null || echo "")
-
-	if [[ -n "$traffic_rate" ]] && [[ "$traffic_rate" -ge "${TRAFFIC_PATTERN_MIN_RATE_BYTES_PER_SEC:-1}" ]]; then
-		# Traffic rate is above minimum threshold - tunnel is healthy (traffic flowing)
-		if set_peer_state "$peer_ip" "last_bytes" "$current_bytes"; then
-			delete_peer_state "$peer_ip" "idle_detected" || true
-			log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes, rate=${traffic_rate} bytes/sec (traffic flowing)"
+	# Bytes are not increasing (static or decreased) - use ping to check if healthy
+	if [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
+		local local_ip
+		local_ip=$(get_local_ip_for_ping)
+		if check_ping_connectivity "$internal_peer_ip" "$local_ip" 2>/dev/null; then
+			# Ping succeeds - tunnel is idle but healthy
+			set_peer_state "$peer_ip" "last_bytes" "$current_bytes" || true
+			set_peer_state "$peer_ip" "idle_detected" "1" || true
+			log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (idle but healthy, ping check passed)"
+			# Check keepalive status and suggest action if needed
+			if [[ "${ENABLE_KEEPALIVE:-0}" -ne 1 ]]; then
+				log_message "INFO" "Consider enabling ENABLE_KEEPALIVE=1 in config to prevent idle tunnel timeouts"
+			else
+				# Keepalive is enabled - check if daemon is running
+				local keepalive_pidfile="${STATE_DIR:-/data/vpn-monitor}/vpn-keepalive.pid"
+				if [[ ! -f "$keepalive_pidfile" ]] || ! kill -0 "$(cat "$keepalive_pidfile" 2>/dev/null)" 2>/dev/null; then
+					log_message "INFO" "Keepalive is enabled but daemon is not running - consider starting: vpn-keepalive.sh start"
+				fi
+			fi
 			return 0
 		fi
 	fi
 
-	# Traffic rate is low or cannot be calculated - may be idle
-	# Check if tunnel has been idle for extended period
-	local samples
-	samples=$(get_traffic_samples "$peer_ip" "${TRAFFIC_PATTERN_IDLE_TIMEOUT_SECONDS:-300}")
-	local sample_count
-	sample_count=$(echo "$samples" | wc -l | tr -d ' ')
-
-	if [[ "$sample_count" -ge 2 ]]; then
-		# Have enough samples to check idle duration
-		local oldest_sample
-		local newest_sample
-		oldest_sample=$(echo "$samples" | head -1)
-		newest_sample=$(echo "$samples" | tail -1)
-
-		# Parse oldest sample
-		local oldest_timestamp
-		if [[ "$oldest_sample" =~ ^([0-9]+):([0-9]+)$ ]]; then
-			oldest_timestamp="${BASH_REMATCH[1]}"
-		else
-			# Invalid format, skip this check
-			oldest_timestamp=""
-		fi
-
-		# Parse newest sample
-		local newest_timestamp
-		if [[ "$newest_sample" =~ ^([0-9]+):([0-9]+)$ ]]; then
-			newest_timestamp="${BASH_REMATCH[1]}"
-		else
-			# Invalid format, skip this check
-			newest_timestamp=""
-		fi
-
-		# Only proceed if both timestamps were parsed successfully
-		if [[ -n "$oldest_timestamp" ]] && [[ -n "$newest_timestamp" ]]; then
-			local idle_duration=$((newest_timestamp - oldest_timestamp))
-			if [[ $idle_duration -ge "${TRAFFIC_PATTERN_IDLE_TIMEOUT_SECONDS:-300}" ]]; then
-				# Tunnel has been idle for extended period - use ping to check if healthy
-				local is_idle_healthy=0
-				if [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
-					local local_ip
-					local_ip=$(get_local_ip_for_ping)
-					if check_ping_connectivity "$internal_peer_ip" "$local_ip" 2>/dev/null; then
-						# Ping succeeds - tunnel is idle but healthy
-						is_idle_healthy=1
-						set_peer_state "$peer_ip" "idle_detected" "1" || true
-						log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (idle but healthy, ping check passed)"
-						# Check keepalive status and suggest action if needed
-						if [[ "${ENABLE_KEEPALIVE:-0}" -ne 1 ]]; then
-							log_message "INFO" "Consider enabling ENABLE_KEEPALIVE=1 in config to prevent idle tunnel timeouts"
-						else
-							# Keepalive is enabled - check if daemon is running
-							local keepalive_pidfile="${STATE_DIR:-/data/vpn-monitor}/vpn-keepalive.pid"
-							if [[ ! -f "$keepalive_pidfile" ]] || ! kill -0 "$(cat "$keepalive_pidfile" 2>/dev/null)" 2>/dev/null; then
-								log_message "INFO" "Keepalive is enabled but daemon is not running - consider starting: vpn-keepalive.sh start"
-							fi
-						fi
-						return 0
-					fi
-				fi
-
-				if [[ $is_idle_healthy -eq 0 ]]; then
-					# Idle and ping failed (or ping check disabled) - likely broken
-					local ping_status="disabled"
-					if [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
-						ping_status="failed"
-					fi
-					handle_error "WARNING" "VPN suspect: SA exists but idle for ${idle_duration}s, bytes=$current_bytes (ping check: $ping_status)"
-					return 1
-				fi
-			fi
-		fi
+	# Bytes not increasing and ping failed (or ping check disabled) - likely broken
+	local ping_status="disabled"
+	if [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
+		ping_status="failed"
 	fi
-
-	# Insufficient data for traffic pattern analysis - use simple heuristic
-	# If bytes are static but non-zero, and we don't have enough history, be conservative
-	if [[ "$current_bytes" -eq "$last_bytes" ]] && [[ "$current_bytes" -gt 0 ]]; then
-		# Static bytes - may be idle, but can't determine without more data
-		# Update state and log warning
-		if set_peer_state "$peer_ip" "last_bytes" "$current_bytes"; then
-			handle_error "WARNING" "VPN suspect: SA exists but bytes not increasing (current=$current_bytes, last=$last_bytes, may be idle)"
-			return 1
-		fi
-	fi
-
-	# Bytes decreased (shouldn't happen except during rekey, which is handled above)
-	handle_error "WARNING" "VPN suspect: SA exists but bytes decreased (current=$current_bytes, last=$last_bytes)"
+	handle_error "WARNING" "VPN suspect: SA exists but bytes not increasing (current=$current_bytes, last=$last_bytes, ping check: $ping_status)"
 	return 1
 }
 
 # Check VPN status using ip xfrm state
 #
 # Checks for Security Association (SA) existence using ip xfrm state command.
-# Validates byte counters if available using enhanced traffic pattern analysis.
+# Validates byte counters if available using simple heuristics.
 #
 # Arguments:
 #   $1: External peer IP address (used for xfrm state checks)
@@ -1166,7 +1080,7 @@ check_xfrm_status() {
 	# Check if we have byte counters
 	local current_bytes
 	if current_bytes=$(extract_byte_counter "$xfrm_output"); then
-		# Successfully extracted byte counter - validate it using enhanced traffic pattern analysis
+		# Successfully extracted byte counter - validate it using simple heuristics
 		# Pass SPI and internal IP to check_byte_counters for rekey detection and idle detection
 		if check_byte_counters "$current_bytes" "$peer_ip" "$current_spi" "$internal_peer_ip"; then
 			# Update stored SPI if we have it (even if rekey not detected)
