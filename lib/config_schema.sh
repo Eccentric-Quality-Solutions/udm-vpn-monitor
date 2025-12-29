@@ -3,7 +3,7 @@
 # Configuration schema definition for UDM VPN Monitor
 # Defines validation rules for all configuration variables
 #
-# Version: 0.3.0
+# Version: 0.4.0
 #
 
 # Configuration schema definition
@@ -86,6 +86,14 @@ declare -A CONFIG_SCHEMA=(
 	["NETWORK_PARTITION_DNS_HOSTNAME"]="optional|string||default:google.com"
 	["NETWORK_PARTITION_DNS_TIMEOUT"]="optional|integer|min:1|max:10|default:2"
 	["NETWORK_PARTITION_INTERFACES"]="optional|string||default:br0,eth0"
+	# Resource monitoring (enabled by default)
+	["ENABLE_RESOURCE_MONITORING"]="optional|integer|values:0,1|default:1"
+	["RESOURCE_CPU_THRESHOLD"]="optional|integer|min:50|max:100|default:90"
+	["RESOURCE_CPU_DURATION"]="optional|integer|min:10|max:600|default:60"
+	["RESOURCE_RAM_THRESHOLD"]="optional|integer|min:50|max:100|default:90"
+	["RESOURCE_RAM_DURATION"]="optional|integer|min:10|max:600|default:60"
+	["RESOURCE_DISK_WARNING_THRESHOLD"]="optional|integer|min:5|max:50|default:20"
+	["RESOURCE_DISK_CRITICAL_THRESHOLD"]="optional|integer|min:1|max:20|default:10"
 )
 
 # Get schema for a configuration variable

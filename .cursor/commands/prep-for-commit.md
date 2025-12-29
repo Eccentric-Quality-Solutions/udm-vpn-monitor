@@ -1,4 +1,4 @@
-- Review the changes that have been made and update the changelog accordingly.
+- Review the changes that have been made (only staged) and update the changelog accordingly.
 - Report if the version has not been incremented since the last git commit.
 - Recommend how the version should be incremented (e.g. is it a minor or major update?).
 - Update documentation to reflect the latest changes.

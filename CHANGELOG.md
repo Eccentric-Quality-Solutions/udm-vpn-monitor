@@ -2,6 +2,32 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
+## 0.4.0 - 2025-12-29
+
+### Added
+- **Resource Monitoring**: New `lib/resources.sh` module that monitors CPU, RAM, and disk space usage:
+  - **CPU Monitoring**: Tracks CPU usage and throttles execution if CPU is pegged at threshold (default: 90%) for sustained duration (default: 60 seconds)
+  - **RAM Monitoring**: Tracks RAM usage and throttles execution if RAM is at threshold (default: 90%) for sustained duration (default: 60 seconds)
+  - **Disk Space Monitoring**: 
+    - Logs warnings when free disk space drops below warning threshold (default: 20% free)
+    - Automatically rotates log files when they exceed 10MB
+    - Removes old rotated log files when disk space is critical (< 10% free)
+    - Throttles execution when disk space is critically low
+  - **State Tracking**: Tracks resource constraint state over time to detect sustained resource pressure
+  - **Graceful Degradation**: Falls back gracefully if monitoring commands are unavailable
+- **Resource Monitoring Configuration**: New configuration options in `vpn-monitor.conf`:
+  - `ENABLE_RESOURCE_MONITORING` (default: 1) - Enable/disable resource monitoring
+  - `RESOURCE_CPU_THRESHOLD` (default: 90) - CPU usage threshold percentage
+  - `RESOURCE_CPU_DURATION` (default: 60) - CPU constraint duration in seconds
+  - `RESOURCE_RAM_THRESHOLD` (default: 90) - RAM usage threshold percentage
+  - `RESOURCE_RAM_DURATION` (default: 60) - RAM constraint duration in seconds
+  - `RESOURCE_DISK_WARNING_THRESHOLD` (default: 20) - Disk space warning threshold (% free)
+  - `RESOURCE_DISK_CRITICAL_THRESHOLD` (default: 10) - Disk space critical threshold (% free)
+
+### Changed
+- **Main Script**: Integrated resource monitoring checks into `validate_monitor_state()` function
+- **Documentation**: Updated README.md with resource monitoring section, configuration table, and usage examples
+
 ## 0.3.0 - 2025-12-29
 
 ### Added

@@ -6,7 +6,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.3.0
+# Version: 0.4.0
 #
 
 # Strict error handling: exit on error, undefined vars, pipe failures
@@ -22,7 +22,7 @@ LOCKFILE="${STATE_DIR}/vpn-monitor.lock"
 LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
 
 # Script version
-SCRIPT_VERSION="0.3.0"
+SCRIPT_VERSION="0.4.0"
 
 # Source library modules
 # shellcheck source=lib/logging.sh
@@ -37,6 +37,8 @@ source "${SCRIPT_DIR}/lib/detection.sh"
 source "${SCRIPT_DIR}/lib/recovery.sh"
 # shellcheck source=lib/lockfile.sh
 source "${SCRIPT_DIR}/lib/lockfile.sh"
+# shellcheck source=lib/resources.sh
+source "${SCRIPT_DIR}/lib/resources.sh"
 
 # Parse help flags early (before directory creation)
 # This allows --help/-h to work even if directories don't exist
@@ -371,6 +373,14 @@ validate_monitor_state() {
 	# Validate state files (check for corruption)
 	if ! validate_state; then
 		log_message "WARNING" "State file validation detected issues - some state files may be corrupted"
+	fi
+
+	# Check system resources (CPU, RAM, disk space)
+	# This check happens early to throttle execution if resources are constrained
+	# Resource monitoring may exit early if resources are severely constrained
+	if ! check_system_resources "$STATE_DIR"; then
+		log_message "INFO" "Script exiting: system resources constrained"
+		exit 0
 	fi
 
 	# Check for network partition before cooldown check

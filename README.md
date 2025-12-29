@@ -29,6 +29,7 @@ For detailed recovery tier flow diagrams and technical implementation, see the [
 - **Robust Detection**: Uses `ip xfrm state` byte counters to detect actual VPN traffic flow
 - **Connectivity Verification**: Optional ping checks verify end-to-end tunnel connectivity
 - **Network Partition Detection**: Automatically detects when local network connectivity is down and skips VPN checks until connectivity is restored
+- **Resource Monitoring**: Monitors CPU, RAM, and disk space usage and throttles execution when resources are constrained to prevent system overload
 - **Tiered Recovery**: Escalates from logging → surgical SA cleanup → full restart
 - **VPN Keepalive Daemon**: Optional background daemon sends periodic pings to prevent idle VPN tunnels from timing out
 - **Safety Controls**: Lockfiles with timeout detection, cooldown timers, and rate limiting prevent restart loops
@@ -191,6 +192,13 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `NETWORK_PARTITION_DNS_HOSTNAME` | Hostname to resolve for network partition detection | "google.com" |
 | `NETWORK_PARTITION_DNS_TIMEOUT` | DNS query timeout in seconds (1-10) | 2 |
 | `NETWORK_PARTITION_INTERFACES` | Comma-separated list of interfaces to check (e.g., "br0,eth0") | "br0,eth0" |
+| `ENABLE_RESOURCE_MONITORING` | Enable resource monitoring (CPU, RAM, disk space) and throttling (0 or 1) | 1 |
+| `RESOURCE_CPU_THRESHOLD` | CPU usage threshold percentage (50-100). Script throttles if CPU is at or above this threshold for RESOURCE_CPU_DURATION seconds. | 90 |
+| `RESOURCE_CPU_DURATION` | CPU constraint duration in seconds (10-600). CPU must be at threshold or above for this duration before throttling. | 60 |
+| `RESOURCE_RAM_THRESHOLD` | RAM usage threshold percentage (50-100). Script throttles if RAM is at or above this threshold for RESOURCE_RAM_DURATION seconds. | 90 |
+| `RESOURCE_RAM_DURATION` | RAM constraint duration in seconds (10-600). RAM must be at threshold or above for this duration before throttling. | 60 |
+| `RESOURCE_DISK_WARNING_THRESHOLD` | Disk space warning threshold (percentage free, 5-50). Script logs a warning when free disk space drops below this threshold. | 20 |
+| `RESOURCE_DISK_CRITICAL_THRESHOLD` | Disk space critical threshold (percentage free, 1-20). Script throttles execution and takes action (e.g., rotates logs) when free disk space drops below this threshold. | 10 |
 
 
 **Cron Schedule Examples:**
@@ -249,6 +257,52 @@ The VPN keepalive daemon is an optional background process that sends periodic p
 **Note:** The keepalive daemon is separate from the monitoring script. The monitoring script still runs via cron and performs its own checks. Keepalive only sends periodic pings to keep tunnels alive - it does not perform failure detection or recovery.
 
 For technical architecture details, systemd integration, and design decisions, see the [VPN Keepalive Daemon section in ARCHITECTURE.md](docs/ARCHITECTURE.md#vpn-keepalive-daemon).
+
+### Resource Monitoring
+
+The resource monitoring feature monitors CPU, RAM, and disk space usage to prevent the VPN monitor from overloading the UDM system. When resources are constrained, the script throttles execution by exiting early, allowing the system to recover.
+
+**How It Works:**
+
+- **CPU Monitoring**: Checks CPU usage percentage. If CPU usage is at or above `RESOURCE_CPU_THRESHOLD` (default: 90%) for `RESOURCE_CPU_DURATION` (default: 60 seconds), the script exits early to reduce load.
+- **RAM Monitoring**: Checks RAM usage percentage. If RAM usage is at or above `RESOURCE_RAM_THRESHOLD` (default: 90%) for `RESOURCE_RAM_DURATION` (default: 60 seconds), the script exits early to reduce memory pressure.
+- **Disk Space Monitoring**: 
+  - Logs a warning when free disk space drops below `RESOURCE_DISK_WARNING_THRESHOLD` (default: 20% free)
+  - At `RESOURCE_DISK_CRITICAL_THRESHOLD` (default: 10% free), the script:
+    - Rotates log files if they exceed 10MB
+    - Removes old rotated log files (.old files)
+    - Throttles execution by exiting early if disk space remains critical
+
+**Configuration:**
+
+Resource monitoring is enabled by default (`ENABLE_RESOURCE_MONITORING=1`). To disable:
+
+```bash
+ENABLE_RESOURCE_MONITORING=0
+```
+
+**Example Log Output:**
+
+```
+[2025-01-15 10:00:00] WARNING: CPU usage has been at 90%+ (currently 95%) for 60s - throttling execution
+[2025-01-15 10:00:00] INFO: Script exiting: system resources constrained
+```
+
+```
+[2025-01-15 10:00:00] WARNING: Free disk space is low: 18% free on /dev/mapper/udm-data
+[2025-01-15 10:00:00] WARNING: Free disk space is critical: 8% free on /dev/mapper/udm-data
+[2025-01-15 10:00:00] WARNING: Log file is large (15360KB), rotating to free disk space
+[2025-01-15 10:00:00] INFO: Log file rotated: /data/vpn-monitor/logs/vpn-monitor.log -> /data/vpn-monitor/logs/vpn-monitor.log.old
+[2025-01-15 10:00:00] INFO: Removed 3 old log file(s) to free disk space
+```
+
+**When to Adjust Thresholds:**
+
+- **Lower CPU/RAM thresholds** (e.g., 80%) if your UDM is frequently under heavy load
+- **Increase durations** (e.g., 120 seconds) if you want to allow brief resource spikes without throttling
+- **Adjust disk thresholds** based on your available disk space and log rotation needs
+
+**Note:** Resource monitoring adds approximately 1 second to script execution time (for CPU usage calculation). This is acceptable since the script runs via cron (default: every 1 minute).
 
 ## Common Scenarios
 

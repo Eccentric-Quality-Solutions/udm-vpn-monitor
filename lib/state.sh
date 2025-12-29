@@ -3,7 +3,7 @@
 # State file management for UDM VPN Monitor
 # Handles failure counters, cooldown periods, rate limiting, and restart tracking
 #
-# Version: 0.3.0
+# Version: 0.4.0
 #
 
 # Source constants for magic numbers
