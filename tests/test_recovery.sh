@@ -648,11 +648,14 @@ EOF
 	# Importance: Fallback ensures recovery has multiple options when preferred method fails.
 	setup_vpn_down_fixture "192.168.1.1" 3 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_XFRM_RECOVERY=1'
 
-	# Mock ip command - xfrm recovery fails (no SAs found or delete fails)
+	# Mock ip command - xfrm recovery fails (delete fails)
+	# Use mock_ip_xfrm_delete with failure flag (0 = fail)
+	# Note: We need to override the show behavior to return empty (no SAs)
+	# So we'll create a custom mock that combines both behaviors
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'EOF'
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "show" ]]; then
     # Return empty (no SAs found) - xfrm recovery will fail
     exit 0
 elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "delete" ]]; then

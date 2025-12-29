@@ -4,7 +4,7 @@
 # Analyzes VPN monitor logs and generates reports on failure frequency and recovery success rate
 # Exports data to CSV for spreadsheet analysis
 #
-# Version: 0.3.0
+# Version: 0.4.1
 #
 
 set -euo pipefail

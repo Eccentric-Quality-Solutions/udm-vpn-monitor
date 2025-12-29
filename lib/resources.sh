@@ -3,7 +3,7 @@
 # Resource monitoring functions for UDM VPN Monitor
 # Monitors CPU, RAM, and disk space usage and implements throttling
 #
-# Version: 0.4.0
+# Version: 0.4.1
 #
 
 # Source common utility functions
@@ -19,6 +19,10 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 			return 1
 		fi
 		return 0
+	}
+	safe_source_lib() {
+		local lib_file="$1"
+		source "$lib_file" 2>/dev/null
 	}
 }
 
@@ -117,7 +121,7 @@ get_cpu_usage() {
 #   Uses MemAvailable if available (more accurate), falls back to MemFree
 #   Returns 0 if calculation fails (graceful degradation)
 get_memory_usage() {
-	if ! command -v free >/dev/null 2>&1; then
+	if ! check_command_available "free"; then
 		return 1
 	fi
 
@@ -175,7 +179,7 @@ get_memory_usage() {
 #   Returns 0 if calculation fails (graceful degradation)
 get_disk_usage() {
 	local path="${1:-/data}"
-	if ! command -v df >/dev/null 2>&1; then
+	if ! check_command_available "df"; then
 		return 1
 	fi
 
@@ -224,7 +228,7 @@ get_disk_usage() {
 #   Returns 100 if calculation fails (assume space available, graceful degradation)
 get_free_disk_space() {
 	local path="${1:-/data}"
-	if ! command -v df >/dev/null 2>&1; then
+	if ! check_command_available "df"; then
 		return 1
 	fi
 
@@ -300,8 +304,8 @@ check_resource_constrained() {
 	fi
 
 	# Ensure state directory exists
-	if [[ ! -d "$state_dir" ]]; then
-		mkdir -p "$state_dir" 2>/dev/null || return 1
+	if ! try_ensure_directory_exists "$state_dir"; then
+		return 1
 	fi
 
 	# Check if resource is currently constrained
@@ -397,7 +401,7 @@ check_system_resources() {
 	local cpu_usage
 	if cpu_usage=$(get_cpu_usage 2>/dev/null); then
 		if check_resource_constrained "cpu" "$cpu_usage" "$cpu_threshold" "$cpu_duration" "$state_dir"; then
-			log_message "WARNING" "CPU usage has been at ${cpu_threshold}%+ (currently ${cpu_usage}%) for ${cpu_duration}s - throttling execution"
+			handle_error "WARNING" "CPU usage has been at ${cpu_threshold}%+ (currently ${cpu_usage}%) for ${cpu_duration}s - throttling execution" 0
 			return 1
 		fi
 	fi
@@ -406,7 +410,7 @@ check_system_resources() {
 	local ram_usage
 	if ram_usage=$(get_memory_usage 2>/dev/null); then
 		if check_resource_constrained "ram" "$ram_usage" "$ram_threshold" "$ram_duration" "$state_dir"; then
-			log_message "WARNING" "RAM usage has been at ${ram_threshold}%+ (currently ${ram_usage}%) for ${ram_duration}s - throttling execution"
+			handle_error "WARNING" "RAM usage has been at ${ram_threshold}%+ (currently ${ram_usage}%) for ${ram_duration}s - throttling execution" 0
 			return 1
 		fi
 	fi
@@ -420,7 +424,7 @@ check_system_resources() {
 			if [[ ! -f "$disk_warning_state_file" ]]; then
 				local filesystem
 				filesystem=$(df -P "$check_path" 2>/dev/null | tail -n1 | awk '{print $1}')
-				log_message "WARNING" "Free disk space is low: ${free_space}% free on ${filesystem}"
+				handle_error "WARNING" "Free disk space is low: ${free_space}% free on ${filesystem}" 0
 				# Mark that we've logged the warning
 				atomic_write_file "$disk_warning_state_file" "1" 2>/dev/null || true
 			fi
@@ -436,7 +440,7 @@ check_system_resources() {
 		if [[ $free_space -lt $disk_critical ]]; then
 			local filesystem
 			filesystem=$(df -P "$check_path" 2>/dev/null | tail -n1 | awk '{print $1}')
-			log_message "WARNING" "Free disk space is critical: ${free_space}% free on ${filesystem}"
+			handle_error "WARNING" "Free disk space is critical: ${free_space}% free on ${filesystem}" 0
 
 			# Clear warning state file (so it can warn again if it recovers to warning level)
 			local disk_warning_state_file="${state_dir}/resource_disk_warning_logged"
@@ -457,7 +461,7 @@ check_system_resources() {
 			fi
 
 			# Still critical - throttle execution
-			log_message "WARNING" "Disk space still critical after cleanup - throttling execution"
+			handle_error "WARNING" "Disk space still critical after cleanup - throttling execution" 0
 			return 1
 		fi
 	fi
@@ -512,7 +516,7 @@ manage_log_files_on_low_disk() {
 
 		# If log file is larger than 10MB, rotate it
 		if [[ -n "$log_size_kb" ]] && [[ "$log_size_kb" -gt 10240 ]]; then
-			log_message "WARNING" "Log file is large (${log_size_kb}KB), rotating to free disk space"
+			handle_error "WARNING" "Log file is large (${log_size_kb}KB), rotating to free disk space" 0
 
 			# Create rotated log file name
 			local rotated_log="${LOG_FILE}.old"

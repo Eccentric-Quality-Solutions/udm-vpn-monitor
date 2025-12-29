@@ -3,7 +3,7 @@
 # Constants for UDM VPN Monitor
 # Defines commonly used magic numbers as named constants for better code readability
 #
-# Version: 0.4.0
+# Version: 0.4.1
 #
 
 # Lockfile timeout default (in seconds)
@@ -53,3 +53,14 @@ readonly XFRM_RECOVERY_VERIFY_INTERVAL=2
 # Maximum interval (in seconds) for exponential backoff during recovery verification
 # Used to cap the exponential backoff interval growth
 readonly XFRM_RECOVERY_MAX_INTERVAL=16
+
+# Error code constants
+# Standard exit codes for consistent error handling throughout the codebase
+# These constants should be used instead of magic numbers for better readability
+readonly EXIT_SUCCESS=0
+readonly EXIT_GENERAL_ERROR=1
+readonly EXIT_CONFIG_ERROR=2
+readonly EXIT_VALIDATION_ERROR=3
+readonly EXIT_PERMISSION_ERROR=4
+readonly EXIT_COMMAND_NOT_FOUND=5
+readonly EXIT_STATE_ERROR=6

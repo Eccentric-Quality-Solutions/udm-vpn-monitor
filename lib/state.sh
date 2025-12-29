@@ -3,13 +3,14 @@
 # State file management for UDM VPN Monitor
 # Handles failure counters, cooldown periods, rate limiting, and restart tracking
 #
-# Version: 0.4.0
+# Version: 0.4.1
 #
 
 # Source constants for magic numbers
 # shellcheck source=lib/constants.sh
 # Determine lib directory (where this file is located)
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Note: safe_source_lib not available here since constants.sh is sourced before common.sh
 if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	# Fallback if constants.sh not found (shouldn't happen in normal operation)
 	# Only set if not already set (to avoid readonly variable errors)
@@ -29,6 +30,17 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 			echo "$default_content" >"$file" 2>/dev/null || return 1
 		fi
 		return 0
+	}
+	try_ensure_directory_exists() {
+		local dir="$1"
+		if [[ ! -d "$dir" ]]; then
+			mkdir -p "$dir" 2>/dev/null || return 1
+		fi
+		return 0
+	}
+	safe_source_lib() {
+		local lib_file="$1"
+		source "$lib_file" 2>/dev/null
 	}
 }
 
@@ -60,6 +72,14 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 #   Requires RESTART_COUNT_FILE, NETWORK_PARTITION_STATE_FILE, ensure_file_exists, and log_message to be set
 #   Per-peer files are created on-demand by increment_failure and check_byte_counters
 init_state() {
+	# Ensure directories exist before creating files
+	if ! try_ensure_directory_exists "$LOGS_DIR"; then
+		handle_error "WARNING" "Failed to create logs directory: $LOGS_DIR"
+	fi
+	if ! try_ensure_directory_exists "$STATE_DIR"; then
+		handle_error "WARNING" "Failed to create state directory: $STATE_DIR"
+	fi
+
 	if ! ensure_file_exists "$RESTART_COUNT_FILE" "0"; then
 		handle_error "WARNING" "Failed to create restart count file"
 	fi
@@ -262,6 +282,15 @@ set_peer_state() {
 		;;
 	esac
 
+	# Ensure directory exists before writing file
+	# Extract directory from the file path to avoid duplicating logic from get_peer_state_file_path()
+	local state_dir
+	state_dir=$(dirname "$state_file")
+	if ! try_ensure_directory_exists "$state_dir"; then
+		handle_error "ERROR" "Failed to create directory for peer state: $state_dir" 0
+		return 1
+	fi
+
 	# Atomic write: write to temp file first, then rename
 	if ! atomic_write_file "$state_file" "$value"; then
 		handle_error "ERROR" "Failed to update peer state for $peer_ip (key: $key, file: $state_file)" 0
@@ -269,6 +298,42 @@ set_peer_state() {
 	fi
 
 	return 0
+}
+
+# Set peer state value with non-critical error handling
+#
+# Wrapper around set_peer_state that handles errors gracefully.
+# State update failures are non-critical and already logged by set_peer_state,
+# so this function allows execution to continue even if state update fails.
+#
+# Arguments:
+#   $1: Peer IP address
+#   $2: State key name (e.g., "failure_count", "last_bytes")
+#   $3: Value to set
+#
+# Returns:
+#   0: Always succeeds (continues execution even if state update fails)
+#
+# Side effects:
+#   - Calls set_peer_state which logs errors on failure
+#   - Execution continues regardless of success/failure
+#
+# Examples:
+#   set_peer_state_non_critical "203.0.113.1" "spi" "$current_spi"
+#   set_peer_state_non_critical "203.0.113.1" "last_bytes" "$current_bytes"
+#
+# Note:
+#   Use this when state updates are non-critical and failures should not
+#   interrupt execution. Errors are already logged by set_peer_state.
+set_peer_state_non_critical() {
+	local peer_ip="$1"
+	local key="$2"
+	local value="$3"
+	# State update failure is non-critical (already logged by set_peer_state)
+	if ! set_peer_state "$peer_ip" "$key" "$value"; then
+		# Error already logged by set_peer_state, continue execution
+		:
+	fi
 }
 
 # Delete peer state value
@@ -299,7 +364,7 @@ delete_peer_state() {
 	local state_file
 	state_file=$(get_peer_state_file_path "$peer_ip" "$key")
 
-	if [[ -f "$state_file" ]]; then
+	if file_exists_and_readable "$state_file"; then
 		if ! rm -f "$state_file"; then
 			handle_error "WARNING" "Failed to delete peer state file: $state_file" 0
 			return 1
@@ -431,7 +496,7 @@ increment_failure() {
 #   Called when VPN recovers after failures
 reset_failure_count() {
 	local peer_ip="$1"
-	set_peer_state "$peer_ip" "failure_count" "0" || true
+	set_peer_state_non_critical "$peer_ip" "failure_count" "0"
 }
 
 # Get network partition state file path
@@ -975,7 +1040,7 @@ validate_state() {
 	local validation_failed=0
 
 	# Validate restart count file (timestamp list)
-	if [[ -f "$RESTART_COUNT_FILE" ]]; then
+	if file_exists_and_readable "$RESTART_COUNT_FILE"; then
 		if ! validate_state_file "$RESTART_COUNT_FILE" "timestamp_list"; then
 			handle_error "WARNING" "Restart count file corrupted, recovering: $RESTART_COUNT_FILE" 0
 			recover_corrupted_state_file "$RESTART_COUNT_FILE" "" "timestamp_list"
@@ -984,7 +1049,7 @@ validate_state() {
 	fi
 
 	# Validate cooldown file (single timestamp)
-	if [[ -f "$COOLDOWN_UNTIL_FILE" ]]; then
+	if file_exists_and_readable "$COOLDOWN_UNTIL_FILE"; then
 		if ! validate_state_file "$COOLDOWN_UNTIL_FILE" "timestamp"; then
 			handle_error "WARNING" "Cooldown file corrupted, recovering: $COOLDOWN_UNTIL_FILE" 0
 			recover_corrupted_state_file "$COOLDOWN_UNTIL_FILE" "" "timestamp"
@@ -995,7 +1060,7 @@ validate_state() {
 	# Validate network partition state file
 	local network_partition_file
 	network_partition_file=$(get_network_partition_state_file)
-	if [[ -f "$network_partition_file" ]]; then
+	if file_exists_and_readable "$network_partition_file"; then
 		if ! validate_state_file "$network_partition_file" "integer"; then
 			handle_error "WARNING" "Network partition state file corrupted, recovering: $network_partition_file" 0
 			recover_corrupted_state_file "$network_partition_file" "0" "integer"
@@ -1008,7 +1073,7 @@ validate_state() {
 		local counter_file
 		for counter_file in "${LOGS_DIR}"/failure_counter_*; do
 			# Check if glob matched actual files
-			[[ -f "$counter_file" ]] || continue
+			file_exists_and_readable "$counter_file" || continue
 
 			if ! validate_state_file "$counter_file" "integer"; then
 				handle_error "WARNING" "Failure counter file corrupted, recovering: $counter_file" 0
@@ -1023,7 +1088,7 @@ validate_state() {
 		local bytes_file
 		for bytes_file in "${STATE_DIR}"/last_bytes_*; do
 			# Check if glob matched actual files
-			[[ -f "$bytes_file" ]] || continue
+			file_exists_and_readable "$bytes_file" || continue
 
 			if ! validate_state_file "$bytes_file" "integer"; then
 				handle_error "WARNING" "Byte counter file corrupted, recovering: $bytes_file" 0

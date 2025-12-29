@@ -13,6 +13,7 @@ load test_helper
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
+load fixtures/vpn_xfrm_recovery
 
 # ============================================================================
 # RECOVERY ACTION PARTIAL FAILURES TESTS
@@ -23,40 +24,8 @@ load fixtures/vpn_failing
 	# Test verifies that xfrm recovery continues when some SA deletions succeed and others fail.
 	# Expected: Function continues processing remaining SAs and verifies re-establishment.
 	# Importance: Partial failures shouldn't stop recovery process - should attempt all deletions.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
-
-	# Set failure count to Tier 2 threshold
-	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
-	mkdir -p "${TEST_DIR}/logs"
-	echo "3" >"$failure_counter"
-
-	# Mock ip command - simulate partial SA deletion failures
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "show" ]]; then
-    # Return multiple SAs for the peer
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678"
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x87654321"
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0xabcdef00"
-    exit 0
-elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "delete" ]]; then
-    # First SA deletion succeeds, second fails, third succeeds
-    if [[ "$7" == "0x12345678" ]]; then
-        exit 0  # Success
-    elif [[ "$7" == "0x87654321" ]]; then
-        exit 1  # Failure
-    elif [[ "$7" == "0xabcdef00" ]]; then
-        exit 0  # Success
-    fi
-    exit 0
-fi
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
+	# Use fixture to set up xfrm recovery scenario with partial failure (3 SAs, some deletions fail)
+	setup_vpn_xfrm_recovery_fixture "192.168.1.1" 3 "partial_failure" 'TIER3_THRESHOLD=5'
 
 	# Mock check_ipsec_phase2 to simulate SA re-establishment after partial deletion
 	local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
@@ -86,25 +55,8 @@ EOF
 	# Test verifies that when xfrm recovery deletes SAs but re-establishment fails, system falls back to full restart.
 	# Expected: Function attempts xfrm recovery, detects re-establishment failure, falls back to ipsec restart.
 	# Importance: Partial recovery success shouldn't leave system in inconsistent state - should escalate to full restart.
-	# Use fixture to set up VPN down scenario first (creates state files and basic setup)
-	setup_vpn_down_fixture "192.168.1.1" 5 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=2'
-
-	# Override mock_ip with custom behavior - SA deletion succeeds but re-establishment never happens
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "show" ]]; then
-    # Return SAs for the peer
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678"
-    exit 0
-elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "delete" ]]; then
-    # SA deletion succeeds
-    exit 0
-fi
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
+	# Use fixture to set up xfrm recovery scenario with successful deletion
+	setup_vpn_xfrm_recovery_fixture "192.168.1.1" 1 "success" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=2'
 
 	# Mock check_ipsec_phase2 to simulate SA re-establishment failure (never re-establishes)
 	local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
@@ -148,25 +100,8 @@ EOF
 	# the next check cycle should detect the recovery.
 	# Expected: First check times out verification, second check detects VPN is healthy.
 	# Importance: Verification timeouts shouldn't prevent detection of successful recovery on subsequent checks.
-	# Use fixture to set up VPN down scenario first (creates state files and basic setup)
-	setup_vpn_down_fixture "192.168.1.1" 3 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=2'
-
-	# Override mock_ip with custom behavior - SAs exist and can be deleted
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "show" ]]; then
-    # Return SAs for the peer
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678"
-    exit 0
-elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "delete" ]]; then
-    # SA deletion succeeds
-    exit 0
-fi
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
+	# Use fixture to set up xfrm recovery scenario with successful deletion
+	setup_vpn_xfrm_recovery_fixture "192.168.1.1" 1 "success" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=2'
 
 	# Mock check_ipsec_phase2 - timeout on first check, succeed on second
 	# Use a file to track state across calls
@@ -252,8 +187,10 @@ EOF
 	bash "$TEST_SCRIPT" &
 	local first_pid=$!
 
-	# Wait a moment for lockfile acquisition
-	sleep 0.2
+	# Wait for lockfile to be created (deterministic - wait for file to appear)
+	# This ensures first instance has acquired lock before second instance starts
+	local lockfile="${TEST_DIR}/vpn-monitor.lock"
+	wait_for_file "$lockfile" 5 || true
 
 	# Run second instance - should be blocked by lockfile
 	run bash "$TEST_SCRIPT"

@@ -23,7 +23,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Full restart is the most aggressive recovery action and should only trigger after multiple failures.
 	setup_vpn_down_fixture "192.168.1.1" 5 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
 
-	# Mock ipsec - track if called
+	# Mock ipsec - restart succeeds, track restart call
 	local mock_ipsec="${TEST_DIR}/ipsec"
 	cat >"$mock_ipsec" <<'EOF'
 #!/bin/bash
@@ -52,16 +52,8 @@ EOF
 @test "tier 3: full restart fails - error handling" {
 	setup_vpn_down_fixture "192.168.1.1" 5 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
 
-	# Mock ipsec - fails
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    echo "ipsec restart failed" >&2
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	# Mock ipsec - restart fails
+	mock_ipsec_reload_restart 1 0
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -121,8 +113,7 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock ipsec - restart succeeds
-	local mock_ipsec
-	mock_ipsec=$(mock_ipsec)
+	mock_ipsec_reload_restart 1 1
 	add_mock_to_path
 
 	# Create test version of script
@@ -180,15 +171,7 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock ipsec - restart fails
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    echo "Restart failed" >&2
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 1 0
 	add_mock_to_path
 
 	# Create test version of script
@@ -235,17 +218,8 @@ fi
 EOF
 	chmod +x "$mock_ip"
 
-	# Mock ipsec - fails in pipe (tests PIPESTATUS handling)
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    echo "Restart output" >&1
-    echo "Restart error" >&2
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	# Mock ipsec - restart fails (tests PIPESTATUS handling)
+	mock_ipsec_reload_restart 1 0
 	add_mock_to_path
 
 	# Create test version of script
@@ -297,7 +271,7 @@ fi
 EOF
 	chmod +x "$mock_ip"
 
-	# Mock ipsec - should not be called during cooldown
+	# Mock ipsec - should not be called during cooldown (but if it is, it fails)
 	local mock_ipsec="${TEST_DIR}/ipsec"
 	cat >"$mock_ipsec" <<'EOF'
 #!/bin/bash
@@ -427,19 +401,8 @@ EOF
 	# Mock ip command - VPN is down initially (no SA)
 	setup_mock_vpn_environment "192.168.1.1" 0
 
-	# Mock ipsec restart to fail (simulates restart failure)
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    echo "Failed to restart IPsec" >&2
-    exit 1
-fi
-if [[ "$1" == "status" ]]; then
-    echo "192.168.1.1: ESTABLISHED"
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	# Mock ipsec - restart fails, status succeeds
+	mock_ipsec_reload_restart 1 0 0 "default" "192.168.1.1"
 	add_mock_to_path
 
 	# First run: VPN fails, reaches Tier 3, restart fails

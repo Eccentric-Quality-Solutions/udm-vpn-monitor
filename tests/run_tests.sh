@@ -563,8 +563,11 @@ run_tests_sequential() {
 		echo -e "${BLUE}Running: $(basename "$test_file")${NC}"
 
 		# Run test file with timeout wrapper
-		run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT"
-		local test_result=$?
+		# Capture exit code explicitly to prevent set -e from stopping execution
+		local test_result=0
+		if ! run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT"; then
+			test_result=$?
+		fi
 
 		if [[ $test_result -eq 2 ]]; then
 			# Timeout occurred
@@ -625,8 +628,11 @@ run_tests_parallel() {
 		test_name=$(basename "$test_file")
 		echo -e "${BLUE}Running: ${test_name}${NC}" >&2
 
-		run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT"
-		local test_result=$?
+		# Capture exit code explicitly to prevent set -e from stopping execution
+		local test_result=0
+		if ! run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT"; then
+			test_result=$?
+		fi
 
 		# Write result to file
 		echo "${test_file}:${test_result}" >>"$results_file"
@@ -785,8 +791,11 @@ run_tests_sequential_with_coverage() {
 		echo -e "${BLUE}Running with coverage: $(basename "$test_file")${NC}"
 
 		# Run test file with per-test timeout and coverage
-		run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT" "1" "$coverage_dir" "${kcov_args[@]}"
-		local test_result=$?
+		# Capture exit code explicitly to prevent set -e from stopping execution
+		local test_result=0
+		if ! run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT" "1" "$coverage_dir" "${kcov_args[@]}"; then
+			test_result=$?
+		fi
 
 		if [[ $test_result -eq 2 ]]; then
 			# Timeout occurred
@@ -868,8 +877,11 @@ run_tests_parallel_with_coverage() {
 			"--exclude-path=/tmp"
 		)
 
-		run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT" "1" "$COVERAGE_DIR" "${kcov_args_array[@]}"
-		local test_result=$?
+		# Capture exit code explicitly to prevent set -e from stopping execution
+		local test_result=0
+		if ! run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT" "1" "$COVERAGE_DIR" "${kcov_args_array[@]}"; then
+			test_result=$?
+		fi
 
 		# Write result to file
 		echo "${test_file}:${test_result}" >>"$results_file"

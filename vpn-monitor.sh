@@ -6,7 +6,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.4.0
+# Version: 0.4.1
 #
 
 # Strict error handling: exit on error, undefined vars, pipe failures
@@ -22,7 +22,7 @@ LOCKFILE="${STATE_DIR}/vpn-monitor.lock"
 LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
 
 # Script version
-SCRIPT_VERSION="0.4.0"
+SCRIPT_VERSION="0.4.1"
 
 # Source library modules
 # shellcheck source=lib/logging.sh
@@ -65,20 +65,8 @@ for arg in "$@"; do
 	esac
 done
 
-# Ensure state directory exists (needed before logging)
-ensure_directory_exists "$STATE_DIR" "state"
-
-# Ensure logs directory exists (needed before logging)
-ensure_directory_exists "$LOGS_DIR" "logs"
-
-# State files
-# Note: Failure counters are per-peer: ${LOGS_DIR}/failure_counter_<peer_ip_sanitized>
-RESTART_COUNT_FILE="${LOGS_DIR}/restart_count"
-# LAST_BYTES_FILE will be per-peer: ${STATE_DIR}/last_bytes_<peer_ip_sanitized>
-COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
-
-# Check for --fake flag early (before config loading) so config errors can be handled gracefully
-# This allows config errors to exit gracefully in fake mode instead of crashing
+# Check for --fake flag early (before directory creation and config loading)
+# This allows directory creation and config errors to exit gracefully in fake mode instead of crashing
 for arg in "$@"; do
 	case "$arg" in
 	--fake)
@@ -87,6 +75,22 @@ for arg in "$@"; do
 		;;
 	esac
 done
+
+# Ensure state directory exists (needed before logging)
+if ! ensure_directory_exists "$STATE_DIR" "state"; then
+	exit 1
+fi
+
+# Ensure logs directory exists (needed before logging)
+if ! ensure_directory_exists "$LOGS_DIR" "logs"; then
+	exit 1
+fi
+
+# State files
+# Note: Failure counters are per-peer: ${LOGS_DIR}/failure_counter_<peer_ip_sanitized>
+RESTART_COUNT_FILE="${LOGS_DIR}/restart_count"
+# LAST_BYTES_FILE will be per-peer: ${STATE_DIR}/last_bytes_<peer_ip_sanitized>
+COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
 
 # Test log file write capability early (before config loading)
 #

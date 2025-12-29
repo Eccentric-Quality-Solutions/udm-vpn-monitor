@@ -3,7 +3,7 @@
 # Common functions for UDM VPN Monitor
 # Shared logging and utility functions for installation/uninstallation scripts and main monitor
 #
-# Version: 0.4.0
+# Version: 0.4.1
 #
 # This module provides shared utility functions used throughout the codebase to reduce duplication:
 # - File operations: file_exists_and_readable(), ensure_file_exists(), atomic_write_file()
@@ -283,6 +283,44 @@ directory_writable() {
 	[[ -d "$1" ]] && [[ -w "$1" ]]
 }
 
+# Try to ensure directory exists (non-fatal)
+#
+# Creates a directory if it doesn't exist, but returns an error code instead of exiting.
+# This is useful in contexts where the script should not exit on failure (e.g., logging).
+# For contexts where failure should be fatal, use ensure_directory_exists() from config.sh.
+#
+# Arguments:
+#   $1: Directory path to ensure exists
+#
+# Returns:
+#   0: Directory exists or was created successfully
+#   1: Failed to create directory
+#
+# Side effects:
+#   Creates directory with mkdir -p if it doesn't exist
+#
+# Examples:
+#   if try_ensure_directory_exists "$log_dir"; then
+#       # directory exists or was created
+#   else
+#       # handle error without exiting
+#   fi
+#
+# Note:
+#   Returns error code on failure - callers should handle errors appropriately.
+#   This is a non-fatal version for use in contexts like log_message() where
+#   the script must not exit even if directory creation fails.
+try_ensure_directory_exists() {
+	local dir="$1"
+
+	if [[ ! -d "$dir" ]]; then
+		if ! mkdir -p "$dir" 2>/dev/null; then
+			return 1
+		fi
+	fi
+	return 0
+}
+
 # Atomic file write
 #
 # Writes content to a file atomically using a temporary file pattern.
@@ -473,4 +511,79 @@ safe_set_variable() {
 	local var_value="$2"
 	declare -g "$var_name"
 	printf -v "$var_name" '%s' "$var_value"
+}
+
+# Check if command is available
+#
+# Checks if a command is available in the system PATH using command -v.
+# Returns error code if command is not found.
+# This is useful for checking command availability before use (both required and optional commands).
+#
+# Arguments:
+#   $1: Command name to check (e.g., "ip", "ipsec", "ping6")
+#
+# Returns:
+#   0: Command is available (found in PATH)
+#   1: Command is not available
+#
+# Examples:
+#   if ! check_command_available "ip"; then
+#       return 1
+#   fi
+#   if check_command_available "ping6"; then
+#       ping_cmd="ping6"
+#   fi
+#
+# Note:
+#   Uses command -v to check command availability
+#   This function can be used for both required and optional commands
+check_command_available() {
+	local cmd="$1"
+	command -v "$cmd" >/dev/null 2>&1
+}
+
+# Safely source a library file with error suppression
+#
+# Sources a library file with error suppression (2>/dev/null) and returns
+# success/failure status. This provides a consistent pattern for sourcing
+# library files with fallback handling throughout the codebase.
+#
+# Arguments:
+#   $1: Path to library file to source
+#
+# Returns:
+#   0: File was sourced successfully
+#   1: File could not be sourced (doesn't exist or has errors)
+#
+# Examples:
+#   if ! safe_source_lib "${LIB_DIR}/constants.sh"; then
+#       # Fallback constants
+#       readonly SECONDS_PER_MINUTE=60
+#   fi
+#
+#   safe_source_lib "${LIB_DIR}/common.sh" || {
+#       # Fallback functions
+#       get_unix_timestamp() { date +%s; }
+#   }
+#
+# Note:
+#   Suppresses stderr output (2>/dev/null) to avoid error messages when
+#   files are intentionally optional with fallback handling.
+#   Callers should provide fallback code using if/else or || operator.
+safe_source_lib() {
+	local lib_file="$1"
+	# Check if file exists and is readable before sourcing
+	if [[ ! -f "$lib_file" ]] || [[ ! -r "$lib_file" ]]; then
+		return 1
+	fi
+	# Source the file
+	# Note: We suppress stderr to avoid cluttering output, but the file must source successfully
+	# The array/variable declarations in the sourced file will be available in the current shell
+	if source "$lib_file" 2>/dev/null; then
+		# File sourced successfully
+		return 0
+	else
+		# Source failed
+		return 1
+	fi
 }

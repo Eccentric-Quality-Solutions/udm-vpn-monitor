@@ -528,6 +528,11 @@ die "Fatal error message"  # Logs and exits with code 1
 if ! warn_if_missing "ipsec"; then
     # Command not available, handle error
 fi
+
+# Check if command exists (returns error code, no logging)
+if ! check_command_available "ip"; then
+    return 1  # Command not available
+fi
 ```
 
 **`handle_error()` Function**:
@@ -538,6 +543,30 @@ The `handle_error()` function provides a unified interface for error handling:
 - **Usage**: `handle_error "SEVERITY" "message" [exit_code]`
 
 This function standardizes error handling patterns and makes it easier to maintain consistent error handling across the codebase.
+
+**`handle_error_or_exit_fake_mode()` Function**:
+The `handle_error_or_exit_fake_mode()` function provides consistent error handling for fatal errors that need fake mode support:
+- **Fake mode (NO_ESCALATE=1)**: Logs error and exits with code 0 (graceful exit for testing)
+- **Normal mode**: Logs error and exits with specified exit code (default: 1)
+- **Usage**: `handle_error_or_exit_fake_mode "message" [exit_code]`
+- **Location**: Defined in `lib/logging.sh` (centralized error handling)
+
+This function should be used instead of manually checking `is_fake_mode()` for fatal errors. It standardizes the pattern of handling errors differently based on fake mode.
+
+**Error Code Constants**:
+Standard exit codes are defined in `lib/constants.sh` for consistent error handling:
+- `EXIT_SUCCESS=0` - Successful operation
+- `EXIT_GENERAL_ERROR=1` - General error (default)
+- `EXIT_CONFIG_ERROR=2` - Configuration file error
+- `EXIT_VALIDATION_ERROR=3` - Validation error
+- `EXIT_PERMISSION_ERROR=4` - Permission error
+- `EXIT_COMMAND_NOT_FOUND=5` - Required command not found
+- `EXIT_STATE_ERROR=6` - State file error
+
+Use these constants instead of magic numbers for better readability:
+```bash
+handle_error_or_exit_fake_mode "Configuration validation failed" "${EXIT_VALIDATION_ERROR:-3}"
+```
 
 **5. Error Handling Patterns by Function Type**
 
@@ -648,7 +677,22 @@ increment_failure() {
   command 2>/dev/null  # Errors hidden, no handling
   ```
 
-**7. Common Error Handling Patterns**
+**7. Standardized Error Handling Patterns**
+
+**Pattern: Fake Mode Support (for fatal errors)**
+```bash
+# Use handle_error_or_exit_fake_mode() instead of manual is_fake_mode() checks
+# OLD (don't use):
+if is_fake_mode; then
+    handle_error "ERROR" "Config error" 0
+    exit 0
+else
+    die "Config error"
+fi
+
+# NEW (use this):
+handle_error_or_exit_fake_mode "Config error" "${EXIT_CONFIG_ERROR:-2}"
+```
 
 **Pattern: Try-Fallback**
 ```bash
@@ -689,7 +733,9 @@ fi
 **8. Error Handling Checklist**
 
 When writing or reviewing code, ensure:
-- [ ] Fatal errors use `die()` with descriptive messages
+- [ ] Fatal errors use `die()` or `handle_error_or_exit_fake_mode()` with descriptive messages
+- [ ] Fatal errors that need fake mode support use `handle_error_or_exit_fake_mode()` instead of manual `is_fake_mode()` checks
+- [ ] Error codes use constants from `lib/constants.sh` (EXIT_*) instead of magic numbers
 - [ ] Non-fatal errors return error codes (0/1)
 - [ ] Warnings are logged with `log_message "WARNING"`
 - [ ] Return codes are checked by callers
@@ -704,7 +750,9 @@ When writing or reviewing code, ensure:
 See these functions for reference:
 - `check_vpn_status()` in `lib/detection.sh` - Returns error codes, logs warnings
 - `surgical_cleanup()` in `lib/recovery.sh` - Tries multiple methods, logs failures
-- `validate_config()` in `lib/config.sh` - Uses `die()` for fatal config errors
+- `validate_config()` in `lib/config.sh` - Uses `handle_error_or_exit_fake_mode()` for fatal config errors
+- `ensure_directory_exists()` in `lib/config.sh` - Uses `handle_error_or_exit_fake_mode()` for fake mode support
+- `handle_config_error()` in `lib/config.sh` - Uses `handle_error_or_exit_fake_mode()` for config parsing errors
 - `increment_failure()` in `lib/state.sh` - Logs errors but continues execution
 
 #### Documentation

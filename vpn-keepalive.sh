@@ -6,7 +6,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.3.0
+# Version: 0.4.1
 #
 
 # Strict error handling: exit on error, undefined vars, pipe failures
@@ -21,7 +21,7 @@ PIDFILE="${STATE_DIR}/vpn-keepalive.pid"
 LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"
 
 # Script version
-SCRIPT_VERSION="0.3.0"
+SCRIPT_VERSION="0.4.1"
 
 # Source library modules
 # shellcheck source=lib/logging.sh
@@ -77,8 +77,12 @@ restart)
 esac
 
 # Ensure directories exist
-ensure_directory_exists "$STATE_DIR" "state"
-ensure_directory_exists "$LOGS_DIR" "logs"
+if ! ensure_directory_exists "$STATE_DIR" "state"; then
+	exit 1
+fi
+if ! ensure_directory_exists "$LOGS_DIR" "logs"; then
+	exit 1
+fi
 
 # Test log file write capability
 if ! touch "$LOG_FILE" 2>/dev/null; then
@@ -157,7 +161,8 @@ start_daemon() {
 
 	log_message "INFO" "Starting VPN keepalive daemon..."
 
-	# Start daemon in background
+	# Start daemon in background and capture PID
+	# For systemd Type=forking: parent must write PID file and exit immediately
 	(
 		# Disable strict error handling in daemon (errors should not kill daemon)
 		set +e
@@ -166,9 +171,6 @@ start_daemon() {
 
 		# Detach from terminal
 		exec >/dev/null 2>&1
-
-		# Write PID file (errors handled by parent checking is_running)
-		echo $$ >"$PIDFILE" 2>/dev/null || true
 
 		# Set up cleanup trap
 		trap 'rm -f "$PIDFILE"; exit 0' EXIT INT TERM
@@ -242,18 +244,27 @@ start_daemon() {
 			sleep "$keepalive_interval" || sleep 30
 		done
 	) &
+	local daemon_pid=$!
 
-	# Give daemon a moment to start
-	sleep 1
-
-	if is_running; then
-		local pid
-		pid=$(cat "$PIDFILE")
-		log_message "INFO" "VPN keepalive daemon started successfully (PID: $pid)"
-		return 0
-	else
-		handle_error "ERROR" "Failed to start VPN keepalive daemon" 1
+	# For systemd Type=forking: parent must write PID file immediately after forking
+	# Write PID file from parent process (not child)
+	if ! echo "$daemon_pid" >"$PIDFILE" 2>/dev/null; then
+		# Failed to write PID file, kill the daemon
+		kill "$daemon_pid" 2>/dev/null || true
+		handle_error "ERROR" "Failed to write PID file: $PIDFILE" 1
 	fi
+
+	# Verify the process is still running (quick check)
+	if ! kill -0 "$daemon_pid" 2>/dev/null; then
+		# Process died immediately, remove PID file
+		rm -f "$PIDFILE"
+		handle_error "ERROR" "VPN keepalive daemon process died immediately after start" 1
+	fi
+
+	# For systemd Type=forking: parent must exit immediately after writing PID file
+	# Systemd will read the PID file and track the child process
+	log_message "INFO" "VPN keepalive daemon started successfully (PID: $daemon_pid)"
+	return 0
 }
 
 # Stop the keepalive daemon

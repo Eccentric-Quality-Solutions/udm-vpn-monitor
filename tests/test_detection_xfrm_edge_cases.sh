@@ -6,7 +6,6 @@
 # These tests address the gap identified in CRITICAL_PATH_TEST_GAPS_REVIEW.md Section 2.1
 
 load test_helper
-load test_helper_functions
 
 # ============================================================================
 # XFRM OUTPUT PARSING EDGE CASES TESTS
@@ -17,6 +16,8 @@ load test_helper_functions
 	# Purpose: Test verifies that extract_byte_counter handles malformed xfrm output gracefully.
 	# Expected: Function returns failure (exit code 1) when byte counter line is malformed.
 	# Importance: Malformed xfrm output could cause false positives/negatives if not handled properly.
+	source_function "extract_byte_counter"
+
 	local xfrm_output="src 192.168.1.1 dst 192.168.1.1
     proto esp spi 0x12345678 reqid 1 mode tunnel
     lifetime current: 123456"
@@ -32,6 +33,8 @@ load test_helper_functions
 	# Purpose: Test verifies that extract_byte_counter rejects non-numeric byte counter values.
 	# Expected: Function returns failure when bytes value is not numeric.
 	# Importance: Invalid byte counter values could cause false positives/negatives.
+	source_function "extract_byte_counter"
+
 	local xfrm_output="src 192.168.1.1 dst 192.168.1.1
     proto esp spi 0x12345678 reqid 1 mode tunnel
     lifetime current: abc123 bytes, 10 packets"
@@ -46,6 +49,8 @@ load test_helper_functions
 	# Purpose: Test verifies that extract_byte_counter rejects negative byte counter values.
 	# Expected: Function returns failure when bytes value is negative.
 	# Importance: Negative byte counters are invalid and should be rejected.
+	source_function "extract_byte_counter"
+
 	local xfrm_output="src 192.168.1.1 dst 192.168.1.1
     proto esp spi 0x12345678 reqid 1 mode tunnel
     lifetime current: -100 bytes, 10 packets"
@@ -256,6 +261,8 @@ EOF
 	# Purpose: Test verifies that extract_byte_counter handles empty xfrm output gracefully.
 	# Expected: Function returns failure when xfrm output is empty.
 	# Importance: Empty xfrm output could cause false negatives if not handled properly.
+	source_function "extract_byte_counter"
+
 	local xfrm_output=""
 
 	run extract_byte_counter "$xfrm_output"
@@ -280,6 +287,8 @@ EOF
 	# Purpose: Test verifies that extract_byte_counter extracts bytes from first lifetime line.
 	# Expected: Function extracts bytes from first "lifetime current:" line found.
 	# Importance: Multiple lifetime lines could cause incorrect byte extraction if not handled properly.
+	source_function "extract_byte_counter"
+
 	local xfrm_output="src 192.168.1.1 dst 192.168.1.1
     proto esp spi 0x12345678 reqid 1 mode tunnel
     lifetime current: 123456 bytes, 10 packets

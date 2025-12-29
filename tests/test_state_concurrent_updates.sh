@@ -6,7 +6,6 @@
 # These tests address the gap identified in CRITICAL_PATH_TEST_GAPS_REVIEW.md Section 4.1
 
 load test_helper
-load test_helper_functions
 
 # ============================================================================
 # CONCURRENT STATE UPDATES TESTS
@@ -84,23 +83,28 @@ load test_helper_functions
 	echo "5" >"$state_file"
 
 	# Try to lock the file in background (simulating another process)
+	# Use file-based synchronization to ensure lock is acquired before test continues
+	local lock_acquired="${TEST_DIR}/lock_acquired"
+	rm -f "$lock_acquired"
 	(
 		exec 200>"${state_file}.lock"
 		flock -x 200
+		touch "$lock_acquired"
 		sleep 0.5
 	) &
 	local lock_pid=$!
 
-	# Wait a moment for lock to be acquired
-	sleep 0.05
+	# Wait for lock to be acquired (deterministic - wait for signal file)
+	wait_for_file "$lock_acquired" 2 || true
 
 	# Try to update state (should handle gracefully)
 	# atomic_write_file should handle this, but may fail
 	run set_peer_state "$peer_ip" "failure_count" "10"
 
-	# Clean up lock
+	# Clean up lock and signal file
 	kill "$lock_pid" 2>/dev/null || true
 	wait "$lock_pid" 2>/dev/null || true
+	rm -f "$lock_acquired"
 
 	# Function should either succeed or fail gracefully (not crash)
 	# The actual behavior depends on atomic_write_file implementation
@@ -163,13 +167,27 @@ load test_helper_functions
 	# Set initial state
 	set_peer_state "$peer_ip" "failure_count" "5"
 
-	# Start background update
-	(set_peer_state "$peer_ip" "failure_count" "10") &
+	# Use file-based synchronization for deterministic concurrent reads
+	local update_started="${TEST_DIR}/update_started"
+	local update_done="${TEST_DIR}/update_done"
+	rm -f "$update_started" "$update_done"
 
-	# Perform concurrent reads
+	# Start background update
+	(
+		touch "$update_started"
+		set_peer_state "$peer_ip" "failure_count" "10"
+		touch "$update_done"
+	) &
+
+	# Wait for update to start
+	while [[ ! -f "$update_started" ]]; do
+		sleep 0.01
+	done
+
+	# Perform concurrent reads while update is in progress
 	local read_count=0
 	local valid_reads=0
-	for i in {1..20}; do
+	while [[ ! -f "$update_done" ]]; do
 		local value
 		value=$(get_peer_state "$peer_ip" "failure_count" "0")
 		read_count=$((read_count + 1))
@@ -177,11 +195,13 @@ load test_helper_functions
 		if [[ "$value" == "5" ]] || [[ "$value" == "10" ]]; then
 			valid_reads=$((valid_reads + 1))
 		fi
+		# Small sleep to avoid tight loop, but deterministic since we wait for update_done
 		sleep 0.01
 	done
 
 	# Wait for background update to complete
 	wait
+	rm -f "$update_started" "$update_done"
 
 	# All reads should have returned valid values
 	assert_equal "$read_count" "$valid_reads"

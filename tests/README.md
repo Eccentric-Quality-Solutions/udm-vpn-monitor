@@ -16,6 +16,8 @@ This directory contains comprehensive tests for the UDM VPN Monitor scripts usin
 - `test_vpn_monitor.sh` - Tests for `vpn-monitor.sh` script (33 tests)
 - `test_analyze_logs.sh` - Tests for `analyze-logs.sh` script (28 tests)
 - `test_check_config.sh` - Tests for `check-config.sh` script (18 tests)
+- `test_check_utilities.sh` - Tests for `check-utilities.sh` script (17 tests)
+- `test_vpn_keepalive.sh` - Tests for `vpn-keepalive.sh` script (18 tests)
 - `test_prepare_install_package.sh` - Tests for `prepare_install_package.sh` script (12 tests)
 
 ### Integration Tests
@@ -62,6 +64,7 @@ This directory contains comprehensive tests for the UDM VPN Monitor scripts usin
 - `test_errors.sh` - Error handling during critical operations tests (3 tests)
 - `test_main.sh` - Main execution edge cases tests (25 tests)
 - `test_rapid_state_changes.sh` - Rapid state change handling tests (6 tests)
+- `test_resources.sh` - Resource monitoring tests (CPU, RAM, disk) (25 tests)
 
 ## Prerequisites
 
@@ -460,6 +463,47 @@ For more information on test coverage gaps, see [TEST_COVERAGE_GAPS.md](../TEST_
 - ✅ Ping check functionality
 - ✅ Debug mode
 - ✅ Cron persistence checking
+
+### vpn-keepalive.sh Tests
+
+- ✅ Script existence and executability
+- ✅ Help message display
+- ✅ Version information
+- ✅ Start daemon functionality
+- ✅ Stop daemon functionality
+- ✅ Status check functionality
+- ✅ Restart functionality
+- ✅ Configuration validation
+- ✅ Multiple peer IPs handling
+- ✅ IPv6 support
+- ✅ Disabled keepalive handling
+- ✅ Already running daemon handling
+
+### check-utilities.sh Tests
+
+- ✅ Script existence and executability
+- ✅ Utility availability checking
+- ✅ Available utilities reporting
+- ✅ Missing utilities reporting
+- ✅ Summary statistics
+- ✅ Colored output
+- ✅ Common utilities checking
+- ✅ Network utilities checking
+- ✅ System monitoring utilities checking
+- ✅ Text processing utilities checking
+
+### lib/resources.sh Tests
+
+- ✅ Library file existence
+- ✅ CPU usage calculation
+- ✅ Memory usage calculation
+- ✅ Disk usage calculation
+- ✅ Free disk space calculation
+- ✅ Resource constraint tracking
+- ✅ System resource throttling
+- ✅ Log file rotation on low disk
+- ✅ Configuration threshold usage
+- ✅ Error handling
 
 ## Writing New Tests
 

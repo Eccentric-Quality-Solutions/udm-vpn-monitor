@@ -32,6 +32,10 @@ load "${BATS_TEST_DIRNAME}/bats-file/load.bash"
 # shellcheck source=../lib/common.sh
 source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 
+# Path to the VPN monitor script and modules (for source_function)
+VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
+LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
+
 # Setup function run before each test
 #
 # Bats framework calls this function automatically before each test.
@@ -332,7 +336,20 @@ create_test_vpn_monitor_script() {
 
 	# Get the project root directory (parent of tests directory)
 	local project_root
-	project_root=$(cd "${BATS_TEST_DIRNAME}/.." && pwd)
+	if [[ -n "${BATS_TEST_DIRNAME:-}" ]] && [[ -d "${BATS_TEST_DIRNAME}" ]]; then
+		project_root=$(cd "${BATS_TEST_DIRNAME}/.." && pwd)
+	else
+		# Fallback: use the directory containing test_helper.bash
+		local helper_dir
+		helper_dir=$(dirname "${BASH_SOURCE[0]}")
+		project_root=$(cd "$helper_dir/.." && pwd)
+	fi
+
+	# Validate project_root is set and exists
+	if [[ -z "$project_root" ]] || [[ ! -d "$project_root" ]] || [[ ! -d "$project_root/lib" ]]; then
+		echo "Error: Failed to determine project root directory (BATS_TEST_DIRNAME=${BATS_TEST_DIRNAME:-unset}, project_root=${project_root:-unset})" >&2
+		return 1
+	fi
 
 	# Copy the original script
 	cp "$original_script" "$test_script"
@@ -353,7 +370,20 @@ create_test_vpn_monitor_script() {
 	if [[ -n "$log_file" ]]; then
 		escaped_log=$(escape_sed_regex "$log_file")
 	fi
+
+	# Ensure project_root is still set (defensive check)
+	if [[ -z "$project_root" ]]; then
+		echo "Error: project_root became empty after validation" >&2
+		return 1
+	fi
+
 	escaped_project_root=$(escape_sed_regex "$project_root")
+
+	# Validate escaped_project_root is set
+	if [[ -z "$escaped_project_root" ]]; then
+		echo "Error: escaped_project_root is empty (project_root='${project_root}', length=${#project_root})" >&2
+		return 1
+	fi
 
 	# Build sed script with all replacements in single pass
 	local sed_script=""
@@ -367,6 +397,7 @@ create_test_vpn_monitor_script() {
 	if [[ -n "$escaped_log" ]]; then
 		sed_script="${sed_script}s|^LOG_FILE=.*|LOG_FILE=\"${escaped_log}\"|;"
 	fi
+	# Replace source paths - escaped_project_root is validated above
 	sed_script="${sed_script}s|source \"\${SCRIPT_DIR}/lib/|source \"${escaped_project_root}/lib/|g"
 
 	# Apply all replacements in single sed pass
@@ -1368,6 +1399,18 @@ if [[ "\$1" == "+%s" ]]; then
     # Unix timestamp format
     echo "$current_time"
     exit 0
+elif [[ "\$1" == "-d" ]] && [[ "\$2" =~ ^\+([0-9]+)\ (minute|minutes)$ ]] && [[ "\$3" == "+%s" ]]; then
+    # Handle date -d "+N minutes" +%s format (used by get_timestamp_plus_minutes)
+    local minutes="\${BASH_REMATCH[1]}"
+    local future_time=\$(( $current_time + minutes * 60 ))
+    echo "\$future_time"
+    exit 0
+elif [[ "\$1" == "-d" ]] && [[ "\$2" =~ ^\"\+([0-9]+)\ (minute|minutes)\"$ ]] && [[ "\$3" == "+%s" ]]; then
+    # Handle date -d "+N minutes" +%s format with quotes (used by get_timestamp_plus_minutes)
+    local minutes="\${BASH_REMATCH[1]}"
+    local future_time=\$(( $current_time + minutes * 60 ))
+    echo "\$future_time"
+    exit 0
 elif [[ "\$1" == "+%Y-%m-%d %H:%M:%S" ]] || [[ "\$1" == '+%Y-%m-%d %H:%M:%S' ]]; then
     # Formatted timestamp format (used by logging)
     # Try Linux format first, then BSD/macOS format
@@ -1594,4 +1637,166 @@ source_recovery_module() {
 	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" 2>/dev/null || true
 	# shellcheck source=../lib/recovery.sh
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" 2>/dev/null || true
+}
+
+# Source a function from the appropriate module
+#
+# Helper function to extract and source individual functions from module files
+# for unit testing. This allows testing functions in isolation without loading
+# entire modules.
+#
+# Arguments:
+#   $1: Function name to source
+#
+# Returns:
+#   0: Function found and sourced successfully
+#   1: Function not found in any module
+#
+# Side effects:
+#   - Sources the function and its dependencies
+#   - Sets up required environment variables
+#   - Exports variables needed by functions
+#
+# Example:
+#   source_function "get_formatted_timestamp"
+#   run get_formatted_timestamp
+#   assert_success
+#
+# Note:
+#   Requires LIB_DIR and VPN_MONITOR_SCRIPT to be set
+#   Functions are searched in order: logging.sh, config.sh, state.sh,
+#   detection.sh, recovery.sh, lockfile.sh, vpn-monitor.sh
+source_function() {
+	local func_name="$1"
+	local func_def=""
+
+	# Map functions to their module files
+	# Try each module file in order until we find the function
+	local modules=(
+		"${LIB_DIR}/logging.sh"
+		"${LIB_DIR}/config.sh"
+		"${LIB_DIR}/state.sh"
+		"${LIB_DIR}/detection.sh"
+		"${LIB_DIR}/recovery.sh"
+		"${LIB_DIR}/lockfile.sh"
+		"${VPN_MONITOR_SCRIPT}"
+	)
+
+	# Try to find the function in each module
+	for module in "${modules[@]}"; do
+		if [[ -f "$module" ]]; then
+			# Extract function using sed, matching from function start to closing brace
+			func_def=$(sed -n "/^${func_name}(/,/^}/p" "$module" 2>/dev/null)
+			if [[ -n "$func_def" ]]; then
+				# Set minimal required variables for functions that need them
+				# Export these so they're available in subshells created by 'run'
+				SCRIPT_DIR="${SCRIPT_DIR:-${BATS_TEST_DIRNAME}/..}"
+				export SCRIPT_DIR
+				STATE_DIR="${STATE_DIR:-${TEST_DIR:-/tmp}}"
+				export STATE_DIR
+				LOGS_DIR="${LOGS_DIR:-${STATE_DIR}/logs}"
+				export LOGS_DIR
+				LOCKFILE="${LOCKFILE:-${STATE_DIR}/vpn-monitor.lock}"
+				export LOCKFILE
+				LOG_FILE="${LOG_FILE:-${LOGS_DIR}/vpn-monitor.log}"
+				export LOG_FILE
+				RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${LOGS_DIR}/restart_count}"
+				export RESTART_COUNT_FILE
+				COOLDOWN_UNTIL_FILE="${COOLDOWN_UNTIL_FILE:-${STATE_DIR}/cooldown_until}"
+				export COOLDOWN_UNTIL_FILE
+				CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
+				export CONFIG_FILE
+				DEBUG="${DEBUG:-0}"
+				export DEBUG
+
+				# Source required dependencies first
+				case "$module" in
+				"${LIB_DIR}/config.sh")
+					# config.sh needs logging.sh
+					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+					fi
+					;;
+				"${LIB_DIR}/state.sh")
+					# state.sh needs logging.sh and common.sh
+					# Source entire state.sh module since functions depend on each other
+					if [[ -f "${LIB_DIR}/constants.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/constants.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/common.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/common.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+					fi
+					# Source entire state.sh to make all functions available
+					if [[ -f "${LIB_DIR}/state.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+						# Function already sourced, skip eval below
+						return 0
+					fi
+					;;
+				"${LIB_DIR}/detection.sh")
+					# detection.sh needs state.sh and logging.sh
+					# Also source detection.sh itself to make helper functions available
+					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/state.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+					fi
+					# Source detection.sh to make all helper functions available
+					# (e.g., validate_ipv4, validate_ipv6, etc. used by validate_ip_address)
+					if [[ -f "${LIB_DIR}/detection.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/detection.sh" 2>/dev/null || true
+						# Function already sourced, skip eval below
+						return 0
+					fi
+					;;
+				"${LIB_DIR}/recovery.sh")
+					# recovery.sh needs detection.sh, state.sh, logging.sh
+					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/state.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/detection.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/detection.sh" 2>/dev/null || true
+					fi
+					;;
+				"${LIB_DIR}/lockfile.sh")
+					# lockfile.sh needs state.sh and logging.sh
+					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/state.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+					fi
+					;;
+				esac
+
+				# Source the function
+				# shellcheck source=/dev/null
+				eval "$func_def"
+				return 0
+			fi
+		fi
+	done
+
+	# Function not found
+	return 1
 }

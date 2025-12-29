@@ -123,16 +123,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command to fail with error (simulates VPN check error)
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "Error: Cannot access xfrm state" >&2
-    exit 1
-fi
-exit 1
-EOF
-	chmod +x "$mock_ip"
+	mock_command_failure "ip" 1 "Error: Cannot access xfrm state"
 	add_mock_to_path
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake

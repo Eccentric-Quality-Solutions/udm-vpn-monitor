@@ -3,8 +3,27 @@
 # Lockfile management for UDM VPN Monitor
 # Handles flock-based and fallback lockfile mechanisms to prevent concurrent execution
 #
-# Version: 0.4.0
+# Version: 0.4.1
 #
+
+# Source common utility functions
+# shellcheck source=lib/common.sh
+# Determine lib directory (where this file is located)
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${LIB_DIR}/common.sh" 2>/dev/null || {
+	# Fallback if common.sh not found - define minimal functions
+	get_unix_timestamp() {
+		date +%s
+	}
+	check_command_available() {
+		local cmd="$1"
+		command -v "$cmd" >/dev/null 2>&1
+	}
+	safe_source_lib() {
+		local lib_file="$1"
+		source "$lib_file" 2>/dev/null
+	}
+}
 
 # Extract PID from lockfile
 #
@@ -287,7 +306,7 @@ acquire_lockfile_flock() {
 	# Check if lockfile exists and contains a valid PID before trying flock
 	# This handles the case where a lockfile was created manually (not via flock)
 	# This check must happen BEFORE opening the file descriptor (which would truncate the file)
-	if [[ -f "$LOCKFILE" ]]; then
+	if file_exists_and_readable "$LOCKFILE"; then
 		local lock_pid
 		lock_pid=$(extract_lockfile_pid "$LOCKFILE" 2>/dev/null || echo "")
 		if [[ -n "$lock_pid" ]] && is_process_running "$lock_pid"; then
@@ -382,7 +401,7 @@ acquire_lockfile_fallback() {
 	local lock_acquired=0
 
 	# Check if existing lockfile is stale
-	if [[ -f "$LOCKFILE" ]]; then
+	if file_exists_and_readable "$LOCKFILE"; then
 		if remove_stale_lockfile_if_needed; then
 			# Lockfile was stale and removed, continue to try acquiring lock
 			:
@@ -405,7 +424,7 @@ acquire_lockfile_fallback() {
 	else
 		# Race condition - another process got it first
 		# Check if the PID in the lockfile is still running before exiting
-		if [[ -f "$LOCKFILE" ]]; then
+		if file_exists_and_readable "$LOCKFILE"; then
 			lock_pid=$(extract_lockfile_pid "$LOCKFILE")
 			if is_process_running "$lock_pid"; then
 				# Process is still running - legitimate lockfile
@@ -420,7 +439,7 @@ acquire_lockfile_fallback() {
 				else
 					# Still can't acquire after retry - another process may have gotten it
 					# Check PID one more time
-					if [[ -f "$LOCKFILE" ]]; then
+					if file_exists_and_readable "$LOCKFILE"; then
 						lock_pid=$(extract_lockfile_pid "$LOCKFILE")
 						if is_process_running "$lock_pid"; then
 							log_and_exit_lockfile_conflict "$lock_pid"
@@ -469,7 +488,7 @@ acquire_lockfile() {
 	local main_func="$1"
 	shift
 
-	if command -v flock >/dev/null 2>&1; then
+	if check_command_available "flock"; then
 		acquire_lockfile_flock "$main_func" "$@"
 	else
 		acquire_lockfile_fallback "$main_func" "$@"

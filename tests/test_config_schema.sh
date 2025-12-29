@@ -115,7 +115,9 @@ EOF
 	# Script should exit with error or log validation error
 	assert_file_exist "$log_file"
 	# Should contain error about missing required variable or validation failure
-	assert_file_contains "$log_file" "EXTERNAL_PEER_IPS" || assert_file_contains "$log_file" "required" || assert_file_contains "$log_file" "ERROR" || assert_file_contains "$log_file" "validation"
+	# The error message format is: "EXTERNAL_PEER_IPS is required but not configured"
+	# or "Configuration validation failed - required variables missing or invalid values"
+	assert_file_contains "$log_file" "EXTERNAL_PEER_IPS" || assert_file_contains "$log_file" "required" || assert_file_contains "$log_file" "ERROR" || assert_file_contains "$log_file" "validation" || assert_file_contains "$log_file" "not configured"
 
 	remove_mock_from_path
 }

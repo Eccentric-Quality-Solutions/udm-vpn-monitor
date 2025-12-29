@@ -25,7 +25,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Disable xfrm recovery to force ipsec reload (xfrm recovery is tried first if enabled)
 	setup_vpn_down_fixture "192.168.1.1" 3 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_XFRM_RECOVERY=0'
 
-	# Mock ipsec - track reload call
+	# Mock ipsec - reload succeeds, track reload call
 	local mock_ipsec="${TEST_DIR}/ipsec"
 	cat >"$mock_ipsec" <<'EOF'
 #!/bin/bash
@@ -58,15 +58,7 @@ EOF
 	setup_vpn_down_fixture "192.168.1.1" 3 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
 
 	# Mock ipsec - reload fails
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    echo "ipsec reload failed" >&2
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -108,21 +100,8 @@ fi
 EOF
 	chmod +x "$mock_ip"
 
-	# Mock ipsec - reload partially succeeds (outputs but exits with error)
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    echo "Starting reload..."
-    echo "Partial success" >&1
-    echo "Error occurred mid-way" >&2
-    exit 1
-fi
-if [[ "$1" == "restart" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	# Mock ipsec - reload fails, restart succeeds (tests fallback)
+	mock_ipsec_reload_restart 0 1
 	add_mock_to_path
 
 	# Create test version of script
@@ -174,15 +153,7 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock ipsec - reload succeeds
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    echo "Reload successful"
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 1 1
 	add_mock_to_path
 
 	# Create test version of script
@@ -235,15 +206,7 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock ipsec - reload fails
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    echo "Reload failed" >&2
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 1
 	add_mock_to_path
 
 	# Create test version of script

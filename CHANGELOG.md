@@ -2,6 +2,51 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
+## 0.4.1 - 2025-12-29
+
+### Added
+- **Test Coverage Expansion**: Comprehensive test suites for existing functionality:
+  - `tests/test_check_utilities.sh` - Tests for utility availability checking script
+  - `tests/test_resources.sh` - Tests for resource monitoring functionality (CPU, RAM, disk)
+  - `tests/test_vpn_keepalive.sh` - Tests for VPN keepalive daemon (start, stop, status, restart)
+- **Test Fixtures**: New reusable test fixtures for common scenarios:
+  - `tests/fixtures/vpn_network_partition.bash` - Network partition detection scenarios
+  - `tests/fixtures/vpn_rate_limited.bash` - Rate limiting scenarios
+  - `tests/fixtures/vpn_xfrm_recovery.bash` - XFRM recovery scenarios
+
+### Changed
+- **Test Infrastructure Improvements**:
+  - Moved `source_function()` helper from `test_helper_functions.sh` to `test_helper.bash` for better organization
+  - Enhanced test synchronization using file-based signaling instead of sleep delays for deterministic test execution
+  - Improved test helper functions with better error handling and validation
+  - Enhanced `create_test_vpn_monitor_script()` with better project root detection and validation
+  - Improved date command mocking to support `date -d "+N minutes" +%s` format
+- **Test Suite Improvements**:
+  - Updated multiple test files to use new fixtures, reducing code duplication
+  - Improved test reliability with better synchronization and deterministic timing
+  - Enhanced test error messages and assertions
+  - Fixed race conditions in concurrent state update tests
+- **Code Quality Improvements**:
+  - Enhanced error handling in `vpn-monitor.sh` with better directory creation validation
+  - Improved `--fake` flag handling to set `NO_ESCALATE` early for graceful error handling
+  - Enhanced `vpn-keepalive.sh` daemon startup with proper PID file handling for systemd Type=forking compatibility
+  - Improved lockfile acquisition tests with better race condition handling
+  - Enhanced config parsing tests with better error message validation
+- **Documentation Updates**:
+  - Updated `DEVELOPER.md` with additional development guidelines
+  - Updated `docs/ARCHITECTURE.md` with architecture improvements
+  - Enhanced `tests/README.md` with comprehensive testing guidelines
+  - Expanded `tests/fixtures/README.md` with fixture usage documentation
+
+### Fixed
+- **Test Reliability**: Fixed race conditions in concurrent state update tests using file-based synchronization
+- **Test Timing**: Replaced sleep-based synchronization with deterministic file-based signaling
+- **Config Parsing**: Improved error message validation in config schema tests
+- **Daemon Startup**: Fixed PID file handling in keepalive daemon for proper systemd integration
+
+### Removed
+- **Binary Artifacts**: Removed `udm-vpn-monitor-installer.zip` from repository (should be generated, not committed)
+
 ## 0.4.0 - 2025-12-29
 
 ### Added

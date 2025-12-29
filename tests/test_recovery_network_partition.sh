@@ -12,6 +12,7 @@ load test_helper
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
+load fixtures/vpn_network_partition
 
 # ============================================================================
 # RECOVERY DURING NETWORK PARTITION TESTS
@@ -22,32 +23,48 @@ load fixtures/vpn_failing
 	# Test verifies that when VPN fails but network is partitioned, recovery actions are skipped.
 	# Expected: Network partition check runs first, recovery is skipped with appropriate log message.
 	# Importance: Recovery actions during network partition are wasteful and could cause issues.
-	# Use fixture to set up VPN down scenario first (creates state files and basic setup)
-	setup_vpn_down_fixture "192.168.1.1" 3 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_NETWORK_PARTITION_CHECK=1' 'ENABLE_XFRM_RECOVERY=0'
+	# Use partition fixture to set up network partition scenario
+	setup_vpn_network_partition_fixture "192.168.1.1" "all" \
+		'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_XFRM_RECOVERY=0'
 
-	# Set network partition state (after fixture sets up STATE_DIR)
-	local partition_state_file="${STATE_DIR}/network_partition_state"
-	echo "1" >"$partition_state_file"
-
-	# Mock network partition check - network is partitioned
+	# Set up VPN down scenario: update mock_ip to also return empty for xfrm state (no SA)
+	# This simulates VPN down + network partition
 	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
+	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "$1" == "route" ]] && [[ "$2" == "show" ]] && [[ "$3" == "default" ]]; then
-    # No default route - network partitioned
-    exit 1
-elif [[ "$1" == "link" ]] && [[ "$2" == "show" ]]; then
-    # Interfaces may be up but no route
-    echo "1: $3: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+# Handle xfrm state - return empty (VPN down, no SA)
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    exit 0  # Return empty output (no SA found)
+fi
+
+# Handle route checks - no default route (network partitioned)
+if [[ "\$1" == "route" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "default" ]]; then
+    exit 1  # No default route
+fi
+
+# Handle link checks - interfaces UP
+if [[ "\$1" == "link" ]] && [[ "\$2" == "show" ]]; then
+    if [[ -n "\${3:-}" ]]; then
+        echo "1: \$3: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+        exit 0
+    fi
+    # Show all interfaces
+    echo "1: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+    echo "2: eth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
     exit 0
 fi
-exec /usr/bin/ip "$@"
+
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
 
-	# Mock dig - DNS fails
-	mock_dig "0"
-	add_mock_to_path
+	# Set up state files for VPN failure (3 failures to trigger recovery)
+	setup_state_files "192.168.1.1" 3 0
+
+	# Set network partition state
+	local partition_state_file="${STATE_DIR}/network_partition_state"
+	echo "1" >"$partition_state_file"
 
 	run bash "$TEST_SCRIPT"
 

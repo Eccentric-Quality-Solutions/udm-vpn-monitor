@@ -7,6 +7,7 @@ load test_helper
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
+load fixtures/vpn_network_partition
 
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
@@ -279,28 +280,7 @@ EOF
 	# Test verifies that check_network_partition correctly identifies network partition.
 	# Expected: Function returns 1 when one or more checks fail.
 	# Importance: Network partition detection prevents false VPN failure detection.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
-
-	# Mock ip command - default route missing
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "route" ]] && [[ "$2" == "show" ]] && [[ "$3" == "default" ]]; then
-    exit 1
-elif [[ "$1" == "link" ]] && [[ "$2" == "show" ]]; then
-    if [[ "$3" == "br0" ]] || [[ "$3" == "eth0" ]]; then
-        echo "1: $3: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
-        exit 0
-    fi
-fi
-# Handle other ip commands
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
-
-	# Mock dig command - DNS resolution fails
-	mock_dig "0"
-	add_mock_to_path
+	setup_vpn_network_partition_fixture "192.168.1.1" "no_default_route" "br0,eth0"
 
 	# Source detection functions to test directly
 	# shellcheck source=../lib/logging.sh

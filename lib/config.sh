@@ -3,7 +3,7 @@
 # Configuration loading and validation for UDM VPN Monitor
 # Handles loading configuration files and validating settings
 #
-# Version: 0.4.0
+# Version: 0.4.1
 #
 # Default Value Handling:
 #   Default values are defined in lib/config_schema.sh as the single source of truth.
@@ -16,6 +16,7 @@
 # shellcheck source=lib/constants.sh
 # Determine lib directory (where this file is located)
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Note: safe_source_lib not available here since constants.sh is sourced before common.sh
 source "${LIB_DIR}/constants.sh" 2>/dev/null || {
 	# Fallback if constants.sh not found (shouldn't happen in normal operation)
 	readonly LOCKFILE_TIMEOUT_DEFAULT=300
@@ -31,9 +32,13 @@ source "${LIB_DIR}/common.sh"
 
 # Source configuration schema
 # shellcheck source=lib/config_schema.sh
-source "${LIB_DIR}/config_schema.sh" 2>/dev/null || {
-	# Fallback if config_schema.sh not found
-	declare -A CONFIG_SCHEMA=()
+# Pre-declare CONFIG_SCHEMA as empty array to avoid unbound variable errors with set -u
+# The schema file will populate it when sourced
+declare -A CONFIG_SCHEMA=()
+
+# Define fallback functions (used if schema file can't be loaded)
+# These are defined as a function to avoid duplication
+define_schema_fallback_functions() {
 	get_config_schema() { return 1; }
 	is_config_required() { return 1; }
 	get_config_default() {
@@ -41,6 +46,22 @@ source "${LIB_DIR}/config_schema.sh" 2>/dev/null || {
 		return 0
 	}
 }
+
+# Try to source the schema file directly
+# Note: We source directly instead of using safe_source_lib because the array declaration
+# in the schema file needs to populate the pre-declared array, and safe_source_lib
+# doesn't work correctly for this use case.
+if [[ -f "${LIB_DIR}/config_schema.sh" ]] && [[ -r "${LIB_DIR}/config_schema.sh" ]]; then
+	# Source the schema file, suppressing stderr to avoid cluttering output
+	# The array is already declared above, so the schema file will populate it
+	if ! source "${LIB_DIR}/config_schema.sh" 2>/dev/null; then
+		# Source failed, array remains empty, use fallback functions
+		define_schema_fallback_functions
+	fi
+else
+	# File doesn't exist or isn't readable, array is already empty, use fallback functions
+	define_schema_fallback_functions
+fi
 
 # Ensure directory exists
 #
@@ -53,26 +74,22 @@ source "${LIB_DIR}/config_schema.sh" 2>/dev/null || {
 #
 # Returns:
 #   0: Directory exists or was created successfully
-#   1: Failed to create directory (exits script)
+#   Never returns if directory creation fails (exits script)
 #
 # Side effects:
-#   Exits script with error code 1 if directory creation fails
+#   - In fake mode: logs error and exits with code 0
+#   - In normal mode: dies (exits script) if directory creation fails
 #
 # Note:
-#   Requires die function to be available (from logging.sh)
+#   Requires handle_error_or_exit_fake_mode function to be available (from logging.sh)
 ensure_directory_exists() {
 	local dir="$1"
 	local description="${2:-directory}"
 
 	if ! mkdir -p "$dir" 2>/dev/null; then
-		# In fake mode, exit gracefully with success; otherwise die
-		if is_fake_mode; then
-			handle_error "ERROR" "Cannot create ${description} directory: $dir" 0
-			exit 0
-		else
-			die "Cannot create ${description} directory: $dir"
-		fi
+		handle_error_or_exit_fake_mode "Cannot create ${description} directory: $dir"
 	fi
+	return 0
 }
 
 # Recalculate log file paths after configuration changes
@@ -92,14 +109,20 @@ ensure_directory_exists() {
 #   to ensure log paths reflect the current configuration.
 recalculate_log_paths() {
 	local default_logs_dir="${STATE_DIR}/logs"
-	local saved_logs_dir="$LOGS_DIR"
+	local default_log_file="${default_logs_dir}/vpn-monitor.log"
+	local expected_log_file="${LOGS_DIR}/vpn-monitor.log"
 
 	# Priority: LOG_FILE override > LOGS_DIR override > defaults
-	# Check if LOG_FILE was overridden first (highest priority)
-	# LOG_FILE is overridden if it differs from both the default path and the current LOGS_DIR path
-	if [[ "$LOG_FILE" != "${default_logs_dir}/vpn-monitor.log" ]] && [[ "$LOG_FILE" != "${saved_logs_dir}/vpn-monitor.log" ]]; then
+	# Check if LOG_FILE was explicitly overridden (differs from both default and current LOGS_DIR)
+	if [[ "$LOG_FILE" != "$default_log_file" ]] && [[ "$LOG_FILE" != "$expected_log_file" ]]; then
 		# LOG_FILE was overridden (via config or environment), derive LOGS_DIR from it
-		LOGS_DIR=$(dirname "$LOG_FILE")
+		local derived_logs_dir
+		derived_logs_dir=$(dirname "$LOG_FILE" 2>/dev/null)
+		if [[ -z "$derived_logs_dir" ]]; then
+			handle_error "ERROR" "Failed to derive LOGS_DIR from LOG_FILE: $LOG_FILE"
+			return 1
+		fi
+		LOGS_DIR="$derived_logs_dir"
 	elif [[ "$LOGS_DIR" != "$default_logs_dir" ]]; then
 		# LOGS_DIR was overridden (via config), update LOG_FILE to use it
 		LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
@@ -108,6 +131,7 @@ recalculate_log_paths() {
 		LOGS_DIR="$default_logs_dir"
 		LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
 	fi
+	return 0
 }
 
 # Load configuration from file
@@ -132,6 +156,163 @@ recalculate_log_paths() {
 # Note:
 #   Requires log_message function to be available (from logging.sh)
 #   Default values are read from config_schema.sh (single source of truth)
+
+# Handle configuration parsing error
+#
+# Provides consistent error handling for configuration parsing errors that should
+# exit gracefully in fake mode (NO_ESCALATE=1) or die in normal mode. This function
+# standardizes the pattern of handling errors differently based on fake mode.
+#
+# Arguments:
+#   $1: Error message to log
+#   $2: Line number where error occurred (optional, for better error messages)
+#
+# Returns:
+#   Never returns (exits script with code 0 in fake mode, dies in normal mode)
+#
+# Side effects:
+#   - Logs error message using handle_error in fake mode
+#   - Dies (exits with code 1) in normal mode
+#
+# Examples:
+#   handle_config_error "Dangerous content detected" 5
+#   # Logs error or dies depending on fake mode
+#
+# Note:
+#   Requires handle_error_or_exit_fake_mode function to be available (from logging.sh)
+handle_config_error() {
+	local message="$1"
+	local line_num="${2:-}"
+	local full_message
+
+	if [[ -n "$line_num" ]]; then
+		full_message="$message (line $line_num)"
+	else
+		full_message="$message"
+	fi
+
+	handle_error_or_exit_fake_mode "$full_message"
+}
+
+# Parse quoted or unquoted value from assignment
+#
+# Extracts and validates the value portion of a configuration assignment.
+# Handles double-quoted, single-quoted, and unquoted values.
+# Validates quote syntax and value format.
+#
+# Arguments:
+#   $1: Assignment value (the part after VAR=, already trimmed and comment-removed)
+#   $2: Original configuration line (for error messages)
+#   $3: Line number (for error messages)
+#
+# Returns:
+#   0: Value parsed successfully (var_value is set)
+#   1: Invalid value format or syntax error
+#
+# Output:
+#   Sets global variable:
+#   - var_value: Extracted variable value
+#
+# Side effects:
+#   - Sets global variable var_value via declare -g
+#   - Logs error messages on syntax errors
+#
+# Examples:
+#   if parse_quoted_value "Site-to-Site" "VPN_NAME=Site-to-Site" 1; then
+#       echo "Value: $var_value"
+#   fi
+#
+# Note:
+#   Requires log_message function to be available (from logging.sh)
+parse_quoted_value() {
+	local assignment="$1"
+	local line="$2"
+	local line_num="$3"
+
+	# Check for unclosed quotes first (syntax error)
+	if [[ "$assignment" =~ ^\" ]] && [[ ! "$assignment" =~ \"$ ]]; then
+		log_message "ERROR" "Unclosed double quote in configuration line: $line (line $line_num)"
+		return 1
+	elif [[ "$assignment" =~ ^\' ]] && [[ ! "$assignment" =~ \'$ ]]; then
+		log_message "ERROR" "Unclosed single quote in configuration line: $line (line $line_num)"
+		return 1
+	elif [[ "$assignment" =~ ^\"(.*)\"$ ]]; then
+		# Double-quoted value (may be empty)
+		declare -g var_value="${BASH_REMATCH[1]}"
+	elif [[ "$assignment" =~ ^\'(.*)\'$ ]]; then
+		# Single-quoted value (may be empty)
+		declare -g var_value="${BASH_REMATCH[1]}"
+	elif [[ -z "$assignment" ]]; then
+		# Empty unquoted value
+		declare -g var_value=""
+	elif [[ "$assignment" =~ ^[^[:space:]#\"\']+$ ]]; then
+		# Unquoted value (no spaces, no quotes, no comment markers)
+		declare -g var_value="$assignment"
+	else
+		# Invalid value format (has spaces but not quoted, or other issues)
+		log_message "ERROR" "Invalid configuration line: $line (value must be quoted if it contains spaces) (line $line_num)"
+		return 1
+	fi
+
+	return 0
+}
+
+# Parse variable assignment from configuration line
+#
+# Extracts variable name and value from a configuration line in the format VAR=value.
+# Handles quoted values (double quotes, single quotes) and unquoted values.
+# Validates quote syntax and value format.
+#
+# Arguments:
+#   $1: Configuration line to parse (should already be trimmed)
+#   $2: Line number (for error messages)
+#
+# Returns:
+#   0: Assignment parsed successfully (var_name and var_value are set)
+#   1: Invalid assignment format or syntax error
+#
+# Output:
+#   Sets global variables:
+#   - var_name: Extracted variable name
+#   - var_value: Extracted variable value
+#
+# Side effects:
+#   - Sets global variables var_name and var_value
+#   - Logs error messages on syntax errors
+#
+# Examples:
+#   if parse_assignment "VPN_NAME=Site-to-Site" 1; then
+#       echo "Variable: $var_name, Value: $var_value"
+#   fi
+#
+# Note:
+#   Requires log_message function to be available (from logging.sh)
+#   Requires parse_quoted_value function to be available
+parse_assignment() {
+	local line="$1"
+	local line_num="$2"
+
+	# Check if line matches VAR=value pattern
+	if ! [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+		log_message "ERROR" "Invalid configuration line: $line (expected VAR=value or VAR=\"value\") (line $line_num)"
+		return 1
+	fi
+
+	declare -g var_name="${BASH_REMATCH[1]}"
+	local assignment="${BASH_REMATCH[2]}"
+
+	# Remove trailing comment if present
+	assignment="${assignment%%#*}"
+	# Remove trailing whitespace after removing comment
+	assignment="${assignment%"${assignment##*[![:space:]]}"}"
+
+	# Parse value (quoted or unquoted)
+	if ! parse_quoted_value "$assignment" "$line" "$line_num"; then
+		return 1
+	fi
+
+	return 0
+}
 
 # Safely parse configuration file
 #
@@ -172,13 +353,16 @@ safe_parse_config_file() {
 	local config_file="$1"
 	local line_num=0
 	local line
-	local var_name
-	local var_value
+	# Note: var_name and var_value are not declared as local so parse_assignment can set them via declare -g
 
 	# Read config file line by line
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		line_num=$((line_num + 1))
+		# Reset variables for each line (parse_assignment will set them via declare -g)
+		var_name=""
+		var_value=""
 
+		# Early returns for simple cases
 		# Skip empty lines
 		if [[ -z "${line// /}" ]]; then
 			continue
@@ -198,100 +382,21 @@ safe_parse_config_file() {
 			continue
 		fi
 
-		# Security check: Reject lines with dangerous patterns that could execute code
-		# Check for backticks, command substitution, eval, source, etc.
+		# Validate security - reject lines with dangerous patterns
 		if [[ "$line" =~ [\`\$\(] ]] || [[ "$line" =~ (eval|source|exec|\.\s*\/) ]]; then
-			# In fake mode, exit gracefully with success; otherwise die
-			if is_fake_mode; then
-				handle_error "ERROR" "Configuration file contains dangerous content at line $line_num: $line" 0
-				return 1
-			else
-				die "Configuration file contains dangerous content at line $line_num: $line"
-				return 1
-			fi
+			handle_config_error "Configuration file contains dangerous content: $line" "$line_num"
 		fi
 
-		# Parse variable assignment: VAR=value or VAR="value" or VAR='value'
-		# Extract variable name and value using a more robust approach
-		# First, check if line matches VAR=value pattern (with optional quotes and trailing comment)
-		if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
-			var_name="${BASH_REMATCH[1]}"
-			local assignment="${BASH_REMATCH[2]}"
-
-			# Remove trailing comment if present
-			assignment="${assignment%%#*}"
-			# Remove trailing whitespace after removing comment
-			assignment="${assignment%"${assignment##*[![:space:]]}"}"
-
-			# Parse value (quoted or unquoted)
-			# Check for unclosed quotes first (syntax error)
-			if [[ "$assignment" =~ ^\" ]] && [[ ! "$assignment" =~ \"$ ]]; then
-				# Starts with double quote but doesn't end with one - unclosed quote
-				# In fake mode, exit gracefully with success; otherwise die
-				if is_fake_mode; then
-					handle_error "ERROR" "Unclosed double quote in configuration line $line_num: $line" 0
-					return 1
-				else
-					die "Unclosed double quote in configuration line $line_num: $line"
-					return 1
-				fi
-			elif [[ "$assignment" =~ ^\' ]] && [[ ! "$assignment" =~ \'$ ]]; then
-				# Starts with single quote but doesn't end with one - unclosed quote
-				# In fake mode, exit gracefully with success; otherwise die
-				if is_fake_mode; then
-					handle_error "ERROR" "Unclosed single quote in configuration line $line_num: $line" 0
-					return 1
-				else
-					die "Unclosed single quote in configuration line $line_num: $line"
-					return 1
-				fi
-			elif [[ "$assignment" =~ ^\"(.*)\"$ ]]; then
-				# Double-quoted value (may be empty)
-				var_value="${BASH_REMATCH[1]}"
-			elif [[ "$assignment" =~ ^\'(.*)\'$ ]]; then
-				# Single-quoted value (may be empty)
-				var_value="${BASH_REMATCH[1]}"
-			elif [[ -z "$assignment" ]]; then
-				# Empty unquoted value
-				var_value=""
-			elif [[ "$assignment" =~ ^[^[:space:]#\"\']+$ ]]; then
-				# Unquoted value (no spaces, no quotes, no comment markers)
-				var_value="$assignment"
-			else
-				# Invalid value format (has spaces but not quoted, or other issues)
-				# In fake mode, exit gracefully with success; otherwise die
-				if is_fake_mode; then
-					handle_error "ERROR" "Invalid configuration line $line_num: $line (value must be quoted if it contains spaces)" 0
-					return 1
-				else
-					die "Invalid configuration line $line_num: $line (value must be quoted if it contains spaces)"
-					return 1
-				fi
-			fi
-		else
-			# Invalid line format (doesn't match VAR=value pattern)
-			# In fake mode, exit gracefully with success; otherwise die
-			if is_fake_mode; then
-				handle_error "ERROR" "Invalid configuration line $line_num: $line (expected VAR=value or VAR=\"value\")" 0
-				return 1
-			else
-				die "Invalid configuration line $line_num: $line (expected VAR=value or VAR=\"value\")"
-				return 1
-			fi
+		# Parse assignment
+		if ! parse_assignment "$line" "$line_num"; then
+			handle_config_error "Failed to parse configuration file: $config_file"
 		fi
 
 		# Validate variable name is in schema whitelist
 		if ! get_config_schema "$var_name" >/dev/null 2>&1; then
 			# Variable not in schema - reject it for security
 			# This prevents setting arbitrary variables that could be used for code injection
-			# In fake mode, exit gracefully with success; otherwise die
-			if is_fake_mode; then
-				handle_error "ERROR" "Unknown configuration variable '$var_name' at line $line_num (not in schema whitelist)" 0
-				return 1
-			else
-				die "Unknown configuration variable '$var_name' at line $line_num (not in schema whitelist)"
-				return 1
-			fi
+			handle_config_error "Unknown configuration variable '$var_name' (not in schema whitelist)" "$line_num"
 		fi
 
 		# Safely assign variable value using printf -v (no code execution)
@@ -406,13 +511,7 @@ load_config() {
 		# Only whitelisted variables from CONFIG_SCHEMA can be set
 		# Only simple variable assignments are allowed (VAR=value or VAR="value")
 		if ! safe_parse_config_file "$config_file"; then
-			# In fake mode, exit gracefully with success; otherwise die
-			if is_fake_mode; then
-				handle_error "ERROR" "Failed to parse configuration file: $config_file" 0
-				exit 0
-			else
-				die "Failed to parse configuration file: $config_file"
-			fi
+			handle_error_or_exit_fake_mode "Failed to parse configuration file: $config_file" "${EXIT_CONFIG_ERROR:-2}"
 		fi
 
 		# Recalculate LOG_FILE path before first log message (in case LOG_FILE was overridden in config)
@@ -423,13 +522,7 @@ load_config() {
 		# File doesn't exist or isn't readable
 		# Check if file exists but isn't readable (for better error message)
 		if [[ -f "$config_file" ]]; then
-			# In fake mode, exit gracefully with success; otherwise die
-			if is_fake_mode; then
-				handle_error "ERROR" "Configuration file is not readable: $config_file" 0
-				exit 0
-			else
-				die "Configuration file is not readable: $config_file"
-			fi
+			handle_error_or_exit_fake_mode "Configuration file is not readable: $config_file" "${EXIT_CONFIG_ERROR:-2}"
 		fi
 
 		# Recalculate LOG_FILE path before first log message (in case STATE_DIR was set via environment)
@@ -519,8 +612,9 @@ apply_config_default() {
 
 	# Check if required
 	if [[ "$required" == "required" ]] && [[ -z "$var_value" ]]; then
-		die "$var_name is required but not configured"
-		# If die doesn't exit (e.g., in tests), return error
+		# Log error message that includes variable name for better debugging
+		handle_error_or_exit_fake_mode "$var_name is required but not configured" "${EXIT_VALIDATION_ERROR:-3}"
+		# If handle_error_or_exit_fake_mode doesn't exit (e.g., in tests), return error
 		return 1
 	fi
 
@@ -590,7 +684,8 @@ validate_config_type() {
 	integer)
 		if ! [[ "$var_value" =~ ^[0-9]+$ ]]; then
 			if [[ "$required" == "required" ]]; then
-				handle_error "ERROR" "$var_name must be an integer (current value: '$var_value')"
+				# Use handle_error_or_exit_fake_mode to respect fake mode
+				handle_error_or_exit_fake_mode "$var_name must be an integer (current value: '$var_value')" "${EXIT_VALIDATION_ERROR:-3}"
 			else
 				# Apply default value for optional variables
 				if [[ -n "$default_val" ]]; then
@@ -668,8 +763,11 @@ validate_config_rule() {
 	non-empty)
 		if [[ -z "$var_value" ]]; then
 			if [[ "$required" == "required" ]]; then
-				die "$var_name cannot be empty"
-				# If die doesn't exit (e.g., in tests), return error
+				# Use handle_error_or_exit_fake_mode to respect fake mode
+				# Note: This function exits, so return 1 won't be reached
+				# but we include it for clarity and in case exit is trapped
+				handle_error_or_exit_fake_mode "$var_name cannot be empty" "${EXIT_VALIDATION_ERROR:-3}"
+				# If handle_error_or_exit_fake_mode doesn't exit (e.g., in tests), return error
 				return 1
 			else
 				# Apply default value for optional variables
@@ -710,8 +808,11 @@ validate_config_rule() {
 		fi
 		if [[ "$var_type" == "integer" ]] && [[ "$var_value" -lt "$min_val" ]]; then
 			if [[ "$required" == "required" ]]; then
-				die "$var_name must be at least $min_val (current value: $var_value)"
-				# If die doesn't exit (e.g., in tests), return error
+				# Use handle_error_or_exit_fake_mode to respect fake mode
+				# Note: This function exits, so return 1 won't be reached
+				# but we include it for clarity and in case exit is trapped
+				handle_error_or_exit_fake_mode "$var_name must be at least $min_val (current value: $var_value)" "${EXIT_VALIDATION_ERROR:-3}"
+				# If handle_error_or_exit_fake_mode doesn't exit (e.g., in tests), return error
 				return 1
 			else
 				# Apply default value for optional variables
@@ -731,8 +832,11 @@ validate_config_rule() {
 		local max_val="${rule#max:}"
 		if [[ "$var_type" == "integer" ]] && [[ "$var_value" -gt "$max_val" ]]; then
 			if [[ "$required" == "required" ]]; then
-				die "$var_name must be at most $max_val (current value: $var_value)"
-				# If die doesn't exit (e.g., in tests), return error
+				# Use handle_error_or_exit_fake_mode to respect fake mode
+				# Note: This function exits, so return 1 won't be reached
+				# but we include it for clarity and in case exit is trapped
+				handle_error_or_exit_fake_mode "$var_name must be at most $max_val (current value: $var_value)" "${EXIT_VALIDATION_ERROR:-3}"
+				# If handle_error_or_exit_fake_mode doesn't exit (e.g., in tests), return error
 				return 1
 			else
 				# Apply default value for optional variables
@@ -760,8 +864,11 @@ validate_config_rule() {
 		done
 		if [[ $found -eq 0 ]]; then
 			if [[ "$required" == "required" ]]; then
-				die "$var_name must be one of: $allowed_values (current value: '$var_value')"
-				# If die doesn't exit (e.g., in tests), return error
+				# Use handle_error_or_exit_fake_mode to respect fake mode
+				# Note: This function exits, so return 1 won't be reached
+				# but we include it for clarity and in case exit is trapped
+				handle_error_or_exit_fake_mode "$var_name must be one of: $allowed_values (current value: '$var_value')" "${EXIT_VALIDATION_ERROR:-3}"
+				# If handle_error_or_exit_fake_mode doesn't exit (e.g., in tests), return error
 				return 1
 			else
 				# Apply default value for optional variables
@@ -997,13 +1104,7 @@ validate_config() {
 	# - Value enumeration (allowed values)
 	# - Relative validation (e.g., TIER2_THRESHOLD >= TIER1_THRESHOLD)
 	if ! validate_config_schema; then
-		# In fake mode, exit gracefully with success; otherwise die
-		if is_fake_mode; then
-			handle_error "ERROR" "Configuration validation failed - check schema rules" 0
-			exit 0
-		else
-			die "Configuration validation failed - check schema rules"
-		fi
+		handle_error_or_exit_fake_mode "Configuration validation failed - check schema rules" "${EXIT_VALIDATION_ERROR:-3}"
 	fi
 
 	# Custom validation: IP address format (not handled by schema)

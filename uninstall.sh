@@ -5,7 +5,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.3.0
+# Version: 0.4.1
 #
 
 set -euo pipefail

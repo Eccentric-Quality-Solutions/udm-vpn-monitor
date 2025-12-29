@@ -542,6 +542,12 @@ The system uses a modular library architecture where functionality is organized 
 **Key Functions**:
 - `get_formatted_timestamp()` - Consistent date/time formatting
 - `ensure_directory_exists()` - Centralized directory creation
+- `check_command_available()` - Check if command is available (returns error code)
+- `file_exists_and_readable()` - Check file existence and readability
+- `directory_exists()` / `directory_writable()` - Directory checks
+- `atomic_write_file()` - Atomic file write operations
+- `sanitize_peer_ip()` - IP address sanitization for filenames
+- `safe_set_variable()` - Safe variable assignment (prevents code injection)
 - `validate_ip_address()` - Robust IP address validation (IPv4/IPv6)
 - `get_file_mtime()` - Cross-platform file modification time
 - `is_process_running()` - Process existence checking

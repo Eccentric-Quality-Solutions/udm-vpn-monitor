@@ -5,7 +5,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.3.0
+# Version: 0.4.1
 #
 
 set -euo pipefail
@@ -44,6 +44,10 @@ fi
 # Source shared common functions (logging, root check)
 # shellcheck source=lib/common.sh
 source "${INSTALL_SCRIPT_DIR}/lib/common.sh"
+
+# Source detection functions for IP address validation
+# shellcheck source=lib/detection.sh
+source "${INSTALL_SCRIPT_DIR}/lib/detection.sh"
 
 # Check if we're on a UDM
 #
@@ -1109,7 +1113,8 @@ detect_local_udm_ip() {
 	local br0_ip
 	br0_ip=$(ip addr show br0 2>/dev/null | grep -oE 'inet [0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1 | awk '{print $2}')
 
-	if [[ -n "$br0_ip" ]]; then
+	# Validate extracted IP address format before returning
+	if [[ -n "$br0_ip" ]] && validate_ip_address "$br0_ip"; then
 		echo "$br0_ip"
 		return 0
 	fi
@@ -1166,8 +1171,9 @@ check_and_setup_routes() {
 		fi
 	fi
 
-	# Validate LOCAL_UDM_IP format (basic check)
-	if [[ ! "$local_udm_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+	# Validate LOCAL_UDM_IP format using proper validation function
+	# This function handles both IPv4 and IPv6 validation, including security checks
+	if ! validate_ip_address "$local_udm_ip"; then
 		log_warn "Invalid LOCAL_UDM_IP format: $local_udm_ip"
 		return 1
 	fi

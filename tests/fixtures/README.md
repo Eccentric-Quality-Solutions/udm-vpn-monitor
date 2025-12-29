@@ -188,6 +188,134 @@ load fixtures/vpn_recovery_disabled
 }
 ```
 
+### `vpn_rate_limited.bash` - VPN Rate Limited Scenario
+
+Sets up a test environment where rate limiting is active. The fixture creates a `restart_count` file with recent restart timestamps and configures the environment to trigger Tier 3 recovery (which is rate limited).
+
+**Function**: `setup_vpn_rate_limited_fixture`
+
+**Arguments**:
+- `$1`: Peer IP address (default: "192.168.1.1")
+- `$2`: Number of restart timestamps to create if none provided (default: 3)
+- `$3+`: Restart timestamps (epoch seconds, one per line in restart_count file). If not provided, creates timestamps relative to current time. Additional config variables as KEY="VALUE" pairs can be passed after timestamps.
+
+**Example**:
+```bash
+load test_helper
+load fixtures/vpn_rate_limited
+
+@test "rate limit prevents restart" {
+    # Use default: 3 restarts within last hour
+    setup_vpn_rate_limited_fixture "192.168.1.1"
+    run bash "$TEST_SCRIPT" --fake
+    assert_file_contains "$LOG_FILE" "Rate limit exceeded"
+}
+
+@test "rate limit with specific timestamps" {
+    local now=$(date +%s)
+    setup_vpn_rate_limited_fixture "192.168.1.1" 3 \
+        $((now - 100)) \
+        $((now - 200)) \
+        $((now - 300))
+    run bash "$TEST_SCRIPT" --fake
+    assert_file_contains "$LOG_FILE" "Rate limit exceeded"
+}
+```
+
+### `vpn_network_partition.bash` - VPN Network Partition Scenario
+
+Sets up a test environment simulating network partition conditions. This fixture configures mocks for route checks, interface state checks, and DNS resolution to simulate various network partition scenarios.
+
+**Function**: `setup_vpn_network_partition_fixture`
+
+**Arguments**:
+- `$1`: Peer IP address (default: "192.168.1.1")
+- `$2`: Partition type (default: "all")
+  - `"no_default_route"`: No default route available
+  - `"interfaces_down"`: Network interfaces are down
+  - `"dns_failure"`: DNS resolution fails
+  - `"all"`: All partition conditions combined
+- `$3`: Interface names as comma-separated string (default: "eth0,eth1", can be overridden via NETWORK_PARTITION_INTERFACES config)
+- `$4+`: Additional config variables as KEY="VALUE" pairs
+
+**Example**:
+```bash
+load test_helper
+load fixtures/vpn_network_partition
+
+@test "network partition - all conditions" {
+    setup_vpn_network_partition_fixture "192.168.1.1" "all"
+    # Network is partitioned: no route, interfaces down, DNS fails
+    run bash "$TEST_SCRIPT" --fake
+    # Should detect partition and not trigger VPN recovery
+}
+
+@test "network partition - DNS failure only" {
+    setup_vpn_network_partition_fixture "192.168.1.1" "dns_failure"
+    # Only DNS resolution fails
+    run bash "$TEST_SCRIPT" --fake
+    # Should detect partition
+}
+
+@test "network partition - custom interfaces" {
+    setup_vpn_network_partition_fixture "192.168.1.1" "interfaces_down" "br0,eth0"
+    # Interfaces are down with custom interface list
+    run bash "$TEST_SCRIPT" --fake
+    # Should detect partition
+}
+```
+
+### `vpn_xfrm_recovery.bash` - VPN XFRM Recovery Scenario
+
+Sets up a test environment for testing xfrm-based recovery operations. This fixture configures mocks for multiple Security Associations (SAs) and simulates different recovery scenarios (success, partial failure, complete failure).
+
+**Function**: `setup_vpn_xfrm_recovery_fixture`
+
+**Arguments**:
+- `$1`: Peer IP address (default: "192.168.1.1")
+- `$2`: SA count - number of Security Associations to simulate (default: 2)
+- `$3`: Recovery type (default: "success")
+  - `"success"`: All SA deletions succeed
+  - `"partial_failure"`: Some SA deletions succeed, others fail (alternating pattern)
+  - `"complete_failure"`: All SA deletions fail
+- `$4+`: Additional config variables as KEY="VALUE" pairs
+
+**Example**:
+```bash
+load test_helper
+load fixtures/vpn_xfrm_recovery
+
+@test "xfrm recovery - successful deletion" {
+    setup_vpn_xfrm_recovery_fixture "192.168.1.1" 2 "success"
+    # 2 SAs, all deletions succeed
+    run bash "$TEST_SCRIPT" --fake
+    # Should successfully delete all SAs and verify re-establishment
+}
+
+@test "xfrm recovery - partial failure" {
+    setup_vpn_xfrm_recovery_fixture "192.168.1.1" 3 "partial_failure"
+    # 3 SAs, some deletions succeed, others fail
+    run bash "$TEST_SCRIPT" --fake
+    # Should handle partial failures gracefully
+}
+
+@test "xfrm recovery - complete failure" {
+    setup_vpn_xfrm_recovery_fixture "192.168.1.1" 2 "complete_failure"
+    # 2 SAs, all deletions fail
+    run bash "$TEST_SCRIPT" --fake
+    # Should fall back to ipsec reload/restart
+}
+
+@test "xfrm recovery - custom config" {
+    setup_vpn_xfrm_recovery_fixture "192.168.1.1" 2 "success" \
+        'TIER2_THRESHOLD=5' \
+        'RECOVERY_VERIFY_TIMEOUT=10'
+    # Custom thresholds and timeout
+    run bash "$TEST_SCRIPT" --fake
+    # Should use custom config values
+}
+```
+
 ## Usage Pattern
 
 1. Load `test_helper` (which provides base setup functions)

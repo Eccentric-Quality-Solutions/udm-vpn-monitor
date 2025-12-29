@@ -3,8 +3,23 @@
 # Logging functions for UDM VPN Monitor
 # Provides centralized logging functionality with timestamp and level support
 #
-# Version: 0.4.0
+# Version: 0.4.1
 #
+
+# Source common utility functions
+# shellcheck source=lib/common.sh
+# Determine lib directory (where this file is located)
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${LIB_DIR}/common.sh" 2>/dev/null || {
+	# Fallback if common.sh not found - define minimal try_ensure_directory_exists
+	try_ensure_directory_exists() {
+		local dir="$1"
+		if [[ ! -d "$dir" ]]; then
+			mkdir -p "$dir" 2>/dev/null || return 1
+		fi
+		return 0
+	}
+}
 
 # Get formatted timestamp
 #
@@ -79,14 +94,14 @@ log_message() {
 	local log_entry="[$timestamp] [$level] $message"
 
 	# Ensure log directory exists and is writable
+	# Note: We use try_ensure_directory_exists() instead of ensure_directory_exists()
+	# because log_message must never exit the script (it's used in error handlers)
 	local log_dir
 	log_dir=$(dirname "$LOG_FILE")
-	if [[ ! -d "$log_dir" ]]; then
-		if ! mkdir -p "$log_dir" 2>/dev/null; then
-			echo "$log_entry" >&2
-			echo "[$timestamp] [ERROR] Cannot create log directory: $log_dir" >&2
-			return 0 # Don't fail the script if logging fails
-		fi
+	if ! try_ensure_directory_exists "$log_dir"; then
+		echo "$log_entry" >&2
+		echo "[$timestamp] [ERROR] Cannot create log directory: $log_dir" >&2
+		return 0 # Don't fail the script if logging fails
 	fi
 
 	# Write to log file (append, create if doesn't exist)
@@ -223,6 +238,43 @@ handle_error() {
 	fi
 
 	return 0
+}
+
+# Handle error in fake mode or die
+#
+# Provides consistent error handling for fatal errors that should exit gracefully
+# in fake mode (NO_ESCALATE=1) or die in normal mode. This function standardizes
+# the pattern of handling errors differently based on fake mode.
+#
+# Arguments:
+#   $1: Error message to log
+#   $2: Exit code (optional, defaults to 1)
+#
+# Returns:
+#   Never returns (exits script with code 0 in fake mode, dies in normal mode)
+#
+# Side effects:
+#   - Logs error message using handle_error
+#   - Exits script with code 0 in fake mode
+#   - Dies (exits with specified code) in normal mode
+#
+# Examples:
+#   handle_error_or_exit_fake_mode "Failed to parse configuration file: $config_file"
+#   handle_error_or_exit_fake_mode "Configuration validation failed" 2
+#
+# Note:
+#   Requires handle_error, die, and is_fake_mode functions to be available (from this file)
+#   This function should be used for fatal errors that need fake mode support
+#   Use EXIT_* constants from constants.sh for exit codes
+handle_error_or_exit_fake_mode() {
+	local message="$1"
+	local exit_code="${2:-1}"
+	if is_fake_mode; then
+		handle_error "ERROR" "$message" 0
+		exit 0
+	else
+		die "$message" "$exit_code"
+	fi
 }
 
 # Warn if command is missing

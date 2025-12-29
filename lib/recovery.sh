@@ -3,13 +3,14 @@
 # Recovery actions for UDM VPN Monitor
 # Implements tiered recovery: logging → surgical cleanup → full restart
 #
-# Version: 0.4.0
+# Version: 0.4.1
 #
 
 # Source constants for magic numbers
 # shellcheck source=lib/constants.sh
 # Determine lib directory (where this file is located)
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Note: safe_source_lib not available here since constants.sh is sourced before common.sh
 if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	# Fallback if constants.sh not found (shouldn't happen in normal operation)
 	# Only set if not already set (to avoid readonly variable errors)
@@ -22,6 +23,8 @@ fi
 
 # Source detection functions for byte counter and SA checks
 # shellcheck source=lib/detection.sh
+# Note: safe_source_lib not available here since common.sh hasn't been sourced yet
+# Using direct source pattern since detection.sh is sourced before common.sh
 source "${LIB_DIR}/detection.sh" 2>/dev/null || {
 	# Fallback if detection.sh not found
 	check_ipsec_phase2() { return 1; }
@@ -56,7 +59,7 @@ source "${LIB_DIR}/detection.sh" 2>/dev/null || {
 count_sas_for_peer() {
 	local peer_ip="$1"
 
-	if ! command -v ip >/dev/null 2>&1; then
+	if ! check_command_available "ip"; then
 		return 1
 	fi
 
@@ -110,7 +113,7 @@ verify_byte_counters_resume() {
 	local peer_ip="$1"
 	local xfrm_output
 
-	if ! command -v ip >/dev/null 2>&1; then
+	if ! check_command_available "ip"; then
 		return 1
 	fi
 
@@ -167,7 +170,7 @@ verify_byte_counters_resume() {
 verify_ipsec_connections_active() {
 	local peer_ips="${1:-${EXTERNAL_PEER_IPS:-}}"
 
-	if ! command -v ipsec >/dev/null 2>&1; then
+	if ! check_command_available "ipsec"; then
 		handle_error "WARNING" "Recovery verification: ipsec command not available for connection verification"
 		return 1
 	fi
@@ -249,7 +252,7 @@ attempt_xfrm_recovery() {
 	local failed_count=0
 	local parse_errors=0
 
-	if ! command -v ip >/dev/null 2>&1; then
+	if ! check_command_available "ip"; then
 		handle_error "WARNING" "ip command not available for xfrm recovery"
 		return 1
 	fi
@@ -488,6 +491,76 @@ attempt_xfrm_recovery() {
 	return 1
 }
 
+# Check availability of recovery commands
+#
+# Checks which recovery commands are available and stores results in global variables.
+# This centralizes command availability checks to simplify strategy selection logic.
+#
+# Output (via global variables):
+#   _RECOVERY_IP_AVAILABLE: 1 if ip command available, 0 otherwise
+#   _RECOVERY_IPSEC_AVAILABLE: 1 if ipsec command available, 0 otherwise
+#
+# Note:
+#   This is a helper function for select_recovery_strategy()
+#   Uses global variables with underscore prefix to indicate internal use
+_check_recovery_command_availability() {
+	declare -g _RECOVERY_IP_AVAILABLE=0
+	declare -g _RECOVERY_IPSEC_AVAILABLE=0
+
+	if check_command_available "ip"; then
+		_RECOVERY_IP_AVAILABLE=1
+	fi
+
+	if check_command_available "ipsec"; then
+		_RECOVERY_IPSEC_AVAILABLE=1
+	fi
+}
+
+# Check if a recovery strategy is applicable
+#
+# Determines if a recovery strategy can be used based on peer IP, tier,
+# configuration, and command availability.
+#
+# Arguments:
+#   $1: Strategy name ("xfrm", "ipsec_reload", "ipsec_restart")
+#   $2: Peer IP address (optional, required for per-connection recovery)
+#   $3: Tier level (2 for surgical cleanup, 3 for full restart)
+#
+# Returns:
+#   0: Strategy is applicable
+#   1: Strategy is not applicable
+#
+# Note:
+#   Uses global variables _RECOVERY_IP_AVAILABLE and _RECOVERY_IPSEC_AVAILABLE
+#   Requires ENABLE_XFRM_RECOVERY configuration variable
+_is_strategy_applicable() {
+	local strategy="$1"
+	local peer_ip="${2:-}"
+	local tier="${3:-2}"
+
+	case "$strategy" in
+	"xfrm")
+		# Requires peer IP, xfrm recovery enabled, and ip command available
+		[[ -n "$peer_ip" ]] &&
+			[[ "${ENABLE_XFRM_RECOVERY:-1}" -eq 1 ]] &&
+			[[ "${_RECOVERY_IP_AVAILABLE:-0}" -eq 1 ]]
+		;;
+	"ipsec_reload")
+		# Requires tier 2 and ipsec command available
+		[[ "$tier" == "2" ]] &&
+			[[ "${_RECOVERY_IPSEC_AVAILABLE:-0}" -eq 1 ]]
+		;;
+	"ipsec_restart")
+		# Requires tier 3 and ipsec command available
+		[[ "$tier" == "3" ]] &&
+			[[ "${_RECOVERY_IPSEC_AVAILABLE:-0}" -eq 1 ]]
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
 # Select recovery strategy based on peer IP and tier
 #
 # Centralizes recovery strategy selection logic, determining the best recovery
@@ -509,15 +582,16 @@ attempt_xfrm_recovery() {
 #   RECOVERY_AVAILABLE: Whether recovery is available (1) or not (0)
 #
 # Strategy selection logic:
-#   1. If peer IP provided and xfrm recovery enabled and ip command available:
+#   Strategies are evaluated in priority order using a lookup table:
+#   1. "xfrm" - If peer IP provided, xfrm recovery enabled, and ip command available:
 #      - Strategy: "xfrm" (per-connection recovery)
 #      - Command: attempt_xfrm_recovery function
 #      - Impact: "per-connection"
-#   2. If tier 2 and ipsec command available:
+#   2. "ipsec_reload" - If tier 2 and ipsec command available:
 #      - Strategy: "ipsec_reload" (affects all tunnels)
-#      - Command: "ipsec reload" with fallback to "ipsec restart"
+#      - Command: "ipsec reload"
 #      - Impact: "all-tunnels"
-#   3. If tier 3 and ipsec command available:
+#   3. "ipsec_restart" - If tier 3 and ipsec command available:
 #      - Strategy: "ipsec_restart" (affects all tunnels)
 #      - Command: "ipsec restart"
 #      - Impact: "all-tunnels"
@@ -525,6 +599,10 @@ attempt_xfrm_recovery() {
 #      - Strategy: unavailable
 #      - Command: empty
 #      - Impact: empty
+#
+# Implementation:
+#   Uses _is_strategy_applicable() to check each strategy's applicability.
+#   First applicable strategy in priority order is selected.
 #
 # Examples:
 #   select_recovery_strategy "203.0.113.1" 2
@@ -536,6 +614,7 @@ attempt_xfrm_recovery() {
 # Note:
 #   Requires ENABLE_XFRM_RECOVERY configuration variable
 #   Checks for command availability (ip, ipsec) before selecting strategy
+#   Uses helper function _is_strategy_applicable() to evaluate strategy conditions
 select_recovery_strategy() {
 	local peer_ip="${1:-}"
 	local tier="${2:-2}"
@@ -552,29 +631,31 @@ select_recovery_strategy() {
 		return 1
 	fi
 
-	# Strategy 1: xfrm-based per-connection recovery (if peer IP provided and enabled)
-	if [[ -n "$peer_ip" ]] && [[ "${ENABLE_XFRM_RECOVERY:-1}" -eq 1 ]] && command -v ip >/dev/null 2>&1; then
-		declare -g RECOVERY_STRATEGY="xfrm"
-		declare -g RECOVERY_COMMAND="attempt_xfrm_recovery"
-		declare -g RECOVERY_IMPACT="per-connection"
-		declare -g RECOVERY_AVAILABLE=1
-		return 0
-	fi
+	# Check command availability
+	_check_recovery_command_availability
 
-	# Strategy 2: ipsec reload (Tier 2) or ipsec restart (Tier 3)
-	if command -v ipsec >/dev/null 2>&1; then
-		if [[ "$tier" == "2" ]]; then
-			declare -g RECOVERY_STRATEGY="ipsec_reload"
-			declare -g RECOVERY_COMMAND="ipsec reload"
-			declare -g RECOVERY_IMPACT="all-tunnels"
-		else
-			declare -g RECOVERY_STRATEGY="ipsec_restart"
-			declare -g RECOVERY_COMMAND="ipsec restart"
-			declare -g RECOVERY_IMPACT="all-tunnels"
+	# Strategy lookup table (in priority order)
+	# Format: strategy_name:command:impact
+	local -a strategies=(
+		"xfrm:attempt_xfrm_recovery:per-connection"
+		"ipsec_reload:ipsec reload:all-tunnels"
+		"ipsec_restart:ipsec restart:all-tunnels"
+	)
+
+	# Try each strategy in priority order
+	local strategy_entry
+	for strategy_entry in "${strategies[@]}"; do
+		IFS=':' read -r strategy_name strategy_command strategy_impact <<<"$strategy_entry"
+
+		# Check if this strategy is applicable
+		if _is_strategy_applicable "$strategy_name" "$peer_ip" "$tier"; then
+			declare -g RECOVERY_STRATEGY="$strategy_name"
+			declare -g RECOVERY_COMMAND="$strategy_command"
+			declare -g RECOVERY_IMPACT="$strategy_impact"
+			declare -g RECOVERY_AVAILABLE=1
+			return 0
 		fi
-		declare -g RECOVERY_AVAILABLE=1
-		return 0
-	fi
+	done
 
 	# No strategy available
 	declare -g RECOVERY_STRATEGY="unavailable"
@@ -639,8 +720,8 @@ surgical_cleanup() {
 		# No recovery strategy available
 		warn_if_missing "ip"
 		warn_if_missing "ipsec"
-		handle_error "ERROR" "No recovery strategy available for Tier 2 recovery" 0
-		return 0
+		handle_error "WARNING" "No recovery strategy available for Tier 2 recovery"
+		return 1
 	fi
 
 	# Execute selected strategy with fallback support
