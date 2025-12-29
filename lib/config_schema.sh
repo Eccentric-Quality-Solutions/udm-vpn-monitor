@@ -3,7 +3,7 @@
 # Configuration schema definition for UDM VPN Monitor
 # Defines validation rules for all configuration variables
 #
-# Version: 0.4.1
+# Version: 0.4.2
 #
 
 # Configuration schema definition
@@ -94,6 +94,8 @@ declare -A CONFIG_SCHEMA=(
 	["RESOURCE_RAM_DURATION"]="optional|integer|min:10|max:600|default:60"
 	["RESOURCE_DISK_WARNING_THRESHOLD"]="optional|integer|min:5|max:50|default:20"
 	["RESOURCE_DISK_CRITICAL_THRESHOLD"]="optional|integer|min:1|max:20|default:10"
+	# Status logging interval (seconds) - how often to log periodic status updates for healthy VPN peers
+	["STATUS_LOG_INTERVAL_SECONDS"]="optional|integer|min:0|max:3600|default:300"
 )
 
 # Get schema for a configuration variable

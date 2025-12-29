@@ -3,3 +3,4 @@
 - Was any functionality lost?
 - Do we need to DRY things up?
 - Run linting and formatting.
+- Are there any critical path tests we need to create or update?

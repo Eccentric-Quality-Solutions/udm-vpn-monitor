@@ -107,6 +107,7 @@ LIB_FILES=(
 	"lib/lockfile.sh"
 	"lib/logging.sh"
 	"lib/recovery.sh"
+	"lib/resources.sh"
 	"lib/state.sh"
 )
 

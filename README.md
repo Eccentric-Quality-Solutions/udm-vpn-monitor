@@ -199,6 +199,8 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `RESOURCE_RAM_DURATION` | RAM constraint duration in seconds (10-600). RAM must be at threshold or above for this duration before throttling. | 60 |
 | `RESOURCE_DISK_WARNING_THRESHOLD` | Disk space warning threshold (percentage free, 5-50). Script logs a warning when free disk space drops below this threshold. | 20 |
 | `RESOURCE_DISK_CRITICAL_THRESHOLD` | Disk space critical threshold (percentage free, 1-20). Script throttles execution and takes action (e.g., rotates logs) when free disk space drops below this threshold. | 10 |
+| `STATUS_LOG_INTERVAL_SECONDS` | How often to log periodic status updates for healthy VPN peers (seconds, 0-3600). Set to 0 to disable periodic status logging. Ensures monitoring activity is visible in logs even when VPNs are healthy. | 300 |
+| `RECOVERY_VERIFY_TIMEOUT` | Maximum time to wait for recovery verification after xfrm-based recovery actions (seconds, 10-300). The script verifies that the VPN tunnel has recovered after performing recovery actions. | 30 |
 
 
 **Cron Schedule Examples:**

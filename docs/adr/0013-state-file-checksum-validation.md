@@ -1,7 +1,7 @@
 # ADR-0013: State File Checksum Validation
 
 ## Status
-Accepted
+Deprecated (Removed in v0.2.0)
 
 ## Context
 State files contain critical system state:
@@ -52,6 +52,9 @@ We will implement checksum validation for state files to:
   - Cooldown file
   - Restart count file
 - **Module**: Implemented in `lib/state.sh` for state file operations
+
+## Deprecation Note
+**Removed in v0.2.0 (2025-12-26)**: Checksum validation was removed to simplify the codebase for single-deployment scenarios where checksum overhead is unnecessary. State file corruption detection now relies on format validation only. See CHANGELOG.md v0.2.0 for details.
 
 ## Related ADRs
 - ADR-0012: Atomic File Operations

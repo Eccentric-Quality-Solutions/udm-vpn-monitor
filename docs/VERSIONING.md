@@ -85,16 +85,40 @@ Version numbers must be updated in **all** of the following locations:
 When releasing a new version:
 
 - [ ] Update version in CHANGELOG.md (add new entry at top)
-- [ ] Update `SCRIPT_VERSION` in `vpn-monitor.sh`
-- [ ] Update `# Version:` comment in `vpn-monitor.sh`
-- [ ] Update `SCRIPT_VERSION` in `vpn-keepalive.sh`
-- [ ] Update `# Version:` comment in `vpn-keepalive.sh`
-- [ ] Update `# Version:` comment in `install.sh`
-- [ ] Update `# Version:` comment in all `lib/*.sh` files (9 files)
-- [ ] Update `# Version:` comment in utility scripts (4 files)
+- [ ] **Use the automated script**: `./scripts/update-version.sh <new_version>` to update all version numbers
+  - Or use `--dry-run` flag to preview changes: `./scripts/update-version.sh <new_version> --dry-run`
+  - The script automatically updates all files listed below
+- [ ] Manually update `# Version:` comment in `vpn-monitor.sh` (if script missed it)
+- [ ] Manually update `SCRIPT_VERSION` in `vpn-monitor.sh` (if script missed it)
+- [ ] Manually update `SCRIPT_VERSION` in `vpn-keepalive.sh` (if script missed it)
+- [ ] Manually update `# Version:` comment in `vpn-keepalive.sh` (if script missed it)
+- [ ] Manually update `# Version:` comment in `install.sh` (if script missed it)
+- [ ] Manually update `# Version:` comment in all `lib/*.sh` files (if script missed any)
+- [ ] Manually update `# Version:` comment in utility scripts (if script missed any)
 - [ ] Verify version consistency: `grep -r "Version:" --include="*.sh" .`
 - [ ] Test that `--version` flag works correctly
 - [ ] Test that install script detects version upgrades correctly
+
+### Automated Version Update
+
+The `scripts/update-version.sh` script automates version number updates across all project files:
+
+```bash
+# Preview changes (dry run)
+./scripts/update-version.sh 0.4.3 --dry-run
+
+# Actually update versions
+./scripts/update-version.sh 0.4.3
+```
+
+The script:
+- Validates version format (SemVer: MAJOR.MINOR.PATCH)
+- Updates `# Version:` comments in all script files
+- Updates `SCRIPT_VERSION` variables in `vpn-monitor.sh` and `vpn-keepalive.sh`
+- Updates all library files (`lib/*.sh`)
+- Updates utility scripts (`analyze-logs.sh`, `check-config.sh`, `check-utilities.sh`, `uninstall.sh`)
+- Verifies updates after completion
+- Provides colored output and error handling
 
 ## Version Extraction
 

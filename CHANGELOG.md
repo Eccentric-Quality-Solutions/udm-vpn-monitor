@@ -2,6 +2,36 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
+## 0.4.2 - 2025-12-29
+
+### Added
+- **Periodic Status Logging**: New `STATUS_LOG_INTERVAL_SECONDS` configuration option to log periodic status updates for healthy VPN peers (default: 300 seconds / 5 minutes). Ensures monitoring activity is visible in logs even when VPNs are healthy. Set to 0 to disable periodic status logging.
+- **Recovery Verification Timeout**: New `RECOVERY_VERIFY_TIMEOUT` configuration option (default: 30 seconds) to control maximum time to wait for recovery verification after xfrm-based recovery actions. Range: 10-300 seconds.
+- **Keepalive Daemon Config Reloading**: VPN keepalive daemon now automatically reloads configuration every 10 iterations (or every 5 minutes, whichever is longer) to pick up configuration changes without requiring service restart.
+- **Keepalive LOCAL_UDM_IP Support**: Keepalive daemon now supports `LOCAL_UDM_IP` configuration for proper ping source routing when using `INTERNAL_PEER_IPS`, matching the behavior of `vpn-monitor.sh` ping checks.
+- **Developer Troubleshooting Documentation**: New `docs/DEV_TROUBLESHOOTING.md` with troubleshooting tips for developers, including keepalive service restart instructions.
+
+### Changed
+- **Keepalive Daemon Improvements**:
+  - Enhanced error handling and logging for keepalive ping failures
+  - Improved peer IP parsing with better fallback handling
+  - Better route management for internal IP pings
+  - More robust daemon operation with config reloading capability
+- **Installation Script Improvements**:
+  - Enhanced error handling for keepalive systemd service startup with detailed journal output
+  - Improved error messages when keepalive service fails to start
+  - Updated library file list to include `resources.sh` in error messages
+- **Recovery Module Refactoring**:
+  - Extracted `format_peer_display()` function for consistent peer display formatting across logging statements
+  - Improved code organization and maintainability
+- **Documentation Updates**:
+  - Updated `README.md` with new configuration options (`STATUS_LOG_INTERVAL_SECONDS`, `RECOVERY_VERIFY_TIMEOUT`)
+  - Updated ADR-0013 status to "Deprecated (Removed in v0.2.0)" in `docs/adr/README.md` and `docs/adr/0013-state-file-checksum-validation.md`
+  - Added deprecation note to ADR-0013 explaining removal in v0.2.0
+
+### Fixed
+- **Config Schema**: Added missing `STATUS_LOG_INTERVAL_SECONDS` to configuration schema validation
+
 ## 0.4.1 - 2025-12-29
 
 ### Added

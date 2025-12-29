@@ -3,7 +3,7 @@
 # State file management for UDM VPN Monitor
 # Handles failure counters, cooldown periods, rate limiting, and restart tracking
 #
-# Version: 0.4.1
+# Version: 0.4.2
 #
 
 # Source constants for magic numbers
@@ -166,6 +166,9 @@ get_peer_state_file_path() {
 	idle_detected)
 		echo "${STATE_DIR}/idle_detected_${peer_sanitized}"
 		;;
+	last_status_log)
+		echo "${STATE_DIR}/last_status_log_${peer_sanitized}"
+		;;
 	*)
 		handle_error "WARNING" "Unknown peer state key: $key" 0
 		echo "${STATE_DIR}/${key}_${peer_sanitized}"
@@ -208,7 +211,7 @@ get_peer_state() {
 		value=$(cat "$state_file" 2>/dev/null || echo "$default_value")
 		# Validate numeric keys
 		case "$key" in
-		failure_count | last_bytes)
+		failure_count | last_bytes | last_status_log)
 			if [[ ! "$value" =~ ^[0-9]+$ ]]; then
 				handle_error "WARNING" "Corrupted peer state file (recovering): $state_file" 0
 				recover_corrupted_state_file "$state_file" "$default_value" "integer"
@@ -267,7 +270,7 @@ set_peer_state() {
 
 	# Validate numeric keys
 	case "$key" in
-	failure_count | last_bytes)
+	failure_count | last_bytes | last_status_log)
 		if [[ ! "$value" =~ ^[0-9]+$ ]]; then
 			handle_error "ERROR" "Invalid value for $key (expected integer): $value" 0
 			return 1

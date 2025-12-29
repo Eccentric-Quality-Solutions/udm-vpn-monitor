@@ -3,7 +3,7 @@
 # Recovery actions for UDM VPN Monitor
 # Implements tiered recovery: logging → surgical cleanup → full restart
 #
-# Version: 0.4.1
+# Version: 0.4.2
 #
 
 # Source constants for magic numbers
@@ -704,15 +704,8 @@ select_recovery_strategy() {
 #   Requires warn_if_missing, log_message, and attempt_xfrm_recovery to be set
 surgical_cleanup() {
 	local peer_ip="$1"
-	# Try to discover connection name for better logging (optional, for debugging)
-	local conn_name=""
-	if command -v discover_connection_name >/dev/null 2>&1; then
-		conn_name=$(discover_connection_name "$peer_ip" 2>/dev/null || echo "")
-	fi
-	local peer_display="$peer_ip"
-	if [[ -n "$conn_name" ]]; then
-		peer_display="$peer_ip (conn: $conn_name)"
-	fi
+	local peer_display
+	peer_display=$(format_peer_display "$peer_ip")
 	log_message "INFO" "Attempting surgical SA cleanup for $peer_display"
 
 	# Select recovery strategy
@@ -960,6 +953,44 @@ full_restart() {
 	return 0
 }
 
+# Format peer display name with optional connection name
+#
+# Formats a peer IP address for display, optionally including the connection name
+# if discoverable. This provides consistent formatting across logging statements.
+#
+# Arguments:
+#   $1: External peer IP address
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints formatted peer display string to stdout
+#
+# Examples:
+#   display=$(format_peer_display "203.0.113.1")
+#   # Returns: "203.0.113.1" or "203.0.113.1 (conn: site-a)" if connection name found
+#
+# Note:
+#   Requires discover_connection_name to be available (from detection.sh)
+#   Falls back to just the IP address if connection name cannot be discovered
+format_peer_display() {
+	local external_peer_ip="$1"
+	local conn_name=""
+	local peer_display="$external_peer_ip"
+
+	# Try to discover connection name for better logging (optional, for debugging)
+	if command -v discover_connection_name >/dev/null 2>&1; then
+		conn_name=$(discover_connection_name "$external_peer_ip" 2>/dev/null || echo "")
+	fi
+
+	if [[ -n "$conn_name" ]]; then
+		peer_display="$external_peer_ip (conn: $conn_name)"
+	fi
+
+	echo "$peer_display"
+}
+
 # Main monitoring function
 #
 # Monitors a single VPN peer and implements tiered recovery escalation.
@@ -1003,15 +1034,8 @@ monitor_peer() {
 		# VPN is OK
 		failure_count=$(get_failure_count "$external_peer_ip")
 		if [[ "$failure_count" -gt 0 ]]; then
-			# Try to discover connection name for better logging (optional, for debugging)
-			local conn_name=""
-			if command -v discover_connection_name >/dev/null 2>&1; then
-				conn_name=$(discover_connection_name "$external_peer_ip" 2>/dev/null || echo "")
-			fi
-			local peer_display="$external_peer_ip"
-			if [[ -n "$conn_name" ]]; then
-				peer_display="$external_peer_ip (conn: $conn_name)"
-			fi
+			local peer_display
+			peer_display=$(format_peer_display "$external_peer_ip")
 			log_message "INFO" "${VPN_NAME:-VPN} recovered for $peer_display after $failure_count failures"
 			reset_failure_count "$external_peer_ip"
 
@@ -1022,6 +1046,35 @@ monitor_peer() {
 				local failure_type_file="${STATE_DIR}/failure_type_${peer_sanitized}"
 				if [[ -f "$failure_type_file" ]]; then
 					rm -f "$failure_type_file" 2>/dev/null || true
+				fi
+			fi
+		else
+			# VPN is healthy with no previous failures - log periodic status update
+			# Log every STATUS_LOG_INTERVAL_SECONDS (default: 5 minutes) to show monitoring is active
+			local status_log_interval="${STATUS_LOG_INTERVAL_SECONDS:-300}" # Default: 5 minutes
+
+			# Only log periodic status if interval is > 0 (0 = disabled)
+			if [[ $status_log_interval -gt 0 ]]; then
+				local last_status_log
+				last_status_log=$(get_peer_state "$external_peer_ip" "last_status_log" "0")
+				local current_time
+				current_time=$(get_unix_timestamp)
+
+				# Validate timestamp values before arithmetic (defensive programming)
+				# get_peer_state already validates last_status_log, but validate current_time
+				if [[ -z "$current_time" ]] || [[ ! "$current_time" =~ ^[0-9]+$ ]]; then
+					# Timestamp invalid - skip periodic logging this time
+					handle_error "WARNING" "Invalid timestamp from get_unix_timestamp, skipping periodic status log" 0
+				else
+					# Check if enough time has passed since last status log
+					# get_peer_state ensures last_status_log is numeric or returns "0"
+					if [[ $((current_time - last_status_log)) -ge $status_log_interval ]] || [[ "$last_status_log" -eq 0 ]]; then
+						local peer_display
+						peer_display=$(format_peer_display "$external_peer_ip")
+						log_message "INFO" "${VPN_NAME:-VPN} check OK for $peer_display"
+						# Update last status log timestamp
+						set_peer_state_non_critical "$external_peer_ip" "last_status_log" "$current_time"
+					fi
 				fi
 			fi
 		fi

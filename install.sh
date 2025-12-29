@@ -5,7 +5,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.4.1
+# Version: 0.4.2
 #
 
 set -euo pipefail
@@ -30,7 +30,7 @@ KEEPALIVE_ONLY=0
 if [[ ! -d "${INSTALL_SCRIPT_DIR}/lib" ]]; then
 	echo "[ERROR] Library directory not found: ${INSTALL_SCRIPT_DIR}/lib"
 	echo "[ERROR] Please ensure the installation package was extracted correctly"
-	echo "[ERROR] Required library files: common.sh, config.sh, config_schema.sh, constants.sh, detection.sh, lockfile.sh, logging.sh, recovery.sh, state.sh"
+	echo "[ERROR] Required library files: common.sh, config.sh, config_schema.sh, constants.sh, detection.sh, lockfile.sh, logging.sh, recovery.sh, resources.sh, state.sh"
 	exit 1
 fi
 
@@ -912,15 +912,31 @@ enable_and_start_keepalive_service() {
 	log_info "Enabling and starting VPN keepalive service..."
 
 	# Enable service for auto-start on boot
-	if ! systemctl enable vpn-keepalive >/dev/null 2>&1; then
+	if ! systemctl enable vpn-keepalive 2>&1; then
 		log_error "Failed to enable systemd service"
 		log_warn "Keepalive daemon can still be started manually: ${INSTALL_DIR}/vpn-keepalive.sh start"
 		return 0 # Don't fail installation for optional feature
 	fi
 
 	# Start service immediately
-	if ! systemctl start vpn-keepalive >/dev/null 2>&1; then
+	local start_output
+	start_output=$(systemctl start vpn-keepalive 2>&1)
+	local start_exit=$?
+	if [[ $start_exit -ne 0 ]]; then
 		log_error "Failed to start systemd service"
+		if [[ -n "$start_output" ]]; then
+			log_error "Error details: $start_output"
+		fi
+		# Try to get more details from systemd journal
+		local journal_output
+		journal_output=$(journalctl -u vpn-keepalive -n 10 --no-pager 2>&1 | tail -5 || true)
+		if [[ -n "$journal_output" ]]; then
+			log_error "Systemd journal output:"
+			# Use here-string to avoid subshell issues with while loop
+			while IFS= read -r line; do
+				log_error "  $line"
+			done <<<"$journal_output"
+		fi
 		log_warn "Service enabled but not started. Check status: systemctl status vpn-keepalive"
 		log_warn "Start manually: systemctl start vpn-keepalive or ${INSTALL_DIR}/vpn-keepalive.sh start"
 		return 0 # Don't fail installation for optional feature
@@ -1039,6 +1055,7 @@ verify_installation() {
 			"detection.sh"
 			"recovery.sh"
 			"lockfile.sh"
+			"resources.sh"
 		)
 		# Also check for indirectly required files (sourced by other lib files)
 		local indirect_libs=(

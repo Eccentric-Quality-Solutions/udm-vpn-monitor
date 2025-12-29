@@ -3,7 +3,7 @@
 # Constants for UDM VPN Monitor
 # Defines commonly used magic numbers as named constants for better code readability
 #
-# Version: 0.4.1
+# Version: 0.4.2
 #
 
 # Lockfile timeout default (in seconds)

@@ -6,7 +6,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.4.1
+# Version: 0.4.2
 #
 
 # Strict error handling: exit on error, undefined vars, pipe failures
@@ -21,7 +21,7 @@ PIDFILE="${STATE_DIR}/vpn-keepalive.pid"
 LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"
 
 # Script version
-SCRIPT_VERSION="0.4.1"
+SCRIPT_VERSION="0.4.2"
 
 # Source library modules
 # shellcheck source=lib/logging.sh
@@ -141,21 +141,11 @@ start_daemon() {
 		die "EXTERNAL_PEER_IPS not configured - cannot start keepalive"
 	fi
 
-	# Parse peer IPs (space-separated, consistent with vpn-monitor.sh)
+	# Validate we have at least one peer (before daemon starts)
 	local IFS=' '
-	local -a external_ips
-	read -ra external_ips <<<"$EXTERNAL_PEER_IPS"
-
-	local -a internal_ips
-	if [[ -n "${INTERNAL_PEER_IPS:-}" ]]; then
-		read -ra internal_ips <<<"$INTERNAL_PEER_IPS"
-	else
-		# Use external IPs as fallback
-		internal_ips=("${external_ips[@]}")
-	fi
-
-	# Validate we have at least one peer
-	if [[ ${#external_ips[@]} -eq 0 ]]; then
+	local -a validate_ips
+	read -ra validate_ips <<<"$EXTERNAL_PEER_IPS"
+	if [[ ${#validate_ips[@]} -eq 0 ]]; then
 		die "No VPN peers configured - cannot start keepalive"
 	fi
 
@@ -179,26 +169,109 @@ start_daemon() {
 		local keepalive_interval="${KEEPALIVE_INTERVAL:-30}"
 		local keepalive_ping_count="${KEEPALIVE_PING_COUNT:-1}"
 
+		# Config reload interval: reload config every 10 iterations (or every 5 minutes, whichever is longer)
+		# This allows the daemon to pick up config changes without reloading too frequently
+		local config_reload_interval=10
+		local iteration_count=0
+
+		# Declare peer arrays in daemon scope (so they can be updated by reload function)
+		local -a external_ips
+		local -a internal_ips
+
+		# Function to load/parse peer configuration from current config variables
+		parse_peer_config() {
+			local IFS=' '
+			read -ra external_ips <<<"${EXTERNAL_PEER_IPS:-}" || true
+
+			if [[ -n "${INTERNAL_PEER_IPS:-}" ]]; then
+				read -ra internal_ips <<<"${INTERNAL_PEER_IPS:-}" || true
+			else
+				# Use external IPs as fallback
+				internal_ips=("${external_ips[@]}")
+			fi
+		}
+
+		# Function to reload configuration and update peer arrays
+		# This allows the daemon to pick up config changes automatically
+		# Note: We call load_config directly (not in subshell) so variables persist.
+		# With set +e, most errors won't kill the daemon. If config is so broken that
+		# load_config calls exit/die, the daemon will restart via systemd (Restart=on-failure).
+		reload_peer_config() {
+			# Log that we're reloading config
+			log_message "INFO" "Reloading configuration from $CONFIG_FILE" || true
+
+			# Reload config (suppress output, errors won't kill daemon due to set +e)
+			# If config is invalid, load_config may call exit, which will kill the daemon.
+			# This is acceptable - systemd will restart it, and the admin can fix the config.
+			load_config "$CONFIG_FILE" >/dev/null 2>&1 || true
+
+			# Reparse peer IPs from reloaded config
+			parse_peer_config
+
+			# Check if we have any peers configured after reload
+			if [[ ${#external_ips[@]} -eq 0 ]]; then
+				log_message "WARNING" "No VPN peers configured after config reload - keepalive will not send pings until peers are configured" || true
+			else
+				# Log successful reload with peer count
+				log_message "INFO" "Configuration reloaded successfully (${#external_ips[@]} peer(s) configured)" || true
+			fi
+
+			# Update keepalive interval if changed
+			local old_interval="$keepalive_interval"
+			keepalive_interval="${KEEPALIVE_INTERVAL:-30}"
+			keepalive_ping_count="${KEEPALIVE_PING_COUNT:-1}"
+
+			# Log if interval changed
+			if [[ "$old_interval" != "$keepalive_interval" ]]; then
+				log_message "INFO" "Keepalive interval changed from ${old_interval}s to ${keepalive_interval}s" || true
+			fi
+		}
+
+		# Initial parse of peer config
+		parse_peer_config
+
 		# Log startup (errors ignored to prevent daemon exit)
 		log_message "INFO" "VPN keepalive daemon started (PID: $$, interval: ${keepalive_interval}s)" || true
 
 		# Main keepalive loop
 		while true; do
+			# Reload config periodically to pick up changes
+			if [[ $iteration_count -ge $config_reload_interval ]]; then
+				reload_peer_config
+				iteration_count=0
+			fi
+
+			# Get LOCAL_UDM_IP for ping source (if configured)
+			# This is needed when using INTERNAL_PEER_IPS to ensure ping goes through the VPN tunnel
+			local local_udm_ip
+			local_udm_ip=$(get_local_ip_for_ping 2>/dev/null || echo "")
+
+			# If LOCAL_UDM_IP is configured and we're using internal IPs, ensure route exists on br0
+			# This matches the behavior of vpn-monitor.sh ping checks
+			if [[ -n "$local_udm_ip" ]] && [[ ${#internal_ips[@]} -gt 0 ]]; then
+				# Check if route exists, add if needed (errors ignored to prevent daemon exit)
+				if ! check_route_exists "$local_udm_ip" 2>/dev/null; then
+					add_route_if_needed "$local_udm_ip" >/dev/null 2>&1 || true
+				fi
+			fi
+
 			# Ping each configured peer
 			local i=0
 			for external_ip in "${external_ips[@]}"; do
 				# Get corresponding internal IP if available
 				# Handle case where internal_ips array might be shorter than external_ips
 				local internal_ip
+				local using_fallback=false
 				if [[ $i -lt ${#internal_ips[@]} ]]; then
 					internal_ip="${internal_ips[$i]}"
+					# Check if internal IP is empty (fallback case)
+					if [[ -z "$internal_ip" ]]; then
+						internal_ip="$external_ip"
+						using_fallback=true
+					fi
 				else
 					internal_ip="$external_ip"
-				fi
-
-				# Fallback to external IP if internal IP is empty
-				if [[ -z "$internal_ip" ]]; then
-					internal_ip="$external_ip"
+					using_fallback=true
 				fi
 
 				# Use internal IP for ping (better for keepalive)
@@ -210,21 +283,38 @@ start_daemon() {
 				fi
 
 				# Perform keepalive ping (quiet, minimal logging)
-				# Use a simple ping command directly to avoid logging overhead
+				# Use LOCAL_UDM_IP as source if configured (matches vpn-monitor.sh behavior)
 				local ping_cmd="ping"
 				local ping_args=()
+
+				# Determine if we should use source IP (LOCAL_UDM_IP configured and using internal IP)
+				local use_source_ip=false
+				if [[ -n "$local_udm_ip" ]] && [[ "$internal_ip" != "$external_ip" ]]; then
+					use_source_ip=true
+				fi
 
 				# Determine if IPv6
 				if [[ ! "$ping_target" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
 					# IPv6
 					if command -v ping6 >/dev/null 2>&1; then
 						ping_cmd="ping6"
+						if [[ "$use_source_ip" == "true" ]]; then
+							ping_args=(-I "$local_udm_ip")
+						fi
 					elif ping -6 >/dev/null 2>&1; then
 						ping_cmd="ping"
 						ping_args=(-6)
+						if [[ "$use_source_ip" == "true" ]]; then
+							ping_args=(-6 -I "$local_udm_ip")
+						fi
 					else
 						# IPv6 ping not available, skip this peer
 						continue
+					fi
+				else
+					# IPv4 - add source IP if needed
+					if [[ "$use_source_ip" == "true" ]]; then
+						ping_args=(-I "$local_udm_ip")
 					fi
 				fi
 
@@ -234,11 +324,18 @@ start_daemon() {
 				if ! "$ping_cmd" "${ping_args[@]}" -c "$keepalive_ping_count" -W "${PING_TIMEOUT:-2}" -q "$ping_target" >/dev/null 2>&1; then
 					# Log failure but continue (don't exit daemon)
 					# Errors in log_message are ignored to prevent daemon exit
-					log_message "WARNING" "Keepalive ping failed for $ping_target (external: $external_ip)" || true
+					# Show internal IP if different from external, otherwise just show external
+					if [[ "$using_fallback" == "true" ]] || [[ "$internal_ip" == "$external_ip" ]]; then
+						log_message "WARNING" "Keepalive ping failed for $external_ip" || true
+					else
+						log_message "WARNING" "Keepalive ping failed for $internal_ip (external: $external_ip)" || true
+					fi
 				fi
 
 				((i++)) || true
 			done
+
+			((iteration_count++)) || true
 
 			# Sleep until next interval (errors ignored)
 			sleep "$keepalive_interval" || sleep 30

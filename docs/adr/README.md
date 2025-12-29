@@ -26,7 +26,7 @@ Architecture Decision Records are documents that capture important architectural
 | [ADR-0010](0010-configuration-schema-validation.md) | Configuration Schema Validation | Accepted |
 | [ADR-0011](0011-security-measures-ip-validation-fixed-string-matching.md) | Security Measures (IP Validation, Fixed-String Matching) | Accepted |
 | [ADR-0012](0012-atomic-file-operations.md) | Atomic File Operations | Accepted |
-| [ADR-0013](0013-state-file-checksum-validation.md) | State File Checksum Validation | Accepted |
+| [ADR-0013](0013-state-file-checksum-validation.md) | State File Checksum Validation | Deprecated (Removed in v0.2.0) |
 | [ADR-0014](0014-ping-check-as-supplementary-diagnostic.md) | Ping Check as Supplementary Diagnostic Tool | Accepted |
 | [ADR-0015](0015-file-based-state-storage.md) | File-Based State Storage | Accepted |
 | [ADR-0016](0016-state-file-location-data-vpn-monitor.md) | State File Location (/data/vpn-monitor/) | Accepted |
