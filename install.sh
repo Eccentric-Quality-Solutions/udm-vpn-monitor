@@ -5,7 +5,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.0.1
+# Version: 0.3.0
 #
 
 set -euo pipefail
@@ -130,6 +130,116 @@ prompt_config_value() {
 	fi
 }
 
+# Prompt for config value and assign to variable
+#
+# Prompts the user for a configuration value and assigns it to a variable.
+# Combines prompting and assignment to reduce boilerplate code.
+#
+# Arguments:
+#   $1: Variable name (will be set in global scope)
+#   $2: Default value (shown in brackets, used if user presses Enter)
+#   $3: Description/prompt text (displayed to user)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   Sets the variable named in $1 in global scope (accessible to caller)
+#
+# Examples:
+#   prompt_and_set_config "external_peer_ips" "" "External peer IP address(es)"
+#   # Prompts user and sets $external_peer_ips variable in global scope
+#
+# Note:
+#   Uses declare -g to set variables in global scope so they're accessible to the caller.
+#   Variables will be set in global scope and accessible after the function returns.
+prompt_and_set_config() {
+	local var_name="$1"
+	local default_value="$2"
+	local description="$3"
+	local value
+	value=$(prompt_config_value "$var_name" "$default_value" "$description")
+	declare -g "$var_name"
+	printf -v "$var_name" '%s' "$value"
+}
+
+# Prompt for all configuration values interactively
+#
+# Prompts the user for all configuration values needed for the VPN monitor.
+# Sets variables in global scope using declare -g, making them accessible to the caller.
+#
+# Arguments:
+#   Default values are passed as parameters (16 total):
+#     $1: default_peer_ips
+#     $2: default_vpn_name
+#     $3: default_tier1
+#     $4: default_tier2
+#     $5: default_tier3
+#     $6: default_cooldown
+#     $7: default_max_restarts
+#     $8: default_cron_schedule
+#     $9: default_lockfile_timeout
+#     ${10}: default_enable_ping
+#     ${11}: default_ping_count
+#     ${12}: default_ping_timeout
+#     ${13}: default_debug
+#     ${14}: default_enable_keepalive
+#     ${15}: default_keepalive_interval
+#     ${16}: default_keepalive_ping_count
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   Sets the following variables in global scope:
+#     external_peer_ips, internal_peer_ips, vpn_name, tier1, tier2, tier3,
+#     cooldown, max_restarts, cron_schedule, lockfile_timeout, enable_ping,
+#     ping_count, ping_timeout, debug, enable_keepalive, keepalive_interval,
+#     keepalive_ping_count
+#
+# Note:
+#   Uses declare -g to set variables in global scope.
+#   Variables will be accessible in the caller's scope after calling this function.
+#   These variables are only used within create_interactive_config() and do not
+#   persist beyond that function's execution.
+prompt_all_config_values() {
+	local default_peer_ips="$1"
+	local default_vpn_name="$2"
+	local default_tier1="$3"
+	local default_tier2="$4"
+	local default_tier3="$5"
+	local default_cooldown="$6"
+	local default_max_restarts="$7"
+	local default_cron_schedule="$8"
+	local default_lockfile_timeout="$9"
+	local default_enable_ping="${10}"
+	local default_ping_count="${11}"
+	local default_ping_timeout="${12}"
+	local default_debug="${13}"
+	local default_enable_keepalive="${14}"
+	local default_keepalive_interval="${15}"
+	local default_keepalive_ping_count="${16}"
+
+	# Prompt for each value (variables will be set in global scope via declare -g)
+	prompt_and_set_config "external_peer_ips" "$default_peer_ips" "External/Public peer IP address(es) to monitor (space-separated, external/public IPs)"
+	prompt_and_set_config "internal_peer_ips" "" "Internal/Private peer IP address(es) (optional, space-separated, for ping checks, empty to skip)"
+	prompt_and_set_config "vpn_name" "$default_vpn_name" "VPN connection identifier/name"
+	prompt_and_set_config "tier1" "$default_tier1" "Tier 1 threshold (failures before logging)"
+	prompt_and_set_config "tier2" "$default_tier2" "Tier 2 threshold (failures before surgical cleanup)"
+	prompt_and_set_config "tier3" "$default_tier3" "Tier 3 threshold (failures before full restart)"
+	prompt_and_set_config "cooldown" "$default_cooldown" "Cooldown period after restart (minutes)"
+	prompt_and_set_config "max_restarts" "$default_max_restarts" "Maximum restarts per hour"
+	prompt_and_set_config "cron_schedule" "$default_cron_schedule" "Cron schedule (e.g., '*/1 * * * *' for every minute)"
+	prompt_and_set_config "lockfile_timeout" "$default_lockfile_timeout" "Lockfile timeout (seconds)"
+	prompt_and_set_config "enable_ping" "$default_enable_ping" "Enable ping connectivity check (0 or 1)"
+	prompt_and_set_config "ping_count" "$default_ping_count" "Ping count (number of packets)"
+	prompt_and_set_config "ping_timeout" "$default_ping_timeout" "Ping timeout per packet (seconds)"
+	prompt_and_set_config "debug" "$default_debug" "Enable debug logging (0 or 1)"
+	prompt_and_set_config "enable_keepalive" "$default_enable_keepalive" "Enable VPN keepalive daemon (0 or 1)"
+	prompt_and_set_config "keepalive_interval" "$default_keepalive_interval" "Keepalive ping interval (seconds)"
+	prompt_and_set_config "keepalive_ping_count" "$default_keepalive_ping_count" "Keepalive ping count (packets)"
+}
+
 # Create config file interactively
 #
 # Prompts the user for each configuration value with defaults.
@@ -162,63 +272,33 @@ create_interactive_config() {
 	local default_ping_count=3
 	local default_ping_timeout=2
 	local default_debug=0
-
-	# Prompt for each value
-	local external_peer_ips
-	external_peer_ips=$(prompt_config_value "EXTERNAL_PEER_IPS" "$default_peer_ips" "External/Public peer IP address(es) to monitor (space-separated, external/public IPs)")
-
-	local internal_peer_ips
-	internal_peer_ips=$(prompt_config_value "INTERNAL_PEER_IPS" "" "Internal/Private peer IP address(es) (optional, space-separated, for ping checks, empty to skip)")
-
-	local vpn_name
-	vpn_name=$(prompt_config_value "VPN_NAME" "$default_vpn_name" "VPN connection identifier/name")
-
-	local tier1
-	tier1=$(prompt_config_value "TIER1_THRESHOLD" "$default_tier1" "Tier 1 threshold (failures before logging)")
-
-	local tier2
-	tier2=$(prompt_config_value "TIER2_THRESHOLD" "$default_tier2" "Tier 2 threshold (failures before surgical cleanup)")
-
-	local tier3
-	tier3=$(prompt_config_value "TIER3_THRESHOLD" "$default_tier3" "Tier 3 threshold (failures before full restart)")
-
-	local cooldown
-	cooldown=$(prompt_config_value "COOLDOWN_MINUTES" "$default_cooldown" "Cooldown period after restart (minutes)")
-
-	local max_restarts
-	max_restarts=$(prompt_config_value "MAX_RESTARTS_PER_HOUR" "$default_max_restarts" "Maximum restarts per hour")
-
-	local cron_schedule
-	cron_schedule=$(prompt_config_value "CRON_SCHEDULE" "$default_cron_schedule" "Cron schedule (e.g., '*/1 * * * *' for every minute)")
-
-	local lockfile_timeout
-	lockfile_timeout=$(prompt_config_value "LOCKFILE_TIMEOUT" "$default_lockfile_timeout" "Lockfile timeout (seconds)")
-
-	local enable_ping
-	enable_ping=$(prompt_config_value "ENABLE_PING_CHECK" "$default_enable_ping" "Enable ping connectivity check (0 or 1)")
-
-	local ping_count
-	ping_count=$(prompt_config_value "PING_COUNT" "$default_ping_count" "Ping count (number of packets)")
-
-	local ping_timeout
-	ping_timeout=$(prompt_config_value "PING_TIMEOUT" "$default_ping_timeout" "Ping timeout per packet (seconds)")
-
-	local debug
-	debug=$(prompt_config_value "DEBUG" "$default_debug" "Enable debug logging (0 or 1)")
-
 	local default_enable_keepalive="1"
-	local enable_keepalive
-	enable_keepalive=$(prompt_config_value "ENABLE_KEEPALIVE" "$default_enable_keepalive" "Enable VPN keepalive daemon (0 or 1)")
-
 	local default_keepalive_interval="30"
-	local keepalive_interval
-	keepalive_interval=$(prompt_config_value "KEEPALIVE_INTERVAL" "$default_keepalive_interval" "Keepalive ping interval (seconds)")
-
 	local default_keepalive_ping_count="1"
-	local keepalive_ping_count
-	keepalive_ping_count=$(prompt_config_value "KEEPALIVE_PING_COUNT" "$default_keepalive_ping_count" "Keepalive ping count (packets)")
+
+	# Prompt for all configuration values
+	# Variables will be set in global scope by prompt_all_config_values
+	prompt_all_config_values \
+		"$default_peer_ips" \
+		"$default_vpn_name" \
+		"$default_tier1" \
+		"$default_tier2" \
+		"$default_tier3" \
+		"$default_cooldown" \
+		"$default_max_restarts" \
+		"$default_cron_schedule" \
+		"$default_lockfile_timeout" \
+		"$default_enable_ping" \
+		"$default_ping_count" \
+		"$default_ping_timeout" \
+		"$default_debug" \
+		"$default_enable_keepalive" \
+		"$default_keepalive_interval" \
+		"$default_keepalive_ping_count"
 
 	# Create config file
+	# shellcheck disable=SC2154
+	# Variables are set in global scope by prompt_all_config_values() via declare -g
 	cat >"${INSTALL_DIR}/${CONFIG_NAME}" <<EOF
 # UDM VPN Monitor Configuration
 # Generated via interactive installation
@@ -340,6 +420,119 @@ KEEPALIVE_PING_COUNT=1
 DEBUG=0
 EOF
 	fi
+}
+
+# Extract version from script file
+#
+# Extracts the SCRIPT_VERSION value from a script file.
+# Looks for lines matching "SCRIPT_VERSION=\"...\"" or "SCRIPT_VERSION='...'".
+#
+# Arguments:
+#   $1: Path to script file
+#
+# Returns:
+#   0: Version found and printed to stdout
+#   1: Version not found
+#
+# Output:
+#   Prints version string to stdout (e.g., "0.0.1")
+get_script_version() {
+	local script_file="$1"
+	if [[ ! -f "$script_file" ]]; then
+		return 1
+	fi
+
+	# Try to extract SCRIPT_VERSION="..." or SCRIPT_VERSION='...'
+	local version
+	version=$(grep -E '^SCRIPT_VERSION=["'\'']' "$script_file" 2>/dev/null | head -1 | sed -E "s/^SCRIPT_VERSION=[\"']([^\"']+)[\"'].*/\1/" | tr -d ' ')
+
+	if [[ -n "$version" ]]; then
+		echo "$version"
+		return 0
+	fi
+
+	return 1
+}
+
+# Get current version being installed
+#
+# Extracts the version from the source vpn-monitor.sh script.
+# Falls back to install script version comment if not found.
+#
+# Returns:
+#   0: Version found and printed to stdout
+#   1: Version not found
+#
+# Output:
+#   Prints version string to stdout
+get_current_version() {
+	local version=""
+
+	# Try to get version from source vpn-monitor.sh
+	if [[ -f "${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}" ]]; then
+		version=$(get_script_version "${INSTALL_SCRIPT_DIR}/${SCRIPT_NAME}")
+	fi
+
+	# Fallback to install script version comment
+	if [[ -z "$version" ]]; then
+		version=$(grep -E '^# Version:' "${INSTALL_SCRIPT_DIR}/install.sh" 2>/dev/null | head -1 | sed -E 's/^# Version:[[:space:]]*//' | tr -d ' ')
+	fi
+
+	if [[ -n "$version" ]]; then
+		echo "$version"
+		return 0
+	fi
+
+	return 1
+}
+
+# Display upgrade information
+#
+# Detects if an existing installation exists and displays version upgrade information
+# including old version, new version, and changelog summary.
+#
+# Returns:
+#   0: Always succeeds (warnings logged but don't fail)
+#
+# Side effects:
+#   - Prints upgrade information to terminal if upgrade detected
+display_upgrade_info() {
+	# Check if existing installation exists
+	if [[ ! -f "${INSTALL_DIR}/${SCRIPT_NAME}" ]]; then
+		# No existing installation
+		return 0
+	fi
+
+	# Get old version from installed script
+	local old_version
+	if ! old_version=$(get_script_version "${INSTALL_DIR}/${SCRIPT_NAME}"); then
+		# Could not determine old version
+		return 0
+	fi
+
+	# Get new version being installed
+	local new_version
+	if ! new_version=$(get_current_version); then
+		# Could not determine new version
+		return 0
+	fi
+
+	# Check if versions are different
+	if [[ "$old_version" == "$new_version" ]]; then
+		# Same version, no upgrade info needed
+		return 0
+	fi
+
+	# Display upgrade information
+	echo ""
+	log_info "Upgrading existing installation detected"
+	log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	log_info "Current version:  $old_version"
+	log_info "New version:      $new_version"
+	echo ""
+	log_info "To see changes between versions, open: ${INSTALL_SCRIPT_DIR}/CHANGELOG.md"
+	log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	echo ""
 }
 
 # Install scripts
@@ -963,16 +1156,7 @@ check_and_setup_routes() {
 			# Update config file with detected IP
 			local config_file="${INSTALL_DIR}/${CONFIG_NAME}"
 			if [[ -f "$config_file" ]]; then
-				# Escape special characters for sed replacement
-				local local_udm_ip_escaped
-				local_udm_ip_escaped=$(printf '%s\n' "$local_udm_ip" | sed 's/\\/\\\\/g' | sed 's/&/\\&/g' | sed 's/|/\\|/g')
-				if grep -q "^LOCAL_UDM_IP=" "$config_file"; then
-					# Update existing line
-					sed -i "s|^LOCAL_UDM_IP=.*|LOCAL_UDM_IP=\"${local_udm_ip_escaped}\"|" "$config_file"
-				else
-					# Add new line after ENABLE_PING_CHECK
-					sed -i "/^ENABLE_PING_CHECK=/a LOCAL_UDM_IP=\"${local_udm_ip}\"" "$config_file"
-				fi
+				update_config_value "$config_file" "LOCAL_UDM_IP" "$local_udm_ip" "^ENABLE_PING_CHECK="
 				log_info "Updated config file with LOCAL_UDM_IP: $local_udm_ip"
 			fi
 		else
@@ -1076,21 +1260,8 @@ validate_config_after_install() {
 				local peer_ips
 				read -p "EXTERNAL_PEER_IPS (space-separated IP addresses): " peer_ips
 				if [[ -n "$peer_ips" ]]; then
-					# Escape special characters for sed replacement string (security: prevent command injection)
-					# In sed replacement strings, we need to escape: & (matched text) and \ (escape)
-					# Also escape the delimiter | if it appears in the value
-					local peer_ips_escaped
-					peer_ips_escaped=$(printf '%s\n' "$peer_ips" | sed 's/\\/\\\\/g' | sed 's/&/\\&/g' | sed 's/|/\\|/g')
-
 					# Update config file with provided IPs
-					if grep -q "^EXTERNAL_PEER_IPS=" "$config_file"; then
-						# Update existing line using escaped value
-						# Use | as delimiter to avoid conflicts with / in IP addresses
-						sed -i "s|^EXTERNAL_PEER_IPS=.*|EXTERNAL_PEER_IPS=\"${peer_ips_escaped}\"|" "$config_file"
-					else
-						# Add new line (no escaping needed for echo, but use original value)
-						echo "EXTERNAL_PEER_IPS=\"${peer_ips}\"" >>"$config_file"
-					fi
+					update_config_value "$config_file" "EXTERNAL_PEER_IPS" "$peer_ips"
 					log_info "EXTERNAL_PEER_IPS updated in configuration file"
 					log_info "Note: IP addresses will be validated when the monitor runs"
 					return 0
@@ -1430,6 +1601,10 @@ main() {
 	fi
 	check_udm
 	create_install_dir
+
+	# Display upgrade information if existing installation detected
+	display_upgrade_info
+
 	install_scripts
 
 	# Validate configuration after installation

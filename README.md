@@ -10,13 +10,11 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
 
 - See [QUICK_START.md](QUICK_START.md) for a 5-minute setup guide.
 - See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common problems and solutions.
-- See [DEVELOPER.md](DEVELOPER.md) for development setup and [ARCHITECTURAL_REVIEW.md](ARCHITECTURAL_REVIEW.md) for code quality analysis.
+- See [DEVELOPER.md](DEVELOPER.md) for development setup and [ARCHITECTURE.md](docs/ARCHITECTURE.md) for architecture and design details.
 
-## ⚠️ Important: Recovery Behavior
+## Recovery Behavior
 
-**Recovery behavior:**
-
-- **Detection**: Uses `ip xfrm state` (primary) → `ipsec status` (fallback). For detailed detection flow, see [ARCHITECTURE.md](ARCHITECTURE.md#detection-method-flow)
+- **Detection**: Uses `ip xfrm state` (primary) → `ipsec status` (fallback). For detailed detection flow, see [ARCHITECTURE.md](docs/ARCHITECTURE.md#detection-method-flow)
 - **Tier 2 Recovery**: 
   - **Default**: xfrm-based per-connection recovery (enabled by default, `ENABLE_XFRM_RECOVERY=1`) - affects only the failing tunnel
   - **Fallback**: `ipsec reload` (affects **all connections**) if xfrm recovery fails or is disabled
@@ -24,13 +22,7 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
   - **Default**: xfrm-based per-connection recovery (enabled by default, `ENABLE_XFRM_RECOVERY=1`) - affects only the failing tunnel
   - **Fallback**: `ipsec restart` (affects **all tunnels**) if xfrm recovery fails or is disabled
 
-**Important Notes:**
-- **Tier 2 recovery**: By default attempts per-connection recovery via xfrm (affects only the failing tunnel). Falls back to `ipsec reload` (affects all tunnels) if xfrm fails or is disabled.
-- **Tier 3 recovery**: By default attempts per-connection recovery via xfrm (affects only the failing tunnel). Falls back to `ipsec restart` (affects all tunnels) if xfrm fails or is disabled.
-- **Per-peer monitoring**: Each VPN is monitored independently, and recovery actions attempt to affect only the failing tunnel by default.
-- **xfrm recovery**: Enabled by default (`ENABLE_XFRM_RECOVERY=1`) for UDM OS 4.3+. Set to `0` to disable and use full tunnel restarts instead.
-
-For detailed recovery tier flow diagrams and technical implementation, see the [Recovery Tier Flow section in ARCHITECTURE.md](ARCHITECTURE.md#recovery-tier-flow).
+For detailed recovery tier flow diagrams and technical implementation, see the [Recovery Tier Flow section in ARCHITECTURE.md](docs/ARCHITECTURE.md#recovery-tier-flow).
 
 ## Features
 
@@ -164,22 +156,7 @@ The install package (recommended) includes all required files with proper direct
    
    **Important**: Use the external/public IP address that the VPN tunnel is established with, not the internal/private IP address. The script checks IPsec Security Associations (SAs) which are identified by external IP addresses. If `INTERNAL_PEER_IPS` is not set, ping checks will use `EXTERNAL_PEER_IPS` instead.
 
-5. **Test manually**:
-   ```bash
-   /data/vpn-monitor/vpn-monitor.sh
-   ```
-   
-   **Fake mode** (runs checks but doesn't escalate tiers):
-   ```bash
-   /data/vpn-monitor/vpn-monitor.sh --fake
-   ```
-   
-   **Show version**:
-   ```bash
-   /data/vpn-monitor/vpn-monitor.sh --version
-   ```
-
-6. **Monitor logs**:
+5. **Monitor logs**:
    ```bash
    tail -f /data/vpn-monitor/logs/vpn-monitor.log
    ```
@@ -192,7 +169,7 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 |-----------|-------------|---------|
 | `EXTERNAL_PEER_IPS` | Space-separated list of remote VPN endpoint **external/public** IPs | (required) |
 | `INTERNAL_PEER_IPS` | Space-separated list of remote VPN endpoint **internal/private** IPs (for ping checks, optional) | "" |
-| `LOCAL_UDM_IP` | Local UDM internal IP address (required when `ENABLE_PING_CHECK=1` and `INTERNAL_PEER_IPS` is set) | "" |
+| `LOCAL_UDM_IP` | Local UDM internal IP address (required when `ENABLE_PING_CHECK=1` and `INTERNAL_PEER_IPS` is set). Used as source IP for ping checks. The script automatically adds this IP to br0 if needed. | "" |
 | `VPN_NAME` | VPN identifier for logging | "Site-to-Site VPN" |
 | `TIER1_THRESHOLD` | Failures before logging starts | 1 |
 | `TIER2_THRESHOLD` | Failures before surgical cleanup | 3 |
@@ -202,7 +179,6 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `CRON_SCHEDULE` | Cron schedule for check frequency (cron format) | "*/1 * * * *" |
 | `LOCKFILE_TIMEOUT` | Lockfile timeout in seconds (detects hung processes) | 300 |
 | `ENABLE_PING_CHECK` | Enable ping connectivity verification (0 or 1) | 1 |
-| `LOCAL_UDM_IP` | Local UDM internal IP address (required when `ENABLE_PING_CHECK=1` and `INTERNAL_PEER_IPS` is set). Used as source IP for ping checks. The script automatically adds this IP to br0 if needed. | "" |
 | `PING_COUNT` | Number of ping packets to send | 3 |
 | `PING_TIMEOUT` | Ping timeout per packet (seconds) | 2 |
 | `ENABLE_KEEPALIVE` | Enable VPN keepalive daemon (0 or 1, see [Keepalive Daemon](#keepalive-daemon)) | 1 |
@@ -272,7 +248,7 @@ The VPN keepalive daemon is an optional background process that sends periodic p
 
 **Note:** The keepalive daemon is separate from the monitoring script. The monitoring script still runs via cron and performs its own checks. Keepalive only sends periodic pings to keep tunnels alive - it does not perform failure detection or recovery.
 
-For technical architecture details, systemd integration, and design decisions, see the [VPN Keepalive Daemon section in ARCHITECTURE.md](ARCHITECTURE.md#vpn-keepalive-daemon).
+For technical architecture details, systemd integration, and design decisions, see the [VPN Keepalive Daemon section in ARCHITECTURE.md](docs/ARCHITECTURE.md#vpn-keepalive-daemon).
 
 ## Common Scenarios
 
@@ -290,7 +266,6 @@ VPN_NAME="Multi-Site VPN"
 **Key Points:**
 - Each VPN is monitored independently with its own failure counter
 - Failures in one tunnel don't affect monitoring of other tunnels
-- Recovery actions are per-peer (each peer has independent failure tracking)
 - State files are created per peer (e.g., `failure_counter_203_0_113_1`, `last_bytes_198_51_100_1`)
 
 **Example Log Output:**
@@ -301,7 +276,7 @@ VPN_NAME="Multi-Site VPN"
 ```
 
 **Recovery Behavior:**
-See the [Important: Recovery Behavior](#-important-recovery-behavior) section above for details on Tier 2 and Tier 3 recovery actions. For detailed recovery tier flow diagrams and technical implementation, see the [Recovery Tier Flow section in ARCHITECTURE.md](ARCHITECTURE.md#recovery-tier-flow).
+Recovery actions are per-peer (each peer has independent failure tracking). See the [Important: Recovery Behavior](#-important-recovery-behavior) section above for details on Tier 2 and Tier 3 recovery actions. For detailed recovery tier flow diagrams and technical implementation, see the [Recovery Tier Flow section in ARCHITECTURE.md](docs/ARCHITECTURE.md#recovery-tier-flow).
 
 ### Testing without Affecting Production VPNs
 
@@ -348,29 +323,19 @@ tail -f /data/vpn-monitor/logs/vpn-keepalive.log
 
 ### Troubleshooting False Positives
 
-False positives occur when the monitor reports VPN failures even though the tunnel is actually healthy. Common causes include:
-
-- **Idle VPN tunnels**: Byte counters aren't increasing because there's no traffic
-- **Ping checks failing**: Firewall blocking ICMP or using external IPs instead of internal IPs
-- **Byte counter detection issues**: Counters reset after SA rekey or very low traffic volume
-- **Transient network issues**: Brief network hiccups triggering false positives
-
 For detailed diagnosis steps and solutions for false positives, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ## How It Works
 
 The monitor uses a multi-layered approach to verify VPN tunnel health and automatically recover from failures.
 
-**Detection**: Uses `ip xfrm state` (primary) → `ipsec status` (fallback). Optional ping checks verify end-to-end connectivity. For detailed detection flow, see [ARCHITECTURE.md](ARCHITECTURE.md#detection-method-flow).
+**Detection**: Uses `ip xfrm state` (primary) → `ipsec status` (fallback). Optional ping checks verify end-to-end connectivity.
 
-**Recovery**: Three-tier escalation system (see [Important: Recovery Behavior](#-important-recovery-behavior) section above for details):
-- **Tier 1**: Logging only
-- **Tier 2**: Surgical cleanup (xfrm-based per-connection recovery by default, falls back to `ipsec reload` if needed)
-- **Tier 3**: Full restart (xfrm-based per-connection recovery by default, falls back to `ipsec restart` if needed)
+**Recovery**: Three-tier escalation system (see [Important: Recovery Behavior](#-important-recovery-behavior) section above for details).
 
 **Safety**: Lockfile protection, cooldown periods, rate limiting, and per-peer failure tracking prevent restart loops and ensure safe operation.
 
-For detailed architecture information including detection flow diagrams, recovery tier details, failure type detection, ping check behavior, state management, and technical implementation, see [ARCHITECTURE.md](ARCHITECTURE.md). For design decisions behind these choices, see [Architecture Decision Records](docs/adr/README.md).
+For detailed architecture information including detection flow diagrams, recovery tier details, failure type detection, ping check behavior, state management, and technical implementation, see [ARCHITECTURE.md](docs/ARCHITECTURE.md). For design decisions behind these choices, see [Architecture Decision Records](docs/adr/README.md).
 
 ## Persistence & Upgrades
 
@@ -398,15 +363,6 @@ If monitoring stops after an upgrade:
 2. If missing, re-run installer:
    ```bash
    /tmp/install.sh
-   ```
-
-3. Or manually restore cron (check config for CRON_SCHEDULE first):
-   ```bash
-   # Check configured schedule
-   grep CRON_SCHEDULE /data/vpn-monitor/vpn-monitor.conf
-   
-   # Restore with default schedule (every 1 minute)
-   (crontab -l 2>/dev/null; echo "*/1 * * * * /data/vpn-monitor/vpn-monitor.sh >> /data/vpn-monitor/logs/cron.log 2>&1") | crontab -
    ```
 
 ## Monitoring
@@ -444,13 +400,13 @@ Reports include summary statistics, tier action analysis, and event timelines. C
 # Run monitor manually
 /data/vpn-monitor/vpn-monitor.sh
 
-# Run in fake mode (checks failures but doesn't escalate tiers)
-/data/vpn-monitor/vpn-monitor.sh --fake
+# Show version
+/data/vpn-monitor/vpn-monitor.sh --version
 ```
 
-For detailed troubleshooting, log analysis patterns, and diagnostic commands, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+For testing without affecting production VPNs (fake mode), see the [Testing without Affecting Production VPNs](#testing-without-affecting-production-vpns) section above.
 
-For details on fake mode, see the [Testing without Affecting Production VPNs](#testing-without-affecting-production-vpns) section above.
+For detailed troubleshooting, log analysis patterns, and diagnostic commands, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 
 ## Uninstallation
@@ -506,12 +462,6 @@ If you prefer to uninstall manually:
 
 ### Important Warnings
 
-1. **⚠️ Recovery Impact - READ THIS**: See the [Important: Recovery Behavior](#-important-recovery-behavior) section above for details. For detailed recovery tier flow diagrams and technical implementation, see the [Recovery Tier Flow section in ARCHITECTURE.md](ARCHITECTURE.md#recovery-tier-flow).
-2. **Fallback Impact**: When xfrm recovery fails or is disabled, Tier 3 recovery restarts all IPsec tunnels using `ipsec restart`, temporarily affecting all Site-to-Site and remote user VPNs.
-3. **Best-Effort**: This is a watchdog tool, not a guaranteed daemon. It may miss failures or require manual intervention
-4. **Upgrade Compatibility**: UniFi OS upgrades may break functionality or remove cron jobs
-5. **No Official Support**: This is an unofficial tool. Use at your own risk
-
 ### When to Use
 
 - Site-to-Site VPNs that occasionally fail silently
@@ -541,28 +491,11 @@ The monitor uses a multi-method detection approach with automatic fallback:
 - Ping checks provide early warning of connectivity issues without triggering false positives
 - Detection distinguishes between "idle but healthy" and "broken" tunnels
 
-For detailed detection flow diagrams, sequence diagrams, ping check behavior scenarios, and technical implementation details, see the [Detection Method Flow section in ARCHITECTURE.md](ARCHITECTURE.md#detection-method-flow).
+For detailed detection flow diagrams, sequence diagrams, ping check behavior scenarios, and technical implementation details, see the [Detection Method Flow section in ARCHITECTURE.md](docs/ARCHITECTURE.md#detection-method-flow).
 
 ### State Management
 
-State is tracked via files in `/data/vpn-monitor/` to persist VPN health, failure counts, and recovery state across execution cycles and reboots.
-
-**Key State Files**:
-- **Per-peer**: `logs/failure_counter_<peer_ip>` (failure counts), `last_bytes_<peer_ip>` (byte counters)
-- **System-wide**: `cooldown_until` (cooldown period), `logs/restart_count` (Tier 3 restart timestamps for rate limiting), `vpn-monitor.lock` (execution control)
-
-**Note on `restart_count`**: This file tracks Unix timestamps (one per line) of Tier 3 recovery actions only:
-- Full IPsec restarts (`ipsec restart`) that affect all tunnels
-- Successful xfrm-based per-connection recovery (when enabled)
-- Does NOT track Tier 1 (logging) or Tier 2 (surgical cleanup) actions
-- Entries older than 24 hours are automatically cleaned up
-- Used for rate limiting to prevent restart loops (default: max 3 restarts per hour)
-
-**Per-Peer Tracking**: Each VPN peer has independent state files, enabling independent monitoring and recovery. Failures in one tunnel don't affect monitoring of other tunnels.
-
-**File Naming**: Per-peer files use sanitized IP addresses (dots/colons replaced with underscores, e.g., `192.168.1.1` → `192_168_1_1`).
-
-For detailed state management documentation including file structure, atomic operations, checksum validation, per-peer isolation, and technical implementation details, see the [State Management section in ARCHITECTURE.md](ARCHITECTURE.md#state-management).
+For detailed state management documentation including file structure, atomic operations, checksum validation, per-peer isolation, and technical implementation details, see the [State Management section in ARCHITECTURE.md](docs/ARCHITECTURE.md#state-management).
 
 ## License
 
@@ -606,14 +539,14 @@ When contributing:
 
 ## Architecture
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed architecture diagrams, component interactions, and design decisions.
+See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture diagrams, component interactions, and design decisions.
 
 ## Documentation
 
 - **[README.md](README.md)** - This file: User-facing documentation, installation, and usage
 - **[QUICK_START.md](QUICK_START.md)** - 5-minute setup guide for new users
 - **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and solutions
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture, design decisions, and component interactions
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System architecture, design decisions, and component interactions
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
 - **[DEVELOPER.md](DEVELOPER.md)** - Developer guide with tooling setup, workflows, and code quality standards
 - **[TODO.md](TODO.md)** - Planned features and improvements
@@ -637,7 +570,4 @@ See [CHANGELOG.md](CHANGELOG.md) for a detailed history of changes and version i
 
 See [TODO.md](TODO.md) for a comprehensive list of potential improvements and future development ideas.
 
-## Acknowledgments
-
-Designed based on real-world UDM VPN monitoring needs and UniFi OS 4.3+ constraints.
 

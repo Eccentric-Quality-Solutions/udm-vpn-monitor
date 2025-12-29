@@ -3,7 +3,7 @@
 # Configuration schema definition for UDM VPN Monitor
 # Defines validation rules for all configuration variables
 #
-# Version: 0.0.1
+# Version: 0.3.0
 #
 
 # Configuration schema definition

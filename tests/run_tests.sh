@@ -401,7 +401,7 @@ run_single_test_with_timeout() {
 	# Escape the test name for regex matching
 	local escaped_name
 	escaped_name=$(escape_test_name_for_filter "$test_name")
-	local bats_args=("$test_file" "-f" "^${escaped_name}$")
+	local bats_args=("--timing" "$test_file" "-f" "^${escaped_name}$")
 
 	# Add filter for failed tests if rerun-failed is enabled
 	if [[ "$RERUN_FAILED" -eq 1 ]]; then

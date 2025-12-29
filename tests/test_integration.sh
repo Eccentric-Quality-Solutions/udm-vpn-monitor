@@ -28,7 +28,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
-		assert [ "$count" -eq 0 ]
+		assert_equal "$count" 0
 	fi
 
 	remove_mock_from_path
@@ -122,7 +122,7 @@ EOF
 	assert_file_exist "$failure_counter"
 	local count
 	count=$(cat "$failure_counter")
-	assert [ "$count" -eq 0 ]
+	assert_equal "$count" 0
 
 	# Should log recovery message
 	assert_file_contains "$LOG_FILE" "recovered"
@@ -130,7 +130,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:integration
+# bats test_tags=slow,category:integration
 @test "integration: Multiple peers - independent failure tracking" {
 	# Test verifies that multiple peer IPs are monitored independently with separate failure counters.
 	# Expected: Each peer maintains its own failure counter; failures in one peer don't affect others.
@@ -172,7 +172,7 @@ EOF
 	if [[ -f "$failure_counter2" ]]; then
 		local count2
 		count2=$(cat "$failure_counter2")
-		assert [ "$count2" -eq 0 ]
+		assert_equal "$count2" 0
 	fi
 
 	remove_mock_from_path
@@ -218,7 +218,7 @@ EOF
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
-		assert [ "$count" -eq 0 ]
+		assert_equal "$count" 0
 	fi
 
 	remove_mock_from_path
@@ -231,9 +231,13 @@ EOF
 	# Importance: Rate limiting protects against restart loops that could destabilize the system.
 	setup_vpn_down_fixture "192.168.1.1" 5 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'MAX_RESTARTS_PER_HOUR=3' 'COOLDOWN_MINUTES=1'
 
+	# Set up controllable time for testing
+	local base_time=1609459200 # Fixed timestamp for reproducible tests
+	mock_date "$base_time" 0
+	add_mock_to_path
+
 	# Create restart file with 3 recent restarts (at limit)
-	local now
-	now=$(date +%s)
+	local now=$base_time
 	{
 		echo "$now"
 		echo "$now"
@@ -339,7 +343,7 @@ EOF
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
-		assert [ "$count" -eq 0 ]
+		assert_equal "$count" 0
 	fi
 
 	remove_mock_from_path
@@ -393,7 +397,7 @@ EOF
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
-		assert [ "$count" -eq 0 ]
+		assert_equal "$count" 0
 	fi
 	# Should log recovery message
 	assert_file_contains "$LOG_FILE" "recovered"
@@ -416,7 +420,7 @@ EOF
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
-		assert [ "$count" -eq 1 ]
+		assert_equal "$count" 1
 	fi
 	# Should log failure
 	assert_file_contains "$LOG_FILE" "VPN check failed"
@@ -441,7 +445,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:integration
+# bats test_tags=slow,category:integration
 @test "integration: monitor_peer tier escalation triggers at correct thresholds" {
 	# Test verifies that monitor_peer function triggers tier escalation actions at configured thresholds.
 	# Expected: Function triggers Tier 1, Tier 2, and Tier 3 actions when failure count reaches respective thresholds.

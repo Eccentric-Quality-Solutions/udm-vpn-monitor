@@ -13,8 +13,8 @@ load fixtures/vpn_cooldown
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh exists and is executable" {
-	# Test verifies that the VPN monitor script file exists and has execute permissions.
+@test "vpn-monitor.sh exists and is executable - should be present and executable" {
+	# Purpose: Test verifies that the VPN monitor script file exists and has execute permissions.
 	# Expected: Script file is present and executable.
 	# Importance: Ensures the script can be run directly without requiring bash explicitly.
 	assert_file_exist "$VPN_MONITOR_SCRIPT"
@@ -22,8 +22,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh shows help with --help flag" {
-	# Test verifies that the script displays usage information when --help flag is provided.
+@test "vpn-monitor.sh shows help with --help flag - should display usage information" {
+	# Purpose: Test verifies that the script displays usage information when --help flag is provided.
 	# Expected: Script outputs usage information including "--fake" flag description.
 	# Importance: Ensures users can access help documentation for script usage.
 	run bash "$VPN_MONITOR_SCRIPT" --help
@@ -33,8 +33,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh shows help with -h flag" {
-	# Test verifies that the script displays usage information when -h short flag is provided.
+@test "vpn-monitor.sh shows help with -h flag - should display usage information" {
+	# Purpose: Test verifies that the script displays usage information when -h short flag is provided.
 	# Expected: Script outputs usage information.
 	# Importance: Ensures short form help flag works correctly for user convenience.
 	run bash "$VPN_MONITOR_SCRIPT" -h
@@ -43,8 +43,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh exits with error if EXTERNAL_PEER_IPS not configured" {
-	# Test verifies that the script validates required configuration and exits with error
+@test "vpn-monitor.sh exits with error if EXTERNAL_PEER_IPS not configured - should exit with error message" {
+	# Purpose: Test verifies that the script validates required configuration and exits with error
 	# when EXTERNAL_PEER_IPS is missing or empty.
 	# Expected: Script exits with failure status and outputs error message about missing configuration.
 	# Importance: Prevents script from running with invalid configuration that would cause runtime errors.
@@ -70,8 +70,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh creates state directory if missing" {
-	# Test verifies that the script automatically creates the state directory if it doesn't exist.
+@test "vpn-monitor.sh creates state directory if missing - should create directory automatically" {
+	# Purpose: Test verifies that the script automatically creates the state directory if it doesn't exist.
 	# Expected: State directory is created during script initialization.
 	# Importance: Ensures script can run successfully even on first execution without manual directory setup.
 	# State directory doesn't exist yet
@@ -85,8 +85,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh initializes state files" {
-	# Test verifies that the script creates necessary state files during initialization.
+@test "vpn-monitor.sh initializes state files - should create restart_count file" {
+	# Purpose: Test verifies that the script creates necessary state files during initialization.
 	# Expected: restart_count file is created in logs directory.
 	# Importance: State files are required for tracking restart history and rate limiting.
 	# Note: Per-peer failure counters are created on-demand, not during initialization.
@@ -101,8 +101,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh creates log file" {
-	# Test verifies that the script creates the log file for recording execution events.
+@test "vpn-monitor.sh creates log file - should create log file in logs directory" {
+	# Purpose: Test verifies that the script creates the log file for recording execution events.
 	# Expected: Log file is created in the logs directory.
 	# Importance: Logging is essential for troubleshooting and monitoring script behavior.
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
@@ -114,8 +114,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh logs script start" {
-	# Test verifies that the script logs a start message when execution begins.
+@test "vpn-monitor.sh logs script start - should log start message" {
+	# Purpose: Test verifies that the script logs a start message when execution begins.
 	# Expected: Log file contains "VPN monitor script started" message.
 	# Importance: Start messages help identify script execution boundaries in log files.
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
@@ -127,8 +127,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh handles --fake flag" {
-	# Test verifies that the script correctly handles the --fake flag for testing mode.
+@test "vpn-monitor.sh handles --fake flag - should log fake mode message" {
+	# Purpose: Test verifies that the script correctly handles the --fake flag for testing mode.
 	# Expected: Script logs fake mode message and disables tier escalation actions.
 	# Importance: Fake mode allows testing without triggering actual recovery actions.
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
@@ -140,8 +140,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh validates peer IP format" {
-	# Test verifies that the script validates peer IP addresses and handles invalid formats gracefully.
+@test "vpn-monitor.sh validates peer IP format - should handle invalid format gracefully" {
+	# Purpose: Test verifies that the script validates peer IP addresses and handles invalid formats gracefully.
 	# Expected: Script handles invalid IP format without crashing, may log warning or exit early.
 	# Importance: IP validation prevents command injection and ensures only valid IPs are processed.
 	setup_test_vpn_monitor "invalid-ip" "${TEST_DIR}"
@@ -158,8 +158,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh rejects dangerous characters in peer IP" {
-	# Test verifies that the script rejects peer IPs containing shell injection characters.
+@test "vpn-monitor.sh rejects dangerous characters in peer IP - should log error and prevent injection" {
+	# Purpose: Test verifies that the script rejects peer IPs containing shell injection characters.
 	# Expected: Script detects invalid IP format and logs error message, preventing command injection.
 	# Importance: Security test ensures malicious input cannot execute arbitrary commands.
 	setup_test_vpn_monitor "192.168.1.1; rm -rf /" "${TEST_DIR}"
@@ -170,9 +170,9 @@ EOF
 	assert_file_contains "$LOG_FILE" "Invalid peer IP format"
 }
 
-# bats test_tags=category:unit
-@test "vpn-monitor.sh handles multiple peer IPs" {
-	# Test verifies that the script correctly processes multiple peer IP addresses from configuration.
+# bats test_tags=slow,category:unit
+@test "vpn-monitor.sh handles multiple peer IPs - should process all configured peers" {
+	# Purpose: Test verifies that the script correctly processes multiple peer IP addresses from configuration.
 	# Expected: Script runs successfully and processes all configured peer IPs.
 	# Importance: Supports monitoring multiple VPN tunnels simultaneously.
 	setup_test_vpn_monitor "192.168.1.1 10.0.0.1" "${TEST_DIR}"
@@ -183,9 +183,9 @@ EOF
 	assert_file_exist "$LOG_FILE"
 }
 
-# bats test_tags=category:unit
-@test "vpn-monitor.sh maintains independent failure counters per peer" {
-	# Test verifies that each peer IP maintains its own independent failure counter.
+# bats test_tags=slow,category:unit
+@test "vpn-monitor.sh maintains independent failure counters per peer - should track each peer separately" {
+	# Purpose: Test verifies that each peer IP maintains its own independent failure counter.
 	# Expected: Each peer has a separate counter file that increments independently based on that peer's status.
 	# Importance: Ensures failures in one VPN tunnel don't affect monitoring of other tunnels.
 	setup_test_vpn_monitor "192.168.1.1 10.0.0.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
@@ -219,15 +219,15 @@ EOF
 		local count2
 		count2=$(cat "$failure_counter2")
 		# They should differ since they started at different values
-		assert [ "$count1" != "$count2" ]
+		assert_not_equal "$count1" "$count2"
 	fi
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh increments failure counter on failure" {
-	# Test verifies that the script increments the failure counter when VPN check detects a failure.
+@test "vpn-monitor.sh increments failure counter on failure - should increment counter" {
+	# Purpose: Test verifies that the script increments the failure counter when VPN check detects a failure.
 	# Expected: Per-peer failure counter file is created and incremented when VPN is down.
 	# Importance: Failure counters track consecutive failures to trigger tiered recovery actions.
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
@@ -247,8 +247,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh resets failure counter on success" {
-	# Test verifies that the script resets the failure counter to 0 when VPN check succeeds.
+@test "vpn-monitor.sh resets failure counter on success - should reset counter to 0" {
+	# Purpose: Test verifies that the script resets the failure counter to 0 when VPN check succeeds.
 	# Expected: Failure counter is reset to 0 when VPN is healthy, clearing previous failure history.
 	# Importance: Ensures recovery actions are only triggered for consecutive failures, not transient issues.
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
@@ -272,8 +272,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh respects cooldown period" {
-	# Test verifies that the script exits early when a cooldown period is active after recovery actions.
+@test "vpn-monitor.sh respects cooldown period - should exit early when active" {
+	# Purpose: Test verifies that the script exits early when a cooldown period is active after recovery actions.
 	# Expected: Script detects cooldown period and exits without performing checks or actions.
 	# Importance: Cooldown prevents excessive recovery actions and allows time for VPN to stabilize.
 	setup_vpn_cooldown_fixture "192.168.1.1" 0 900 'COOLDOWN_MINUTES=15'
@@ -285,8 +285,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh handles lockfile timeout" {
-	# Test verifies that the script handles stale lockfiles that exceed the timeout period.
+@test "vpn-monitor.sh handles lockfile timeout - should handle stale lockfile" {
+	# Purpose: Test verifies that the script handles stale lockfiles that exceed the timeout period.
 	# Expected: Script detects stale lockfile (older than LOCKFILE_TIMEOUT) and handles it appropriately.
 	# Importance: Prevents script from being blocked indefinitely by abandoned lockfiles from crashed processes.
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'LOCKFILE_TIMEOUT=300'
@@ -305,8 +305,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh prevents concurrent execution with lockfile" {
-	# Test verifies that the script uses lockfiles to prevent multiple instances from running simultaneously.
+@test "vpn-monitor.sh prevents concurrent execution with lockfile - should detect existing lockfile" {
+	# Purpose: Test verifies that the script uses lockfiles to prevent multiple instances from running simultaneously.
 	# Expected: Script detects existing lockfile and either waits or exits to prevent concurrent execution.
 	# Importance: Prevents race conditions and state file corruption from multiple script instances.
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
@@ -315,16 +315,18 @@ EOF
 	echo "$(date +%s):$$" >"$LOCKFILE"
 
 	# Try to run script (should detect lockfile)
-	run timeout 2 bash "$TEST_SCRIPT" --fake 2>&1 || true
+	run timeout 2 bash "$TEST_SCRIPT" --fake 2>&1
 
+	# Script should handle lockfile detection gracefully
+	assert_success
 	# Should detect existing lockfile (may exit or wait)
 	# The exact behavior depends on whether flock is available
 	assert_file_exist "$LOG_FILE"
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh loads configuration from file" {
-	# Test verifies that the script successfully loads configuration variables from the config file.
+@test "vpn-monitor.sh loads configuration from file - should log successful load" {
+	# Purpose: Test verifies that the script successfully loads configuration variables from the config file.
 	# Expected: Script reads config file and logs successful configuration load message.
 	# Importance: Configuration loading is essential for script customization and proper operation.
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'VPN_NAME="Custom VPN Name"' 'DEBUG=1'
@@ -336,8 +338,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh uses default config if file missing" {
-	# Test verifies that the script handles missing configuration file gracefully and uses defaults.
+@test "vpn-monitor.sh uses default config if file missing - should log warning and use defaults" {
+	# Purpose: Test verifies that the script handles missing configuration file gracefully and uses defaults.
 	# Expected: Script logs warning about missing config file and continues with default values.
 	# Importance: Ensures script can run even if config file is accidentally deleted or misconfigured.
 	mkdir -p "${TEST_DIR}"
@@ -357,8 +359,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh handles ping check when enabled" {
-	# Test verifies that the script performs ping checks when ENABLE_PING_CHECK is enabled in configuration.
+@test "vpn-monitor.sh handles ping check when enabled - should perform ping checks" {
+	# Purpose: Test verifies that the script performs ping checks when ENABLE_PING_CHECK is enabled in configuration.
 	# Expected: Script executes ping checks to internal peer IPs as an additional VPN health verification method.
 	# Importance: Ping checks provide an additional layer of VPN connectivity verification beyond xfrm state checks.
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "0x12345678" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=2'
@@ -375,8 +377,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh handles debug mode" {
-	# Test verifies that the script enables debug logging when DEBUG=1 is set in configuration.
+@test "vpn-monitor.sh handles debug mode - should enable debug logging" {
+	# Purpose: Test verifies that the script enables debug logging when DEBUG=1 is set in configuration.
 	# Expected: Script enables verbose debug output for troubleshooting script behavior.
 	# Importance: Debug mode is essential for diagnosing issues in production environments.
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'DEBUG=1'
@@ -386,13 +388,14 @@ EOF
 	# Debug output should be present
 	assert_file_exist "$LOG_FILE"
 	# Debug messages go to stderr, check log file for DEBUG entries
-	run grep -q "DEBUG" "$LOG_FILE" || true
 	# May or may not have DEBUG entries depending on execution path
+	run grep -q "DEBUG" "$LOG_FILE" || true
+	# Note: grep -q returns 0 if found, 1 if not found - both are acceptable here
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh checks cron persistence" {
-	# Test verifies that the script checks for cron job persistence to ensure scheduled execution.
+@test "vpn-monitor.sh checks cron persistence - should verify cron entry exists" {
+	# Purpose: Test verifies that the script checks for cron job persistence to ensure scheduled execution.
 	# Expected: Script verifies cron entry exists and may warn if cron job is missing.
 	# Importance: Ensures script continues to run on schedule even after system reboots or cron changes.
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
@@ -412,8 +415,8 @@ EOF
 # ============================================================================
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh initialize_monitor logs script start in normal mode" {
-	# Test verifies that initialize_monitor function logs script start message in normal execution mode.
+@test "vpn-monitor.sh initialize_monitor logs script start in normal mode - should log start message" {
+	# Purpose: Test verifies that initialize_monitor function logs script start message in normal execution mode.
 	# Expected: Log contains "VPN monitor script started" message but not fake mode message.
 	# Importance: Ensures proper logging distinguishes between normal and test modes.
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
@@ -429,8 +432,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh initialize_monitor logs script start in fake mode" {
-	# Test verifies that initialize_monitor function correctly identifies and logs fake mode operation.
+@test "vpn-monitor.sh initialize_monitor logs script start in fake mode - should log fake mode message" {
+	# Purpose: Test verifies that initialize_monitor function correctly identifies and logs fake mode operation.
 	# Expected: Log contains fake mode message and tier escalation disabled notification.
 	# Importance: Fake mode logging helps distinguish test runs from production execution in logs.
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
@@ -446,8 +449,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh initialize_monitor initializes state files" {
-	# Test verifies that initialize_monitor function creates necessary state files during initialization.
+@test "vpn-monitor.sh initialize_monitor initializes state files - should create restart_count file" {
+	# Purpose: Test verifies that initialize_monitor function creates necessary state files during initialization.
 	# Expected: restart_count file is created in logs directory during script startup.
 	# Importance: State file initialization ensures proper tracking of restart history from first run.
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
@@ -462,8 +465,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh validate_monitor_state exits when in cooldown period" {
-	# Test verifies that validate_monitor_state function detects active cooldown and exits early.
+@test "vpn-monitor.sh validate_monitor_state exits when in cooldown period - should exit early" {
+	# Purpose: Test verifies that validate_monitor_state function detects active cooldown and exits early.
 	# Expected: Script exits early with success status and logs cooldown period message.
 	# Importance: Cooldown mechanism prevents excessive recovery actions and allows VPN stabilization time.
 	setup_vpn_cooldown_fixture "192.168.1.1" 0 900 'COOLDOWN_MINUTES=15'
@@ -477,8 +480,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh validate_monitor_state continues when not in cooldown" {
-	# Test verifies that validate_monitor_state function allows script execution when cooldown period has expired.
+@test "vpn-monitor.sh validate_monitor_state continues when not in cooldown - should continue execution" {
+	# Purpose: Test verifies that validate_monitor_state function allows script execution when cooldown period has expired.
 	# Expected: Script continues normal execution without cooldown-related exit messages.
 	# Importance: Ensures script resumes normal monitoring after cooldown period expires.
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'COOLDOWN_MINUTES=15'
@@ -497,8 +500,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh validate_monitor_state checks cron persistence on first run" {
-	# Test verifies that validate_monitor_state function checks for cron job persistence on first execution.
+@test "vpn-monitor.sh validate_monitor_state checks cron persistence on first run - should verify cron entry" {
+	# Purpose: Test verifies that validate_monitor_state function checks for cron job persistence on first execution.
 	# Expected: Script verifies cron entry exists and may warn if missing, only checking once per installation.
 	# Importance: Ensures script continues to run on schedule and alerts if cron job is removed.
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
@@ -519,8 +522,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh process_peer_ips processes single peer" {
-	# Test verifies that process_peer_ips function correctly processes a single peer IP address.
+@test "vpn-monitor.sh process_peer_ips processes single peer - should process peer and check status" {
+	# Purpose: Test verifies that process_peer_ips function correctly processes a single peer IP address.
 	# Expected: Script processes the peer IP and performs VPN status check, logging peer information.
 	# Importance: Core functionality test ensures single-peer monitoring works correctly.
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
@@ -536,9 +539,9 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:unit
-@test "vpn-monitor.sh process_peer_ips processes multiple peers" {
-	# Test verifies that process_peer_ips function correctly processes multiple peer IP addresses.
+# bats test_tags=slow,category:unit
+@test "vpn-monitor.sh process_peer_ips processes multiple peers - should process all peers independently" {
+	# Purpose: Test verifies that process_peer_ips function correctly processes multiple peer IP addresses.
 	# Expected: Script processes all configured peer IPs and performs VPN status checks for each.
 	# Importance: Ensures multi-tunnel monitoring works correctly with independent status tracking per peer.
 	setup_test_vpn_monitor "192.168.1.1 10.0.0.1" "${TEST_DIR}"
@@ -568,9 +571,9 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:unit
-@test "vpn-monitor.sh process_peer_ips skips empty peer IP" {
-	# Test verifies that process_peer_ips function handles empty peer IP entries gracefully.
+# bats test_tags=slow,category:unit
+@test "vpn-monitor.sh process_peer_ips skips empty peer IP - should skip and log warning" {
+	# Purpose: Test verifies that process_peer_ips function handles empty peer IP entries gracefully.
 	# Expected: Script skips empty peer IPs (from extra whitespace) and logs warning message.
 	# Importance: Prevents errors from malformed configuration with extra spaces between IPs.
 	setup_test_vpn_monitor "192.168.1.1  10.0.0.1" "${TEST_DIR}"
@@ -586,8 +589,8 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh process_peer_ips validates configuration" {
-	# Test verifies that process_peer_ips function validates configuration before processing peers.
+@test "vpn-monitor.sh process_peer_ips validates configuration - should exit with error if invalid" {
+	# Purpose: Test verifies that process_peer_ips function validates configuration before processing peers.
 	# Expected: Script exits with failure status when EXTERNAL_PEER_IPS is empty or missing.
 	# Importance: Configuration validation prevents script execution with invalid settings.
 	setup_test_vpn_monitor "" "${TEST_DIR}"

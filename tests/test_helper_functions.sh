@@ -239,10 +239,7 @@ source_function() {
 	run extract_lockfile_pid "${TEST_DIR}/nonexistent.lock"
 	assert_success
 	# Empty output expected
-	if [[ -n "$output" ]]; then
-		echo "Expected empty output but got: $output" >&2
-		return 1
-	fi
+	assert_output ""
 }
 
 # bats test_tags=category:unit
@@ -318,7 +315,8 @@ source_function() {
 
 	local test_file="${TEST_DIR}/test_file"
 	touch "$test_file"
-	sleep 1
+	# Small delay to ensure file system has updated mtime
+	sleep 0.1
 
 	run get_file_mtime "$test_file"
 	assert_success
@@ -492,7 +490,7 @@ source_function() {
 	assert_file_exist "$counter_file"
 	local count
 	count=$(cat "$counter_file")
-	assert [ "$count" -eq 1 ]
+	assert_equal "$count" 1
 
 	# Second increment
 	run increment_failure "192.168.1.1"
@@ -501,7 +499,7 @@ source_function() {
 
 	# Verify the counter was incremented
 	count=$(cat "$counter_file")
-	assert [ "$count" -eq 2 ]
+	assert_equal "$count" 2
 }
 
 # bats test_tags=category:unit
@@ -524,7 +522,7 @@ source_function() {
 	assert_file_exist "$counter_file"
 	local count
 	count=$(cat "$counter_file")
-	assert [ "$count" -eq 0 ]
+	assert_equal "$count" 0
 }
 
 # ============================================================================
@@ -624,9 +622,10 @@ source_function() {
 	assert_success
 	# Should return default (0) for corrupted file (function logs warning)
 	# Verify it ends with 0 (the actual return value)
-	assert [ "${output##*$'\n'}" = "0" ] || [ "$output" = "0" ]
-	# Use assert_equal for exact value comparison
-	assert_equal "${output##*$'\n'}" "0" || assert_equal "$output" "0"
+	# Check if last line is "0" OR entire output is "0" (handles newline cases)
+	if [[ "${output##*$'\n'}" != "0" ]] && [[ "$output" != "0" ]]; then
+		fail "Expected output to be '0' or end with '0', but got: '$output'"
+	fi
 }
 
 # bats test_tags=category:unit
@@ -646,7 +645,7 @@ source_function() {
 	assert_file_exist "$counter_file"
 	local count
 	count=$(cat "$counter_file")
-	assert [ "$count" -eq 7 ]
+	assert_equal "$count" 7
 }
 
 # bats test_tags=category:unit
@@ -666,7 +665,7 @@ source_function() {
 	local counter_file="${LOGS_DIR}/failure_counter_192_168_1_1"
 	local count
 	count=$(cat "$counter_file")
-	assert [ "$count" -eq 10 ]
+	assert_equal "$count" 10
 }
 
 # bats test_tags=category:unit
@@ -701,7 +700,7 @@ source_function() {
 	assert_file_exist "$bytes_file"
 	local bytes
 	bytes=$(cat "$bytes_file")
-	assert [ "$bytes" -eq 123456 ]
+	assert_equal "$bytes" 123456
 }
 
 # bats test_tags=category:unit
@@ -991,17 +990,16 @@ SCRIPT
 	source_function "discover_connection_name"
 	source_function "sanitize_peer_ip"
 
-	# Mock ipsec command - libreswan format
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
+	# Mock ipsec command - libreswan format with multiple connections
+	cat >"${TEST_DIR}/ipsec" <<'EOF'
 #!/bin/bash
 if [[ "$1" == "status" ]]; then
     echo "site-a: ESTABLISHED 1 hour ago, 192.168.1.1...192.168.1.2"
     echo "site-b: ESTABLISHED 2 hours ago, 10.0.0.1...10.0.0.2"
 fi
 EOF
-	chmod +x "$mock_ipsec"
-	PATH="${TEST_DIR}:${PATH}"
+	chmod +x "${TEST_DIR}/ipsec"
+	add_mock_to_path
 
 	STATE_DIR="${TEST_DIR}"
 	run discover_connection_name "192.168.1.1"
@@ -1018,17 +1016,16 @@ EOF
 	source_function "discover_connection_name"
 	source_function "sanitize_peer_ip"
 
-	# Mock ipsec command - strongswan format
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
+	# Mock ipsec command - strongswan format with multiple connections
+	cat >"${TEST_DIR}/ipsec" <<'EOF'
 #!/bin/bash
 if [[ "$1" == "status" ]]; then
     echo "site-a: IKEv1, ESTABLISHED, 192.168.1.1"
     echo "site-b: IKEv2, ESTABLISHED, 10.0.0.1"
 fi
 EOF
-	chmod +x "$mock_ipsec"
-	PATH="${TEST_DIR}:${PATH}"
+	chmod +x "${TEST_DIR}/ipsec"
+	add_mock_to_path
 
 	STATE_DIR="${TEST_DIR}"
 	run discover_connection_name "192.168.1.1"
@@ -1045,16 +1042,9 @@ EOF
 	source_function "discover_connection_name"
 	source_function "sanitize_peer_ip"
 
-	# Mock ipsec command - no matching peer IP
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    echo "site-a: ESTABLISHED 1 hour ago, 192.168.1.1...192.168.1.2"
-fi
-EOF
-	chmod +x "$mock_ipsec"
-	PATH="${TEST_DIR}:${PATH}"
+	# Mock ipsec command - no matching peer IP (uses different IP)
+	mock_ipsec "libreswan" "192.168.1.1" "site-a"
+	add_mock_to_path
 
 	export STATE_DIR="${TEST_DIR}"
 	run discover_connection_name "10.0.0.1"
@@ -1078,16 +1068,8 @@ EOF
 	export STATE_DIR
 
 	# Mock ipsec command - libreswan format
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    echo "site-a: ESTABLISHED 1 hour ago, 192.168.1.1...192.168.1.2"
-fi
-EOF
-	chmod +x "$mock_ipsec"
-	PATH="${TEST_DIR}:${PATH}"
-	export PATH
+	mock_ipsec "libreswan" "192.168.1.1" "site-a"
+	add_mock_to_path
 
 	# Clean up any existing cache file from previous tests
 	local cache_file="${TEST_DIR}/connection_name_192_168_1_1"
@@ -1110,7 +1092,7 @@ EOF
 	assert_equal "$(cat "$cache_file")" "site-a"
 
 	# Remove ipsec mock - second call should use cache (tests cache-first behavior)
-	rm -f "$mock_ipsec"
+	rm -f "${TEST_DIR}/ipsec"
 	# Ensure STATE_DIR is still exported for second call
 	export STATE_DIR
 	run discover_connection_name "192.168.1.1"
@@ -1156,15 +1138,14 @@ EOF
 	rm -f "$cache_file"
 
 	# Mock ipsec command - fails
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
+	cat >"${TEST_DIR}/ipsec" <<'EOF'
 #!/bin/bash
 if [[ "$1" == "status" ]]; then
     exit 1
 fi
 EOF
-	chmod +x "$mock_ipsec"
-	PATH="${TEST_DIR}:${PATH}"
+	chmod +x "${TEST_DIR}/ipsec"
+	add_mock_to_path
 
 	STATE_DIR="${TEST_DIR}"
 	run discover_connection_name "192.168.1.1"
@@ -1307,9 +1288,9 @@ EOF
 	assert_success
 	# Should return empty string (no default for required variables)
 	# Function may output newline, so check for empty or whitespace-only
-	if [[ -n "$output" ]] && [[ "$output" != "" ]]; then
-		echo "Expected empty output but got: '$output'" >&2
-		return 1
+	# Check if output is empty or contains only whitespace
+	if [[ -n "$output" ]] && [[ ! "$output" =~ ^[[:space:]]*$ ]]; then
+		fail "Expected empty or whitespace-only output, but got: '$output'"
 	fi
 }
 
@@ -1428,7 +1409,7 @@ EOF
 	# Check output has 4 lines
 	local line_count
 	line_count=$(echo "$output" | wc -l | tr -d ' ')
-	assert [ "$line_count" -eq 4 ]
+	assert_equal "$line_count" 4
 	# Check each component
 	local required var_type rules default_val
 	{
@@ -1917,9 +1898,9 @@ source_lockfile_module() {
 
 # bats test_tags=category:unit
 @test "acquire_lockfile_flock successfully acquires lock when available" {
-	# Skip if flock not available
+	# Skip condition: Requires 'flock' command to be available for file locking tests
 	if ! command -v flock >/dev/null 2>&1; then
-		skip "flock command not available"
+		skip "flock command not available (test requires flock for file locking functionality)"
 	fi
 
 	source_lockfile_module
@@ -1941,9 +1922,9 @@ source_lockfile_module() {
 
 # bats test_tags=category:unit
 @test "acquire_lockfile_flock detects running process and exits gracefully" {
-	# Skip if flock not available
+	# Skip condition: Requires 'flock' command to be available for file locking tests
 	if ! command -v flock >/dev/null 2>&1; then
-		skip "flock command not available"
+		skip "flock command not available (test requires flock for file locking functionality)"
 	fi
 
 	source_lockfile_module
@@ -1971,9 +1952,9 @@ source_lockfile_module() {
 
 # bats test_tags=category:unit
 @test "acquire_lockfile_flock removes stale lockfile and acquires lock" {
-	# Skip if flock not available
+	# Skip condition: Requires 'flock' command to be available for file locking tests
 	if ! command -v flock >/dev/null 2>&1; then
-		skip "flock command not available"
+		skip "flock command not available (test requires flock for file locking functionality)"
 	fi
 
 	source_lockfile_module
@@ -2001,9 +1982,9 @@ source_lockfile_module() {
 
 # bats test_tags=category:unit
 @test "acquire_lockfile_flock handles race condition when lockfile removed between check and acquisition" {
-	# Skip if flock not available
+	# Skip condition: Requires 'flock' command to be available for file locking tests
 	if ! command -v flock >/dev/null 2>&1; then
-		skip "flock command not available"
+		skip "flock command not available (test requires flock for file locking functionality)"
 	fi
 
 	source_lockfile_module
@@ -2038,9 +2019,9 @@ source_lockfile_module() {
 	# Test verifies that acquire_lockfile_flock function cleans up lockfile when wrapped function exits successfully.
 	# Expected: Lockfile is removed after function execution completes, even on successful exit.
 	# Importance: Ensures lockfiles are properly cleaned up to prevent blocking future script executions.
-	# Skip if flock not available
+	# Skip condition: Requires 'flock' command to be available for file locking tests
 	if ! command -v flock >/dev/null 2>&1; then
-		skip "flock command not available"
+		skip "flock command not available (test requires flock for file locking functionality)"
 	fi
 
 	source_lockfile_module
@@ -2064,9 +2045,9 @@ source_lockfile_module() {
 	# Test verifies that acquire_lockfile_flock function cleans up lockfile even when wrapped function exits with error.
 	# Expected: Lockfile is removed after function execution completes, regardless of exit code.
 	# Importance: Ensures lockfiles are always cleaned up via EXIT trap, preventing permanent blocking on errors.
-	# Skip if flock not available
+	# Skip condition: Requires 'flock' command to be available for file locking tests
 	if ! command -v flock >/dev/null 2>&1; then
-		skip "flock command not available"
+		skip "flock command not available (test requires flock for file locking functionality)"
 	fi
 
 	source_lockfile_module
@@ -2189,6 +2170,7 @@ source_lockfile_module() {
 	# Result depends on timing - both outcomes are valid:
 	# 1. We got the lock first (before bg process created it) - lockfile should be cleaned up
 	# 2. Bg process created lockfile first - should detect conflict and exit gracefully
+	# Check if output contains "already running" or "Lock acquired"
 	if echo "$output" | grep -q "already running"; then
 		# Detected conflict - this is valid behavior
 		refute_output --partial "Lock acquired"
@@ -2321,36 +2303,37 @@ source_lockfile_module() {
 	# Test verifies that constants.sh file defines all required constants with correct values.
 	# Expected: All constants (IPv4/IPv6 limits, ping thresholds, xfrm settings, time conversions) are defined correctly.
 	# Importance: Constants ensure consistent validation limits and configuration values across the application.
+	# Skip condition: Requires constants.sh file to be available for constant validation tests
 	# Source constants.sh
 	# shellcheck source=/dev/null
 	source "${LIB_DIR}/constants.sh" 2>/dev/null || {
-		skip "constants.sh not found"
+		skip "constants.sh not found (test requires constants.sh at ${LIB_DIR}/constants.sh to verify constant definitions)"
 	}
 
 	# Verify IPv4 constants
-	assert [ "$MAX_IPV4_OCTET" -eq 255 ]
-	assert [ "$IPV4_OCTET_COUNT" -eq 4 ]
-	assert [ "$IPV4_CIDR_SINGLE_HOST" -eq 32 ]
+	assert_equal "$MAX_IPV4_OCTET" 255
+	assert_equal "$IPV4_OCTET_COUNT" 4
+	assert_equal "$IPV4_CIDR_SINGLE_HOST" 32
 
 	# Verify IPv6 constants
-	assert [ "$MAX_IPV6_SEGMENTS" -eq 8 ]
-	assert [ "$MIN_IPV6_SEGMENT_HEX_DIGITS" -eq 1 ]
-	assert [ "$MAX_IPV6_SEGMENT_HEX_DIGITS" -eq 4 ]
+	assert_equal "$MAX_IPV6_SEGMENTS" 8
+	assert_equal "$MIN_IPV6_SEGMENT_HEX_DIGITS" 1
+	assert_equal "$MAX_IPV6_SEGMENT_HEX_DIGITS" 4
 
 	# Verify ping constants
-	assert [ "$PING_PACKET_LOSS_THRESHOLD" -eq 100 ]
+	assert_equal "$PING_PACKET_LOSS_THRESHOLD" 100
 
 	# Verify xfrm constants
-	assert [ "$XFRM_OUTPUT_CONTEXT_LINES" -eq 10 ]
-	assert [ "$XFRM_RECOVERY_SLEEP_SECONDS" -eq 3 ]
-	assert [ "$XFRM_RECOVERY_VERIFY_TIMEOUT" -eq 30 ]
-	assert [ "$XFRM_RECOVERY_VERIFY_INTERVAL" -eq 2 ]
-	assert [ "$XFRM_RECOVERY_MAX_INTERVAL" -eq 16 ]
+	assert_equal "$XFRM_OUTPUT_CONTEXT_LINES" 10
+	assert_equal "$XFRM_RECOVERY_SLEEP_SECONDS" 3
+	assert_equal "$XFRM_RECOVERY_VERIFY_TIMEOUT" 30
+	assert_equal "$XFRM_RECOVERY_VERIFY_INTERVAL" 2
+	assert_equal "$XFRM_RECOVERY_MAX_INTERVAL" 16
 
 	# Verify time constants
-	assert [ "$SECONDS_PER_MINUTE" -eq 60 ]
-	assert [ "$SECONDS_PER_HOUR" -eq 3600 ]
-	assert [ "$SECONDS_PER_DAY" -eq 86400 ]
+	assert_equal "$SECONDS_PER_MINUTE" 60
+	assert_equal "$SECONDS_PER_HOUR" 3600
+	assert_equal "$SECONDS_PER_DAY" 86400
 }
 
 # bats test_tags=category:unit
@@ -2471,7 +2454,7 @@ source_lockfile_module() {
 	# But get_peer_state with default "" might return "0" if default handling is wrong
 	# Let's check if status is 1 (expected) or if we need to verify the logic differently
 	# The function returns 1 when last_spi is empty, which should happen here
-	assert [ "$status" -eq 1 ]
+	assert_equal "$status" 1
 }
 
 # bats test_tags=category:unit
@@ -2536,7 +2519,7 @@ source_lockfile_module() {
 	# First check - should store SPI but return false (no rekey)
 	run detect_sa_rekey "0x12345678" "203.0.113.1"
 	# Function returns 1 when no rekey (first check)
-	assert [ "$status" -eq 1 ]
+	assert_equal "$status" 1
 
 	# Verify SPI was stored
 	local stored_spi
@@ -2654,9 +2637,6 @@ source_lockfile_module() {
 	mock_ip=$(mock_ip_xfrm_state "203.0.113.1" "2000" "0xABCDEF12")
 	add_mock_to_path
 
-	# Ensure PATH includes TEST_DIR so mock ip command is found
-	export PATH="${TEST_DIR}:${PATH}"
-
 	# Source constants for XFRM_OUTPUT_CONTEXT_LINES if not already set
 	if [[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && [[ -f "${LIB_DIR}/constants.sh" ]]; then
 		# shellcheck source=/dev/null
@@ -2677,6 +2657,7 @@ source_lockfile_module() {
 	# Use regex to verify IP address format
 	assert_output --regexp '203\.0\.113\.1'
 
+	# Skip condition: Requires mock IP command to be available in PATH for integration test
 	# Check VPN status (skip if mock not found in PATH)
 	if command -v ip 2>/dev/null | grep -q "^${TEST_DIR}/mock_ip$"; then
 		run check_xfrm_status "203.0.113.1"
@@ -2688,7 +2669,7 @@ source_lockfile_module() {
 		# Use assert_equal for better error messages
 		assert_equal "$stored_spi" "0xABCDEF12"
 	else
-		skip "Mock IP command not found in PATH (integration test skipped)"
+		skip "Mock IP command not found in PATH (integration test requires mock_ip at ${TEST_DIR}/mock_ip to verify xfrm status checking)"
 	fi
 }
 
@@ -2719,7 +2700,7 @@ source_lockfile_module() {
 	add_mock_to_path
 
 	# Set PATH BEFORE sourcing so command -v finds mock
-	export PATH="${TEST_DIR}:${PATH}"
+	add_mock_to_path
 
 	# Source constants for XFRM_OUTPUT_CONTEXT_LINES if not already set
 	if [[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && [[ -f "${LIB_DIR}/constants.sh" ]]; then
@@ -2758,9 +2739,10 @@ source_lockfile_module() {
 		# Use assert_equal for better error messages
 		assert_equal "$last_bytes" "1000"
 	else
+		# Skip condition: Requires mock IP command to be available in PATH for integration test
 		# Mock not found in PATH - skip integration test
 		# Core functionality is tested in unit tests above
-		skip "Mock IP command not found in PATH (integration test skipped, unit tests passed)"
+		skip "Mock IP command not found in PATH (integration test requires mock_ip at ${TEST_DIR}/mock_ip to verify rekey detection, unit tests passed)"
 	fi
 }
 

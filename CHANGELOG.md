@@ -2,7 +2,63 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
-## [Unreleased] - 2025-12-26
+## 0.3.0 - 2025-12-29
+
+### Added
+- **Deployment Checklist**: `DEPLOYMENT_CHECKLIST.md` - Comprehensive deployment checklist with pre-deployment checks, installation steps, verification procedures, and troubleshooting guidance
+- **Versioning Guide**: `docs/VERSIONING.md` - Complete versioning strategy documentation following Semantic Versioning (SemVer) principles, including version update checklist and best practices
+- **Comprehensive Test Suite Expansion**: Major expansion of test coverage with 40+ new and updated test files:
+  - `test_config_large_values.sh` - Tests for handling large configuration values
+  - `test_config_loading.sh` - Tests for configuration file loading behavior
+  - `test_config_order.sh` - Tests for configuration precedence and order
+  - `test_config_overrides.sh` - Tests for configuration override mechanisms
+  - `test_config_schema.sh` - Tests for configuration schema validation
+  - `test_config_security.sh` - Tests for configuration security and validation
+  - `test_config_validation.sh` - Tests for configuration validation logic
+  - `test_detection_failure_type.sh` - Tests for failure type detection
+  - `test_detection_fallback.sh` - Tests for detection fallback mechanisms
+  - `test_detection_idle.sh` - Tests for idle VPN detection
+  - `test_detection_network_partition.sh` - Tests for network partition detection
+  - `test_detection_rekey.sh` - Tests for SA rekey detection
+  - `test_detection_status.sh` - Tests for VPN status detection
+  - `test_detection_xfrm_edge_cases.sh` - Tests for xfrm edge cases
+  - `test_integration_e2e_recovery.sh` - End-to-end recovery integration tests
+  - `test_multiple_peer_edge_cases.sh` - Tests for multiple peer scenarios
+  - `test_rapid_state_changes.sh` - Tests for rapid state change handling
+  - `test_recovery_cooldown_rate_limit_interaction.sh` - Tests for cooldown and rate limit interactions
+  - `test_recovery_network_partition.sh` - Tests for recovery during network partitions
+  - `test_recovery_partial_failures.sh` - Tests for partial recovery failures
+  - `test_recovery_rate_limiting.sh` - Tests for recovery rate limiting
+  - `test_recovery_tier1.sh` - Tests for Tier 1 recovery actions
+  - `test_recovery_tier2.sh` - Tests for Tier 2 recovery actions
+  - `test_recovery_tier3.sh` - Tests for Tier 3 recovery actions
+  - `test_state_concurrent_updates.sh` - Tests for concurrent state updates
+- **Test Fixtures**: New test fixtures for common scenarios:
+  - `tests/fixtures/vpn_multiple_peers.bash` - Multiple VPN peers scenario
+  - `tests/fixtures/vpn_recovery_disabled.bash` - Recovery disabled scenario
+  - `tests/fixtures/vpn_rekey.bash` - VPN rekey scenario
+- **Test Infrastructure Utilities**:
+  - `tests/tag_slow_tests.sh` - Utility to tag slow-running tests
+  - `tests/tag_slow_tests_from_log.sh` - Utility to tag slow tests from test run logs
+- **Enhanced BATS Guide**: Significantly expanded `docs/BATS_GUIDE.md` with comprehensive documentation on BATS testing framework, usage patterns, helper libraries, and best practices
+
+### Changed
+- **Test Suite Reorganization**: Major refactoring of test suite for better organization and maintainability:
+  - Split large test files into focused, single-responsibility test files
+  - Reorganized recovery tests into tier-specific test files (tier1, tier2, tier3)
+  - Improved test fixtures usage to reduce code duplication
+  - Enhanced test helpers for better test isolation and mocking
+- **Documentation Improvements**:
+  - Updated `README.md` with improved structure and clearer documentation references
+  - Enhanced `DEVELOPER.md` with additional development guidelines
+  - Expanded `tests/README.md` with comprehensive testing guidelines
+  - Updated `tests/fixtures/README.md` with fixture usage documentation
+- **Code Quality**: Various code improvements and refactoring across library modules for better maintainability
+
+### Removed
+- **CRITICAL_PATH_TEST_GAPS.md**: Removed outdated test gaps document
+
+## 0.2.0 - 2025-12-26
 
 ### Changed
 - **Simplified Byte Counter Detection**: Replaced complex traffic pattern analysis with simple heuristics in `check_byte_counters()`:
@@ -134,7 +190,7 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 - **Deprecated Configuration**: Removed deprecated `PING_TARGET_IP` configuration variable (replaced by `INTERNAL_PEER_IPS`)
 - **Deprecated State Files**: Removed deprecated `last_bytes_file` state file format (replaced by abstracted state management in `lib/state.sh`)
 
-## [0.0.1] - 2025-12-15
+## [0.1.0] - 2025-12-15
 
 ### Added
 - Initial release of UDM VPN Monitor

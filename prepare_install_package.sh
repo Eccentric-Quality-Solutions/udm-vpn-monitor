@@ -54,6 +54,36 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Copy files from source directory to destination with error handling
+#
+# Arguments:
+#   $1: Source directory
+#   $2: Destination directory
+#   $3: Array of file paths (relative to source)
+#
+# Returns:
+#   0: Always succeeds (warnings logged but don't fail)
+copy_files_with_validation() {
+	local source_dir="$1"
+	local dest_dir="$2"
+	shift 2
+	local files=("$@")
+
+	for file in "${files[@]}"; do
+		if [[ -f "${source_dir}/${file}" ]]; then
+			# Create destination directory if needed
+			local dest_file_dir
+			dest_file_dir=$(dirname "${dest_dir}/${file}")
+			mkdir -p "$dest_file_dir"
+
+			cp "${source_dir}/${file}" "${dest_dir}/${file}"
+			echo "  Added: ${file}"
+		else
+			echo "Warning: ${file} not found, skipping" >&2
+		fi
+	done
+}
+
 # Main script files
 MAIN_FILES=(
 	"vpn-monitor.sh"
@@ -82,28 +112,11 @@ LIB_FILES=(
 
 echo "Preparing install package..."
 
-# Create temporary directory structure
-mkdir -p "${TEMP_DIR}/lib"
-
 # Copy main files
-for file in "${MAIN_FILES[@]}"; do
-	if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
-		cp "${SCRIPT_DIR}/${file}" "${TEMP_DIR}/${file}"
-		echo "  Added: ${file}"
-	else
-		echo "Warning: ${file} not found, skipping" >&2
-	fi
-done
+copy_files_with_validation "$SCRIPT_DIR" "$TEMP_DIR" "${MAIN_FILES[@]}"
 
 # Copy library files
-for file in "${LIB_FILES[@]}"; do
-	if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
-		cp "${SCRIPT_DIR}/${file}" "${TEMP_DIR}/${file}"
-		echo "  Added: ${file}"
-	else
-		echo "Warning: ${file} not found, skipping" >&2
-	fi
-done
+copy_files_with_validation "$SCRIPT_DIR" "$TEMP_DIR" "${LIB_FILES[@]}"
 
 # Create package file (zip or tar)
 cd "$TEMP_DIR"

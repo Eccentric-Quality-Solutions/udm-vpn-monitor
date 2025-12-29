@@ -36,7 +36,8 @@ EOF
 	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Should handle directory gracefully (should rediscover or skip cache)
 	assert_file_exist "$log_file"
@@ -67,7 +68,8 @@ EOF
 	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Should handle corrupted cache file gracefully (should rediscover or skip cache)
 	assert_file_exist "$log_file"
@@ -97,7 +99,8 @@ EOF
 	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Should handle read-only cache file gracefully (should suppress write error)
 	assert_file_exist "$log_file"
@@ -129,7 +132,8 @@ EOF
 	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Should handle unreadable cache file gracefully (should rediscover)
 	assert_file_exist "$log_file"
@@ -172,7 +176,8 @@ EOF
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Script should use cached name (even if invalid) since cache is checked first
 	# Cache will only be updated if ipsec status is checked and new name is discovered
@@ -217,7 +222,8 @@ EOF
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Should handle connection name discovery during VPN failure gracefully
 	# Code at lib/detection.sh:675-733 handles discovery when no SA exists
@@ -269,7 +275,8 @@ EOF
 	chmod +x "$mock_command"
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Should handle discovery when both cache and ipsec unavailable gracefully
 	# Code at lib/detection.sh:695-698 handles ipsec unavailable
@@ -314,7 +321,8 @@ EOF
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Cached name should be used (cache takes priority over discovery)
 	# Code at lib/detection.sh:694-702 checks cache first and returns early if found

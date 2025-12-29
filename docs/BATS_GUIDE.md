@@ -232,13 +232,17 @@ We have a comprehensive `test_helper.bash` file that provides:
 
 6. **Custom Helpers**: Project-specific helpers like `assert_log_contains` that build on standard library functions, reducing test duplication.
 
-7. **Test Fixtures**: Reusable test fixtures in `tests/fixtures/` for common VPN scenarios (active, down, failing, cooldown) that can be loaded into tests for consistent scenario setup.
+7. **Test Fixtures**: Reusable test fixtures in `tests/fixtures/` for common VPN scenarios (active, down, failing, cooldown) that can be loaded into tests for consistent scenario setup. Multiple fixtures can be loaded in a single test file.
+
+8. **Library Module Sourcing**: Helper function `source_recovery_module()` that sources all recovery dependencies (constants.sh, common.sh, logging.sh, state.sh, detection.sh, recovery.sh) for testing recovery functions directly.
+
+9. **Advanced Mock Functions**: Specialized mock functions for network testing including `mock_ip_route`, `mock_ip_link`, `mock_dig`, `mock_nslookup_fail`, `mock_ip_interfaces_up`, and `mock_ping_success` for comprehensive network partition and interface state testing.
 
 ### Test Execution
 
 Our `run_tests.sh` script provides comprehensive test execution capabilities:
 
-- **Test Filtering**: Fast vs. slow tests (slow tests excluded by default). Fast tests (244 tests) run by default, while slow tests (142 tests including integration and high-risk scenarios) can be included with `--slow` flag. High-risk tests are split into modular files (`test_config.sh`, `test_lockfile.sh`, `test_detection.sh`, `test_recovery.sh`, `test_state.sh`, `test_logging.sh`, `test_connection.sh`, `test_errors.sh`, `test_main.sh`) for better organization and maintainability.
+- **Test Filtering**: Fast vs. slow tests (slow tests excluded by default). Fast tests (419 tests) run by default, while slow tests (220 tests including integration and high-risk scenarios) can be included with `--slow` flag. High-risk tests are split into modular files (`test_config.sh`, `test_lockfile.sh`, `test_detection.sh`, `test_recovery.sh`, `test_state.sh`, `test_logging.sh`, `test_connection.sh`, `test_errors.sh`, `test_main.sh`) for better organization and maintainability.
 
 - **Coverage Reporting**: Integration with kcov for code coverage. Generate coverage reports with `--coverage` flag. Coverage reports are generated in HTML format in the `coverage` directory.
 
@@ -252,6 +256,8 @@ Our `run_tests.sh` script provides comprehensive test execution capabilities:
 
 - **Fast-Fail Mode**: Option to stop on first failure (disabled by default). Use `--all` flag to run all tests regardless of failures.
 
+For detailed usage instructions, command-line options, and examples, see [tests/README.md](../tests/README.md).
+
 ### CI/CD Integration
 
 We have integrated BATS testing into our CI/CD pipeline via GitHub Actions (`.github/workflows/tests.yml`). The workflow:
@@ -260,7 +266,9 @@ We have integrated BATS testing into our CI/CD pipeline via GitHub Actions (`.gi
 - Generates coverage reports
 - Provides test results in TAP format for CI integration
 
-### Current Usage Patterns
+For detailed CI/CD integration information, see [tests/README.md](../tests/README.md).
+
+### Usage Pattern Examples
 
 **1. Test Structure**:
 ```bash
@@ -328,13 +336,31 @@ We use concise conditional skipping patterns in our tests:
 This pattern is used in `test_install.sh` and `test_uninstall.sh` for tests that require specific conditions to be met.
 
 **5. Test Tagging for High-Risk Tests**:
-Our high-risk test suite uses BATS test tags to mark critical tests:
+Our high-risk test suite uses BATS test tags to mark critical tests with multiple tag categories:
 ```bash
-# bats test_tags=priority:high
+# bats test_tags=category:high-risk,priority:high
 @test "config file contains syntax errors" {
     # Test implementation for critical path
 }
+
+# bats test_tags=slow,category:integration,priority:medium
+@test "VPN flapping scenario" {
+    # Slow integration test
+}
 ```
+
+**Tag Categories**:
+- `category:high-risk` - Critical path tests that could cause production failures
+- `category:integration` - Integration tests that test full workflows
+- `category:unit` - Unit tests for individual functions
+- `priority:high` - High priority tests that should be run frequently
+- `priority:medium` - Medium priority tests
+- `slow` - Tests that take longer than the threshold (default: 5 seconds)
+
+**Multiple Tags**: Tests can have multiple tags separated by commas. The `slow` tag is automatically added by `tag_slow_tests.sh` script when tests exceed the threshold.
+
+**Slow Test Tagging**: Use `./tests/tag_slow_tests.sh` to automatically identify and tag slow tests. The script runs all tests with timing enabled and tags tests exceeding `SLOW_THRESHOLD` (default: 5 seconds). Tests tagged as `slow` are excluded from default test runs but can be included with `--slow` flag.
+
 These tests are organized into modular files (`test_config.sh`, `test_lockfile.sh`, `test_detection.sh`, `test_recovery.sh`, `test_state.sh`, `test_logging.sh`, `test_connection.sh`, `test_errors.sh`, `test_main.sh`) and are recognized by the test runner as slow tests that require the `--slow` flag. This modular approach improves maintainability and makes it easier to focus on specific areas when debugging or enhancing tests.
 
 **6. Advanced bats-assert Usage**:
@@ -372,7 +398,124 @@ Our test suite extensively uses advanced bats-assert features (112 instances acr
 ```
 This approach provides more precise assertions, better error messages, and more maintainable test code.
 
-**7. Comprehensive bats-file Assertions**:
+**7. Test Fixtures - Reusable Test Scenarios**:
+Our test suite uses fixtures to reduce duplication and ensure consistent test environments. Fixtures combine multiple setup steps into single function calls.
+
+**Loading Multiple Fixtures**: Tests can load multiple fixtures at once:
+```bash
+load test_helper
+load fixtures/vpn_active
+load fixtures/vpn_down
+load fixtures/vpn_failing
+
+@test "test with multiple fixture options" {
+    # Can use any of the loaded fixtures
+    setup_vpn_active_fixture "192.168.1.1"
+    # or
+    setup_vpn_down_fixture "192.168.1.1"
+}
+```
+
+**Available Fixtures**:
+- `fixtures/vpn_active.bash` - VPN is active and healthy (`setup_vpn_active_fixture`)
+- `fixtures/vpn_down.bash` - VPN is down, no SA found (`setup_vpn_down_fixture`)
+- `fixtures/vpn_failing.bash` - VPN has recorded failures (`setup_vpn_failing_fixture`)
+- `fixtures/vpn_cooldown.bash` - VPN is in cooldown period (`setup_vpn_cooldown_fixture`)
+- `fixtures/vpn_rekey.bash` - VPN has undergone a rekey (`setup_vpn_rekey_fixture`)
+- `fixtures/vpn_multiple_peers.bash` - Multiple VPN peers scenario (`setup_vpn_multiple_peers_fixture`)
+- `fixtures/vpn_recovery_disabled.bash` - Recovery actions disabled (`setup_vpn_recovery_disabled_fixture`)
+
+**Example Usage**:
+```bash
+load test_helper
+load fixtures/vpn_active
+
+@test "VPN active test" {
+    setup_vpn_active_fixture "192.168.1.1" 1000 2000 0x12345678 'TIER1_THRESHOLD=1'
+    # VPN is active, bytes increased from 1000 to 2000
+    run bash "$TEST_SCRIPT" --fake
+    assert_success
+}
+```
+
+See `tests/fixtures/README.md` for detailed fixture documentation.
+
+**8. Direct Library Function Testing**:
+For testing library functions directly (unit testing), source the library files in your test:
+```bash
+@test "test detection function directly" {
+    setup_test_vpn_monitor "192.168.1.1"
+    
+    # Source library files to test functions directly
+    # shellcheck source=../lib/logging.sh
+    source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+    # shellcheck source=../lib/detection.sh
+    source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+    
+    # Test function directly
+    run check_vpn_status "192.168.1.1"
+    assert_success
+}
+```
+
+**Helper Function for Recovery Module**: Use `source_recovery_module()` to source all recovery dependencies:
+```bash
+@test "test recovery function" {
+    setup_test_vpn_monitor "192.168.1.1"
+    source_recovery_module  # Sources all dependencies automatically
+    
+    run attempt_xfrm_recovery "192.168.1.1"
+    assert_success
+}
+```
+
+This pattern is useful for unit testing individual functions without running the full script.
+
+**9. Test Documentation Best Practices**:
+Our tests include detailed comments explaining purpose, expected behavior, and importance:
+```bash
+# bats test_tags=category:high-risk,priority:high
+@test "check_default_route - Default route exists" {
+    # Test verifies that check_default_route correctly detects when default route exists.
+    # Expected: Function returns 0 when default route is present.
+    # Importance: Default route check is critical for network partition detection.
+    setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+    # ... test implementation
+}
+```
+
+This documentation helps maintainers understand test intent and importance, especially for high-risk tests.
+
+**10. Advanced Mock Command Patterns**:
+Beyond basic mocks, we have specialized mock functions for network and system testing:
+
+**Network Partition Mocks**:
+```bash
+# Mock ip route command
+mock_ip_route "1" "default via 192.168.1.1 dev eth0"  # Route exists
+mock_ip_route "0"  # Route missing
+
+# Mock ip link command for interface state
+mock_ip_link "UP,UP" "eth0,eth1"  # Multiple interfaces UP
+
+# Mock DNS resolution
+mock_dig "1" "8.8.8.8"  # DNS succeeds
+mock_dig "0" "8.8.8.8" "timeout"  # DNS timeout
+mock_nslookup_fail  # Prevent DNS fallback
+
+# Mock interfaces as UP
+mock_ip_interfaces_up "br0,eth0" "1"  # Interfaces UP, default route exists
+```
+
+**Specialized Ping Mocks**:
+```bash
+# Mock ping that always succeeds with proper output format
+mock_ping_success  # Always succeeds, outputs packet loss info
+```
+
+These mocks enable comprehensive testing of network partition detection and interface state checks.
+
+**11. Comprehensive bats-file Assertions**:
 Our test suite uses comprehensive bats-file assertions for thorough filesystem testing:
 ```bash
 @test "verifies file permissions after setting them" {
@@ -434,39 +577,12 @@ This comprehensive approach to filesystem testing ensures better validation of f
 
 1. **Test Organization**: ✅ **Improved** - High-risk tests have been split into modular files for better organization
 2. **Parallel Execution**: ✅ **Implemented** - Available but disabled by default for output streaming; can be enabled with `--jobs` flag when needed
-3. **Test Tags**: ✅ **Implemented** - High-risk tests use `bats test_tags=priority:high` for tagging
+3. **Test Tags**: ✅ **Implemented** - High-risk tests use multi-tag patterns (`bats test_tags=category:high-risk,priority:high`) with automatic slow test tagging
 4. **Advanced bats-assert Features**: ✅ **Implemented** - 112 instances upgraded across 6 test files using regex matching, `assert_line`, `assert_equal`, and `assert_regex`
 5. **Comprehensive bats-file Assertions**: ✅ **Implemented** - Enhanced file assertions added across multiple test files including permission, emptiness, and symlink checks
-6. **Documentation**: Tests could benefit from more inline documentation
-
-
-### 4. Parallel Execution
-
-**Current Status**: Parallel execution is implemented and available but disabled by default (`PARALLEL_JOBS=0`) to ensure output streams properly to the terminal.
-
-**Usage**: Parallel execution can be enabled when needed:
-
-```bash
-# Enable parallel execution with auto-detected CPU cores
-./tests/run_tests.sh --jobs auto
-
-# Use specific number of parallel jobs
-./tests/run_tests.sh --jobs 8
-
-# Disable parallel execution (default)
-./tests/run_tests.sh --jobs 0
-# or
-PARALLEL_JOBS=0 ./tests/run_tests.sh
-```
-
-**Performance**: Parallel execution can reduce test time by 3-4x on multi-core systems:
-- Without parallel: ~15 minutes (all tests)
-- With parallel (8 jobs): ~3-5 minutes (all tests)
-- With parallel (fast tests only): ~1-2 minutes
-
-**Requirements**: GNU parallel or rush must be installed. The test runner automatically detects and uses available tools.
-
-**Note**: Parallel execution is disabled by default to ensure output streams properly to the terminal for real-time feedback during development. Enable it when you need faster test runs and can tolerate buffered output.
+6. **Test Documentation**: ✅ **Improved** - Tests now include detailed comments explaining purpose, expected behavior, and importance, especially for high-risk tests
+7. **Test Fixtures**: ✅ **Implemented** - Reusable fixtures available for common scenarios with support for loading multiple fixtures
+8. **Direct Library Testing**: ✅ **Implemented** - Pattern established for testing library functions directly by sourcing library files
 
 ## Community Resources
 
@@ -504,16 +620,60 @@ PARALLEL_JOBS=0 ./tests/run_tests.sh
 
 ### 1. Test Filtering
 
+BATS provides several ways to filter which tests run:
+
+**Filter by Test Name Pattern** (most common):
 ```bash
-# Run tests matching a pattern
-bats --filter "VPN" tests/
+# Run tests matching a pattern in the test name
+bats tests/test_analyze_logs.sh -f "calculates"
 
-# Run tests NOT matching a pattern
-bats --negative-filter "slow" tests/
+# Run multiple specific tests using regex
+bats tests/test_analyze_logs.sh -f "calculates.*(recovery success rate|tier success rates|failures per day)"
 
-# Run tests by status (failed, passed, skipped)
-bats --filter-status failed tests/
+# Filter tests in a specific file
+bats tests/test_config.sh -f "config file"
+
+# Filter across all test files
+bats tests/ -f "VPN"
 ```
+
+**Negative Filter** (exclude tests):
+```bash
+# Run tests NOT matching a pattern
+bats tests/ --negative-filter "slow"
+
+# Exclude specific test categories
+bats tests/ --negative-filter "integration"
+```
+
+**Filter by Status** (from previous run):
+```bash
+# Run only tests that failed in the last run
+bats --filter-status failed tests/
+
+# Run only tests that passed
+bats --filter-status passed tests/
+
+# Run only tests that were skipped
+bats --filter-status skipped tests/
+```
+
+**Practical Examples**:
+```bash
+# Run only calculation-related tests after refactoring floating point logic
+bats tests/test_analyze_logs.sh -f "calculates.*(recovery success rate|tier success rates|failures per day)"
+
+# Run all tests related to a specific feature
+bats tests/ -f "config file"
+
+# Run tests excluding slow/integration tests
+bats tests/ --negative-filter "integration|slow"
+
+# Quick verification of specific functionality
+bats tests/test_analyze_logs.sh -f "calculates"
+```
+
+**Note**: The `-f` flag uses regex pattern matching, so you can use regex patterns for flexible filtering. When running specific test cases, use `-f` with a pattern that matches the test name from the `@test` annotation.
 
 ### 2. Output Formats
 
@@ -561,7 +721,42 @@ bats --list-tests tests/
 BATSLIB_TEMP_PRESERVE_ON_FAILURE=1 bats tests/
 ```
 
-### 5. Test Reporting
+### 5. Slow Test Tagging
+
+We have a script to automatically identify and tag slow tests:
+
+```bash
+# Run all tests with timing and tag slow tests (default threshold: 5 seconds)
+./tests/tag_slow_tests.sh
+
+# Use custom threshold (in seconds)
+SLOW_THRESHOLD=10 ./tests/tag_slow_tests.sh
+```
+
+The script:
+- Runs all tests with timing enabled
+- Identifies tests exceeding the threshold
+- Automatically adds `slow` tag to test tags (preserving existing tags)
+- Updates test files in place
+
+**Example**: If a test takes 7 seconds and threshold is 5 seconds:
+```bash
+# Before
+# bats test_tags=category:high-risk,priority:high
+@test "slow test" {
+    # ...
+}
+
+# After (automatically updated)
+# bats test_tags=slow,category:high-risk,priority:high
+@test "slow test" {
+    # ...
+}
+```
+
+This ensures slow tests are properly tagged and can be excluded from fast test runs.
+
+### 6. Test Reporting
 
 ```bash
 # Generate coverage report
@@ -570,6 +765,74 @@ bats --coverage tests/
 # Generate HTML report (with external tools)
 bats --tap tests/ | tap-html > report.html
 ```
+
+### 7. Complete Test Example
+
+Here's a complete example showing multiple patterns together:
+
+```bash
+#!/usr/bin/env bats
+#
+# Tests for Network Partition Detection Functions
+# Tests critical paths and error handling scenarios
+
+load test_helper
+load fixtures/vpn_active
+load fixtures/vpn_down
+
+# bats test_tags=category:high-risk,priority:high
+@test "check_default_route - Default route exists" {
+    # Test verifies that check_default_route correctly detects when default route exists.
+    # Expected: Function returns 0 when default route is present.
+    # Importance: Default route check is critical for network partition detection.
+    
+    setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+    
+    # Mock ip command - default route exists
+    mock_ip_route "1" "default via 192.168.1.1 dev eth0"
+    add_mock_to_path
+    
+    # Source detection functions to test directly
+    # shellcheck source=../lib/logging.sh
+    source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+    # shellcheck source=../lib/detection.sh
+    source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+    
+    # Test check_default_route function
+    run check_default_route
+    assert_success
+    
+    remove_mock_from_path
+}
+
+# bats test_tags=slow,category:integration,priority:medium
+@test "VPN flapping scenario with fixtures" {
+    # Purpose: Test verifies VPN flapping within cooldown period is handled correctly.
+    # Expected: Cooldown should prevent excessive recovery actions.
+    
+    # Use fixture for initial VPN state
+    setup_vpn_active_fixture "192.168.1.1"
+    
+    # Run script - VPN is active
+    run bash "$TEST_SCRIPT" --fake
+    assert_success
+    
+    # Change to VPN down state using fixture
+    setup_vpn_down_fixture "192.168.1.1"
+    
+    # Run script - VPN fails, triggers recovery
+    run bash "$TEST_SCRIPT" --fake
+    assert_file_contains "$LOG_FILE" "Tier 3" || assert_file_contains "$LOG_FILE" "cooldown"
+}
+```
+
+This example demonstrates:
+- Loading multiple fixtures
+- Using test tags with multiple categories
+- Direct library function testing
+- Advanced mock usage
+- Test documentation comments
+- Combining fixtures with manual setup
 
 ## Summary
 
@@ -598,8 +861,529 @@ Our test suite leverages BATS best practices and includes:
 - **Output streaming** with unbuffered output for real-time test results
 - **Failed test rerun** capability for quick iteration
 - **CI/CD integration** via GitHub Actions for automatic test execution
-- **Test fixtures** for reusable VPN scenario setup
+- **Test fixtures** for reusable VPN scenario setup with support for loading multiple fixtures
 - **BATS Extended Syntax** for concise conditional skipping
 - **Modular test organization** with high-risk tests split into focused files for better maintainability
-- **Test tagging** using `bats test_tags=priority:high` for high-risk tests
+- **Test tagging** using multi-tag patterns (`bats test_tags=category:high-risk,priority:high,slow`) for test categorization and filtering
+- **Slow test auto-tagging** via `tag_slow_tests.sh` script that automatically identifies and tags slow tests
+- **Direct library function testing** by sourcing library files to test individual functions in isolation
+- **Advanced mock patterns** for network partition detection, DNS resolution, and interface state testing
+- **Test documentation** with detailed comments explaining purpose, expected behavior, and importance
 
+## Quick Reference
+
+This section provides quick access to the most common patterns and commands used in our BATS test suite.
+
+### Essential Test Structure
+
+```bash
+#!/usr/bin/env bats
+load test_helper
+
+# bats test_tags=category:high-risk,priority:high
+@test "test description" {
+    setup_test_vpn_monitor "192.168.1.1"
+    run bash "$TEST_SCRIPT" --fake
+    assert_success
+    assert_file_contains "$LOG_FILE" "expected message"
+}
+```
+
+### Common Setup Patterns
+
+**Basic VPN Monitor Setup**:
+```bash
+setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+```
+
+**With Custom Config**:
+```bash
+setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'ENABLE_PING_CHECK=0'
+```
+
+**Using Fixtures**:
+```bash
+load fixtures/vpn_active
+setup_vpn_active_fixture "192.168.1.1"
+```
+
+**With State Files**:
+```bash
+setup_state_files "192.168.1.1" 2 500  # failure_count=2, last_bytes=500
+```
+
+### Common Assertions
+
+**Exit Status**:
+```bash
+assert_success
+assert_failure
+```
+
+**Output Matching**:
+```bash
+assert_output "exact match"
+assert_output --partial "partial match"
+assert_output --regexp 'pattern.*match'
+assert_line --partial "line content"
+```
+
+**File Checks**:
+```bash
+assert_file_exist "$file"
+assert_file_not_exist "$file"
+assert_file_empty "$file"
+assert_file_not_empty "$file"
+assert_file_contains "$file" "pattern"
+assert_file_permission 755 "$file"
+```
+
+**Log Checks**:
+```bash
+assert_log_contains "$LOG_FILE" "message"
+assert_log_not_contains "$LOG_FILE" "message"
+```
+
+**Value Comparisons**:
+```bash
+assert_equal "$var" "expected"
+assert_regex "$var" '^pattern$'
+```
+
+### Common Mock Patterns
+
+**VPN Environment**:
+```bash
+setup_mock_vpn_environment "192.168.1.1" 1000 0x12345678
+add_mock_to_path
+```
+
+**Network Partition**:
+```bash
+mock_ip_route "1" "default via 192.168.1.1 dev eth0"  # Route exists
+mock_dig "1" "8.8.8.8"  # DNS succeeds
+mock_ip_interfaces_up "br0,eth0" "1"
+add_mock_to_path
+```
+
+**Ping**:
+```bash
+mock_ping "192.168.1.1" "1"  # Success
+mock_ping_success  # Always succeeds
+add_mock_to_path
+```
+
+### Direct Library Function Testing
+
+**Test Detection Functions**:
+```bash
+source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+run check_vpn_status "192.168.1.1"
+assert_success
+```
+
+**Test Recovery Functions**:
+```bash
+source_recovery_module
+run attempt_xfrm_recovery "192.168.1.1"
+assert_success
+```
+
+### Test Tagging
+
+**Tag Format**:
+```bash
+# bats test_tags=category:high-risk,priority:high
+# bats test_tags=slow,category:integration,priority:medium
+```
+
+**Common Tags**:
+- `category:high-risk` - Critical path tests
+- `category:integration` - Integration tests
+- `category:unit` - Unit tests
+- `priority:high` - High priority
+- `priority:medium` - Medium priority
+- `slow` - Slow tests (>5 seconds)
+
+### Running Tests
+
+**Fast Tests Only** (default):
+```bash
+./tests/run_tests.sh
+```
+
+**Include Slow Tests**:
+```bash
+./tests/run_tests.sh --slow
+```
+
+**Specific Test File**:
+```bash
+bats tests/test_detection.sh
+```
+
+**Filter by Name**:
+```bash
+bats tests/ -f "VPN status"
+```
+
+**Failed Tests Only**:
+```bash
+./tests/run_tests.sh --failed
+```
+
+**With Coverage**:
+```bash
+./tests/run_tests.sh --coverage
+```
+
+### Helper Functions Quick Reference
+
+**Setup Functions**:
+- `setup_test_vpn_monitor` - Complete VPN monitor setup
+- `setup_test_config` - Create config file
+- `setup_state_files` - Create state files
+- `setup_mock_vpn_environment` - Setup mocks
+- `setup_vpn_active_fixture` - VPN active fixture
+- `setup_vpn_down_fixture` - VPN down fixture
+
+**Mock Functions**:
+- `mock_ip_xfrm_state` - Mock ip xfrm state
+- `mock_ping` - Mock ping command
+- `mock_ipsec` - Mock ipsec command
+- `mock_ip_route` - Mock ip route
+- `mock_dig` - Mock DNS resolution
+- `add_mock_to_path` - Add mocks to PATH
+- `remove_mock_from_path` - Remove mocks from PATH
+
+**Assertion Functions**:
+- `assert_log_contains` - Check log content
+- `assert_log_not_contains` - Check log doesn't contain
+- `assert_file_executable` - Check file is executable
+- `assert_state_file` - Check state file value
+
+### Common Patterns by Test Type
+
+**Unit Test** (testing functions directly):
+```bash
+source_recovery_module
+run attempt_xfrm_recovery "192.168.1.1"
+assert_success
+```
+
+**Integration Test** (testing full script):
+```bash
+setup_test_vpn_monitor "192.168.1.1"
+run bash "$TEST_SCRIPT" --fake
+assert_success
+```
+
+**Network Partition Test**:
+```bash
+setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+mock_ip_route "0"  # No route
+mock_dig "0" "8.8.8.8" "timeout"
+add_mock_to_path
+source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+run check_network_partition "192.168.1.1"
+assert_success
+```
+
+**State Management Test**:
+```bash
+setup_test_vpn_monitor "192.168.1.1"
+setup_state_files "192.168.1.1" 3 1000
+run bash "$TEST_SCRIPT" --fake
+assert_file_contains "$LOG_FILE" "Tier"
+```
+
+### Troubleshooting
+
+**Preserve Temp Directories on Failure**:
+```bash
+BATSLIB_TEMP_PRESERVE_ON_FAILURE=1 bats tests/
+```
+
+**Verbose Output**:
+```bash
+bats --verbose tests/
+```
+
+**List All Tests**:
+```bash
+bats --list-tests tests/
+```
+
+**Tag Slow Tests**:
+```bash
+./tests/tag_slow_tests.sh
+SLOW_THRESHOLD=10 ./tests/tag_slow_tests.sh  # Custom threshold
+```
+
+---
+
+## Document Organization
+
+**Current Size**: ~1389 lines
+
+This document is comprehensive and covers all aspects of BATS testing in our project. It has grown beyond the initial size and could benefit from splitting into multiple focused documents for better navigation:
+
+**Potential Split Structure**:
+- `BATS_GUIDE.md` - Core guide (introduction, basics, quick reference)
+- `BATS_PATTERNS.md` - Detailed usage patterns and examples
+- `BATS_ADVANCED.md` - Advanced features, debugging, optimization
+- `BATS_REFERENCE.md` - Complete API reference and helper functions
+
+This would improve navigation and make it easier to find specific information. For now, the single document structure works well and the Quick Reference section below provides quick access to common patterns.
+
+## Quick Reference
+
+This section provides quick access to the most common patterns and commands used in our BATS test suite.
+
+### Essential Test Structure
+
+```bash
+#!/usr/bin/env bats
+load test_helper
+
+# bats test_tags=category:high-risk,priority:high
+@test "test description" {
+    setup_test_vpn_monitor "192.168.1.1"
+    run bash "$TEST_SCRIPT" --fake
+    assert_success
+    assert_file_contains "$LOG_FILE" "expected message"
+}
+```
+
+### Common Setup Patterns
+
+**Basic VPN Monitor Setup**:
+```bash
+setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+```
+
+**With Custom Config**:
+```bash
+setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'ENABLE_PING_CHECK=0'
+```
+
+**Using Fixtures**:
+```bash
+load fixtures/vpn_active
+setup_vpn_active_fixture "192.168.1.1"
+```
+
+**With State Files**:
+```bash
+setup_state_files "192.168.1.1" 2 500  # failure_count=2, last_bytes=500
+```
+
+### Common Assertions
+
+**Exit Status**:
+```bash
+assert_success
+assert_failure
+```
+
+**Output Matching**:
+```bash
+assert_output "exact match"
+assert_output --partial "partial match"
+assert_output --regexp 'pattern.*match'
+assert_line --partial "line content"
+```
+
+**File Checks**:
+```bash
+assert_file_exist "$file"
+assert_file_not_exist "$file"
+assert_file_empty "$file"
+assert_file_not_empty "$file"
+assert_file_contains "$file" "pattern"
+assert_file_permission 755 "$file"
+```
+
+**Log Checks**:
+```bash
+assert_log_contains "$LOG_FILE" "message"
+assert_log_not_contains "$LOG_FILE" "message"
+```
+
+**Value Comparisons**:
+```bash
+assert_equal "$var" "expected"
+assert_regex "$var" '^pattern$'
+```
+
+### Common Mock Patterns
+
+**VPN Environment**:
+```bash
+setup_mock_vpn_environment "192.168.1.1" 1000 0x12345678
+add_mock_to_path
+```
+
+**Network Partition**:
+```bash
+mock_ip_route "1" "default via 192.168.1.1 dev eth0"  # Route exists
+mock_dig "1" "8.8.8.8"  # DNS succeeds
+mock_ip_interfaces_up "br0,eth0" "1"
+add_mock_to_path
+```
+
+**Ping**:
+```bash
+mock_ping "192.168.1.1" "1"  # Success
+mock_ping_success  # Always succeeds
+add_mock_to_path
+```
+
+### Direct Library Function Testing
+
+**Test Detection Functions**:
+```bash
+source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+run check_vpn_status "192.168.1.1"
+assert_success
+```
+
+**Test Recovery Functions**:
+```bash
+source_recovery_module
+run attempt_xfrm_recovery "192.168.1.1"
+assert_success
+```
+
+### Test Tagging
+
+**Tag Format**:
+```bash
+# bats test_tags=category:high-risk,priority:high
+# bats test_tags=slow,category:integration,priority:medium
+```
+
+**Common Tags**:
+- `category:high-risk` - Critical path tests
+- `category:integration` - Integration tests
+- `category:unit` - Unit tests
+- `priority:high` - High priority
+- `priority:medium` - Medium priority
+- `slow` - Slow tests (>5 seconds)
+
+### Running Tests
+
+**Fast Tests Only** (default):
+```bash
+./tests/run_tests.sh
+```
+
+**Include Slow Tests**:
+```bash
+./tests/run_tests.sh --slow
+```
+
+**Specific Test File**:
+```bash
+bats tests/test_detection.sh
+```
+
+**Filter by Name**:
+```bash
+bats tests/ -f "VPN status"
+```
+
+**Failed Tests Only**:
+```bash
+./tests/run_tests.sh --failed
+```
+
+**With Coverage**:
+```bash
+./tests/run_tests.sh --coverage
+```
+
+### Helper Functions Quick Reference
+
+**Setup Functions**:
+- `setup_test_vpn_monitor` - Complete VPN monitor setup
+- `setup_test_config` - Create config file
+- `setup_state_files` - Create state files
+- `setup_mock_vpn_environment` - Setup mocks
+- `setup_vpn_active_fixture` - VPN active fixture
+- `setup_vpn_down_fixture` - VPN down fixture
+
+**Mock Functions**:
+- `mock_ip_xfrm_state` - Mock ip xfrm state
+- `mock_ping` - Mock ping command
+- `mock_ipsec` - Mock ipsec command
+- `mock_ip_route` - Mock ip route
+- `mock_dig` - Mock DNS resolution
+- `add_mock_to_path` - Add mocks to PATH
+- `remove_mock_from_path` - Remove mocks from PATH
+
+**Assertion Functions**:
+- `assert_log_contains` - Check log content
+- `assert_log_not_contains` - Check log doesn't contain
+- `assert_file_executable` - Check file is executable
+- `assert_state_file` - Check state file value
+
+### Common Patterns by Test Type
+
+**Unit Test** (testing functions directly):
+```bash
+source_recovery_module
+run attempt_xfrm_recovery "192.168.1.1"
+assert_success
+```
+
+**Integration Test** (testing full script):
+```bash
+setup_test_vpn_monitor "192.168.1.1"
+run bash "$TEST_SCRIPT" --fake
+assert_success
+```
+
+**Network Partition Test**:
+```bash
+setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+mock_ip_route "0"  # No route
+mock_dig "0" "8.8.8.8" "timeout"
+add_mock_to_path
+source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+run check_network_partition "192.168.1.1"
+assert_success
+```
+
+**State Management Test**:
+```bash
+setup_test_vpn_monitor "192.168.1.1"
+setup_state_files "192.168.1.1" 3 1000
+run bash "$TEST_SCRIPT" --fake
+assert_file_contains "$LOG_FILE" "Tier"
+```
+
+### Troubleshooting
+
+**Preserve Temp Directories on Failure**:
+```bash
+BATSLIB_TEMP_PRESERVE_ON_FAILURE=1 bats tests/
+```
+
+**Verbose Output**:
+```bash
+bats --verbose tests/
+```
+
+**List All Tests**:
+```bash
+bats --list-tests tests/
+```
+
+**Tag Slow Tests**:
+```bash
+./tests/tag_slow_tests.sh
+SLOW_THRESHOLD=10 ./tests/tag_slow_tests.sh  # Custom threshold
+```

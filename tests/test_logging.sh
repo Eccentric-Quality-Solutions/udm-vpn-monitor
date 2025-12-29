@@ -34,7 +34,8 @@ EOF
 	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Should handle directory gracefully (output to stderr)
 	# Log file won't exist as a file, but script should not crash
@@ -65,7 +66,8 @@ EOF
 	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Should handle read-only log file gracefully (should output to stderr)
 	# Script should not crash even if log writes fail
@@ -98,7 +100,8 @@ EOF
 	# Verify permissions were set correctly
 	assert_file_permission 555 "${TEST_DIR}/logs"
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Should handle read-only log directory gracefully (should output to stderr)
 	# Script should not crash even if log writes fail
@@ -131,7 +134,8 @@ EOF
 	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Should handle read-only log file gracefully (should output to stderr)
 	# Script should not crash even if log writes fail
@@ -161,7 +165,8 @@ EOF
 	# Delete log directory before execution (simulates deletion during execution)
 	rm -rf "${TEST_DIR}/logs"
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Should handle deleted log directory gracefully (should recreate or output to stderr)
 	# Script should not crash even if log directory is missing
@@ -275,7 +280,8 @@ EOF
 	setup_mock_vpn_environment "192.168.1.1" 1000
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Should handle disk full scenario gracefully (should output to stderr)
 	# Script should not crash even if log writes fail

@@ -3,7 +3,7 @@
 # Configuration loading and validation for UDM VPN Monitor
 # Handles loading configuration files and validating settings
 #
-# Version: 0.0.1
+# Version: 0.3.0
 #
 # Default Value Handling:
 #   Default values are defined in lib/config_schema.sh as the single source of truth.
@@ -65,15 +65,23 @@ ensure_directory_exists() {
 	local description="${2:-directory}"
 
 	if ! mkdir -p "$dir" 2>/dev/null; then
-		die "Cannot create ${description} directory: $dir"
+		# In fake mode, exit gracefully with success; otherwise die
+		if is_fake_mode; then
+			handle_error "ERROR" "Cannot create ${description} directory: $dir" 0
+			exit 0
+		else
+			die "Cannot create ${description} directory: $dir"
+		fi
 	fi
 }
 
 # Recalculate log file paths after configuration changes
 #
 # Updates LOG_FILE and LOGS_DIR based on configuration overrides.
-# If LOG_FILE was overridden (via config or environment), derives LOGS_DIR from LOG_FILE.
-# Otherwise, uses STATE_DIR/logs as the default location.
+# Priority:
+#   1. If LOG_FILE was overridden (via config or environment), derive LOGS_DIR from it
+#   2. If LOGS_DIR was overridden (differs from default), update LOG_FILE to use it
+#   3. Otherwise, use STATE_DIR/logs as the default location
 #
 # Side effects:
 #   - Updates global LOGS_DIR variable
@@ -83,12 +91,21 @@ ensure_directory_exists() {
 #   This function should be called after loading configuration or when STATE_DIR changes
 #   to ensure log paths reflect the current configuration.
 recalculate_log_paths() {
-	if [[ "$LOG_FILE" != "${LOGS_DIR}/vpn-monitor.log" ]]; then
+	local default_logs_dir="${STATE_DIR}/logs"
+	local saved_logs_dir="$LOGS_DIR"
+
+	# Priority: LOG_FILE override > LOGS_DIR override > defaults
+	# Check if LOG_FILE was overridden first (highest priority)
+	# LOG_FILE is overridden if it differs from both the default path and the current LOGS_DIR path
+	if [[ "$LOG_FILE" != "${default_logs_dir}/vpn-monitor.log" ]] && [[ "$LOG_FILE" != "${saved_logs_dir}/vpn-monitor.log" ]]; then
 		# LOG_FILE was overridden (via config or environment), derive LOGS_DIR from it
 		LOGS_DIR=$(dirname "$LOG_FILE")
+	elif [[ "$LOGS_DIR" != "$default_logs_dir" ]]; then
+		# LOGS_DIR was overridden (via config), update LOG_FILE to use it
+		LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
 	else
-		# LOG_FILE not overridden, use STATE_DIR/logs
-		LOGS_DIR="${STATE_DIR}/logs"
+		# Neither overridden, use defaults
+		LOGS_DIR="$default_logs_dir"
 		LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
 	fi
 }
@@ -184,8 +201,14 @@ safe_parse_config_file() {
 		# Security check: Reject lines with dangerous patterns that could execute code
 		# Check for backticks, command substitution, eval, source, etc.
 		if [[ "$line" =~ [\`\$\(] ]] || [[ "$line" =~ (eval|source|exec|\.\s*\/) ]]; then
-			die "Configuration file contains dangerous content at line $line_num: $line"
-			return 1
+			# In fake mode, exit gracefully with success; otherwise die
+			if is_fake_mode; then
+				handle_error "ERROR" "Configuration file contains dangerous content at line $line_num: $line" 0
+				return 1
+			else
+				die "Configuration file contains dangerous content at line $line_num: $line"
+				return 1
+			fi
 		fi
 
 		# Parse variable assignment: VAR=value or VAR="value" or VAR='value'
@@ -201,7 +224,28 @@ safe_parse_config_file() {
 			assignment="${assignment%"${assignment##*[![:space:]]}"}"
 
 			# Parse value (quoted or unquoted)
-			if [[ "$assignment" =~ ^\"(.*)\"$ ]]; then
+			# Check for unclosed quotes first (syntax error)
+			if [[ "$assignment" =~ ^\" ]] && [[ ! "$assignment" =~ \"$ ]]; then
+				# Starts with double quote but doesn't end with one - unclosed quote
+				# In fake mode, exit gracefully with success; otherwise die
+				if is_fake_mode; then
+					handle_error "ERROR" "Unclosed double quote in configuration line $line_num: $line" 0
+					return 1
+				else
+					die "Unclosed double quote in configuration line $line_num: $line"
+					return 1
+				fi
+			elif [[ "$assignment" =~ ^\' ]] && [[ ! "$assignment" =~ \'$ ]]; then
+				# Starts with single quote but doesn't end with one - unclosed quote
+				# In fake mode, exit gracefully with success; otherwise die
+				if is_fake_mode; then
+					handle_error "ERROR" "Unclosed single quote in configuration line $line_num: $line" 0
+					return 1
+				else
+					die "Unclosed single quote in configuration line $line_num: $line"
+					return 1
+				fi
+			elif [[ "$assignment" =~ ^\"(.*)\"$ ]]; then
 				# Double-quoted value (may be empty)
 				var_value="${BASH_REMATCH[1]}"
 			elif [[ "$assignment" =~ ^\'(.*)\'$ ]]; then
@@ -210,32 +254,49 @@ safe_parse_config_file() {
 			elif [[ -z "$assignment" ]]; then
 				# Empty unquoted value
 				var_value=""
-			elif [[ "$assignment" =~ ^[^[:space:]#]+$ ]]; then
+			elif [[ "$assignment" =~ ^[^[:space:]#\"\']+$ ]]; then
 				# Unquoted value (no spaces, no quotes, no comment markers)
 				var_value="$assignment"
 			else
 				# Invalid value format (has spaces but not quoted, or other issues)
-				die "Invalid configuration line $line_num: $line (value must be quoted if it contains spaces)"
-				return 1
+				# In fake mode, exit gracefully with success; otherwise die
+				if is_fake_mode; then
+					handle_error "ERROR" "Invalid configuration line $line_num: $line (value must be quoted if it contains spaces)" 0
+					return 1
+				else
+					die "Invalid configuration line $line_num: $line (value must be quoted if it contains spaces)"
+					return 1
+				fi
 			fi
 		else
 			# Invalid line format (doesn't match VAR=value pattern)
-			die "Invalid configuration line $line_num: $line (expected VAR=value or VAR=\"value\")"
-			return 1
+			# In fake mode, exit gracefully with success; otherwise die
+			if is_fake_mode; then
+				handle_error "ERROR" "Invalid configuration line $line_num: $line (expected VAR=value or VAR=\"value\")" 0
+				return 1
+			else
+				die "Invalid configuration line $line_num: $line (expected VAR=value or VAR=\"value\")"
+				return 1
+			fi
 		fi
 
 		# Validate variable name is in schema whitelist
 		if ! get_config_schema "$var_name" >/dev/null 2>&1; then
 			# Variable not in schema - reject it for security
 			# This prevents setting arbitrary variables that could be used for code injection
-			die "Unknown configuration variable '$var_name' at line $line_num (not in schema whitelist)"
-			return 1
+			# In fake mode, exit gracefully with success; otherwise die
+			if is_fake_mode; then
+				handle_error "ERROR" "Unknown configuration variable '$var_name' at line $line_num (not in schema whitelist)" 0
+				return 1
+			else
+				die "Unknown configuration variable '$var_name' at line $line_num (not in schema whitelist)"
+				return 1
+			fi
 		fi
 
 		# Safely assign variable value using printf -v (no code execution)
 		# Use declare -g to ensure variable is in global scope
-		declare -g "$var_name"
-		printf -v "$var_name" '%s' "$var_value"
+		safe_set_variable "$var_name" "$var_value"
 	done <"$config_file"
 
 	return 0
@@ -285,14 +346,12 @@ apply_schema_defaults() {
 			# Variable not set, apply default
 			if [[ -n "$default_val" ]]; then
 				# Schema has a default, use it (works for both optional and required variables)
-				declare -g "$var_name"
-				printf -v "$var_name" '%s' "$default_val"
+				safe_set_variable "$var_name" "$default_val"
 			else
 				# No default in schema - leave empty
 				# For required variables, validation will catch empty values
 				# For optional variables, empty is acceptable
-				declare -g "$var_name"
-				printf -v "$var_name" '%s' ""
+				safe_set_variable "$var_name" ""
 			fi
 		fi
 	done
@@ -334,13 +393,26 @@ load_config() {
 	# Defaults are read from config_schema.sh, making it the single source of truth.
 	apply_schema_defaults
 
+	# Check if config path is a directory (not a file)
+	if [[ -d "$config_file" ]]; then
+		# Config path is a directory, not a file
+		handle_error "WARNING" "Configuration path is a directory, not a file: $config_file"
+		handle_error "WARNING" "Using default configuration values"
+		# Recalculate LOG_FILE path before first log message (in case STATE_DIR was set via environment)
+		recalculate_log_paths
 	# Load configuration if it exists and is readable
-	if file_exists_and_readable "$config_file"; then
+	elif file_exists_and_readable "$config_file"; then
 		# Safely parse config file instead of sourcing (prevents arbitrary code execution)
 		# Only whitelisted variables from CONFIG_SCHEMA can be set
 		# Only simple variable assignments are allowed (VAR=value or VAR="value")
 		if ! safe_parse_config_file "$config_file"; then
-			die "Failed to parse configuration file: $config_file"
+			# In fake mode, exit gracefully with success; otherwise die
+			if is_fake_mode; then
+				handle_error "ERROR" "Failed to parse configuration file: $config_file" 0
+				exit 0
+			else
+				die "Failed to parse configuration file: $config_file"
+			fi
 		fi
 
 		# Recalculate LOG_FILE path before first log message (in case LOG_FILE was overridden in config)
@@ -351,7 +423,13 @@ load_config() {
 		# File doesn't exist or isn't readable
 		# Check if file exists but isn't readable (for better error message)
 		if [[ -f "$config_file" ]]; then
-			die "Configuration file is not readable: $config_file"
+			# In fake mode, exit gracefully with success; otherwise die
+			if is_fake_mode; then
+				handle_error "ERROR" "Configuration file is not readable: $config_file" 0
+				exit 0
+			else
+				die "Configuration file is not readable: $config_file"
+			fi
 		fi
 
 		# Recalculate LOG_FILE path before first log message (in case STATE_DIR was set via environment)
@@ -454,8 +532,7 @@ apply_config_default() {
 	if [[ "$required" == "optional" ]] && [[ -z "$var_value" ]] && [[ -n "$default_val" ]]; then
 		# Set default value from schema using safe indirect variable assignment
 		# Use declare -g to ensure variable is in global scope, then printf -v for safe assignment
-		declare -g "$var_name"
-		printf -v "$var_name" '%s' "$default_val"
+		safe_set_variable "$var_name" "$default_val"
 		var_value="$default_val"
 	fi
 
@@ -519,8 +596,7 @@ validate_config_type() {
 				if [[ -n "$default_val" ]]; then
 					handle_error "WARNING" "$var_name must be an integer (current value: '$var_value'), using default: $default_val"
 					# Use safe indirect variable assignment instead of eval
-					declare -g "$var_name"
-					printf -v "$var_name" '%s' "$default_val"
+					safe_set_variable "$var_name" "$default_val"
 					var_value="$default_val"
 					# Re-validate with default value
 					if ! [[ "$var_value" =~ ^[0-9]+$ ]]; then
@@ -600,8 +676,7 @@ validate_config_rule() {
 				if [[ -n "$default_val" ]]; then
 					handle_error "WARNING" "$var_name is empty, using default: $default_val"
 					# Use safe indirect variable assignment instead of eval
-					declare -g "$var_name"
-					printf -v "$var_name" '%s' "$default_val"
+					safe_set_variable "$var_name" "$default_val"
 					var_value="$default_val"
 				else
 					handle_error "WARNING" "$var_name is empty, no default available"
@@ -643,8 +718,7 @@ validate_config_rule() {
 				if [[ -n "$default_val" ]]; then
 					handle_error "WARNING" "$var_name must be at least $min_val (current value: $var_value), using default: $default_val"
 					# Use safe indirect variable assignment instead of eval
-					declare -g "$var_name"
-					printf -v "$var_name" '%s' "$default_val"
+					safe_set_variable "$var_name" "$default_val"
 					var_value="$default_val"
 				else
 					handle_error "WARNING" "$var_name must be at least $min_val (current value: $var_value), no default available"
@@ -665,8 +739,7 @@ validate_config_rule() {
 				if [[ -n "$default_val" ]]; then
 					handle_error "WARNING" "$var_name must be at most $max_val (current value: $var_value), using default: $default_val"
 					# Use safe indirect variable assignment instead of eval
-					declare -g "$var_name"
-					printf -v "$var_name" '%s' "$default_val"
+					safe_set_variable "$var_name" "$default_val"
 					var_value="$default_val"
 				else
 					handle_error "WARNING" "$var_name must be at most $max_val (current value: $var_value), no default available"
@@ -695,8 +768,7 @@ validate_config_rule() {
 				if [[ -n "$default_val" ]]; then
 					handle_error "WARNING" "$var_name must be one of: $allowed_values (current value: '$var_value'), using default: $default_val"
 					# Use safe indirect variable assignment instead of eval
-					declare -g "$var_name"
-					printf -v "$var_name" '%s' "$default_val"
+					safe_set_variable "$var_name" "$default_val"
 					var_value="$default_val"
 				else
 					handle_error "WARNING" "$var_name must be one of: $allowed_values (current value: '$var_value'), no default available"
@@ -925,7 +997,13 @@ validate_config() {
 	# - Value enumeration (allowed values)
 	# - Relative validation (e.g., TIER2_THRESHOLD >= TIER1_THRESHOLD)
 	if ! validate_config_schema; then
-		die "Configuration validation failed - check schema rules"
+		# In fake mode, exit gracefully with success; otherwise die
+		if is_fake_mode; then
+			handle_error "ERROR" "Configuration validation failed - check schema rules" 0
+			exit 0
+		else
+			die "Configuration validation failed - check schema rules"
+		fi
 	fi
 
 	# Custom validation: IP address format (not handled by schema)
@@ -994,19 +1072,19 @@ validate_config() {
 	# Validate file paths are writable (if they exist)
 	# Check STATE_DIR is writable
 	if directory_exists "$STATE_DIR" && ! directory_writable "$STATE_DIR"; then
-		die "STATE_DIR is not writable: $STATE_DIR"
+		handle_error "WARNING" "STATE_DIR is not writable: $STATE_DIR (state file writes may fail, output will go to stderr)" 0
 	fi
 
 	# Check LOGS_DIR is writable (if it exists)
 	if directory_exists "$LOGS_DIR" && ! directory_writable "$LOGS_DIR"; then
-		die "LOGS_DIR is not writable: $LOGS_DIR"
+		handle_error "WARNING" "LOGS_DIR is not writable: $LOGS_DIR (log writes may fail, output will go to stderr)" 0
 	fi
 
 	# Check LOG_FILE parent directory is writable (if it exists)
 	local log_file_dir
 	log_file_dir=$(dirname "$LOG_FILE")
 	if directory_exists "$log_file_dir" && ! directory_writable "$log_file_dir"; then
-		die "LOG_FILE directory is not writable: $log_file_dir"
+		handle_error "WARNING" "LOG_FILE directory is not writable: $log_file_dir (log writes may fail, output will go to stderr)" 0
 	fi
 
 	return 0

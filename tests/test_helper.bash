@@ -10,6 +10,28 @@ load "${BATS_TEST_DIRNAME}/bats-support/load.bash"
 load "${BATS_TEST_DIRNAME}/bats-assert/load.bash"
 load "${BATS_TEST_DIRNAME}/bats-file/load.bash"
 
+# BATS Built-in Variables
+#
+# BATS provides several built-in variables that are available in tests:
+#   - BATS_TEST_DIRNAME: Directory containing the test file
+#   - BATS_TEST_FILENAME: Full path to the test file
+#   - BATS_TEST_NAME: Name of the test (from @test annotation)
+#   - BATS_TEST_NUMBER: Sequential number of the test in the file
+#   - BATS_TEST_TMPDIR: Temporary directory for the test (automatically cleaned)
+#
+# These variables are useful for:
+#   - Better error messages (using BATS_TEST_NAME)
+#   - Debugging (using BATS_TEST_FILENAME and BATS_TEST_NUMBER)
+#   - Test-specific temporary files (using BATS_TEST_TMPDIR)
+#
+# Example usage:
+#   echo "Running test: ${BATS_TEST_NAME} from ${BATS_TEST_FILENAME}"
+#   local debug_file="${BATS_TEST_TMPDIR}/debug.log"
+
+# Load common functions from lib
+# shellcheck source=../lib/common.sh
+source "${BATS_TEST_DIRNAME}/../lib/common.sh"
+
 # Setup function run before each test
 #
 # Bats framework calls this function automatically before each test.
@@ -18,9 +40,15 @@ load "${BATS_TEST_DIRNAME}/bats-file/load.bash"
 # Side effects:
 #   - Creates TEST_DIR for this test using temp_make
 #   - Creates MOCK_DATA_DIR and MOCK_INSTALL_DIR
-#   - Saves original PWD and HOME
+#   - Saves original PWD, HOME, and PATH
 #   - Sets TEST_DIR, MOCK_DATA_DIR, MOCK_INSTALL_DIR environment variables
 setup() {
+	# Save original PATH before any modifications
+	# This ensures we can restore PATH in teardown even if test fails
+	# PATH may be modified by add_mock_to_path() during tests
+	ORIGINAL_PATH="${PATH}"
+	export ORIGINAL_PATH
+
 	# Create temporary directory for this test using bats-file's temp_make
 	# This provides consistent temporary directory handling and better cleanup
 	TEST_DIR="$(temp_make --prefix 'vpn-monitor-')"
@@ -49,6 +77,7 @@ setup() {
 # Cleans up test environment and restores original state.
 #
 # Side effects:
+#   - Restores original PATH (removes any mock PATH modifications)
 #   - Removes TEST_DIR and all contents using temp_del
 #   - Restores original working directory
 #   - Removes test cron entries containing "test-vpn-monitor"
@@ -56,6 +85,12 @@ setup() {
 # Note: Set BATSLIB_TEMP_PRESERVE_ON_FAILURE=1 to preserve temp directories
 #       for debugging when tests fail
 teardown() {
+	# Always restore PATH, even if test fails
+	# This ensures PATH modifications don't persist between tests
+	if [[ -n "${ORIGINAL_PATH:-}" ]]; then
+		export PATH="$ORIGINAL_PATH"
+	fi
+
 	# Clean up test directory using bats-file's temp_del
 	# This provides better cleanup handling and respects BATSLIB_TEMP_PRESERVE_ON_FAILURE
 	if [[ -n "$TEST_DIR" ]] && [[ -d "$TEST_DIR" ]]; then
@@ -310,15 +345,15 @@ create_test_vpn_monitor_script() {
 	local escaped_project_root
 
 	if [[ -n "$config_file" ]]; then
-		escaped_config=$(echo "$config_file" | sed 's/[[\.*^$()+?{|]/\\&/g')
+		escaped_config=$(escape_sed_regex "$config_file")
 	fi
 	if [[ -n "$state_dir" ]]; then
-		escaped_state=$(echo "$state_dir" | sed 's/[[\.*^$()+?{|]/\\&/g')
+		escaped_state=$(escape_sed_regex "$state_dir")
 	fi
 	if [[ -n "$log_file" ]]; then
-		escaped_log=$(echo "$log_file" | sed 's/[[\.*^$()+?{|]/\\&/g')
+		escaped_log=$(escape_sed_regex "$log_file")
 	fi
-	escaped_project_root=$(echo "$project_root" | sed 's/[[\.*^$()+?{|]/\\&/g')
+	escaped_project_root=$(escape_sed_regex "$project_root")
 
 	# Build sed script with all replacements in single pass
 	local sed_script=""
@@ -477,6 +512,8 @@ run_script() {
 # Returns:
 #   0: Pattern found in log file
 #   1: Pattern not found or file doesn't exist (fails test)
+#
+# Note: Uses BATS_TEST_NAME for better error messages when available
 assert_log_contains() {
 	local log_file="$1"
 	local pattern="$2"
@@ -484,7 +521,12 @@ assert_log_contains() {
 	assert_file_exist "$log_file"
 
 	run grep -Fq -- "$pattern" "$log_file"
-	assert_success "Log file should contain: $pattern"
+	# Use BATS_TEST_NAME in error message if available for better debugging
+	if [[ -n "${BATS_TEST_NAME:-}" ]]; then
+		assert_success "Log file should contain '$pattern' in test '${BATS_TEST_NAME}'"
+	else
+		assert_success "Log file should contain: $pattern"
+	fi
 }
 
 # Assert log file does not contain pattern
@@ -500,6 +542,8 @@ assert_log_contains() {
 # Returns:
 #   0: Pattern not found (or file doesn't exist)
 #   1: Pattern found (fails test)
+#
+# Note: Uses BATS_TEST_NAME for better error messages when available
 assert_log_not_contains() {
 	local log_file="$1"
 	local pattern="$2"
@@ -509,7 +553,12 @@ assert_log_not_contains() {
 	fi
 
 	run grep -Fq -- "$pattern" "$log_file"
-	assert_failure "Log file should not contain: $pattern"
+	# Use BATS_TEST_NAME in error message if available for better debugging
+	if [[ -n "${BATS_TEST_NAME:-}" ]]; then
+		assert_failure "Log file should not contain '$pattern' in test '${BATS_TEST_NAME}'"
+	else
+		assert_failure "Log file should not contain: $pattern"
+	fi
 }
 
 # Create mock ip command output
@@ -605,7 +654,12 @@ EOF
 # Create mock ipsec command
 #
 # Creates a mock 'ipsec' command that simulates IPsec service operations.
-# Supports 'restart' and 'status' subcommands for testing.
+# Supports 'restart', 'reload', and 'status' subcommands for testing.
+#
+# Arguments:
+#   $1: Format type ("libreswan", "strongswan", or "default", default: "default")
+#   $2: Optional peer IP address for status output (default: "192.168.1.1")
+#   $3: Optional connection name (default: "test-conn")
 #
 # Returns:
 #   0: Always succeeds
@@ -614,10 +668,52 @@ EOF
 #   Prints the path to the created mock script
 #
 # Side effects:
-#   Creates mock script in TEST_DIR
+#   Creates mock script in TEST_DIR as "ipsec"
 mock_ipsec() {
-	local mock_ipsec="${TEST_DIR}/mock_ipsec"
-	cat >"$mock_ipsec" <<'EOF'
+	local format="${1:-default}"
+	local peer_ip="${2:-192.168.1.1}"
+	local conn_name="${3:-test-conn}"
+	local mock_ipsec="${TEST_DIR}/ipsec"
+
+	case "$format" in
+	libreswan)
+		cat >"$mock_ipsec" <<EOF
+#!/bin/bash
+if [[ "\$1" == "restart" ]]; then
+    echo "Restarting IPsec..."
+    echo "Stopping IPsec..."
+    echo "Starting IPsec..."
+    exit 0
+fi
+if [[ "\$1" == "reload" ]]; then
+    echo "Reloading IPsec configuration..."
+    exit 0
+fi
+if [[ "\$1" == "status" ]]; then
+    echo "${conn_name}: ESTABLISHED 1 hour ago, ${peer_ip}...192.168.1.2"
+fi
+EOF
+		;;
+	strongswan)
+		cat >"$mock_ipsec" <<EOF
+#!/bin/bash
+if [[ "\$1" == "restart" ]]; then
+    echo "Restarting IPsec..."
+    echo "Stopping IPsec..."
+    echo "Starting IPsec..."
+    exit 0
+fi
+if [[ "\$1" == "reload" ]]; then
+    echo "Reloading IPsec configuration..."
+    exit 0
+fi
+if [[ "\$1" == "status" ]]; then
+    echo "${conn_name}: IKEv2, ESTABLISHED, ${peer_ip}"
+fi
+EOF
+		;;
+	default)
+		cat >"$mock_ipsec" <<'EOF'
 #!/bin/bash
 if [[ "$1" == "restart" ]]; then
     echo "Restarting IPsec..."
@@ -625,11 +721,17 @@ if [[ "$1" == "restart" ]]; then
     echo "Starting IPsec..."
     exit 0
 fi
+if [[ "$1" == "reload" ]]; then
+    echo "Reloading IPsec configuration..."
+    exit 0
+fi
 if [[ "$1" == "status" ]]; then
     echo "IPsec connections:"
     echo "  test-conn: ESTABLISHED"
 fi
 EOF
+		;;
+	esac
 	chmod +x "$mock_ipsec"
 	echo "$mock_ipsec"
 }
@@ -659,7 +761,9 @@ add_mock_to_path() {
 # Side effects:
 #   Modifies PATH environment variable
 remove_mock_from_path() {
-	export PATH=$(echo "$PATH" | sed "s|${TEST_DIR}:||g")
+	# Use bash parameter expansion instead of sed for better performance and reliability
+	local new_path="${PATH//${TEST_DIR}:/}"
+	export PATH="$new_path"
 }
 
 # Assert state file exists and contains value
@@ -1017,13 +1121,411 @@ setup_mock_vpn_environment() {
 
 	# Create mock ipsec if requested
 	if [[ "$create_ipsec" == "1" ]]; then
-		MOCK_IPSEC=$(mock_ipsec)
+		MOCK_IPSEC=$(mock_ipsec "default")
 	fi
 
 	# Add mocks to PATH
 	add_mock_to_path
 
 	export MOCK_IP MOCK_PING MOCK_IPSEC
+}
+
+# Create mock ip command for route checks
+#
+# Creates a mock 'ip' command that handles route show default commands.
+# Used for network partition detection tests.
+#
+# Arguments:
+#   $1: Route exists flag ("1" for exists, "0" for missing, default: "1")
+#   $2: Optional route output (default: "default via 192.168.1.1 dev eth0")
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "ip"
+mock_ip_route() {
+	local route_exists="${1:-1}"
+	local route_output="${2:-default via 192.168.1.1 dev eth0}"
+
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "route" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "default" ]]; then
+    if [[ "$route_exists" == "1" ]]; then
+        echo "$route_output"
+        exit 0
+    else
+        exit 1
+    fi
+fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	echo "$mock_ip"
+}
+
+# Create mock ip command for interface state checks
+#
+# Creates a mock 'ip' command that handles link show commands.
+# Used for network partition detection tests.
+#
+# Arguments:
+#   $1: Comma-separated list of interface states ("UP" or "DOWN", default: "UP")
+#   $2: Comma-separated list of interface names (default: "eth0,eth1")
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "ip"
+mock_ip_link() {
+	local states="${1:-UP,UP}"
+	local interfaces="${2:-eth0,eth1}"
+
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "link" ]] && [[ "\$2" == "show" ]]; then
+    # Parse states and interfaces
+    IFS=',' read -r -a state_array <<< "$states"
+    IFS=',' read -r -a iface_array <<< "$interfaces"
+    
+    for i in "\${!iface_array[@]}"; do
+        local iface="\${iface_array[\$i]}"
+        local state="\${state_array[\$i]:-UP}"
+        echo "\${i}: \${iface}: <BROADCAST,MULTICAST,\${state},LOWER_UP> mtu 1500"
+    done
+    exit 0
+fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	echo "$mock_ip"
+}
+
+# Create mock dig command for DNS resolution checks
+#
+# Creates a mock 'dig' command that simulates DNS resolution.
+# Used for network partition detection tests.
+#
+# Arguments:
+#   $1: Success flag ("1" for success, "0" for failure/timeout, default: "1")
+#   $2: IP address to return (default: "8.8.8.8")
+#   $3: Timeout behavior ("timeout" for timeout, "unreachable" for unreachable, default: success)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "dig"
+mock_dig() {
+	local success="${1:-1}"
+	local ip_address="${2:-8.8.8.8}"
+	local timeout_behavior="${3:-}"
+
+	local mock_dig="${TEST_DIR}/dig"
+	cat >"$mock_dig" <<EOF
+#!/bin/bash
+if [[ "$success" == "1" ]]; then
+    echo "$ip_address"
+    exit 0
+elif [[ "$timeout_behavior" == "timeout" ]]; then
+    # Simulate timeout
+    sleep 0.1
+    exit 124
+elif [[ "$timeout_behavior" == "unreachable" ]]; then
+    echo ";; connection timed out; no servers could be reached"
+    exit 9
+else
+    # General failure
+    exit 1
+fi
+EOF
+	chmod +x "$mock_dig"
+	echo "$mock_dig"
+}
+
+# Create mock ping command that succeeds with proper output
+#
+# Creates a mock 'ping' command that always succeeds and outputs packet loss info
+# in the format expected by check_ping_connectivity. Handles all common ping arguments.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "ping"
+mock_ping_success() {
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<'EOF'
+#!/bin/bash
+# Mock ping that always succeeds and outputs packet loss info
+# Handle common ping arguments: -c, -W, -w, -q, -I, -6, target_ip
+echo "3 packets transmitted, 3 received, 0% packet loss"
+exit 0
+EOF
+	chmod +x "$mock_ping"
+	echo "$mock_ping"
+}
+
+# Create mock nslookup command that fails
+#
+# Creates a mock 'nslookup' command that always fails.
+# Used to prevent DNS fallback from succeeding in tests.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "nslookup"
+mock_nslookup_fail() {
+	local mock_nslookup="${TEST_DIR}/nslookup"
+	cat >"$mock_nslookup" <<'EOF'
+#!/bin/bash
+exit 1
+EOF
+	chmod +x "$mock_nslookup"
+	echo "$mock_nslookup"
+}
+
+# Create mock date command with controllable time
+#
+# Creates a mock 'date' command that returns a controllable timestamp.
+# Used for time-based testing of cooldowns, rate limiting, and time-sensitive operations.
+# Allows tests to simulate time passing by calling this function multiple times with
+# different increment values.
+#
+# Arguments:
+#   $1: Base timestamp in Unix seconds (default: current time via date +%s)
+#   $2: Increment in seconds to add to base timestamp (default: 0)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "date"
+#   Overwrites any existing date mock in TEST_DIR
+#
+# Examples:
+#   # Set time to specific timestamp
+#   mock_date 1609459200 0  # 2021-01-01 00:00:00 UTC
+#   add_mock_to_path
+#
+#   # Advance time by 15 minutes (900 seconds)
+#   mock_date 1609459200 900
+#   add_mock_to_path
+#
+#   # Use current time as base, advance by 1 hour
+#   local base=$(date +%s)
+#   mock_date "$base" 3600
+#   add_mock_to_path
+#
+# Note:
+#   Supports common date formats:
+#   - date +%s: Returns Unix timestamp
+#   - date '+%Y-%m-%d %H:%M:%S': Returns formatted timestamp
+#   - date '+%Y-%m-%d': Returns date only
+#   Other formats fall back to real date command
+mock_date() {
+	local base_timestamp="${1:-$(date +%s 2>/dev/null || echo 0)}"
+	local increment="${2:-0}"
+	local current_time=$((base_timestamp + increment))
+
+	local mock_date="${TEST_DIR}/date"
+	cat >"$mock_date" <<EOF
+#!/bin/bash
+# Mock date command with controllable time
+# Current mock time: $current_time (Unix timestamp)
+
+if [[ "\$1" == "+%s" ]]; then
+    # Unix timestamp format
+    echo "$current_time"
+    exit 0
+elif [[ "\$1" == "+%Y-%m-%d %H:%M:%S" ]] || [[ "\$1" == '+%Y-%m-%d %H:%M:%S' ]]; then
+    # Formatted timestamp format (used by logging)
+    # Try Linux format first, then BSD/macOS format
+    date -d "@$current_time" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -r "$current_time" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "1970-01-01 00:00:00"
+    exit 0
+elif [[ "\$1" == "+%Y-%m-%d" ]] || [[ "\$1" == '+%Y-%m-%d' ]]; then
+    # Date only format
+    date -d "@$current_time" +%Y-%m-%d 2>/dev/null || date -r "$current_time" +%Y-%m-%d 2>/dev/null || echo "1970-01-01"
+    exit 0
+fi
+
+# For other date formats or arguments, fall back to real date command
+# This handles edge cases and formats we don't explicitly support
+exec /bin/date "\$@"
+EOF
+	chmod +x "$mock_date"
+	echo "$mock_date"
+}
+
+# Set up controllable time for testing
+#
+# Convenience function that sets up mock_date with a fixed base timestamp
+# and adds it to PATH. This reduces duplication in tests that need controllable time.
+#
+# Arguments:
+#   $1: Base timestamp in Unix seconds (default: 1609459200 = 2021-01-01 00:00:00 UTC)
+#   $2: Increment in seconds to add to base timestamp (default: 0)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Creates mock date command in TEST_DIR
+#   - Adds TEST_DIR to PATH
+#   - Sets BASE_TIME variable to the actual timestamp being used
+#
+# Example:
+#   setup_controllable_time
+#   # Time is now 1609459200
+#   local now=$BASE_TIME
+#
+#   setup_controllable_time 1609459200 900
+#   # Time is now 1609460100 (15 minutes later)
+#   local now=$BASE_TIME
+setup_controllable_time() {
+	local base_timestamp="${1:-1609459200}" # Default: 2021-01-01 00:00:00 UTC
+	local increment="${2:-0}"
+	local current_time=$((base_timestamp + increment))
+
+	mock_date "$base_timestamp" "$increment"
+	add_mock_to_path
+
+	# Export BASE_TIME for use in tests
+	export BASE_TIME=$current_time
+}
+
+# Create mock ip command that shows interfaces as UP
+#
+# Creates a mock 'ip' command that shows specified interfaces as UP with "state UP" in output.
+# Handles both "ip link show" and "ip route show default" commands.
+#
+# Arguments:
+#   $1: Comma-separated list of interfaces to show as UP (default: "br0,eth0")
+#   $2: Whether to show default route (default: "1" for yes, "0" for no)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "ip"
+mock_ip_interfaces_up() {
+	local interfaces="${1:-br0,eth0}"
+	local show_default_route="${2:-1}"
+
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "route" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "default" ]]; then
+    if [[ "$show_default_route" == "1" ]]; then
+        echo "default via 192.168.1.1 dev eth0"
+        exit 0
+    else
+        exit 1
+    fi
+elif [[ "\$1" == "link" ]] && [[ "\$2" == "show" ]]; then
+    # Parse interfaces
+    IFS=',' read -r -a iface_array <<< "$interfaces"
+    for iface in "\${iface_array[@]}"; do
+        # Trim whitespace using parameter expansion
+        iface="\${iface#"\${iface%%[![:space:]]*}"}"
+        iface="\${iface%"\${iface##*[![:space:]]}"}"
+        if [[ -z "\$iface" ]]; then
+            continue
+        fi
+        # Check if this is the interface being queried
+        if [[ -z "\${3:-}" ]] || [[ "\$3" == "\$iface" ]]; then
+            echo "1: \$iface: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default"
+            exit 0
+        fi
+    done
+    # If specific interface queried but not found, exit 1
+    if [[ -n "\${3:-}" ]]; then
+        exit 1
+    fi
+    # If no specific interface, show all
+    for iface in "\${iface_array[@]}"; do
+        # Trim whitespace using parameter expansion
+        iface="\${iface#"\${iface%%[![:space:]]*}"}"
+        iface="\${iface%"\${iface##*[![:space:]]}"}"
+        [[ -z "\$iface" ]] && continue
+        echo "1: \$iface: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default"
+    done
+    exit 0
+fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	echo "$mock_ip"
+}
+
+# Run test script with mocks in PATH
+#
+# Convenience function that ensures mocks are in PATH and runs the script.
+# This standardizes the pattern of add_mock_to_path + run bash.
+#
+# Note: This function is provided for convenience but is not currently used
+# in the test suite. Tests typically use add_mock_to_path + run bash directly
+# for clarity. This function may be useful for future refactoring or for
+# tests that need to ensure mocks are in PATH before running.
+#
+# Arguments:
+#   $1: Script path to run
+#   $2+: Additional arguments to pass to script
+#
+# Returns:
+#   Exit code of the script
+#
+# Side effects:
+#   Sets 'output' and 'status' variables (bats convention)
+#   Ensures PATH includes TEST_DIR
+#
+# Example:
+#   setup_mock_vpn_environment "192.168.1.1" 1000
+#   run_with_mocks "$test_script" --fake
+run_with_mocks() {
+	local script="$1"
+	shift
+	local args=("$@")
+
+	# Ensure mocks are in PATH
+	add_mock_to_path
+
+	# Run the script
+	run bash "$script" "${args[@]}"
 }
 
 # ============================================================================
@@ -1039,6 +1541,9 @@ setup_mock_vpn_environment() {
 #   - fixtures/vpn_down.bash: VPN is down (no SA found)
 #   - fixtures/vpn_failing.bash: VPN has recorded failures
 #   - fixtures/vpn_cooldown.bash: VPN is in cooldown period
+#   - fixtures/vpn_rekey.bash: VPN has undergone a rekey (SPI change)
+#   - fixtures/vpn_multiple_peers.bash: Multiple VPN peers scenario
+#   - fixtures/vpn_recovery_disabled.bash: VPN with recovery actions disabled
 #
 # Example usage:
 #   # Load test helper (includes fixtures documentation)
@@ -1053,3 +1558,40 @@ setup_mock_vpn_environment() {
 #   }
 #
 # See tests/fixtures/ directory for fixture implementations and documentation.
+
+# Source recovery module and all dependencies
+#
+# Sources all required library files for testing recovery functions.
+# Sets up environment variables needed by recovery functions.
+#
+# Side effects:
+#   - Sources constants.sh, common.sh, logging.sh, state.sh, detection.sh, recovery.sh
+#   - Sets up LOG_FILE, LOGS_DIR, STATE_DIR if not already set
+#
+# Example:
+#   source_recovery_module
+#   run attempt_xfrm_recovery "192.168.1.1"
+source_recovery_module() {
+	# Set up required environment variables if not already set
+	STATE_DIR="${STATE_DIR:-${TEST_DIR:-/tmp}}"
+	export STATE_DIR
+	LOGS_DIR="${LOGS_DIR:-${STATE_DIR}/logs}"
+	export LOGS_DIR
+	LOG_FILE="${LOG_FILE:-${LOGS_DIR}/vpn-monitor.log}"
+	export LOG_FILE
+	mkdir -p "$LOGS_DIR"
+
+	# Source dependencies in order
+	# shellcheck source=../lib/constants.sh
+	source "${BATS_TEST_DIRNAME}/../lib/constants.sh" 2>/dev/null || true
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+	# shellcheck source=../lib/detection.sh
+	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" 2>/dev/null || true
+	# shellcheck source=../lib/recovery.sh
+	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" 2>/dev/null || true
+}

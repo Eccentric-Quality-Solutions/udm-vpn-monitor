@@ -39,7 +39,8 @@ EOF
 	setup_mock_vpn_environment "192.168.1.1" 0
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script"
+	assert_success
 
 	# Should handle state file write error gracefully (should log error but continue)
 	# Script should not crash even if state file writes fail
@@ -96,7 +97,8 @@ EOF
 	add_mock_to_path
 
 	# Run script - recovery actions should fail but script should continue
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script"
+	assert_success
 
 	# Should handle recovery action errors gracefully (should log error but continue)
 	# Script should not crash even if recovery actions fail
@@ -133,7 +135,8 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Should handle VPN check error gracefully (should log error but continue)
 	# Code at lib/detection.sh handles xfrm errors gracefully

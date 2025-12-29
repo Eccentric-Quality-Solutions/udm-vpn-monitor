@@ -5,6 +5,7 @@
 - shfmt and shellcheck have been installed using brew
 
 ## Testing
+- When asked to run some subset of tests, clarify if we want to run the tests or test cases that are applicable. Usually it will be the latter. We probably want to use BATS test case filtering.
 - Always make sure when running tests that they stream output to the terminal and aren't buffered
 - Whenever you run tests and a test is slow, make sure to tag it as such.
 - When creating tests take advantage of BATS built-in functionality and the test fixtures we've created.

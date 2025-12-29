@@ -3,7 +3,7 @@
 # VPN status detection for UDM VPN Monitor
 # Handles VPN detection using xfrm, ipsec, and ping checks
 #
-# Version: 0.0.1
+# Version: 0.3.0
 #
 
 # Source constants for magic numbers

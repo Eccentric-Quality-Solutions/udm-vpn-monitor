@@ -3,7 +3,7 @@
 # Logging functions for UDM VPN Monitor
 # Provides centralized logging functionality with timestamp and level support
 #
-# Version: 0.0.1
+# Version: 0.3.0
 #
 
 # Get formatted timestamp
@@ -116,6 +116,30 @@ log_message() {
 	fi
 
 	return 0
+}
+
+# Check if script is running in fake mode
+#
+# Returns whether the script is running in fake mode (NO_ESCALATE=1).
+# Fake mode allows the script to run checks and log errors but exit gracefully
+# instead of crashing on configuration or initialization errors.
+#
+# Returns:
+#   0: Script is in fake mode (NO_ESCALATE=1)
+#   1: Script is not in fake mode (NO_ESCALATE=0 or unset)
+#
+# Examples:
+#   if is_fake_mode; then
+#       handle_error "ERROR" "Config error" 0
+#       exit 0
+#   else
+#       die "Config error"
+#   fi
+#
+# Note:
+#   Checks the NO_ESCALATE environment variable
+is_fake_mode() {
+	[[ "${NO_ESCALATE:-0}" -eq 1 ]]
 }
 
 # Die function for fatal errors

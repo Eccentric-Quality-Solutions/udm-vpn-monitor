@@ -4,7 +4,7 @@
 # Analyzes VPN monitor logs and generates reports on failure frequency and recovery success rate
 # Exports data to CSV for spreadsheet analysis
 #
-# Version: 0.0.1
+# Version: 0.3.0
 #
 
 set -euo pipefail
@@ -355,6 +355,71 @@ analyze_logs() {
 	return 0
 }
 
+# Calculate floating point division with fallbacks
+#
+# Performs floating point division using awk if available, falling back to bash
+# integer math.
+#
+# Arguments:
+#   $1: Numerator
+#   $2: Denominator
+#   $3: Scale (decimal places, default: 2)
+#
+# Returns:
+#   0: Success
+#
+# Output:
+#   Prints result to stdout
+#
+# Examples:
+#   result=$(calculate_float_division 10 3 2)  # Returns "3.33"
+#   result=$(calculate_float_division 5 2)      # Returns "2.50" (default scale 2)
+calculate_float_division() {
+	local numerator="$1"
+	local denominator="$2"
+	local scale="${3:-2}"
+	local result=""
+
+	if [[ $denominator -eq 0 ]]; then
+		echo "0"
+		return 0
+	fi
+
+	# Try awk first (available on UDM systems)
+	if command -v awk >/dev/null 2>&1; then
+		result=$(awk "BEGIN {printf \"%.${scale}f\", $numerator / $denominator}" 2>/dev/null)
+	fi
+
+	# Fallback to bash integer math if awk failed or not available
+	# Only fallback if result is empty (not if it's "0.00" which is a valid result)
+	if [[ -z "$result" ]]; then
+		local int_part=$((numerator / denominator))
+		local remainder=$((numerator % denominator))
+		# Calculate decimal part (multiply remainder by 10^scale, divide by denominator)
+		if [[ $scale -eq 0 ]]; then
+			# No decimal places needed
+			result="${int_part}"
+		else
+			local multiplier=1
+			local i
+			for ((i = 0; i < scale; i++)); do
+				multiplier=$((multiplier * 10))
+			done
+			local decimal_part=$(((remainder * multiplier) / denominator))
+			# Pad decimal part with zeros if needed
+			local decimal_str="${decimal_part}"
+			while [[ ${#decimal_str} -lt $scale ]]; do
+				decimal_str="0${decimal_str}"
+			done
+			result="${int_part}.${decimal_str}"
+		fi
+	fi
+
+	# Ensure we have a valid value
+	[[ -z "$result" ]] && result="0"
+	echo "$result"
+}
+
 # Calculate statistics
 #
 # Calculates failure frequency and recovery success rate from parsed data.
@@ -435,80 +500,27 @@ calculate_statistics() {
 	fi
 
 	# Calculate failure frequency (per day)
-	# Use awk for floating point division (more reliable than bc)
 	FAILURES_PER_DAY=0
 	if [[ $days -gt 0 ]] && [[ $total_failures -gt 0 ]]; then
-		# Try awk first (more common than bc)
-		if command -v awk >/dev/null 2>&1; then
-			FAILURES_PER_DAY=$(awk "BEGIN {printf \"%.2f\", $total_failures / $days}" 2>/dev/null)
-		fi
-		# Fallback to bc if awk failed or not available
-		if [[ -z "$FAILURES_PER_DAY" ]] || [[ "$FAILURES_PER_DAY" == "0" ]] || [[ "$FAILURES_PER_DAY" == "" ]]; then
-			if command -v bc >/dev/null 2>&1; then
-				FAILURES_PER_DAY=$(echo "scale=2; $total_failures / $days" | bc 2>/dev/null)
-			fi
-		fi
-		# Final fallback: use bash integer division with manual decimal
-		if [[ -z "$FAILURES_PER_DAY" ]] || [[ "$FAILURES_PER_DAY" == "0" ]] || [[ "$FAILURES_PER_DAY" == "" ]]; then
-			local int_part=$((total_failures / days))
-			local remainder=$((total_failures % days))
-			# Calculate decimal part (multiply remainder by 100, divide by days, round)
-			local decimal_part=$(((remainder * 100) / days))
-			FAILURES_PER_DAY="${int_part}.${decimal_part}"
-		fi
-		# Ensure we have a valid value
-		[[ -z "$FAILURES_PER_DAY" ]] && FAILURES_PER_DAY="0"
+		FAILURES_PER_DAY=$(calculate_float_division "$total_failures" "$days" 2)
 	fi
 
 	# Calculate recovery success rate
 	RECOVERY_SUCCESS_RATE=0
 	if [[ $total_failures -gt 0 ]] && [[ $total_recoveries -gt 0 ]]; then
-		# Use awk first (more common than bc)
-		if command -v awk >/dev/null 2>&1; then
-			RECOVERY_SUCCESS_RATE=$(awk "BEGIN {printf \"%.2f\", ($total_recoveries * 100) / $total_failures}" 2>/dev/null)
-		fi
-		# Fallback to bash integer math if awk failed
-		if [[ -z "$RECOVERY_SUCCESS_RATE" ]] || [[ "$RECOVERY_SUCCESS_RATE" == "0" ]] || [[ "$RECOVERY_SUCCESS_RATE" == "" ]]; then
-			local int_part=$(((total_recoveries * 100) / total_failures))
-			local remainder=$(((total_recoveries * 100) % total_failures))
-			local decimal_part=$(((remainder * 100) / total_failures))
-			RECOVERY_SUCCESS_RATE="${int_part}.${decimal_part}"
-		fi
-		[[ -z "$RECOVERY_SUCCESS_RATE" ]] && RECOVERY_SUCCESS_RATE="0"
+		RECOVERY_SUCCESS_RATE=$(calculate_float_division $((total_recoveries * 100)) "$total_failures" 2)
 	fi
 
 	# Calculate tier 2 success rate
 	TIER2_SUCCESS_RATE=0
 	if [[ $total_tier2 -gt 0 ]] && [[ $total_tier2_completed -gt 0 ]]; then
-		# Use awk first (more common than bc)
-		if command -v awk >/dev/null 2>&1; then
-			TIER2_SUCCESS_RATE=$(awk "BEGIN {printf \"%.2f\", ($total_tier2_completed * 100) / $total_tier2}" 2>/dev/null)
-		fi
-		# Fallback to bash integer math if awk failed
-		if [[ -z "$TIER2_SUCCESS_RATE" ]] || [[ "$TIER2_SUCCESS_RATE" == "0" ]] || [[ "$TIER2_SUCCESS_RATE" == "" ]]; then
-			local int_part=$(((total_tier2_completed * 100) / total_tier2))
-			local remainder=$(((total_tier2_completed * 100) % total_tier2))
-			local decimal_part=$(((remainder * 100) / total_tier2))
-			TIER2_SUCCESS_RATE="${int_part}.${decimal_part}"
-		fi
-		[[ -z "$TIER2_SUCCESS_RATE" ]] && TIER2_SUCCESS_RATE="0"
+		TIER2_SUCCESS_RATE=$(calculate_float_division $((total_tier2_completed * 100)) "$total_tier2" 2)
 	fi
 
 	# Calculate tier 3 success rate
 	TIER3_SUCCESS_RATE=0
 	if [[ $total_tier3 -gt 0 ]] && [[ $total_tier3_completed -gt 0 ]]; then
-		# Use awk first (more common than bc)
-		if command -v awk >/dev/null 2>&1; then
-			TIER3_SUCCESS_RATE=$(awk "BEGIN {printf \"%.2f\", ($total_tier3_completed * 100) / $total_tier3}" 2>/dev/null)
-		fi
-		# Fallback to bash integer math if awk failed
-		if [[ -z "$TIER3_SUCCESS_RATE" ]] || [[ "$TIER3_SUCCESS_RATE" == "0" ]] || [[ "$TIER3_SUCCESS_RATE" == "" ]]; then
-			local int_part=$(((total_tier3_completed * 100) / total_tier3))
-			local remainder=$(((total_tier3_completed * 100) % total_tier3))
-			local decimal_part=$(((remainder * 100) / total_tier3))
-			TIER3_SUCCESS_RATE="${int_part}.${decimal_part}"
-		fi
-		[[ -z "$TIER3_SUCCESS_RATE" ]] && TIER3_SUCCESS_RATE="0"
+		TIER3_SUCCESS_RATE=$(calculate_float_division $((total_tier3_completed * 100)) "$total_tier3" 2)
 	fi
 
 	STATS_FIRST_DATE="$first_date"

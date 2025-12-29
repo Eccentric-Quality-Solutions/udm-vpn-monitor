@@ -4,18 +4,64 @@ This directory contains comprehensive tests for the UDM VPN Monitor scripts usin
 
 ## Test Structure
 
+### Core Test Infrastructure
 - `test_helper.bash` - Common test utilities and helper functions
-- `test_helper_functions.sh` - Unit tests for individual helper functions in `vpn-monitor.sh` (119 tests)
-- `test_integration.sh` - Integration tests for full monitoring flow with mock VPN states (18 tests)
-- `test_high_risk.sh` - **High-risk tests** for critical paths and error handling scenarios (127 tests)
+- `test_helper_functions.sh` - Unit tests for individual helper functions in `vpn-monitor.sh` (118 tests)
+- `run_tests.sh` - Test runner script
+- `generate_coverage_report.sh` - Generates test coverage reports from kcov output
+
+### Script-Specific Tests
 - `test_install.sh` - Tests for `install.sh` script (18 tests)
 - `test_uninstall.sh` - Tests for `uninstall.sh` script (34 tests)
 - `test_vpn_monitor.sh` - Tests for `vpn-monitor.sh` script (33 tests)
 - `test_analyze_logs.sh` - Tests for `analyze-logs.sh` script (28 tests)
 - `test_check_config.sh` - Tests for `check-config.sh` script (18 tests)
 - `test_prepare_install_package.sh` - Tests for `prepare_install_package.sh` script (12 tests)
-- `run_tests.sh` - Test runner script
-- `generate_coverage_report.sh` - Generates test coverage reports from kcov output
+
+### Integration Tests
+- `test_integration.sh` - Integration tests for full monitoring flow with mock VPN states (18 tests)
+- `test_integration_e2e_recovery.sh` - End-to-end recovery integration tests (6 tests)
+
+### Configuration Tests
+- `test_config.sh` - Main configuration tests (45 tests)
+- `test_config_loading.sh` - Configuration loading and validation tests (6 tests)
+- `test_config_validation.sh` - Configuration variable validation tests (10 tests)
+- `test_config_large_values.sh` - Very large values validation tests (3 tests)
+- `test_config_overrides.sh` - Path and environment variable overrides tests (4 tests)
+- `test_config_security.sh` - Security-related tests (dangerous content detection) (12 tests)
+- `test_config_order.sh` - Validation order dependencies tests (5 tests)
+- `test_config_schema.sh` - Schema default application tests (5 tests)
+
+### Detection Tests
+- `test_detection.sh` - Main detection tests (47 tests)
+- `test_detection_status.sh` - VPN status detection tests (9 tests)
+- `test_detection_fallback.sh` - Fallback chain edge cases tests (6 tests)
+- `test_detection_network_partition.sh` - Network partition detection tests (11 tests)
+- `test_detection_rekey.sh` - SA rekey detection tests (7 tests)
+- `test_detection_failure_type.sh` - Failure type detection tests (8 tests)
+- `test_detection_idle.sh` - Idle tunnel detection tests (6 tests)
+- `test_detection_xfrm_edge_cases.sh` - XFRM edge cases and error handling tests (13 tests)
+- `test_multiple_peer_edge_cases.sh` - Multiple peer IP edge cases tests (4 tests)
+
+### Recovery Tests
+- `test_recovery.sh` - Recovery strategy selection, XFRM recovery, and fallback logic tests (17 tests)
+- `test_recovery_tier1.sh` - Tier 1 (logging) recovery tests (1 test)
+- `test_recovery_tier2.sh` - Tier 2 (surgical cleanup) recovery tests (7 tests)
+- `test_recovery_tier3.sh` - Tier 3 (full restart) recovery tests (10 tests)
+- `test_recovery_rate_limiting.sh` - Rate limiting tests (6 tests)
+- `test_recovery_cooldown_rate_limit_interaction.sh` - Cooldown and rate limiting interaction tests (3 tests)
+- `test_recovery_network_partition.sh` - Network partition recovery tests (3 tests)
+- `test_recovery_partial_failures.sh` - Partial failure recovery tests (4 tests)
+
+### Other High-Risk Tests
+- `test_lockfile.sh` - Lockfile management tests (18 tests)
+- `test_state.sh` - State file management tests (25 tests)
+- `test_state_concurrent_updates.sh` - Concurrent state update tests (9 tests)
+- `test_logging.sh` - Logging failure scenario tests (8 tests)
+- `test_connection.sh` - Connection name discovery and caching tests (8 tests)
+- `test_errors.sh` - Error handling during critical operations tests (3 tests)
+- `test_main.sh` - Main execution edge cases tests (25 tests)
+- `test_rapid_state_changes.sh` - Rapid state change handling tests (6 tests)
 
 ## Prerequisites
 
@@ -60,13 +106,17 @@ By default, slow tests are excluded to speed up local development:
 This runs:
 - `test_analyze_logs.sh` (28 tests)
 - `test_check_config.sh` (18 tests)
-- `test_helper_functions.sh` (119 tests)
+- `test_helper_functions.sh` (118 tests)
 - `test_install.sh` (18 tests)
 - `test_uninstall.sh` (34 tests)
 - `test_vpn_monitor.sh` (33 tests)
 - `test_prepare_install_package.sh` (12 tests)
+- Configuration tests (split files): `test_config_loading.sh`, `test_config_validation.sh`, `test_config_large_values.sh`, `test_config_overrides.sh`, `test_config_security.sh`, `test_config_order.sh`, `test_config_schema.sh` (45 tests)
+- Detection tests (split files): `test_detection_status.sh`, `test_detection_fallback.sh`, `test_detection_network_partition.sh`, `test_detection_rekey.sh`, `test_detection_failure_type.sh`, `test_detection_idle.sh`, `test_detection_xfrm_edge_cases.sh`, `test_multiple_peer_edge_cases.sh` (58 tests)
+- Recovery tests (split files): `test_recovery_tier1.sh`, `test_recovery_tier2.sh`, `test_recovery_tier3.sh`, `test_recovery_rate_limiting.sh`, `test_recovery_cooldown_rate_limit_interaction.sh`, `test_recovery_network_partition.sh`, `test_recovery_partial_failures.sh` (34 tests)
+- Other tests: `test_state_concurrent_updates.sh`, `test_rapid_state_changes.sh` (15 tests)
 
-**Total**: 262 fast tests
+**Total**: 419 fast tests
 
 ### Run All Tests (Including Slow Tests)
 
@@ -80,9 +130,18 @@ RUN_SLOW_TESTS=1 ./tests/run_tests.sh
 
 Slow tests include:
 - `test_integration.sh` - Integration tests for full monitoring flow (18 tests)
-- `test_high_risk.sh` - High-risk edge case and error handling tests (127 tests)
+- `test_integration_e2e_recovery.sh` - End-to-end recovery integration tests (6 tests)
+- `test_config.sh` - Main configuration tests (45 tests)
+- `test_detection.sh` - Main detection tests (47 tests)
+- `test_recovery.sh` - Recovery strategy selection, XFRM recovery, and fallback logic tests (17 tests)
+- `test_lockfile.sh` - Lockfile management tests (18 tests)
+- `test_state.sh` - State file management tests (25 tests)
+- `test_logging.sh` - Logging failure scenario tests (8 tests)
+- `test_connection.sh` - Connection name discovery and caching tests (8 tests)
+- `test_errors.sh` - Error handling during critical operations tests (3 tests)
+- `test_main.sh` - Main execution edge cases tests (25 tests)
 
-**Total**: 145 slow tests
+**Total**: 220 slow tests
 
 ### Run with Coverage
 
@@ -125,14 +184,46 @@ PARALLEL_JOBS=4 ./tests/run_tests.sh
 ### Run Specific Test File
 
 ```bash
+# Script-specific tests
 bats tests/test_install.sh
 bats tests/test_uninstall.sh
 bats tests/test_vpn_monitor.sh
-bats tests/test_integration.sh
-bats tests/test_high_risk.sh
 bats tests/test_analyze_logs.sh
 bats tests/test_check_config.sh
 bats tests/test_prepare_install_package.sh
+
+# Integration tests
+bats tests/test_integration.sh
+bats tests/test_integration_e2e_recovery.sh
+
+# Configuration tests
+bats tests/test_config.sh
+bats tests/test_config_loading.sh
+bats tests/test_config_validation.sh
+bats tests/test_config_security.sh
+# ... or run all config tests: bats tests/test_config*.sh
+
+# Detection tests
+bats tests/test_detection.sh
+bats tests/test_detection_status.sh
+bats tests/test_detection_network_partition.sh
+bats tests/test_detection_xfrm_edge_cases.sh
+# ... or run all detection tests: bats tests/test_detection*.sh
+
+# Recovery tests
+bats tests/test_recovery.sh
+bats tests/test_recovery_tier1.sh
+bats tests/test_recovery_cooldown_rate_limit_interaction.sh
+bats tests/test_recovery_network_partition.sh
+bats tests/test_recovery_partial_failures.sh
+# ... or run all recovery tests: bats tests/test_recovery*.sh
+
+# Other high-risk tests
+bats tests/test_lockfile.sh
+bats tests/test_state.sh
+bats tests/test_state_concurrent_updates.sh
+bats tests/test_main.sh
+bats tests/test_rapid_state_changes.sh
 ```
 
 ## Test Categories
@@ -140,17 +231,30 @@ bats tests/test_prepare_install_package.sh
 ### Fast Tests (run by default)
 - `test_analyze_logs.sh` - Log analysis script tests (28 tests)
 - `test_check_config.sh` - Configuration validation script tests (18 tests)
-- `test_helper_functions.sh` - Unit tests for helper functions (119 tests)
+- `test_helper_functions.sh` - Unit tests for helper functions (118 tests)
 - `test_install.sh` - Installation script tests (18 tests)
 - `test_uninstall.sh` - Uninstallation script tests (34 tests)
 - `test_vpn_monitor.sh` - Core VPN monitor functionality tests (33 tests)
 - `test_prepare_install_package.sh` - Package preparation script tests (12 tests)
+- Configuration tests (split files) - Configuration loading, validation, security, etc. (45 tests)
+- Detection tests (split files) - VPN status detection, network partition, rekey, etc. (58 tests)
+- Recovery tests (split files) - Recovery strategy, tier tests, rate limiting (34 tests)
+- Other tests - State concurrent updates, rapid state changes (15 tests)
 
 ### Slow Tests (excluded by default)
 - `test_integration.sh` - Integration tests for full monitoring flow (18 tests)
-- `test_high_risk.sh` - High-risk edge case and error handling tests (127 tests)
+- `test_integration_e2e_recovery.sh` - End-to-end recovery integration tests (6 tests)
+- `test_config.sh` - Main configuration tests (45 tests)
+- `test_detection.sh` - Main detection tests (47 tests)
+- `test_recovery.sh` - Recovery strategy selection, XFRM recovery, and fallback logic tests (17 tests)
+- `test_lockfile.sh` - Lockfile management tests (18 tests)
+- `test_state.sh` - State file management tests (25 tests)
+- `test_logging.sh` - Logging failure scenario tests (8 tests)
+- `test_connection.sh` - Connection name discovery and caching tests (8 tests)
+- `test_errors.sh` - Error handling during critical operations tests (3 tests)
+- `test_main.sh` - Main execution edge cases tests (25 tests)
 
-**Total Test Count**: 389 tests across all test files
+**Total Test Count**: 639 tests across all test files
 
 **Note**: Slow tests are automatically included in CI/CD via the `RUN_SLOW_TESTS=1` environment variable (see `.github/workflows/tests.yml`).
 
@@ -169,29 +273,22 @@ bats tests/test_install.sh -t "install.sh creates installation directory"
 The most straightforward approach is to run only the test files that contain tests starting from your desired test number.
 
 **Test File Ranges:**
-- Tests 1-28: `test_analyze_logs.sh`
-- Tests 29-46: `test_check_config.sh`
-- Tests 47-165: `test_helper_functions.sh`
-- Tests 166-292: `test_high_risk.sh`
-- Tests 293-310: `test_install.sh`
-- Tests 311-328: `test_integration.sh`
-- Tests 329-340: `test_prepare_install_package.sh`
-- Tests 323-356: `test_uninstall.sh`
-- Tests 357-389: `test_vpn_monitor.sh`
 
-**Example: Run from test 147 onwards**
+To find which test file contains a specific test number, use the script provided below. Test files are run in alphabetical order, so the ranges depend on the execution order.
 
-Test 147 is the first test in `test_high_risk.sh`. To run from test 147:
+**Example: Run from a specific test file onwards**
+
+If you know which test file contains the test you want to start from:
 
 ```bash
-# Run test_high_risk.sh and all subsequent test files
-bats tests/test_high_risk.sh tests/test_install.sh tests/test_integration.sh tests/test_prepare_install_package.sh tests/test_uninstall.sh tests/test_vpn_monitor.sh
+# Run specific test files and all subsequent ones
+bats tests/test_detection.sh tests/test_recovery.sh tests/test_state.sh
 
 # With parallelization (if GNU parallel is installed)
-bats --jobs auto tests/test_high_risk.sh tests/test_install.sh tests/test_integration.sh tests/test_prepare_install_package.sh tests/test_uninstall.sh tests/test_vpn_monitor.sh
+bats --jobs auto tests/test_detection.sh tests/test_recovery.sh tests/test_state.sh
 
 # Or using the test runner (includes slow tests by default)
-./tests/run_tests.sh --slow --all
+./tests/run_tests.sh --slow
 ```
 
 #### Method 2: Filter by Test Name Pattern
@@ -270,177 +367,54 @@ bats --tap tests/test_*.sh
 
 Current test coverage: **46.9%** (1141/2433 lines) as of latest run.
 
-### High-Risk Tests (test_high_risk.sh)
+### High-Risk Tests
 
-The `test_high_risk.sh` file contains comprehensive tests for critical paths and error handling scenarios that could cause production failures. These tests focus on areas identified as **Critical Priority** in the test coverage gaps analysis.
-
-#### Overview
-
-The high-risk test suite includes **127 tests** covering critical paths and error handling scenarios across multiple categories:
+The test suite includes comprehensive tests for critical paths and error handling scenarios that could cause production failures. These tests are distributed across multiple test files for better organization:
 
 #### Test Categories
 
-**1. Lockfile Management (~15 tests)**
-Tests lockfile cleanup, error handling, race conditions, and edge cases:
-- ✅ Lockfile cleanup on script exit
-- ✅ Lockfile cleanup on script error
-- ✅ Lockfile cleanup on SIGTERM
-- ✅ Lockfile contains invalid format
-- ✅ Lockfile timestamp at timeout boundary
-- ✅ Lockfile acquisition prevents concurrent execution
-- ✅ Lockfile acquisition uses flock when available
-- ✅ Lockfile acquisition falls back when flock unavailable
-- ✅ Lockfile switching between flock and fallback modes
-- ✅ Multiple processes attempting to acquire lock simultaneously
-- ✅ TOCTOU race conditions
-- ✅ PID reuse scenarios
-- ✅ Stale lockfile detection
-- ✅ Trap handlers properly clean up lockfile in all exit scenarios
+**1. Lockfile Management** (`test_lockfile.sh` - 18 tests)
+Tests lockfile cleanup, error handling, race conditions, and edge cases.
 
-**2. Configuration Loading and Validation (~10 tests)**
-Tests configuration file error handling, security, and validation:
-- ✅ Config file contains syntax errors
-- ✅ Config file is unreadable (permission denied)
-- ✅ Config file is a directory instead of file
-- ✅ LOG_FILE override in config recalculates LOGS_DIR
-- ✅ Negative threshold values in config
-- ✅ Threshold values out of order
-- ✅ Config file attempts command injection via variable
-- ✅ Config file sources external commands (security risk)
-- ✅ Config file contains null bytes or invalid characters
-- ✅ Environment variable overrides and validation
+**2. Configuration Loading and Validation** (`test_config.sh` and split files - 90 tests total)
+Tests configuration file error handling, security, validation, and edge cases.
 
-**3. VPN Status Detection (~20 tests)**
-Tests VPN detection edge cases, byte counter handling, and fallback mechanisms:
-- ✅ xfrm SA exists but byte counter is exactly 0
-- ✅ xfrm SA exists but byte counter decreases (wrap-around)
-- ✅ xfrm SA exists but byte counter stays same
-- ✅ Byte counter file corrupted (non-numeric)
-- ✅ Byte counter file contains negative number
-- ✅ Byte counter file is empty
-- ✅ Byte counter file is directory
-- ✅ All detection methods unavailable
-- ✅ xfrm output contains multiple lifetime lines
-- ✅ xfrm command fails with permission denied
-- ✅ xfrm output format variations (different Linux kernel versions)
-- ✅ xfrm returns multiple SAs for same peer IP
-- ✅ xfrm output contains malformed byte counter line
-- ✅ First check (no previous bytes) - should accept any non-zero value
-- ✅ Byte counter increases but very slowly
-- ✅ Byte counter jumps dramatically (counter reset on remote side)
-- ✅ Ping check enabled but INTERNAL_PEER_IPS not set
-- ✅ Ping command hangs (timeout handling)
-- ✅ Ping target is unreachable but command succeeds
+**3. VPN Status Detection** (`test_detection.sh` and split files - 105 tests total)
+Tests VPN detection edge cases, byte counter handling, fallback mechanisms, network partitions, rekey detection, and XFRM edge cases.
 
-**4. Recovery Actions (~25 tests)**
-Tests recovery action execution, error handling, and verification:
-- ✅ Surgical cleanup uses ipsec reload (default behavior)
-- ✅ Surgical cleanup fails - error handling
-- ✅ Full restart with ipsec command
-- ✅ Full restart fails - error handling
-- ✅ Full restart when ipsec is not available
-- ✅ Rate limit file corrupted
-- ✅ Failure counter file is directory
-- ✅ Multiple peers failing simultaneously - verify independent cleanup
-- ✅ Restart succeeds but VPN doesn't recover (cooldown still set)
-- ✅ Restart fails but cooldown is still set
-- ✅ PIPESTATUS handling when restart command fails in pipe
-- ✅ Recovery action partially succeeds
-- ✅ Recovery action succeeds but VPN still fails on next check
-- ✅ Recovery action fails and failure counter continues incrementing
-- ✅ Multiple recovery actions triggered simultaneously
-- ✅ Recovery action during cooldown period (should be prevented)
-- ✅ Restart command hangs (timeout scenario)
-- ✅ Recovery succeeds but byte counters do not increase immediately
-- ✅ VPN fails, reaches Tier 3, restart fails, then recovers naturally
+**4. Recovery Actions** (`test_recovery.sh` and split files - 51 tests total)
+Tests recovery action execution, error handling, tier-based recovery, rate limiting, cooldown interactions, and partial failures.
 
-**5. State and File Management (~30 tests)**
-Tests state file handling, permissions, corruption, and edge cases:
-- ✅ Rate limit file corrupted
-- ✅ Rate limit file is empty
-- ✅ Rate limit file is a directory
-- ✅ Rate limit file contains very old timestamps
-- ✅ Rate limit file contains future timestamps
-- ✅ Failure counter file corrupted (non-numeric)
-- ✅ Failure counter file contains negative number
-- ✅ Failure counter file is empty
-- ✅ Cooldown file corrupted (invalid timestamp)
-- ✅ State file permissions prevent write/read
-- ✅ State file deleted during script execution
-- ✅ State file modified during script execution
-- ✅ Cache file is a directory
-- ✅ Cache file corrupted (contains invalid data)
-- ✅ Cache file permissions prevent write/read
-- ✅ Log file is a directory
-- ✅ Log file permissions prevent write
-- ✅ Log directory becomes read-only during execution
-- ✅ Log file becomes read-only during execution
-- ✅ Log directory deleted during execution
-- ✅ Disk full scenario (log write fails)
-- ✅ STATE_DIR override to non-existent directory creates it
-- ✅ STATE_DIR override in config updates all dependent paths
-- ✅ LOG_FILE path contains symlinks
-- ✅ LOG_FILE path contains special characters
+**5. State and File Management** (`test_state.sh` and `test_state_concurrent_updates.sh` - 34 tests total)
+Tests state file handling, permissions, corruption, concurrent updates, and edge cases.
 
-**6. Configuration Validation (~15 tests)**
-Tests configuration value validation and edge cases:
-- ✅ Invalid COOLDOWN_MINUTES (negative, zero, very large)
-- ✅ Invalid MAX_RESTARTS_PER_HOUR (negative, zero, very large)
-- ✅ Invalid LOCKFILE_TIMEOUT (negative, zero)
-- ✅ Invalid PING_COUNT (negative, zero, very large)
-- ✅ Invalid PING_TIMEOUT (negative, zero)
-- ✅ Environment variable sets invalid value
-- ✅ Multiple environment variables override config
+**6. Logging** (`test_logging.sh` - 8 tests)
+Tests logging failure scenarios and error handling.
 
-**7. System and Resource Edge Cases (~12 tests)**
-Tests system-level edge cases and resource exhaustion:
-- ✅ Tool availability detection (command -v) fails
-- ✅ Error during state file write
-- ✅ Cached connection name becomes invalid
-- ✅ Cached connection name takes priority over discovery
-- ✅ Connection name discovery during VPN failure (no active SA)
-- ✅ Discovery happens when both config and cache unavailable
-- ✅ Lockfile exists but PID belongs to different user
-- ✅ Lockfile exists but PID is zombie process
-- ✅ Lockfile file modification time cannot be read (permission issues)
-- ✅ Script execution during system shutdown (should cleanup)
-- ✅ Script execution when system resources exhausted
-- ✅ Error during VPN check (should log and continue)
-- ✅ Error during recovery action (should log and continue)
+**7. Connection Management** (`test_connection.sh` - 8 tests)
+Tests connection name discovery, caching, and edge cases.
+
+**8. Error Handling** (`test_errors.sh` - 3 tests)
+Tests error handling during critical operations.
+
+**9. Main Execution** (`test_main.sh` - 25 tests)
+Tests main execution edge cases and error scenarios.
+
+**10. Rapid State Changes** (`test_rapid_state_changes.sh` - 6 tests)
+Tests handling of rapid state changes and race conditions.
 
 #### Test Statistics
 
-- **Total Tests**: 127
-- **Test Categories**: 7 main categories
+- **Total High-Risk Tests**: ~250+ tests across multiple files
+- **Test Categories**: 10 main categories
 - **Focus Areas**: Critical error handling, edge cases, security, race conditions, resource management
-
-#### Test Results
-
-All 127 tests pass successfully. Tests verify:
-- ✅ Error handling doesn't crash the script
-- ✅ Edge cases are handled gracefully
-- ✅ Security concerns (command injection) are mitigated
-- ✅ Recovery actions execute correctly
-- ✅ Fallback mechanisms work as expected
-- ✅ Race conditions are properly handled
-- ✅ Resource exhaustion scenarios are handled
-- ✅ File permission issues are handled gracefully
 
 #### CI Integration
 
-The high-risk tests are automatically included in CI because:
+The high-risk tests are automatically included in CI when `RUN_SLOW_TESTS=1` is set because:
 1. `run_tests.sh` automatically discovers all `test_*.sh` files
-2. CI runs `./tests/run_tests.sh` which includes all test files
-3. No additional CI configuration needed
-
-#### Maintenance
-
-When adding new high-risk scenarios:
-1. Add tests to `test_high_risk.sh`
-2. Follow existing test patterns
-3. Use helper functions from `test_helper.bash`
-4. Ensure tests are isolated and don't depend on each other
-5. Run tests locally before committing
+2. High-risk test files are marked as slow tests
+3. CI runs `./tests/run_tests.sh --slow` which includes all test files
 
 For more information on test coverage gaps, see [TEST_COVERAGE_GAPS.md](../TEST_COVERAGE_GAPS.md).
 

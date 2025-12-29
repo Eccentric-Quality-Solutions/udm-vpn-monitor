@@ -60,7 +60,8 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Run script - should exit with error due to invalid IP
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_failure
 
 	# Lockfile should be cleaned up even on error
 	# Note: Script may exit before lockfile creation, so check may be flaky
@@ -180,9 +181,9 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "lockfile acquisition uses flock when available" {
-	# Skip if flock not available
+	# Skip condition: Requires 'flock' command to be available for file locking tests
 	if ! command -v flock >/dev/null 2>&1; then
-		skip "flock command not available"
+		skip "flock command not available (test requires flock for file locking functionality)"
 	fi
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
@@ -420,9 +421,9 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "multiple processes attempting to acquire lock simultaneously (flock path)" {
-	# Skip if flock not available
+	# Skip condition: Requires 'flock' command to be available for concurrent lock acquisition tests
 	if ! command -v flock >/dev/null 2>&1; then
-		skip "flock command not available"
+		skip "flock command not available (test requires flock for concurrent file locking tests)"
 	fi
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
@@ -651,10 +652,10 @@ EOF
 	echo "$(date +%s):${old_pid}" >"$lockfile"
 	touch "$lockfile"
 
-	# Check if PID is actually reused (unlikely but possible)
+	# Skip condition: Cannot test PID reuse scenario if current process has the same PID as the old process
 	# If current process has same PID, we can't test this scenario
 	if [[ $$ -eq $old_pid ]]; then
-		skip "Cannot test PID reuse - PID matches current process"
+		skip "Cannot test PID reuse scenario - current process PID ($$) matches old PID ($old_pid), test requires different PID to verify stale lockfile detection"
 	fi
 
 	# Try to run script - it should check if PID is still running
@@ -700,9 +701,10 @@ EOF
 	# Give script a moment to create lockfile before killing it
 	sleep 0.01
 
+	# Skip condition: Lockfile must be created by script before we can test crash recovery
 	# Verify lockfile exists (should be created by script)
 	if [[ ! -f "$lockfile" ]]; then
-		skip "Lockfile not created quickly enough for crash test"
+		skip "Lockfile not created quickly enough for crash test (script may have been killed before lockfile creation, test requires lockfile to exist to verify crash recovery)"
 	fi
 
 	# Kill script with SIGKILL (cannot be caught, simulates crash)
@@ -823,7 +825,8 @@ EOF
 	add_mock_to_path
 
 	# Add mock stat to PATH before system stat
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Should handle stat failure gracefully (should treat mtime=0 as stale)
 	# Code at lib/state.sh:266 returns "0" on stat failure
@@ -871,7 +874,8 @@ EOF
 	add_mock_to_path
 
 	# Add mock kill to PATH before system kill
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Should handle kill -0 failure gracefully (should treat lockfile as stale)
 	# Code at lib/lockfile.sh:68 suppresses errors with 2>/dev/null
@@ -919,7 +923,8 @@ EOF
 	add_mock_to_path
 
 	# Add mock kill to PATH before system kill
-	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake || true
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
 
 	# Zombie processes still respond to kill -0, so lockfile would appear valid
 	# Code at lib/lockfile.sh:68 uses kill -0 which succeeds for zombies

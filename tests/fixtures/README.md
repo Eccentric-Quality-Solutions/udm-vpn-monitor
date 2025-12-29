@@ -108,6 +108,86 @@ load fixtures/vpn_cooldown
 }
 ```
 
+### `vpn_rekey.bash` - VPN Rekey Scenario
+
+Sets up a test environment where the VPN has undergone a rekey (SPI change). Useful for testing rekey detection and byte counter baseline reset.
+
+**Function**: `setup_vpn_rekey_fixture`
+
+**Arguments**:
+- `$1`: Peer IP address (default: "192.168.1.1")
+- `$2`: Old SPI value (default: 0x12345678)
+- `$3`: New SPI value (default: 0x87654321)
+- `$4`: Old bytes value (default: 5000)
+- `$5`: New bytes value (default: 1000, typically lower after rekey)
+- `$6+`: Additional config variables as KEY="VALUE" pairs
+
+**Example**:
+```bash
+load test_helper
+load fixtures/vpn_rekey
+
+@test "VPN rekey - SPI changes, baseline reset" {
+    setup_vpn_rekey_fixture "192.168.1.1"
+    # VPN has rekeyed, SPI changed from 0x12345678 to 0x87654321
+    run bash "$TEST_SCRIPT" --fake
+    assert_success
+    assert_file_contains "$LOG_FILE" "rekey"
+}
+```
+
+### `vpn_multiple_peers.bash` - VPN Multiple Peers Scenario
+
+Sets up a test environment with multiple VPN peers for testing multi-peer scenarios.
+
+**Function**: `setup_vpn_multiple_peers_fixture`
+
+**Arguments**:
+- `$1`: Peer IPs as space-separated string (default: "192.168.1.1 10.0.0.1 172.16.0.1")
+- `$2`: Failure count for all peers (default: 0)
+- `$3`: Bytes value for all peers (default: 1000)
+- `$4`: SPI value for all peers (default: 0x12345678)
+- `$5+`: Additional config variables as KEY="VALUE" pairs
+
+**Example**:
+```bash
+load test_helper
+load fixtures/vpn_multiple_peers
+
+@test "Multiple peers - all healthy" {
+    setup_vpn_multiple_peers_fixture "192.168.1.1 10.0.0.1"
+    # Two peers, both healthy
+    run bash "$TEST_SCRIPT" --fake
+    assert_success
+}
+```
+
+### `vpn_recovery_disabled.bash` - VPN with Recovery Disabled
+
+Sets up a test environment where recovery actions are disabled. Useful for testing detection without recovery side effects.
+
+**Function**: `setup_vpn_recovery_disabled_fixture`
+
+**Arguments**:
+- `$1`: Peer IP address (default: "192.168.1.1")
+- `$2`: Failure count (default: 0)
+- `$3`: Bytes value (default: 1000)
+- `$4`: SPI value (default: 0x12345678)
+- `$5+`: Additional config variables as KEY="VALUE" pairs
+
+**Example**:
+```bash
+load test_helper
+load fixtures/vpn_recovery_disabled
+
+@test "VPN detection without recovery" {
+    setup_vpn_recovery_disabled_fixture "192.168.1.1"
+    # VPN with recovery disabled
+    run bash "$TEST_SCRIPT" --fake
+    # Should detect failures but not trigger recovery
+}
+```
+
 ## Usage Pattern
 
 1. Load `test_helper` (which provides base setup functions)

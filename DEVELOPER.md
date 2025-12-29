@@ -84,12 +84,7 @@ For design decisions and rationale behind architectural choices, see [Architectu
 
 **Testing:**
 
-For comprehensive testing documentation including test structure, writing new tests, coverage reporting, and CI/CD integration, see [tests/README.md](tests/README.md).
-
-**Quick reference:**
-- Run all tests: `./tests/run_tests.sh`
-- Run with coverage: `./tests/run_tests.sh --coverage`
-- Run specific test file: `bats tests/test_vpn_monitor.sh`
+For comprehensive testing documentation including test structure, running tests, writing new tests, coverage reporting, and CI/CD integration, see [tests/README.md](tests/README.md).
 
 ### Common Development Tasks
 
@@ -97,7 +92,7 @@ For comprehensive testing documentation including test structure, writing new te
 1. Create feature branch: `git checkout -b feature/new-feature`
 2. Write tests first (TDD approach)
 3. Implement feature
-4. Run tests: `./tests/run_tests.sh`
+4. Run tests (see [tests/README.md](tests/README.md) for details)
 5. Check code quality: `shellcheck` and `shfmt`
 6. Update documentation
 7. Submit pull request
@@ -107,11 +102,11 @@ For comprehensive testing documentation including test structure, writing new te
 2. Write a test that fails (demonstrates the bug)
 3. Fix the bug
 4. Verify test passes
-5. Run full test suite
+5. Run full test suite (see [tests/README.md](tests/README.md) for details)
 6. Update CHANGELOG.md
 
 **Refactoring:**
-1. Ensure tests pass before refactoring
+1. Ensure tests pass before refactoring (see [tests/README.md](tests/README.md) for details)
 2. Make small, incremental changes
 3. Run tests after each change
 4. Keep functionality identical (no behavior changes)
@@ -220,17 +215,7 @@ cd bats-core
 sudo ./install.sh /usr/local
 ```
 
-**Usage**:
-```bash
-# Run all tests
-./tests/run_tests.sh
-
-# Run specific test file
-bats tests/test_vpn_monitor.sh
-
-# Run with verbose output
-bats --verbose tests/test_*.sh
-```
+**Usage**: See [tests/README.md](tests/README.md) for detailed usage instructions.
 
 **Documentation**: https://github.com/bats-core/bats-core
 
@@ -261,7 +246,9 @@ make
 sudo make install
 ```
 
-**Usage**:
+**Usage**: See [tests/README.md](tests/README.md) for detailed coverage reporting instructions.
+
+**Quick reference**:
 ```bash
 # Run tests with coverage
 ./tests/run_tests.sh --coverage
@@ -924,11 +911,11 @@ udm-vpn-monitor/
    shfmt -w *.sh lib/*.sh tests/*.sh
    shellcheck --severity=error *.sh lib/*.sh tests/*.sh
    ```
-3. **Run all tests**:
+3. **Run all tests** (see [tests/README.md](tests/README.md) for details):
    ```bash
    ./tests/run_tests.sh
    ```
-4. **Check test coverage** (if kcov is installed):
+4. **Check test coverage** (if kcov is installed; see [tests/README.md](tests/README.md) for details):
    ```bash
    ./tests/run_tests.sh --coverage
    ```

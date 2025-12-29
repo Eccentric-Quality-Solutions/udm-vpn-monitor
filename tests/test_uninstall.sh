@@ -22,8 +22,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	# Test verifies that the uninstall script enforces root requirement for uninstallation.
 	# Expected: Script exits with failure status and displays error message when run without root privileges.
 	# Importance: Uninstallation requires root access to remove system files and cron entries.
-	# Skip if actually running as root (can't test root requirement)
-	[[ $EUID -eq 0 ]] && skip "Cannot test root requirement when running as root"
+	# Skip condition: Cannot test non-root requirement when running as root (test requires non-root user to verify root requirement)
+	[[ $EUID -eq 0 ]] && skip "Cannot test root requirement when running as root (test requires non-root user to verify uninstall fails without root privileges)"
 	run bash "$UNINSTALL_SCRIPT"
 	assert_failure
 	assert_output --partial "must be run as root"
@@ -34,8 +34,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	# Test verifies that the uninstall script handles cases where installation doesn't exist gracefully.
 	# Expected: Script exits successfully with informative message when no installation is found.
 	# Importance: Prevents errors when uninstall is run multiple times or on systems without installation.
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Ensure installation directory doesn't exist
 	rm -rf /data/vpn-monitor 2>/dev/null || true
@@ -51,8 +51,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	# Test verifies that the uninstall script removes the installation directory and all its contents.
 	# Expected: Installation directory is completely removed during uninstallation process.
 	# Importance: Ensures complete removal of all installed files and directories.
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -75,8 +75,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	# Test verifies that the uninstall script removes the cron job entry during uninstallation.
 	# Expected: Script removes vpn-monitor cron entry from crontab, preventing scheduled execution.
 	# Importance: Ensures complete removal of all installation components including scheduled tasks.
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create test cron entry
 	create_test_cron_entry "*/1 * * * *" "/data/vpn-monitor/vpn-monitor.sh"
@@ -105,8 +105,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	# Test verifies that the uninstall script removes cron entry even when installation directory is missing.
 	# Expected: Script removes cron entry regardless of installation directory state, ensuring complete cleanup.
 	# Importance: Handles partial installations where cron was created but directory was removed separately.
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create test cron entry
 	create_test_cron_entry "*/1 * * * *" "/data/vpn-monitor/vpn-monitor.sh"
@@ -131,8 +131,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	# Test verifies that the uninstall script performs post-uninstallation verification checks.
 	# Expected: Script verifies that all components are removed and outputs success message.
 	# Importance: Verification ensures uninstallation completed successfully and no components remain.
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -158,8 +158,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	# Test verifies that the uninstall script prompts for user confirmation before proceeding.
 	# Expected: Script displays confirmation prompt and cancels uninstallation when user responds "no".
 	# Importance: Confirmation prompt prevents accidental uninstallation and data loss.
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -183,8 +183,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	# Test verifies that the uninstall script skips confirmation prompt when --yes flag is provided.
 	# Expected: Script proceeds with uninstallation immediately without prompting for confirmation.
 	# Importance: Allows automated uninstallation in scripts and CI/CD environments without user interaction.
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -203,8 +203,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh skips prompt in CI environment" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 	export CI=1
 
 	# Create mock installation directory
@@ -228,8 +228,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	# Test verifies that the uninstall script displays list of files that will be removed before uninstallation.
 	# Expected: Script lists all files and directories that will be deleted, providing transparency to users.
 	# Importance: File listing helps users understand what will be removed and prevents accidental data loss.
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory with multiple files
 	local install_dir="/data/vpn-monitor"
@@ -254,8 +254,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	# Test verifies that the uninstall script removes lockfiles during uninstallation cleanup.
 	# Expected: Script removes lockfiles along with installation directory, preventing stale lock issues.
 	# Importance: Lockfile cleanup ensures clean uninstallation and prevents lockfile conflicts on reinstall.
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -277,8 +277,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh displays summary after successful uninstall" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -298,8 +298,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh removes logrotate configuration when it exists" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -325,8 +325,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh handles missing logrotate configuration gracefully" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -349,8 +349,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh handles read-only logrotate directory gracefully" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -380,8 +380,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh verifies uninstallation includes logrotate config check" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -407,8 +407,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh verification fails when logrotate config still exists" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -436,8 +436,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh check_installation returns 0 when installation exists" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -456,8 +456,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh check_installation returns 1 when installation missing" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Ensure installation directory doesn't exist
 	rm -rf /data/vpn-monitor 2>/dev/null || true
@@ -474,8 +474,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh remove_cron handles crontab with only vpn-monitor entry" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create test cron entry (only entry)
 	create_test_cron_entry "*/1 * * * *" "/data/vpn-monitor/vpn-monitor.sh"
@@ -503,8 +503,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh remove_cron handles missing cron entry gracefully" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Ensure no vpn-monitor cron entry exists
 	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
@@ -525,8 +525,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh remove_logrotate_config handles removal failure" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -556,8 +556,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh remove_installation_dir handles missing directory gracefully" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create installation directory first, then remove it manually
 	# to simulate it being removed before remove_installation_dir is called
@@ -579,8 +579,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh remove_installation_dir lists files before removal" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory with multiple files
 	local install_dir="/data/vpn-monitor"
@@ -605,8 +605,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh cleanup_lockfile handles missing lockfile" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory without lockfile
 	local install_dir="/data/vpn-monitor"
@@ -624,8 +624,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh cleanup_lockfile removes stale lockfile" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -649,8 +649,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh verify_uninstallation detects cron entry still exists" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create test cron entry
 	create_test_cron_entry "*/1 * * * *" "/data/vpn-monitor/vpn-monitor.sh"
@@ -685,8 +685,8 @@ EOF
 
 # bats test_tags=category:unit
 @test "uninstall.sh verify_uninstallation detects installation directory still exists" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -718,8 +718,8 @@ EOF
 
 # bats test_tags=category:unit
 @test "uninstall.sh verify_uninstallation detects multiple remaining components" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -761,8 +761,8 @@ EOF
 
 # bats test_tags=category:unit
 @test "uninstall.sh verify_uninstallation succeeds when all components removed" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Ensure all components are removed
 	rm -rf /data/vpn-monitor 2>/dev/null || true
@@ -792,8 +792,8 @@ EOF
 
 # bats test_tags=category:unit
 @test "uninstall.sh full uninstallation flow with all components" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create complete mock installation
 	local install_dir="/data/vpn-monitor"
@@ -838,8 +838,8 @@ EOF
 
 # bats test_tags=category:unit
 @test "uninstall.sh handles interactive confirmation with yes" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -860,8 +860,8 @@ EOF
 
 # bats test_tags=category:unit
 @test "uninstall.sh remove_cron preserves other cron entries" {
-	# Skip if not root (uninstall.sh requires root)
-	[[ $EUID -ne 0 ]] && skip "This test requires root access"
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Save original crontab
 	local original_crontab

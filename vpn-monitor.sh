@@ -6,7 +6,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.0.1
+# Version: 0.3.0
 #
 
 # Strict error handling: exit on error, undefined vars, pipe failures
@@ -22,7 +22,7 @@ LOCKFILE="${STATE_DIR}/vpn-monitor.lock"
 LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
 
 # Script version
-SCRIPT_VERSION="0.0.1"
+SCRIPT_VERSION="0.3.0"
 
 # Source library modules
 # shellcheck source=lib/logging.sh
@@ -75,6 +75,17 @@ RESTART_COUNT_FILE="${LOGS_DIR}/restart_count"
 # LAST_BYTES_FILE will be per-peer: ${STATE_DIR}/last_bytes_<peer_ip_sanitized>
 COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
 
+# Check for --fake flag early (before config loading) so config errors can be handled gracefully
+# This allows config errors to exit gracefully in fake mode instead of crashing
+for arg in "$@"; do
+	case "$arg" in
+	--fake)
+		NO_ESCALATE=1
+		break
+		;;
+	esac
+done
+
 # Test log file write capability early (before config loading)
 #
 # This test uses the default LOG_FILE path (${STATE_DIR}/logs/vpn-monitor.log).
@@ -87,14 +98,21 @@ COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
 # Note:
 #   After config loading, recalculate_log_paths() is called to update LOG_FILE/LOGS_DIR
 #   if they were overridden. The new log directory is created at that point.
+#   If log file write fails, we output to stderr and continue (log_message handles this gracefully)
 if ! touch "$LOG_FILE" 2>/dev/null; then
-	die "Cannot write to log file: $LOG_FILE (check permissions on directory: $(dirname "$LOG_FILE"))"
+	# Log file write failed - output to stderr and continue
+	# log_message() will handle subsequent write failures gracefully
+	echo "[$(get_formatted_timestamp)] [WARNING] Cannot write to log file: $LOG_FILE (check permissions on directory: $(dirname "$LOG_FILE"))" >&2
+	echo "[$(get_formatted_timestamp)] [WARNING] Continuing execution - log messages will be output to stderr" >&2
 fi
 
 # Verify logging works by writing a test message
 # This ensures log_message function will work before we proceed
+# If this fails, log_message() will handle it gracefully by outputting to stderr
 if ! echo "[$(get_formatted_timestamp)] [INFO] Log file initialized" >>"$LOG_FILE" 2>/dev/null; then
-	die "Cannot write to log file after touch test: $LOG_FILE"
+	# Log file write failed - output to stderr and continue
+	echo "[$(get_formatted_timestamp)] [WARNING] Cannot write to log file after touch test: $LOG_FILE" >&2
+	echo "[$(get_formatted_timestamp)] [WARNING] Continuing execution - log messages will be output to stderr" >&2
 fi
 
 # Load configuration
@@ -305,126 +323,59 @@ initialize_monitor() {
 	parse_args "$@"
 
 	# Log script start
-	if [[ $NO_ESCALATE -eq 1 ]]; then
+	if [[ "${NO_ESCALATE:-0}" -eq 1 ]]; then
 		log_message "INFO" "${VPN_NAME:-VPN} monitor script started in fake mode (PID: $$) - tier escalation disabled"
 	else
 		log_message "INFO" "${VPN_NAME:-VPN} monitor script started (PID: $$)"
 	fi
 
 	# Debug output (only if DEBUG=1)
-	if [[ "${DEBUG:-0}" -eq 1 ]]; then
-		echo "DEBUG: Starting main() function, PID: $$" >&2
-		echo "DEBUG: After log_message call" >&2
-	fi
+	debug_log "Starting main() function, PID: $$"
+	debug_log "After log_message call"
 
 	# Initialize state
-	if [[ "${DEBUG:-0}" -eq 1 ]]; then
-		echo "DEBUG: Calling init_state()" >&2
-	fi
+	debug_log "Calling init_state()"
 	init_state
-	if [[ "${DEBUG:-0}" -eq 1 ]]; then
-		echo "DEBUG: After init_state()" >&2
-	fi
+	debug_log "After init_state()"
 }
 
 # Validate monitor state and check cooldown
 #
-# Validates state files for corruption and checks if script should exit due to cooldown.
+# Validates state files for corruption, checks for network partition, and checks if script should exit due to cooldown.
+# Network partition check happens before cooldown check to ensure partition detection works even during cooldown periods.
 # Performs cron persistence check once per run (tracked via .cron_checked file).
 # This ensures state integrity before proceeding with monitoring.
 #
 # Returns:
-#   0: State is valid and not in cooldown (continues execution)
-#   1: Should exit (in cooldown, script exits with code 0)
+#   0: State is valid, network is healthy (or partition check disabled), and not in cooldown (continues execution)
+#   Exits script with code 0 if network is partitioned or in cooldown
 #
 # Side effects:
+#   - May exit script if network is partitioned (logs message, exits with code 0)
 #   - May exit script if in cooldown (logs message, exits with code 0)
+#   - Updates network partition state file if partition status changed
 #   - Logs warnings about state file issues (but doesn't fail)
 #   - Checks cron persistence once per run (creates .cron_checked file)
 #   - Enables debug output if DEBUG=1
 #
 # Examples:
 #   validate_monitor_state
-#   # Validates state, checks cooldown, may exit if in cooldown
+#   # Validates state, checks partition, checks cooldown, may exit if partitioned or in cooldown
 #
 # Note:
-#   Requires validate_state, check_cooldown, check_cron_persistence, log_message,
-#   STATE_DIR, DEBUG to be set
+#   Requires validate_state, check_cooldown, check_cron_persistence, check_network_partition,
+#   get_network_partition_state, set_network_partition_state, log_message, STATE_DIR, DEBUG to be set
 #   Cron check is performed once per run to avoid log spam
+#   Network partition check runs before cooldown check to ensure partition detection works during cooldown
 validate_monitor_state() {
 	# Validate state files (check for corruption)
 	if ! validate_state; then
 		log_message "WARNING" "State file validation detected issues - some state files may be corrupted"
 	fi
 
-	# Check cooldown
-	if [[ "${DEBUG:-0}" -eq 1 ]]; then
-		echo "DEBUG: Checking cooldown" >&2
-	fi
-	if check_cooldown; then
-		if [[ "${DEBUG:-0}" -eq 1 ]]; then
-			echo "DEBUG: In cooldown, exiting" >&2
-		fi
-		log_message "INFO" "Script exiting: in cooldown period"
-		exit 0
-	fi
-	if [[ "${DEBUG:-0}" -eq 1 ]]; then
-		echo "DEBUG: Not in cooldown, continuing" >&2
-	fi
-
-	# Check cron persistence (first run only, to avoid log spam)
-	if [[ ! -f "${STATE_DIR}/.cron_checked" ]]; then
-		if [[ "${DEBUG:-0}" -eq 1 ]]; then
-			echo "DEBUG: Checking cron persistence" >&2
-		fi
-		check_cron_persistence
-		touch "${STATE_DIR}/.cron_checked"
-	fi
-}
-
-# Process all peer IPs
-#
-# Iterates through configured peer IPs and monitors each one.
-# Validates configuration before processing to ensure EXTERNAL_PEER_IPS is set correctly.
-# Checks for network partition before VPN checks - if network is partitioned, skips VPN monitoring.
-# Skips empty peer IPs with a warning.
-# Uses EXTERNAL_PEER_IPS for xfrm state checks and INTERNAL_PEER_IPS for ping checks.
-#
-# Returns:
-#   0: All peers are healthy (all monitor_peer calls succeeded) or network is partitioned (skipped VPN checks)
-#   1: One or more peers have issues (at least one monitor_peer call failed)
-#
-# Side effects:
-#   - Validates configuration via validate_config()
-#   - Checks network partition status (if enabled)
-#   - Updates network partition state file
-#   - Calls monitor_peer() for each peer IP pair (external, internal) if network is healthy
-#   - Logs warnings for empty peer IPs (skips them)
-#   - Enables debug output if DEBUG=1
-#
-# Examples:
-#   if ! process_peer_ips; then
-#       echo "Some peers have issues"
-#   fi
-#
-# Note:
-#   Requires validate_config, monitor_peer, log_message, check_network_partition,
-#   get_network_partition_state, set_network_partition_state, EXTERNAL_PEER_IPS, INTERNAL_PEER_IPS, DEBUG to be set
-#   EXTERNAL_PEER_IPS should be space-separated list of external/public IP addresses
-#   INTERNAL_PEER_IPS should be space-separated list of internal/private IP addresses (optional)
-process_peer_ips() {
-	local all_ok=0
-
-	# Validate configuration
-	if [[ "${DEBUG:-0}" -eq 1 ]]; then
-		echo "DEBUG: Validating EXTERNAL_PEER_IPS (value: '${EXTERNAL_PEER_IPS}')" >&2
-		echo "DEBUG: INTERNAL_PEER_IPS (value: '${INTERNAL_PEER_IPS}')" >&2
-	fi
-
-	# Validate configuration (includes EXTERNAL_PEER_IPS validation via schema)
-	validate_config
-
-	# Check for network partition before VPN checks (if enabled)
+	# Check for network partition before cooldown check
+	# Partition check should happen first because if network is partitioned,
+	# we should skip VPN checks regardless of cooldown status
 	if [[ "${ENABLE_NETWORK_PARTITION_CHECK:-1}" -eq 1 ]]; then
 		local dns_server="${NETWORK_PARTITION_DNS_SERVER:-8.8.8.8}"
 		local dns_hostname="${NETWORK_PARTITION_DNS_HOSTNAME:-google.com}"
@@ -435,13 +386,7 @@ process_peer_ips() {
 		local prev_partition_state
 		prev_partition_state=$(get_network_partition_state)
 
-		if check_network_partition "$dns_server" "$dns_hostname" "$dns_timeout" "$interfaces"; then
-			# Network is healthy - check if it was previously partitioned
-			if [[ "$prev_partition_state" -eq 1 ]]; then
-				log_message "INFO" "Network connectivity restored - resuming VPN monitoring"
-				set_network_partition_state 0
-			fi
-		else
+		if ! check_network_partition "$dns_server" "$dns_hostname" "$dns_timeout" "$interfaces"; then
 			# Network is partitioned - skip VPN checks
 			if [[ "$prev_partition_state" -eq 0 ]]; then
 				log_message "WARNING" "Network partition detected - skipping VPN checks until connectivity restored"
@@ -449,10 +394,77 @@ process_peer_ips() {
 			else
 				log_message "INFO" "Network still partitioned - VPN checks skipped"
 			fi
-			# Return success since we're intentionally skipping checks
-			return 0
+			# Exit early - don't check cooldown or process peers
+			exit 0
+		else
+			# Network is healthy - check if it was previously partitioned
+			if [[ "$prev_partition_state" -eq 1 ]]; then
+				log_message "INFO" "Network connectivity restored - resuming VPN monitoring"
+				set_network_partition_state 0
+			fi
 		fi
 	fi
+
+	# Check cooldown
+	debug_log "Checking cooldown"
+	if check_cooldown; then
+		debug_log "In cooldown, exiting"
+		log_message "INFO" "Script exiting: in cooldown period"
+		exit 0
+	fi
+	debug_log "Not in cooldown, continuing"
+
+	# Check cron persistence (first run only, to avoid log spam)
+	if [[ ! -f "${STATE_DIR}/.cron_checked" ]]; then
+		debug_log "Checking cron persistence"
+		check_cron_persistence
+		# Create .cron_checked file - handle errors gracefully
+		if ! touch "${STATE_DIR}/.cron_checked" 2>/dev/null; then
+			handle_error "WARNING" "Cannot create .cron_checked file in ${STATE_DIR} (check permissions)"
+		fi
+	fi
+}
+
+# Process all peer IPs
+#
+# Iterates through configured peer IPs and monitors each one.
+# Validates configuration before processing to ensure EXTERNAL_PEER_IPS is set correctly.
+# Network partition check is performed earlier in validate_monitor_state() before this function is called.
+# Skips empty peer IPs with a warning.
+# Uses EXTERNAL_PEER_IPS for xfrm state checks and INTERNAL_PEER_IPS for ping checks.
+#
+# Returns:
+#   0: All peers are healthy (all monitor_peer calls succeeded)
+#   1: One or more peers have issues (at least one monitor_peer call failed)
+#
+# Side effects:
+#   - Validates configuration via validate_config()
+#   - Calls monitor_peer() for each peer IP pair (external, internal)
+#   - Logs warnings for empty peer IPs (skips them)
+#   - Enables debug output if DEBUG=1
+#
+# Examples:
+#   if ! process_peer_ips; then
+#       echo "Some peers have issues"
+#   fi
+#
+# Note:
+#   Requires validate_config, monitor_peer, log_message, EXTERNAL_PEER_IPS, INTERNAL_PEER_IPS, DEBUG to be set
+#   EXTERNAL_PEER_IPS should be space-separated list of external/public IP addresses
+#   INTERNAL_PEER_IPS should be space-separated list of internal/private IP addresses (optional)
+#   Network partition check is performed in validate_monitor_state() before this function is called
+process_peer_ips() {
+	local all_ok=0
+
+	# Validate configuration
+	debug_log "Validating EXTERNAL_PEER_IPS (value: '${EXTERNAL_PEER_IPS}')"
+	debug_log "INTERNAL_PEER_IPS (value: '${INTERNAL_PEER_IPS}')"
+
+	# Validate configuration (includes EXTERNAL_PEER_IPS validation via schema)
+	validate_config
+
+	# Network partition check is now done in validate_monitor_state() before cooldown check
+	# This ensures partition detection happens even during cooldown periods
 
 	# Process each peer IP
 	# Convert space-separated string to array to avoid word splitting and globbing
@@ -495,7 +507,7 @@ process_peer_ips() {
 #
 # Execution flow:
 #   1. Initializes the monitor (parse args, log start, init state)
-#   2. Validates state and checks cooldown (may exit if in cooldown)
+#   2. Validates state, checks network partition, and checks cooldown (may exit if partitioned or in cooldown)
 #   3. Processes all peer IPs (monitors each configured peer)
 #   4. Logs completion status and exits with appropriate status code
 #

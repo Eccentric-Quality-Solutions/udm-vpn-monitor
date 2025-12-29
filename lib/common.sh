@@ -3,12 +3,14 @@
 # Common functions for UDM VPN Monitor
 # Shared logging and utility functions for installation/uninstallation scripts and main monitor
 #
-# Version: 0.0.1
+# Version: 0.3.0
 #
 # This module provides shared utility functions used throughout the codebase to reduce duplication:
 # - File operations: file_exists_and_readable(), ensure_file_exists(), atomic_write_file()
 # - Directory operations: directory_exists(), directory_writable()
 # - Timestamp operations: get_unix_timestamp()
+# - String escaping: escape_sed_replacement(), escape_sed_regex()
+# - Config file operations: update_config_value()
 # - Logging: log_info(), log_warn(), log_error()
 # - System checks: check_root()
 #
@@ -94,6 +96,34 @@ log_error() {
 	echo -e "${RED}[ERROR]${NC} $*"
 }
 
+# Print debug message if DEBUG is enabled
+#
+# Prints a debug message to stderr if the DEBUG environment variable is set to 1.
+# This provides a consistent way to output debug information throughout the codebase.
+#
+# Arguments:
+#   $@: Debug message text (all arguments are concatenated with spaces)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints to stderr if DEBUG=1: "DEBUG: <message>"
+#
+# Examples:
+#   debug_log "Starting main() function, PID: $$"
+#   debug_log "After log_message call"
+#   debug_log "Validating EXTERNAL_PEER_IPS (value: '${EXTERNAL_PEER_IPS}')"
+#
+# Note:
+#   Only outputs if DEBUG environment variable is set to 1
+#   Output goes to stderr (>&2) to avoid interfering with stdout
+debug_log() {
+	if [[ "${DEBUG:-0}" -eq 1 ]]; then
+		echo "DEBUG: $*" >&2
+	fi
+}
+
 # Check if running as root
 #
 # Verifies that the script is running with root privileges (EUID = 0).
@@ -151,7 +181,7 @@ file_exists_and_readable() {
 #
 # Returns:
 #   0: File exists or was created successfully
-#   1: Failed to create file (exits script if die function is available)
+#   1: Failed to create file
 #
 # Side effects:
 #   Creates file with default content if it doesn't exist
@@ -159,22 +189,22 @@ file_exists_and_readable() {
 # Examples:
 #   ensure_file_exists "$counter_file" "0"
 #   ensure_file_exists "$log_file"
+#   # Callers should handle errors:
+#   if ! ensure_file_exists "$file" "0"; then
+#       handle_error "WARNING" "Failed to create file: $file" 0
+#   fi
 #
 # Note:
-#   If die function is available (from logging.sh), will exit on error.
-#   Otherwise, returns error code.
+#   Returns error code on failure - callers should handle errors appropriately.
+#   Some callers may want to log and continue, others may want to die().
 ensure_file_exists() {
 	local file="$1"
 	local default_content="${2:-}"
 
 	if [[ ! -f "$file" ]]; then
 		if ! echo "$default_content" >"$file" 2>/dev/null; then
-			# Try to use die if available, otherwise return error
-			if command -v die >/dev/null 2>&1; then
-				die "Cannot create file: $file"
-			else
-				return 1
-			fi
+			# Return error code - let caller decide how to handle
+			return 1
 		fi
 	fi
 	return 0
@@ -287,4 +317,160 @@ atomic_write_file() {
 		return 1
 	fi
 	return 0
+}
+
+# Escape string for sed replacement
+#
+# Escapes special characters in a string for use in sed replacement strings.
+# This prevents command injection and ensures proper sed behavior when replacing
+# text that may contain special characters.
+#
+# Arguments:
+#   $1: Value to escape
+#   $2: Optional delimiter character used in sed command (default: |)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints escaped string to stdout
+#
+# Examples:
+#   escaped=$(escape_sed_replacement "$peer_ips")
+#   sed -i "s|^EXTERNAL_PEER_IPS=.*|EXTERNAL_PEER_IPS=\"${escaped}\"|" "$config_file"
+#
+#   # With custom delimiter
+#   escaped=$(escape_sed_replacement "$value" "/")
+#   sed -i "s/^KEY=.*/KEY=\"${escaped}\"/" "$file"
+#
+# Note:
+#   Escapes: \ (backslash), & (matched text), and delimiter character
+#   Uses printf '%s\n' to handle multi-line values safely
+escape_sed_replacement() {
+	local value="$1"
+	local delimiter="${2:-|}"
+	# Use a different delimiter for the sed command that escapes the delimiter character
+	# This avoids issues when delimiter is | (which would create invalid s||| syntax)
+	if [[ "$delimiter" == "|" ]]; then
+		printf '%s\n' "$value" | sed 's/\\/\\\\/g' | sed 's/&/\\&/g' | sed "s#|#\\|#g"
+	else
+		printf '%s\n' "$value" | sed 's/\\/\\\\/g' | sed 's/&/\\&/g' | sed "s|${delimiter}|\\${delimiter}|g"
+	fi
+}
+
+# Escape string for sed regex pattern
+#
+# Escapes special regex characters in a string for use in sed pattern matching.
+# This ensures that literal strings are matched correctly in sed regex patterns
+# rather than being interpreted as regex metacharacters.
+#
+# Arguments:
+#   $1: Value to escape
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints escaped string to stdout
+#
+# Examples:
+#   escaped=$(escape_sed_regex "$config_file")
+#   sed -i "s|^CONFIG_FILE=.*|CONFIG_FILE=\"${escaped}\"|" "$file"
+#
+# Note:
+#   Escapes regex special characters: [ \ . * ^ $ ( ) + ? { |
+#   Uses echo instead of printf as regex patterns are typically single-line
+escape_sed_regex() {
+	local value="$1"
+	echo "$value" | sed 's/[[\.*^$()+?{|]/\\&/g'
+}
+
+# Update or add a configuration variable in config file
+#
+# Updates an existing configuration variable or adds it if it doesn't exist.
+# Escapes special characters for safe sed replacement to prevent command injection.
+#
+# Arguments:
+#   $1: Config file path
+#   $2: Variable name
+#   $3: Variable value (will be quoted in config file)
+#   $4: Optional insertion point pattern (e.g., "^ENABLE_PING_CHECK=")
+#       If provided and variable doesn't exist, inserts after this pattern.
+#       If not provided, appends to end of file.
+#
+# Returns:
+#   0: Success
+#   1: Failed to update config file (file doesn't exist or write failed)
+#
+# Examples:
+#   update_config_value "$config_file" "LOCAL_UDM_IP" "$local_udm_ip"
+#   update_config_value "$config_file" "EXTERNAL_PEER_IPS" "$peer_ips"
+#   update_config_value "$config_file" "LOCAL_UDM_IP" "$ip" "^ENABLE_PING_CHECK="
+#
+# Note:
+#   Uses escape_sed_replacement() to safely escape values for sed replacement
+#   Uses | as delimiter in sed to avoid conflicts with / in paths/IPs
+update_config_value() {
+	local config_file="$1"
+	local var_name="$2"
+	local var_value="$3"
+	local insert_after="${4:-}"
+
+	# Validate config file exists
+	if [[ ! -f "$config_file" ]]; then
+		return 1
+	fi
+
+	# Escape value for sed replacement
+	local escaped_value
+	escaped_value=$(escape_sed_replacement "$var_value" "|")
+
+	if grep -q "^${var_name}=" "$config_file"; then
+		# Update existing line
+		sed -i "s|^${var_name}=.*|${var_name}=\"${escaped_value}\"|" "$config_file"
+	else
+		# Add new line
+		if [[ -n "$insert_after" ]]; then
+			# Insert after specified pattern
+			# Note: insert_after is used as a regex pattern in sed, so special regex
+			# characters should be escaped by the caller if literal matching is desired
+			sed -i "/${insert_after}/a ${var_name}=\"${var_value}\"" "$config_file"
+		else
+			# Append to end of file
+			echo "${var_name}=\"${var_value}\"" >>"$config_file"
+		fi
+	fi
+
+	return 0
+}
+
+# Safely assign a variable value using indirect assignment
+#
+# This prevents code injection by using printf -v instead of eval.
+# Uses declare -g to ensure the variable is in global scope, then
+# printf -v for safe assignment without code execution.
+#
+# Arguments:
+#   $1: Variable name to assign
+#   $2: Value to assign
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   Sets global variable via declare -g + printf -v
+#
+# Examples:
+#   safe_set_variable "VPN_NAME" "Site-to-Site VPN"
+#   safe_set_variable "$var_name" "$var_value"
+#
+# Note:
+#   This function is used throughout config.sh to safely set configuration
+#   variables without risk of code injection. It replaces the repeated pattern
+#   of "declare -g \"$var_name\"; printf -v \"$var_name\" '%s' \"$var_value\""
+safe_set_variable() {
+	local var_name="$1"
+	local var_value="$2"
+	declare -g "$var_name"
+	printf -v "$var_name" '%s' "$var_value"
 }

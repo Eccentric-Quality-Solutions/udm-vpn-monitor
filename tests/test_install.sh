@@ -43,8 +43,8 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	# Test verifies that the install script enforces root requirement for production installations.
 	# Expected: Script exits with failure status and displays error message when run without root privileges.
 	# Importance: Production installations require root access to install files and configure system services.
-	# Skip if actually running as root (can't test non-root requirement)
-	[[ $EUID -eq 0 ]] && skip "Cannot test root requirement when running as root"
+	# Skip condition: Cannot test non-root requirement when running as root (test requires non-root user to verify root requirement)
+	[[ $EUID -eq 0 ]] && skip "Cannot test root requirement when running as root (test requires non-root user to verify installation fails without root privileges)"
 	run bash "$INSTALL_SCRIPT" --silent --no-cron
 	assert_failure
 	assert_output --partial "must be run as root"
@@ -249,13 +249,15 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 			# Cron entry exists - test passes
 			assert_success "Cron entry was created"
 		else
+			# Skip condition: Cron entry creation may fail in test environment without proper permissions
 			# Script may have failed to create cron entry, but that's acceptable in test environment
 			# The important thing is the script attempted to set it up
-			skip "Cron entry not created (may require root or crontab permissions)"
+			skip "Cron entry not created (test requires root privileges or crontab permissions to verify cron entry creation)"
 		fi
 	else
+		# Skip condition: Crontab command not available or permission denied in test environment
 		# Crontab not available or permission denied - skip test
-		skip "Crontab not available or permission denied"
+		skip "Crontab not available or permission denied (test requires crontab command and appropriate permissions to verify cron setup)"
 	fi
 
 	# Clean up
@@ -300,8 +302,9 @@ EOF
 			return 1
 		fi
 	else
+		# Skip condition: Cron entry verification requires crontab access and appropriate permissions
 		# Cron entry not found - may be a test environment issue
-		skip "Cron entry not found (may require root or crontab permissions)"
+		skip "Cron entry not found (test requires root privileges or crontab permissions to verify cron entry exists)"
 	fi
 
 	# Clean up

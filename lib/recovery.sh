@@ -3,7 +3,7 @@
 # Recovery actions for UDM VPN Monitor
 # Implements tiered recovery: logging → surgical cleanup → full restart
 #
-# Version: 0.0.1
+# Version: 0.3.0
 #
 
 # Source constants for magic numbers
@@ -643,63 +643,73 @@ surgical_cleanup() {
 		return 0
 	fi
 
-	# Execute selected strategy
-	case "$RECOVERY_STRATEGY" in
-	"xfrm")
-		log_message "INFO" "Attempting xfrm-based per-connection recovery for $peer_ip"
-		if attempt_xfrm_recovery "$peer_ip"; then
-			log_message "INFO" "xfrm-based recovery completed successfully for $peer_ip"
-			log_message "INFO" "Surgical cleanup completed for $peer_ip (via xfrm)"
-			return 0
-		else
-			# xfrm recovery failed - fall back to ipsec reload
-			handle_error "WARNING" "xfrm-based recovery failed, falling back to ipsec reload (affects all tunnels)"
-			# Re-select strategy for fallback (without peer IP to force ipsec reload)
-			select_recovery_strategy "" 2
-		fi
-		;;
-	"ipsec_reload")
-		log_message "INFO" "Attempting ipsec reload (affects all tunnels)"
-		local reload_start_time
-		reload_start_time=$(get_unix_timestamp)
-		local command_succeeded=0
-		if ipsec reload >/dev/null 2>&1; then
-			command_succeeded=1
-			log_message "INFO" "Successfully reloaded IPsec connections via ipsec reload"
-		else
-			local reload_exit_code=$?
-			handle_error "WARNING" "ipsec reload failed (exit code: ${reload_exit_code}), attempting ipsec restart"
-			if ipsec restart >/dev/null 2>&1; then
+	# Execute selected strategy with fallback support
+	local strategy_executed=0
+	while [[ $strategy_executed -eq 0 ]]; do
+		case "$RECOVERY_STRATEGY" in
+		"xfrm")
+			log_message "INFO" "Attempting xfrm-based per-connection recovery for $peer_ip"
+			if attempt_xfrm_recovery "$peer_ip"; then
+				log_message "INFO" "xfrm-based recovery completed successfully for $peer_ip"
+				log_message "INFO" "Surgical cleanup completed for $peer_ip (via xfrm)"
+				return 0
+			else
+				# xfrm recovery failed - fall back to ipsec reload
+				handle_error "WARNING" "xfrm-based recovery failed, falling back to ipsec reload (affects all tunnels)"
+				# Re-select strategy for fallback (without peer IP to force ipsec reload)
+				if ! select_recovery_strategy "" 2; then
+					# Fallback strategy not available
+					handle_error "ERROR" "xfrm recovery failed and no fallback strategy available" 0
+					return 0
+				fi
+				# Continue loop to execute fallback strategy
+				continue
+			fi
+			;;
+		"ipsec_reload")
+			log_message "INFO" "Attempting ipsec reload (affects all tunnels)"
+			local reload_start_time
+			reload_start_time=$(get_unix_timestamp)
+			local command_succeeded=0
+			if ipsec reload >/dev/null 2>&1; then
 				command_succeeded=1
-				log_message "INFO" "Successfully restarted IPsec service via ipsec restart"
+				log_message "INFO" "Successfully reloaded IPsec connections via ipsec reload"
 			else
-				local restart_exit_code=$?
-				handle_error "ERROR" "ipsec restart also failed (exit code: ${restart_exit_code})" 0
+				local reload_exit_code=$?
+				handle_error "WARNING" "ipsec reload failed (exit code: ${reload_exit_code}), attempting ipsec restart"
+				if ipsec restart >/dev/null 2>&1; then
+					command_succeeded=1
+					log_message "INFO" "Successfully restarted IPsec service via ipsec restart"
+				else
+					local restart_exit_code=$?
+					handle_error "ERROR" "ipsec restart also failed (exit code: ${restart_exit_code})" 0
+				fi
 			fi
-		fi
 
-		# Verify connections are active after reload/restart
-		if [[ $command_succeeded -eq 1 ]]; then
-			# Wait a moment for connections to re-establish
-			sleep "$XFRM_RECOVERY_SLEEP_SECONDS"
+			# Verify connections are active after reload/restart
+			if [[ $command_succeeded -eq 1 ]]; then
+				# Wait a moment for connections to re-establish
+				sleep "$XFRM_RECOVERY_SLEEP_SECONDS"
 
-			# Verify connections are active (not just that command succeeded)
-			if verify_ipsec_connections_active; then
-				local reload_duration=$(($(get_unix_timestamp) - reload_start_time))
-				log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback, verification: connections active, duration: ${reload_duration}s)"
+				# Verify connections are active (not just that command succeeded)
+				if verify_ipsec_connections_active; then
+					local reload_duration=$(($(get_unix_timestamp) - reload_start_time))
+					log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback, verification: connections active, duration: ${reload_duration}s)"
+				else
+					local reload_duration=$(($(get_unix_timestamp) - reload_start_time))
+					handle_error "WARNING" "Surgical cleanup completed for $peer_ip (via ipsec fallback, verification: some connections not active, duration: ${reload_duration}s)"
+				fi
 			else
-				local reload_duration=$(($(get_unix_timestamp) - reload_start_time))
-				handle_error "WARNING" "Surgical cleanup completed for $peer_ip (via ipsec fallback, verification: some connections not active, duration: ${reload_duration}s)"
+				log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback, verification skipped due to command failure)"
 			fi
-		else
-			log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback, verification skipped due to command failure)"
-		fi
-		;;
-	*)
-		handle_error "ERROR" "Unknown recovery strategy: $RECOVERY_STRATEGY" 0
-		return 0
-		;;
-	esac
+			strategy_executed=1
+			;;
+		*)
+			handle_error "ERROR" "Unknown recovery strategy: $RECOVERY_STRATEGY" 0
+			return 0
+			;;
+		esac
+	done
 
 	# Always return 0 (function always succeeds - cleanup commands attempted, errors are logged)
 	return 0
@@ -768,91 +778,101 @@ full_restart() {
 		die "No recovery strategy available for Tier 3 recovery"
 	fi
 
-	# Execute selected strategy
-	case "$RECOVERY_STRATEGY" in
-	"xfrm")
-		log_message "INFO" "Tier 3: Attempting xfrm-based per-connection recovery for $peer_ip"
-		if attempt_xfrm_recovery "$peer_ip"; then
-			log_message "INFO" "Tier 3: xfrm-based per-connection recovery successful for $peer_ip"
-			# Record restart for rate limiting (even though it's per-connection)
-			record_restart
-			set_cooldown "$COOLDOWN_MINUTES"
-			return 0
-		else
-			handle_error "WARNING" "Tier 3: xfrm-based recovery failed for $peer_ip, falling back to full restart"
-			# Re-select strategy for fallback (without peer IP to force ipsec restart)
-			select_recovery_strategy "" 3
-		fi
-		;;
-	"ipsec_restart")
-		handle_error "WARNING" "Tier 3: Performing full IPsec restart (affects all VPN tunnels)"
-
-		# Record restart
-		record_restart
-
-		log_message "INFO" "Executing ipsec restart (affects all tunnels)"
-		local restart_start_time
-		restart_start_time=$(get_unix_timestamp)
-		# Capture exit code explicitly to avoid PIPESTATUS being cleared
-		# PIPESTATUS[0] = exit code of first command in pipe (ipsec), not tee
-		ipsec restart 2>&1 | tee -a "$LOG_FILE"
-		local ipsec_exit_code=${PIPESTATUS[0]}
-		if [[ $ipsec_exit_code -ne 0 ]]; then
-			handle_error "ERROR" "Failed to restart IPsec service (exit code: $ipsec_exit_code)" 0
-			return 1
-		fi
-
-		# Wait a moment for connections to re-establish
-		sleep "$XFRM_RECOVERY_SLEEP_SECONDS"
-
-		# Verify all connections restored and byte counters resume
-		local verify_start_time
-		verify_start_time=$(get_unix_timestamp)
-		local connections_verified=0
-		local byte_counters_verified=0
-
-		# Verify connections are active (not just that command succeeded)
-		if verify_ipsec_connections_active; then
-			connections_verified=1
-		else
-			handle_error "WARNING" "Tier 3: Some connections not active after ipsec restart"
-		fi
-
-		# Verify byte counters resume for all configured peers
-		if [[ -n "${EXTERNAL_PEER_IPS:-}" ]]; then
-			local IFS=' '
-			local -a peer_ips_array
-			read -ra peer_ips_array <<<"$EXTERNAL_PEER_IPS"
-			local peers_with_bytes=0
-			local total_peers=${#peer_ips_array[@]}
-
-			for peer_ip in "${peer_ips_array[@]}"; do
-				if verify_byte_counters_resume "$peer_ip" 2>/dev/null; then
-					((peers_with_bytes++))
-				fi
-			done
-
-			if [[ $peers_with_bytes -eq $total_peers ]]; then
-				byte_counters_verified=1
-				log_message "INFO" "Tier 3: Byte counters resumed for all $total_peers peer(s)"
+	# Execute selected strategy with fallback support
+	local strategy_executed=0
+	while [[ $strategy_executed -eq 0 ]]; do
+		case "$RECOVERY_STRATEGY" in
+		"xfrm")
+			log_message "INFO" "Tier 3: Attempting xfrm-based per-connection recovery for $peer_ip"
+			if attempt_xfrm_recovery "$peer_ip"; then
+				log_message "INFO" "Tier 3: xfrm-based per-connection recovery successful for $peer_ip"
+				# Record restart for rate limiting (even though it's per-connection)
+				record_restart
+				set_cooldown "$COOLDOWN_MINUTES"
+				return 0
 			else
-				handle_error "WARNING" "Tier 3: Byte counters resumed for only $peers_with_bytes/$total_peers peer(s)"
+				handle_error "WARNING" "Tier 3: xfrm-based recovery failed for $peer_ip, falling back to full restart"
+				# Re-select strategy for fallback (without peer IP to force ipsec restart)
+				if ! select_recovery_strategy "" 3; then
+					# Fallback strategy not available
+					handle_error "ERROR" "Tier 3: xfrm recovery failed and no fallback strategy available" 0
+					return 1
+				fi
+				# Continue loop to execute fallback strategy
+				continue
 			fi
-		else
-			# No peers configured - skip byte counter verification
-			byte_counters_verified=1
-			log_message "INFO" "Tier 3: Byte counter verification skipped (no peers configured)"
-		fi
+			;;
+		"ipsec_restart")
+			handle_error "WARNING" "Tier 3: Performing full IPsec restart (affects all VPN tunnels)"
 
-		local restart_duration=$(($(get_unix_timestamp) - restart_start_time))
-		local verify_duration=$(($(get_unix_timestamp) - verify_start_time))
-		log_message "INFO" "Tier 3: Full IPsec restart completed (duration: ${restart_duration}s, verification: ${verify_duration}s, connections: ${connections_verified}, byte counters: ${byte_counters_verified})"
-		;;
-	*)
-		handle_error "ERROR" "Unknown recovery strategy: $RECOVERY_STRATEGY" 0
-		return 1
-		;;
-	esac
+			# Record restart
+			record_restart
+
+			log_message "INFO" "Executing ipsec restart (affects all tunnels)"
+			local restart_start_time
+			restart_start_time=$(get_unix_timestamp)
+			# Capture exit code explicitly to avoid PIPESTATUS being cleared
+			# PIPESTATUS[0] = exit code of first command in pipe (ipsec), not tee
+			ipsec restart 2>&1 | tee -a "$LOG_FILE"
+			local ipsec_exit_code=${PIPESTATUS[0]}
+			if [[ $ipsec_exit_code -ne 0 ]]; then
+				handle_error "ERROR" "Failed to restart IPsec service (exit code: $ipsec_exit_code)" 0
+				return 1
+			fi
+
+			# Wait a moment for connections to re-establish
+			sleep "$XFRM_RECOVERY_SLEEP_SECONDS"
+
+			# Verify all connections restored and byte counters resume
+			local verify_start_time
+			verify_start_time=$(get_unix_timestamp)
+			local connections_verified=0
+			local byte_counters_verified=0
+
+			# Verify connections are active (not just that command succeeded)
+			if verify_ipsec_connections_active; then
+				connections_verified=1
+			else
+				handle_error "WARNING" "Tier 3: Some connections not active after ipsec restart"
+			fi
+
+			# Verify byte counters resume for all configured peers
+			if [[ -n "${EXTERNAL_PEER_IPS:-}" ]]; then
+				local IFS=' '
+				local -a peer_ips_array
+				read -ra peer_ips_array <<<"$EXTERNAL_PEER_IPS"
+				local peers_with_bytes=0
+				local total_peers=${#peer_ips_array[@]}
+
+				for peer_ip in "${peer_ips_array[@]}"; do
+					if verify_byte_counters_resume "$peer_ip" 2>/dev/null; then
+						((peers_with_bytes++))
+					fi
+				done
+
+				if [[ $peers_with_bytes -eq $total_peers ]]; then
+					byte_counters_verified=1
+					log_message "INFO" "Tier 3: Byte counters resumed for all $total_peers peer(s)"
+				else
+					handle_error "WARNING" "Tier 3: Byte counters resumed for only $peers_with_bytes/$total_peers peer(s)"
+				fi
+			else
+				# No peers configured - skip byte counter verification
+				byte_counters_verified=1
+				log_message "INFO" "Tier 3: Byte counter verification skipped (no peers configured)"
+			fi
+
+			local restart_duration=$(($(get_unix_timestamp) - restart_start_time))
+			local verify_duration=$(($(get_unix_timestamp) - verify_start_time))
+			log_message "INFO" "Tier 3: Full IPsec restart completed (duration: ${restart_duration}s, verification: ${verify_duration}s, connections: ${connections_verified}, byte counters: ${byte_counters_verified})"
+			strategy_executed=1
+			;;
+		*)
+			handle_error "ERROR" "Unknown recovery strategy: $RECOVERY_STRATEGY" 0
+			return 1
+			;;
+		esac
+	done
 
 	log_message "INFO" "Full IPsec restart completed"
 	set_cooldown "$COOLDOWN_MINUTES"
@@ -966,10 +986,19 @@ monitor_peer() {
 
 		# Tier 2: Surgical cleanup
 		if [[ "$failure_count" -ge "$TIER2_THRESHOLD" ]] && [[ "$failure_count" -lt "$TIER3_THRESHOLD" ]]; then
-			if [[ "$NO_ESCALATE" -eq 1 ]]; then
+			if [[ "${NO_ESCALATE:-0}" -eq 1 ]]; then
 				# In fake mode, log what would be done (including the command that would be used)
-				log_message "INFO" "Tier 2: Would attempt surgical SA cleanup for $external_peer_ip (skipped in fake mode)"
-				log_message "INFO" "Tier 2: Would use ipsec reload (affects all tunnels)"
+				# Use strategy selection to determine what would be done
+				if select_recovery_strategy "$external_peer_ip" 2; then
+					if [[ "$RECOVERY_STRATEGY" == "xfrm" ]]; then
+						log_message "INFO" "Tier 2: Would attempt xfrm-based per-connection recovery for $external_peer_ip (skipped in fake mode)"
+					else
+						log_message "INFO" "Tier 2: Would attempt surgical SA cleanup for $external_peer_ip (skipped in fake mode)"
+						log_message "INFO" "Tier 2: Would use $RECOVERY_COMMAND ($RECOVERY_IMPACT)"
+					fi
+				else
+					log_message "INFO" "Tier 2: Would attempt surgical SA cleanup for $external_peer_ip (skipped in fake mode, no strategy available)"
+				fi
 			else
 				handle_error "WARNING" "Tier 2: Attempting surgical SA cleanup for $external_peer_ip"
 				surgical_cleanup "$external_peer_ip"
@@ -978,7 +1007,7 @@ monitor_peer() {
 
 		# Tier 3: Full restart (with per-connection option if xfrm enabled)
 		if [[ "$failure_count" -ge "$TIER3_THRESHOLD" ]]; then
-			if [[ "$NO_ESCALATE" -eq 1 ]]; then
+			if [[ "${NO_ESCALATE:-0}" -eq 1 ]]; then
 				# In fake mode, still check rate limit to test the logic
 				# This allows tests to verify rate limiting behavior
 				if ! check_rate_limit; then

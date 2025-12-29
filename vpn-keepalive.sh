@@ -6,7 +6,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.0.1
+# Version: 0.3.0
 #
 
 # Strict error handling: exit on error, undefined vars, pipe failures
@@ -21,7 +21,7 @@ PIDFILE="${STATE_DIR}/vpn-keepalive.pid"
 LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"
 
 # Script version
-SCRIPT_VERSION="0.0.1"
+SCRIPT_VERSION="0.3.0"
 
 # Source library modules
 # shellcheck source=lib/logging.sh
