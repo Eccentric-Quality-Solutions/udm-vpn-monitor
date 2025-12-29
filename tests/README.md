@@ -12,6 +12,7 @@ This directory contains comprehensive tests for the UDM VPN Monitor scripts usin
 - `test_uninstall.sh` - Tests for `uninstall.sh` script (34 tests)
 - `test_vpn_monitor.sh` - Tests for `vpn-monitor.sh` script (33 tests)
 - `test_analyze_logs.sh` - Tests for `analyze-logs.sh` script (28 tests)
+- `test_check_config.sh` - Tests for `check-config.sh` script (18 tests)
 - `test_prepare_install_package.sh` - Tests for `prepare_install_package.sh` script (12 tests)
 - `run_tests.sh` - Test runner script
 - `generate_coverage_report.sh` - Generates test coverage reports from kcov output
@@ -58,13 +59,14 @@ By default, slow tests are excluded to speed up local development:
 
 This runs:
 - `test_analyze_logs.sh` (28 tests)
+- `test_check_config.sh` (18 tests)
 - `test_helper_functions.sh` (119 tests)
 - `test_install.sh` (18 tests)
 - `test_uninstall.sh` (34 tests)
 - `test_vpn_monitor.sh` (33 tests)
 - `test_prepare_install_package.sh` (12 tests)
 
-**Total**: 244 fast tests
+**Total**: 262 fast tests
 
 ### Run All Tests (Including Slow Tests)
 
@@ -129,6 +131,7 @@ bats tests/test_vpn_monitor.sh
 bats tests/test_integration.sh
 bats tests/test_high_risk.sh
 bats tests/test_analyze_logs.sh
+bats tests/test_check_config.sh
 bats tests/test_prepare_install_package.sh
 ```
 
@@ -136,6 +139,7 @@ bats tests/test_prepare_install_package.sh
 
 ### Fast Tests (run by default)
 - `test_analyze_logs.sh` - Log analysis script tests (28 tests)
+- `test_check_config.sh` - Configuration validation script tests (18 tests)
 - `test_helper_functions.sh` - Unit tests for helper functions (119 tests)
 - `test_install.sh` - Installation script tests (18 tests)
 - `test_uninstall.sh` - Uninstallation script tests (34 tests)
@@ -166,11 +170,12 @@ The most straightforward approach is to run only the test files that contain tes
 
 **Test File Ranges:**
 - Tests 1-28: `test_analyze_logs.sh`
-- Tests 29-147: `test_helper_functions.sh`
-- Tests 148-274: `test_high_risk.sh`
-- Tests 275-292: `test_install.sh`
-- Tests 293-310: `test_integration.sh`
-- Tests 311-322: `test_prepare_install_package.sh`
+- Tests 29-46: `test_check_config.sh`
+- Tests 47-165: `test_helper_functions.sh`
+- Tests 166-292: `test_high_risk.sh`
+- Tests 293-310: `test_install.sh`
+- Tests 311-328: `test_integration.sh`
+- Tests 329-340: `test_prepare_install_package.sh`
 - Tests 323-356: `test_uninstall.sh`
 - Tests 357-389: `test_vpn_monitor.sh`
 

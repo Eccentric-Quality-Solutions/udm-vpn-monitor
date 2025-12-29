@@ -61,6 +61,7 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
   - `TROUBLESHOOTING.md` - Comprehensive troubleshooting guide with common issues and solutions
 - **Developer Documentation**: `DEVELOPER.md` with development setup and guidelines
 - **Test Documentation**: Comprehensive `tests/README.md` with testing guidelines
+- **BATS Testing Guide**: `docs/BATS_GUIDE.md` - Comprehensive guide to the BATS testing framework, including usage patterns, helper libraries, and best practices for writing tests
 - **IP Address Validation**: Robust `validate_ip_address()` function supporting IPv4, IPv6, and IPv4-mapped IPv6 addresses
 - **Cross-Platform Compatibility**: `get_file_mtime()` function for Linux/BSD/macOS compatibility
 - **Version Information**: `--version` flag added to main script
@@ -112,7 +113,7 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 ### Improved
 - **Code Quality**: Reduced code duplication by 20+ blocks, improved maintainability and readability with dedicated library modules; extracted duplicated code patterns (e.g., `file_exists_and_readable` function)
 - **Modular Architecture**: Complete separation of functionality into dedicated modules with single responsibility per module
-- **Test Coverage**: Significantly expanded test suite covering edge cases and high-risk scenarios; improved test helpers for better xfrm testing and per-tunnel reboot scenarios
+- **Test Coverage**: Significantly expanded test suite covering edge cases and high-risk scenarios; improved test helpers for better xfrm testing and per-tunnel reboot scenarios; expanded use of test fixtures to reduce code duplication and improve maintainability
 - **Error Messages**: More descriptive error messages and logging throughout all modules
 - **Documentation**: 
   - Enhanced all function documentation across entire codebase with consistent format (Arguments, Returns, Side effects, Examples, Notes)

@@ -159,7 +159,11 @@ flowchart TD
     CooldownCheck -->|Yes| Exit2([Exit: In<br/>cooldown period])
     CooldownCheck -->|No| ValidateConfig{EXTERNAL_PEER_IPS<br/>Configured?}
     ValidateConfig -->|No| Exit3([Exit: Config<br/>Error])
-    ValidateConfig -->|Yes| ForEachPeer[For Each Peer IP]
+    ValidateConfig -->|Yes| NetworkPartitionCheck{Network<br/>Partition<br/>Check<br/>Enabled?}
+    NetworkPartitionCheck -->|Yes| CheckPartition[Check Network<br/>Partition Status]
+    NetworkPartitionCheck -->|No| ForEachPeer[For Each Peer IP]
+    CheckPartition -->|Partitioned| Exit5([Exit: Network<br/>Partitioned<br/>Skip VPN Checks])
+    CheckPartition -->|Healthy| ForEachPeer
     
     ForEachPeer --> ValidateIP{Valid<br/>IP Format?}
     ValidateIP -->|No| NextPeer[Next Peer]
@@ -181,19 +185,22 @@ flowchart TD
     IpsecCheck -->|No| VPNFail
     
     VPNOK --> ResetCounter[Reset Failure Counter]
-    VPNFail --> IncrementCounter[Increment Failure Counter]
+    VPNFail --> NetworkPartitionCheck2{Network<br/>Partitioned?}
+    NetworkPartitionCheck2 -->|Yes| SkipRecovery[Skip Recovery<br/>Actions]
+    NetworkPartitionCheck2 -->|No| IncrementCounter[Increment Failure Counter]
     
+    SkipRecovery --> NextPeer
     IncrementCounter --> TierCheck{Failure<br/>Count?}
     TierCheck -->|>= TIER1| Tier1[Log Failure]
     TierCheck -->|>= TIER2| Tier2[Surgical Cleanup]
-    TierCheck -->|>= TIER3| Tier3[Full Restart]
+    TierCheck -->|>= TIER3| RateLimitCheck{Rate Limit<br/>OK?}
     
-    Tier1 --> RateLimitCheck{Rate Limit<br/>OK?}
-    Tier2 --> RateLimitCheck
-    Tier3 --> RateLimitCheck
+    Tier1 --> NextPeer
+    Tier2 --> NextPeer
     
     RateLimitCheck -->|No| Exit4([Exit: Rate<br/>Limited])
-    RateLimitCheck -->|Yes| RecordRestart[Record Restart]
+    RateLimitCheck -->|Yes| Tier3[Full Restart]
+    Tier3 --> RecordRestart[Record Restart]
     RecordRestart --> SetCooldown[Set Cooldown Period]
     
     ResetCounter --> NextPeer
@@ -208,7 +215,10 @@ flowchart TD
     Exit1 --> End
     Exit2 --> End
     Exit3 --> End
+    Exit5 --> End
 ```
+
+**Note**: Network partition check (if enabled via `ENABLE_NETWORK_PARTITION_CHECK`) occurs before processing peer IPs. If network is partitioned, all VPN checks are skipped to avoid false positives and unnecessary recovery actions.
 
 ## Detection Method Flow
 
@@ -318,7 +328,12 @@ stateDiagram-v2
     
     Tier3 --> Cooldown: After Restart
     Cooldown --> Monitoring: Cooldown Expired
+    
+    Monitoring --> SkipRecovery: Network Partitioned
+    SkipRecovery --> Monitoring: Continue Monitoring
 ```
+
+**Note**: Network partition check also occurs after VPN check fails. If network is partitioned when a VPN failure is detected, recovery actions are skipped to avoid unnecessary disruption. Network partition state is checked before incrementing failure counters and triggering recovery tiers.
 
 ## Data Flow
 
@@ -378,6 +393,7 @@ State files are organized into two categories:
 **System-Wide State Files** (shared across all peers):
 - `cooldown_until`: Cooldown expiration timestamp (prevents immediate re-restarts)
 - `logs/restart_count`: Unix timestamps of Tier 3 recovery actions (one timestamp per line, for rate limiting) - see [Rate Limiting](#rate-limiting-logsrestart_count) section below for details
+- `network_partition_state`: Network partition status (0 = healthy, 1 = partitioned) - used to detect network connectivity issues that affect all peers
 - `vpn-monitor.lock`: Lockfile for execution control (format: `timestamp:pid` for timeout detection)
 - `.cron_checked`: Flag file to prevent repeated cron persistence checks
 
@@ -444,6 +460,14 @@ Each peer's monitoring and recovery actions operate completely independently.
 - **Limit**: Configurable via `MAX_RESTARTS_PER_HOUR` (default: 3 restarts per hour)
 - **Behavior**: If limit exceeded, Tier 3 recovery actions are skipped until rate limit window expires
 
+**Network Partition State** (`network_partition_state`):
+- **Purpose**: Tracks network connectivity status to distinguish VPN failures from network partition issues
+- **Mechanism**: Stores a single integer value (0 = healthy, 1 = partitioned)
+- **Usage**: Used by recovery logic to avoid unnecessary VPN recovery actions when network connectivity is down
+- **Detection**: Network partition check uses DNS queries to external servers (configurable via `NETWORK_PARTITION_DNS_SERVER`, `NETWORK_PARTITION_DNS_HOSTNAME`)
+- **Behavior**: When network is partitioned, recovery actions are skipped to avoid unnecessary disruption
+- **Configuration**: Controlled via `ENABLE_NETWORK_PARTITION_CHECK` (default: 1, enabled)
+
 **Lockfile** (`vpn-monitor.lock`):
 - **Purpose**: Prevents concurrent script execution
 - **Format**: `timestamp:pid` for timeout detection
@@ -495,6 +519,7 @@ For implementation details, see the [`lib/state.sh`](#libstatesh) module documen
 │
 ├── State Files:
 ├── cooldown_until              # Cooldown expiration timestamp
+├── network_partition_state     # Network partition status (0=healthy, 1=partitioned)
 ├── last_bytes_192_168_1_1     # Per-peer byte counters
 ├── last_bytes_192_168_2_1     # (sanitized IP in filename)
 └── .cron_checked              # Flag file for cron check

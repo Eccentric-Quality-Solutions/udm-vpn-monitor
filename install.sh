@@ -405,6 +405,13 @@ install_scripts() {
 		log_info "Installed check-utilities.sh (utility availability checker)"
 	fi
 
+	# Copy config checker script (optional utility)
+	if [[ -f "${INSTALL_SCRIPT_DIR}/check-config.sh" ]]; then
+		cp "${INSTALL_SCRIPT_DIR}/check-config.sh" "${INSTALL_DIR}/check-config.sh"
+		chmod 755 "${INSTALL_DIR}/check-config.sh"
+		log_info "Installed check-config.sh (configuration validator)"
+	fi
+
 	# Handle config file installation
 	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
 		# Config file already exists
