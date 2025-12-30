@@ -787,8 +787,8 @@ setup_cron() {
 
 # Install systemd service for keepalive daemon
 #
-# Installs and enables the systemd service file for the VPN keepalive daemon.
-# Only installs if systemd is available, keepalive is enabled in config, and not in dev mode.
+# Installs the systemd service file for the VPN keepalive daemon.
+# Only installs if systemd is available and not in dev mode.
 #
 # Returns:
 #   0: Service installed successfully (or skipped if not applicable)
@@ -797,7 +797,8 @@ setup_cron() {
 # Side effects:
 #   - Creates /etc/systemd/system/vpn-keepalive.service
 #   - Reloads systemd daemon
-#   - Enables service (but doesn't start it - user must enable keepalive first)
+# Note: Service restart is handled by enable_and_start_keepalive_service() or
+#       by the caller if the service is running but keepalive is disabled.
 install_keepalive_service() {
 	# Skip in dev mode (systemd services are system-wide)
 	if [[ $DEV_MODE -eq 1 ]]; then
@@ -861,8 +862,9 @@ install_keepalive_service() {
 
 # Enable and start keepalive service
 #
-# Enables and starts the systemd service for the VPN keepalive daemon.
+# Enables and starts (or restarts) the systemd service for the VPN keepalive daemon.
 # Only works if systemd is available and service is installed.
+# Uses restart instead of start so it works whether the service is already running or not.
 #
 # Returns:
 #   0: Service enabled/started successfully (or skipped if not applicable)
@@ -870,7 +872,7 @@ install_keepalive_service() {
 #
 # Side effects:
 #   - Enables systemd service for auto-start on boot
-#   - Starts the service immediately
+#   - Starts or restarts the service immediately
 enable_and_start_keepalive_service() {
 	# Skip in dev mode
 	if [[ $DEV_MODE -eq 1 ]]; then
@@ -918,12 +920,13 @@ enable_and_start_keepalive_service() {
 		return 0 # Don't fail installation for optional feature
 	fi
 
-	# Start service immediately
+	# Start or restart service immediately
+	# Use restart instead of start so it works whether service is running or not
 	local start_output
-	start_output=$(systemctl start vpn-keepalive 2>&1)
+	start_output=$(systemctl restart vpn-keepalive 2>&1)
 	local start_exit=$?
 	if [[ $start_exit -ne 0 ]]; then
-		log_error "Failed to start systemd service"
+		log_error "Failed to start/restart systemd service"
 		if [[ -n "$start_output" ]]; then
 			log_error "Error details: $start_output"
 		fi
@@ -938,7 +941,7 @@ enable_and_start_keepalive_service() {
 			done <<<"$journal_output"
 		fi
 		log_warn "Service enabled but not started. Check status: systemctl status vpn-keepalive"
-		log_warn "Start manually: systemctl start vpn-keepalive or ${INSTALL_DIR}/vpn-keepalive.sh start"
+		log_warn "Start manually: systemctl restart vpn-keepalive or ${INSTALL_DIR}/vpn-keepalive.sh start"
 		return 0 # Don't fail installation for optional feature
 	fi
 
@@ -1663,6 +1666,17 @@ main() {
 		enable_keepalive=$(grep -E "^ENABLE_KEEPALIVE=" "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "0")
 		if [[ "$enable_keepalive" == "1" ]]; then
 			enable_and_start_keepalive_service
+		else
+			# If service is already running but keepalive is disabled, restart it to pick up service file changes
+			if command -v systemctl >/dev/null 2>&1 && systemctl is-active vpn-keepalive >/dev/null 2>&1; then
+				log_info "Service is running but keepalive is disabled, restarting to pick up service file changes..."
+				if systemctl restart vpn-keepalive 2>&1; then
+					log_info "Service restarted successfully"
+				else
+					log_warn "Failed to restart service, but service file was updated"
+					log_warn "Restart manually: systemctl restart vpn-keepalive"
+				fi
+			fi
 		fi
 	fi
 
