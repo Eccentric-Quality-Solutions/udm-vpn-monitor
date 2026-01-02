@@ -71,3 +71,11 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Extract to `split_rules_string()` helper function to reduce duplication
     - Low priority: current duplication is acceptable but makes maintenance slightly harder
     - See `lib/config.sh` lines 1211-1226 and 1375-1390
+
+- Standardize `handle_error_or_exit_fake_mode()` return value checking pattern
+    - Some places check return value explicitly: `if ! handle_error_or_exit_fake_mode() ... then return 1`
+    - Other places call it and then always `return 1` with a comment (works but inconsistent)
+    - Standardize to explicit check pattern for consistency and clarity
+    - Low priority: current code works correctly, this is a style consistency improvement
+    - See `lib/config.sh` lines 1108, 1154, 1179, 1212, 1405 for examples that could be refactored
+    - Pattern documented in `docs/CODE_PATTERNS.md` under "Fake Mode Support" section

@@ -327,10 +327,10 @@ The test suite is designed to work in CI/CD environments (GitHub Actions, GitLab
 **CI/CD Setup Example:**
 
 See `.github/workflows/ci.yml` for a complete CI/CD setup example. The workflow:
-1. Installs bats from package manager
+1. Installs bats and GNU parallel from package manager
 2. Installs bats helper libraries
 3. Optionally builds and installs kcov from source
-4. Runs tests with appropriate environment variables
+4. Runs tests with parallel execution enabled (4 jobs) and appropriate environment variables
 
 ### Environment Variables
 
@@ -1102,17 +1102,18 @@ To maintain test isolation:
 Example GitHub Actions workflow:
 
 ```yaml
-- name: Install bats
+- name: Install dependencies
   run: |
-    git clone https://github.com/bats-core/bats-core.git
-    cd bats-core
-    sudo ./install.sh /usr/local
+    sudo apt-get update
+    sudo apt-get install -y bats parallel
 
 - name: Install kcov for coverage
   run: |
     sudo apt-get update && sudo apt-get install -y kcov
 
 - name: Run tests with coverage
+  env:
+    PARALLEL_JOBS: 4
   run: |
     RUN_SLOW_TESTS=1 ./tests/run_tests.sh --coverage
 

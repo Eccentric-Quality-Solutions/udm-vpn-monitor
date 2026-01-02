@@ -57,10 +57,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install bats
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bats
+          sudo apt-get install -y bats parallel
 
       - name: Install bats helper libraries
         run: |
@@ -99,12 +99,10 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bats jq
-          
-      - name: Build and install kcov
-        run: |
-          # Install build dependencies for kcov
           sudo apt-get install -y \
+            bats \
+            jq \
+            parallel \
             cmake \
             build-essential \
             libcurl4-openssl-dev \
@@ -115,6 +113,8 @@ jobs:
             zlib1g-dev \
             git
           
+      - name: Build and install kcov
+        run: |
           # Clone and build kcov from source
           git clone https://github.com/SimonKagstrom/kcov.git /tmp/kcov
           cd /tmp/kcov
@@ -249,10 +249,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install bats
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bats
+          sudo apt-get install -y bats parallel
 
       - name: Install bats helper libraries
         run: |

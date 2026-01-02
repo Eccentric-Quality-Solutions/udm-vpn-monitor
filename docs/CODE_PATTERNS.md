@@ -160,6 +160,41 @@ fi
 - Fake mode (NO_ESCALATE=1): Logs error and exits with code 0
 - Normal mode: Logs error and exits with specified exit code
 
+**Pattern: Checking Return Value in Functions**
+
+When calling `handle_error_or_exit_fake_mode()` from a function that needs to return an error code (not exit), always check the return value:
+
+```bash
+# ✅ GOOD: Check return value when function needs to return error code
+validate_config_type() {
+    if [[ "$required" == "required" ]]; then
+        # In fake mode, it returns 1; in normal mode it calls die() and never returns
+        if ! handle_error_or_exit_fake_mode "$var_name must be an integer" "${EXIT_VALIDATION_ERROR:-3}"; then
+            # In fake mode, handle_error_or_exit_fake_mode returns 1
+            return 1
+        fi
+        # In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
+    fi
+}
+
+# ✅ GOOD: Use || return 1 pattern for simple cases
+if ! mkdir -p "$dir" 2>/dev/null; then
+    handle_error_or_exit_fake_mode "Cannot create directory: $dir" || return 1
+fi
+
+# ❌ BAD: Don't call and then always return 1 without checking
+if [[ "$required" == "required" ]]; then
+    handle_error_or_exit_fake_mode "$var_name must be an integer" "${EXIT_VALIDATION_ERROR:-3}"
+    return 1  # This always executes, even if function succeeded (though it never does)
+fi
+```
+
+**Key Points:**
+- Always check return value when function needs to return error code
+- In fake mode: `handle_error_or_exit_fake_mode()` returns 1, so check with `if ! ... then return 1`
+- In normal mode: `handle_error_or_exit_fake_mode()` calls `die()` and never returns
+- Use `|| return 1` pattern for simple cases where you want to return immediately on error
+
 ### Pattern: Try-Fallback
 
 **When to Use:** Operations with fallback mechanisms
