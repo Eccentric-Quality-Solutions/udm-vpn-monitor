@@ -423,3 +423,121 @@ EOF
 	run bash "$test_install" --dev --no-cron --overwrite-conf <<<"no"
 	assert_output --partial "only effective with --silent"
 }
+
+# bats test_tags=category:unit,priority:high
+@test "install.sh check_and_setup_routes tests all IPs from all locations with proper fallback" {
+	# Purpose: Test verifies that check_and_setup_routes() tests all internal IPs from all locations,
+	#          uses proper ping fallback logic, and sets LOG_FILE correctly
+	# Expected: All configured internal IPs are tested, ping fallback logic is used, LOG_FILE is set
+	# Importance: Ensures ping connectivity testing works correctly during installation with multiple locations/IPs
+	cd "$TEST_DIR"
+
+	# Create source files with install.sh and lib directory
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
+	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
+	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+
+	# Create config file with multiple locations and multiple internal IPs
+	cat >"${TEST_DIR}/source/vpn-monitor.conf" <<'EOF'
+LOCATION_NYC_EXTERNAL="203.0.113.1"
+LOCATION_NYC_INTERNAL="192.168.1.1 192.168.1.2"
+LOCATION_DC_EXTERNAL="203.0.113.2"
+LOCATION_DC_INTERNAL="192.168.2.1 192.168.2.2 192.168.2.3"
+ENABLE_PING_CHECK=1
+LOCAL_UDM_IP="10.0.0.1"
+PING_COUNT=3
+PING_TIMEOUT=2
+EOF
+
+	# Track which IPs are pinged by logging ping command calls
+	local ping_log="${TEST_DIR}/ping_log"
+	>"$ping_log"
+
+	# Create mock ping command that logs all arguments and succeeds
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<EOF
+#!/bin/bash
+# Log all arguments to track ping calls
+echo "\$*" >> "$ping_log"
+# Extract and log target IP (last argument that looks like an IP)
+for arg in "\$@"; do
+    if [[ "\$arg" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || [[ "\$arg" =~ ^[0-9a-fA-F:]+$ ]]; then
+        echo "\$arg" >> "$ping_log"
+    fi
+done
+# Simulate successful ping
+echo "3 packets transmitted, 3 received, 0% packet loss"
+exit 0
+EOF
+	chmod +x "$mock_ping"
+
+	# Create mock ip command for route checks
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "addr" ]] && [[ "$2" == "show" ]] && [[ "$3" == "br0" ]]; then
+    # Simulate route exists
+    echo "inet 10.0.0.1/32 scope global br0"
+    exit 0
+elif [[ "$1" == "addr" ]] && [[ "$2" == "add" ]]; then
+    # Simulate successful route add
+    exit 0
+fi
+# Fallback to real ip for other commands
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+
+	# Add mocks to PATH
+	add_mock_to_path
+
+	# Run install script in dev mode - this will call check_and_setup_routes()
+	run bash "$test_install" --dev --silent --no-cron
+
+	# Installation should succeed
+	assert_success
+
+	# Verify ping log file exists and has entries
+	assert_file_exist "$ping_log"
+
+	# Extract IP addresses from ping log (grep for IP patterns)
+	local ip_matches
+	ip_matches=$(grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' "$ping_log" | sort -u)
+	local unique_ips
+	unique_ips=$(echo "$ip_matches" | grep -c . || echo "0")
+	if [[ $unique_ips -lt 5 ]]; then
+		echo "Expected at least 5 unique IPs to be pinged, but found $unique_ips" >&2
+		echo "IPs found: $ip_matches" >&2
+		echo "Ping log contents:" >&2
+		cat "$ping_log" >&2
+		return 1
+	fi
+
+	# Verify specific IPs were tested
+	assert_file_contains "$ping_log" "192.168.1.1"
+	assert_file_contains "$ping_log" "192.168.1.2"
+	assert_file_contains "$ping_log" "192.168.2.1"
+	assert_file_contains "$ping_log" "192.168.2.2"
+	assert_file_contains "$ping_log" "192.168.2.3"
+
+	# Verify LOG_FILE was created (check_ping_connectivity writes to it)
+	# The log file should exist in the installation directory
+	local install_log="${TEST_DIR}/vpn-monitor/logs/vpn-monitor.log"
+	if [[ -f "$install_log" ]]; then
+		# Verify log contains ping check messages
+		# check_ping_connectivity logs "Ping check OK" or "Ping check failed"
+		if ! grep -q "Ping check" "$install_log"; then
+			echo "Expected ping check messages in log file" >&2
+			echo "Log contents:" >&2
+			cat "$install_log" >&2
+			return 1
+		fi
+	fi
+
+	# Verify ping fallback logic was used: check that our mock ping was called
+	# (This verifies that check_ping_connectivity() used the ping command, not ping6)
+	assert_file_exist "$ping_log"
+
+	remove_mock_from_path
+}

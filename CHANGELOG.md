@@ -12,9 +12,11 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
   - Additional fallback: attempts to execute command with `--help`/`--version` flags to verify availability
   - Better compatibility with UDM OS environments where PATH may be restricted
 - **Detection Reliability Test Suite**: New `tests/test_recovery_detection_reliability.sh` test file with comprehensive tests for the detection reliability safeguard, ensuring recovery escalation is properly blocked when detection tools are unavailable
+- **Installation Route Testing Enhancement**: Enhanced `check_and_setup_routes()` in `install.sh` to test ping connectivity to all internal IPs from all configured locations (not just the first IP). Uses `check_ping_connectivity()` from detection.sh which provides proper fallback logic for ping commands (ping vs ping6, timeout handling, etc.) and proper logging.
 - Migration script tests for interactive mode with mocked input
 - Migration script test for fallback `sanitize_location_name` when library fails to load
 - Migration script test for `CONFIG_FILE` environment variable override
+- Installation test for comprehensive route testing with multiple locations and IPs
 
 ### Changed
 - **Migration Script Default Behavior (BREAKING CHANGE)**: The `migrate-config-to-locations.sh` script now defaults to interactive mode (prompts for location names) instead of automatic generation. Use the `--auto` flag to restore the previous automatic behavior. This change improves the user experience by allowing meaningful location names by default.
@@ -22,6 +24,7 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
   - Use `--auto` flag for automatic generation (LOCATION_1, LOCATION_2, etc.)
   - Use `--csv FILE` for bulk import from CSV file
   - Previous versions defaulted to automatic generation
+- **Installation Route Testing**: Enhanced installation script to test ping connectivity to all internal IPs from all configured locations during route setup, instead of only testing the first internal IP. This ensures all configured VPN endpoints are properly reachable and routes are correctly configured.
 - **Documentation Updates**:
   - Updated `docs/ARCHITECTURE.md` with information about detection reliability safeguard in tiered recovery system
   - Updated `docs/CODE_PATTERNS.md` with notes about PATH restrictions in cron/systemd environments and `BASH_REMATCH` safety patterns when using `set -u`

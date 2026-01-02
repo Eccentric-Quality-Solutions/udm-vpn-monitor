@@ -1174,7 +1174,9 @@ detect_local_udm_ip() {
 #
 # Verifies that LOCAL_UDM_IP is configured and route exists on br0 interface.
 # If LOCAL_UDM_IP is not configured, attempts auto-detection from br0.
-# Adds route if needed and tests ping connectivity.
+# Adds route if needed and tests ping connectivity to all internal IPs from all locations.
+# Uses check_ping_connectivity() from detection.sh which has proper fallback logic
+# for finding ping commands (ping vs ping6, timeout handling, etc.).
 #
 # Returns:
 #   0: Route setup successful (or not needed)
@@ -1183,7 +1185,7 @@ detect_local_udm_ip() {
 # Side effects:
 #   - May update config file with detected LOCAL_UDM_IP
 #   - Adds route to br0 interface if needed
-#   - Tests ping connectivity to first INTERNAL_PEER_IP
+#   - Tests ping connectivity to all INTERNAL_PEER_IPs from all configured locations
 check_and_setup_routes() {
 	# Only proceed if ping checks are enabled and internal peer IPs are configured
 	if [[ "${ENABLE_PING_CHECK:-0}" -ne 1 ]]; then
@@ -1227,8 +1229,7 @@ check_and_setup_routes() {
 		log_info "LOCAL_UDM_IP not configured, attempting auto-detection from br0 interface..."
 		if local_udm_ip=$(detect_local_udm_ip 2>/dev/null); then
 			log_info "Auto-detected LOCAL_UDM_IP: $local_udm_ip"
-			# Update config file with detected IP
-			local config_file="${INSTALL_DIR}/${CONFIG_NAME}"
+			# Update config file with detected IP (reuse existing config_file variable)
 			if [[ -f "$config_file" ]]; then
 				update_config_value "$config_file" "LOCAL_UDM_IP" "$local_udm_ip" "^ENABLE_PING_CHECK="
 				log_info "Updated config file with LOCAL_UDM_IP: $local_udm_ip"
@@ -1272,38 +1273,66 @@ check_and_setup_routes() {
 		fi
 	fi
 
-	# Test ping connectivity to first internal peer IP from first location with internal IPs
+	# Test ping connectivity to all internal peer IPs from all locations
+	# Use check_ping_connectivity() from detection.sh which has proper fallback logic
+	# This function handles ping6 fallback, timeout wrapping, and proper error messages
+	# Set LOG_FILE for log_message() used by check_ping_connectivity()
+	# If log directory exists, use it; otherwise log_message() will output to stderr
 	if [[ -f "$config_file" ]]; then
-		local first_internal_ip=""
+		# Set LOG_FILE for log_message() used by check_ping_connectivity()
+		# The log directory should exist (created by create_install_dir()), but handle gracefully if not
+		if [[ -d "${INSTALL_DIR}/logs" ]]; then
+			LOG_FILE="${INSTALL_DIR}/logs/vpn-monitor.log"
+			export LOG_FILE
+		fi
+		# If LOG_FILE is not set, log_message() will output to stderr (which is fine for installation)
+
+		local tested_any=0
+		local ping_failed_any=0
+		local location_name=""
+
+		# Collect all internal IPs from all locations
 		while IFS='=' read -r key value || [[ -n "$key" ]]; do
 			# Skip comments and empty lines
 			[[ "$key" =~ ^# ]] && continue
 			[[ -z "$key" ]] && continue
 
 			# Check for LOCATION_*_INTERNAL pattern
-			if [[ "$key" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+			if [[ "$key" =~ ^LOCATION_(.+)_INTERNAL$ ]]; then
+				# Extract location name from variable name (e.g., LOCATION_NYC_INTERNAL -> NYC)
+				location_name="${BASH_REMATCH[1]}"
+
 				# Remove quotes and trim whitespace
 				value=$(echo "$value" | sed "s/^[\"']//" | sed "s/[\"']$//" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
 				if [[ -n "$value" ]]; then
-					# Get first IP from space-separated list
+					# Split space-separated IPs into array
 					local IFS=' '
 					read -ra internal_ips_array <<<"$value"
-					if [[ ${#internal_ips_array[@]} -gt 0 ]] && [[ -n "${internal_ips_array[0]}" ]]; then
-						first_internal_ip="${internal_ips_array[0]}"
-						break
-					fi
+
+					# Test each internal IP for this location
+					for internal_ip in "${internal_ips_array[@]}"; do
+						# Skip empty entries
+						[[ -z "$internal_ip" ]] && continue
+
+						tested_any=1
+						# Use check_ping_connectivity() which logs its own messages and has proper fallback logic
+						# This function handles ping6 fallback, timeout wrapping, and proper error messages
+						# Note: check_ping_connectivity() uses log_message() which outputs to log file or stderr
+						if ! check_ping_connectivity "$internal_ip" "$local_udm_ip"; then
+							ping_failed_any=1
+						fi
+					done
 				fi
 			fi
 		done <"$config_file" || true
 
-		if [[ -n "$first_internal_ip" ]]; then
-			log_info "Testing ping connectivity to $first_internal_ip from $local_udm_ip..."
-			if ping -I "$local_udm_ip" -c 1 -W 2 "$first_internal_ip" >/dev/null 2>&1; then
-				log_info "Ping test successful: $first_internal_ip is reachable from $local_udm_ip"
-			else
-				log_warn "Ping test failed: $first_internal_ip is not reachable from $local_udm_ip"
-				log_warn "This may be normal if the VPN tunnel is not yet established"
-				log_warn "The route has been added and will be used during monitoring"
+		if [[ $tested_any -eq 0 ]]; then
+			log_info "No internal IPs configured for ping testing"
+		else
+			log_info "Ping connectivity tests completed (route has been added and will be used during monitoring)"
+			# Log VPN tunnel warning once if any ping tests failed (reduces noise)
+			if [[ $ping_failed_any -eq 1 ]]; then
+				log_warn "Some ping tests failed - this may be normal if the VPN tunnel is not yet established"
 			fi
 		fi
 	fi
