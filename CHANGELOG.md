@@ -2,6 +2,38 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Detection Reliability Safeguard**: Added safety check that prevents recovery escalation when detection is unreliable. If failure type is "unknown" and both `ip` and `ipsec` commands are unavailable, the system cannot reliably determine if VPN is actually down, so recovery escalation (Tier 2/3) is skipped to prevent false recovery actions. Failures are still logged for monitoring, but recovery actions are not executed when detection tools are unavailable.
+- **Enhanced Command Availability Checking**: Improved `check_command_available()` function in `lib/common.sh` to handle restricted PATH environments (common in cron/systemd on UDM OS):
+  - Falls back to checking common system directories (`/usr/sbin`, `/usr/bin`, `/sbin`, `/bin`) when `command -v` fails
+  - Handles cases where PATH doesn't include `/usr/sbin` (common in cron/systemd environments)
+  - Additional fallback: attempts to execute command with `--help`/`--version` flags to verify availability
+  - Better compatibility with UDM OS environments where PATH may be restricted
+- **Detection Reliability Test Suite**: New `tests/test_recovery_detection_reliability.sh` test file with comprehensive tests for the detection reliability safeguard, ensuring recovery escalation is properly blocked when detection tools are unavailable
+- Migration script tests for interactive mode with mocked input
+- Migration script test for fallback `sanitize_location_name` when library fails to load
+- Migration script test for `CONFIG_FILE` environment variable override
+
+### Changed
+- **Migration Script Default Behavior (BREAKING CHANGE)**: The `migrate-config-to-locations.sh` script now defaults to interactive mode (prompts for location names) instead of automatic generation. Use the `--auto` flag to restore the previous automatic behavior. This change improves the user experience by allowing meaningful location names by default.
+  - Default mode: Interactive (prompts for each location name)
+  - Use `--auto` flag for automatic generation (LOCATION_1, LOCATION_2, etc.)
+  - Use `--csv FILE` for bulk import from CSV file
+  - Previous versions defaulted to automatic generation
+- **Documentation Updates**:
+  - Updated `docs/ARCHITECTURE.md` with information about detection reliability safeguard in tiered recovery system
+  - Updated `docs/CODE_PATTERNS.md` with notes about PATH restrictions in cron/systemd environments and `BASH_REMATCH` safety patterns when using `set -u`
+  - Updated `docs/MIGRATION.md` to reflect new default interactive behavior of migration script
+
+### Fixed
+- Fixed migration script default mode parameter mismatch in `migrate_config()` function
+- Added fallback `sanitize_location_name()` function when library files fail to load
+- Restored `CONFIG_FILE` environment variable override capability (needed for testing)
+- **BASH_REMATCH Safety**: Fixed potential "unbound variable" errors when using `set -u` (nounset) by using `${BASH_REMATCH[n]:-}` default values in `lib/recovery.sh` when accessing regex capture groups. This prevents errors if regex doesn't match or capture group is empty.
+- **External IP Extraction Safety**: Fixed potential unbound variable error in `verify_ipsec_connections_active()` function by using safe default value `${BASH_REMATCH[1]:-}` when extracting external IP from location data
+
 ## 0.4.3 - 2026-01-02
 
 ### Added

@@ -1605,8 +1605,17 @@ ipsec_output=$(ipsec status 2>/dev/null)  # May fail if ipsec not available
 
 **Command Checking Functions:**
 - `check_command_available()` - Silent check, returns 0/1
+  - Uses `command -v` first (POSIX compliant)
+  - Falls back to checking common system directories (`/usr/sbin`, `/usr/bin`, `/sbin`, `/bin`) if PATH is restricted
+  - Handles cron/systemd environments where PATH may not include `/usr/sbin` (common on UDM OS)
 - `check_command_or_warn()` - Checks and logs warning if unavailable
 - `command -v` - POSIX compliant command availability check
+
+**Important Note on PATH Restrictions:**
+- Scripts run by cron or systemd often have restricted PATH that excludes `/usr/sbin`
+- This is a known issue on UDM OS and other Linux systems
+- `check_command_available()` handles this by checking system directories directly when `command -v` fails
+- Always use `check_command_available()` instead of raw `command -v` for better compatibility
 
 ### Pattern: Fallback Command Execution
 
@@ -1744,11 +1753,20 @@ if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
     local var_name="${BASH_REMATCH[1]}"
     local assignment="${BASH_REMATCH[2]}"
 fi
+
+# ✅ GOOD: Safe access with set -u (use default empty string)
+if [[ "$line" =~ ^src[[:space:]]+([0-9.]+)[[:space:]]+dst[[:space:]]+([0-9.]+) ]]; then
+    # Safe access prevents "unbound variable" errors with set -u
+    current_src="${BASH_REMATCH[1]:-}"
+    current_dst="${BASH_REMATCH[2]:-}"
+fi
 ```
 
 **Key Points:**
 - Use regex with capture groups for structured text parsing
 - Access captured groups via `BASH_REMATCH[1]`, `BASH_REMATCH[2]`, etc.
+- **Important**: When `set -u` (nounset) is enabled, use `${BASH_REMATCH[n]:-}` to provide default empty string
+- This prevents "unbound variable" errors if regex doesn't match or capture group is empty
 - Validate regex match succeeded before accessing `BASH_REMATCH`
 - Use anchors (`^`, `$`) for precise matching
 

@@ -104,17 +104,23 @@ If you prefer to migrate manually:
 
 The migration script supports several options:
 
-### Default Mode (Automatic Location Names)
+### Default Mode (Interactive - Prompts for Location Names)
 ```bash
 /data/vpn-monitor/scripts/migrate-config-to-locations.sh
 ```
-Generates location names automatically: `LOCATION_1`, `LOCATION_2`, etc.
+**Default behavior**: Prompts you to enter a name for each location (e.g., NYC, DC, SF). This allows you to use meaningful location names by default.
 
-### Interactive Mode (Custom Location Names)
+### Automatic Mode (Generic Location Names)
+```bash
+/data/vpn-monitor/scripts/migrate-config-to-locations.sh --auto
+```
+Generates location names automatically: `LOCATION_1`, `LOCATION_2`, etc. Use this flag for non-interactive migrations or when you don't need custom names.
+
+### Interactive Mode (Explicit)
 ```bash
 /data/vpn-monitor/scripts/migrate-config-to-locations.sh --interactive
 ```
-Prompts you to enter a name for each location.
+Explicitly enables interactive mode (same as default). Prompts you to enter a name for each location.
 
 ### CSV Mode (Bulk Import)
 ```bash

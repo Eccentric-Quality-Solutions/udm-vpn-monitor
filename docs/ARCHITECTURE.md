@@ -864,6 +864,7 @@ graph TB
 ### 3. Tiered Recovery
 - **Why**: Gradual escalation prevents unnecessary disruption
 - **Tiers**: Log → Cleanup → Restart
+- **Safety Safeguard**: Recovery escalation is blocked when detection is unreliable. If failure type is "unknown" and both `ip` and `ipsec` commands are unavailable, the system cannot reliably determine if VPN is actually down, so recovery escalation is skipped to prevent false recovery actions. Failures are still logged for monitoring, but Tier 2/3 recovery actions are not executed.
 - **Tier 2 Details**: 
   - Default: xfrm-based per-connection recovery (uses `ip xfrm state delete`) if `ENABLE_XFRM_RECOVERY=1` (enabled by default for UDM OS 4.3+) - affects only the failing tunnel
   - Fallback: Falls back to `ipsec reload` (affects all connections) if xfrm recovery fails or is disabled
@@ -872,7 +873,7 @@ graph TB
   - Default: xfrm-based per-connection recovery attempted first if `ENABLE_XFRM_RECOVERY=1` (enabled by default for UDM OS 4.3+) - affects only the failing tunnel
   - Fallback: Falls back to `ipsec restart` (affects all tunnels) if xfrm recovery fails or is disabled
   - **Recovery Verification**: Same verification process as Tier 2 (see Tier 2 Details above)
-- **Benefit**: Most issues resolved without full restart. Per-connection recovery is enabled by default, providing surgical recovery that affects only the failing tunnel. Recovery verification ensures tunnels are actually functional after recovery actions.
+- **Benefit**: Most issues resolved without full restart. Per-connection recovery is enabled by default, providing surgical recovery that affects only the failing tunnel. Recovery verification ensures tunnels are actually functional after recovery actions. Safety safeguard prevents false recovery actions when detection tools are unavailable.
 
 ### 4. Per-Location State Tracking
 - **Why**: Multiple locations need independent monitoring and recovery

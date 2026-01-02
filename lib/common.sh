@@ -780,6 +780,9 @@ safe_set_variable() {
 # Check if command is available
 #
 # Checks if a command is available in the system PATH using command -v.
+# Falls back to checking if command can be executed directly if command -v fails.
+# This handles cases where command exists but isn't found by command -v
+# (e.g., functions, aliases, or commands in non-standard PATH locations).
 # Returns error code if command is not found.
 # This is useful for checking command availability before use (both required and optional commands).
 #
@@ -787,7 +790,7 @@ safe_set_variable() {
 #   $1: Command name to check (e.g., "ip", "ipsec", "ping6")
 #
 # Returns:
-#   0: Command is available (found in PATH)
+#   0: Command is available (found in PATH or executable)
 #   1: Command is not available
 #
 # Examples:
@@ -799,11 +802,59 @@ safe_set_variable() {
 #   fi
 #
 # Note:
-#   Uses command -v to check command availability
+#   Uses command -v to check command availability (POSIX compliant)
+#   Falls back to trying to execute command with --help/--version flags if command -v fails
 #   This function can be used for both required and optional commands
 check_command_available() {
 	local cmd="$1"
-	command -v "$cmd" >/dev/null 2>&1
+
+	# First try command -v (POSIX compliant, checks PATH)
+	if command -v "$cmd" >/dev/null 2>&1; then
+		return 0
+	fi
+
+	# Fallback 1: Check common system directories
+	# This handles cases where PATH doesn't include /usr/sbin or /sbin
+	# (common in cron/systemd environments on UDM systems)
+	local system_dirs=("/usr/sbin" "/usr/bin" "/sbin" "/bin")
+	for dir in "${system_dirs[@]}"; do
+		if [[ -x "${dir}/${cmd}" ]]; then
+			return 0
+		fi
+	done
+
+	# Fallback 2: try to execute the command with --help or --version flag
+	# This handles cases where command exists but command -v doesn't find it
+	# (e.g., functions, aliases, or commands in non-standard locations)
+	# Exit code 127 means "command not found", any other exit code means command exists
+	# Use timeout to prevent hanging, and redirect output to avoid side effects
+	local exit_code=127
+	if command -v timeout >/dev/null 2>&1; then
+		# Try --help first
+		timeout 1 "$cmd" --help >/dev/null 2>&1
+		exit_code=$?
+		# If --help fails with "command not found" (127), try --version
+		if [[ $exit_code -eq 127 ]]; then
+			timeout 1 "$cmd" --version >/dev/null 2>&1
+			exit_code=$?
+		fi
+	else
+		# If timeout not available, try without timeout (should be quick for --help)
+		"$cmd" --help >/dev/null 2>&1
+		exit_code=$?
+		# If --help fails with "command not found" (127), try --version
+		if [[ $exit_code -eq 127 ]]; then
+			"$cmd" --version >/dev/null 2>&1
+			exit_code=$?
+		fi
+	fi
+
+	# Exit code 127 means "command not found", any other exit code means command exists
+	if [[ $exit_code -eq 127 ]]; then
+		return 1
+	else
+		return 0
+	fi
 }
 
 # Check command availability and log warning if missing

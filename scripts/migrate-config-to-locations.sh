@@ -3,7 +3,12 @@
 # Migration script to convert old EXTERNAL_PEER_IPS/INTERNAL_PEER_IPS format
 # to new location-based configuration format
 #
-# Version: 1.0.0
+# Version: 1.1.0
+#
+# Default Behavior (BREAKING CHANGE in v1.1.0):
+#   - Default mode is now "interactive" (prompts for location names)
+#   - Use --auto flag for non-interactive automatic generation (LOCATION_1, LOCATION_2, etc.)
+#   - Previous versions defaulted to automatic generation
 #
 
 set -euo pipefail
@@ -11,14 +16,38 @@ set -euo pipefail
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-# Allow CONFIG_FILE to be overridden via environment variable
-CONFIG_FILE="${CONFIG_FILE:-${PROJECT_ROOT}/vpn-monitor.conf}"
+# Allow CONFIG_FILE to be overridden via environment variable (for testing)
+# Default to standard UDM installation location
+CONFIG_FILE="${CONFIG_FILE:-/data/vpn-monitor/vpn-monitor.conf}"
 
 # Source library modules for validation (optional - script works without them)
 # shellcheck source=lib/logging.sh
 source "${PROJECT_ROOT}/lib/logging.sh" 2>/dev/null || true
 # shellcheck source=lib/config.sh
 source "${PROJECT_ROOT}/lib/config.sh" 2>/dev/null || true
+
+# Fallback sanitize_location_name if library failed to load
+if ! command -v sanitize_location_name >/dev/null 2>&1; then
+	sanitize_location_name() {
+		local location_name="$1"
+		local sanitized
+		# Replace invalid chars with underscore (keep alphanumeric and underscore)
+		sanitized="${location_name//[^A-Za-z0-9_]/_}"
+		# Ensure max length (64 chars for filename safety)
+		if [[ ${#sanitized} -gt 64 ]]; then
+			sanitized="${sanitized:0:64}"
+		fi
+		# Ensure it starts with alphanumeric (not underscore)
+		if [[ "$sanitized" =~ ^_ ]]; then
+			sanitized="LOC${sanitized}"
+		fi
+		# If empty after sanitization, use default
+		if [[ -z "$sanitized" ]]; then
+			sanitized="LOCATION"
+		fi
+		echo "$sanitized"
+	}
+fi
 
 # Function to validate IP address format
 validate_ip() {
@@ -68,24 +97,24 @@ read_old_config() {
 # Function to generate location names
 generate_location_names() {
 	local count="$1"
-	local mode="${2:-default}" # default, interactive, csv
+	local mode="${2:-interactive}" # interactive (default), auto, csv
 	local csv_file="${3:-}"
 	local -a names=()
 
 	case "$mode" in
-	default)
-		# Generate default names: LOCATION_1, LOCATION_2, etc.
+	auto)
+		# Generate default names: 1, 2, etc. (will become LOCATION_1, LOCATION_2 in config)
 		for ((i = 1; i <= count; i++)); do
-			names+=("LOCATION_$i")
+			names+=("$i")
 		done
 		;;
 	interactive)
-		# Prompt user for each location name
-		echo "Enter location names (one per line, press Enter to finish):"
+		# Prompt user for each location name (default behavior)
+		echo "Enter location names for each IP pair:"
 		for ((i = 1; i <= count; i++)); do
-			read -r -p "Location $i name: " name
+			read -r -p "Location $i name (e.g., NYC, DC, SF): " name
 			if [[ -z "$name" ]]; then
-				name="LOCATION_$i"
+				name="$i"
 			fi
 			names+=("$(sanitize_location_name "$name")")
 		done
@@ -102,12 +131,12 @@ generate_location_names() {
 			csv_names["$idx"]="$(sanitize_location_name "$name")"
 		done <"$csv_file"
 
-		# Generate names from CSV, fallback to default if missing
+		# Generate names from CSV, fallback to index number if missing
 		for ((i = 1; i <= count; i++)); do
 			if [[ -n "${csv_names[$i]:-}" ]]; then
 				names+=("${csv_names[$i]}")
 			else
-				names+=("LOCATION_$i")
+				names+=("$i")
 			fi
 		done
 		;;
@@ -122,7 +151,7 @@ generate_location_names() {
 # Function to migrate config
 migrate_config() {
 	local config_file="$1"
-	local mode="${2:-default}"
+	local mode="${2:-interactive}"
 	local csv_file="${3:-}"
 
 	# Read old config
@@ -247,7 +276,7 @@ migrate_config() {
 
 # Main function
 main() {
-	local mode="default"
+	local mode="interactive" # Default: prompt for names
 	local csv_file=""
 
 	# Parse arguments
@@ -257,23 +286,28 @@ main() {
 			mode="interactive"
 			shift
 			;;
+		--auto | -a)
+			mode="auto"
+			shift
+			;;
 		--csv)
 			mode="csv"
 			csv_file="$2"
 			shift 2
 			;;
 		--help | -h)
-			echo "Usage: $0 [--interactive|--csv FILE]"
+			echo "Usage: $0 [--interactive|--auto|--csv FILE]"
 			echo ""
 			echo "Migrates vpn-monitor.conf from old format (EXTERNAL_PEER_IPS/INTERNAL_PEER_IPS)"
 			echo "to new location-based format (LOCATION_*_EXTERNAL/LOCATION_*_INTERNAL)."
 			echo ""
 			echo "Options:"
-			echo "  --interactive, -i    Prompt for location names interactively"
+			echo "  --interactive, -i    Prompt for location names interactively (default)"
+			echo "  --auto, -a           Generate generic location names automatically (LOCATION_1, LOCATION_2, etc.)"
 			echo "  --csv FILE           Read location names from CSV file (format: index,name)"
 			echo "  --help, -h           Show this help message"
 			echo ""
-			echo "Default: Generates location names automatically (LOCATION_1, LOCATION_2, etc.)"
+			echo "Default: Prompts for location names for each IP pair"
 			exit 0
 			;;
 		*)

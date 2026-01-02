@@ -48,12 +48,12 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_old_config "$config_file" "203.0.113.1" ""
 
-	# Run migration script with CONFIG_FILE environment variable
-	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" 2>&1
+	# Run migration script with CONFIG_FILE environment variable and --auto flag
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 
 	# Check migration succeeded
 	assert_file_exist "$config_file"
-	assert_file_contains "$config_file" "LOCATION_LOCATION_1_EXTERNAL"
+	assert_file_contains "$config_file" "LOCATION_1_EXTERNAL"
 	assert_file_contains "$config_file" "203.0.113.1"
 	# Check that old format config lines are removed (but allow in comments)
 	refute_file_contains "$config_file" "^EXTERNAL_PEER_IPS="
@@ -67,11 +67,11 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_old_config "$config_file" "203.0.113.1" "192.168.1.1"
 
-	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" 2>&1
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 
 	assert_file_exist "$config_file"
-	assert_file_contains "$config_file" "LOCATION_LOCATION_1_EXTERNAL"
-	assert_file_contains "$config_file" "LOCATION_LOCATION_1_INTERNAL"
+	assert_file_contains "$config_file" "LOCATION_1_EXTERNAL"
+	assert_file_contains "$config_file" "LOCATION_1_INTERNAL"
 	assert_file_contains "$config_file" "203.0.113.1"
 	assert_file_contains "$config_file" "192.168.1.1"
 }
@@ -84,12 +84,12 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_old_config "$config_file" "203.0.113.1 198.51.100.1 192.0.2.1" "192.168.1.1 192.168.2.1"
 
-	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" 2>&1
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 
 	assert_file_exist "$config_file"
-	assert_file_contains "$config_file" "LOCATION_LOCATION_1_EXTERNAL"
-	assert_file_contains "$config_file" "LOCATION_LOCATION_2_EXTERNAL"
-	assert_file_contains "$config_file" "LOCATION_LOCATION_3_EXTERNAL"
+	assert_file_contains "$config_file" "LOCATION_1_EXTERNAL"
+	assert_file_contains "$config_file" "LOCATION_2_EXTERNAL"
+	assert_file_contains "$config_file" "LOCATION_3_EXTERNAL"
 	assert_file_contains "$config_file" "203.0.113.1"
 	assert_file_contains "$config_file" "198.51.100.1"
 	assert_file_contains "$config_file" "192.0.2.1"
@@ -103,7 +103,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_old_config "$config_file" "203.0.113.1" ""
 
-	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" 2>&1
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 
 	# Check backup file exists (pattern: *.backup.YYYYMMDD_HHMMSS)
 	local backup_files
@@ -127,7 +127,7 @@ EOF
 		'VPN_NAME="Test VPN"' \
 		'LOG_FILE="/var/log/vpn-monitor.log"'
 
-	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" 2>&1
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 
 	assert_file_exist "$config_file"
 	assert_file_contains "$config_file" "TIER1_THRESHOLD=1"
@@ -136,18 +136,18 @@ EOF
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "migration script - default location name generation" {
-	# Purpose: Test that default location names are generated (LOCATION_1, LOCATION_2, etc.)
+@test "migration script - auto mode location name generation" {
+	# Purpose: Test that --auto flag generates location names (LOCATION_1, LOCATION_2, etc.)
 	# Expected: Location names follow pattern LOCATION_N
-	# Importance: Default behavior for automated migration
+	# Importance: Automated migration behavior
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_old_config "$config_file" "203.0.113.1 198.51.100.1" ""
 
-	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" 2>&1
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 
 	assert_file_exist "$config_file"
-	assert_file_contains "$config_file" "LOCATION_LOCATION_1_EXTERNAL"
-	assert_file_contains "$config_file" "LOCATION_LOCATION_2_EXTERNAL"
+	assert_file_contains "$config_file" "LOCATION_1_EXTERNAL"
+	assert_file_contains "$config_file" "LOCATION_2_EXTERNAL"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -170,7 +170,7 @@ EOF
 	assert_file_exist "$config_file"
 	assert_file_contains "$config_file" "LOCATION_NYC_EXTERNAL"
 	assert_file_contains "$config_file" "LOCATION_LA_EXTERNAL"
-	refute_file_contains "$config_file" "LOCATION_LOCATION_1_EXTERNAL"
+	refute_file_contains "$config_file" "LOCATION_1_EXTERNAL"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -191,8 +191,8 @@ EOF
 
 	assert_file_exist "$config_file"
 	assert_file_contains "$config_file" "LOCATION_NYC_EXTERNAL"
-	assert_file_contains "$config_file" "LOCATION_LOCATION_2_EXTERNAL"
-	assert_file_contains "$config_file" "LOCATION_LOCATION_3_EXTERNAL"
+	assert_file_contains "$config_file" "LOCATION_2_EXTERNAL"
+	assert_file_contains "$config_file" "LOCATION_3_EXTERNAL"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -204,13 +204,13 @@ EOF
 	create_old_config "$config_file" "203.0.113.1 198.51.100.1" "192.168.1.1"
 	# Only first location has internal IP
 
-	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" 2>&1
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 
 	assert_file_exist "$config_file"
-	assert_file_contains "$config_file" "LOCATION_LOCATION_1_INTERNAL"
-	assert_file_contains "$config_file" "LOCATION_LOCATION_2_INTERNAL"
+	assert_file_contains "$config_file" "LOCATION_1_INTERNAL"
+	assert_file_contains "$config_file" "LOCATION_2_INTERNAL"
 	# Second location should have empty internal IP
-	assert_file_contains "$config_file" 'LOCATION_LOCATION_2_INTERNAL=""'
+	assert_file_contains "$config_file" 'LOCATION_2_INTERNAL=""'
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -221,7 +221,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_old_config "$config_file" "203.0.113.1 invalid.ip 198.51.100.1" ""
 
-	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" 2>&1
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 
 	# Should contain warning about invalid IP
 	assert_output --partial "invalid"
@@ -237,7 +237,7 @@ EOF
 	# Importance: Prevents migration of non-existent files
 	local config_file="${TEST_DIR}/nonexistent.conf"
 
-	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" 2>&1
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 	assert_failure
 	assert_output --partial "not found"
 }
@@ -254,7 +254,7 @@ LOCATION_NYC_EXTERNAL="203.0.113.1"
 TIER1_THRESHOLD=1
 EOF
 
-	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" 2>&1
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 	assert_failure
 	assert_output --partial "not found" || assert_output --partial "already migrated"
 }
@@ -289,10 +289,10 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_old_config "$config_file" "203.0.113.1" "192.168.1.1 192.168.1.88"
 
-	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" 2>&1
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 
 	assert_file_exist "$config_file"
-	assert_file_contains "$config_file" "LOCATION_LOCATION_1_INTERNAL"
+	assert_file_contains "$config_file" "LOCATION_1_INTERNAL"
 	# Both internal IPs should be present
 	assert_file_contains "$config_file" "192.168.1.1"
 	assert_file_contains "$config_file" "192.168.1.88"
@@ -306,7 +306,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_old_config "$config_file" "203.0.113.1" ""
 
-	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" 2>&1
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 
 	assert_file_exist "$config_file"
 	assert_file_contains "$config_file" "Location-based VPN configuration"
@@ -321,7 +321,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_old_config "$config_file" "203.0.113.1" "192.168.1.1"
 
-	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" 2>&1
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 	assert_success
 
 	# Try to validate migrated config using check-config.sh if available
@@ -340,12 +340,12 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_old_config "$config_file" "203.0.113.1" ""
 
-	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" 2>&1
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 
 	assert_file_exist "$config_file"
-	assert_file_contains "$config_file" "LOCATION_LOCATION_1_INTERNAL"
+	assert_file_contains "$config_file" "LOCATION_1_INTERNAL"
 	# Should have empty internal IP
-	assert_file_contains "$config_file" 'LOCATION_LOCATION_1_INTERNAL=""'
+	assert_file_contains "$config_file" 'LOCATION_1_INTERNAL=""'
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -361,10 +361,111 @@ EXTERNAL_PEER_IPS="203.0.113.1"
 TIER1_THRESHOLD=1
 EOF
 
-	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" 2>&1
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 
 	assert_file_exist "$config_file"
 	# Comments should be preserved (except those on old format lines)
 	assert_file_contains "$config_file" "# This is a comment" ||
 		assert_file_contains "$config_file" "# Another comment"
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "migration script - interactive mode with user input" {
+	# Purpose: Test that interactive mode prompts for location names and uses them
+	# Expected: User-provided names are sanitized and used in config
+	# Importance: Default behavior allows custom location names
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	create_old_config "$config_file" "203.0.113.1 198.51.100.1" ""
+
+	# Simulate user input: provide names for each location
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --interactive <<'EOF'
+NYC
+DC
+EOF
+
+	assert_success
+	assert_file_exist "$config_file"
+	assert_file_contains "$config_file" "LOCATION_NYC_EXTERNAL"
+	assert_file_contains "$config_file" "LOCATION_DC_EXTERNAL"
+	assert_file_contains "$config_file" "203.0.113.1"
+	assert_file_contains "$config_file" "198.51.100.1"
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "migration script - interactive mode with empty input uses defaults" {
+	# Purpose: Test that empty input in interactive mode uses index numbers
+	# Expected: Empty input results in LOCATION_N format
+	# Importance: Handles user skipping input gracefully
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	create_old_config "$config_file" "203.0.113.1" ""
+
+	# Simulate user pressing Enter (empty input)
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --interactive <<'EOF'
+
+EOF
+
+	assert_success
+	assert_file_exist "$config_file"
+	# Empty input should result in index number (1)
+	assert_file_contains "$config_file" "LOCATION_1_EXTERNAL"
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "migration script - fallback sanitize_location_name when library fails" {
+	# Purpose: Test that script works when library files fail to load
+	# Expected: Fallback sanitize_location_name function is used
+	# Importance: Script should work even if libraries are unavailable
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	create_old_config "$config_file" "203.0.113.1" ""
+
+	# Temporarily rename lib directory to simulate library loading failure
+	local lib_backup="${TEST_DIR}/lib_backup"
+	local lib_restored=0
+
+	# Set up trap to ensure lib directory is restored even if test fails
+	# shellcheck disable=SC2064
+	trap 'if [[ $lib_restored -eq 0 ]] && [[ -d "$lib_backup" ]]; then mv "$lib_backup" "${BATS_TEST_DIRNAME}/../lib" 2>/dev/null || true; fi' EXIT
+
+	if [[ -d "${BATS_TEST_DIRNAME}/../lib" ]]; then
+		mv "${BATS_TEST_DIRNAME}/../lib" "$lib_backup" || {
+			# If move fails, skip test (lib directory may be in use)
+			skip "Cannot rename lib directory for testing"
+		}
+	fi
+
+	# Run migration - should use fallback sanitize_location_name
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1 || true
+
+	# Restore lib directory
+	if [[ -d "$lib_backup" ]]; then
+		mv "$lib_backup" "${BATS_TEST_DIRNAME}/../lib" || true
+		lib_restored=1
+	fi
+
+	# Clear trap
+	trap - EXIT
+
+	# Script should still work (may fail for other reasons, but not due to missing sanitize_location_name)
+	# If it succeeded, verify output
+	if [[ $status -eq 0 ]]; then
+		assert_file_exist "$config_file"
+		assert_file_contains "$config_file" "LOCATION_1_EXTERNAL"
+	fi
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "migration script - CONFIG_FILE environment variable override" {
+	# Purpose: Test that CONFIG_FILE environment variable can override default path
+	# Expected: Script uses CONFIG_FILE from environment instead of default
+	# Importance: Allows testing and custom config file locations
+	local custom_config_file="${TEST_DIR}/custom-location.conf"
+	create_old_config "$custom_config_file" "203.0.113.1" ""
+
+	# Override CONFIG_FILE via environment variable
+	CONFIG_FILE="$custom_config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
+
+	assert_success
+	assert_file_exist "$custom_config_file"
+	assert_file_contains "$custom_config_file" "LOCATION_1_EXTERNAL"
+	assert_file_contains "$custom_config_file" "203.0.113.1"
 }

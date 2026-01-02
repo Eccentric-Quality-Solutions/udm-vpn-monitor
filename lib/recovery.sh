@@ -186,7 +186,7 @@ verify_ipsec_connections_active() {
 					# Fallback: extract from LOCATIONS format directly
 					local location_data="${LOCATIONS[$location_name]:-}"
 					if [[ "$location_data" =~ external:([^|]+) ]]; then
-						external_ip="${BASH_REMATCH[1]}"
+						external_ip="${BASH_REMATCH[1]:-}"
 					fi
 				fi
 				if [[ -n "$external_ip" ]]; then
@@ -485,8 +485,9 @@ attempt_xfrm_recovery() {
 			fi
 
 			# Start new SA block: extract src and dst from regex match
-			current_src="${BASH_REMATCH[1]}"
-			current_dst="${BASH_REMATCH[2]}"
+			# Use default empty string to handle set -u safely (shouldn't happen if regex matches, but defensive)
+			current_src="${BASH_REMATCH[1]:-}"
+			current_dst="${BASH_REMATCH[2]:-}"
 			current_proto="" # Will be extracted from continuation lines
 			current_spi=""   # Will be extracted from continuation lines
 			in_sa_block=1    # Mark that we're now parsing an SA block
@@ -498,13 +499,14 @@ attempt_xfrm_recovery() {
 			# Regex allows optional leading whitespace, captures protocol name
 			# Also handles case where "spi" appears on same line: "proto esp spi 0x12345678"
 			if [[ "$line" =~ ^[[:space:]]*proto[[:space:]]+([a-zA-Z0-9]+) ]]; then
-				current_proto="${BASH_REMATCH[1]}"
+				# Use default empty string to handle set -u safely (shouldn't happen if regex matches, but defensive)
+				current_proto="${BASH_REMATCH[1]:-}"
 				# Normalize to lowercase for consistency (xfrm uses lowercase internally)
 				current_proto=$(echo "$current_proto" | tr '[:upper:]' '[:lower:]')
 				# Check if "spi" is on the same line as "proto" (common format)
 				# If found, extract SPI immediately (avoids needing separate line)
 				if [[ "$line" =~ [[:space:]]+spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+) ]]; then
-					current_spi="${BASH_REMATCH[1]}"
+					current_spi="${BASH_REMATCH[1]:-}"
 				fi
 			fi
 			# Look for "spi <spi_value>" on its own line (alternative format)
@@ -512,7 +514,7 @@ attempt_xfrm_recovery() {
 			# This is intentional: handles both "proto esp spi 0x123" and separate "spi 0x123" lines
 			# Supports hex (0x12345678) and decimal (12345678) formats
 			if [[ "$line" =~ ^[[:space:]]*spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+) ]]; then
-				current_spi="${BASH_REMATCH[1]}"
+				current_spi="${BASH_REMATCH[1]:-}"
 			fi
 		fi
 	done <<<"$xfrm_output"
@@ -1243,7 +1245,7 @@ full_restart() {
 							# Fallback: extract from LOCATIONS format directly
 							local location_data="${LOCATIONS[$location_name]:-}"
 							if [[ "$location_data" =~ external:([^|]+) ]]; then
-								external_ip="${BASH_REMATCH[1]}"
+								external_ip="${BASH_REMATCH[1]:-}"
 							fi
 						fi
 						if [[ -n "$external_ip" ]]; then
@@ -1476,6 +1478,32 @@ monitor_location() {
 		"routing_issue") failure_type_display=" (routing issue)" ;;
 		esac
 		handle_error "WARNING" "${VPN_NAME:-VPN} check failed for location $location_name ($external_peer_ip) (failure count: $failure_count)$failure_type_display"
+
+		# Safety check: Don't escalate recovery if detection is unreliable
+		# If failure type is "unknown" and required detection tools are unavailable,
+		# we cannot reliably determine if VPN is actually down, so skip recovery escalation
+		if [[ "$failure_type" == "unknown" ]]; then
+			# Check if required detection tools are available
+			# If both ip and ipsec are unavailable, detection is unreliable
+			local ip_available=0
+			local ipsec_available=0
+			if check_command_available "ip"; then
+				ip_available=1
+			fi
+			if check_command_available "ipsec"; then
+				ipsec_available=1
+			fi
+
+			# If neither tool is available, detection is unreliable - don't escalate recovery
+			if [[ $ip_available -eq 0 ]] && [[ $ipsec_available -eq 0 ]]; then
+				handle_error "ERROR" "Detection unreliable: Both 'ip' and 'ipsec' commands unavailable - skipping recovery escalation for location $location_name ($external_peer_ip) to prevent false recovery actions" 0
+				# Still log the failure but don't escalate recovery
+				if [[ "$failure_count" -ge "$TIER1_THRESHOLD" ]]; then
+					log_message "INFO" "Tier 1: Logging ${VPN_NAME:-VPN} failure for location $location_name ($external_peer_ip)$failure_type_display (recovery skipped - detection unreliable)"
+				fi
+				return 0
+			fi
+		fi
 
 		# Tier 1: Logging
 		if [[ "$failure_count" -ge "$TIER1_THRESHOLD" ]]; then
