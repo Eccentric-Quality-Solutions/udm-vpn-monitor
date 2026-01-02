@@ -1145,9 +1145,29 @@ check_byte_counters() {
 	if [[ "$current_bytes" -eq 0 ]]; then
 		# Zero bytes - check if this is first check or if we've had traffic before
 		if [[ "$last_bytes" -eq 0 ]]; then
-			# First check with zero bytes - may be idle or broken, but can't tell yet
-			handle_error "WARNING" "VPN suspect: SA exists but bytes=0 (first check, may be idle)"
-			return 1
+			# First check with zero bytes - may be idle or broken
+			# If ping check is enabled, use it to determine if VPN is healthy
+			if [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
+				local local_ip
+				local_ip=$(get_local_ip_for_ping)
+				# Check ping connectivity to determine if VPN is healthy despite zero bytes
+				# Errors are logged by check_ping_connectivity, so we don't suppress stderr
+				if check_ping_connectivity "$internal_peer_ip" "$local_ip"; then
+					# Ping succeeds - VPN is healthy but idle (newly established or idle)
+					set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "$current_bytes"
+					set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
+					log_message "INFO" "VPN OK: SA exists, bytes=0 (first check, idle but healthy, ping check passed)"
+					return 0
+				else
+					# Ping fails - VPN is likely broken
+					handle_error "WARNING" "VPN suspect: SA exists but bytes=0 (first check, ping check failed)"
+					return 1
+				fi
+			else
+				# Ping check disabled or internal_peer_ip not provided - fail-safe behavior
+				handle_error "WARNING" "VPN suspect: SA exists but bytes=0 (first check, may be idle, ping check disabled)"
+				return 1
+			fi
 		else
 			# Bytes dropped to zero after previously having traffic - likely broken
 			handle_error "WARNING" "VPN suspect: SA exists but bytes dropped to 0 (was $last_bytes)"

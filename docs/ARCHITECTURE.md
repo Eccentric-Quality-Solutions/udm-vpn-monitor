@@ -173,18 +173,15 @@ flowchart TD
     ResourceCheck -->|Constrained| Exit6([Exit: Resources<br/>Constrained])
     ResourceCheck -->|OK| NetworkPartitionCheck{Network<br/>Partition<br/>Check<br/>Enabled?}
     NetworkPartitionCheck -->|Yes| CheckPartition[Check Network<br/>Partition Status]
-    NetworkPartitionCheck -->|No| CronCheck[Check Cron<br/>Persistence<br/>Once Per Run]
-    CheckPartition -->|Partitioned| Exit5([Exit: Network<br/>Partitioned<br/>Skip VPN Checks])
-    CheckPartition -->|Healthy| CronCheck
-    CronCheck --> CooldownCheck{In<br/>Cooldown?}
+    NetworkPartitionCheck -->|No| CooldownCheck{In<br/>Cooldown?}
+    CheckPartition -->|Partitioned| UpdatePartitionState[Update Partition State<br/>Continue Execution]
+    CheckPartition -->|Healthy| UpdatePartitionState
+    UpdatePartitionState --> CooldownCheck{In<br/>Cooldown?}
     CooldownCheck -->|Yes| Exit2([Exit: In<br/>cooldown period])
-    CooldownCheck -->|No| ValidateConfig{LOCATION_*_EXTERNAL<br/>Configured?}
-    ValidateConfig -->|No| Exit3([Exit: Config<br/>Error])
-    ValidateConfig -->|Yes| ForEachLocation[For Each Location]
+    CooldownCheck -->|No| CronCheck[Check Cron<br/>Persistence<br/>Once Per Run]
+    CronCheck --> ForEachLocation[For Each Location]
     
-    ForEachLocation --> ValidateIP{Valid<br/>IP Format?}
-    ValidateIP -->|No| NextLocation[Next Location]
-    ValidateIP -->|Yes| CheckVPN[check_vpn_status]
+    ForEachLocation --> CheckVPN[check_vpn_status]
     
     CheckVPN --> XfrmCheck{ip xfrm state<br/>SA Found?}
     XfrmCheck -->|Yes| ByteCheck{Bytes<br/>Increasing?}
@@ -231,21 +228,19 @@ flowchart TD
     
     Exit1 --> End
     Exit2 --> End
-    Exit3 --> End
-    Exit5 --> End
     Exit6 --> End
 ```
 
 **Note**: 
-- **Execution Order**: The actual execution flow includes more steps than shown in simplified form above. Full order: Lockfile acquisition → Directory creation → Config loading → State path recalculation → State initialization → State validation → Resource check → Network partition check → Cron persistence check → Cooldown check → Config validation → Location processing.
+- **Execution Order**: The actual execution flow includes more steps than shown in simplified form above. Full order: Directory creation → Config loading → Config validation → Lockfile acquisition → Initialize monitor (parse args, init state) → State validation → Resource check → Network partition check → Cooldown check → Cron persistence check → Location processing.
 
 - **State Validation**: State files are validated for format correctness (integer, timestamp, timestamp_list) early in execution (after state initialization). Corrupted files are automatically detected, backed up, and recovered with safe defaults. This validation step ensures state file integrity before proceeding.
 
 - **Resource Monitoring**: Checks CPU, RAM, and disk space usage early in the execution flow (after state validation). If system resources are severely constrained, the script exits early to avoid adding load to an already stressed system. This throttling mechanism prevents the monitor from contributing to system overload.
 
-- **Network Partition Check**: (if enabled via `ENABLE_NETWORK_PARTITION_CHECK`) occurs before cooldown check to ensure partition detection works even during cooldown periods. This timing is intentional - if the network is partitioned, VPN checks should be skipped regardless of cooldown status. If network is partitioned, all VPN checks are skipped to avoid false positives and unnecessary recovery actions.
+- **Network Partition Check**: (if enabled via `ENABLE_NETWORK_PARTITION_CHECK`) occurs before cooldown check to ensure partition detection works even during cooldown periods. This timing is intentional - if the network is partitioned, VPN checks should be skipped regardless of cooldown status. When network is partitioned, the script updates partition state and continues execution (does not exit early). Recovery actions later check partition state and skip recovery if network is partitioned, allowing VPN checks to proceed but preventing unnecessary recovery actions.
 
-- **Cron Persistence Check**: Performed once per run (tracked via `.cron_checked` file) after network partition check and before cooldown check. Detects if cron jobs were removed during system upgrades (common after UniFi OS updates). Logs warnings but doesn't fail execution - this is a diagnostic check to help users detect configuration loss.
+- **Cron Persistence Check**: Performed once per run (tracked via `.cron_checked` file) after cooldown check. Detects if cron jobs were removed during system upgrades (common after UniFi OS updates). Logs warnings but doesn't fail execution - this is a diagnostic check to help users detect configuration loss.
 
 ## Detection Method Flow
 
@@ -364,7 +359,7 @@ stateDiagram-v2
     SkipRecovery --> Monitoring: Continue Monitoring
 ```
 
-**Note**: Network partition check also occurs after VPN check fails. If network is partitioned when a VPN failure is detected, recovery actions are skipped to avoid unnecessary disruption. Network partition state is checked before incrementing failure counters and triggering recovery tiers.
+**Note**: Network partition check also occurs after VPN check fails. When a VPN failure is detected, the failure counter is incremented first (to track the failure even if recovery is skipped), then network partition state is checked. If network is partitioned when a VPN failure is detected, recovery actions are skipped to avoid unnecessary disruption, but the failure count is still incremented for tracking purposes.
 
 ## Data Flow
 

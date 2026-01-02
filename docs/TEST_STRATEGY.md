@@ -122,7 +122,7 @@ For detailed information about test structure, file organization, test categorie
 - **[Test Categories](../tests/README.md#test-categories)** - Fast vs. slow tests, test categorization, and test counts
 - **[Test Environment Requirements](../tests/README.md#test-environment-requirements)** - System requirements and tool installation
 
-**Summary**: The test suite consists of ~827 tests organized by functionality (configuration, detection, recovery, integration, etc.) and categorized as fast (~605 tests, run by default) or slow (~222 tests, excluded by default for faster development feedback).
+**Summary**: The test suite consists of ~900 tests organized by functionality (configuration, detection, recovery, integration, etc.) and categorized as fast (~605 tests, run by default) or slow (~295 tests, excluded by default for faster development feedback).
 
 ## Testing Approach
 

@@ -73,6 +73,7 @@ Version numbers must be updated in **all** of the following locations:
    - `lib/lockfile.sh`
    - `lib/logging.sh`
    - `lib/recovery.sh`
+   - `lib/resources.sh`
    - `lib/state.sh`
 6. **Utility scripts** - Update `# Version:` comment:
    - `check-config.sh`

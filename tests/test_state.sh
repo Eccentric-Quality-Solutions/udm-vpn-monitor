@@ -306,10 +306,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "State file corruption - Backup file creation fails - should still recover" {
-	# Purpose: Test verifies that recovery continues even if backup creation fails.
-	# Expected: File is recovered even if backup fails.
-	# Importance: Ensures recovery doesn't fail completely if backup fails.
+@test "State file corruption - Backup file creation fails for readable file - should preserve corrupted file" {
+	# Purpose: Test verifies that recovery fails and preserves corrupted file if backup fails for a readable file.
+	# Expected: Recovery fails, corrupted file is preserved (not reset).
+	# Importance: Prevents data loss when backup fails due to disk space or permissions.
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
 	source_function "get_peer_state_file_path"
@@ -319,22 +319,107 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
 	echo "invalid-value" >"$failure_counter"
 
-	# Make logs directory read-only to prevent backup creation
-	chmod 555 "${LOGS_DIR}"
+	# Store original corrupted content
+	local original_content
+	original_content=$(cat "$failure_counter")
+
+	# Make STATE_DIR read-only to prevent backup creation
+	# Note: Backup files are created in the same directory as state files
+	chmod 555 "${STATE_DIR}"
 
 	# Source state functions to test directly
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" || true
 
-	# Trigger recovery - should still recover even if backup fails
+	# Trigger recovery - should fail because backup failed
+	run recover_corrupted_state_file "$failure_counter" "0" "integer"
+	assert_failure
+
+	# Verify corrupted file is preserved (not reset)
+	assert_file_exist "$failure_counter"
+	local preserved_content
+	preserved_content=$(cat "$failure_counter")
+	assert_equal "$preserved_content" "$original_content"
+
+	# Restore permissions
+	chmod 755 "${STATE_DIR}" 2>/dev/null || true
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "State file corruption - Unreadable file recovery - should recover even without backup" {
+	# Purpose: Test verifies that unreadable files can be recovered even though they cannot be backed up.
+	# Expected: File is recovered (removed/reset) even though backup is skipped.
+	# Importance: Unreadable files cannot be backed up, but should still be recoverable.
+	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+
+	source_function "get_peer_state_file_path"
+
+	# Create corrupted failure counter file
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	echo "invalid-value" >"$failure_counter"
+
+	# Make file unreadable (but still exists)
+	chmod 000 "$failure_counter"
+
+	# Source state functions to test directly
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" || true
+
+	# Trigger recovery - should succeed even though backup is skipped
+	run recover_corrupted_state_file "$failure_counter" "0" "integer"
+	assert_success
+
+	# Verify file was recovered (reset to default)
+	assert_file_exist "$failure_counter"
+	local value
+	value=$(cat "$failure_counter")
+	assert_equal "$value" "0"
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "State file corruption - Caller handles recovery failure gracefully - should return default value" {
+	# Purpose: Test verifies that callers of recover_corrupted_state_file handle recovery failures gracefully.
+	# Expected: Caller returns default value even if recovery fails, corrupted file is preserved.
+	# Importance: Ensures system continues to work even when recovery fails (e.g., backup fails).
+	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+
+	source_function "get_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Create corrupted failure counter file
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	echo "invalid-value" >"$failure_counter"
+
+	# Store original corrupted content
+	local original_content
+	original_content=$(cat "$failure_counter")
+
+	# Make STATE_DIR read-only to prevent backup creation
+	# Note: Backup files are created in the same directory as state files
+	chmod 555 "${STATE_DIR}"
+
+	# Source state functions to test directly
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" || true
+
+	# Call get_peer_state which internally calls recover_corrupted_state_file
+	# Even though recovery fails, get_peer_state should return default value
 	local value
 	value=$(get_peer_state "" "192.168.1.1" "failure_count" "0")
 
-	# Verify file was recovered (value should be 0)
+	# Verify caller returns default value even though recovery failed
 	assert_equal "$value" "0"
 
+	# Verify corrupted file is preserved (recovery failed, so file wasn't reset)
+	assert_file_exist "$failure_counter"
+	local preserved_content
+	preserved_content=$(cat "$failure_counter")
+	assert_equal "$preserved_content" "$original_content"
+
 	# Restore permissions
-	chmod 755 "${LOGS_DIR}" 2>/dev/null || true
+	chmod 755 "${STATE_DIR}" 2>/dev/null || true
 }
 
 # bats test_tags=category:high-risk,priority:high

@@ -969,7 +969,8 @@ select_recovery_strategy() {
 #   $1: Peer IP address to clean up
 #
 # Returns:
-#   0: Always succeeds (cleanup commands attempted, errors are logged if they fail)
+#   0: Recovery succeeded (recovery actions completed successfully)
+#   1: Recovery failed (recovery actions failed or could not be attempted)
 #
 # Actions:
 #   Reloads IPsec configuration to clean up and re-establish SAs:
@@ -1012,6 +1013,7 @@ surgical_cleanup() {
 
 	# Execute selected strategy with fallback support
 	local strategy_executed=0
+	local recovery_succeeded=0
 	while [[ $strategy_executed -eq 0 ]]; do
 		case "$RECOVERY_STRATEGY" in
 		"xfrm")
@@ -1027,7 +1029,7 @@ surgical_cleanup() {
 				if ! select_recovery_strategy "" 2; then
 					# Fallback strategy not available
 					handle_error "ERROR" "xfrm recovery failed and no fallback strategy available" 0
-					return 0
+					return 1
 				fi
 				# Continue loop to execute fallback strategy
 				continue
@@ -1050,6 +1052,7 @@ surgical_cleanup() {
 				else
 					local restart_exit_code=$?
 					handle_error "ERROR" "ipsec restart also failed (exit code: ${restart_exit_code})" 0
+					command_succeeded=0
 				fi
 			fi
 
@@ -1068,6 +1071,7 @@ surgical_cleanup() {
 						reload_duration=0
 					fi
 					log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback, verification: connections active, duration: ${reload_duration}s)"
+					recovery_succeeded=1
 				else
 					local current_time
 					current_time=$(get_unix_timestamp)
@@ -1077,21 +1081,27 @@ surgical_cleanup() {
 						reload_duration=0
 					fi
 					handle_error "WARNING" "Surgical cleanup completed for $peer_ip (via ipsec fallback, verification: some connections not active, duration: ${reload_duration}s)"
+					recovery_succeeded=0
 				fi
 			else
 				log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback, verification skipped due to command failure)"
+				recovery_succeeded=0
 			fi
 			strategy_executed=1
 			;;
 		*)
 			handle_error "ERROR" "Unknown recovery strategy: $RECOVERY_STRATEGY" 0
-			return 0
+			return 1
 			;;
 		esac
 	done
 
-	# Always return 0 (function always succeeds - cleanup commands attempted, errors are logged)
-	return 0
+	# Return based on whether recovery actually succeeded
+	if [[ $recovery_succeeded -eq 1 ]]; then
+		return 0
+	else
+		return 1
+	fi
 }
 
 # Full VPN restart (Tier 3 recovery)
@@ -1420,32 +1430,42 @@ monitor_location() {
 		fi
 		return 0
 	else
-		# VPN check failed - check network partition
+		# VPN check failed - increment failure count first
+		# This ensures failure count increments even when recovery is skipped due to network partition
+		failure_count=$(increment_failure "$location_name" "$external_peer_ip")
+
+		# Check network partition - always re-check (don't rely on cached state)
+		# This ensures we detect partition state changes (e.g., network just recovered)
 		if [[ "${ENABLE_NETWORK_PARTITION_CHECK:-1}" -eq 1 ]]; then
-			local partition_state
-			partition_state=$(get_network_partition_state)
-			if [[ "$partition_state" -eq 1 ]]; then
-				# Re-check partition status - it may have cleared during recovery
-				# Use same parameters as validate_monitor_state for consistency
-				local dns_server="${NETWORK_PARTITION_DNS_SERVER:-8.8.8.8}"
-				local dns_hostname="${NETWORK_PARTITION_DNS_HOSTNAME:-google.com}"
-				local dns_timeout="${NETWORK_PARTITION_DNS_TIMEOUT:-2}"
-				local interfaces="${NETWORK_PARTITION_INTERFACES:-br0,eth0}"
-				if check_network_partition "$dns_server" "$dns_hostname" "$dns_timeout" "$interfaces"; then
-					# Partition has cleared - log message and update state, then continue with recovery
-					log_message "INFO" "Network connectivity restored - resuming VPN monitoring"
-					set_network_partition_state 0
-					# Continue with recovery below
+			# Use same parameters as validate_monitor_state for consistency
+			local dns_server="${NETWORK_PARTITION_DNS_SERVER:-8.8.8.8}"
+			local dns_hostname="${NETWORK_PARTITION_DNS_HOSTNAME:-google.com}"
+			local dns_timeout="${NETWORK_PARTITION_DNS_TIMEOUT:-2}"
+			local interfaces="${NETWORK_PARTITION_INTERFACES:-br0,eth0}"
+			if ! check_network_partition "$dns_server" "$dns_hostname" "$dns_timeout" "$interfaces"; then
+				# Network is partitioned - skip recovery but update state
+				local prev_partition_state
+				prev_partition_state=$(get_network_partition_state)
+				set_network_partition_state 1
+				if [[ "$prev_partition_state" -eq 0 ]]; then
+					log_message "WARNING" "Network partition detected - skipping VPN recovery for location $location_name ($external_peer_ip) until connectivity restored"
 				else
-					# Still partitioned - skip recovery
-					log_message "INFO" "Skipping VPN recovery for location $location_name ($external_peer_ip) - network is partitioned"
-					return 0
+					log_message "INFO" "Skipping VPN recovery for location $location_name ($external_peer_ip) - network is still partitioned (failure count: $failure_count)"
 				fi
+				return 0
+			else
+				# Network is healthy - check if it was previously partitioned
+				local prev_partition_state
+				prev_partition_state=$(get_network_partition_state)
+				if [[ "$prev_partition_state" -eq 1 ]]; then
+					log_message "INFO" "Network connectivity restored - resuming VPN monitoring for location $location_name ($external_peer_ip)"
+					set_network_partition_state 0
+				fi
+				# Continue with recovery below
 			fi
 		fi
 
-		# VPN check failed
-		failure_count=$(increment_failure "$location_name" "$external_peer_ip")
+		# VPN check failed - continue with recovery
 		local failure_type="unknown"
 		if command -v get_failure_type >/dev/null 2>&1; then
 			failure_type=$(get_failure_type "$location_name" "$external_peer_ip" 2>/dev/null || echo "unknown")

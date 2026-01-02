@@ -3351,6 +3351,106 @@ source_lockfile_module() {
 }
 
 # bats test_tags=category:unit
+@test "check_byte_counters allows first zero bytes check to pass if ping succeeds" {
+	# Purpose: Test verifies that check_byte_counters allows first check with zero bytes to pass if ping check succeeds
+	# Expected: Function performs ping check on first zero bytes check, and passes if ping succeeds
+	# Importance: Reduces false positives for newly established idle VPNs while maintaining fail-safe behavior
+	# Set up environment
+	STATE_DIR="${TEST_DIR}"
+	LOGS_DIR="${STATE_DIR}/logs"
+	mkdir -p "${STATE_DIR}"
+	mkdir -p "${LOGS_DIR}"
+	export STATE_DIR LOGS_DIR
+	export ENABLE_PING_CHECK=1
+	export PING_COUNT=3
+	export PING_TIMEOUT=2
+
+	local peer_ip="203.0.113.1"
+	local internal_peer_ip="10.0.0.1"
+	local location_name="TEST"
+
+	# Mock ping command that succeeds
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<'EOF'
+#!/bin/bash
+# Simulate successful ping
+exit 0
+EOF
+	chmod +x "$mock_ping"
+	add_mock_to_path
+
+	# Source required functions
+	# shellcheck source=/dev/null
+	source_function "check_byte_counters"
+	# shellcheck source=/dev/null
+	source_function "set_peer_state"
+	# shellcheck source=/dev/null
+	source_function "get_peer_state"
+	# shellcheck source=/dev/null
+	source_function "get_local_ip_for_ping"
+
+	# First check with zero bytes - no previous state (last_bytes=0)
+	# With ping check enabled and internal_peer_ip provided, should pass if ping succeeds
+	run check_byte_counters "$location_name" "0" "$peer_ip" "" "$internal_peer_ip"
+	assert_success
+
+	# Verify state was updated
+	local last_bytes
+	last_bytes=$(get_peer_state "$location_name" "$peer_ip" "last_bytes" "0")
+	assert_equal "$last_bytes" "0"
+
+	# Verify idle_detected was set
+	local idle_detected
+	idle_detected=$(get_peer_state "$location_name" "$peer_ip" "idle_detected" "0")
+	assert_equal "$idle_detected" "1"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:unit
+@test "check_byte_counters fails first zero bytes check if ping fails" {
+	# Purpose: Test verifies that check_byte_counters fails first check with zero bytes if ping check fails
+	# Expected: Function performs ping check on first zero bytes check, and fails if ping fails
+	# Importance: Maintains fail-safe behavior when ping check indicates VPN is broken
+	# Set up environment
+	STATE_DIR="${TEST_DIR}"
+	LOGS_DIR="${STATE_DIR}/logs"
+	mkdir -p "${STATE_DIR}"
+	mkdir -p "${LOGS_DIR}"
+	export STATE_DIR LOGS_DIR
+	export ENABLE_PING_CHECK=1
+	export PING_COUNT=3
+	export PING_TIMEOUT=2
+
+	local peer_ip="203.0.113.1"
+	local internal_peer_ip="10.0.0.1"
+	local location_name="TEST"
+
+	# Mock ping command that fails
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<'EOF'
+#!/bin/bash
+# Simulate failed ping
+exit 1
+EOF
+	chmod +x "$mock_ping"
+	add_mock_to_path
+
+	# Source required functions
+	# shellcheck source=/dev/null
+	source_function "check_byte_counters"
+	# shellcheck source=/dev/null
+	source_function "get_peer_state"
+
+	# First check with zero bytes - no previous state (last_bytes=0)
+	# With ping check enabled and internal_peer_ip provided, should fail if ping fails
+	run check_byte_counters "$location_name" "0" "$peer_ip" "" "$internal_peer_ip"
+	assert_failure
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:unit
 @test "check_xfrm_status extracts and tracks SPI" {
 	# Purpose: Test verifies that check_xfrm_status function extracts SPI from xfrm output and stores it
 	# Expected: Function extracts SPI value from xfrm state output and stores it in state file for tracking

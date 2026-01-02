@@ -1788,6 +1788,58 @@ fi
 
 ---
 
+## 27. Always Re-Check Critical State Instead of Relying on Cached Values
+
+### Problem
+Network partition check was relying on cached partition state (`get_network_partition_state()`) before re-checking. This caused issues:
+- If network was partitioned but just recovered, recovery was still skipped based on stale cached state
+- Partition state could be stale if state changed between when it was cached and when it was checked
+- Recovery was incorrectly skipped when it shouldn't be
+
+### Impact
+- Recovery actions skipped when they shouldn't be
+- Failure count didn't increment correctly when recovery was skipped
+- VPN remained broken unnecessarily
+
+### Lesson
+**When making critical decisions based on state, always re-check the actual state rather than relying on cached values.** Cached state is useful for:
+- Logging (showing state transitions)
+- Performance optimization (avoiding expensive checks)
+- But NOT for making critical decisions where stale state could cause incorrect behavior
+
+### Pattern to Follow
+```bash
+# ✅ GOOD: Always re-check critical state
+if ! check_network_partition "$dns_server" "$dns_hostname" "$dns_timeout" "$interfaces"; then
+    # Network is partitioned - make decision based on fresh check
+    local prev_partition_state=$(get_network_partition_state)  # Only for logging
+    set_network_partition_state 1
+    # ... handle partition ...
+fi
+
+# ❌ BAD: Rely on cached state for critical decisions
+partition_state=$(get_network_partition_state)  # Cached value
+if [[ "$partition_state" -eq 1 ]]; then
+    # Only re-check if cached state says partitioned - misses state changes!
+    if check_network_partition ...; then
+        # ...
+    fi
+fi
+```
+
+### Systematic Application
+- When making critical decisions (e.g., skip recovery, perform actions), always re-check the actual state
+- Use cached state only for logging state transitions or performance optimization
+- If state can change between checks, always re-check before making decisions
+
+### Related Patterns
+- See `lib/recovery.sh:monitor_location()` lines 1433-1466 for implementation
+- Network partition state is checked in `vpn-monitor.sh` at script start, but recovery code always re-checks
+- Failure count increments before partition check to ensure accurate tracking even when recovery is skipped
+- Cached state (`get_network_partition_state()`) is used only for logging state transitions, not for decision-making
+
+---
+
 ## Summary: Key Takeaways
 
 These lessons should be applied systematically in future development and code reviews to prevent similar issues:
@@ -1818,5 +1870,6 @@ These lessons should be applied systematically in future development and code re
 24. **Always extract external IP from LOCATIONS using helper function** - LOCATIONS array stores delimited strings, not just IPs
 25. **Simplify complex conditionals when all branches converge** - Extract common operations outside conditionals
 26. **Distinguish between script execution success and recovery success** - Script execution success ≠ Operational success
+27. **Always re-check critical state instead of relying on cached values** - Cached state can become stale, especially when state changes can occur between checks
 
 ---

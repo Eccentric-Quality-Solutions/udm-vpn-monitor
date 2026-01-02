@@ -338,7 +338,7 @@ The test suite respects the following environment variables:
 
 **Test Execution:**
 - `RUN_SLOW_TESTS` - Set to `1` to include slow tests (default: `0`)
-- `PARALLEL_JOBS` - Number of parallel jobs (default: `0` = auto-detect)
+- `PARALLEL_JOBS` - Number of parallel jobs (default: `auto` = batch/parallel mode)
 - `TEST_TIMEOUT` - Timeout for individual tests in seconds (default: `120`)
 - `FAST_FAIL` - Set to `1` to stop on first failure (default: `0`)
 
@@ -511,16 +511,18 @@ rm logs/test_checkpoint.txt
 
 ### Parallel Execution
 
-The test runner supports parallel execution to significantly reduce test time. By default, parallel execution is enabled if GNU parallel or rush is installed.
+The test runner supports parallel execution to significantly reduce test time. By default, tests run in batch/parallel mode (auto-detect CPU cores) if GNU parallel or rush is installed.
 
 ```bash
-# Auto-detect CPU cores (default)
+# Auto-detect CPU cores (default - batch/parallel mode)
 ./tests/run_tests.sh
 
 # Use specific number of parallel jobs
 ./tests/run_tests.sh --jobs 8
 
-# Disable parallel execution
+# Run tests sequentially (disable parallel execution)
+./tests/run_tests.sh --sequential
+# or
 ./tests/run_tests.sh --jobs 0
 
 # Set via environment variable
@@ -533,8 +535,8 @@ PARALLEL_JOBS=4 ./tests/run_tests.sh
 - With parallel (fast tests only): ~1-2 minutes
 
 **Requirements:**
-- GNU parallel or rush must be installed
-- If not available, tests run sequentially (still works, just slower)
+- GNU parallel or rush must be installed for parallel execution
+- If not available, tests automatically fall back to sequential execution (still works, just slower)
 
 **Note:** Coverage reporting may be slower with parallel execution due to kcov overhead, but is still supported.
 

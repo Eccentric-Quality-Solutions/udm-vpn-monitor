@@ -516,6 +516,7 @@ safe_parse_config_file() {
 				# In normal mode, handle_config_error exits and never returns
 				parse_error=1
 			fi
+			continue
 		fi
 
 		# Safely assign variable value using printf -v (no code execution)
@@ -626,6 +627,71 @@ apply_schema_defaults() {
 # Note:
 #   Requires log_message function to be available (from logging.sh)
 #   Default values are read from config_schema.sh (single source of truth)
+# Validate critical configuration variables after parsing
+#
+# Validates that all required configuration variables are declared after parsing completes.
+# This ensures that even if parsing partially failed, we catch missing critical variables
+# before proceeding with incomplete configuration.
+#
+# Returns:
+#   0: All required variables are declared
+#   1: One or more required variables are missing
+#
+# Side effects:
+#   - Logs errors for missing required variables
+#
+# Note:
+#   This function should be called immediately after safe_parse_config_file() succeeds
+#   to catch cases where parsing partially failed but didn't return an error.
+#   Since apply_schema_defaults() runs before parsing, all variables should already be
+#   declared, but this provides a defensive check for edge cases.
+validate_critical_config_vars() {
+	local var_name
+	local schema
+	local schema_parts
+	local required
+	local missing_required=()
+
+	# Check all schema-defined variables
+	for var_name in "${!CONFIG_SCHEMA[@]}"; do
+		# Get schema for this variable
+		schema=$(get_config_schema "$var_name" 2>/dev/null || echo "")
+		if [[ -z "$schema" ]]; then
+			# Variable not in schema - skip (for backward compatibility)
+			continue
+		fi
+
+		# Parse schema using standard function (consistent with rest of codebase)
+		schema_parts=$(parse_config_schema "$schema")
+		{
+			read -r required
+		} <<<"$schema_parts"
+
+		# Only validate required variables here
+		# Optional variables are validated later in validate_config_schema()
+		if [[ "$required" != "required" ]]; then
+			continue
+		fi
+
+		# Check if required variable is declared
+		# Since apply_schema_defaults() runs before parsing, all variables should
+		# already be declared, but this provides a defensive check for edge cases
+		# where parsing might have failed silently or defaults weren't applied correctly
+		if ! declare -p "$var_name" &>/dev/null; then
+			# Variable not declared at all - this is a critical error
+			missing_required+=("$var_name")
+		fi
+	done
+
+	# Report missing required variables
+	if [[ ${#missing_required[@]} -gt 0 ]]; then
+		handle_error "ERROR" "Missing required configuration variables: ${missing_required[*]}"
+		return 1
+	fi
+
+	return 0
+}
+
 # Handle fatal config error with proper fake mode support
 #
 # Helper function to handle fatal configuration errors that need to exit gracefully
@@ -679,6 +745,12 @@ load_config() {
 		# Only simple variable assignments are allowed (VAR=value or VAR="value")
 		if ! safe_parse_config_file "$config_file"; then
 			handle_fatal_config_error "Failed to parse configuration file: $config_file" "${EXIT_CONFIG_ERROR:-2}"
+		fi
+
+		# Validate that critical configuration variables are set after parsing
+		# This ensures that even if parsing partially failed, we catch missing critical variables
+		if ! validate_critical_config_vars; then
+			handle_fatal_config_error "Critical configuration variables are missing after parsing: $config_file" "${EXIT_CONFIG_ERROR:-2}"
 		fi
 
 		log_message "INFO" "Configuration loaded from: $config_file"

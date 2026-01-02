@@ -260,6 +260,7 @@ For comprehensive troubleshooting information including common issues, debugging
 - **Flaky Tests**: Use `./tests/detect_flaky_tests.sh` to identify inconsistent tests
 - **Slow Tests**: Use `./tests/tag_slow_tests.sh` to identify and tag slow tests
 - **Coverage Gaps**: Run `./tests/run_tests.sh --coverage` and review `coverage/index.html`
+- **Test Isolation Issues**: Use `./tests/verify_test_isolation.sh` to detect tests that leak state
 
 ## Test Performance Optimization
 
@@ -363,6 +364,9 @@ bats --timing tests/
 # Check for flaky tests
 ./tests/detect_flaky_tests.sh --slow
 
+# Verify test isolation
+./tests/verify_test_isolation.sh
+
 # Review coverage
 ./tests/run_tests.sh --coverage
 ```
@@ -401,6 +405,7 @@ bats --timing tests/
 - [ ] Run full test suite
 - [ ] Review test execution time trends
 - [ ] Identify tests needing refactoring
+- [ ] Verify test isolation (`./tests/verify_test_isolation.sh`)
 - [ ] Review test documentation
 
 ### Quarterly Maintenance

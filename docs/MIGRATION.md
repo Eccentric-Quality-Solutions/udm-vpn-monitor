@@ -120,12 +120,13 @@ Prompts you to enter a name for each location.
 ```bash
 /data/vpn-monitor/scripts/migrate-config-to-locations.sh --csv locations.csv
 ```
-Reads location names from a CSV file. CSV format:
+Reads location names from a CSV file. CSV format (index,name):
 ```csv
-Location Name,External IP,Internal IPs
-NYC,203.0.113.1,192.168.100.1
-DC,198.51.100.1,192.168.200.1 192.168.200.2
+2,DC
+3,CHICAGO
 ```
+
+**Note**: The CSV file only provides location names. External and internal IPs are read from the existing `EXTERNAL_PEER_IPS` and `INTERNAL_PEER_IPS` variables in your config file. The index in the CSV corresponds to the position of the external IP in `EXTERNAL_PEER_IPS` (1 = first IP, 2 = second IP, etc.).
 
 ## Location Name Rules
 

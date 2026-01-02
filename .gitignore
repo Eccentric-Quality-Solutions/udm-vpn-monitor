@@ -1,4 +1,5 @@
 # Logs
+/logs/
 *.log
 cron.log
 vpn-monitor.log

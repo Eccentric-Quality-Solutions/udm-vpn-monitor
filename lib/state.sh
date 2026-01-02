@@ -945,6 +945,8 @@ record_restart() {
 #   Backup files can be used for forensic analysis or manual recovery
 backup_corrupted_state_file() {
 	local state_file="$1"
+	local max_attempts="${2:-3}"
+	local attempt=1
 	local timestamp
 	timestamp=$(get_unix_timestamp)
 	local backup_file="${state_file}.corrupted.${timestamp}"
@@ -961,14 +963,27 @@ backup_corrupted_state_file() {
 		return 1
 	fi
 
-	# Create backup of state file
-	if ! cp "$state_file" "$backup_file" 2>/dev/null; then
-		handle_error "WARNING" "Failed to backup corrupted state file: $state_file" 0
-		return 1
-	fi
+	# Attempt backup with retries
+	while [[ $attempt -le $max_attempts ]]; do
+		# Create backup of state file
+		if cp "$state_file" "$backup_file" 2>/dev/null; then
+			handle_error "INFO" "Backed up corrupted state file: $state_file -> $backup_file" 0
+			return 0
+		fi
 
-	handle_error "INFO" "Backed up corrupted state file: $state_file -> $backup_file" 0
-	return 0
+		# If this isn't the last attempt, try again with a new timestamp
+		if [[ $attempt -lt $max_attempts ]]; then
+			timestamp=$(get_unix_timestamp)
+			backup_file="${state_file}.corrupted.${timestamp}"
+			handle_error "WARNING" "Backup attempt $attempt failed, retrying: $state_file" 0
+			attempt=$((attempt + 1))
+		else
+			handle_error "ERROR" "Failed to backup corrupted state file after $max_attempts attempts: $state_file" 0
+			return 1
+		fi
+	done
+
+	return 1
 }
 
 # Recover corrupted state file
@@ -984,7 +999,7 @@ backup_corrupted_state_file() {
 #
 # Returns:
 #   0: Success (file backed up and reset)
-#   1: Failed to backup or reset
+#   1: Failed to backup (preserves corrupted file) or reset
 #
 # Side effects:
 #   - Creates backup of corrupted file (see backup_corrupted_state_file)
@@ -1000,22 +1015,37 @@ backup_corrupted_state_file() {
 #
 # Note:
 #   If default value is empty string, file is removed instead of reset
+#   If backup fails for a readable file, recovery is aborted to preserve corrupted file
+#   If file is unreadable, recovery proceeds (cannot backup unreadable files)
 recover_corrupted_state_file() {
 	local state_file="$1"
 	local default_value="${2:-}"
 	local expected_format="${3:-integer}"
 
-	# Backup corrupted file first
-	if ! backup_corrupted_state_file "$state_file"; then
-		handle_error "WARNING" "Failed to backup corrupted file before recovery: $state_file" 0
-		# Continue with recovery even if backup fails
+	# Check if file exists and is readable before attempting backup
+	local file_is_readable=0
+	if [[ -f "$state_file" ]] && file_exists_and_readable "$state_file"; then
+		file_is_readable=1
+	fi
+
+	# Backup corrupted file first (with retry logic)
+	# If file is readable and backup fails, abort recovery to preserve corrupted file
+	if [[ $file_is_readable -eq 1 ]]; then
+		if ! backup_corrupted_state_file "$state_file"; then
+			handle_error "ERROR" "Failed to backup corrupted file before recovery (preserving corrupted file): $state_file" 0
+			return 1
+		fi
 	fi
 
 	# Reset file to default value
 	if [[ -z "$default_value" ]]; then
 		# Remove file if default is empty
 		rm -f "$state_file" 2>/dev/null || true
-		handle_error "INFO" "Recovered corrupted state file by removal: $state_file" 0
+		if [[ $file_is_readable -eq 1 ]]; then
+			handle_error "INFO" "Recovered corrupted state file by removal: $state_file" 0
+		else
+			handle_error "INFO" "Recovered unreadable corrupted state file by removal: $state_file" 0
+		fi
 	else
 		# If file is unreadable, remove it first before writing (atomic_write_file can overwrite, but this is safer)
 		if [[ -f "$state_file" ]] && ! file_exists_and_readable "$state_file"; then
@@ -1027,7 +1057,11 @@ recover_corrupted_state_file() {
 			return 1
 		fi
 
-		handle_error "INFO" "Recovered corrupted state file by reset to default: $state_file (value: $default_value)" 0
+		if [[ $file_is_readable -eq 1 ]]; then
+			handle_error "INFO" "Recovered corrupted state file by reset to default: $state_file (value: $default_value)" 0
+		else
+			handle_error "INFO" "Recovered unreadable corrupted state file by reset to default: $state_file (value: $default_value)" 0
+		fi
 	fi
 
 	return 0

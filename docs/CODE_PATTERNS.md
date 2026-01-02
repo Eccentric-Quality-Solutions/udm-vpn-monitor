@@ -627,6 +627,63 @@ value=$(cat "$state_file" 2>/dev/null || echo "0")
 - Format validation ensures files contain expected data types and structures
 - Recovery mechanism preserves corrupted files for analysis while resetting to safe defaults
 
+### Pattern: Handling Recovery Function Return Values
+
+**When to Use:** Calling `recover_corrupted_state_file()` or other recovery functions
+
+**Pattern:**
+```bash
+# ✅ GOOD: Check return value when recovery failure affects behavior
+validate_state() {
+    local validation_failed=0
+    
+    if ! validate_state_file "$state_file" "integer"; then
+        handle_error "WARNING" "State file corrupted, recovering: $state_file" 0
+        if ! recover_corrupted_state_file "$state_file" "0" "integer"; then
+            # Recovery failed (e.g., backup failed), mark validation as failed
+            validation_failed=1
+            handle_error "ERROR" "Recovery failed, corrupted file preserved: $state_file" 0
+        fi
+    fi
+    
+    return $validation_failed
+}
+
+# ✅ ACCEPTABLE: Continue with default value if recovery fails
+# This pattern is acceptable when the function can safely return a default value
+get_peer_state() {
+    local state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "$key")
+    
+    if file_exists_and_readable "$state_file"; then
+        local value=$(cat "$state_file" 2>/dev/null || echo "$default_value")
+        if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+            handle_error "WARNING" "Corrupted peer state file (recovering): $state_file" 0
+            recover_corrupted_state_file "$state_file" "$default_value" "integer"
+            # Continue with default value even if recovery fails
+            # Corrupted file is preserved for later analysis
+            echo "$default_value"
+            return 0
+        fi
+        echo "$value"
+    else
+        echo "$default_value"
+    fi
+}
+```
+
+**Key Points:**
+- `recover_corrupted_state_file()` returns 0 on success, 1 on failure
+- Recovery can fail if backup fails (for readable files) - corrupted file is preserved
+- Check return value when recovery failure affects function behavior (e.g., validation status)
+- It's acceptable to continue with default values if recovery fails - system continues to work, corrupted file preserved
+- When recovery fails, the corrupted file is preserved for later analysis
+- Log errors appropriately when recovery fails to aid debugging
+
+**When to Check Return Value:**
+- **Must check:** When recovery failure affects return value or validation status
+- **Should check:** When you need to track recovery success/failure for monitoring
+- **Acceptable to skip:** When function can safely return default value and continue operation
+
 ### Pattern: Pattern-Based State File Validation
 
 **When to Use:** Validating multiple state files matching a glob pattern
@@ -729,6 +786,76 @@ fi
 - `validate_ip_address()` - Validates IPv4 or IPv6 addresses
 - `validate_timestamp()` - Validates Unix timestamps (0 to year 2100)
 - `validate_state_file()` - Validates state file format (integer, timestamp, timestamp_list)
+
+### Pattern: Use Supplementary Diagnostics to Reduce False Positives
+
+**When to Use:** When primary validation logic may produce false positives in edge cases, and supplementary diagnostics can help distinguish between valid and invalid states
+
+**Pattern:**
+```bash
+# ✅ GOOD: Use supplementary diagnostics to reduce false positives
+if [[ "$current_bytes" -eq 0 ]]; then
+    if [[ "$last_bytes" -eq 0 ]]; then
+        # First check with zero bytes - may be idle or broken
+        # Use ping check as supplementary diagnostic to distinguish
+        if [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
+            local local_ip
+            local_ip=$(get_local_ip_for_ping)
+            if check_ping_connectivity "$internal_peer_ip" "$local_ip"; then
+                # Ping succeeds - VPN is healthy but idle (newly established or idle)
+                set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "$current_bytes"
+                set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
+                log_message "INFO" "VPN OK: SA exists, bytes=0 (first check, idle but healthy, ping check passed)"
+                return 0
+            else
+                # Ping fails - VPN is likely broken
+                handle_error "WARNING" "VPN suspect: SA exists but bytes=0 (first check, ping check failed)"
+                return 1
+            fi
+        else
+            # Ping check disabled or internal_peer_ip not provided - fail-safe behavior
+            handle_error "WARNING" "VPN suspect: SA exists but bytes=0 (first check, may be idle, ping check disabled)"
+            return 1
+        fi
+    else
+        # Bytes dropped to zero after previously having traffic - likely broken
+        handle_error "WARNING" "VPN suspect: SA exists but bytes dropped to 0 (was $last_bytes)"
+        return 1
+    fi
+fi
+
+# ❌ BAD: Fail immediately without supplementary diagnostics
+if [[ "$current_bytes" -eq 0 ]]; then
+    if [[ "$last_bytes" -eq 0 ]]; then
+        # First check with zero bytes - fails immediately (false positive for idle VPNs)
+        handle_error "WARNING" "VPN suspect: SA exists but bytes=0 (first check, may be idle)"
+        return 1  # ← False positive for newly established idle VPNs
+    fi
+fi
+```
+
+**Key Points:**
+- Use supplementary diagnostics (like ping checks) when primary validation may produce false positives
+- Maintain fail-safe behavior: if supplementary diagnostics are unavailable, default to conservative (fail-safe) behavior
+- Only use supplementary diagnostics when they provide meaningful additional information
+- Log the diagnostic result clearly to help with troubleshooting
+- Distinguish between "uncertain but likely healthy" (idle state) and "definitely broken" states
+- Update state appropriately based on diagnostic results (e.g., mark as idle but healthy)
+
+**Real-World Example:**
+In `check_byte_counters()` (`lib/detection.sh`), the first check with zero bytes could indicate either:
+- A newly established VPN that hasn't passed traffic yet (healthy but idle)
+- A broken VPN tunnel (unhealthy)
+
+Using ping check as a supplementary diagnostic helps distinguish between these cases:
+- Ping succeeds → VPN is healthy but idle → Pass check, mark as idle
+- Ping fails → VPN is likely broken → Fail check
+- Ping check unavailable → Fail-safe behavior → Fail check (conservative)
+
+**Related Patterns:**
+- See ADR-0014 for ping check design rationale
+- See "Optional-Feature" pattern for handling optional diagnostics
+- See "Fail-Safe Behavior" in error handling patterns
 
 ---
 
@@ -1076,6 +1203,57 @@ load fixtures/vpn_down
 - Use fixture setup functions for common scenarios
 - Multiple fixtures can be loaded in a single test file
 - Fixtures reduce duplication and ensure consistent test environments
+
+### Pattern: Testing File Deletion Failures
+
+**When to Use:** Testing functions that delete files and need to verify error handling when deletion fails
+
+**Pattern:**
+```bash
+# ✅ GOOD: Make parent directory read-only to prevent deletion
+local state_file
+state_file=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
+mkdir -p "$(dirname "$state_file")"
+echo "5" >"$state_file"
+
+# Make parent directory read-only (not the file itself)
+local state_dir
+state_dir=$(dirname "$state_file")
+local original_perms
+original_perms=$(stat -c "%a" "$state_dir" 2>/dev/null || echo "755")
+
+if chmod 555 "$state_dir" 2>/dev/null; then
+    # Try to delete (should fail gracefully)
+    run delete_peer_state "" "$peer_ip" "failure_count"
+    assert_failure
+    
+    # Verify file still exists (deletion failed)
+    assert_file_exist "$state_file"
+    
+    # Restore permissions for cleanup
+    chmod "$original_perms" "$state_dir" 2>/dev/null || true
+else
+    skip "Cannot make directory read-only on this system"
+fi
+
+# ❌ BAD: Making file read-only doesn't prevent rm -f from deleting it
+chmod 444 "$state_file"
+run delete_peer_state "" "$peer_ip" "failure_count"
+# This will succeed even though file is read-only - rm -f can delete read-only files!
+```
+
+**Key Points:**
+- To test file deletion failures, make the **parent directory** read-only (chmod 555), not the file itself
+- The `rm -f` command can delete read-only files but cannot delete files from a read-only directory
+- Always save original permissions and restore them after the test for cleanup
+- Handle cases where chmod may fail (e.g., on some systems) by skipping the test gracefully
+- Verify that the file still exists after the deletion attempt fails
+
+**Why This Works:**
+- `rm -f` can delete read-only files (the `-f` flag forces removal even when files are write-protected)
+- However, `rm -f` cannot delete files from a directory that doesn't have write permission
+- Making the directory read-only (chmod 555) removes write permission, preventing file deletion
+- This provides a reliable way to test deletion failure scenarios in BATS tests
 
 ---
 
@@ -1886,6 +2064,24 @@ if [[ -f "${LIB_DIR}/config_schema.sh" ]] && source "${LIB_DIR}/config_schema.sh
 fi
 ```
 
+**Troubleshooting: CONFIG_SCHEMA Not Populating in Tests**
+
+**Problem:** When sourcing `config.sh` in BATS tests, the `CONFIG_SCHEMA` associative array is not being populated correctly, causing `get_config_schema()` to return "not found" for valid configuration variables.
+
+**Root Cause:** If `config.sh` declares `CONFIG_SCHEMA` as `declare -A CONFIG_SCHEMA=()` (without `-g` flag) before sourcing `config_schema.sh`, and `config.sh` is sourced from within a function (like BATS test functions), this creates a **local** variable that shadows the global `-gA` one created by `config_schema.sh`. Functions like `get_config_schema` then see the empty local variable instead of the populated global one.
+
+**Solution:** Always use `declare -gA CONFIG_SCHEMA=()` (with `-g` flag) to ensure `CONFIG_SCHEMA` is always global, preventing scoping issues when `config.sh` is sourced from within functions.
+
+**Test Pattern:** Tests should use the standard pattern:
+```bash
+source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+source "${BATS_TEST_DIRNAME}/../lib/config_schema.sh" 2>/dev/null || true  # Optional but recommended
+```
+
+**Key Lesson:** When a test exposes a scoping issue in production code, fix the production code rather than working around it in tests. Using `declare -gA` instead of `declare -A` ensures associative arrays are always global, which is the correct behavior for configuration schemas that need to be accessible from anywhere.
+
 ---
 
 ## Bash Strict Mode and Safety Patterns
@@ -2176,13 +2372,13 @@ This document consolidates code patterns used throughout the UDM VPN Monitor cod
 
 1. **Error Handling**: Use appropriate error handling patterns (fatal vs non-fatal, fake mode support)
 2. **File Operations**: Always check readability before file operations, use atomic writes
-3. **State Management**: Use abstraction layers for state file paths, track per-location state
-4. **Validation**: Use validation functions instead of inline regex
+3. **State Management**: Use abstraction layers for state file paths, track per-location state, handle recovery function return values appropriately
+4. **Validation**: Use validation functions instead of inline regex, use supplementary diagnostics to reduce false positives
 5. **Function Documentation**: Include comprehensive documentation blocks for all functions
 6. **Configuration**: Use schema-based validation, safe config file parsing
 7. **Logging**: Use centralized logging function, don't log success when operations fail
 8. **Module Organization**: Follow consistent module sourcing and header patterns
-9. **Testing**: Use test helper functions, mock system commands, use fixtures
+9. **Testing**: Use test helper functions, mock system commands, use fixtures, test file deletion failures with read-only directories
 10. **Variable Naming**: Follow naming conventions (UPPERCASE for constants, lowercase_with_underscores for locals)
 11. **Arithmetic**: Use safe timestamp arithmetic, validate and clamp results
 12. **Process Management**: Handle race conditions gracefully
@@ -2191,7 +2387,7 @@ This document consolidates code patterns used throughout the UDM VPN Monitor cod
 15. **String Parsing**: Use character-by-character parsing for complex syntax, trim and normalize strings
 16. **Loops**: Read files line by line properly, iterate over arrays correctly
 17. **Associative Arrays**: Use namerefs to pass arrays by reference, initialize properly
-18. **Variable Initialization**: Use conditional readonly for multi-source modules, provide default parameter values, pre-declare arrays
+18. **Variable Initialization**: Use conditional readonly for multi-source modules, provide default parameter values, pre-declare arrays (use `declare -gA` for global arrays to avoid scoping issues)
 19. **Bash Strict Mode**: Use `set -euo pipefail` in main scripts, handle errors explicitly in library modules
 20. **Quoting**: Always quote variable expansions, use `$()` for command substitution, quote heredoc delimiters appropriately
 21. **UDM Constraints**: Target UDM OS 4.3+, use `/data` for persistent storage, check command availability, provide fallbacks

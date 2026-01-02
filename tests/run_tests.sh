@@ -69,8 +69,9 @@ RERUN_FAILED="${RERUN_FAILED:-0}"
 
 # Parallel execution settings
 # Number of parallel jobs (0 = disabled, auto = detect CPU cores, or specific number)
+# Default: auto (run in batch/parallel by default if parallel tool is available)
 # Set PARALLEL_JOBS=0 to disable, auto to auto-detect, or a number like 4, 8, etc.
-PARALLEL_JOBS="${PARALLEL_JOBS:-0}"
+PARALLEL_JOBS="${PARALLEL_JOBS:-auto}"
 PARALLEL_TOOL=""
 
 # Test tag filtering settings
@@ -1185,7 +1186,7 @@ run_tests() {
 		echo -e "${BLUE}Fast-fail: disabled (will run all tests)${NC}"
 	fi
 	if [[ "$PARALLEL_JOBS" == "0" ]]; then
-		echo -e "${BLUE}Parallel execution: disabled${NC}"
+		echo -e "${BLUE}Parallel execution: disabled (sequential mode)${NC}"
 	fi
 	echo -e "${BLUE}Test timeout: ${TEST_TIMEOUT}s (tests exceeding this will be skipped)${NC}"
 	echo ""
@@ -1607,6 +1608,10 @@ parse_args() {
 			INDIVIDUAL_MODE=1 # Resume only works in individual mode
 			shift
 			;;
+		--sequential)
+			PARALLEL_JOBS=0
+			shift
+			;;
 		--help | -h)
 			show_help
 			exit 0
@@ -1633,7 +1638,8 @@ Options:
     --all, -a              Run all tests even if some fail (disables fast-fail)
     --failed, -f           Rerun only failed tests from the last completed run
     --jobs, -j <N>         Number of parallel jobs (auto, 0=disabled, or number)
-                           Default: 0 (sequential execution, no parallelization)
+                           Default: auto (batch/parallel execution if parallel tool available)
+    --sequential           Run tests sequentially (disable parallel execution)
     --filter-tags, -t <T>  Filter tests by tags (e.g., category:unit, priority:high)
                            Supports multiple tags: category:integration,priority:high
     --individual, -i       Run each test case individually with detailed per-test output
@@ -1643,16 +1649,18 @@ Options:
     --help, -h             Show this help message
 
 Examples:
-    $0                              Run fast tests only, run all tests (no fast-fail), sequential
-    $0 --slow                       Run all tests including slow tests, sequential, no fast-fail
-    $0 --coverage                   Run fast tests with coverage reporting, sequential, no fast-fail
-    $0 --slow --coverage            Run all tests with coverage reporting, sequential, no fast-fail
+    $0                              Run fast tests only in batch/parallel mode (default)
+    $0 --slow                       Run all tests including slow tests in batch/parallel mode
+    $0 --sequential                 Run tests sequentially (disable parallel execution)
+    $0 --coverage                   Run fast tests with coverage reporting in batch/parallel mode
+    $0 --slow --coverage            Run all tests with coverage reporting in batch/parallel mode
     $0 --all                        Run all tests even if some fail (same as default)
     $0 --failed                     Rerun only tests that failed in the last run
     $0 --slow --failed              Rerun only failed tests from last run (includes slow tests)
     $0 --jobs 8                     Run tests with 8 parallel jobs (requires GNU parallel)
-    $0 --jobs auto                  Auto-detect CPU cores for parallel execution
-    $0 --jobs 0                     Disable parallel execution (run sequentially, default)
+    $0 --jobs auto                  Auto-detect CPU cores for parallel execution (default)
+    $0 --jobs 0                     Disable parallel execution (run sequentially)
+    $0 --sequential                 Run tests sequentially (same as --jobs 0)
     $0 --filter-tags category:unit  Run only unit tests
     $0 --filter-tags priority:high  Run only high-priority tests
     $0 --filter-tags category:integration,priority:high  Run integration tests with high priority
@@ -1663,7 +1671,8 @@ Examples:
 
 Test Behavior:
     By default, tests run all tests regardless of failures (fast-fail disabled).
-    Tests run sequentially (no parallelization) to ensure output streams properly.
+    Tests run in batch/parallel mode by default if GNU parallel or rush is available.
+    Use --sequential or --jobs 0 to run tests sequentially.
     Tests that exceed 2 minutes (120 seconds) will be skipped automatically.
     Use --all flag or set FAST_FAIL=0 to run all tests regardless of failures (default).
     
@@ -1692,15 +1701,15 @@ Coverage Reporting:
     with --coverage if kcov is not found.
 
 Parallel Execution:
-    By default, parallel execution is disabled (sequential execution) to ensure
-    output streams properly to the terminal. Parallel execution can significantly
-    reduce test execution time (often 3-4x faster on multi-core systems).
+    By default, tests run in batch/parallel mode (auto-detect CPU cores) if GNU parallel
+    or rush is available. This significantly reduces test execution time (often 3-4x faster
+    on multi-core systems).
     
-    Parallel execution requires GNU parallel or rush to be installed. If not
-    available, tests will run sequentially.
+    Parallel execution requires GNU parallel or rush to be installed. If not available,
+    tests will automatically fall back to sequential execution.
     
-    Set PARALLEL_JOBS=0 to disable parallel execution (default), or use --jobs 0.
-    Set PARALLEL_JOBS=auto to auto-detect CPU cores.
+    Use --sequential or --jobs 0 to disable parallel execution and run sequentially.
+    Set PARALLEL_JOBS=auto to auto-detect CPU cores (default).
     Set PARALLEL_JOBS=N to use a specific number of jobs.
 
 Test Tag Filtering:
@@ -1728,10 +1737,10 @@ Test Timeout:
 
 Performance Tips:
     - Install GNU parallel for faster test execution: brew install parallel
-    - Use --jobs auto to utilize all CPU cores (disabled by default for streaming output)
+    - Tests run in batch/parallel mode by default (auto-detect CPU cores)
+    - Use --sequential to run tests sequentially if needed
     - Parallel execution works best with fast tests (exclude slow tests locally)
     - Coverage reporting may be slower with parallel execution due to kcov overhead
-    - Tests run sequentially by default to ensure output streams to terminal
 
 EOF
 }
