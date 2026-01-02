@@ -111,6 +111,11 @@ LIB_FILES=(
 	"lib/state.sh"
 )
 
+# Script files (utility scripts)
+SCRIPT_FILES=(
+	"scripts/migrate-config-to-locations.sh"
+)
+
 echo "Preparing install package..."
 
 # Copy main files
@@ -118,6 +123,9 @@ copy_files_with_validation "$SCRIPT_DIR" "$TEMP_DIR" "${MAIN_FILES[@]}"
 
 # Copy library files
 copy_files_with_validation "$SCRIPT_DIR" "$TEMP_DIR" "${LIB_FILES[@]}"
+
+# Copy script files
+copy_files_with_validation "$SCRIPT_DIR" "$TEMP_DIR" "${SCRIPT_FILES[@]}"
 
 # Create package file (zip or tar)
 cd "$TEMP_DIR"
@@ -140,6 +148,12 @@ for file in "${MAIN_FILES[@]}"; do
 done
 echo "  Library files:"
 for file in "${LIB_FILES[@]}"; do
+	if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
+		echo "    - ${file}"
+	fi
+done
+echo "  Script files:"
+for file in "${SCRIPT_FILES[@]}"; do
 	if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
 		echo "    - ${file}"
 	fi

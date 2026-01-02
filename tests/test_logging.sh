@@ -15,9 +15,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:high
 @test "log file is a directory" {
+	# Purpose: Test verifies that the script handles LOG_FILE paths that point to directories instead of files gracefully
+	# Expected: Script handles directory instead of log file gracefully, outputs to stderr and does not crash
+	# Importance: Directory paths can occur from misconfiguration or symlink issues; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -45,9 +48,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "log file permissions prevent write" {
+	# Purpose: Test verifies that the script handles log files with write permissions prevented gracefully
+	# Expected: Script handles read-only log file gracefully, outputs to stderr and does not crash
+	# Importance: Permission issues can occur from incorrect file ownership or chmod operations; script must handle gracefully
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -80,9 +86,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "log directory becomes read-only during execution" {
+	# Purpose: Test verifies that the script handles log directories that become read-only during execution gracefully
+	# Expected: Script handles read-only log directory gracefully, outputs to stderr and does not crash
+	# Importance: Directory permissions can change during execution; script must handle this gracefully
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -113,9 +122,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "log file becomes read-only during execution" {
+	# Purpose: Test verifies that the script handles log files that become read-only during execution gracefully
+	# Expected: Script handles read-only log file gracefully, outputs to stderr and does not crash
+	# Importance: File permissions can change during execution; script must handle this gracefully
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -147,9 +159,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "log directory deleted during execution" {
+	# Purpose: Test verifies that the script handles log directories that are deleted during execution gracefully
+	# Expected: Script handles deleted log directory gracefully, recreates directory or outputs to stderr and does not crash
+	# Importance: Directories can be deleted during execution; script must handle this gracefully
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -179,11 +194,14 @@ EOF
 # ============================================================================
 
 @test "LOG_FILE path contains symlinks" {
+	# Purpose: Test verifies that the script handles LOG_FILE paths containing symlinks gracefully
+	# Expected: Script handles symlink path gracefully, writes to real directory via symlink
+	# Importance: Symlinks are commonly used in file systems; script must handle them correctly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local symlink_log_dir="${TEST_DIR}/symlink-logs"
 	local real_log_dir="${TEST_DIR}/real-logs"
 	cat >"$config_file" <<EOF
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 LOG_FILE="${symlink_log_dir}/vpn-monitor.log"
 EOF
 
@@ -221,10 +239,13 @@ EOF
 }
 
 @test "LOG_FILE path contains special characters" {
+	# Purpose: Test verifies that the script handles LOG_FILE paths containing special characters gracefully
+	# Expected: Script handles special characters in path gracefully and creates log file successfully
+	# Importance: File paths may contain special characters; script must handle them correctly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local special_log_dir="${TEST_DIR}/logs-with-special-chars"
 	cat >"$config_file" <<EOF
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 LOG_FILE="${special_log_dir}/vpn-monitor.log"
 EOF
 
@@ -253,9 +274,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "disk full scenario (log write fails)" {
+	# Purpose: Test verifies that the script handles disk full scenarios where log writes fail gracefully
+	# Expected: Script handles disk full scenario gracefully, outputs to stderr and does not crash
+	# Importance: Disk space can run out during execution; script must handle this gracefully without crashing
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"

@@ -44,8 +44,10 @@ setup_vpn_xfrm_recovery_fixture() {
 	local default_config=('ENABLE_XFRM_RECOVERY=1' 'TIER2_THRESHOLD=3')
 	setup_test_vpn_monitor "$peer_ip" "${TEST_DIR}" "${default_config[@]}" "${extra_config[@]}"
 
-	# Set up state files with failure count at Tier 2 threshold (3)
-	setup_state_files "$peer_ip" 3 0
+	# Set up state files with failure count at Tier 2 threshold (3) using location-aware functions
+	# setup_test_vpn_monitor creates location "TEST1" for single IP
+	ensure_state_functions_loaded
+	set_peer_state "TEST1" "$peer_ip" "failure_count" "3" || true
 
 	# Generate SPI values for the SAs
 	# Use different SPIs for each SA to simulate multiple SAs
@@ -64,7 +66,7 @@ setup_vpn_xfrm_recovery_fixture() {
 #!/bin/bash
 if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
     # Handle SA deletion based on recovery type
-    local spi_to_delete="\$7"
+    spi_to_delete="\$7"
 EOF
 
 	# Add deletion logic based on recovery type
@@ -82,8 +84,8 @@ EOF
 		cat >>"$mock_ip" <<EOF
     # Partial failure: alternate between success and failure
     # Pattern: first succeeds, second fails, third succeeds, etc.
-    local delete_count_file="${TEST_DIR}/delete_count"
-    local delete_count=\$(cat "\$delete_count_file" 2>/dev/null || echo "0")
+    delete_count_file="${TEST_DIR}/delete_count"
+    delete_count=\$(cat "\$delete_count_file" 2>/dev/null || echo "0")
     delete_count=\$((delete_count + 1))
     echo "\$delete_count" > "\$delete_count_file"
     

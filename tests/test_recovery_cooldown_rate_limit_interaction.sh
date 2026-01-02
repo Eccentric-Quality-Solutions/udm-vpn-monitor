@@ -22,13 +22,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:high
 @test "cooldown and rate limit interaction: rate limit allows restart but cooldown is active - cooldown takes precedence" {
-	# Test verifies that when rate limit allows restart but cooldown is active,
-	# cooldown takes precedence and script exits early before attempting restart.
-	# Expected: Script exits early due to cooldown, no restart attempted.
-	# Importance: Ensures cooldown period is respected even when rate limit would allow restart.
+	# Purpose: Test verifies that when rate limit allows restart but cooldown is active, cooldown takes precedence and script exits early before attempting restart
+	# Expected: Script exits early due to cooldown, no restart attempted
+	# Importance: Ensures cooldown period is respected even when rate limit would allow restart
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -36,15 +35,24 @@ MAX_RESTARTS_PER_HOUR=3
 COOLDOWN_MINUTES=0.01
 ENABLE_XFRM_RECOVERY=0
 ENABLE_NETWORK_PARTITION_CHECK=0
-NO_ESCALATE=1
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
+	mkdir -p "${TEST_DIR}/state"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}"
-	local restart_file="${TEST_DIR}/logs/restart_count"
-	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
+	local restart_file="${TEST_DIR}/state/restart_count"
 	local cooldown_file="${state_dir}/cooldown_until"
+
+	# Set LOGS_DIR and STATE_DIR for state functions
+	export LOGS_DIR="${TEST_DIR}/logs"
+	export STATE_DIR="${state_dir}"
+
+	# Use get_peer_state_file_path to get correct path dynamically
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
 
 	# Set up controllable time for testing
 	local base_time=1609459200 # Fixed timestamp for reproducible tests
@@ -76,12 +84,12 @@ if [[ "$1" == "restart" ]]; then
 fi
 EOF
 	chmod +x "$mock_ipsec"
-	add_mock_to_path
+	# Mock is already in PATH from mock_date add_mock_to_path call
 
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	run bash "$test_script"
+	run bash "$test_script" --fake
 	assert_success
 
 	# Should exit early due to cooldown
@@ -103,12 +111,11 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high
+# bats test_tags=slow,category:high-risk,priority:high
 @test "cooldown and rate limit interaction: cooldown expires but rate limit still active - rate limit prevents restart" {
-	# Test verifies that when cooldown expires but rate limit is still active,
-	# rate limit prevents restart even though cooldown has expired.
-	# Expected: Script continues past cooldown check, but rate limit blocks restart.
-	# Importance: Ensures rate limiting is enforced even after cooldown period ends.
+	# Purpose: Test verifies that when cooldown expires but rate limit is still active, rate limit prevents restart even though cooldown has expired
+	# Expected: Script continues past cooldown check, but rate limit blocks restart
+	# Importance: Ensures rate limiting is enforced even after cooldown period ends
 
 	# Set up controllable time for testing
 	local base_time=1609459200 # Fixed timestamp for reproducible tests
@@ -124,10 +131,9 @@ EOF
 		"$recent" \
 		'COOLDOWN_MINUTES=15' \
 		'ENABLE_XFRM_RECOVERY=0' \
-		'ENABLE_NETWORK_PARTITION_CHECK=0' \
-		'NO_ESCALATE=1'
+		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
-	local restart_file="${LOGS_DIR}/restart_count"
+	local restart_file="${STATE_DIR}/restart_count"
 
 	# Setup VPN as DOWN so recovery is triggered
 	setup_mock_vpn_environment "192.168.1.1" 0
@@ -142,9 +148,9 @@ if [[ "$1" == "restart" ]]; then
 fi
 EOF
 	chmod +x "$mock_ipsec"
-	add_mock_to_path
+	# Mock is already in PATH from mock_date add_mock_to_path call
 
-	run bash "$TEST_SCRIPT"
+	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should continue past cooldown check (cooldown expired)
@@ -168,11 +174,9 @@ EOF
 
 # bats test_tags=slow,category:high-risk,priority:high
 @test "cooldown and rate limit interaction: both cooldown and rate limit expire simultaneously - should allow restart" {
-	# Test verifies that when both cooldown and rate limit expire simultaneously,
-	# restart is allowed and both are properly set after restart.
-	# Expected: Script continues past cooldown check, rate limit allows restart,
-	# restart is performed, and new cooldown is set.
-	# Importance: Ensures system can recover when both protections have expired.
+	# Purpose: Test verifies that when both cooldown and rate limit expire simultaneously, restart is allowed and both are properly set after restart
+	# Expected: Script continues past cooldown check, rate limit allows restart, restart is performed, and new cooldown is set
+	# Importance: Ensures system can recover when both protections have expired
 
 	# Set up controllable time for testing
 	local base_time=1609459200 # Fixed timestamp for reproducible tests
@@ -188,10 +192,9 @@ EOF
 		"$old_restart" \
 		'COOLDOWN_MINUTES=15' \
 		'ENABLE_XFRM_RECOVERY=0' \
-		'ENABLE_NETWORK_PARTITION_CHECK=0' \
-		'NO_ESCALATE=0'
+		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
-	local restart_file="${LOGS_DIR}/restart_count"
+	local restart_file="${STATE_DIR}/restart_count"
 	local cooldown_file="${STATE_DIR}/cooldown_until"
 
 	# No active cooldown (expired or never set)
@@ -223,7 +226,7 @@ elif [[ "\$1" == "status" ]]; then
 fi
 EOF
 	chmod +x "$mock_ipsec"
-	add_mock_to_path
+	# Mock is already in PATH from mock_date add_mock_to_path call
 
 	run bash "$TEST_SCRIPT"
 	# Script may exit with status 1 due to warnings (e.g., verification failures)

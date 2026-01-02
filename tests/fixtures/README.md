@@ -316,6 +316,78 @@ load fixtures/vpn_xfrm_recovery
 }
 ```
 
+### `vpn_at_tier.bash` - VPN at Specific Tier Threshold
+
+Sets up a test environment where the VPN has reached a specific tier threshold. This fixture simplifies tier-specific test scenarios by automatically configuring the failure count and tier thresholds.
+
+**Function**: `setup_vpn_at_tier_fixture`
+
+**Arguments**:
+- `$1`: Tier number (1, 2, or 3) (default: 1)
+- `$2`: Peer IP address (default: "192.168.1.1")
+- `$3+`: Additional config variables as KEY="VALUE" pairs
+
+**Example**:
+```bash
+load test_helper
+load fixtures/vpn_at_tier
+
+@test "tier 1: logging triggered" {
+    setup_vpn_at_tier_fixture 1 "192.168.1.1"
+    # VPN at Tier 1 threshold (failure_count=1, TIER1_THRESHOLD=1)
+    run bash "$TEST_SCRIPT" --fake
+    # Should trigger Tier 1 action (logging)
+}
+
+@test "tier 2: surgical cleanup" {
+    setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_XFRM_RECOVERY=0'
+    # VPN at Tier 2 threshold (failure_count=3, TIER2_THRESHOLD=3)
+    run bash "$TEST_SCRIPT" --fake
+    # Should trigger Tier 2 action (ipsec reload)
+}
+
+@test "tier 3: restart" {
+    setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_HOUR=10'
+    # VPN at Tier 3 threshold (failure_count=5, TIER3_THRESHOLD=5)
+    run bash "$TEST_SCRIPT" --fake
+    # Should trigger Tier 3 action (ipsec restart)
+}
+```
+
+### `vpn_idle.bash` - VPN Idle Tunnel Scenario
+
+Sets up a test environment where the VPN tunnel is idle (bytes not increasing) but ping succeeds. This simulates a healthy tunnel that is not passing traffic.
+
+**Function**: `setup_vpn_idle_fixture`
+
+**Arguments**:
+- `$1`: Peer IP address (default: "192.168.1.1")
+- `$2`: Static bytes value (default: 1000) - bytes that don't increase
+- `$3`: Internal IP for ping check (default: "10.0.0.1")
+- `$4`: SPI value (default: 0x12345678)
+- `$5+`: Additional config variables as KEY="VALUE" pairs
+
+**Example**:
+```bash
+load test_helper
+load fixtures/vpn_idle
+
+@test "idle tunnel detected - ping succeeds" {
+    setup_vpn_idle_fixture "192.168.1.1"
+    # Idle tunnel: bytes static at 1000, ping succeeds
+    run bash "$TEST_SCRIPT" --fake
+    # Should detect idle tunnel (ping succeeds, bytes not increasing)
+    assert_file_contains "$LOG_FILE" "idle but healthy"
+}
+
+@test "idle tunnel - custom bytes and IP" {
+    setup_vpn_idle_fixture "192.168.1.1" 5000 "10.0.0.1"
+    # Idle tunnel: bytes static at 5000, ping to 10.0.0.1 succeeds
+    run bash "$TEST_SCRIPT" --fake
+    # Should detect idle tunnel
+}
+```
+
 ## Usage Pattern
 
 1. Load `test_helper` (which provides base setup functions)
@@ -352,7 +424,8 @@ To migrate existing tests to use fixtures:
 ```bash
 @test "VPN active test" {
     setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
-    setup_state_files "192.168.1.1" 0 1000
+    source_function "set_peer_state"
+    set_peer_state "" "192.168.1.1" "last_bytes" "1000"
     setup_mock_vpn_environment "192.168.1.1" 2000
     # Test code
 }

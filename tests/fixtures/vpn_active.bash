@@ -32,13 +32,17 @@ setup_vpn_active_fixture() {
 	shift 4 || true
 	local extra_config=("$@")
 
-	# Set up test VPN monitor with config
-	setup_test_vpn_monitor "$peer_ip" "${TEST_DIR}" "${extra_config[@]}"
+	# Set up test VPN monitor with location-based config
+	setup_location_vpn_monitor "$peer_ip" "${TEST_DIR}" "${extra_config[@]}"
 
-	# Set up state files with initial byte counter (no failures)
-	setup_state_files "$peer_ip" 0 "$initial_bytes" "$spi"
+	# Set up state files with initial byte counter (no failures) using location-based state functions
+	# setup_location_vpn_monitor creates location "TEST"
+	ensure_state_functions_loaded
+	set_peer_state "TEST" "$peer_ip" "last_bytes" "$initial_bytes" || true
+	if [[ -n "$spi" ]]; then
+		set_peer_state "TEST" "$peer_ip" "spi" "$spi" || true
+	fi
 
 	# Set up mock VPN environment with current byte counter (VPN active, bytes increasing)
 	setup_mock_vpn_environment "$peer_ip" "$current_bytes" "$spi"
 }
-

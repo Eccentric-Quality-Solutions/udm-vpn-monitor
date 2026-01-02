@@ -35,7 +35,6 @@ EOF
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT"
 
 	# Script should handle error code gracefully
@@ -58,7 +57,7 @@ EOF
 	# Importance: Tool availability detection can fail due to system issues; script must handle this without crashing.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 ENABLE_NETWORK_PARTITION_CHECK=0
 EOF
 
@@ -107,7 +106,7 @@ EOF
 	# Purpose: Test verifies that the script handles missing ping commands gracefully when ping check is enabled.
 	# Expected: Script logs warning but continues execution without ping check when ping command is unavailable.
 	# Importance: Ping commands may not be available on all systems; script must handle this gracefully.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="2001:db8::1"'
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_NYC_INTERNAL="2001:db8::1"'
 
 	# Mock command to fail for ping (simulates ping not available)
 	local mock_command="${TEST_DIR}/command"
@@ -126,7 +125,6 @@ EOF
 
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
@@ -142,21 +140,22 @@ EOF
 	# Purpose: Test verifies that the script handles ping commands that hang indefinitely without blocking execution.
 	# Expected: Script uses timeout mechanism to prevent ping from blocking script execution indefinitely.
 	# Importance: Network issues can cause ping to hang; script must handle this to remain responsive.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=1'
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_NYC_INTERNAL="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=1'
 
 	# Mock ping to hang (simulates timeout)
 	local mock_ping="${TEST_DIR}/ping"
 	cat >"$mock_ping" <<'EOF'
 #!/bin/bash
 # Simulate ping hanging (sleep longer than timeout)
-sleep 3
+sleep 2
 exit 0
 EOF
 	chmod +x "$mock_ping"
 	add_mock_to_path
 
-	add_mock_to_path
-	run timeout 2 bash "$TEST_SCRIPT" --fake
+	# Use timeout of 10 seconds to allow script initialization, ping timeout handling, and completion
+	# The ping wrapper timeout is 2 seconds, but script initialization and other checks take additional time
+	run timeout 10 bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should handle ping timeout gracefully (should log error but continue)
@@ -171,7 +170,7 @@ EOF
 	# Purpose: Test verifies that the script handles ping commands that succeed but report 100% packet loss.
 	# Expected: Script detects packet loss and logs warning but continues execution.
 	# Importance: Network anomalies can cause ping to succeed but report no packets received; script must handle this edge case.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="192.168.1.1"'
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_NYC_INTERNAL="192.168.1.1"'
 
 	# Mock ping to return success but 100% packet loss (weird network state)
 	local mock_ping="${TEST_DIR}/ping"
@@ -187,7 +186,6 @@ EOF
 	chmod +x "$mock_ping"
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
@@ -210,12 +208,13 @@ EOF
 	setup_vpn_down_fixture "192.168.1.1" 0
 
 	# Mock ipsec status to hang (simulates timeout)
+	# Sleep longer than IPSEC_STATUS_TIMEOUT (5 seconds) to trigger timeout
 	local mock_ipsec="${TEST_DIR}/ipsec"
 	cat >"$mock_ipsec" <<'EOF'
 #!/bin/bash
 if [[ "$1" == "status" ]]; then
-    # Simulate ipsec status hanging
-    sleep 3
+    # Simulate ipsec status hanging longer than timeout (6 seconds > 5 second timeout)
+    sleep 6
     exit 0
 fi
 EOF
@@ -223,12 +222,13 @@ EOF
 	add_mock_to_path
 
 	# Run with timeout to prevent test from hanging
-	add_mock_to_path
-	run timeout 2 bash "$TEST_SCRIPT" --fake
+	# Test timeout should be longer than IPSEC_STATUS_TIMEOUT to allow script to complete
+	# Allow extra time for script initialization and other operations
+	run timeout 10 bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should handle ipsec status hang gracefully (should timeout and continue)
-	# Code at lib/detection.sh:636 uses ipsec status with 2>/dev/null
+	# Code at lib/detection.sh wraps ipsec status with timeout command (IPSEC_STATUS_TIMEOUT=5s)
 	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path

@@ -4,7 +4,7 @@
 # Analyzes VPN monitor logs and generates reports on failure frequency and recovery success rate
 # Exports data to CSV for spreadsheet analysis
 #
-# Version: 0.4.2
+# Version: 0.4.3
 #
 
 set -euo pipefail
@@ -14,6 +14,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/vpn-monitor.conf"
 LOGS_DIR="${SCRIPT_DIR}/logs"
 LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
+
+# Source logging functions for timestamp formatting
+# shellcheck source=lib/logging.sh
+source "${SCRIPT_DIR}/lib/logging.sh" 2>/dev/null || {
+	# Fallback if logging.sh not found - define minimal get_formatted_timestamp
+	get_formatted_timestamp() {
+		date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S'
+	}
+}
 
 # Default values
 OUTPUT_DIR="${SCRIPT_DIR}/reports"
@@ -552,7 +561,7 @@ generate_text_report() {
 		echo "UDM VPN Monitor Log Analysis Report"
 		echo "=========================================="
 		echo ""
-		echo "Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+		echo "Generated: $(get_formatted_timestamp)"
 		echo "Log File: $LOG_FILE"
 		if [[ -n "${DATE_START:-}" ]]; then
 			echo "Date Range: ${DATE_START} to ${DATE_END:-${DATE_START}}"

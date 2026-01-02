@@ -17,7 +17,7 @@ Alternative storage mechanisms could include:
 - Configuration management systems
 
 ## Decision
-We will use file-based state storage with plain text files in `/data/vpn-monitor/` directory.
+We will use file-based state storage with plain text files in `/data/vpn-monitor/state/` directory.
 
 ## Consequences
 
@@ -35,25 +35,30 @@ We will use file-based state storage with plain text files in `/data/vpn-monitor
 - **Manual Parsing**: Requires parsing logic for reading/writing state
 - **File System Dependency**: Relies on file system being available and writable
 - **No Query Capabilities**: Cannot easily query or aggregate data across files
-- **Corruption Risk**: Files can be corrupted (mitigated by checksum validation)
+- **Corruption Risk**: Files can be corrupted (mitigated by format validation)
 
 ## Implementation Details
 - **State File Types**:
-  - Per-peer failure counters: `logs/failure_counter_<peer_ip>`
-  - Per-peer byte counters: `last_bytes_<peer_ip>`
-  - Restart timestamps: `logs/restart_count` (Unix timestamps of Tier 3 recovery actions only: full IPsec restarts and successful xfrm-based per-connection recovery)
+  - Per-location, per-peer failure counters: `state/failure_counter_<location>_<peer_ip>`
+  - Per-location, per-peer byte counters: `state/last_bytes_<location>_<peer_ip>`
+  - Per-location, per-peer SPI values: `state/spi_<location>_<peer_ip>`
+  - Per-location, per-peer idle detection: `state/idle_detected_<location>_<peer_ip>`
+  - Per-location, per-peer failure type: `state/failure_type_<location>_<peer_ip>`
+  - Per-location, per-peer last status log: `state/last_status_log_<location>_<peer_ip>`
+  - Restart timestamps: `state/restart_count` (Unix timestamps of Tier 3 recovery actions only: full IPsec restarts and successful xfrm-based per-connection recovery)
   - Cooldown expiration: `cooldown_until`
 - **File Format**: Plain text with simple value storage
 - **Atomic Operations**: Write-tmp-move pattern ensures atomic updates
-- **Checksum Validation**: Files include checksums to detect corruption
-- **Location**: `/data/vpn-monitor/` (persists across UDM reboots)
+- **Format Validation**: Files are validated for correct format (integer, timestamp, etc.) to detect corruption
+- **Location**: `/data/vpn-monitor/state/` (persists across UDM reboots)
 - **Module**: Implemented in `lib/state.sh` with dedicated functions for each state file type
 
 ## Related ADRs
 - ADR-0004: Per-Peer State Tracking
 - ADR-0012: Atomic File Operations
-- ADR-0013: State File Checksum Validation
+- ADR-0013: State File Checksum Validation (Deprecated - removed in v0.2.0, replaced with format validation)
 - ADR-0016: State File Location (/data/vpn-monitor/)
+- ADR-0024: Location-Based Configuration Format (location names included in state file names)
 
 ## References
 - ARCHITECTURE.md: "File Structure" section

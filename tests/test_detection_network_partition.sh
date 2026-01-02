@@ -18,9 +18,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:high
 @test "check_default_route - Default route exists" {
-	# Test verifies that check_default_route correctly detects when default route exists.
-	# Expected: Function returns 0 when default route is present.
-	# Importance: Default route check is critical for network partition detection.
+	# Purpose: Test verifies that check_default_route correctly detects when default route exists
+	# Expected: Function returns 0 when default route is present
+	# Importance: Default route check is critical for network partition detection
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - default route exists
@@ -42,9 +42,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:high
 @test "check_default_route - Default route missing" {
-	# Test verifies that check_default_route correctly detects when default route is missing.
-	# Expected: Function returns 1 when default route is not found.
-	# Importance: Missing default route indicates network partition.
+	# Purpose: Test verifies that check_default_route correctly detects when default route is missing
+	# Expected: Function returns 1 when default route is not found
+	# Importance: Missing default route indicates network partition
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - default route missing
@@ -66,9 +66,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:high
 @test "check_dns_resolution - DNS resolution succeeds" {
-	# Test verifies that check_dns_resolution correctly detects successful DNS resolution.
-	# Expected: Function returns 0 when DNS resolution succeeds.
-	# Importance: DNS resolution check is critical for network partition detection.
+	# Purpose: Test verifies that check_dns_resolution correctly detects successful DNS resolution
+	# Expected: Function returns 0 when DNS resolution succeeds
+	# Importance: DNS resolution check is critical for network partition detection
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock dig command - DNS resolution succeeds
@@ -90,9 +90,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:high
 @test "check_dns_resolution - DNS resolution fails (timeout)" {
-	# Test verifies that check_dns_resolution correctly detects DNS resolution timeout.
-	# Expected: Function returns 1 when DNS resolution times out.
-	# Importance: DNS timeout indicates network partition.
+	# Purpose: Test verifies that check_dns_resolution correctly detects DNS resolution timeout
+	# Expected: Function returns 1 when DNS resolution times out
+	# Importance: DNS timeout indicates network partition
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock dig command - DNS resolution fails (timeout)
@@ -116,9 +116,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:high
 @test "check_dns_resolution - DNS server unreachable" {
-	# Test verifies that check_dns_resolution correctly detects unreachable DNS server.
-	# Expected: Function returns 1 when DNS server is unreachable.
-	# Importance: Unreachable DNS server indicates network partition.
+	# Purpose: Test verifies that check_dns_resolution correctly detects unreachable DNS server
+	# Expected: Function returns 1 when DNS server is unreachable
+	# Importance: Unreachable DNS server indicates network partition
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock dig command - DNS server unreachable
@@ -145,9 +145,9 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "check_interface_state - All interfaces UP" {
-	# Test verifies that check_interface_state correctly detects when all interfaces are UP.
-	# Expected: Function returns 0 when all checked interfaces are UP.
-	# Importance: Interface state check is critical for network partition detection.
+	# Purpose: Test verifies that check_interface_state correctly detects when all interfaces are UP
+	# Expected: Function returns 0 when all checked interfaces are UP
+	# Importance: Interface state check is critical for network partition detection
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - all interfaces UP
@@ -169,9 +169,9 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "check_interface_state - One interface DOWN" {
-	# Test verifies that check_interface_state correctly detects when one interface is DOWN.
-	# Expected: Function returns 1 when one or more interfaces are DOWN.
-	# Importance: Down interfaces indicate network partition.
+	# Purpose: Test verifies that check_interface_state correctly detects when one interface is DOWN
+	# Expected: Function returns 1 when one or more interfaces are DOWN
+	# Importance: Down interfaces indicate network partition
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - one interface DOWN
@@ -208,9 +208,9 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "check_interface_state - Interface doesn't exist" {
-	# Test verifies that check_interface_state correctly handles non-existent interfaces.
-	# Expected: Function returns 1 when interface doesn't exist.
-	# Importance: Non-existent interfaces indicate network partition or misconfiguration.
+	# Purpose: Test verifies that check_interface_state correctly handles non-existent interfaces
+	# Expected: Function returns 1 when interface doesn't exist
+	# Importance: Non-existent interfaces indicate network partition or misconfiguration
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - interface doesn't exist
@@ -244,9 +244,9 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "check_network_partition - All checks pass (network healthy)" {
-	# Test verifies that check_network_partition correctly identifies healthy network.
-	# Expected: Function returns 0 when all checks pass.
-	# Importance: Network partition detection prevents false VPN failure detection.
+	# Purpose: Test verifies that check_network_partition correctly identifies healthy network
+	# Expected: Function returns 0 when all checks pass
+	# Importance: Network partition detection prevents false VPN failure detection
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - default route exists, interfaces UP
@@ -277,9 +277,9 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "check_network_partition - One check fails (network partitioned)" {
-	# Test verifies that check_network_partition correctly identifies network partition.
-	# Expected: Function returns 1 when one or more checks fail.
-	# Importance: Network partition detection prevents false VPN failure detection.
+	# Purpose: Test verifies that check_network_partition correctly identifies network partition
+	# Expected: Function returns 1 when one or more checks fail
+	# Importance: Network partition detection prevents false VPN failure detection
 	setup_vpn_network_partition_fixture "192.168.1.1" "no_default_route" "br0,eth0"
 
 	# Source detection functions to test directly
@@ -297,9 +297,9 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "check_network_partition - Custom DNS server/hostname/interfaces" {
-	# Test verifies that check_network_partition correctly uses custom parameters.
-	# Expected: Function uses custom DNS server, hostname, and interfaces.
-	# Importance: Custom parameters allow flexible network partition detection.
+	# Purpose: Test verifies that check_network_partition correctly uses custom parameters
+	# Expected: Function uses custom DNS server, hostname, and interfaces
+	# Importance: Custom parameters allow flexible network partition detection
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - interfaces UP

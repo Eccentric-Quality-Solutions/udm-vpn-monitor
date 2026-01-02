@@ -36,7 +36,14 @@ setup_vpn_cooldown_fixture() {
 	# Set up test VPN monitor with config
 	setup_test_vpn_monitor "$peer_ip" "${TEST_DIR}" "${extra_config[@]}"
 
-	# Set up state files with failure count and cooldown timestamp
-	setup_state_files "$peer_ip" "$failure_count" 0 "" "$cooldown_until"
-}
+	# Set up state files with failure count and cooldown timestamp using location-aware functions
+	# setup_test_vpn_monitor creates location "TEST1" for single IP
+	ensure_state_functions_loaded
+	set_peer_state "TEST1" "$peer_ip" "failure_count" "$failure_count" || true
 
+	# Set up cooldown file (system-wide, not per-peer)
+	if [[ -n "$cooldown_until" ]] && [[ "$cooldown_until" != "0" ]]; then
+		local cooldown_file="${STATE_DIR:-${TEST_DIR}}/cooldown_until"
+		echo "$cooldown_until" >"$cooldown_file"
+	fi
+}

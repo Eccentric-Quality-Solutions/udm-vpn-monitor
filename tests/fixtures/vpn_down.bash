@@ -29,12 +29,14 @@ setup_vpn_down_fixture() {
 	shift 2 || true
 	local extra_config=("$@")
 
-	# Set up test VPN monitor with config
-	setup_test_vpn_monitor "$peer_ip" "${TEST_DIR}" "${extra_config[@]}"
+	# Set up test VPN monitor with location-based config
+	setup_location_vpn_monitor "$peer_ip" "${TEST_DIR}" "${extra_config[@]}"
 
-	# Set up state files if failure count > 0 (otherwise no state files needed)
+	# Set up state files if failure count > 0 (otherwise no state files needed) using location-based state functions
+	# setup_location_vpn_monitor creates location "TEST"
 	if [[ "$failure_count" -gt 0 ]]; then
-		setup_state_files "$peer_ip" "$failure_count" 0
+		ensure_state_functions_loaded
+		set_peer_state "TEST" "$peer_ip" "failure_count" "$failure_count" || true
 	fi
 
 	# Create mock ip command that returns empty output (VPN down, no SA)
@@ -53,4 +55,3 @@ EOF
 
 	export MOCK_IP="$mock_ip"
 }
-

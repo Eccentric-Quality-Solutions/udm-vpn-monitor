@@ -42,19 +42,11 @@ We will use byte counters from `ip xfrm state` as the primary method for detecti
 ## Implementation Details
 - **Detection Flow**:
   1. Extract byte counters from `ip xfrm state` output for the peer IP
-  2. Store historical samples with timestamps for traffic pattern analysis
-  3. Compare current bytes to last known bytes (stored in `last_bytes_<peer_ip>`)
-  4. Calculate traffic rate (bytes/second) from historical samples if sufficient data exists
-  5. If bytes are increasing: VPN is healthy (traffic flowing)
-  6. If traffic rate >= minimum threshold: VPN is healthy (traffic flowing at acceptable rate)
-  7. If bytes are static and idle duration exceeds threshold: Use ping checks to distinguish idle but healthy from broken
-  8. If bytes are zero or decreasing: VPN is suspect (may indicate failure)
-- **Traffic Pattern Analysis**:
-  - Historical samples stored with timestamps (format: `timestamp:bytes`)
-  - Maximum samples retained: 20 (older samples automatically pruned)
-  - Minimum time window for rate calculation: 60 seconds
-  - Minimum traffic rate threshold: 1 byte/second
-  - Idle detection timeout: 300 seconds (5 minutes)
+  2. Compare current bytes to last known bytes (stored in `last_bytes_<location>_<peer_ip>`)
+  3. If bytes are increasing: VPN is healthy (traffic flowing)
+  4. If bytes are static and ping fails: VPN is broken (failure detected)
+  5. If bytes are static and ping succeeds: VPN is idle but healthy (no failure, keepalive suggested)
+  6. If bytes are zero or decreasing: VPN is suspect (may indicate failure)
 - **Idle Detection**:
   - When tunnel is idle (static bytes for extended period), ping checks are used to verify tunnel health
   - If ping succeeds: Tunnel is idle but healthy (no failure, keepalive suggested)
@@ -62,39 +54,31 @@ We will use byte counters from `ip xfrm state` as the primary method for detecti
   - Keepalive daemon status is checked and suggestions provided when idle tunnels are detected
 - **Baseline Management**:
   - First check: Any non-zero bytes accepted as baseline
-  - Subsequent checks: Use traffic rate analysis and ping checks for idle detection
-  - Rekey events: Baseline reset to 0, traffic history cleared (see ADR-0020)
+  - Subsequent checks: Use simple byte counter comparison and ping checks for idle detection
+  - Rekey events: Baseline reset to 0 (see ADR-0020)
 - **State Storage**: 
-  - Per-peer byte counters stored in `last_bytes_<peer_ip>` files
-  - Traffic history stored in `traffic_history_<peer_ip>` files
-  - Idle state tracked in `idle_detected_<peer_ip>` files
+  - Per-location, per-peer byte counters stored in `last_bytes_<location>_<peer_ip>` files
+  - Idle state tracked in `idle_detected_<location>_<peer_ip>` files
 - **Validation Logic**:
   - `current_bytes > 0`: Required for healthy tunnel (except first check)
   - `current_bytes > last_bytes`: Indicates active traffic flow
-  - `traffic_rate >= TRAFFIC_PATTERN_MIN_RATE_BYTES_PER_SEC`: Indicates healthy traffic flow
-  - `idle_duration >= TRAFFIC_PATTERN_IDLE_TIMEOUT_SECONDS && ping_succeeds`: Idle but healthy
-  - `idle_duration >= TRAFFIC_PATTERN_IDLE_TIMEOUT_SECONDS && ping_fails`: Likely broken
+  - `current_bytes == last_bytes && ping_succeeds`: Idle but healthy
+  - `current_bytes == last_bytes && ping_fails`: Likely broken
   - `last_bytes == 0`: First check or after rekey (accepts any non-zero)
 - **Module**: Implemented in `lib/detection.sh` with `check_byte_counters()` function
-- **Supporting Functions**: 
-  - `store_traffic_sample()`: Stores historical byte counter samples
-  - `get_traffic_samples()`: Retrieves historical samples with optional age filtering
-  - `calculate_traffic_rate()`: Calculates bytes/second from historical samples
-  - All in `lib/state.sh`
 
 ## Related ADRs
 - ADR-0006: Multi-Method Detection with Fallback (byte counters are primary method)
 - ADR-0014: Ping Check as Supplementary Diagnostic (ping supplements byte counter detection for idle tunnels)
 - ADR-0020: SA Rekey Detection and Handling (handles byte counter resets during rekey)
-- ADR-0004: Per-Peer State Tracking (byte counters and traffic history tracked per-peer)
+- ADR-0004: Per-Peer State Tracking (byte counters tracked per-location, per-peer)
 - ADR-0009: VPN Keepalive Daemon (keepalive prevents idle tunnel timeouts)
+- ADR-0024: Location-Based Configuration Format (location names included in state file names)
 
 ## References
 - ARCHITECTURE.md: "Detection Method Flow" section
-- ARCHITECTURE.md: "State Management" section (byte counter and traffic history storage)
-- ARCHITECTURAL_REVIEW.md: Section 6.3 "Traffic Pattern Analysis" (recommendations implemented)
-- lib/detection.sh: `check_byte_counters()` function implementation (enhanced with traffic pattern analysis)
+- ARCHITECTURE.md: "State Management" section (byte counter storage)
+- lib/detection.sh: `check_byte_counters()` function implementation
 - lib/detection.sh: `check_xfrm_status()` function (byte counter extraction)
-- lib/state.sh: `store_traffic_sample()`, `get_traffic_samples()`, `calculate_traffic_rate()` functions
-- lib/constants.sh: Traffic pattern analysis constants (TRAFFIC_PATTERN_*)
+- lib/state.sh: State file management functions
 

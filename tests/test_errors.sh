@@ -10,15 +10,34 @@ load fixtures/vpn_down
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
+# Create mock command that fails with specific exit code and error message
+mock_command_failure() {
+	local command_name="$1"
+	local exit_code="${2:-1}"
+	local error_message="${3:-}"
+	local mock_command="${TEST_DIR}/${command_name}"
+	cat >"$mock_command" <<EOF
+#!/bin/bash
+${error_message:+echo "$error_message" >&2}
+exit $exit_code
+EOF
+	chmod +x "$mock_command"
+	echo "$mock_command"
+}
+
 # ============================================================================
 # ERROR HANDLING DURING CRITICAL OPERATIONS
 # ============================================================================
 
 # bats test_tags=category:high-risk,priority:high
 @test "error during state file write" {
+	# Purpose: Test verifies that script handles errors during state file write operations gracefully
+	# Expected: Script logs error and continues execution without crashing when state file writes fail
+	# Importance: Prevents script failures from filesystem permission issues or disk space problems
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -27,7 +46,16 @@ EOF
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}"
-	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
+
+	# Set LOGS_DIR and STATE_DIR for state functions
+	export LOGS_DIR="${TEST_DIR}/logs"
+	export STATE_DIR="${state_dir}"
+
+	# Use get_peer_state_file_path to get correct path dynamically
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
 
 	# Create failure counter file and make parent directory read-only (prevents write)
 	echo "2" >"$failure_counter"
@@ -52,9 +80,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "error during recovery action (should log and continue)" {
+	# Purpose: Test verifies that script handles errors during recovery actions gracefully
+	# Expected: Script logs error about recovery failure and continues execution without crashing
+	# Importance: Prevents script failures when recovery commands fail, ensuring monitoring continues
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -65,7 +97,16 @@ EOF
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}"
-	local failure_counter="${TEST_DIR}/logs/failure_counter_192_168_1_1"
+
+	# Set LOGS_DIR and STATE_DIR for state functions
+	export LOGS_DIR="${TEST_DIR}/logs"
+	export STATE_DIR="${state_dir}"
+
+	# Use get_peer_state_file_path to get correct path dynamically
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
 
 	# Set failure count to Tier 2 threshold (triggers surgical cleanup)
 	echo "3" >"$failure_counter"
@@ -110,9 +151,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "error during VPN check (should log and continue)" {
+	# Purpose: Test verifies that script handles errors during VPN check operations gracefully
+	# Expected: Script logs error about VPN check failure and continues execution without crashing
+	# Importance: Prevents script failures when VPN detection commands fail, ensuring monitoring continues
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"

@@ -3,7 +3,7 @@
 # Resource monitoring functions for UDM VPN Monitor
 # Monitors CPU, RAM, and disk space usage and implements throttling
 #
-# Version: 0.4.2
+# Version: 0.4.3
 #
 
 # Source common utility functions
@@ -89,10 +89,25 @@ get_cpu_usage() {
 		return 1
 	fi
 
+	# Validate that idle_diff <= total_diff (shouldn't happen but possible with timing)
+	if [[ $idle_diff -gt $total_diff ]]; then
+		# Invalid state - idle time increased more than total time
+		# This shouldn't happen but can occur with timing issues
+		return 1
+	fi
+
 	# Calculate usage: (1 - idle/total) * 100
 	# Use awk for floating point math (UDM doesn't have bc)
 	local cpu_usage
 	cpu_usage=$(awk "BEGIN {printf \"%.0f\", (1 - $idle_diff/$total_diff) * 100}")
+
+	# Clamp CPU usage to 0-100 range (shouldn't be needed but protects against edge cases)
+	if [[ $cpu_usage -lt 0 ]]; then
+		cpu_usage=0
+	elif [[ $cpu_usage -gt 100 ]]; then
+		cpu_usage=100
+	fi
+
 	echo "$cpu_usage"
 	return 0
 }
@@ -270,12 +285,13 @@ get_free_disk_space() {
 #
 # Returns:
 #   0: Resource is constrained (has been >= threshold for >= duration)
-#   1: Resource is not constrained or hasn't been constrained long enough
+#   1: Resource is not constrained, hasn't been constrained long enough, or invalid input
 #
 # Side effects:
 #   - Creates/updates state file: ${STATE_DIR}/resource_${resource}_constrained
 #   - State file contains timestamp when resource first became constrained
 #   - Removes state file when resource is no longer constrained
+#   - Logs warnings for invalid usage values (non-numeric or out of range)
 #
 # Examples:
 #   if check_resource_constrained "cpu" 95 90 60 "$STATE_DIR"; then
@@ -285,6 +301,8 @@ get_free_disk_space() {
 # Note:
 #   Requires STATE_DIR to be writable
 #   State file format: unix timestamp (seconds since epoch)
+#   Validates usage is numeric and within range (0-100) before processing
+#   Returns error (1) and logs warning for invalid usage values
 check_resource_constrained() {
 	local resource="$1"
 	local usage="$2"
@@ -293,6 +311,24 @@ check_resource_constrained() {
 	local state_dir="$5"
 
 	if [[ -z "$resource" ]] || [[ -z "$usage" ]] || [[ -z "$threshold" ]] || [[ -z "$duration" ]] || [[ -z "$state_dir" ]]; then
+		return 1
+	fi
+
+	# Validate usage is a number and within expected range (0-100)
+	if ! [[ "$usage" =~ ^-?[0-9]+$ ]]; then
+		# Not a number - invalid input
+		if command -v log_message >/dev/null 2>&1; then
+			log_message "WARNING" "check_resource_constrained: Invalid usage value for ${resource}: '${usage}' (not a number)"
+		fi
+		return 1
+	fi
+
+	# Validate usage is within expected range (0-100)
+	if [[ "$usage" -lt 0 ]] || [[ "$usage" -gt 100 ]]; then
+		# Out of range - log warning and return error for clearly invalid input
+		if command -v log_message >/dev/null 2>&1; then
+			log_message "WARNING" "check_resource_constrained: Usage value for ${resource} is out of expected range (0-100): ${usage}%"
+		fi
 		return 1
 	fi
 
@@ -311,7 +347,7 @@ check_resource_constrained() {
 	# Check if resource is currently constrained
 	if [[ "$usage" -ge "$threshold" ]]; then
 		# Resource is constrained - check if we have a state file
-		if [[ -f "$state_file" ]]; then
+		if [[ -f "$state_file" ]] && file_exists_and_readable "$state_file"; then
 			# Read when it first became constrained
 			local constrained_since
 			constrained_since=$(cat "$state_file" 2>/dev/null)
@@ -509,10 +545,7 @@ manage_log_files_on_low_disk() {
 	# Check if log file exists and is large
 	if [[ -f "$LOG_FILE" ]]; then
 		local log_size_kb
-		log_size_kb=$(stat -c%s "$LOG_FILE" 2>/dev/null | awk '{print int($1/1024)}')
-		if [[ -z "$log_size_kb" ]]; then
-			log_size_kb=$(stat -f%z "$LOG_FILE" 2>/dev/null | awk '{print int($1/1024)}' || echo "0")
-		fi
+		log_size_kb=$(stat -c%s "$LOG_FILE" 2>/dev/null | awk '{print int($1/1024)}' || echo "0")
 
 		# If log file is larger than 10MB, rotate it
 		if [[ -n "$log_size_kb" ]] && [[ "$log_size_kb" -gt 10240 ]]; then

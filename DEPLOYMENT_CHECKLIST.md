@@ -51,15 +51,25 @@ Before installation, gather:
 
 ### 3. Configure VPN Monitor
 - [ ] Edit configuration file: `nano /data/vpn-monitor/vpn-monitor.conf`
-- [ ] Set `EXTERNAL_PEER_IPS` to your remote VPN gateway external/public IP(s)
-- [ ] Optionally set `INTERNAL_PEER_IPS` for ping checks
+- [ ] Configure locations using location-based format (see below)
+- [ ] Optionally set `INTERNAL` IPs for ping checks
 - [ ] Review other settings (thresholds, cooldown, etc.)
 
 **Critical Configuration:**
 ```bash
-EXTERNAL_PEER_IPS="203.0.113.1 198.51.100.1"  # REQUIRED - External/public IPs
-INTERNAL_PEER_IPS="192.168.100.1 192.168.200.1"  # Optional - Internal/private IPs
+# Location-based configuration format
+LOCATION_NYC_EXTERNAL="203.0.113.1"  # REQUIRED - External/public IP
+LOCATION_NYC_INTERNAL="192.168.100.1"  # Optional - Internal/private IP(s)
+
+LOCATION_DC_EXTERNAL="198.51.100.1"  # REQUIRED - External/public IP
+LOCATION_DC_INTERNAL="192.168.200.1"  # Optional - Internal/private IP(s)
 ```
+
+**Note**: If migrating from old format (`EXTERNAL_PEER_IPS`/`INTERNAL_PEER_IPS`), use the migration script:
+```bash
+/data/vpn-monitor/scripts/migrate-config-to-locations.sh
+```
+See [MIGRATION.md](docs/MIGRATION.md) for detailed migration instructions.
 
 ### 4. Test Installation
 - [ ] Run monitor manually: `/data/vpn-monitor/vpn-monitor.sh --fake`
@@ -145,7 +155,7 @@ ping -c 3 <PEER_IP>
 command -v ipsec
 
 # Check rate limiting
-cat /data/vpn-monitor/logs/restart_count
+cat /data/vpn-monitor/state/restart_count
 
 # Check cooldown
 cat /data/vpn-monitor/cooldown_until

@@ -3,7 +3,7 @@
 # Logging functions for UDM VPN Monitor
 # Provides centralized logging functionality with timestamp and level support
 #
-# Version: 0.4.2
+# Version: 0.4.3
 #
 
 # Source common utility functions
@@ -39,10 +39,9 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 #
 # Note:
 #   Uses date '+%Y-%m-%d %H:%M:%S' command
-#   Compatible with both Linux and BSD/macOS date commands
 #   Fallback repeats same command (handles edge cases)
 get_formatted_timestamp() {
-	# Try date command with fallback (handles both Linux and BSD/macOS)
+	# Try date command with fallback
 	date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S'
 }
 
@@ -126,7 +125,15 @@ log_message() {
 	# - Always: ERROR and WARNING
 	# - If DEBUG=1: DEBUG messages
 	# - If interactive (TTY): INFO messages (so users see success when running manually)
-	if [[ "${DEBUG:-0}" -eq 1 ]] || [[ "$level" == "ERROR" ]] || [[ "$level" == "WARNING" ]] || { [[ "$level" == "INFO" ]] && [[ $is_interactive -eq 1 ]]; }; then
+	local should_output=0
+	if [[ "$level" == "ERROR" ]] || [[ "$level" == "WARNING" ]]; then
+		should_output=1
+	elif [[ "$level" == "DEBUG" ]] && [[ "${DEBUG:-0}" == "1" ]]; then
+		should_output=1
+	elif [[ "$level" == "INFO" ]] && [[ $is_interactive -eq 1 ]]; then
+		should_output=1
+	fi
+	if [[ $should_output -eq 1 ]]; then
 		echo "$log_entry" >&2
 	fi
 
@@ -251,11 +258,12 @@ handle_error() {
 #   $2: Exit code (optional, defaults to 1)
 #
 # Returns:
-#   Never returns (exits script with code 0 in fake mode, dies in normal mode)
+#   1: In fake mode (allows calling function to return failure)
+#   Never returns in normal mode (dies with specified exit code)
 #
 # Side effects:
 #   - Logs error message using handle_error
-#   - Exits script with code 0 in fake mode
+#   - Returns 1 in fake mode (allows test assertions to work correctly)
 #   - Dies (exits with specified code) in normal mode
 #
 # Examples:
@@ -266,12 +274,13 @@ handle_error() {
 #   Requires handle_error, die, and is_fake_mode functions to be available (from this file)
 #   This function should be used for fatal errors that need fake mode support
 #   Use EXIT_* constants from constants.sh for exit codes
+#   In fake mode, returns 1 instead of exiting to allow tests to assert failure
 handle_error_or_exit_fake_mode() {
 	local message="$1"
 	local exit_code="${2:-1}"
 	if is_fake_mode; then
 		handle_error "ERROR" "$message" 0
-		exit 0
+		return 1
 	else
 		die "$message" "$exit_code"
 	fi

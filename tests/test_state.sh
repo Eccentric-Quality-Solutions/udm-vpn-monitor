@@ -23,8 +23,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: File corruption can occur due to disk errors or manual editing; script must handle it robustly.
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
-	# Create corrupted failure counter file
-	local failure_counter="${LOGS_DIR}/failure_counter_192_168_1_1"
+	source_function "get_peer_state_file_path"
+
+	# Create corrupted failure counter file (location-based path)
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
 	echo "invalid-non-numeric-value" >"$failure_counter"
 
 	add_mock_to_path
@@ -44,8 +47,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Negative failure counts are invalid; script must handle corrupted data robustly.
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
+	source_function "get_peer_state_file_path"
+
 	# Create failure counter file with negative number
-	local failure_counter="${LOGS_DIR}/failure_counter_192_168_1_1"
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
 	echo "-5" >"$failure_counter"
 
 	add_mock_to_path
@@ -65,8 +71,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Empty files can occur from truncation or corruption; script must handle them robustly.
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
+	source_function "get_peer_state_file_path"
+
 	# Create empty failure counter file (clear any existing file from fixture)
-	local failure_counter="${LOGS_DIR}/failure_counter_192_168_1_1"
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
 	rm -f "$failure_counter"
 	touch "$failure_counter"
 	# Verify file is empty before script runs
@@ -125,8 +134,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Permission issues can occur due to incorrect file ownership or chmod operations; script must handle gracefully.
 	setup_vpn_down_fixture "192.168.1.1" 3
 
+	source_function "get_peer_state_file_path"
+
 	# Create failure counter file and make it read-only (prevents write)
-	local failure_counter="${LOGS_DIR}/failure_counter_192_168_1_1"
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
 	echo "3" >"$failure_counter"
 	chmod 444 "$failure_counter"
 	# Verify permissions were set correctly
@@ -151,8 +163,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Permission issues can prevent reading state files; script must handle gracefully.
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
+	source_function "get_peer_state_file_path"
+
 	# Create failure counter file and make it unreadable (prevents read)
-	local failure_counter="${LOGS_DIR}/failure_counter_192_168_1_1"
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
 	echo "3" >"$failure_counter"
 	chmod 000 "$failure_counter"
 	# Verify permissions were set correctly
@@ -177,9 +192,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Files can be deleted by other processes or manual intervention; script must handle gracefully.
 	setup_vpn_down_fixture "192.168.1.1" 2
 
+	source_function "get_peer_state_file_path"
+
 	# Delete failure counter file during execution (simulate file deletion)
 	# This is a simplified test - in real scenario, file might be deleted between checks
-	local failure_counter="${LOGS_DIR}/failure_counter_192_168_1_1"
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
 	rm -f "$failure_counter"
 
 	add_mock_to_path
@@ -226,8 +244,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Backup files allow forensic analysis and manual recovery.
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
+	source_function "get_peer_state_file_path"
+
 	# Create corrupted failure counter file
-	local failure_counter="${LOGS_DIR}/failure_counter_192_168_1_1"
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
 	echo "invalid-value" >"$failure_counter"
 
 	# Source state functions to test directly
@@ -236,11 +257,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Trigger recovery by reading the corrupted file
 	local value
-	value=$(get_peer_state "192.168.1.1" "failure_count" "0")
+	value=$(get_peer_state "" "192.168.1.1" "failure_count" "0")
 
 	# Verify backup file was created
 	local backup_files
-	backup_files=$(find "${LOGS_DIR}" -name "failure_counter_192_168_1_1.corrupted.*" 2>/dev/null | wc -l)
+	backup_files=$(find "${STATE_DIR}" -name "failure_counter_LOCATION_192_168_1_1.corrupted.*" 2>/dev/null | wc -l)
 	assert [ "$backup_files" -gt 0 ]
 
 	# Verify file was recovered
@@ -254,10 +275,15 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Ensures recovery works when multiple files are corrupted.
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
+	source_function "get_peer_state_file_path"
+
 	# Create multiple corrupted files
-	local failure_counter="${LOGS_DIR}/failure_counter_192_168_1_1"
-	local bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
-	local spi_file="${STATE_DIR}/spi_192_168_1_1"
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	local bytes_file
+	bytes_file=$(get_peer_state_file_path "" "192.168.1.1" "last_bytes")
+	local spi_file
+	spi_file=$(get_peer_state_file_path "" "192.168.1.1" "spi")
 	local cooldown_file="${STATE_DIR}/cooldown_until"
 
 	echo "invalid-value" >"$failure_counter"
@@ -269,7 +295,6 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	add_mock_to_path
 
 	# Run script - should recover all corrupted files
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
@@ -287,8 +312,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Ensures recovery doesn't fail completely if backup fails.
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
+	source_function "get_peer_state_file_path"
+
 	# Create corrupted failure counter file
-	local failure_counter="${LOGS_DIR}/failure_counter_192_168_1_1"
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
 	echo "invalid-value" >"$failure_counter"
 
 	# Make logs directory read-only to prevent backup creation
@@ -300,7 +328,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Trigger recovery - should still recover even if backup fails
 	local value
-	value=$(get_peer_state "192.168.1.1" "failure_count" "0")
+	value=$(get_peer_state "" "192.168.1.1" "failure_count" "0")
 
 	# Verify file was recovered (value should be 0)
 	assert_equal "$value" "0"
@@ -339,8 +367,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Ensures corrupted files are reset to safe defaults.
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
+	source_function "get_peer_state_file_path"
+
 	# Create corrupted failure counter file
-	local failure_counter="${LOGS_DIR}/failure_counter_192_168_1_1"
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
 	echo "invalid-value" >"$failure_counter"
 
 	# Source state functions to test directly
@@ -365,10 +396,15 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Per-peer files are critical for monitoring individual peers.
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
+	source_function "get_peer_state_file_path"
+
 	# Create corrupted per-peer files
-	local failure_counter="${LOGS_DIR}/failure_counter_192_168_1_1"
-	local bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
-	local spi_file="${STATE_DIR}/spi_192_168_1_1"
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	local bytes_file
+	bytes_file=$(get_peer_state_file_path "" "192.168.1.1" "last_bytes")
+	local spi_file
+	spi_file=$(get_peer_state_file_path "" "192.168.1.1" "spi")
 
 	echo "invalid-value" >"$failure_counter"
 	echo "invalid-value" >"$bytes_file"
@@ -378,7 +414,6 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	add_mock_to_path
 
 	# Run script - should recover all corrupted per-peer files
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
@@ -562,15 +597,15 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local unknown_key="unknown_key"
 	local peer_ip="192.168.1.1"
 	local state_file
-	state_file=$(get_peer_state_file_path "$peer_ip" "$unknown_key")
+	state_file=$(get_peer_state_file_path "" "$peer_ip" "$unknown_key")
 
-	# Should use default path (STATE_DIR/<key>_<sanitized_ip>)
-	[[ "$state_file" == "${STATE_DIR}/${unknown_key}_192_168_1_1" ]]
+	# Should use default path (STATE_DIR/<key>_LOCATION_<sanitized_ip>)
+	[[ "$state_file" == "${STATE_DIR}/${unknown_key}_LOCATION_192_168_1_1" ]]
 
 	# Should be able to set/get unknown key
-	set_peer_state "$peer_ip" "$unknown_key" "test_value" || true
+	set_peer_state "" "$peer_ip" "$unknown_key" "test_value" || true
 	local value
-	value=$(get_peer_state "$peer_ip" "$unknown_key" "default")
+	value=$(get_peer_state "" "$peer_ip" "$unknown_key" "default")
 	[[ "$value" == "test_value" ]] || [[ "$value" == "default" ]]
 }
 
@@ -599,7 +634,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	export STATE_DIR="$readonly_dir"
 
 	# Should handle write failure gracefully
-	if ! set_peer_state "192.168.1.1" "last_bytes" "1000" 2>/dev/null; then
+	if ! set_peer_state "" "192.168.1.1" "last_bytes" "1000" 2>/dev/null; then
 		# Write failed - this is expected
 		# Should not crash
 		:
@@ -627,22 +662,26 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	local peer_ip="192.168.1.1"
 
-	# Test all key types
+	# Test all key types - use empty string for location to test backward compatibility
 	local failure_count_path
-	failure_count_path=$(get_peer_state_file_path "$peer_ip" "failure_count")
-	[[ "$failure_count_path" == "${LOGS_DIR}/failure_counter_192_168_1_1" ]]
+	failure_count_path=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
+	[[ "$failure_count_path" == "${STATE_DIR}/failure_counter_LOCATION_192_168_1_1" ]]
 
 	local last_bytes_path
-	last_bytes_path=$(get_peer_state_file_path "$peer_ip" "last_bytes")
-	[[ "$last_bytes_path" == "${STATE_DIR}/last_bytes_192_168_1_1" ]]
+	last_bytes_path=$(get_peer_state_file_path "" "$peer_ip" "last_bytes")
+	[[ "$last_bytes_path" == "${STATE_DIR}/last_bytes_LOCATION_192_168_1_1" ]]
 
 	local spi_path
-	spi_path=$(get_peer_state_file_path "$peer_ip" "spi")
-	[[ "$spi_path" == "${STATE_DIR}/spi_192_168_1_1" ]]
+	spi_path=$(get_peer_state_file_path "" "$peer_ip" "spi")
+	[[ "$spi_path" == "${STATE_DIR}/spi_LOCATION_192_168_1_1" ]]
 
 	local idle_detected_path
-	idle_detected_path=$(get_peer_state_file_path "$peer_ip" "idle_detected")
-	[[ "$idle_detected_path" == "${STATE_DIR}/idle_detected_192_168_1_1" ]]
+	idle_detected_path=$(get_peer_state_file_path "" "$peer_ip" "idle_detected")
+	[[ "$idle_detected_path" == "${STATE_DIR}/idle_detected_LOCATION_192_168_1_1" ]]
+
+	local failure_type_path
+	failure_type_path=$(get_peer_state_file_path "" "$peer_ip" "failure_type")
+	[[ "$failure_type_path" == "${STATE_DIR}/failure_type_LOCATION_192_168_1_1" ]]
 }
 
 # bats test_tags=category:high-risk,priority:medium
@@ -667,15 +706,15 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	sanitized=$(sanitize_peer_ip "$peer_ip")
 	[[ "$sanitized" == "2001_db8__1" ]]
 
-	# Test file path resolution for IPv6
+	# Test file path resolution for IPv6 - use empty string for location to test backward compatibility
 	local failure_count_path
-	failure_count_path=$(get_peer_state_file_path "$peer_ip" "failure_count")
-	[[ "$failure_count_path" == "${LOGS_DIR}/failure_counter_2001_db8__1" ]]
+	failure_count_path=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
+	[[ "$failure_count_path" == "${STATE_DIR}/failure_counter_LOCATION_2001_db8__1" ]]
 
-	# Should be able to set/get IPv6 peer state
-	set_peer_state "$peer_ip" "failure_count" "5" || true
+	# Should be able to set/get IPv6 peer state - use empty string for location to test backward compatibility
+	set_peer_state "" "$peer_ip" "failure_count" "5" || true
 	local value
-	value=$(get_peer_state "$peer_ip" "failure_count" "0")
+	value=$(get_peer_state "" "$peer_ip" "failure_count" "0")
 	[[ "$value" == "5" ]] || [[ "$value" == "0" ]]
 }
 
@@ -698,14 +737,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local peer2="10.0.0.1"
 
 	# Set different state values for each peer
-	set_peer_state "$peer1" "failure_count" "3" || true
-	set_peer_state "$peer2" "failure_count" "5" || true
+	set_peer_state "" "$peer1" "failure_count" "3" || true
+	set_peer_state "" "$peer2" "failure_count" "5" || true
 
 	# Get state values - should be independent
 	local count1
-	count1=$(get_peer_state "$peer1" "failure_count" "0")
+	count1=$(get_peer_state "" "$peer1" "failure_count" "0")
 	local count2
-	count2=$(get_peer_state "$peer2" "failure_count" "0")
+	count2=$(get_peer_state "" "$peer2" "failure_count" "0")
 
 	# Values should be independent
 	[[ "$count1" == "3" ]] || [[ "$count1" == "0" ]]

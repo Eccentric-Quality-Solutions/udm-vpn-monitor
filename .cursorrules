@@ -1,5 +1,15 @@
 
+- Remember that this is meant to run on UDM OS 4.3+ and that we do not need to be compatible with other versions of *nix besides that running on the UDM.
+    - In addition, we need to use only tools and commands which are available in the UDM OS unless it is something we can easily add without causing any issues to the UDM stability, etc.
 - Don't assume we need backwards compatibility, this app is currently only used in a single deployment. In most cases we can move forward without maintaining backwards compatibility and just reinstall the app on the applicable UDMs. Do ask before ignoring backwards compatibility but don't assume it is necessary.
+- When there are multiple equally valid paths for implementing functionality, ask clarifying questions. This isn't needed for every little detial, but for anything significant where you don't have clarity.
+- If you make a change and it doesn't fix the problem, revert the change unless it is worthwhile otherwise. In general we want to minimize the number of code changes we make when fixing a bug/error. You can add suggestions to FUTURE.md, but we want to minimize side effects.
+- Run relevant tests after you alter functionality in any significant way.
+
+## Debugging
+- When debugging make sure you put a comment before the function that says, "AGENT {NAME} DEBUGGING" and then remove it when you are done.
+    - {NAME} should be the name of the chat in which you are operating.
+    - The goal is to avoid multiple agents working simultaneously from making conflicting changes.
 
 ## Linting and Formatting
 - shfmt and shellcheck have been installed using brew

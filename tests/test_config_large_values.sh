@@ -15,9 +15,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:high
 @test "invalid COOLDOWN_MINUTES (very large)" {
+	# Purpose: Test verifies that the script handles very large COOLDOWN_MINUTES values gracefully
+	# Expected: Script processes very large value without crashing, either using default or failing gracefully
+	# Importance: Very large values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 COOLDOWN_MINUTES=999999999
 EOF
 
@@ -42,9 +46,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "invalid MAX_RESTARTS_PER_HOUR (very large)" {
+	# Purpose: Test verifies that the script handles very large MAX_RESTARTS_PER_HOUR values gracefully
+	# Expected: Script processes very large value without crashing, either using default or failing gracefully
+	# Importance: Very large values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 MAX_RESTARTS_PER_HOUR=999999999
 EOF
 
@@ -68,9 +76,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "invalid PING_COUNT (very large)" {
+	# Purpose: Test verifies that the script handles very large PING_COUNT values gracefully
+	# Expected: Script processes very large value without crashing, either using default or failing gracefully
+	# Importance: Very large values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 PING_COUNT=999999999
 EOF
 

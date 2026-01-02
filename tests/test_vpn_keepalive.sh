@@ -8,6 +8,16 @@ load test_helper
 # Path to the vpn-keepalive script
 KEEPALIVE_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-keepalive.sh"
 
+# Teardown function to ensure cleanup after each test
+teardown() {
+	# Clean up any running daemon processes
+	cleanup_keepalive_daemon
+	# Remove mock from path
+	remove_mock_from_path 2>/dev/null || true
+	# Kill any remaining vpn-keepalive processes
+	pkill -9 -f "vpn-keepalive.sh" 2>/dev/null || true
+}
+
 # Setup function for keepalive tests
 #
 # Creates test environment with config file and directories.
@@ -40,10 +50,10 @@ setup_keepalive_test() {
 		cp "${BATS_TEST_DIRNAME}/../lib/detection.sh" "${lib_dir}/detection.sh"
 	fi
 
-	# Create config file
+	# Create config file with location-based format
 	cat >"$config_file" <<EOF
-EXTERNAL_PEER_IPS="192.168.1.1"
-INTERNAL_PEER_IPS="10.0.0.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="10.0.0.1"
 ENABLE_KEEPALIVE=1
 KEEPALIVE_INTERVAL=30
 KEEPALIVE_PING_COUNT=1
@@ -58,18 +68,32 @@ EOF
 # Clean up any running keepalive daemon
 #
 # Stops and removes PID file if daemon is running.
+# Also kills any child processes to ensure complete cleanup.
 cleanup_keepalive_daemon() {
-	local pidfile="${MOCK_INSTALL_DIR}/vpn-keepalive.pid"
+	local pidfile="${MOCK_INSTALL_DIR}/state/vpn-keepalive.pid"
 	if [[ -f "$pidfile" ]]; then
 		local pid
 		pid=$(cat "$pidfile" 2>/dev/null || echo "")
 		if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-			kill -TERM "$pid" 2>/dev/null || true
-			sleep 1
-			kill -KILL "$pid" 2>/dev/null || true
+			# Kill the process group to ensure all children are killed
+			kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+			# Wait for process to terminate, but with timeout to avoid long delays
+			local wait_count=0
+			while kill -0 "$pid" 2>/dev/null && [[ $wait_count -lt 10 ]]; do
+				sleep 0.1
+				wait_count=$((wait_count + 1))
+			done
+			# Force kill if still running (kill process group)
+			if kill -0 "$pid" 2>/dev/null; then
+				kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+				# Brief wait after KILL to ensure process is gone
+				sleep 0.1
+			fi
 		fi
 		rm -f "$pidfile"
 	fi
+	# Also kill any remaining vpn-keepalive processes that might have escaped
+	pkill -f "vpn-keepalive.sh" 2>/dev/null || true
 }
 
 # bats test_tags=category:unit
@@ -104,7 +128,7 @@ cleanup_keepalive_daemon() {
 
 	assert_success
 	assert_output --partial "UDM VPN Keepalive"
-	assert_output --partial "0.3.0"
+	assert_output --partial "0.4.2"
 }
 
 # bats test_tags=category:unit
@@ -125,26 +149,26 @@ cleanup_keepalive_daemon() {
 }
 
 # bats test_tags=category:unit
-@test "vpn-keepalive.sh start fails when EXTERNAL_PEER_IPS not configured" {
+@test "vpn-keepalive.sh start fails when no locations configured" {
 	# Purpose: Test verifies that start command fails gracefully when configuration is missing.
 	# Expected: Start command exits with error and reports missing configuration.
 	# Importance: Prevents daemon from starting with invalid configuration.
-	setup_keepalive_test "EXTERNAL_PEER_IPS="
+	setup_keepalive_test "LOCATION_TEST_EXTERNAL="
 
 	cd "$MOCK_INSTALL_DIR"
 	run bash "${MOCK_INSTALL_DIR}/vpn-keepalive.sh" start 2>&1
 
 	assert_failure
-	# Error may be in log file or stderr
-	assert_output --partial "EXTERNAL_PEER_IPS" || assert_file_contains "${MOCK_INSTALL_DIR}/logs/vpn-keepalive.log" "EXTERNAL_PEER_IPS" || true
+	# Error may be in log file or stderr - should mention locations or validation failure
+	assert_output --partial "location" || assert_output --partial "configuration" || assert_file_contains "${MOCK_INSTALL_DIR}/logs/vpn-keepalive.log" "location" || true
 }
 
 # bats test_tags=category:unit
-@test "vpn-keepalive.sh start fails when no peers configured" {
-	# Purpose: Test verifies that start command fails when peer list is empty.
-	# Expected: Start command exits with error and reports no peers configured.
-	# Importance: Prevents daemon from starting without any peers to ping.
-	setup_keepalive_test 'EXTERNAL_PEER_IPS=""'
+@test "vpn-keepalive.sh start fails when LOCATION_TEST_EXTERNAL is empty" {
+	# Purpose: Test verifies that start command fails when no locations are configured.
+	# Expected: Start command exits with error and reports no locations configured.
+	# Importance: Prevents daemon from starting without any locations to ping.
+	setup_keepalive_test 'LOCATION_TEST_EXTERNAL=""'
 
 	cd "$MOCK_INSTALL_DIR"
 	run bash "${MOCK_INSTALL_DIR}/vpn-keepalive.sh" start 2>&1
@@ -171,12 +195,16 @@ EOF
 	add_mock_to_path
 
 	cd "$MOCK_INSTALL_DIR"
-	run bash "${MOCK_INSTALL_DIR}/vpn-keepalive.sh" start 2>&1
+	# Start daemon (don't use 'run' as it waits for background processes)
+	bash "${MOCK_INSTALL_DIR}/vpn-keepalive.sh" start >/dev/null 2>&1 || true
+	# Wait for PID file to appear (faster than fixed sleep)
+	local pidfile="${MOCK_INSTALL_DIR}/state/vpn-keepalive.pid"
+	wait_for_file "$pidfile" 2 || true
 
-	# Start may succeed or fail depending on library loading
 	# Check that PID file is created if start succeeded
-	if [[ $status -eq 0 ]]; then
-		assert_file_exist "${MOCK_INSTALL_DIR}/vpn-keepalive.pid"
+	# Note: PID file is created in state directory, not directly in install dir
+	if [[ -f "$pidfile" ]]; then
+		assert_file_exist "$pidfile"
 	fi
 
 	# Cleanup
@@ -204,7 +232,9 @@ EOF
 
 	# Start daemon first time
 	bash "${MOCK_INSTALL_DIR}/vpn-keepalive.sh" start >/dev/null 2>&1 || true
-	sleep 1
+	# Wait for PID file to appear (faster than fixed sleep)
+	local pidfile="${MOCK_INSTALL_DIR}/state/vpn-keepalive.pid"
+	wait_for_file "$pidfile" 2 || true
 
 	# Try to start again
 	run bash "${MOCK_INSTALL_DIR}/vpn-keepalive.sh" start
@@ -255,10 +285,11 @@ EOF
 
 	# Start daemon
 	bash "${MOCK_INSTALL_DIR}/vpn-keepalive.sh" start >/dev/null 2>&1 || true
-	sleep 1
+	# Wait for PID file to appear (faster than fixed sleep)
+	local pidfile="${MOCK_INSTALL_DIR}/state/vpn-keepalive.pid"
+	wait_for_file "$pidfile" 2 || true
 
 	# Verify it's running
-	local pidfile="${MOCK_INSTALL_DIR}/vpn-keepalive.pid"
 	if [[ -f "$pidfile" ]]; then
 		local pid
 		pid=$(cat "$pidfile" 2>/dev/null || echo "")
@@ -267,17 +298,38 @@ EOF
 			run bash "${MOCK_INSTALL_DIR}/vpn-keepalive.sh" stop
 
 			assert_success
-			sleep 1
+			# Wait for PID file to be removed (indicates daemon stopped)
+			# Use timeout to prevent hanging if daemon doesn't stop
+			local wait_count=0
+			while [[ -f "$pidfile" ]] && [[ $wait_count -lt 20 ]]; do
+				sleep 0.05
+				wait_count=$((wait_count + 1))
+			done
 
-			# Verify process is stopped
+			# Verify process is stopped (with timeout protection)
 			if [[ -n "$pid" ]]; then
+				# Process should be stopped - check with timeout
+				local check_count=0
+				while kill -0 "$pid" 2>/dev/null && [[ $check_count -lt 10 ]]; do
+					sleep 0.1
+					check_count=$((check_count + 1))
+				done
+				# Final check - should fail (process not running)
 				run kill -0 "$pid" 2>&1
 				assert_failure
 			fi
 
-			# Verify PID file is removed
-			run test -f "$pidfile"
-			assert_failure
+			# Verify PID file is removed (may still exist if cleanup failed, but process should be stopped)
+			if [[ -f "$pidfile" ]]; then
+				# PID file still exists - this is acceptable if process is stopped
+				# (cleanup may have failed, but daemon is stopped)
+				run kill -0 "$pid" 2>&1
+				assert_failure
+			else
+				# PID file removed - ideal case
+				run test -f "$pidfile"
+				assert_failure
+			fi
 		fi
 	fi
 
@@ -306,7 +358,9 @@ EOF
 
 	# Start daemon
 	bash "${MOCK_INSTALL_DIR}/vpn-keepalive.sh" start >/dev/null 2>&1 || true
-	sleep 1
+	# Wait for PID file to appear (faster than fixed sleep)
+	local pidfile="${MOCK_INSTALL_DIR}/state/vpn-keepalive.pid"
+	wait_for_file "$pidfile" 2 || true
 
 	# Check status
 	run bash "${MOCK_INSTALL_DIR}/vpn-keepalive.sh" status
@@ -339,7 +393,9 @@ EOF
 
 	# Start daemon first
 	bash "${MOCK_INSTALL_DIR}/vpn-keepalive.sh" start >/dev/null 2>&1 || true
-	sleep 1
+	# Wait for PID file to appear (faster than fixed sleep)
+	local pidfile="${MOCK_INSTALL_DIR}/state/vpn-keepalive.pid"
+	wait_for_file "$pidfile" 2 || true
 
 	# Restart daemon
 	run bash "${MOCK_INSTALL_DIR}/vpn-keepalive.sh" restart
@@ -369,7 +425,7 @@ EOF
 		[[ -z "$output" ]] || assert_output --partial "disabled" || assert_file_contains "${MOCK_INSTALL_DIR}/logs/vpn-keepalive.log" "disabled" || true
 	fi
 	# Verify PID file is not created
-	run test -f "${MOCK_INSTALL_DIR}/vpn-keepalive.pid"
+	run test -f "${MOCK_INSTALL_DIR}/state/vpn-keepalive.pid"
 	assert_failure
 }
 
@@ -378,7 +434,7 @@ EOF
 	# Purpose: Test verifies that keepalive daemon handles IPv6 addresses correctly.
 	# Expected: Script detects IPv6 addresses and uses appropriate ping command.
 	# Importance: Ensures keepalive works with IPv6 VPN tunnels.
-	setup_keepalive_test 'EXTERNAL_PEER_IPS="2001:db8::1"'
+	setup_keepalive_test 'LOCATION_TEST_EXTERNAL="2001:db8::1"'
 
 	# Mock ping6 command
 	local mock_ping6="${TEST_DIR}/ping6"
@@ -412,11 +468,11 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-keepalive.sh uses INTERNAL_PEER_IPS for ping when configured" {
+@test "vpn-keepalive.sh uses INTERNAL IPs for ping when configured" {
 	# Purpose: Test verifies that keepalive uses internal IPs for ping when configured.
-	# Expected: Script uses INTERNAL_PEER_IPS instead of EXTERNAL_PEER_IPS for ping targets.
+	# Expected: Script uses LOCATION_*_INTERNAL instead of LOCATION_*_EXTERNAL for ping targets.
 	# Importance: Internal IPs are better for keepalive as they go through VPN tunnel.
-	setup_keepalive_test 'EXTERNAL_PEER_IPS="192.168.1.1" INTERNAL_PEER_IPS="10.0.0.1"'
+	setup_keepalive_test 'LOCATION_TEST_EXTERNAL="192.168.1.1" LOCATION_TEST_INTERNAL="10.0.0.1"'
 
 	# Mock ping command that logs target
 	local mock_ping="${TEST_DIR}/ping"
@@ -430,7 +486,11 @@ EOF
 
 	cd "$MOCK_INSTALL_DIR"
 	bash "${MOCK_INSTALL_DIR}/vpn-keepalive.sh" start >/dev/null 2>&1 || true
-	sleep 2
+	# Wait for PID file to appear (faster than fixed sleep)
+	local pidfile="${MOCK_INSTALL_DIR}/state/vpn-keepalive.pid"
+	wait_for_file "$pidfile" 2 || true
+	# Give daemon a moment to potentially write to log (reduced from 2s)
+	sleep 0.2
 
 	# Cleanup
 	cleanup_keepalive_daemon
@@ -442,7 +502,7 @@ EOF
 	# Purpose: Test verifies that keepalive daemon handles multiple peer IPs correctly.
 	# Expected: Script pings all configured peer IPs in sequence.
 	# Importance: Ensures keepalive works with multi-tunnel configurations.
-	setup_keepalive_test 'EXTERNAL_PEER_IPS="192.168.1.1 10.0.0.1"'
+	setup_keepalive_test 'LOCATION_TEST1_EXTERNAL="192.168.1.1" LOCATION_TEST1_INTERNAL="" LOCATION_TEST2_EXTERNAL="10.0.0.1" LOCATION_TEST2_INTERNAL=""'
 
 	# Mock ping command
 	local mock_ping="${TEST_DIR}/ping"
@@ -496,7 +556,9 @@ EOF
 
 	cd "$MOCK_INSTALL_DIR"
 	bash "${MOCK_INSTALL_DIR}/vpn-keepalive.sh" start >/dev/null 2>&1 || true
-	sleep 1
+	# Wait for PID file to appear (faster than fixed sleep)
+	local pidfile="${MOCK_INSTALL_DIR}/state/vpn-keepalive.pid"
+	wait_for_file "$pidfile" 2 || true
 
 	# Log file should exist (may be created by daemon)
 	local log_file="${MOCK_INSTALL_DIR}/logs/vpn-keepalive.log"

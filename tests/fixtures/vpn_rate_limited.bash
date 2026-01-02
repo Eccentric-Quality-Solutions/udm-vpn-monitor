@@ -77,13 +77,15 @@ setup_vpn_rate_limited_fixture() {
 	setup_test_vpn_monitor "$peer_ip" "${TEST_DIR}" "${default_config[@]}" "${extra_config[@]}"
 
 	# Create restart count file with timestamps
-	local restart_file="${LOGS_DIR}/restart_count"
+	local restart_file="${STATE_DIR}/restart_count"
 	# Clear file if it exists
 	: >"$restart_file"
 	for ts in "${timestamps[@]}"; do
 		echo "$ts" >>"$restart_file"
 	done
 
-	# Set failure count to trigger Tier 3 (default is 5, matching TIER3_THRESHOLD)
-	setup_state_files "$peer_ip" 5
+	# Set failure count to trigger Tier 3 (default is 5, matching TIER3_THRESHOLD) using location-aware functions
+	ensure_state_functions_loaded
+	# setup_test_vpn_monitor creates location "TEST1" for single IP
+	set_peer_state "TEST1" "$peer_ip" "failure_count" "5" || true
 }

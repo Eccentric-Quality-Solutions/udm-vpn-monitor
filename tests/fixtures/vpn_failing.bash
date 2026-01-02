@@ -34,14 +34,19 @@ setup_vpn_failing_fixture() {
 	shift 5 || true
 	local extra_config=("$@")
 
-	# Set up test VPN monitor with config
-	setup_test_vpn_monitor "$peer_ip" "${TEST_DIR}" "${extra_config[@]}"
+	# Set up test VPN monitor with location-based config
+	setup_location_vpn_monitor "$peer_ip" "${TEST_DIR}" "${extra_config[@]}"
 
-	# Set up state files with failure count and last bytes
-	setup_state_files "$peer_ip" "$failure_count" "$last_bytes" "$spi"
+	# Set up state files with failure count and last bytes using location-based state functions
+	# setup_location_vpn_monitor creates location "TEST"
+	ensure_state_functions_loaded
+	set_peer_state "TEST" "$peer_ip" "failure_count" "$failure_count" || true
+	set_peer_state "TEST" "$peer_ip" "last_bytes" "$last_bytes" || true
+	if [[ -n "$spi" ]]; then
+		set_peer_state "TEST" "$peer_ip" "spi" "$spi" || true
+	fi
 
 	# Set up mock VPN environment with bytes not increasing (or VPN down)
 	# If current_bytes equals last_bytes, bytes aren't increasing (failure scenario)
 	setup_mock_vpn_environment "$peer_ip" "$current_bytes" "$spi"
 }
-

@@ -35,10 +35,25 @@ setup_vpn_multiple_peers_fixture() {
 	# Set up test VPN monitor with multiple peers
 	setup_test_vpn_monitor "$peer_ips" "${TEST_DIR}" "${extra_config[@]}"
 
-	# Set up state files for each peer
+	# Set up state files for each peer using location-aware functions
+	# setup_test_vpn_monitor creates locations TEST1, TEST2, TEST3, etc. for each IP in order
+	ensure_state_functions_loaded
 	local peer_ip
+	local location_num=1
 	for peer_ip in $peer_ips; do
-		setup_state_files "$peer_ip" "$failure_count" "$bytes" "$spi"
+		# Skip empty IPs (from multiple spaces)
+		[[ -z "$peer_ip" ]] && continue
+
+		# Map IP to location name (TEST1, TEST2, TEST3, etc.)
+		local location_name="TEST${location_num}"
+		set_peer_state "$location_name" "$peer_ip" "failure_count" "$failure_count" || true
+		if [[ "$bytes" != "0" ]] || [[ "$failure_count" -gt 0 ]]; then
+			set_peer_state "$location_name" "$peer_ip" "last_bytes" "$bytes" || true
+		fi
+		if [[ -n "$spi" ]]; then
+			set_peer_state "$location_name" "$peer_ip" "spi" "$spi" || true
+		fi
+		location_num=$((location_num + 1))
 	done
 
 	# Create mock ip command that handles multiple peers

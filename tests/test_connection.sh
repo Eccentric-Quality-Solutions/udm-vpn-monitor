@@ -16,9 +16,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:high
 @test "cache file is a directory" {
+	# Purpose: Test verifies that the script handles connection name cache files that are directories instead of files gracefully
+	# Expected: Script handles directory instead of cache file gracefully, should rediscover or skip cache
+	# Importance: Directory paths can occur from misconfiguration or symlink issues; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -47,9 +50,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "cache file corrupted (contains invalid data)" {
+	# Purpose: Test verifies that the script handles corrupted connection name cache files gracefully
+	# Expected: Script handles corrupted cache file gracefully, should rediscover or skip cache
+	# Importance: File corruption can occur due to disk errors or manual editing; script must handle it robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -79,9 +85,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "cache file permissions prevent write" {
+	# Purpose: Test verifies that the script handles connection name cache files with write permissions prevented gracefully
+	# Expected: Script handles read-only cache file gracefully, should suppress write error
+	# Importance: Permission issues can occur from incorrect file ownership or chmod operations; script must handle gracefully
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -112,9 +121,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "cache file permissions prevent read" {
+	# Purpose: Test verifies that the script handles connection name cache files with read permissions prevented gracefully
+	# Expected: Script handles unreadable cache file gracefully, should rediscover connection name
+	# Importance: Permission issues can occur from incorrect file ownership or chmod operations; script must handle gracefully
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -145,9 +157,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "cached connection name becomes invalid" {
+	# Purpose: Test verifies that the script handles cached connection names that become invalid or stale gracefully
+	# Expected: Script uses cached name even if invalid since cache is checked first, cache will only be updated if ipsec status is checked
+	# Importance: Cached connection names can become stale when VPN configurations change; script must handle this gracefully
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -192,9 +207,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "connection name discovery during VPN failure (no active SA)" {
+	# Purpose: Test verifies that connection name discovery works correctly during VPN failure when no active SA exists
+	# Expected: Script handles connection name discovery during VPN failure gracefully, discovery code handles case when no SA exists
+	# Importance: Connection name discovery must work even when VPN is down to enable proper recovery actions
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -234,9 +252,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "discovery happens when both config and cache unavailable" {
+	# Purpose: Test verifies that connection name discovery works when both config and cache are unavailable
+	# Expected: Script handles discovery when both cache and ipsec unavailable gracefully, discovery code handles ipsec unavailable case
+	# Importance: Connection name discovery must work even when preferred methods are unavailable
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -290,9 +311,12 @@ EOF
 # ============================================================================
 
 @test "cached connection name takes priority over discovery" {
+	# Purpose: Test verifies that cached connection names take priority over discovered names
+	# Expected: Script uses cached name instead of discovered name, cache is checked first and returns early if found
+	# Importance: Ensures cached connection names are preferred to avoid unnecessary discovery operations
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"

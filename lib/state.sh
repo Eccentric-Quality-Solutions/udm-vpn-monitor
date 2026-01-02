@@ -3,7 +3,7 @@
 # State file management for UDM VPN Monitor
 # Handles failure counters, cooldown periods, rate limiting, and restart tracking
 #
-# Version: 0.4.2
+# Version: 0.4.3
 #
 
 # Source constants for magic numbers
@@ -74,7 +74,9 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 init_state() {
 	# Ensure directories exist before creating files
 	if ! try_ensure_directory_exists "$LOGS_DIR"; then
-		handle_error "WARNING" "Failed to create logs directory: $LOGS_DIR"
+		# log_message() (called by handle_error) already handles logging failures gracefully
+		# by outputting to stderr if the log directory can't be created
+		handle_error "WARNING" "Failed to create logs directory: $LOGS_DIR" 0
 	fi
 	if ! try_ensure_directory_exists "$STATE_DIR"; then
 		handle_error "WARNING" "Failed to create state directory: $STATE_DIR"
@@ -125,12 +127,13 @@ sanitize_peer_ip() {
 #
 # Returns the full file path for a per-peer state key.
 # Handles different storage locations for different state types:
-#   - failure_count: stored in LOGS_DIR
+#   - failure_count: stored in STATE_DIR
 #   - last_bytes: stored in STATE_DIR
 #
 # Arguments:
-#   $1: Peer IP address
-#   $2: State key name (e.g., "failure_count", "last_bytes")
+#   $1: Location name (required, sanitized)
+#   $2: Peer IP address
+#   $3: State key name (e.g., "failure_count", "last_bytes")
 #
 # Returns:
 #   0: Always succeeds
@@ -139,39 +142,48 @@ sanitize_peer_ip() {
 #   Prints the full file path to stdout
 #
 # Examples:
-#   path=$(get_peer_state_file_path "203.0.113.1" "failure_count")
-#   # Returns: ${LOGS_DIR}/failure_counter_203_0_113_1
-#   path=$(get_peer_state_file_path "203.0.113.1" "last_bytes")
-#   # Returns: ${STATE_DIR}/last_bytes_203_0_113_1
+#   path=$(get_peer_state_file_path "NYC" "203.0.113.1" "failure_count")
+#   # Returns: ${STATE_DIR}/failure_counter_NYC_203_0_113_1
+#   path=$(get_peer_state_file_path "NYC" "203.0.113.1" "last_bytes")
+#   # Returns: ${STATE_DIR}/last_bytes_NYC_203_0_113_1
 #
 # Note:
-#   Requires LOGS_DIR, STATE_DIR, and sanitize_peer_ip to be set
+#   Requires LOGS_DIR, STATE_DIR, sanitize_location_name (from common.sh), and sanitize_peer_ip to be set
 #   Used internally by get_peer_state and set_peer_state
+#   Location name is sanitized before use in filename
 get_peer_state_file_path() {
-	local peer_ip="$1"
-	local key="$2"
+	local location_name="$1"
+	local peer_ip="$2"
+	local key="$3"
+	local location_sanitized
 	local peer_sanitized
+
+	# Sanitize location name and peer IP
+	location_sanitized=$(sanitize_location_name "$location_name")
 	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
 
 	case "$key" in
 	failure_count)
-		echo "${LOGS_DIR}/failure_counter_${peer_sanitized}"
+		echo "${STATE_DIR}/failure_counter_${location_sanitized}_${peer_sanitized}"
 		;;
 	last_bytes)
-		echo "${STATE_DIR}/last_bytes_${peer_sanitized}"
+		echo "${STATE_DIR}/last_bytes_${location_sanitized}_${peer_sanitized}"
 		;;
 	spi)
-		echo "${STATE_DIR}/spi_${peer_sanitized}"
+		echo "${STATE_DIR}/spi_${location_sanitized}_${peer_sanitized}"
 		;;
 	idle_detected)
-		echo "${STATE_DIR}/idle_detected_${peer_sanitized}"
+		echo "${STATE_DIR}/idle_detected_${location_sanitized}_${peer_sanitized}"
 		;;
 	last_status_log)
-		echo "${STATE_DIR}/last_status_log_${peer_sanitized}"
+		echo "${STATE_DIR}/last_status_log_${location_sanitized}_${peer_sanitized}"
+		;;
+	failure_type)
+		echo "${STATE_DIR}/failure_type_${location_sanitized}_${peer_sanitized}"
 		;;
 	*)
 		handle_error "WARNING" "Unknown peer state key: $key" 0
-		echo "${STATE_DIR}/${key}_${peer_sanitized}"
+		echo "${STATE_DIR}/${key}_${location_sanitized}_${peer_sanitized}"
 		;;
 	esac
 }
@@ -182,9 +194,10 @@ get_peer_state_file_path() {
 # Returns default value (0 for numeric, empty for others) if file doesn't exist.
 #
 # Arguments:
-#   $1: Peer IP address
-#   $2: State key name (e.g., "failure_count", "last_bytes")
-#   $3: Default value (optional, defaults to "0" for numeric keys)
+#   $1: Location name (required, sanitized)
+#   $2: Peer IP address
+#   $3: State key name (e.g., "failure_count", "last_bytes")
+#   $4: Default value (optional, defaults to "0" for numeric keys)
 #
 # Returns:
 #   0: Always succeeds
@@ -193,18 +206,19 @@ get_peer_state_file_path() {
 #   Prints the state value to stdout (or default if not found)
 #
 # Examples:
-#   count=$(get_peer_state "203.0.113.1" "failure_count")
-#   bytes=$(get_peer_state "203.0.113.1" "last_bytes")
+#   count=$(get_peer_state "NYC" "203.0.113.1" "failure_count")
+#   bytes=$(get_peer_state "NYC" "203.0.113.1" "last_bytes")
 #
 # Note:
 #   Requires get_peer_state_file_path to be set
 #   Validates numeric values and returns default if corrupted
 get_peer_state() {
-	local peer_ip="$1"
-	local key="$2"
-	local default_value="${3:-0}"
+	local location_name="$1"
+	local peer_ip="$2"
+	local key="$3"
+	local default_value="${4:-0}"
 	local state_file
-	state_file=$(get_peer_state_file_path "$peer_ip" "$key")
+	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "$key")
 
 	if file_exists_and_readable "$state_file"; then
 		local value
@@ -241,9 +255,10 @@ get_peer_state() {
 # Uses temporary file and mv for atomic write to prevent corruption.
 #
 # Arguments:
-#   $1: Peer IP address
-#   $2: State key name (e.g., "failure_count", "last_bytes")
-#   $3: Value to set
+#   $1: Location name (required, sanitized)
+#   $2: Peer IP address
+#   $3: State key name (e.g., "failure_count", "last_bytes")
+#   $4: Value to set
 #
 # Returns:
 #   0: Success
@@ -254,19 +269,20 @@ get_peer_state() {
 #   - Logs errors if write fails
 #
 # Examples:
-#   set_peer_state "203.0.113.1" "failure_count" "5"
-#   set_peer_state "203.0.113.1" "last_bytes" "123456"
+#   set_peer_state "NYC" "203.0.113.1" "failure_count" "5"
+#   set_peer_state "NYC" "203.0.113.1" "last_bytes" "123456"
 #
 # Note:
 #   Requires get_peer_state_file_path to be set
 #   Uses temporary file and mv for atomic write to prevent corruption on interruption
 #   Validates numeric keys before writing
 set_peer_state() {
-	local peer_ip="$1"
-	local key="$2"
-	local value="$3"
+	local location_name="$1"
+	local peer_ip="$2"
+	local key="$3"
+	local value="$4"
 	local state_file
-	state_file=$(get_peer_state_file_path "$peer_ip" "$key")
+	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "$key")
 
 	# Validate numeric keys
 	case "$key" in
@@ -310,9 +326,10 @@ set_peer_state() {
 # so this function allows execution to continue even if state update fails.
 #
 # Arguments:
-#   $1: Peer IP address
-#   $2: State key name (e.g., "failure_count", "last_bytes")
-#   $3: Value to set
+#   $1: Location name (required, sanitized)
+#   $2: Peer IP address
+#   $3: State key name (e.g., "failure_count", "last_bytes")
+#   $4: Value to set
 #
 # Returns:
 #   0: Always succeeds (continues execution even if state update fails)
@@ -322,18 +339,19 @@ set_peer_state() {
 #   - Execution continues regardless of success/failure
 #
 # Examples:
-#   set_peer_state_non_critical "203.0.113.1" "spi" "$current_spi"
-#   set_peer_state_non_critical "203.0.113.1" "last_bytes" "$current_bytes"
+#   set_peer_state_non_critical "NYC" "203.0.113.1" "spi" "$current_spi"
+#   set_peer_state_non_critical "NYC" "203.0.113.1" "last_bytes" "$current_bytes"
 #
 # Note:
 #   Use this when state updates are non-critical and failures should not
 #   interrupt execution. Errors are already logged by set_peer_state.
 set_peer_state_non_critical() {
-	local peer_ip="$1"
-	local key="$2"
-	local value="$3"
+	local location_name="$1"
+	local peer_ip="$2"
+	local key="$3"
+	local value="$4"
 	# State update failure is non-critical (already logged by set_peer_state)
-	if ! set_peer_state "$peer_ip" "$key" "$value"; then
+	if ! set_peer_state "$location_name" "$peer_ip" "$key" "$value"; then
 		# Error already logged by set_peer_state, continue execution
 		:
 	fi
@@ -362,10 +380,11 @@ set_peer_state_non_critical() {
 #   Requires get_peer_state_file_path to be set
 #   Safe to call if file doesn't exist (returns 0)
 delete_peer_state() {
-	local peer_ip="$1"
-	local key="$2"
+	local location_name="$1"
+	local peer_ip="$2"
+	local key="$3"
 	local state_file
-	state_file=$(get_peer_state_file_path "$peer_ip" "$key")
+	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "$key")
 
 	if file_exists_and_readable "$state_file"; then
 		if ! rm -f "$state_file"; then
@@ -399,11 +418,12 @@ delete_peer_state() {
 #   Requires delete_peer_state to be set
 #   Safe to call even if no state files exist
 cleanup_peer_state() {
-	local peer_ip="$1"
-	delete_peer_state "$peer_ip" "failure_count"
-	delete_peer_state "$peer_ip" "last_bytes"
-	delete_peer_state "$peer_ip" "spi"
-	delete_peer_state "$peer_ip" "idle_detected"
+	local location_name="$1"
+	local peer_ip="$2"
+	delete_peer_state "$location_name" "$peer_ip" "failure_count"
+	delete_peer_state "$location_name" "$peer_ip" "last_bytes"
+	delete_peer_state "$location_name" "$peer_ip" "spi"
+	delete_peer_state "$location_name" "$peer_ip" "idle_detected"
 	# Add other state keys here as needed
 }
 
@@ -414,7 +434,8 @@ cleanup_peer_state() {
 # Returns 0 if file doesn't exist (first failure) or is empty/corrupted.
 #
 # Arguments:
-#   $1: Peer IP address (used to locate per-peer counter file)
+#   $1: Location name (required, sanitized)
+#   $2: Peer IP address (used to locate per-peer counter file)
 #
 # Returns:
 #   0: Always succeeds
@@ -423,16 +444,17 @@ cleanup_peer_state() {
 #   Prints the failure count (integer) to stdout (0 if file doesn't exist)
 #
 # Examples:
-#   count=$(get_failure_count "203.0.113.1")
+#   count=$(get_failure_count "NYC" "203.0.113.1")
 #   echo "Failure count: $count"
 #
 # Note:
 #   Uses get_peer_state() abstraction layer internally
-#   Counter file: ${LOGS_DIR}/failure_counter_<sanitized_peer_ip>
+#   Counter file: ${STATE_DIR}/failure_counter_<location>_<sanitized_peer_ip>
 #   Returns 0 if file doesn't exist (cat fails) or is empty
 get_failure_count() {
-	local peer_ip="$1"
-	get_peer_state "$peer_ip" "failure_count" "0"
+	local location_name="$1"
+	local peer_ip="$2"
+	get_peer_state "$location_name" "$peer_ip" "failure_count" "0"
 }
 
 # Increment failure counter for a specific peer
@@ -442,7 +464,8 @@ get_failure_count() {
 # Each peer has its own independent failure counter tracked separately.
 #
 # Arguments:
-#   $1: Peer IP address (used to locate per-peer counter file)
+#   $1: Location name (required, sanitized)
+#   $2: Peer IP address (used to locate per-peer counter file)
 #
 # Returns:
 #   0: Always succeeds
@@ -452,21 +475,22 @@ get_failure_count() {
 #
 # Side effects:
 #   - Creates or updates per-peer counter file with new count (atomic write)
-#   - Counter file: ${LOGS_DIR}/failure_counter_<sanitized_peer_ip>
+#   - Counter file: ${STATE_DIR}/failure_counter_<location>_<sanitized_peer_ip>
 #
 # Examples:
-#   new_count=$(increment_failure "203.0.113.1")
+#   new_count=$(increment_failure "NYC" "203.0.113.1")
 #   echo "Failure count incremented to: $new_count"
 #
 # Note:
 #   Uses get_peer_state() and set_peer_state() abstraction layer internally
 #   Reads current count, increments by 1, writes back atomically
 increment_failure() {
-	local peer_ip="$1"
+	local location_name="$1"
+	local peer_ip="$2"
 	local count
-	count=$(get_peer_state "$peer_ip" "failure_count" "0")
+	count=$(get_peer_state "$location_name" "$peer_ip" "failure_count" "0")
 	local new_count=$((count + 1))
-	if set_peer_state "$peer_ip" "failure_count" "$new_count"; then
+	if set_peer_state "$location_name" "$peer_ip" "failure_count" "$new_count"; then
 		echo "$new_count"
 	else
 		# If set failed, return current count (already logged error)
@@ -481,25 +505,27 @@ increment_failure() {
 # Each peer has its own independent failure counter tracked separately.
 #
 # Arguments:
-#   $1: Peer IP address (used to locate per-peer counter file)
+#   $1: Location name (required, sanitized)
+#   $2: Peer IP address (used to locate per-peer counter file)
 #
 # Returns:
 #   0: Always succeeds
 #
 # Side effects:
 #   - Writes "0" to per-peer counter file (atomic write)
-#   - Counter file: ${LOGS_DIR}/failure_counter_<sanitized_peer_ip>
+#   - Counter file: ${STATE_DIR}/failure_counter_<location>_<sanitized_peer_ip>
 #
 # Examples:
-#   reset_failure_count "203.0.113.1"
+#   reset_failure_count "NYC" "203.0.113.1"
 #   # Resets counter to 0 for this peer
 #
 # Note:
 #   Uses set_peer_state() abstraction layer internally
 #   Called when VPN recovers after failures
 reset_failure_count() {
-	local peer_ip="$1"
-	set_peer_state_non_critical "$peer_ip" "failure_count" "0"
+	local location_name="$1"
+	local peer_ip="$2"
+	set_peer_state_non_critical "$location_name" "$peer_ip" "failure_count" "0"
 }
 
 # Get network partition state file path
@@ -614,7 +640,6 @@ set_network_partition_state() {
 # Get timestamp plus N minutes
 #
 # Returns a Unix timestamp (seconds since epoch) that is N minutes in the future.
-# Handles Linux and BSD/macOS date command differences with fallbacks.
 # Used for calculating cooldown expiration times.
 #
 # Arguments:
@@ -631,13 +656,17 @@ set_network_partition_state() {
 #   echo "Cooldown expires at: $future_time"
 #
 # Note:
-#   Tries Linux date format first (-d "+N minutes"), then BSD/macOS (-v+"N"M)
-#   Falls back to manual calculation if both fail: $(get_unix_timestamp) + minutes * SECONDS_PER_MINUTE
+#   Uses Linux date format (-d "+N minutes")
+#   Falls back to manual calculation if date fails: $(get_unix_timestamp) + minutes * SECONDS_PER_MINUTE
 get_timestamp_plus_minutes() {
 	local minutes="$1"
-	# Try Linux date format first, then BSD/macOS, fallback to manual calculation
+	local seconds_to_add=$((minutes * SECONDS_PER_MINUTE))
+	# Use Linux date format, fallback to manual calculation
 	# +%s: output as seconds since epoch
-	date -d "+${minutes} minutes" +%s 2>/dev/null || date -v+"${minutes}"M +%s 2>/dev/null || echo $(($(get_unix_timestamp) + minutes * SECONDS_PER_MINUTE))
+	date -d "+${minutes} minutes" +%s 2>/dev/null || safe_timestamp_add "$(get_unix_timestamp)" "$seconds_to_add" 2>/dev/null || {
+		handle_error "ERROR" "Failed to calculate future timestamp (overflow or invalid input)" 0
+		echo "$(get_unix_timestamp)" # Fallback to current time
+	}
 }
 
 # Get file modification time as timestamp
@@ -699,14 +728,25 @@ check_cooldown() {
 		return 1 # Not in cooldown
 	fi
 
+	# Check if file is readable before attempting to read
+	if ! file_exists_and_readable "$COOLDOWN_UNTIL_FILE"; then
+		handle_error "WARNING" "Cooldown file is not readable, removing: $COOLDOWN_UNTIL_FILE" 0
+		rm -f "$COOLDOWN_UNTIL_FILE" 2>/dev/null || true
+		return 1 # Not in cooldown (file unreadable, treat as no cooldown)
+	fi
+
 	local cooldown_until
-	cooldown_until=$(cat "$COOLDOWN_UNTIL_FILE")
+	cooldown_until=$(cat "$COOLDOWN_UNTIL_FILE" 2>/dev/null || echo "0")
 	local now
 	now=$(get_unix_timestamp)
 
 	if [[ "$now" -lt "$cooldown_until" ]]; then
 		local remaining
-		remaining=$((cooldown_until - now))
+		remaining=$(safe_timestamp_diff "$cooldown_until" "$now" 2>/dev/null || echo "0")
+		# Ensure remaining is non-negative (should be if now < cooldown_until, but validate)
+		if [[ $remaining -lt 0 ]]; then
+			remaining=0
+		fi
 		log_message "INFO" "In cooldown period, $remaining seconds remaining"
 		return 0 # In cooldown
 	else
@@ -748,6 +788,7 @@ set_cooldown() {
 	if ! atomic_write_file "$COOLDOWN_UNTIL_FILE" "$cooldown_until"; then
 		handle_error "ERROR" "Failed to set cooldown period (file: $COOLDOWN_UNTIL_FILE)" 0
 		# Continue execution but log the error
+		return 0
 	fi
 
 	log_message "INFO" "Cooldown period set for $minutes minutes"
@@ -782,11 +823,17 @@ check_rate_limit() {
 	local now
 	now=$(get_unix_timestamp)
 	local one_hour_ago
-	one_hour_ago=$((now - SECONDS_PER_HOUR))
+	one_hour_ago=$(safe_timestamp_subtract "$now" "$SECONDS_PER_HOUR" 2>/dev/null || echo "0")
 
 	# Get restart count file (format: timestamp per line)
 	if [[ ! -f "$RESTART_COUNT_FILE" ]]; then
 		return 0 # No previous restarts, allow
+	fi
+
+	# Check if file is readable before attempting to read
+	if ! file_exists_and_readable "$RESTART_COUNT_FILE"; then
+		handle_error "WARNING" "Restart count file is not readable, treating as empty: $RESTART_COUNT_FILE" 0
+		return 0 # Allow restart (file unreadable, treat as no previous restarts)
 	fi
 
 	# Count restarts in the last hour
@@ -809,44 +856,67 @@ check_rate_limit() {
 # Each restart adds a new line with Unix timestamp.
 #
 # Returns:
-#   0: Always succeeds
+#   0: Always succeeds (logs warnings on errors but continues)
 #
 # Side effects:
-#   - Appends current Unix timestamp to RESTART_COUNT_FILE
-#   - Removes entries older than 24 hours from RESTART_COUNT_FILE (cleanup)
-#   - Uses temporary file for atomic update during cleanup
-#   - Logs warnings if cleanup operations fail
+#   - Reads current RESTART_COUNT_FILE content (if exists and readable)
+#   - Appends current Unix timestamp to content in memory
+#   - Filters content to keep only entries from last 24 hours
+#   - Atomically writes updated content to RESTART_COUNT_FILE using atomic_write_file
+#   - Logs warnings if read, filter, or write operations fail
 #
 # Examples:
 #   record_restart
-#   # Adds current timestamp to restart count file
+#   # Adds current timestamp to restart count file atomically
 #
 # Note:
-#   Requires RESTART_COUNT_FILE, SECONDS_PER_DAY, and log_message to be set (from config.sh, constants.sh, and logging.sh)
+#   Requires RESTART_COUNT_FILE, SECONDS_PER_DAY, file_exists_and_readable, atomic_write_file,
+#   and handle_error to be set (from config.sh, constants.sh, common.sh, and logging.sh)
 #   File format: one Unix timestamp per line
 #   Cleanup uses awk to filter timestamps > (now - SECONDS_PER_DAY)
-#   Atomic update via temp file and mv with error handling
+#   Fully atomic operation: read-modify-write pattern with error handling
 record_restart() {
 	local timestamp
 	timestamp=$(get_unix_timestamp)
-	echo "$timestamp" >>"$RESTART_COUNT_FILE"
+
+	# Read current file content (if it exists and is readable)
+	# Append new timestamp to content in memory, then filter and write atomically
+	local current_content
+	if file_exists_and_readable "$RESTART_COUNT_FILE"; then
+		current_content=$(cat "$RESTART_COUNT_FILE" 2>/dev/null || echo "")
+		# Trim trailing newlines to avoid creating empty lines when appending
+		# Remove all trailing newlines using parameter expansion
+		while [[ "$current_content" == *$'\n' ]]; do
+			current_content="${current_content%$'\n'}"
+		done
+	else
+		current_content=""
+	fi
+
+	# Append new timestamp to content
+	local updated_content
+	if [[ -n "$current_content" ]]; then
+		updated_content="${current_content}"$'\n'"${timestamp}"
+	else
+		updated_content="${timestamp}"
+	fi
 
 	# Keep only last 24 hours of timestamps (cleanup old entries)
 	# Prevents restart count file from growing indefinitely
 	local one_day_ago
-	one_day_ago=$((timestamp - SECONDS_PER_DAY))
-	# awk filters lines where first field (timestamp) > cutoff, writes to temp file
-	if ! awk -v cutoff="$one_day_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" >"${RESTART_COUNT_FILE}.tmp" 2>/dev/null; then
-		handle_error "WARNING" "Failed to filter old restart timestamps from $RESTART_COUNT_FILE"
-		rm -f "${RESTART_COUNT_FILE}.tmp" 2>/dev/null || true
-		return 0 # Continue even if cleanup fails
+	one_day_ago=$(safe_timestamp_subtract "$timestamp" "$SECONDS_PER_DAY" 2>/dev/null || echo "0")
+	# awk filters lines where first field (timestamp) > cutoff
+	local filtered_content
+	filtered_content=$(echo "$updated_content" | awk -v cutoff="$one_day_ago" '$1 > cutoff' 2>/dev/null)
+	if [[ $? -ne 0 ]]; then
+		handle_error "WARNING" "Failed to filter old restart timestamps"
+		return 0 # Continue even if filtering fails
 	fi
 
-	# Atomic move: replace original file with filtered version
-	if ! mv "${RESTART_COUNT_FILE}.tmp" "$RESTART_COUNT_FILE" 2>/dev/null; then
-		handle_error "WARNING" "Failed to update restart count file $RESTART_COUNT_FILE (cleanup skipped, file may grow)"
-		rm -f "${RESTART_COUNT_FILE}.tmp" 2>/dev/null || true
-		return 0 # Continue even if cleanup fails
+	# Atomic write: write entire file atomically with error checking
+	if ! atomic_write_file "$RESTART_COUNT_FILE" "$filtered_content"; then
+		handle_error "WARNING" "Failed to record restart timestamp in $RESTART_COUNT_FILE"
+		return 0 # Continue even if write fails
 	fi
 }
 
@@ -882,6 +952,13 @@ backup_corrupted_state_file() {
 	# If file doesn't exist, nothing to backup
 	if [[ ! -f "$state_file" ]]; then
 		return 0
+	fi
+
+	# If file is not readable, skip backup but allow recovery to proceed
+	# Recovery can still remove or overwrite unreadable files
+	if ! file_exists_and_readable "$state_file"; then
+		handle_error "WARNING" "Cannot backup unreadable state file (skipping backup): $state_file" 0
+		return 1
 	fi
 
 	# Create backup of state file
@@ -940,6 +1017,10 @@ recover_corrupted_state_file() {
 		rm -f "$state_file" 2>/dev/null || true
 		handle_error "INFO" "Recovered corrupted state file by removal: $state_file" 0
 	else
+		# If file is unreadable, remove it first before writing (atomic_write_file can overwrite, but this is safer)
+		if [[ -f "$state_file" ]] && ! file_exists_and_readable "$state_file"; then
+			rm -f "$state_file" 2>/dev/null || true
+		fi
 		# Set file to default value using atomic write
 		if ! atomic_write_file "$state_file" "$default_value"; then
 			handle_error "ERROR" "Failed to reset corrupted state file: $state_file" 0
@@ -978,14 +1059,10 @@ validate_state_file() {
 	local file="$1"
 	local expected_format="${2:-integer}"
 
-	# Check file exists
-	if [[ ! -f "$file" ]]; then
-		return 1
-	fi
-
-	# Check file is readable
-	if [[ ! -r "$file" ]]; then
-		handle_error "WARNING" "State file is not readable: $file"
+	# Check file exists and is readable
+	# Use file_exists_and_readable for consistency and to prevent hangs on unreadable files
+	if ! file_exists_and_readable "$file"; then
+		handle_error "WARNING" "State file is not readable (cannot validate): $file" 0
 		return 1
 	fi
 
@@ -1020,6 +1097,58 @@ validate_state_file() {
 	esac
 
 	return 0
+}
+
+# Validate state files matching a pattern
+#
+# Validates all state files matching a glob pattern in STATE_DIR.
+# Automatically recovers corrupted files.
+#
+# Arguments:
+#   $1: Glob pattern to match (e.g., "failure_counter_*")
+#   $2: Expected format type ("integer", "timestamp", "timestamp_list")
+#   $3: Default value for recovery (optional, defaults to "0")
+#   $4: Description for error messages (e.g., "Failure counter file")
+#
+# Returns:
+#   0: All matching files are valid (or successfully recovered)
+#   1: One or more files are invalid and recovery failed
+#
+# Side effects:
+#   - Logs warnings for corrupted state files
+#   - Backs up corrupted files before recovery
+#   - Resets corrupted files to safe defaults
+#
+# Examples:
+#   validate_state_files_by_pattern "failure_counter_*" "integer" "0" "Failure counter file"
+#   validate_state_files_by_pattern "last_bytes_*" "integer" "0" "Byte counter file"
+#
+# Note:
+#   Requires STATE_DIR, validate_state_file, recover_corrupted_state_file, and handle_error
+validate_state_files_by_pattern() {
+	local pattern="$1"
+	local expected_format="$2"
+	local default_value="${3:-0}"
+	local description="${4:-State file}"
+	local validation_failed=0
+
+	if ! directory_exists "$STATE_DIR"; then
+		return 0
+	fi
+
+	local state_file
+	for state_file in "${STATE_DIR}"/${pattern}; do
+		# Check if glob matched actual files
+		file_exists_and_readable "$state_file" || continue
+
+		if ! validate_state_file "$state_file" "$expected_format"; then
+			handle_error "WARNING" "$description corrupted, recovering: $state_file" 0
+			recover_corrupted_state_file "$state_file" "$default_value" "$expected_format"
+			validation_failed=1
+		fi
+	done
+
+	return $validation_failed
 }
 
 # Validate all state files
@@ -1072,34 +1201,10 @@ validate_state() {
 	fi
 
 	# Validate per-peer failure counter files (if any exist)
-	if directory_exists "$LOGS_DIR"; then
-		local counter_file
-		for counter_file in "${LOGS_DIR}"/failure_counter_*; do
-			# Check if glob matched actual files
-			file_exists_and_readable "$counter_file" || continue
-
-			if ! validate_state_file "$counter_file" "integer"; then
-				handle_error "WARNING" "Failure counter file corrupted, recovering: $counter_file" 0
-				recover_corrupted_state_file "$counter_file" "0" "integer"
-				validation_failed=1
-			fi
-		done
-	fi
+	validate_state_files_by_pattern "failure_counter_*" "integer" "0" "Failure counter file" || validation_failed=1
 
 	# Validate per-peer byte counter files (if any exist)
-	if directory_exists "$STATE_DIR"; then
-		local bytes_file
-		for bytes_file in "${STATE_DIR}"/last_bytes_*; do
-			# Check if glob matched actual files
-			file_exists_and_readable "$bytes_file" || continue
-
-			if ! validate_state_file "$bytes_file" "integer"; then
-				handle_error "WARNING" "Byte counter file corrupted, recovering: $bytes_file" 0
-				recover_corrupted_state_file "$bytes_file" "0" "integer"
-				validation_failed=1
-			fi
-		done
-	fi
+	validate_state_files_by_pattern "last_bytes_*" "integer" "0" "Byte counter file" || validation_failed=1
 
 	return $validation_failed
 }

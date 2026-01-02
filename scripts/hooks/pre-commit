@@ -26,41 +26,41 @@ cd "$REPO_ROOT"
 # Git hooks run with minimal environment, so we check multiple locations
 find_command() {
 	local cmd="$1"
-	
+
 	# First check if command is in PATH (works for apt-installed tools if PATH includes system paths)
 	if command -v "$cmd" >/dev/null 2>&1; then
 		command -v "$cmd"
 		return 0
 	fi
-	
+
 	# Check standard system paths (for apt-installed tools)
 	local system_paths=(
 		"/usr/bin"
 		"/usr/local/bin"
 		"/bin"
 	)
-	
+
 	for sys_path in "${system_paths[@]}"; do
 		if [[ -x "${sys_path}/${cmd}" ]]; then
 			echo "${sys_path}/${cmd}"
 			return 0
 		fi
 	done
-	
+
 	# Check common Homebrew locations (for Homebrew-installed tools)
 	local brew_paths=(
-		"/home/linuxbrew/.linuxbrew/bin"  # Linux Homebrew (default)
-		"$HOME/.linuxbrew/bin"             # Linux Homebrew (user install)
-		"/opt/homebrew/bin"                # macOS Homebrew (Apple Silicon)
+		"/home/linuxbrew/.linuxbrew/bin" # Linux Homebrew (default)
+		"$HOME/.linuxbrew/bin"           # Linux Homebrew (user install)
+		"/opt/homebrew/bin"              # macOS Homebrew (Apple Silicon)
 	)
-	
+
 	for brew_path in "${brew_paths[@]}"; do
 		if [[ -x "${brew_path}/${cmd}" ]]; then
 			echo "${brew_path}/${cmd}"
 			return 0
 		fi
 	done
-	
+
 	return 1
 }
 
@@ -104,6 +104,18 @@ if [[ ${#STAGED_SH_FILES[@]} -gt 0 ]]; then
 			exit 1
 		fi
 	fi
+
+	# Check documentation standards
+	DOC_CHECK_SCRIPT="${REPO_ROOT}/scripts/check-documentation.sh"
+	if [[ -f "$DOC_CHECK_SCRIPT" ]] && [[ -x "$DOC_CHECK_SCRIPT" ]]; then
+		echo "Checking function documentation standards..."
+		if ! "$DOC_CHECK_SCRIPT"; then
+			echo "Error: Documentation check failed. Please fix documentation issues before committing." >&2
+			exit 1
+		fi
+	else
+		echo "Warning: Documentation checker script not found or not executable: $DOC_CHECK_SCRIPT" >&2
+	fi
 fi
 
 # Check if prepare_install_package.sh exists
@@ -137,4 +149,3 @@ echo "Adding ${PACKAGE_FILE} to commit..."
 git add "$PACKAGE_FILE"
 
 echo "Pre-commit hook completed successfully."
-

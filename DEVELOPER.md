@@ -86,6 +86,13 @@ For design decisions and rationale behind architectural choices, see [Architectu
 
 For comprehensive testing documentation including test structure, running tests, writing new tests, coverage reporting, and CI/CD integration, see [tests/README.md](tests/README.md).
 
+The test suite includes **827 tests** across multiple test files:
+- **Fast tests** (~605 tests): Run by default, include unit tests, script-specific tests, and split high-risk test files
+- **Slow tests** (~222 tests): High-risk tests and integration tests, excluded by default (use `--slow` flag to include)
+
+For test patterns and best practices, see [tests/TEST_PATTERNS.md](tests/TEST_PATTERNS.md).
+For BATS framework guide and advanced features, see [docs/BATS_GUIDE.md](docs/BATS_GUIDE.md).
+
 ### Common Development Tasks
 
 **Adding a New Feature:**
@@ -878,6 +885,7 @@ This should be run once after cloning the repository (see [First Time Setup](#fi
 1. **Code Quality Checks** (if tools are installed):
    - Runs ShellCheck on staged shell scripts to catch errors and security issues
    - Checks code formatting with shfmt on staged shell scripts
+   - Validates function documentation standards (enforces ADR-0007)
    - Blocks commit if errors are found (with helpful error messages)
    - Warns if ShellCheck or shfmt are not installed (but allows commit to proceed)
 

@@ -37,6 +37,7 @@ Architecture Decision Records are documents that capture important architectural
 | [ADR-0021](0021-bats-testing-framework.md) | BATS Testing Framework | Accepted |
 | [ADR-0022](0022-phase-1-detection-deferred.md) | Phase 1 Detection Deferred | Accepted |
 | [ADR-0023](0023-resource-monitoring-and-throttling.md) | Resource Monitoring and Throttling | Accepted |
+| [ADR-0024](0024-location-based-configuration.md) | Location-Based Configuration Format | Accepted |
 
 ## ADR Format
 

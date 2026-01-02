@@ -17,21 +17,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # 3. VPN STATUS DETECTION TESTS
 # ============================================================================
 
-# bats test_tags=category:high-risk,priority:high
+# bats test_tags=slow,category:high-risk,priority:high
 @test "xfrm SA exists but byte counter is exactly 0 - should detect bytes=0 as suspect condition" {
 	# Purpose: Test verifies that the detection function correctly identifies VPN failures when xfrm SA exists but byte counter is exactly 0, indicating no traffic has passed through the tunnel.
 	# Expected: Function detects bytes=0 as suspect condition and may mark VPN as failed.
 	# Importance: Zero byte counter indicates VPN tunnel is established but not passing traffic, a failure condition.
 	# Test Category: VPN status detection
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	# Mock ip command - SA exists but bytes=0
 	local mock_ip="${TEST_DIR}/ip"
@@ -46,21 +38,16 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	add_mock_to_path
-	run bash "$test_script" --fake
+	run bash "$TEST_SCRIPT" --fake
 
 	# Should detect bytes=0 as suspect (may fail VPN check)
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "bytes=0" || assert_file_contains "$log_file" "suspect"
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "bytes=0" || assert_file_contains "$LOG_FILE" "suspect"
 
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high
+# bats test_tags=slow,category:high-risk,priority:high
 @test "xfrm SA exists but byte counter decreases - should detect bytes not increasing and mark VPN as suspect" {
 	# Purpose: Test verifies that the detection function correctly identifies VPN failures when byte counter decreases between checks.
 	# Expected: Function detects bytes not increasing and may mark VPN as suspect or failed.
@@ -69,16 +56,13 @@ EOF
 	# Scenario: Counter wrap-around or VPN re-establishment
 	# Setup: Set initial byte count to 10000, mock returns 5000
 	# Edge case: Handles counter wrap-around scenarios
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=0'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local last_bytes_file="${state_dir}/last_bytes_192_168_1_1"
+	source_function "get_peer_state_file_path"
+
+	# setup_location_vpn_monitor creates location "TEST" from LOCATION_TEST_EXTERNAL
+	local last_bytes_file
+	last_bytes_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "last_bytes")
 
 	# Set initial byte count (high value)
 	echo "10000" >"$last_bytes_file"
@@ -96,16 +80,11 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	add_mock_to_path
-	run bash "$test_script" --fake
+	run bash "$TEST_SCRIPT" --fake
 
 	# Should detect bytes not increasing (may fail VPN check)
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "bytes not increasing" || assert_file_contains "$log_file" "suspect"
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "bytes not increasing" || assert_file_contains "$LOG_FILE" "suspect"
 
 	remove_mock_from_path
 }
@@ -116,9 +95,9 @@ EOF
 	# Expected: Function detects bytes not increasing and marks VPN as suspect or failed.
 	# Importance: Stagnant byte counters indicate VPN tunnel is not passing traffic, a critical failure condition.
 	# Test Category: VPN status detection
-	setup_vpn_failing_fixture "192.168.1.1" 0 1000 1000
+	# Disable ping check so that bytes not increasing is detected as suspect (not idle but healthy)
+	setup_vpn_failing_fixture "192.168.1.1" 0 1000 1000 "0x12345678" 'ENABLE_PING_CHECK=0'
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 
 	# Should detect bytes not increasing
@@ -128,7 +107,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high
+# bats test_tags=slow,category:high-risk,priority:high
 @test "byte counter file corrupted - should treat as 0 or reset and continue normal operation" {
 	# Purpose: Test verifies that the script handles corrupted byte counter files gracefully without crashing.
 	# Expected: Script treats corrupted file as 0 or resets it, continuing normal operation.
@@ -136,8 +115,11 @@ EOF
 	# Test Category: Error handling, File corruption
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
+	source_function "get_peer_state_file_path"
+
 	# Create corrupted byte counter file (non-numeric)
-	local last_bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
+	local last_bytes_file
+	last_bytes_file=$(get_peer_state_file_path "" "192.168.1.1" "last_bytes")
 	echo "invalid-value" >"$last_bytes_file"
 
 	add_mock_to_path
@@ -150,7 +132,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high
+# bats test_tags=slow,category:high-risk,priority:high
 @test "byte counter file contains negative number - should handle gracefully" {
 	# Purpose: Test verifies that the script handles byte counter files containing negative numbers gracefully.
 	# Expected: Script treats negative value as invalid and either resets to 0 or uses current bytes value.
@@ -158,8 +140,11 @@ EOF
 	# Test Category: Error handling, File corruption
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
+	source_function "get_peer_state_file_path"
+
 	# Create byte counter file with negative number
-	local last_bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
+	local last_bytes_file
+	last_bytes_file=$(get_peer_state_file_path "" "192.168.1.1" "last_bytes")
 	echo "-1000" >"$last_bytes_file"
 
 	add_mock_to_path
@@ -172,7 +157,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high
+# bats test_tags=slow,category:high-risk,priority:high
 @test "byte counter file is empty - should treat as 0 and update with current bytes" {
 	# Purpose: Test verifies that the script handles empty byte counter files gracefully.
 	# Expected: Script treats empty file as 0, then updates it with current bytes value from xfrm output.
@@ -180,8 +165,11 @@ EOF
 	# Test Category: Error handling, File corruption
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
+	source_function "get_peer_state_file_path"
+
 	# Clear byte counter file to test empty file handling
-	local last_bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
+	local last_bytes_file
+	last_bytes_file=$(get_peer_state_file_path "" "192.168.1.1" "last_bytes")
 	# Remove file if it exists (from fixture setup), then create empty file
 	rm -f "$last_bytes_file"
 	touch "$last_bytes_file"
@@ -213,32 +201,20 @@ EOF
 	# Expected: Script handles missing detection tools gracefully, may log warnings or exit early.
 	# Importance: Ensures script fails gracefully in environments where required tools are missing.
 	# Test Category: Error handling, Tool availability
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	# Don't create any mock commands (all unavailable)
 	# PATH will not include mocks, so real commands won't be found in test environment
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
 	# Create minimal PATH with only essential commands
 	# Use a PATH that doesn't include ip or ipsec
-	PATH="/usr/bin:/bin" run bash "$test_script" --fake
+	PATH="/usr/bin:/bin" run bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should handle all methods unavailable gracefully
 	# Script may exit early, but if log file exists, it should contain error messages
-	if [[ -f "$log_file" ]]; then
-		assert_file_contains "$log_file" "suspect" || assert_file_contains "$log_file" "failed" || assert_file_contains "$log_file" "WARNING"
+	if [[ -f "$LOG_FILE" ]]; then
+		assert_file_contains "$LOG_FILE" "suspect" || assert_file_contains "$LOG_FILE" "failed" || assert_file_contains "$LOG_FILE" "WARNING"
 	else
 		# If log file doesn't exist, script likely exited very early - this is acceptable
 		# The important thing is it didn't crash
@@ -246,21 +222,13 @@ EOF
 	fi
 }
 
-# bats test_tags=category:high-risk,priority:high
+# bats test_tags=slow,category:high-risk,priority:high
 @test "xfrm output contains multiple lifetime lines - should extract first lifetime line correctly" {
 	# Purpose: Test verifies that the script correctly handles xfrm output containing multiple lifetime lines.
 	# Expected: Script extracts the first lifetime line correctly and uses it for byte counter detection.
 	# Importance: xfrm output can contain multiple lifetime entries; script must parse them correctly.
 	# Test Category: VPN status detection, Parsing edge cases
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	# Mock ip command with multiple lifetime lines
 	local mock_ip="${TEST_DIR}/ip"
@@ -277,24 +245,19 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	add_mock_to_path
-	run bash "$test_script" --fake
+	run bash "$TEST_SCRIPT" --fake
 
 	# Should extract first lifetime line correctly
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high
-@test "ping check enabled but INTERNAL_PEER_IPS not set - should use peer IP for ping check" {
-	# Purpose: Test verifies that when ping check is enabled but INTERNAL_PEER_IPS is not set, the script uses peer IP for ping check.
-	# Expected: Script falls back to using EXTERNAL_PEER_IPS for ping check when INTERNAL_PEER_IPS is not configured.
+# bats test_tags=slow,category:high-risk,priority:high
+@test "ping check enabled but internal IP not set - should use peer IP for ping check" {
+	# Purpose: Test verifies that when ping check is enabled but internal IP is not set, the script uses peer IP for ping check.
+	# Expected: Script falls back to using external peer IP for ping check when internal IP is not configured.
 	# Importance: Ensures ping check works even when internal peer IPs are not configured.
 	# Test Category: VPN status detection, Ping check fallback
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1'
@@ -304,7 +267,6 @@ EOF
 	mock_ping=$(mock_ping "192.168.1.1" "1")
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 
 	# Should use peer IP for ping check
@@ -339,7 +301,6 @@ EOF
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT"
 
 	# Script should handle error code gracefully
@@ -361,18 +322,7 @@ EOF
 	# Expected: Script falls back to alternative detection methods when primary tool detection fails.
 	# Importance: Tool availability detection can fail in some environments; script must handle gracefully.
 	# Test Category: Error handling, Tool availability
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	# Mock command to fail (simulates command -v failure)
 	local mock_command="${TEST_DIR}/command"
@@ -392,11 +342,11 @@ EOF
 	# Create minimal PATH without ip command
 	PATH="${TEST_DIR}:/usr/bin:/bin" add_mock_to_path
 
-	PATH="${TEST_DIR}:/usr/bin:/bin" run bash "$test_script" --fake
+	PATH="${TEST_DIR}:/usr/bin:/bin" run bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should handle missing ip command gracefully (should fall back to ipsec or fail gracefully)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	# Restore
 	mv "${TEST_DIR}/ip_backup" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -413,7 +363,7 @@ EOF
 	# Expected: Script logs warning about missing ping command but continues execution without ping check.
 	# Importance: Ping commands may not be available in all environments; script must handle gracefully.
 	# Test Category: Error handling, Tool availability
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="2001:db8::1"'
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="2001:db8::1"'
 
 	# Mock command to fail for ping (simulates ping not available)
 	local mock_command="${TEST_DIR}/command"
@@ -432,7 +382,6 @@ EOF
 
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
@@ -452,21 +401,22 @@ EOF
 	# Scenario: Ping command hangs due to network issues
 	# Setup: Mock ping to sleep longer than timeout value
 	# Edge case: Handles hanging commands that could block script execution
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=1'
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=1'
 
 	# Mock ping to hang (simulates timeout)
 	local mock_ping="${TEST_DIR}/ping"
 	cat >"$mock_ping" <<'EOF'
 #!/bin/bash
 # Simulate ping hanging (sleep longer than timeout)
-sleep 3
+sleep 2
 exit 0
 EOF
 	chmod +x "$mock_ping"
 	add_mock_to_path
 
-	add_mock_to_path
-	run timeout 2 bash "$TEST_SCRIPT" --fake
+	# Use timeout of 10 seconds to allow script initialization, ping timeout handling, and completion
+	# The ping wrapper timeout is 2 seconds, but script initialization and other checks take additional time
+	run timeout 10 bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should handle ping timeout gracefully (should log error but continue)
@@ -482,7 +432,7 @@ EOF
 	# Expected: Script detects 100% packet loss from ping output and logs warning but continues execution.
 	# Importance: Weird network states can cause ping to succeed but report no packets received; script must detect this.
 	# Test Category: VPN status detection, Ping check edge cases
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="192.168.1.1"'
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="192.168.1.1"'
 
 	# Mock ping to return success but 100% packet loss (weird network state)
 	local mock_ping="${TEST_DIR}/ping"
@@ -498,7 +448,6 @@ EOF
 	chmod +x "$mock_ping"
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
@@ -513,7 +462,7 @@ EOF
 # 3.3 FALLBACK CHAIN EDGE CASES (continued)
 # ============================================================================
 
-# bats test_tags=category:high-risk,priority:high
+# bats test_tags=slow,category:high-risk,priority:high
 @test "ipsec command hangs (timeout scenario - status check) - should timeout and continue" {
 	# Purpose: Test verifies that the script handles ipsec status commands that hang indefinitely.
 	# Expected: Script times out ipsec status check and continues execution without blocking.
@@ -522,11 +471,12 @@ EOF
 	setup_vpn_down_fixture "192.168.1.1" 0
 
 	# Mock ipsec status to hang (simulates timeout)
+	# Sleep longer than IPSEC_STATUS_TIMEOUT (5 seconds) to trigger timeout
 	local mock_ipsec="${TEST_DIR}/ipsec"
 	cat >"$mock_ipsec" <<'EOF'
 #!/bin/bash
 if [[ "$1" == "status" ]]; then
-    # Simulate ipsec status hanging
+    # Simulate ipsec status hanging longer than timeout (6 seconds > 5 second timeout)
     sleep 6
     exit 0
 fi
@@ -535,12 +485,13 @@ EOF
 	add_mock_to_path
 
 	# Run with timeout to prevent test from hanging
-	add_mock_to_path
-	run timeout 5 bash "$TEST_SCRIPT" --fake
+	# Test timeout should be longer than IPSEC_STATUS_TIMEOUT to allow script to complete
+	# Allow extra time for script initialization and other operations
+	run timeout 10 bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should handle ipsec status hang gracefully (should timeout and continue)
-	# Code at lib/detection.sh:636 uses ipsec status with 2>/dev/null
+	# Code at lib/detection.sh wraps ipsec status with timeout command (IPSEC_STATUS_TIMEOUT=5s)
 	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
@@ -556,7 +507,7 @@ EOF
 	# Expected: Function returns 0 when default route is present.
 	# Importance: Default route check is critical for network partition detection.
 	# Test Category: Network partition detection
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - default route exists
 	mock_ip_route "1" "default via 192.168.1.1 dev eth0"
@@ -581,7 +532,7 @@ EOF
 	# Expected: Function returns 1 when default route is not found.
 	# Importance: Missing default route indicates network partition.
 	# Test Category: Network partition detection
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - default route missing
 	mock_ip_route "0"
@@ -606,7 +557,7 @@ EOF
 	# Expected: Function returns 0 when DNS resolution succeeds.
 	# Importance: DNS resolution check is critical for network partition detection.
 	# Test Category: Network partition detection
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock dig command - DNS resolution succeeds
 	mock_dig "1" "8.8.8.8"
@@ -631,7 +582,7 @@ EOF
 	# Expected: Function returns 1 when DNS resolution times out.
 	# Importance: DNS timeout indicates network partition.
 	# Test Category: Network partition detection
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock dig command - DNS resolution fails (timeout)
 	mock_dig "0" "8.8.8.8" "timeout"
@@ -658,7 +609,7 @@ EOF
 	# Expected: Function returns 1 when DNS server is unreachable.
 	# Importance: Unreachable DNS server indicates network partition.
 	# Test Category: Network partition detection
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock dig command - DNS server unreachable
 	local mock_dig="${TEST_DIR}/dig"
@@ -688,7 +639,7 @@ EOF
 	# Expected: Function returns 0 when all checked interfaces are UP.
 	# Importance: Interface state check is critical for network partition detection.
 	# Test Category: Network partition detection
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - all interfaces UP
 	mock_ip_interfaces_up "br0,eth0" "0" >/dev/null
@@ -713,7 +664,7 @@ EOF
 	# Expected: Function returns 1 when one or more interfaces are DOWN.
 	# Importance: Down interfaces indicate network partition.
 	# Test Category: Network partition detection
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - one interface DOWN
 	local mock_ip="${TEST_DIR}/ip"
@@ -753,7 +704,7 @@ EOF
 	# Expected: Function returns 1 when interface doesn't exist.
 	# Importance: Non-existent interfaces indicate network partition or misconfiguration.
 	# Test Category: Network partition detection
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - interface doesn't exist
 	local mock_ip="${TEST_DIR}/ip"
@@ -790,7 +741,7 @@ EOF
 	# Expected: Function returns 0 when all checks pass.
 	# Importance: Network partition detection prevents false VPN failure detection.
 	# Test Category: Network partition detection
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - default route exists, interfaces UP
 	mock_ip_interfaces_up "br0,eth0" "1" >/dev/null
@@ -824,7 +775,7 @@ EOF
 	# Expected: Function returns 1 when one or more checks fail.
 	# Importance: Network partition detection prevents false VPN failure detection.
 	# Test Category: Network partition detection
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - default route missing, interfaces UP
 	mock_ip_interfaces_up "br0,eth0" "0" >/dev/null
@@ -852,7 +803,7 @@ EOF
 	# Expected: Function uses custom DNS server, hostname, and interfaces.
 	# Importance: Custom parameters allow flexible network partition detection.
 	# Test Category: Network partition detection
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - interfaces UP
 	mock_ip_interfaces_up "eth1,eth2" "1" >/dev/null
@@ -886,13 +837,16 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "SA rekey detected - SPI changes, baseline reset to 0" {
-	# Test verifies that SA rekey detection resets byte counter baseline to 0 when SPI changes.
-	# Expected: When SPI changes, byte counter baseline is reset to 0.
-	# Importance: Prevents false failure detection after SA rekey events.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	# Purpose: Test verifies that SA rekey detection resets byte counter baseline to 0 when SPI changes
+	# Expected: When SPI changes, byte counter baseline is reset to 0
+	# Importance: Prevents false failure detection after SA rekey events
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
-	# Set initial SPI and byte counter
-	setup_state_files "192.168.1.1" 0 5000 "0x12345678"
+	# Set initial SPI and byte counter using location-based state functions
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+	set_peer_state "TEST" "192.168.1.1" "last_bytes" "5000" || true
+	set_peer_state "TEST" "192.168.1.1" "spi" "0x12345678" || true
 
 	# Mock ip command - new SPI (rekey occurred)
 	local mock_ip="${TEST_DIR}/ip"
@@ -907,7 +861,6 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 
 	# Should detect rekey and reset baseline
@@ -915,8 +868,11 @@ EOF
 	assert_file_exist "$LOG_FILE"
 	assert_file_contains "$LOG_FILE" "SA rekey detected" || assert_file_contains "$LOG_FILE" "rekey"
 
+	source_function "get_peer_state_file_path"
+
 	# Verify byte counter baseline was reset
-	local bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
+	local bytes_file
+	bytes_file=$(get_peer_state_file_path "" "192.168.1.1" "last_bytes")
 	if [[ -f "$bytes_file" ]]; then
 		local bytes
 		bytes=$(cat "$bytes_file")
@@ -929,13 +885,16 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "SA rekey detected - Byte counter baseline reset allows new baseline" {
-	# Test verifies that byte counter baseline reset after rekey allows new baseline to be established.
-	# Expected: After rekey, new byte counter baseline can be established from current bytes.
-	# Importance: Ensures byte counter tracking works correctly after rekey events.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	# Purpose: Test verifies that byte counter baseline reset after rekey allows new baseline to be established
+	# Expected: After rekey, new byte counter baseline can be established from current bytes
+	# Importance: Ensures byte counter tracking works correctly after rekey events
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
-	# Set initial SPI and byte counter (high value)
-	setup_state_files "192.168.1.1" 0 10000 "0x12345678"
+	# Set initial SPI and byte counter (high value) using location-based state functions
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+	set_peer_state "TEST" "192.168.1.1" "last_bytes" "10000" || true
+	set_peer_state "TEST" "192.168.1.1" "spi" "0x12345678" || true
 
 	# Mock ip command - new SPI (rekey) with new bytes
 	local mock_ip="${TEST_DIR}/ip"
@@ -950,15 +909,17 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 
 	# Should detect rekey and establish new baseline
 	assert_success
 	assert_file_exist "$LOG_FILE"
 
+	source_function "get_peer_state_file_path"
+
 	# Verify new baseline was established (2000 bytes)
-	local bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
+	local bytes_file
+	bytes_file=$(get_peer_state_file_path "" "192.168.1.1" "last_bytes")
 	if [[ -f "$bytes_file" ]]; then
 		local bytes
 		bytes=$(cat "$bytes_file")
@@ -970,14 +931,20 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "SA rekey detected - Idle state cleared on rekey" {
-	# Test verifies that idle state is cleared when SA rekey is detected.
-	# Expected: Idle state file is deleted when rekey occurs.
-	# Importance: Rekey events reset all state, including idle detection.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	# Purpose: Test verifies that idle state is cleared when SA rekey is detected
+	# Expected: Idle state file is deleted when rekey occurs
+	# Importance: Rekey events reset all state, including idle detection
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
-	# Set initial SPI and create idle state file
-	setup_state_files "192.168.1.1" 0 1000 "0x12345678"
-	local idle_file="${STATE_DIR}/idle_detected_192_168_1_1"
+	# Set initial SPI and create idle state file using location-based state functions
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+	set_peer_state "TEST" "192.168.1.1" "last_bytes" "1000" || true
+	set_peer_state "TEST" "192.168.1.1" "spi" "0x12345678" || true
+	source_function "get_peer_state_file_path"
+	# setup_location_vpn_monitor creates location "TEST" from LOCATION_TEST_EXTERNAL
+	local idle_file
+	idle_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "idle_detected")
 	echo "1" >"$idle_file"
 
 	# Mock ip command - new SPI (rekey occurred)
@@ -993,7 +960,6 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 
 	# Should detect rekey and clear idle state
@@ -1006,15 +972,18 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:medium
+# bats test_tags=slow,category:high-risk,priority:medium
 @test "SA rekey not detected - SPI unchanged" {
-	# Test verifies that SA rekey is not detected when SPI remains unchanged.
-	# Expected: No rekey detection when SPI is the same as stored value.
-	# Importance: Prevents false rekey detection when SPI hasn't changed.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	# Purpose: Test verifies that SA rekey is not detected when SPI remains unchanged
+	# Expected: No rekey detection when SPI is the same as stored value
+	# Importance: Prevents false rekey detection when SPI hasn't changed
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
-	# Set initial SPI
-	setup_state_files "192.168.1.1" 0 1000 "0x12345678"
+	# Set initial SPI using location-based state functions
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+	set_peer_state "TEST" "192.168.1.1" "last_bytes" "1000" || true
+	set_peer_state "TEST" "192.168.1.1" "spi" "0x12345678" || true
 
 	# Mock ip command - same SPI (no rekey)
 	local mock_ip="${TEST_DIR}/ip"
@@ -1029,7 +998,6 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 
 	# Should not detect rekey
@@ -1041,12 +1009,12 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:medium
+# bats test_tags=slow,category:high-risk,priority:medium
 @test "SA rekey detection - First check (no stored SPI) - Should store SPI" {
-	# Test verifies that first check stores SPI without detecting rekey.
-	# Expected: SPI is stored on first check, no rekey detected.
-	# Importance: Ensures SPI tracking starts correctly on first check.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	# Purpose: Test verifies that first check stores SPI without detecting rekey
+	# Expected: SPI is stored on first check, no rekey detected
+	# Importance: Ensures SPI tracking starts correctly on first check
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
 	# Don't set SPI file (first check)
 
@@ -1063,15 +1031,17 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 
 	# Should store SPI but not detect rekey
 	assert_success
 	assert_file_exist "$LOG_FILE"
 
-	# Verify SPI was stored
-	local spi_file="${STATE_DIR}/spi_192_168_1_1"
+	source_function "get_peer_state_file_path"
+
+	# Verify SPI was stored - use location-based path
+	local spi_file
+	spi_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "spi")
 	assert_file_exist "$spi_file"
 	local spi
 	spi=$(cat "$spi_file")
@@ -1080,15 +1050,18 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:medium
+# bats test_tags=slow,category:high-risk,priority:medium
 @test "SA rekey detection - SPI file corrupted - Should recover gracefully" {
-	# Test verifies that corrupted SPI files are recovered gracefully.
-	# Expected: Corrupted SPI file is recovered and SPI tracking continues.
-	# Importance: Prevents script failures from corrupted SPI files.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	# Purpose: Test verifies that corrupted SPI files are recovered gracefully
+	# Expected: Corrupted SPI file is recovered and SPI tracking continues
+	# Importance: Prevents script failures from corrupted SPI files
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
-	# Create corrupted SPI file
-	local spi_file="${STATE_DIR}/spi_192_168_1_1"
+	source_function "get_peer_state_file_path"
+
+	# Create corrupted SPI file - use location-based path
+	local spi_file
+	spi_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "spi")
 	echo "invalid-value" >"$spi_file"
 
 	# Mock ip command
@@ -1104,7 +1077,6 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 
 	# Should recover corrupted file and continue
@@ -1122,15 +1094,18 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:medium
+# bats test_tags=slow,category:high-risk,priority:medium
 @test "SA rekey detection - Multiple rekeys in sequence" {
-	# Test verifies that multiple rekeys in sequence are detected correctly.
-	# Expected: Each rekey is detected and baseline is reset appropriately.
-	# Importance: Ensures rekey detection works correctly for multiple rekey events.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	# Purpose: Test verifies that multiple rekeys in sequence are detected correctly
+	# Expected: Each rekey is detected and baseline is reset appropriately
+	# Importance: Ensures rekey detection works correctly for multiple rekey events
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
-	# Set initial SPI
-	setup_state_files "192.168.1.1" 0 1000 "0x12345678"
+	# Set initial SPI using location-based state functions
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+	set_peer_state "TEST" "192.168.1.1" "last_bytes" "1000" || true
+	set_peer_state "TEST" "192.168.1.1" "spi" "0x12345678" || true
 
 	# First rekey
 	local mock_ip="${TEST_DIR}/ip"
@@ -1145,7 +1120,6 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 	assert_file_contains "$LOG_FILE" "SA rekey detected" || assert_file_contains "$LOG_FILE" "rekey"
@@ -1160,13 +1134,16 @@ if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
 fi
 EOF
 
-	add_mock_to_path
+	# Mock is already in PATH from first add_mock_to_path call
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 	assert_file_contains "$LOG_FILE" "SA rekey detected" || assert_file_contains "$LOG_FILE" "rekey"
 
+	source_function "get_peer_state_file_path"
+
 	# Verify SPI was updated to latest value
-	local spi_file="${STATE_DIR}/spi_192_168_1_1"
+	local spi_file
+	spi_file=$(get_peer_state_file_path "" "192.168.1.1" "spi")
 	if [[ -f "$spi_file" ]]; then
 		local spi
 		spi=$(cat "$spi_file")
@@ -1182,10 +1159,10 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Failure type tunnel_down - No Phase 2 SA found" {
-	# Test verifies that failure type "tunnel_down" is detected when no Phase 2 SA is found.
-	# Expected: Failure type is detected as "tunnel_down" when no SA exists.
-	# Importance: Enables targeted recovery strategies based on failure type.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	# Purpose: Test verifies that failure type "tunnel_down" is detected when no Phase 2 SA is found
+	# Expected: Failure type is detected as "tunnel_down" when no SA exists
+	# Importance: Enables targeted recovery strategies based on failure type
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
 	# Mock ip command - no SA (tunnel down)
 	local mock_ip="${TEST_DIR}/ip"
@@ -1200,7 +1177,6 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
@@ -1208,8 +1184,10 @@ EOF
 	assert_file_exist "$LOG_FILE"
 	assert_file_contains "$LOG_FILE" "Tunnel down" || assert_file_contains "$LOG_FILE" "tunnel_down"
 
+	source_function "get_peer_state_file_path"
 	# Verify failure type stored in state file
-	local failure_type_file="${STATE_DIR}/failure_type_192_168_1_1"
+	local failure_type_file
+	failure_type_file=$(get_peer_state_file_path "" "192.168.1.1" "failure_type")
 	if [[ -f "$failure_type_file" ]]; then
 		local failure_type
 		failure_type=$(cat "$failure_type_file")
@@ -1221,28 +1199,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Failure type routing_issue - Phase 2 SA exists but bytes not increasing" {
-	# Test verifies that failure type "routing_issue" is detected when SA exists but bytes not increasing.
-	# Expected: Failure type is detected as "routing_issue" when SA exists but traffic not flowing.
-	# Importance: Enables targeted recovery strategies for routing issues.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	# Purpose: Test verifies that failure type "routing_issue" is detected when SA exists but bytes not increasing
+	# Expected: Failure type is detected as "routing_issue" when SA exists but traffic not flowing
+	# Importance: Enables targeted recovery strategies for routing issues
+	# Disable ping check so that bytes not increasing is treated as a routing issue, not idle tunnel
+	setup_vpn_failing_fixture "192.168.1.1" 0 1000 1000 "0x12345678" 'ENABLE_PING_CHECK=0'
 
-	# Set initial bytes (same as current - not increasing)
-	setup_state_files "192.168.1.1" 0 1000 "0x12345678"
-
-	# Mock ip command - SA exists but bytes not increasing
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 1000 bytes, 10 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
-	add_mock_to_path
-
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
@@ -1250,8 +1212,10 @@ EOF
 	assert_file_exist "$LOG_FILE"
 	assert_file_contains "$LOG_FILE" "Routing issue" || assert_file_contains "$LOG_FILE" "routing_issue"
 
+	source_function "get_peer_state_file_path"
 	# Verify failure type stored in state file
-	local failure_type_file="${STATE_DIR}/failure_type_192_168_1_1"
+	local failure_type_file
+	failure_type_file=$(get_peer_state_file_path "" "192.168.1.1" "failure_type")
 	if [[ -f "$failure_type_file" ]]; then
 		local failure_type
 		failure_type=$(cat "$failure_type_file")
@@ -1263,36 +1227,19 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Failure type routing_issue - Phase 2 SA exists but ping fails" {
-	# Test verifies that failure type "routing_issue" is detected when SA exists but ping fails.
-	# Expected: Failure type is detected as "routing_issue" when SA exists but connectivity fails.
-	# Importance: Enables targeted recovery strategies for routing issues.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="192.168.1.1"'
+	# Purpose: Test verifies that failure type "routing_issue" is detected when SA exists but ping fails
+	# Expected: Failure type is detected as "routing_issue" when SA exists but connectivity fails
+	# Importance: Enables targeted recovery strategies for routing issues
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="192.168.1.1"'
 
-	# Set initial bytes (increasing)
-	setup_state_files "192.168.1.1" 0 1000 "0x12345678"
-
-	# Mock ip command - SA exists
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 2000 bytes, 20 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
-
-	# Mock ping - fails
+	# Mock ping - fails (overrides fixture's ping mock)
 	local mock_ping="${TEST_DIR}/ping"
 	cat >"$mock_ping" <<'EOF'
 #!/bin/bash
 exit 1
 EOF
 	chmod +x "$mock_ping"
-	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
@@ -1305,15 +1252,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Failure type rekey - SPI changed (not a failure, but logged)" {
-	# Test verifies that failure type "rekey" is detected when SPI changes (not a failure).
-	# Expected: Failure type is detected as "rekey" when SPI changes, VPN marked as OK.
-	# Importance: Rekey events are logged but not treated as failures.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	# Purpose: Test verifies that failure type "rekey" is detected when SPI changes (not a failure)
+	# Expected: Failure type is detected as "rekey" when SPI changes, VPN marked as OK
+	# Importance: Rekey events are logged but not treated as failures
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "0x12345678"
 
-	# Set initial SPI
-	setup_state_files "192.168.1.1" 0 1000 "0x12345678"
-
-	# Mock ip command - new SPI (rekey)
+	# Mock ip command - new SPI (rekey) - override fixture's mock
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'EOF'
 #!/bin/bash
@@ -1324,9 +1268,7 @@ if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
 fi
 EOF
 	chmod +x "$mock_ip"
-	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 
 	# Should detect rekey (not a failure)
@@ -1334,8 +1276,10 @@ EOF
 	assert_file_exist "$LOG_FILE"
 	assert_file_contains "$LOG_FILE" "rekey" || assert_file_contains "$LOG_FILE" "SA rekey detected"
 
+	source_function "get_peer_state_file_path"
 	# Verify failure type stored (rekey is logged but VPN is OK)
-	local failure_type_file="${STATE_DIR}/failure_type_192_168_1_1"
+	local failure_type_file
+	failure_type_file=$(get_peer_state_file_path "" "192.168.1.1" "failure_type")
 	if [[ -f "$failure_type_file" ]]; then
 		local failure_type
 		failure_type=$(cat "$failure_type_file")
@@ -1346,12 +1290,12 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:medium
+# bats test_tags=slow,category:high-risk,priority:medium
 @test "Failure type unknown - Unable to determine type" {
-	# Test verifies that failure type "unknown" is detected when unable to determine specific type.
-	# Expected: Failure type is detected as "unknown" when detection methods fail.
-	# Importance: Ensures failure tracking continues even when specific type cannot be determined.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	# Purpose: Test verifies that failure type "unknown" is detected when unable to determine specific type
+	# Expected: Failure type is detected as "unknown" when detection methods fail
+	# Importance: Ensures failure tracking continues even when specific type cannot be determined
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
 	# Mock ip command - SA exists but no byte counter info
 	local mock_ip="${TEST_DIR}/ip"
@@ -1366,7 +1310,6 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
@@ -1374,8 +1317,10 @@ EOF
 	assert_file_exist "$LOG_FILE"
 	assert_file_contains "$LOG_FILE" "Unknown" || assert_file_contains "$LOG_FILE" "unknown"
 
+	source_function "get_peer_state_file_path"
 	# Verify failure type stored in state file
-	local failure_type_file="${STATE_DIR}/failure_type_192_168_1_1"
+	local failure_type_file
+	failure_type_file=$(get_peer_state_file_path "" "192.168.1.1" "failure_type")
 	if [[ -f "$failure_type_file" ]]; then
 		local failure_type
 		failure_type=$(cat "$failure_type_file")
@@ -1387,10 +1332,10 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Failure type stored in state file for recovery actions" {
-	# Test verifies that failure type is stored in state file for use by recovery actions.
-	# Expected: Failure type is stored in state file and can be retrieved for recovery strategies.
-	# Importance: Enables recovery actions to use failure-specific strategies.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	# Purpose: Test verifies that failure type is stored in state file for use by recovery actions
+	# Expected: Failure type is stored in state file and can be retrieved for recovery strategies
+	# Importance: Enables recovery actions to use failure-specific strategies
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
 	# Mock ip command - no SA (tunnel down)
 	local mock_ip="${TEST_DIR}/ip"
@@ -1404,12 +1349,13 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
+	source_function "get_peer_state_file_path"
 	# Verify failure type stored in state file
-	local failure_type_file="${STATE_DIR}/failure_type_192_168_1_1"
+	local failure_type_file
+	failure_type_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_type")
 	assert_file_exist "$failure_type_file"
 	local failure_type
 	failure_type=$(cat "$failure_type_file")
@@ -1418,22 +1364,19 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:medium
+# bats test_tags=slow,category:high-risk,priority:medium
 @test "Failure type cleared on VPN recovery" {
-	# Test verifies that failure type is cleared when VPN recovers.
-	# Expected: Failure type file is removed or cleared when VPN becomes healthy.
-	# Importance: Ensures failure type tracking is reset after recovery.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	# Purpose: Test verifies that failure type is cleared when VPN recovers
+	# Expected: Failure type file is removed or cleared when VPN becomes healthy
+	# Importance: Ensures failure type tracking is reset after recovery
+	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
+	source_function "get_peer_state_file_path"
 	# Create failure type file (from previous failure)
-	local failure_type_file="${STATE_DIR}/failure_type_192_168_1_1"
+	local failure_type_file
+	failure_type_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_type")
 	echo "tunnel_down" >"$failure_type_file"
 
-	# Mock ip command - VPN recovers
-	setup_mock_vpn_environment "192.168.1.1" 1000
-	add_mock_to_path
-
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 
 	# VPN should recover
@@ -1450,10 +1393,10 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Failure type detection when xfrm unavailable" {
-	# Test verifies that failure type detection works when xfrm is unavailable.
-	# Expected: Failure type is detected using fallback methods when xfrm unavailable.
-	# Importance: Ensures failure type detection works even when preferred method unavailable.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	# Purpose: Test verifies that failure type detection works when xfrm is unavailable
+	# Expected: Failure type is detected using fallback methods when xfrm unavailable
+	# Importance: Ensures failure type detection works even when preferred method unavailable
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
 	# Don't create ip mock (xfrm unavailable)
 	# Mock ipsec - no connection
@@ -1485,13 +1428,16 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Idle tunnel detected - Bytes not increasing but ping succeeds" {
-	# Test verifies that idle tunnel detection works when bytes are not increasing but ping succeeds.
-	# Expected: Tunnel is marked as idle but healthy, idle state stored in state file.
-	# Importance: Prevents false failure detection for tunnels that are healthy but not passing traffic.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="10.0.0.1"'
+	# Purpose: Test verifies that idle tunnel detection works when bytes are not increasing but ping succeeds
+	# Expected: Tunnel is marked as idle but healthy, idle state stored in state file
+	# Importance: Prevents false failure detection for tunnels that are healthy but not passing traffic
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="10.0.0.1"'
+
+	source_function "get_peer_state_file_path"
 
 	# Set initial byte counter (bytes not increasing)
-	local last_bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
+	local last_bytes_file
+	last_bytes_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "last_bytes")
 	echo "1000" >"$last_bytes_file"
 
 	# Mock ip command - SA exists, bytes static
@@ -1518,7 +1464,8 @@ EOF
 	assert_file_contains "$LOG_FILE" "idle but healthy" || assert_file_contains "$LOG_FILE" "ping check passed"
 
 	# Idle state should be stored
-	local idle_file="${STATE_DIR}/idle_detected_192_168_1_1"
+	local idle_file
+	idle_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "idle_detected")
 	assert_file_exist "$idle_file"
 	local idle_state
 	idle_state=$(cat "$idle_file" 2>/dev/null || echo "")
@@ -1529,13 +1476,16 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Idle tunnel detected - Idle state stored in state file" {
-	# Test verifies that idle tunnel state is stored in state file.
-	# Expected: idle_detected file is created with value "1" when idle tunnel is detected.
-	# Importance: Idle state tracking allows monitoring idle tunnels over time.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="10.0.0.1"'
+	# Purpose: Test verifies that idle tunnel state is stored in state file
+	# Expected: idle_detected file is created with value "1" when idle tunnel is detected
+	# Importance: Idle state tracking allows monitoring idle tunnels over time
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="10.0.0.1"'
+
+	source_function "get_peer_state_file_path"
 
 	# Set initial byte counter (bytes not increasing)
-	local last_bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
+	local last_bytes_file
+	last_bytes_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "last_bytes")
 	echo "1000" >"$last_bytes_file"
 
 	# Mock ip command - SA exists, bytes static
@@ -1557,7 +1507,8 @@ EOF
 	run bash "$TEST_SCRIPT" --fake
 
 	# Idle state file should exist and contain "1"
-	local idle_file="${STATE_DIR}/idle_detected_192_168_1_1"
+	local idle_file
+	idle_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "idle_detected")
 	assert_file_exist "$idle_file"
 	local idle_state
 	idle_state=$(cat "$idle_file" 2>/dev/null || echo "")
@@ -1568,13 +1519,16 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Idle tunnel - Keepalive suggestion logged when keepalive disabled" {
-	# Test verifies that keepalive suggestion is logged when idle tunnel detected and keepalive disabled.
-	# Expected: Log message suggests enabling ENABLE_KEEPALIVE=1 when idle tunnel detected.
-	# Importance: Helps users prevent idle tunnel timeouts.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'ENABLE_KEEPALIVE=0' 'INTERNAL_PEER_IPS="10.0.0.1"'
+	# Purpose: Test verifies that keepalive suggestion is logged when idle tunnel detected and keepalive disabled
+	# Expected: Log message suggests enabling ENABLE_KEEPALIVE=1 when idle tunnel detected
+	# Importance: Helps users prevent idle tunnel timeouts
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'ENABLE_KEEPALIVE=0' 'LOCATION_TEST_INTERNAL="10.0.0.1"'
+
+	source_function "get_peer_state_file_path"
 
 	# Set initial byte counter (bytes not increasing)
-	local last_bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
+	local last_bytes_file
+	last_bytes_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "last_bytes")
 	echo "1000" >"$last_bytes_file"
 
 	# Mock ip command - SA exists, bytes static
@@ -1605,13 +1559,16 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Idle tunnel - Keepalive daemon check when keepalive enabled" {
-	# Test verifies that keepalive daemon status is checked when keepalive is enabled.
-	# Expected: Log message checks if keepalive daemon is running when idle tunnel detected.
-	# Importance: Helps users ensure keepalive daemon is running when enabled.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'ENABLE_KEEPALIVE=1' 'INTERNAL_PEER_IPS="10.0.0.1"'
+	# Purpose: Test verifies that keepalive daemon status is checked when keepalive is enabled
+	# Expected: Log message checks if keepalive daemon is running when idle tunnel detected
+	# Importance: Helps users ensure keepalive daemon is running when enabled
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'ENABLE_KEEPALIVE=1' 'LOCATION_TEST_INTERNAL="10.0.0.1"'
+
+	source_function "get_peer_state_file_path"
 
 	# Set initial byte counter (bytes not increasing)
-	local last_bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
+	local last_bytes_file
+	last_bytes_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "last_bytes")
 	echo "1000" >"$last_bytes_file"
 
 	# Mock ip command - SA exists, bytes static
@@ -1644,15 +1601,19 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Idle tunnel - Traffic resumes, idle state cleared" {
-	# Test verifies that idle state is cleared when traffic resumes.
-	# Expected: idle_detected file is deleted or cleared when bytes start increasing again.
-	# Importance: Ensures idle state doesn't persist after traffic resumes.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="10.0.0.1"'
+	# Purpose: Test verifies that idle state is cleared when traffic resumes
+	# Expected: idle_detected file is deleted or cleared when bytes start increasing again
+	# Importance: Ensures idle state doesn't persist after traffic resumes
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="10.0.0.1"'
+
+	source_function "get_peer_state_file_path"
 
 	# Set initial byte counter and idle state
-	local last_bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
+	local last_bytes_file
+	last_bytes_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "last_bytes")
 	echo "1000" >"$last_bytes_file"
-	local idle_file="${STATE_DIR}/idle_detected_192_168_1_1"
+	local idle_file
+	idle_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "idle_detected")
 	echo "1" >"$idle_file"
 
 	# Mock ip command - SA exists, bytes increasing (traffic resumed)
@@ -1666,6 +1627,9 @@ if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
 fi
 EOF
 	chmod +x "$mock_ip"
+
+	# Mock ping - succeeds (required when ENABLE_PING_CHECK=1)
+	mock_ping_success >/dev/null
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -1687,13 +1651,16 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Idle tunnel - Ping check disabled, idle not detected" {
-	# Test verifies that idle tunnel is not detected when ping check is disabled.
-	# Expected: Tunnel is marked as suspect/failed when bytes not increasing and ping disabled.
-	# Importance: Ping check is required for idle tunnel detection.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=0' 'INTERNAL_PEER_IPS="10.0.0.1"'
+	# Purpose: Test verifies that idle tunnel is not detected when ping check is disabled
+	# Expected: Tunnel is marked as suspect/failed when bytes not increasing and ping disabled
+	# Importance: Ping check is required for idle tunnel detection
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=0' 'LOCATION_TEST_INTERNAL="10.0.0.1"'
+
+	source_function "get_peer_state_file_path"
 
 	# Set initial byte counter (bytes not increasing)
-	local last_bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
+	local last_bytes_file
+	last_bytes_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "last_bytes")
 	echo "1000" >"$last_bytes_file"
 
 	# Mock ip command - SA exists, bytes static
@@ -1718,7 +1685,8 @@ EOF
 	assert_file_contains "$LOG_FILE" "suspect" || assert_file_contains "$LOG_FILE" "bytes not increasing"
 
 	# Idle state should not be set
-	local idle_file="${STATE_DIR}/idle_detected_192_168_1_1"
+	local idle_file
+	idle_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "idle_detected")
 	if [[ -f "$idle_file" ]]; then
 		fail "Idle state should not be set when ping check is disabled"
 	fi

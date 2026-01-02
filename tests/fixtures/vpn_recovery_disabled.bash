@@ -40,8 +40,16 @@ setup_vpn_recovery_disabled_fixture() {
 		'ENABLE_NETWORK_PARTITION_CHECK=0' \
 		"${extra_config[@]}"
 
-	# Set up state files
-	setup_state_files "$peer_ip" "$failure_count" "$bytes" "$spi"
+	# Set up state files using location-aware functions
+	# setup_test_vpn_monitor creates location "TEST1" for single IP
+	ensure_state_functions_loaded
+	set_peer_state "TEST1" "$peer_ip" "failure_count" "$failure_count" || true
+	if [[ "$bytes" != "0" ]] || [[ "$failure_count" -gt 0 ]]; then
+		set_peer_state "TEST1" "$peer_ip" "last_bytes" "$bytes" || true
+	fi
+	if [[ -n "$spi" ]]; then
+		set_peer_state "TEST1" "$peer_ip" "spi" "$spi" || true
+	fi
 
 	# Set up mock VPN environment
 	setup_mock_vpn_environment "$peer_ip" "$bytes" "$spi"

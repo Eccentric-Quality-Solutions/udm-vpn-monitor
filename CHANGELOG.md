@@ -2,6 +2,92 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
+## 0.4.3 - 2026-01-02
+
+### Added
+- **Location-Based Configuration**: New location-based configuration format that organizes VPN connections by named locations:
+  - Format: `LOCATION_<NAME>_EXTERNAL` and `LOCATION_<NAME>_INTERNAL` variables
+  - Better organization for managing multiple VPN connections
+  - Clearer logging with location names in logs and state files
+  - Independent tracking per location with separate failure counters and state files
+  - Supports multiple internal IPs per location with 30% ping threshold for health determination
+- **Configuration Migration Script**: New `scripts/migrate-config-to-locations.sh` script to automatically migrate from old `EXTERNAL_PEER_IPS`/`INTERNAL_PEER_IPS` format to new location-based format:
+  - Interactive mode with prompts for location names
+  - CSV mode for bulk import
+  - Automatic backup creation before migration
+  - Config validation after migration
+- **Multiple Internal IPs Support**: Enhanced ping health determination for locations with multiple internal IPs:
+  - For locations with multiple internal IPs: VPN is considered healthy if ≥30% respond to pings (rounded up)
+  - For locations with single internal IP: VPN requires 100% success (ping must succeed)
+  - Example: 3 internal IPs need at least 1 successful ping, 10 internal IPs need at least 3 successful pings
+- **Test Infrastructure Improvements**:
+  - New test fixtures: `vpn_at_tier.bash`, `vpn_idle.bash` for common test scenarios
+  - New test utilities: `detect_flaky_tests.sh` for identifying flaky tests
+  - New test verification: `verify_test_isolation.sh` for ensuring test isolation
+  - Enhanced test helpers with better mocking and synchronization
+- **Documentation Enhancements**:
+  - New `docs/CODE_PATTERNS.md` - Comprehensive code patterns and best practices guide
+  - New `docs/CODE_REVIEW_LESSONS_LEARNED.md` - Lessons learned from code reviews
+  - New `docs/TEST_MAINTENANCE.md` - Test maintenance guidelines and patterns
+  - New `docs/TEST_STRATEGY.md` - Testing strategy and approach documentation
+  - New `docs/MIGRATION.md` - Migration guide for location-based configuration
+  - New `tests/TEST_PATTERNS.md` - Test patterns and best practices
+  - New `ACCEPTABLE_RISKS.md` - Documented acceptable risks and limitations
+- **Development Tools**:
+  - New `scripts/audit_mock_cleanup.sh` - Script to audit and clean up test mocks
+  - New `scripts/check-documentation.sh` - Script to verify documentation completeness
+  - Enhanced CI/CD workflow with improved test execution and reporting
+
+### Changed
+- **Configuration System**: Major refactoring of configuration loading and parsing:
+  - New location-based configuration format replaces `EXTERNAL_PEER_IPS`/`INTERNAL_PEER_IPS` format
+  - Enhanced configuration parsing with better error handling and validation
+  - Improved quote handling and escaping in configuration values
+  - Better handling of empty or missing configuration values
+  - Enhanced location name extraction and sanitization
+- **State File Management**: Updated state file naming to include location names:
+  - Old format: `state/failure_counter_203_0_113_1`
+  - New format: `state/failure_counter_NYC_203_0_113_1`
+  - State files now include location name for better organization
+- **Test Suite Expansion**: Major expansion of test coverage:
+  - New test files: `test_config_location.sh`, `test_detection_error_recovery.sh`, `test_detection_ping_multiple.sh`, `test_fixtures_vpn_at_tier.sh`, `test_fixtures_vpn_idle.sh`, `test_integration_location.sh`, `test_migration.sh`, `test_recovery_cascading_failures.sh`, `test_recovery_multi_location_partial.sh`, `test_state_atomic_write_failures.sh`, `test_state_location.sh`, `test_test_isolation.sh`
+  - Enhanced existing tests with better fixtures and improved test isolation
+  - Improved test helpers with better synchronization and mocking capabilities
+- **Detection Module**: Enhanced detection logic for location-based configuration:
+  - Support for multiple internal IPs per location with 30% ping threshold
+  - Improved error recovery and handling
+  - Better ping health determination for multiple IPs
+- **Recovery Module**: Enhanced recovery actions for location-based configuration:
+  - Per-location recovery tracking and actions
+  - Improved cascading failure handling
+  - Better multi-location partial failure recovery
+- **Test Execution**: Improved test execution and reporting:
+  - Enhanced `run_tests.sh` with better test filtering and execution
+  - Improved test isolation verification
+  - Better flaky test detection
+- **Documentation Updates**:
+  - Updated `README.md` with location-based configuration documentation
+  - Updated `QUICK_START.md` with migration guidance
+  - Updated `DEPLOYMENT_CHECKLIST.md` with migration steps
+  - Updated `DEVELOPER.md` with new development guidelines
+  - Updated `TROUBLESHOOTING.md` with location-based configuration troubleshooting
+  - Updated ADRs to reflect location-based configuration changes
+- **Code Quality Improvements**:
+  - Enhanced error handling throughout configuration and detection modules
+  - Improved code organization and maintainability
+  - Better separation of concerns with location-based configuration parsing
+  - Enhanced validation and error messages
+
+### Fixed
+- **Configuration Parsing**: Fixed quote handling and escaping in configuration values
+- **State File Operations**: Fixed state file operations for location-based configuration
+- **Test Isolation**: Improved test isolation to prevent test interference
+- **Error Recovery**: Enhanced error recovery in detection and configuration modules
+
+### Removed
+- **Deprecated Test File**: Removed `tests/run_individual_tests.sh` (functionality integrated into `run_tests.sh`)
+- **Deprecated Documentation**: Removed `docs/TEST_REVIEW.md` and `docs/TROUBLESHOOTING_LOG_FILE_OVERRIDE.md` (replaced by new documentation)
+
 ## 0.4.2 - 2025-12-29
 
 ### Added

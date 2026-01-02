@@ -44,14 +44,48 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 # Side effects:
 #   - Creates TEST_DIR for this test using temp_make
 #   - Creates MOCK_DATA_DIR and MOCK_INSTALL_DIR
-#   - Saves original PWD, HOME, and PATH
+#   - Saves original PWD, HOME, PATH, and all test-related environment variables
 #   - Sets TEST_DIR, MOCK_DATA_DIR, MOCK_INSTALL_DIR environment variables
+#
+# Test Isolation:
+#   This function saves all environment variables that tests might modify to ensure
+#   complete isolation between tests. See teardown() for restoration logic.
 setup() {
 	# Save original PATH before any modifications
 	# This ensures we can restore PATH in teardown even if test fails
 	# PATH may be modified by add_mock_to_path() during tests
 	ORIGINAL_PATH="${PATH}"
 	export ORIGINAL_PATH
+
+	# Save original paths
+	ORIGINAL_PWD="$PWD"
+	ORIGINAL_HOME="$HOME"
+
+	# Save all test-related environment variables that might be modified by tests
+	# This ensures complete test isolation - each test starts with a clean environment
+	# Variables are saved with ORIGINAL_ prefix and restored in teardown()
+	# Use a sentinel value to distinguish between unset and empty string
+	# We use a special marker "__UNSET__" to track variables that were not originally set
+	local var_name
+	for var_name in \
+		CONFIG_FILE STATE_DIR LOGS_DIR LOCKFILE LOG_FILE \
+		RESTART_COUNT_FILE COOLDOWN_UNTIL_FILE \
+		MOCK_IP MOCK_PING MOCK_IPSEC \
+		NO_ESCALATE DEBUG BASE_TIME \
+		TEST_CONFIG_FILE TEST_SCRIPT \
+		MOCK_DATA_DIR MOCK_INSTALL_DIR; do
+		if [[ -v "$var_name" ]]; then
+			# Variable was set (even if empty), save its value
+			printf -v "ORIGINAL_${var_name}" '%s' "${!var_name}"
+		else
+			# Variable was not set, use sentinel value
+			printf -v "ORIGINAL_${var_name}" '%s' "__UNSET__"
+		fi
+		export "ORIGINAL_${var_name}"
+	done
+
+	# Export saved values so they're available in teardown even if test fails
+	export ORIGINAL_PWD ORIGINAL_HOME
 
 	# Create temporary directory for this test using bats-file's temp_make
 	# This provides consistent temporary directory handling and better cleanup
@@ -64,10 +98,6 @@ setup() {
 
 	# Create mock /data directory structure
 	mkdir -p "${MOCK_DATA_DIR}"
-
-	# Save original paths
-	ORIGINAL_PWD="$PWD"
-	ORIGINAL_HOME="$HOME"
 
 	# Set test environment
 	export TEST_DIR
@@ -82,9 +112,15 @@ setup() {
 #
 # Side effects:
 #   - Restores original PATH (removes any mock PATH modifications)
+#   - Restores all test-related environment variables to their original values
 #   - Removes TEST_DIR and all contents using temp_del
 #   - Restores original working directory
 #   - Removes test cron entries containing "test-vpn-monitor"
+#
+# Test Isolation:
+#   This function ensures complete test isolation by restoring all environment
+#   variables to their original state before the test ran. This prevents test
+#   pollution where one test's modifications affect subsequent tests.
 #
 # Note: Set BATSLIB_TEMP_PRESERVE_ON_FAILURE=1 to preserve temp directories
 #       for debugging when tests fail
@@ -95,18 +131,85 @@ teardown() {
 		export PATH="$ORIGINAL_PATH"
 	fi
 
+	# Restore all test-related environment variables to their original values
+	# This ensures complete test isolation - each test starts fresh
+	# Use helper function to restore variables (DRY principle)
+	restore_env_var() {
+		local var_name="$1"
+		local original_var="ORIGINAL_${var_name}"
+		if [[ "${!original_var:-}" == "__UNSET__" ]]; then
+			# Variable was not originally set, unset it
+			unset "$var_name"
+		else
+			# Variable was set (even if empty), restore its value
+			export "$var_name"="${!original_var}"
+		fi
+	}
+
+	# Restore all tracked environment variables
+	restore_env_var CONFIG_FILE
+	restore_env_var STATE_DIR
+	restore_env_var LOGS_DIR
+	restore_env_var LOCKFILE
+	restore_env_var LOG_FILE
+	restore_env_var RESTART_COUNT_FILE
+	restore_env_var COOLDOWN_UNTIL_FILE
+	restore_env_var MOCK_IP
+	restore_env_var MOCK_PING
+	restore_env_var MOCK_IPSEC
+	restore_env_var NO_ESCALATE
+	restore_env_var DEBUG
+	restore_env_var BASE_TIME
+	restore_env_var TEST_CONFIG_FILE
+	restore_env_var TEST_SCRIPT
+	restore_env_var MOCK_DATA_DIR
+	restore_env_var MOCK_INSTALL_DIR
+
+	# Restore HOME if it was saved
+	if [[ -n "${ORIGINAL_HOME:-}" ]]; then
+		export HOME="$ORIGINAL_HOME"
+	fi
+
 	# Clean up test directory using bats-file's temp_del
 	# This provides better cleanup handling and respects BATSLIB_TEMP_PRESERVE_ON_FAILURE
 	if [[ -n "$TEST_DIR" ]] && [[ -d "$TEST_DIR" ]]; then
 		temp_del "$TEST_DIR"
 	fi
 
+	# Unset TEST_DIR after cleanup
+	unset TEST_DIR
+
 	# Restore original directory
 	cd "$ORIGINAL_PWD" || true
 
+	# Clean up any directories created from environment variable names in project root
+	# This can happen if LOG_FILE or LOGS_DIR gets set to an environment variable name
+	# during test execution (e.g., when tests export LOCATION_*_EXTERNAL variables).
+	# Pattern: directories matching LOCATION_*_EXTERNAL=* or LOCATION_*_EXTERNAL="*"
+	# This ensures test isolation - directories created accidentally are cleaned up
+	if [[ -n "$ORIGINAL_PWD" ]] && [[ -d "$ORIGINAL_PWD" ]]; then
+		local cleanup_dir
+		# Use nullglob to avoid literal expansion if no matches
+		shopt -s nullglob
+		for cleanup_dir in "$ORIGINAL_PWD"/LOCATION_*_EXTERNAL*; do
+			if [[ -d "$cleanup_dir" ]] && [[ "$cleanup_dir" =~ LOCATION_.*_EXTERNAL.*= ]]; then
+				rm -rf "$cleanup_dir" 2>/dev/null || true
+			fi
+		done
+		shopt -u nullglob
+	fi
+
 	# Clean up any test cron entries
+	# Remove both "test-vpn-monitor" entries (created by tests) and "vpn-monitor.sh" entries
+	# (created by create_test_cron_entry or install tests) to ensure complete isolation
 	if command -v crontab >/dev/null 2>&1; then
-		crontab -l 2>/dev/null | grep -v "test-vpn-monitor" | crontab - || true
+		crontab -l 2>/dev/null | grep -v "test-vpn-monitor" | grep -v "vpn-monitor.sh" | crontab - || true
+		# If crontab is now empty, remove it completely
+		local crontab_content
+		crontab_content=$(crontab -l 2>/dev/null || echo "")
+		if [[ -z "$crontab_content" ]] || [[ "$crontab_content" =~ ^[[:space:]]*$ ]]; then
+			crontab -r 2>/dev/null || true
+		fi
 	fi
 }
 
@@ -127,7 +230,10 @@ create_mock_config() {
 	local config_file="${1:-${MOCK_INSTALL_DIR}/vpn-monitor.conf}"
 	cat >"$config_file" <<'EOF'
 # Test configuration
-EXTERNAL_PEER_IPS="192.168.1.1 10.0.0.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
+LOCATION_TEST2_EXTERNAL="10.0.0.1"
+LOCATION_TEST2_INTERNAL="10.0.0.1"
 VPN_NAME="Test VPN"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
@@ -137,7 +243,7 @@ MAX_RESTARTS_PER_HOUR=3
 LOG_FILE="/data/vpn-monitor/logs/vpn-monitor.log"
 STATE_DIR="/data/vpn-monitor"
 CRON_SCHEDULE="*/1 * * * *"
-LOCKFILE_TIMEOUT=300
+LOCKFILE_TIMEOUT=5
 ENABLE_PING_CHECK=1
 PING_COUNT=3
 PING_TIMEOUT=2
@@ -396,6 +502,12 @@ create_test_vpn_monitor_script() {
 	fi
 	if [[ -n "$escaped_log" ]]; then
 		sed_script="${sed_script}s|^LOG_FILE=.*|LOG_FILE=\"${escaped_log}\"|;"
+		# Also set LOGS_DIR to match the log file directory
+		local log_dir
+		log_dir=$(dirname "$escaped_log")
+		local escaped_log_dir
+		escaped_log_dir=$(escape_sed_regex "$log_dir")
+		sed_script="${sed_script}s|^LOGS_DIR=.*|LOGS_DIR=\"${escaped_log_dir}\"|;"
 	fi
 	# Replace source paths - escaped_project_root is validated above
 	sed_script="${sed_script}s|source \"\${SCRIPT_DIR}/lib/|source \"${escaped_project_root}/lib/|g"
@@ -610,7 +722,7 @@ assert_log_not_contains() {
 #
 # Side effects:
 #   Creates mock script in TEST_DIR
-mock_ip_xfrm_state() {
+	mock_ip_xfrm_state() {
 	local peer_ip="$1"
 	local bytes="${2:-1000}"
 	local spi="${3:-0x12345678}"
@@ -634,6 +746,56 @@ fi
 EOF
 	chmod +x "$mock_ip"
 	echo "$mock_ip"
+}
+
+# Create a mock ip command for VPN down scenario
+#
+# Creates a mock ip command that returns empty output for xfrm state queries,
+# simulating a VPN down scenario (no SAs found).
+#
+# Arguments:
+#   $1: Optional path to mock ip file (default: ${TEST_DIR}/ip)
+#   $2: Optional additional ip command handlers (string content)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Creates executable mock ip script at specified path
+#   - Adds mock to PATH via add_mock_to_path (if called separately)
+#
+# Example:
+#   # Basic usage:
+#   mock_ip_vpn_down
+#   add_mock_to_path
+#
+#   # With custom path:
+#   mock_ip_vpn_down "${TEST_DIR}/custom_ip"
+#
+#   # With additional handlers:
+#   local additional_handlers
+#   additional_handlers=$(cat <<'ADDITIONAL_EOF'
+#   if [[ "$1" == "route" ]] && [[ "$2" == "show" ]]; then
+#       exit 1
+#   fi
+#   ADDITIONAL_EOF
+#   )
+#   mock_ip_vpn_down "${TEST_DIR}/ip" "$additional_handlers"
+mock_ip_vpn_down() {
+	local mock_ip="${1:-${TEST_DIR}/ip}"
+	local additional_handlers="${2:-}"
+
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+# Handle xfrm state - return empty (VPN down, no SA)
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    exit 0  # Return empty output (no SA found - VPN down)
+fi
+${additional_handlers}
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
 }
 
 # Create mock ping command
@@ -767,6 +929,107 @@ EOF
 	echo "$mock_ipsec"
 }
 
+# Create mock ipsec command with configurable reload/restart exit codes
+#
+# Creates a mock 'ipsec' command that simulates IPsec service operations
+# with configurable exit codes for reload and restart subcommands.
+# This allows tests to simulate various failure scenarios.
+#
+# Arguments:
+#   $1: Reload exit code (0 = success, 1 = failure, default: 0)
+#   $2: Restart exit code (0 = success, 1 = failure, default: 0)
+#   $3: Status exit code (optional, default: 0)
+#   $4: Format type ("libreswan", "strongswan", or "default", optional, default: "default")
+#   $5: Optional peer IP address for status output (optional, default: "192.168.1.1")
+#   $6: Optional connection name for status output (optional, default: "test-conn")
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "ipsec"
+mock_ipsec_reload_restart() {
+	local reload_exit="${1:-0}"
+	local restart_exit="${2:-0}"
+	local status_exit="${3:-0}"
+	local format="${4:-default}"
+	local peer_ip="${5:-192.168.1.1}"
+	local conn_name="${6:-test-conn}"
+	local mock_ipsec="${TEST_DIR}/ipsec"
+
+	case "$format" in
+	libreswan)
+		cat >"$mock_ipsec" <<EOF
+#!/bin/bash
+if [[ "\$1" == "restart" ]]; then
+    echo "Restarting IPsec..."
+    echo "Stopping IPsec..."
+    echo "Starting IPsec..."
+    exit ${restart_exit}
+fi
+if [[ "\$1" == "reload" ]]; then
+    echo "Reloading IPsec configuration..."
+    exit ${reload_exit}
+fi
+if [[ "\$1" == "status" ]]; then
+    if [[ ${status_exit} -eq 0 ]]; then
+        echo "${conn_name}: ESTABLISHED 1 hour ago, ${peer_ip}...192.168.1.2"
+    fi
+    exit ${status_exit}
+fi
+EOF
+		;;
+	strongswan)
+		cat >"$mock_ipsec" <<EOF
+#!/bin/bash
+if [[ "\$1" == "restart" ]]; then
+    echo "Restarting IPsec..."
+    echo "Stopping IPsec..."
+    echo "Starting IPsec..."
+    exit ${restart_exit}
+fi
+if [[ "\$1" == "reload" ]]; then
+    echo "Reloading IPsec configuration..."
+    exit ${reload_exit}
+fi
+if [[ "\$1" == "status" ]]; then
+    if [[ ${status_exit} -eq 0 ]]; then
+        echo "${conn_name}: IKEv2, ESTABLISHED, ${peer_ip}"
+    fi
+    exit ${status_exit}
+fi
+EOF
+		;;
+	default)
+		cat >"$mock_ipsec" <<EOF
+#!/bin/bash
+if [[ "\$1" == "restart" ]]; then
+    echo "Restarting IPsec..."
+    echo "Stopping IPsec..."
+    echo "Starting IPsec..."
+    exit ${restart_exit}
+fi
+if [[ "\$1" == "reload" ]]; then
+    echo "Reloading IPsec configuration..."
+    exit ${reload_exit}
+fi
+if [[ "\$1" == "status" ]]; then
+    if [[ ${status_exit} -eq 0 ]]; then
+        echo "IPsec connections:"
+        echo "  ${conn_name}: ESTABLISHED"
+    fi
+    exit ${status_exit}
+fi
+EOF
+		;;
+	esac
+	chmod +x "$mock_ipsec"
+	echo "$mock_ipsec"
+}
+
 # Add mock commands to PATH
 #
 # Prepends TEST_DIR to PATH so mock commands are found before real system commands.
@@ -836,7 +1099,7 @@ wait_for_file() {
 	local timeout="${2:-5}"
 	local start_time
 	local elapsed_time
-	local sleep_interval=0.1
+	local sleep_interval=0.01 # Reduced from 0.1s to 0.01s for faster response
 
 	# Get start time in seconds since epoch
 	start_time=$(date +%s 2>/dev/null || echo "0")
@@ -844,7 +1107,7 @@ wait_for_file() {
 	# If date command failed, use iteration-based fallback
 	if [[ "$start_time" == "0" ]]; then
 		# Fallback: use iteration counting (less accurate but works without date)
-		local max_iterations=$((timeout * 10)) # timeout * (1 / sleep_interval)
+		local max_iterations=$((timeout * 100)) # timeout * (1 / sleep_interval) - updated for 0.01s interval
 		local iterations=0
 		while [[ $iterations -lt $max_iterations ]]; do
 			if [[ -f "$file" ]]; then
@@ -876,10 +1139,11 @@ wait_for_file() {
 # Test Setup Helper Functions - Reduce Duplication Across Tests
 # ============================================================================
 
-# Create a test config file with common settings
+# Create a test config file with common settings (DEPRECATED - use setup_test_location_config instead)
 #
-# Creates a vpn-monitor.conf file with customizable settings.
-# Provides sensible defaults for common test scenarios.
+# Creates a vpn-monitor.conf file with customizable settings using old EXTERNAL_PEER_IPS format.
+# DEPRECATED: This function uses the deprecated EXTERNAL_PEER_IPS format which is no longer supported.
+# Use setup_test_location_config() instead for location-based configuration.
 #
 # Arguments:
 #   $1: Path to config file (default: ${TEST_DIR}/vpn-monitor.conf)
@@ -894,6 +1158,10 @@ wait_for_file() {
 #
 # Example:
 #   setup_test_config "${TEST_DIR}/vpn-monitor.conf" "192.168.1.1 10.0.0.1" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3'
+#
+# Deprecated:
+#   This function creates config files with EXTERNAL_PEER_IPS which is deprecated.
+#   Use setup_test_location_config() instead.
 setup_test_config() {
 	local config_file="${1:-${TEST_DIR}/vpn-monitor.conf}"
 	# Use ${2-} instead of ${2:-} to allow empty strings to pass through
@@ -914,7 +1182,7 @@ MAX_RESTARTS_PER_HOUR=3
 LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
 STATE_DIR="${TEST_DIR}"
 CRON_SCHEDULE="*/1 * * * *"
-LOCKFILE_TIMEOUT=300
+LOCKFILE_TIMEOUT=5
 ENABLE_PING_CHECK=1
 PING_COUNT=3
 PING_TIMEOUT=2
@@ -937,6 +1205,68 @@ EOF
 	done
 
 	echo "$config_file"
+}
+
+# Set up location-based VPN monitor test environment
+#
+# Creates a test VPN monitor environment using location-based configuration.
+# This is similar to setup_test_vpn_monitor but uses location-based config format.
+#
+# Arguments:
+#   $1: External IP for location (default: "192.168.1.1")
+#   $2: State directory (optional, defaults to ${TEST_DIR})
+#   $3+: Additional config variables as KEY="VALUE" pairs
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Creates config file with location-based format
+#   - Creates test script
+#   - Sets TEST_CONFIG_FILE, TEST_SCRIPT, STATE_DIR, LOGS_DIR variables
+#
+# Example:
+#   setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1'
+setup_location_vpn_monitor() {
+	local external_ip="${1:-192.168.1.1}"
+	local state_dir="${2:-${TEST_DIR}}"
+	shift 2 || true
+	local extra_config=("$@")
+
+	local vpn_monitor_script="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
+
+	# Set up environment
+	setup_test_environment "$state_dir"
+
+	# Create config file with location-based format
+	TEST_CONFIG_FILE="${TEST_DIR}/vpn-monitor.conf"
+	# Check if LOCATION_TEST_INTERNAL is already provided in extra_config
+	local has_internal=0
+	for config_var in "${extra_config[@]}"; do
+		if [[ "$config_var" =~ ^LOCATION_TEST_INTERNAL= ]]; then
+			has_internal=1
+			break
+		fi
+	done
+
+	# Only set LOCATION_TEST_INTERNAL if not already provided
+	local config_args=("LOCATION_TEST_EXTERNAL=\"${external_ip}\"")
+	if [[ $has_internal -eq 0 ]]; then
+		config_args+=("LOCATION_TEST_INTERNAL=\"${external_ip}\"")
+	fi
+	config_args+=("${extra_config[@]}")
+
+	setup_test_location_config "$TEST_CONFIG_FILE" "${config_args[@]}"
+
+	# Create test script
+	TEST_SCRIPT=$(create_test_vpn_monitor_script \
+		"$vpn_monitor_script" \
+		"${TEST_DIR}/vpn-monitor.sh" \
+		"$TEST_CONFIG_FILE" \
+		"$STATE_DIR" \
+		"$LOG_FILE")
+
+	export TEST_CONFIG_FILE TEST_SCRIPT
 }
 
 # Set up test config with recovery settings disabled
@@ -985,7 +1315,7 @@ setup_test_config_with_recovery_disabled() {
 #
 # Side effects:
 #   - Creates directories
-#   - Exports LOGS_DIR, STATE_DIR, LOCKFILE, LOG_FILE, RESTART_COUNT_FILE, COOLDOWN_UNTIL_FILE
+#   - Exports LOGS_DIR, STATE_DIR, LOCKFILE, LOG_FILE, RESTART_COUNT_FILE (in STATE_DIR), COOLDOWN_UNTIL_FILE
 setup_test_environment() {
 	local state_dir="${1:-${TEST_DIR}}"
 	local logs_dir="${2:-${state_dir}/logs}"
@@ -997,7 +1327,7 @@ setup_test_environment() {
 	export LOGS_DIR="$logs_dir"
 	export LOCKFILE="${state_dir}/vpn-monitor.lock"
 	export LOG_FILE="${logs_dir}/vpn-monitor.log"
-	export RESTART_COUNT_FILE="${logs_dir}/restart_count"
+	export RESTART_COUNT_FILE="${state_dir}/restart_count"
 	export COOLDOWN_UNTIL_FILE="${state_dir}/cooldown_until"
 }
 
@@ -1035,9 +1365,66 @@ setup_test_vpn_monitor() {
 	# Set up environment
 	setup_test_environment "$state_dir"
 
-	# Create config file
+	# Create config file with location-based format
 	TEST_CONFIG_FILE="${TEST_DIR}/vpn-monitor.conf"
-	setup_test_config "$TEST_CONFIG_FILE" "$peer_ips" "${extra_config[@]}"
+
+	# Convert peer IPs to location-based config variables
+	local location_configs=()
+	local location_num=1
+	# Split peer_ips by whitespace and create location variables
+	if [[ -n "$peer_ips" ]]; then
+		# Handle empty strings in the middle (multiple spaces)
+		# Use read -a to split properly, but also detect multiple consecutive spaces
+		local ip_array
+		read -ra ip_array <<<"$peer_ips" || true
+
+		# Check if original string had multiple consecutive spaces (indicates empty IP)
+		# This is a heuristic: if the string has "  " (double space), create an empty entry
+		if [[ "$peer_ips" =~ [[:space:]]{2,} ]]; then
+			# Found multiple spaces - create entries including an empty one in the middle
+			local first_ip="${ip_array[0]:-}"
+			local second_ip="${ip_array[1]:-}"
+
+			# Create first location
+			if [[ -n "$first_ip" ]]; then
+				local location_name="TEST${location_num}"
+				location_configs+=("LOCATION_${location_name}_EXTERNAL=\"${first_ip}\"")
+				location_configs+=("LOCATION_${location_name}_INTERNAL=\"${first_ip}\"")
+				location_num=$((location_num + 1))
+			fi
+
+			# Create empty location (this is what we're testing)
+			local location_name="TEST${location_num}"
+			location_configs+=("LOCATION_${location_name}_EXTERNAL=\"\"")
+			location_configs+=("LOCATION_${location_name}_INTERNAL=\"\"")
+			location_num=$((location_num + 1))
+
+			# Create second location if it exists
+			if [[ -n "$second_ip" ]]; then
+				location_name="TEST${location_num}"
+				location_configs+=("LOCATION_${location_name}_EXTERNAL=\"${second_ip}\"")
+				location_configs+=("LOCATION_${location_name}_INTERNAL=\"${second_ip}\"")
+				location_num=$((location_num + 1))
+			fi
+		else
+			# Normal case: no multiple spaces, process all IPs
+			for ip in "${ip_array[@]}"; do
+				# Skip empty IPs (from trailing spaces, etc.)
+				[[ -z "$ip" ]] && continue
+
+				# Create location variable name
+				local location_name="TEST${location_num}"
+				location_configs+=("LOCATION_${location_name}_EXTERNAL=\"${ip}\"")
+				location_configs+=("LOCATION_${location_name}_INTERNAL=\"${ip}\"")
+				location_num=$((location_num + 1))
+			done
+		fi
+	fi
+
+	# Combine location configs with extra config
+	setup_test_location_config "$TEST_CONFIG_FILE" \
+		"${location_configs[@]}" \
+		"${extra_config[@]}"
 
 	# Create test script
 	TEST_SCRIPT=$(create_test_vpn_monitor_script \
@@ -1050,64 +1437,224 @@ setup_test_vpn_monitor() {
 	export TEST_CONFIG_FILE TEST_SCRIPT
 }
 
-# Set up state files for testing
+# Set up location-based configuration file
 #
-# Creates common state files used in tests (failure counters, byte counters, etc.).
+# Creates a test configuration file with location-based format (LOCATION_*_EXTERNAL/LOCATION_*_INTERNAL).
+# This is similar to setup_test_config but uses the new location-based format instead of EXTERNAL_PEER_IPS.
 #
 # Arguments:
-#   $1: Peer IP address
-#   $2: Failure count (default: 0)
-#   $3: Last bytes value (default: 0)
-#   $4: SPI value (optional)
-#   $5: Cooldown until timestamp (optional, 0 to skip)
+#   $1: Config file path (optional, defaults to ${TEST_DIR}/vpn-monitor.conf)
+#   $2+: Additional config variables as KEY="VALUE" pairs (location configs should be included here)
+#
+# Returns:
+#   Prints the path to the created config file
+#
+# Side effects:
+#   - Creates config file with location-based format and common test settings
+#
+# Example:
+#   setup_test_location_config "${TEST_DIR}/vpn-monitor.conf" \
+#     'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+#     'LOCATION_NYC_INTERNAL="192.168.1.1"' \
+#     'TIER1_THRESHOLD=1'
+#
+# Note:
+#   Location variables (LOCATION_*_EXTERNAL/LOCATION_*_INTERNAL) should be provided as extra_config
+#   This function provides the common test settings; location-specific configs are added via extra_config
+setup_test_location_config() {
+	local config_file="${1:-${TEST_DIR}/vpn-monitor.conf}"
+	shift || true
+	local extra_config=("$@")
+
+	mkdir -p "$(dirname "$config_file")"
+
+	cat >"$config_file" <<EOF
+VPN_NAME="Test VPN"
+TIER1_THRESHOLD=1
+TIER2_THRESHOLD=3
+TIER3_THRESHOLD=5
+COOLDOWN_MINUTES=15
+MAX_RESTARTS_PER_HOUR=3
+LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
+STATE_DIR="${TEST_DIR}"
+CRON_SCHEDULE="*/1 * * * *"
+LOCKFILE_TIMEOUT=5
+ENABLE_PING_CHECK=1
+PING_COUNT=3
+PING_TIMEOUT=2
+ENABLE_NETWORK_PARTITION_CHECK=0
+DEBUG=0
+EOF
+
+	# Add any extra config variables (including location configs)
+	for config_var in "${extra_config[@]}"; do
+		if [[ -n "$config_var" ]]; then
+			# Ensure config_var is in KEY=VALUE format, not just a bare value
+			if [[ "$config_var" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+				echo "$config_var" >>"$config_file"
+			else
+				# Skip bare values that aren't in KEY=VALUE format
+				# This prevents bare IP addresses or other values from being written
+				continue
+			fi
+		fi
+	done
+
+	echo "$config_file"
+}
+
+# Enable fake mode (non-escalating error handling)
+#
+# Sets NO_ESCALATE=1 to prevent functions from exiting on errors.
+# This is used in tests that expect failures and want to verify error handling
+# without the function exiting the script.
 #
 # Returns:
 #   0: Always succeeds
 #
 # Side effects:
-#   - Creates failure counter file
-#   - Creates last_bytes file
-#   - Creates SPI file (if provided)
-#   - Creates cooldown file (if timestamp provided)
-setup_state_files() {
-	local peer_ip="$1"
-	local failure_count="${2:-0}"
-	local last_bytes="${3:-0}"
-	local spi="${4:-}"
-	local cooldown_until="${5:-}"
+#   - Sets and exports NO_ESCALATE=1
+#
+# Example:
+#   enable_fake_mode
+#   run parse_location_config
+#   assert_failure
+#
+# Note:
+#   This should be called before functions that might exit on error
+#   Standard pattern: enable_fake_mode before calling function that may fail
+enable_fake_mode() {
+	NO_ESCALATE=1
+	export NO_ESCALATE
+}
 
-	# Sanitize peer IP for file names
-	local sanitized_ip
-	sanitized_ip=$(echo "$peer_ip" | tr '.' '_' | tr ':' '_')
+# Set up location-based configuration and load it
+#
+# Sets up test environment, sets CONFIG_FILE, and loads the configuration.
+# This helper reduces code duplication in location-based tests.
+# The config file should already exist before calling this function.
+#
+# Arguments:
+#   $1: Config file path (required)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Sets CONFIG_FILE environment variable
+#   Calls load_config() to load the configuration
+#
+# Side effects:
+#   - Sets up test environment (calls setup_test_environment)
+#   - Sets and exports CONFIG_FILE
+#   - Loads configuration using load_config()
+#
+# Example:
+#   local config_file="${TEST_DIR}/vpn-monitor.conf"
+#   cat >"$config_file" <<'EOF'
+#   LOCATION_NYC_EXTERNAL="203.0.113.1"
+#   TIER1_THRESHOLD=1
+#   EOF
+#   setup_location_config_and_load "$config_file"
+#
+# Note:
+#   Requires load_config() function to be available (from lib/config.sh)
+#   Config file must exist before calling this function
+#   CONFIG_FILE is always exported (standardized pattern)
+setup_location_config_and_load() {
+	local config_file="$1"
 
-	# Ensure directories exist
-	mkdir -p "${LOGS_DIR:-${TEST_DIR}/logs}"
-	mkdir -p "${STATE_DIR:-${TEST_DIR}}"
+	# Set up test environment
+	setup_test_environment
 
-	# Set up failure counter
-	if [[ -n "$peer_ip" ]]; then
-		local failure_counter="${LOGS_DIR:-${TEST_DIR}/logs}/failure_counter_${sanitized_ip}"
-		echo "$failure_count" >"$failure_counter"
+	# Set and export CONFIG_FILE (standardized: always export)
+	CONFIG_FILE="$config_file"
+	export CONFIG_FILE
+
+	# Load config (requires lib/config.sh to be sourced)
+	if command -v load_config >/dev/null 2>&1; then
+		load_config "$config_file"
+	fi
+}
+
+# Helper function to create location-based config
+# Uses the shared helper from test_helper.bash to avoid code duplication
+setup_location_config() {
+	local config_file="${1:-${TEST_DIR}/vpn-monitor.conf}"
+	shift || true
+	local extra_config=("$@")
+
+	# Use shared helper function with default location configs
+	setup_test_location_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		'LOCATION_NYC_INTERNAL="192.168.1.1"' \
+		'LOCATION_LA_EXTERNAL="198.51.100.1"' \
+		'LOCATION_LA_INTERNAL="192.168.2.1"' \
+		"${extra_config[@]}"
+}
+
+# Helper function to set up location-based test environment
+# Sets up test environment, creates config file, and creates test script
+setup_location_test_vpn_monitor() {
+	local state_dir="${1:-${TEST_DIR}}"
+	shift || true
+	local extra_config=("$@")
+
+	setup_test_environment "$state_dir"
+
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_location_config "$config_file" "${extra_config[@]}"
+
+	TEST_CONFIG_FILE="$config_file"
+	TEST_SCRIPT=$(create_test_vpn_monitor_script \
+		"$VPN_MONITOR_SCRIPT" \
+		"${TEST_DIR}/vpn-monitor.sh" \
+		"$TEST_CONFIG_FILE" \
+		"$STATE_DIR" \
+		"$LOG_FILE")
+
+	export TEST_CONFIG_FILE TEST_SCRIPT
+}
+
+# Ensure state functions are loaded
+#
+# Sources lib/state.sh if state functions are not already available.
+# This helper reduces duplication when fixtures need to use state functions.
+# Safe to call multiple times (idempotent).
+#
+# Returns:
+#   0: Always succeeds (state functions available or sourced)
+#
+# Side effects:
+#   - Sources lib/state.sh if set_peer_state is not available
+#   - Sets up required environment variables (STATE_DIR, LOGS_DIR) if not set
+#
+# Example:
+#   ensure_state_functions_loaded
+#   set_peer_state "" "192.168.1.1" "failure_count" "5"
+#
+# Note:
+#   Uses 2>/dev/null || true to suppress errors if state.sh is not found
+#   (for maximum compatibility in test environments)
+ensure_state_functions_loaded() {
+	# Check if state functions are already available
+	if command -v set_peer_state >/dev/null 2>&1; then
+		return 0
 	fi
 
-	# Set up byte counter
-	# Create bytes file if peer_ip is set AND (last_bytes is non-zero OR failure_count > 0)
-	if [[ -n "$peer_ip" ]] && ([[ "$last_bytes" != "0" ]] || [[ "$failure_count" -gt 0 ]]); then
-		local bytes_file="${STATE_DIR:-${TEST_DIR}}/last_bytes_${sanitized_ip}"
-		echo "$last_bytes" >"$bytes_file"
-	fi
+	# Set up required environment variables if not already set
+	STATE_DIR="${STATE_DIR:-${TEST_DIR:-/tmp}}"
+	export STATE_DIR
+	LOGS_DIR="${LOGS_DIR:-${STATE_DIR}/logs}"
+	export LOGS_DIR
 
-	# Set up SPI file
-	if [[ -n "$spi" ]] && [[ -n "$peer_ip" ]]; then
-		local spi_file="${STATE_DIR:-${TEST_DIR}}/spi_${sanitized_ip}"
-		echo "$spi" >"$spi_file"
-	fi
+	# Source logging.sh first (state.sh requires handle_error from logging.sh)
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
 
-	# Set up cooldown file
-	if [[ -n "$cooldown_until" ]] && [[ "$cooldown_until" != "0" ]]; then
-		local cooldown_file="${STATE_DIR:-${TEST_DIR}}/cooldown_until"
-		echo "$cooldown_until" >"$cooldown_file"
-	fi
+	# Source state.sh
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
 }
 
 # Set up complete mock VPN environment
@@ -1413,12 +1960,12 @@ elif [[ "\$1" == "-d" ]] && [[ "\$2" =~ ^\"\+([0-9]+)\ (minute|minutes)\"$ ]] &&
     exit 0
 elif [[ "\$1" == "+%Y-%m-%d %H:%M:%S" ]] || [[ "\$1" == '+%Y-%m-%d %H:%M:%S' ]]; then
     # Formatted timestamp format (used by logging)
-    # Try Linux format first, then BSD/macOS format
-    date -d "@$current_time" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -r "$current_time" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "1970-01-01 00:00:00"
+    # Use Linux format
+    date -d "@$current_time" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "1970-01-01 00:00:00"
     exit 0
 elif [[ "\$1" == "+%Y-%m-%d" ]] || [[ "\$1" == '+%Y-%m-%d' ]]; then
     # Date only format
-    date -d "@$current_time" +%Y-%m-%d 2>/dev/null || date -r "$current_time" +%Y-%m-%d 2>/dev/null || echo "1970-01-01"
+    date -d "@$current_time" +%Y-%m-%d 2>/dev/null || echo "1970-01-01"
     exit 0
 fi
 
@@ -1587,6 +2134,8 @@ run_with_mocks() {
 #   - fixtures/vpn_rekey.bash: VPN has undergone a rekey (SPI change)
 #   - fixtures/vpn_multiple_peers.bash: Multiple VPN peers scenario
 #   - fixtures/vpn_recovery_disabled.bash: VPN with recovery actions disabled
+#   - fixtures/vpn_at_tier.bash: VPN at specific tier threshold
+#   - fixtures/vpn_idle.bash: VPN idle tunnel scenario
 #
 # Example usage:
 #   # Load test helper (includes fixtures documentation)
@@ -1664,7 +2213,7 @@ source_recovery_module() {
 #
 # Note:
 #   Requires LIB_DIR and VPN_MONITOR_SCRIPT to be set
-#   Functions are searched in order: logging.sh, config.sh, state.sh,
+#   Functions are searched in order: common.sh, logging.sh, config.sh, state.sh,
 #   detection.sh, recovery.sh, lockfile.sh, vpn-monitor.sh
 source_function() {
 	local func_name="$1"
@@ -1673,6 +2222,7 @@ source_function() {
 	# Map functions to their module files
 	# Try each module file in order until we find the function
 	local modules=(
+		"${LIB_DIR}/common.sh"
 		"${LIB_DIR}/logging.sh"
 		"${LIB_DIR}/config.sh"
 		"${LIB_DIR}/state.sh"
@@ -1700,7 +2250,7 @@ source_function() {
 				export LOCKFILE
 				LOG_FILE="${LOG_FILE:-${LOGS_DIR}/vpn-monitor.log}"
 				export LOG_FILE
-				RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${LOGS_DIR}/restart_count}"
+				RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
 				export RESTART_COUNT_FILE
 				COOLDOWN_UNTIL_FILE="${COOLDOWN_UNTIL_FILE:-${STATE_DIR}/cooldown_until}"
 				export COOLDOWN_UNTIL_FILE
@@ -1711,6 +2261,14 @@ source_function() {
 
 				# Source required dependencies first
 				case "$module" in
+				"${LIB_DIR}/common.sh")
+					# common.sh is standalone, no dependencies
+					# Source entire common.sh to make all functions available
+					# shellcheck source=/dev/null
+					source "${LIB_DIR}/common.sh" 2>/dev/null || true
+					# Function already sourced, skip eval below
+					return 0
+					;;
 				"${LIB_DIR}/config.sh")
 					# config.sh needs logging.sh
 					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
@@ -1799,4 +2357,68 @@ source_function() {
 
 	# Function not found
 	return 1
+}
+
+# Test peer state with empty location (backward compatibility pattern)
+#
+# Helper function that encapsulates the common test pattern of:
+# - Calling set_peer_state with empty location (for backward compatibility)
+# - Getting the file path using get_peer_state_file_path
+# - Asserting file existence
+#
+# This reduces duplication across tests that need to verify peer state file creation.
+#
+# Arguments:
+#   $1: Peer IP address
+#   $2: State key (e.g., "failure_count", "last_bytes", "spi")
+#   $3: Value to set
+#   $4: Optional expected value to verify (if not provided, only existence is checked)
+#
+# Returns:
+#   0: File exists (and optionally matches expected value)
+#   1: File doesn't exist or value mismatch (fails test)
+#
+# Side effects:
+#   - Calls set_peer_state with empty location
+#   - Creates state file
+#   - Asserts file existence
+#   - Optionally verifies file content
+#
+# Example:
+#   # Basic usage - just verify file exists
+#   source_function "set_peer_state"
+#   source_function "get_peer_state_file_path"
+#   test_peer_state_with_empty_location "192.168.1.1" "failure_count" "5"
+#
+#   # With value verification
+#   source_function "set_peer_state"
+#   source_function "get_peer_state_file_path"
+#   test_peer_state_with_empty_location "192.168.1.1" "failure_count" "5" "5"
+#
+# Note:
+#   Requires set_peer_state and get_peer_state_file_path functions to be sourced
+#   before calling this helper. Tests should source these functions first.
+test_peer_state_with_empty_location() {
+	local peer_ip="$1"
+	local key="$2"
+	local value="$3"
+	local expected_value="${4:-}"
+
+	# Set peer state with empty location (backward compatibility)
+	run set_peer_state "" "$peer_ip" "$key" "$value"
+	assert_success
+
+	# Get file path using get_peer_state_file_path
+	local state_file
+	state_file=$(get_peer_state_file_path "" "$peer_ip" "$key")
+
+	# Assert file exists
+	assert_file_exist "$state_file"
+
+	# If expected value provided, verify file content
+	if [[ -n "$expected_value" ]]; then
+		local file_content
+		file_content=$(cat "$state_file")
+		assert_equal "$file_content" "$expected_value"
+	fi
 }

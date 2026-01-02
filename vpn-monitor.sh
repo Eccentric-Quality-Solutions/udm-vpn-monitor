@@ -6,7 +6,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.4.2
+# Version: 0.4.3
 #
 
 # Strict error handling: exit on error, undefined vars, pipe failures
@@ -15,8 +15,8 @@ set -euo pipefail
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/vpn-monitor.conf"
-STATE_DIR="${SCRIPT_DIR}"
-LOGS_DIR="${STATE_DIR}/logs"
+STATE_DIR="${SCRIPT_DIR}/state"
+LOGS_DIR="${SCRIPT_DIR}/logs"
 # shellcheck disable=SC2034
 LOCKFILE="${STATE_DIR}/vpn-monitor.lock"
 LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
@@ -56,11 +56,11 @@ for arg in "$@"; do
 		echo "  --help     Show this help message"
 		echo "  --version  Show version information"
 		echo ""
-		exit 0
+		exit "${EXIT_SUCCESS:-0}"
 		;;
 	--version | -v)
 		echo "UDM VPN Monitor v${SCRIPT_VERSION:-0.0.1}"
-		exit 0
+		exit "${EXIT_SUCCESS:-0}"
 		;;
 	esac
 done
@@ -71,6 +71,8 @@ for arg in "$@"; do
 	case "$arg" in
 	--fake)
 		NO_ESCALATE=1
+		export NO_ESCALATE
+		NO_ESCALATE_SET_FROM_CMD=1
 		break
 		;;
 	esac
@@ -78,23 +80,23 @@ done
 
 # Ensure state directory exists (needed before logging)
 if ! ensure_directory_exists "$STATE_DIR" "state"; then
-	exit 1
+	exit "${EXIT_GENERAL_ERROR:-1}"
 fi
 
 # Ensure logs directory exists (needed before logging)
 if ! ensure_directory_exists "$LOGS_DIR" "logs"; then
-	exit 1
+	exit "${EXIT_GENERAL_ERROR:-1}"
 fi
 
 # State files
-# Note: Failure counters are per-peer: ${LOGS_DIR}/failure_counter_<peer_ip_sanitized>
-RESTART_COUNT_FILE="${LOGS_DIR}/restart_count"
+# Note: Failure counters are per-peer: ${STATE_DIR}/failure_counter_<location>_<peer_ip_sanitized>
+RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 # LAST_BYTES_FILE will be per-peer: ${STATE_DIR}/last_bytes_<peer_ip_sanitized>
 COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
 
 # Test log file write capability early (before config loading)
 #
-# This test uses the default LOG_FILE path (${STATE_DIR}/logs/vpn-monitor.log).
+# This test uses the default LOG_FILE path (${LOGS_DIR}/vpn-monitor.log).
 # If LOG_FILE is later overridden in config, subsequent logs will go to the new location,
 # but this initial test message will remain in the default location. This is intentional:
 # the early test validates that the default log location is writable, which is important
@@ -102,8 +104,8 @@ COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
 # still be written to the default location.
 #
 # Note:
-#   After config loading, recalculate_log_paths() is called to update LOG_FILE/LOGS_DIR
-#   if they were overridden. The new log directory is created at that point.
+#   After config loading, path recalculation (log paths and state paths) is handled
+#   automatically inside load_config(). The new log directory is created at that point.
 #   If log file write fails, we output to stderr and continue (log_message handles this gracefully)
 if ! touch "$LOG_FILE" 2>/dev/null; then
 	# Log file write failed - output to stderr and continue
@@ -122,11 +124,34 @@ if ! echo "[$(get_formatted_timestamp)] [INFO] Log file initialized" >>"$LOG_FIL
 fi
 
 # Load configuration
-load_config "$CONFIG_FILE"
+# Note: Path recalculation (log paths and state paths) is now handled inside load_config()
+# In fake mode, config errors are logged but don't cause exit (handle_error_or_exit_fake_mode handles this)
+# In normal mode, config errors cause exit (set -e will trigger, or handle_error_or_exit_fake_mode calls die)
+if ! load_config "$CONFIG_FILE"; then
+	# load_config failed - in fake mode this returns 1, in normal mode it exits via handle_error_or_exit_fake_mode
+	# In fake mode, we should exit gracefully (exit 0) since errors are logged but don't cause failure
+	if is_fake_mode; then
+		exit "${EXIT_SUCCESS:-0}"
+	fi
+	# In normal mode, load_config should have already exited via handle_error_or_exit_fake_mode
+	# But if we get here, exit with error code
+	exit "${EXIT_VALIDATION_ERROR:-3}"
+fi
 
-# Update state file paths to use LOGS_DIR (in case STATE_DIR was overridden)
-# Note: Failure counters are per-peer: ${LOGS_DIR}/failure_counter_<peer_ip_sanitized>
-RESTART_COUNT_FILE="${LOGS_DIR}/restart_count"
+# Validate configuration early (before network partition check)
+# This ensures configuration errors are caught before other checks
+# Configuration validation includes location-based config validation
+if ! validate_config; then
+	# validate_config calls handle_error_or_exit_fake_mode which exits in normal mode
+	# or returns 1 in fake mode
+	# Validation errors should cause failure even in fake mode (configuration errors prevent script from running)
+	# Fake mode skips recovery actions, but configuration errors should still cause failure
+	exit "${EXIT_VALIDATION_ERROR:-3}"
+fi
+
+# Update state file paths that depend on LOGS_DIR
+# Note: Failure counters are per-peer: ${STATE_DIR}/failure_counter_<location>_<peer_ip_sanitized>
+RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 
 # Check cron persistence
 #
@@ -263,6 +288,8 @@ parse_args() {
 		case "$1" in
 		--fake)
 			NO_ESCALATE=1
+			export NO_ESCALATE
+			NO_ESCALATE_SET_FROM_CMD=1
 			log_message "INFO" "Fake mode enabled: tier escalation disabled"
 			shift
 			;;
@@ -384,7 +411,7 @@ validate_monitor_state() {
 	# Resource monitoring may exit early if resources are severely constrained
 	if ! check_system_resources "$STATE_DIR"; then
 		log_message "INFO" "Script exiting: system resources constrained"
-		exit 0
+		exit "${EXIT_SUCCESS:-0}"
 	fi
 
 	# Check for network partition before cooldown check
@@ -401,15 +428,15 @@ validate_monitor_state() {
 		prev_partition_state=$(get_network_partition_state)
 
 		if ! check_network_partition "$dns_server" "$dns_hostname" "$dns_timeout" "$interfaces"; then
-			# Network is partitioned - skip VPN checks
+			# Network is partitioned - update state but continue to allow recovery code to check partition state
 			if [[ "$prev_partition_state" -eq 0 ]]; then
 				log_message "WARNING" "Network partition detected - skipping VPN checks until connectivity restored"
 				set_network_partition_state 1
 			else
 				log_message "INFO" "Network still partitioned - VPN checks skipped"
 			fi
-			# Exit early - don't check cooldown or process peers
-			exit 0
+			# Don't exit early - let recovery code check partition state and skip recovery actions
+			# This allows tests to verify that recovery is skipped when partition is detected
 		else
 			# Network is healthy - check if it was previously partitioned
 			if [[ "$prev_partition_state" -eq 1 ]]; then
@@ -424,7 +451,7 @@ validate_monitor_state() {
 	if check_cooldown; then
 		debug_log "In cooldown, exiting"
 		log_message "INFO" "Script exiting: in cooldown period"
-		exit 0
+		exit "${EXIT_SUCCESS:-0}"
 	fi
 	debug_log "Not in cooldown, continuing"
 
@@ -439,76 +466,72 @@ validate_monitor_state() {
 	fi
 }
 
-# Process all peer IPs
+# Process all locations
 #
-# Iterates through configured peer IPs and monitors each one.
-# Validates configuration before processing to ensure EXTERNAL_PEER_IPS is set correctly.
+# Iterates through configured locations and monitors each one.
+# Configuration is validated earlier in main() before network partition check.
 # Network partition check is performed earlier in validate_monitor_state() before this function is called.
-# Skips empty peer IPs with a warning.
-# Uses EXTERNAL_PEER_IPS for xfrm state checks and INTERNAL_PEER_IPS for ping checks.
+# Skips invalid locations with a warning.
+# Uses location external IP for xfrm state checks and location internal IPs for ping checks.
 #
 # Returns:
-#   0: All peers are healthy (all monitor_peer calls succeeded)
-#   1: One or more peers have issues (at least one monitor_peer call failed)
+#   0: All locations are healthy (all monitor_location calls succeeded)
+#   1: One or more locations have issues (at least one monitor_location call failed)
 #
 # Side effects:
-#   - Validates configuration via validate_config()
-#   - Calls monitor_peer() for each peer IP pair (external, internal)
-#   - Logs warnings for empty peer IPs (skips them)
+#   - Uses LOCATIONS array populated by validate_config() (called earlier)
+#   - Calls monitor_location() for each location
+#   - Logs warnings for invalid locations (skips them)
 #   - Enables debug output if DEBUG=1
 #
 # Examples:
-#   if ! process_peer_ips; then
-#       echo "Some peers have issues"
+#   if ! process_locations; then
+#       echo "Some locations have issues"
 #   fi
 #
 # Note:
-#   Requires validate_config, monitor_peer, log_message, EXTERNAL_PEER_IPS, INTERNAL_PEER_IPS, DEBUG to be set
-#   EXTERNAL_PEER_IPS should be space-separated list of external/public IP addresses
-#   INTERNAL_PEER_IPS should be space-separated list of internal/private IP addresses (optional)
+#   Requires LOCATIONS array to be populated (via validate_config() called earlier)
+#   Requires monitor_location, log_message, DEBUG to be set
 #   Network partition check is performed in validate_monitor_state() before this function is called
-process_peer_ips() {
+process_locations() {
 	local all_ok=0
 
-	# Validate configuration
-	debug_log "Validating EXTERNAL_PEER_IPS (value: '${EXTERNAL_PEER_IPS}')"
-	debug_log "INTERNAL_PEER_IPS (value: '${INTERNAL_PEER_IPS}')"
+	# Configuration is already validated early in main() before network partition check
+	# parse_location_config() was called by validate_config(), so LOCATIONS array should be populated
+	# Defensive check: verify LOCATIONS is populated (should never be empty if validation succeeded)
+	if [[ ${#LOCATIONS[@]} -eq 0 ]]; then
+		handle_error_or_exit_fake_mode "No locations configured" "${EXIT_VALIDATION_ERROR:-3}"
+		return 1
+	fi
 
-	# Validate configuration (includes EXTERNAL_PEER_IPS validation via schema)
-	validate_config
+	# Log found locations
+	local location_list=""
+	for loc in "${!LOCATIONS[@]}"; do
+		if [[ -n "$location_list" ]]; then
+			location_list="${location_list}, "
+		fi
+		location_list="${location_list}${loc}"
+	done
+	log_message "INFO" "Found ${#LOCATIONS[@]} location(s): $location_list"
 
-	# Network partition check is now done in validate_monitor_state() before cooldown check
-	# This ensures partition detection happens even during cooldown periods
-
-	# Process each peer IP
-	# Convert space-separated string to array to avoid word splitting and globbing
-	# Use IFS to split on spaces, read into array with proper quoting
-	local IFS=' '
-	local -a external_peer_ips_array
-	local -a internal_peer_ips_array
-	read -ra external_peer_ips_array <<<"$EXTERNAL_PEER_IPS"
-	read -ra internal_peer_ips_array <<<"$INTERNAL_PEER_IPS"
-
-	local idx=0
-	for external_peer_ip in "${external_peer_ips_array[@]}"; do
-		# Basic validation: non-empty (shouldn't happen after validate_config, but check anyway)
-		if [[ -z "$external_peer_ip" ]]; then
-			log_message "WARNING" "Skipping empty external peer IP"
+	# Process each location
+	for location_name in "${!LOCATIONS[@]}"; do
+		# Get external IP for this location
+		local external_ip
+		if ! external_ip=$(get_location_external_ip "$location_name"); then
+			handle_error "WARNING" "Location $location_name: Failed to get external IP (skipping)"
+			all_ok=1
 			continue
 		fi
 
-		# Get corresponding internal IP (if available)
-		local internal_peer_ip=""
-		if [[ $idx -lt ${#internal_peer_ips_array[@]} ]] && [[ -n "${internal_peer_ips_array[$idx]}" ]]; then
-			internal_peer_ip="${internal_peer_ips_array[$idx]}"
-		fi
+		# Get internal IPs for this location (may be empty)
+		local internal_ips
+		internal_ips=$(get_location_internal_ips "$location_name")
 
-		# Monitor peer with both external and internal IPs
-		if ! monitor_peer "$external_peer_ip" "$internal_peer_ip"; then
+		# Monitor location with external IP and internal IPs
+		if ! monitor_location "$location_name" "$external_ip" "$internal_ips"; then
 			all_ok=1
 		fi
-
-		((idx++))
 	done
 
 	return $all_ok
@@ -544,7 +567,7 @@ process_peer_ips() {
 #   # Runs complete monitoring process
 #
 # Note:
-#   Requires initialize_monitor, validate_monitor_state, process_peer_ips,
+#   Requires initialize_monitor, validate_monitor_state, process_locations,
 #   log_message to be set
 #   Called by acquire_lockfile to ensure single instance execution
 main() {
@@ -554,9 +577,9 @@ main() {
 	# Validate state and check cooldown (may exit if in cooldown)
 	validate_monitor_state
 
-	# Process all peer IPs
+	# Process all locations
 	local all_ok=0
-	if ! process_peer_ips; then
+	if ! process_locations; then
 		all_ok=1
 	fi
 
@@ -570,7 +593,7 @@ main() {
 	# In fake mode, always exit with 0 (we're just checking/logging, not taking action)
 	# Failures are logged but don't cause the script to fail in fake mode
 	if [[ "${NO_ESCALATE:-0}" -eq 1 ]]; then
-		exit 0
+		exit "${EXIT_SUCCESS:-0}"
 	fi
 
 	exit $all_ok

@@ -3,13 +3,14 @@
 # Common functions for UDM VPN Monitor
 # Shared logging and utility functions for installation/uninstallation scripts and main monitor
 #
-# Version: 0.4.2
+# Version: 0.4.3
 #
 # This module provides shared utility functions used throughout the codebase to reduce duplication:
 # - File operations: file_exists_and_readable(), ensure_file_exists(), atomic_write_file()
 # - Directory operations: directory_exists(), directory_writable()
-# - Timestamp operations: get_unix_timestamp()
+# - Timestamp operations: get_unix_timestamp(), validate_timestamp(), safe_timestamp_subtract(), safe_timestamp_add(), safe_timestamp_diff()
 # - String escaping: escape_sed_replacement(), escape_sed_regex()
+# - String sanitization: sanitize_location_name()
 # - Config file operations: update_config_value()
 # - Logging: log_info(), log_warn(), log_error()
 # - System checks: check_root()
@@ -146,7 +147,7 @@ debug_log() {
 check_root() {
 	if [[ $EUID -ne 0 ]]; then
 		log_error "This script must be run as root"
-		exit 1
+		exit "${EXIT_PERMISSION_ERROR:-4}"
 	fi
 }
 
@@ -230,9 +231,207 @@ ensure_file_exists() {
 #
 # Note:
 #   Uses 'date +%s' command internally
-#   Compatible with Linux and BSD/macOS date commands
 get_unix_timestamp() {
 	date +%s
+}
+
+# Validate timestamp is reasonable
+#
+# Validates that a Unix timestamp is within reasonable bounds to prevent
+# arithmetic overflow/underflow issues. Checks that timestamp is:
+# - Not negative
+# - Not too far in the future (reasonable upper bound)
+# - A valid integer
+#
+# Arguments:
+#   $1: Timestamp to validate (Unix timestamp in seconds)
+#
+# Returns:
+#   0: Timestamp is valid
+#   1: Timestamp is invalid (negative, too large, or not a number)
+#
+# Examples:
+#   if validate_timestamp "$timestamp"; then
+#       # use timestamp safely
+#   fi
+#
+# Note:
+#   Upper bound is set to year 2100 (4102444800) to allow reasonable future dates
+#   while preventing arithmetic overflow issues
+validate_timestamp() {
+	local timestamp="$1"
+
+	# Check if timestamp is a valid integer
+	if [[ ! "$timestamp" =~ ^[0-9]+$ ]]; then
+		return 1
+	fi
+
+	# Check if timestamp is too far in the future (year 2100 = 4102444800)
+	# This prevents arithmetic overflow while allowing reasonable future dates
+	local max_timestamp=4102444800
+	if [[ $timestamp -gt $max_timestamp ]]; then
+		return 1
+	fi
+
+	return 0
+}
+
+# Safely subtract seconds from a timestamp
+#
+# Performs timestamp subtraction with bounds checking to prevent underflow.
+# Validates both input timestamp and result before returning.
+#
+# Arguments:
+#   $1: Base timestamp (Unix timestamp in seconds)
+#   $2: Seconds to subtract (positive integer)
+#
+# Returns:
+#   0: Success (result printed to stdout)
+#   1: Invalid input timestamp
+#   2: Invalid seconds value (negative or not a number)
+#   3: Result would be negative (underflow)
+#
+# Output:
+#   Prints the result timestamp to stdout if successful
+#
+# Examples:
+#   result=$(safe_timestamp_subtract "$now" "$SECONDS_PER_HOUR")
+#   one_day_ago=$(safe_timestamp_subtract "$timestamp" "$SECONDS_PER_DAY" 2>/dev/null || echo "0")
+#
+# Note:
+#   If subtraction would result in negative value, returns error code 3
+#   Caller should handle this case appropriately (e.g., use 0 or current time)
+safe_timestamp_subtract() {
+	local base_timestamp="$1"
+	local seconds_to_subtract="$2"
+
+	# Validate base timestamp
+	if ! validate_timestamp "$base_timestamp"; then
+		return 1
+	fi
+
+	# Validate seconds_to_subtract is a non-negative integer
+	# Note: Negative check is redundant since ^[0-9]+ won't match negatives
+	if [[ ! "$seconds_to_subtract" =~ ^[0-9]+$ ]]; then
+		return 2
+	fi
+
+	# Perform subtraction
+	local result=$((base_timestamp - seconds_to_subtract))
+
+	# Check for underflow (negative result)
+	if [[ $result -lt 0 ]]; then
+		return 3
+	fi
+
+	# Validate result is still reasonable
+	if ! validate_timestamp "$result"; then
+		return 1
+	fi
+
+	# Output result
+	echo "$result"
+	return 0
+}
+
+# Safely add seconds to a timestamp
+#
+# Performs timestamp addition with bounds checking to prevent overflow.
+# Validates both input timestamp and result before returning.
+#
+# Arguments:
+#   $1: Base timestamp (Unix timestamp in seconds)
+#   $2: Seconds to add (positive integer)
+#
+# Returns:
+#   0: Success (result printed to stdout)
+#   1: Invalid input timestamp
+#   2: Invalid seconds value (negative or not a number)
+#   3: Result would exceed maximum (overflow)
+#
+# Output:
+#   Prints the result timestamp to stdout if successful
+#
+# Examples:
+#   future_time=$(safe_timestamp_add "$now" "$SECONDS_PER_HOUR")
+#   if result=$(safe_timestamp_add "$timestamp" 3600); then
+#       future_timestamp=$result
+#   fi
+#
+# Note:
+#   If addition would result in value exceeding maximum timestamp, returns error code 3
+#   Caller should handle this case appropriately
+safe_timestamp_add() {
+	local base_timestamp="$1"
+	local seconds_to_add="$2"
+
+	# Validate base timestamp
+	if ! validate_timestamp "$base_timestamp"; then
+		return 1
+	fi
+
+	# Validate seconds_to_add is a non-negative integer
+	if [[ ! "$seconds_to_add" =~ ^[0-9]+$ ]]; then
+		return 2
+	fi
+
+	# Perform addition
+	local result=$((base_timestamp + seconds_to_add))
+
+	# Validate result is still reasonable (check for overflow)
+	if ! validate_timestamp "$result"; then
+		return 3
+	fi
+
+	# Output result
+	echo "$result"
+	return 0
+}
+
+# Safely calculate difference between two timestamps
+#
+# Calculates the difference (timestamp1 - timestamp2) with bounds checking.
+# Validates both input timestamps before calculation.
+#
+# Arguments:
+#   $1: First timestamp (Unix timestamp in seconds)
+#   $2: Second timestamp (Unix timestamp in seconds)
+#
+# Returns:
+#   0: Success (result printed to stdout, may be negative)
+#   1: Invalid first timestamp
+#   2: Invalid second timestamp
+#
+# Output:
+#   Prints the difference (timestamp1 - timestamp2) to stdout if successful
+#   Result may be negative if timestamp2 > timestamp1
+#
+# Examples:
+#   elapsed=$(safe_timestamp_diff "$end_time" "$start_time")
+#   remaining=$(safe_timestamp_diff "$cooldown_until" "$now")
+#
+# Note:
+#   Returns the raw difference, which may be negative
+#   Caller should handle negative results appropriately
+safe_timestamp_diff() {
+	local timestamp1="$1"
+	local timestamp2="$2"
+
+	# Validate both timestamps
+	if ! validate_timestamp "$timestamp1"; then
+		return 1
+	fi
+
+	if ! validate_timestamp "$timestamp2"; then
+		return 2
+	fi
+
+	# Perform subtraction (may be negative)
+	local result=$((timestamp1 - timestamp2))
+
+	# Output result (even if negative, as this is valid for duration calculations)
+	echo "$result"
+	return 0
 }
 
 # Check if directory exists
@@ -351,6 +550,22 @@ atomic_write_file() {
 	local file="$1"
 	local content="$2"
 
+	# If target file exists but is unreadable or unwritable, remove it first to avoid potential hangs
+	# This can happen if file permissions were changed (e.g., chmod 000 or chmod 444)
+	# Removing unwritable files prevents mv from hanging when trying to overwrite them
+	if [[ -f "$file" ]] && (! file_exists_and_readable "$file" || ! [[ -w "$file" ]]); then
+		rm -f "$file" 2>/dev/null || true
+	fi
+
+	# Clean up any leftover .tmp file from previous failed attempts
+	# This prevents hangs when directory becomes unwritable but .tmp file exists
+	# Also ensures we start with a clean slate for the atomic write
+	if [[ -f "${file}.tmp" ]]; then
+		# Remove .tmp file if unreadable (prevents mv from hanging)
+		# or if readable (ensures clean start)
+		rm -f "${file}.tmp" 2>/dev/null || true
+	fi
+
 	if ! (echo "$content" >"${file}.tmp" && mv "${file}.tmp" "$file"); then
 		return 1
 	fi
@@ -421,6 +636,55 @@ escape_sed_replacement() {
 escape_sed_regex() {
 	local value="$1"
 	echo "$value" | sed 's/[[\.*^$()+?{|]/\\&/g'
+}
+
+# Sanitize location name for filename safety
+#
+# Sanitizes a location name to be safe for use in filenames.
+# Replaces invalid characters with underscores and ensures valid identifier format.
+#
+# Arguments:
+#   $1: Location name to sanitize
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints sanitized location name to stdout
+#
+# Examples:
+#   sanitized=$(sanitize_location_name "NYC-Office")
+#   # Returns: "NYC_Office"
+#
+# Note:
+#   - Replaces invalid chars (non-alphanumeric, non-underscore) with underscore
+#   - Ensures max length of 64 chars for filename safety
+#   - Ensures result is valid identifier (alphanumeric + underscore)
+sanitize_location_name() {
+	local location_name="$1"
+	local sanitized
+
+	# Replace invalid chars with underscore (keep alphanumeric and underscore)
+	# Use bash parameter expansion instead of sed for better performance
+	sanitized="${location_name//[^A-Za-z0-9_]/_}"
+
+	# Ensure max length (64 chars for filename safety)
+	if [[ ${#sanitized} -gt 64 ]]; then
+		sanitized="${sanitized:0:64}"
+	fi
+
+	# Ensure it starts with alphanumeric (not underscore)
+	if [[ "$sanitized" =~ ^_ ]]; then
+		sanitized="LOC${sanitized}"
+	fi
+
+	# If empty after sanitization, use default
+	if [[ -z "$sanitized" ]]; then
+		sanitized="LOCATION"
+	fi
+
+	echo "$sanitized"
+	return 0
 }
 
 # Update or add a configuration variable in config file
@@ -540,6 +804,54 @@ safe_set_variable() {
 check_command_available() {
 	local cmd="$1"
 	command -v "$cmd" >/dev/null 2>&1
+}
+
+# Check command availability and log warning if missing
+#
+# Checks if a command is available in PATH and logs a standardized warning
+# message if it is not. This function standardizes the pattern of checking
+# command availability and logging warnings, replacing the duplicate patterns
+# of check_command_available() + handle_error() or warn_if_missing() + handle_error().
+#
+# Arguments:
+#   $1: Command name to check
+#   $2: Optional context message for the warning (e.g., "Cannot add route", "Ping check enabled")
+#
+# Returns:
+#   0: Command is available (found in PATH)
+#   1: Command is not available (warning logged)
+#
+# Side effects:
+#   - Logs a warning message via handle_error() if command is not available
+#   - Warning message format: "<context> but <command> command not available"
+#     or "<command> command not available" if no context provided
+#
+# Examples:
+#   if ! check_command_or_warn "ip" "Cannot add route"; then
+#       return 1
+#   fi
+#   if ! check_command_or_warn "ping"; then
+#       return 1
+#   fi
+#
+# Note:
+#   Requires handle_error() function to be available (from logging.sh)
+#   Use check_command_available() if you need silent checks without logging
+#   This function standardizes error messages across the codebase
+check_command_or_warn() {
+	local cmd="$1"
+	local context="${2:-}"
+
+	if ! check_command_available "$cmd"; then
+		if [[ -n "$context" ]]; then
+			handle_error "WARNING" "$context but $cmd command not available"
+		else
+			handle_error "WARNING" "$cmd command not available"
+		fi
+		return 1
+	fi
+
+	return 0
 }
 
 # Safely source a library file with error suppression

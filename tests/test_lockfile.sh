@@ -15,9 +15,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:high
 @test "lockfile cleanup on script exit" {
+	# Purpose: Test verifies that lockfile is cleaned up when script exits successfully
+	# Expected: Lockfile is removed by EXIT trap handler when script completes normally
+	# Importance: Lockfile cleanup ensures lock is released after successful script execution
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -45,9 +49,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "lockfile cleanup on script error" {
+	# Purpose: Test verifies that lockfile is cleaned up when script exits with error
+	# Expected: Lockfile is removed by EXIT trap handler even when script encounters errors
+	# Importance: Lockfile cleanup on error prevents stale locks from blocking future script execution
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="invalid-ip-format"
+LOCATION_TEST_EXTERNAL="invalid-ip-format"
+LOCATION_TEST_INTERNAL="invalid-ip-format"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -75,9 +83,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "lockfile contains invalid format" {
+	# Purpose: Test verifies that script handles lockfiles with invalid format gracefully
+	# Expected: Script detects invalid lockfile format, cleans it up or handles it without crashing
+	# Importance: Invalid format handling prevents script failures from corrupted lockfiles
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -107,10 +119,14 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "lockfile timestamp at timeout boundary" {
+	# Purpose: Test verifies that script handles lockfiles at timeout boundary correctly
+	# Expected: Script correctly identifies lockfiles at exactly the timeout threshold as stale
+	# Importance: Boundary condition handling ensures consistent stale lockfile detection
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-LOCKFILE_TIMEOUT=300
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
+LOCKFILE_TIMEOUT=60
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -118,8 +134,8 @@ EOF
 	local state_dir="${TEST_DIR}"
 	local lockfile="${state_dir}/vpn-monitor.lock"
 
-	# Create lockfile exactly at timeout boundary (300 seconds ago)
-	local boundary_time=$(($(date +%s) - 300))
+	# Create lockfile exactly at timeout boundary (60 seconds ago)
+	local boundary_time=$(($(date +%s) - 60))
 	echo "${boundary_time}:12345" >"$lockfile"
 	# Touch file to set modification time
 	touch -d "@$boundary_time" "$lockfile" 2>/dev/null || true
@@ -143,9 +159,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "lockfile acquisition prevents concurrent execution" {
+	# Purpose: Test verifies that lockfile acquisition prevents multiple script instances from running simultaneously
+	# Expected: Script detects existing lockfile with running PID and exits gracefully without executing
+	# Importance: Concurrent execution prevention ensures only one instance monitors VPN at a time
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -181,6 +201,9 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "lockfile acquisition uses flock when available" {
+	# Purpose: Test verifies that script uses flock-based locking when flock command is available
+	# Expected: Script uses flock mechanism for atomic lockfile acquisition and cleanup
+	# Importance: Flock-based locking provides reliable atomic operations for lockfile management
 	# Skip condition: Requires 'flock' command to be available for file locking tests
 	if ! command -v flock >/dev/null 2>&1; then
 		skip "flock command not available (test requires flock for file locking functionality)"
@@ -188,7 +211,8 @@ EOF
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -216,6 +240,9 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "lockfile acquisition falls back when flock unavailable" {
+	# Purpose: Test verifies that script falls back to atomic file-based locking when flock is unavailable
+	# Expected: Script uses fallback locking mechanism (atomic file operations) when flock command is not found
+	# Importance: Fallback mechanism ensures lockfile functionality works even without flock command
 	# Temporarily hide flock command
 	local test_bin="${TEST_DIR}/bin"
 	mkdir -p "$test_bin"
@@ -240,7 +267,8 @@ EOF
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -268,14 +296,15 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "lockfile switching between flock and fallback modes" {
-	# This test verifies correct behavior when switching between flock and fallback lockfile mechanisms
-	# Different locking mechanisms have different failure modes, so it's critical to ensure
-	# they can interoperate correctly when the system switches modes
+	# Purpose: Test verifies correct behavior when switching between flock and fallback lockfile mechanisms
+	# Expected: Both locking modes can detect and handle lockfiles created by the other mode correctly
+	# Importance: Mode interoperability ensures consistent lockfile behavior when system switches between locking mechanisms
 	# Both modes use the same lockfile format (timestamp:pid), so they should be compatible
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -344,9 +373,10 @@ EOF
 	# Test 3: Verify stale lockfile handling works correctly when switching modes
 	# Create a stale lockfile (old timestamp) - format is same for both modes
 	# Update config file to set LOCKFILE_TIMEOUT for stale lockfile detection
-	local lockfile_timeout=300
+	local lockfile_timeout=60
 	cat >"$config_file" <<EOF
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 LOCKFILE_TIMEOUT=${lockfile_timeout}
 EOF
 	# Recreate test script to pick up updated config
@@ -380,9 +410,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "lockfile cleanup on SIGTERM" {
+	# Purpose: Test verifies that lockfile is cleaned up when script receives SIGTERM signal
+	# Expected: Lockfile is removed by trap handler when script is terminated with SIGTERM
+	# Importance: Signal-based cleanup ensures lockfile is released when script is stopped by system or user
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -421,6 +455,9 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "multiple processes attempting to acquire lock simultaneously (flock path)" {
+	# Purpose: Test verifies that flock-based locking prevents multiple processes from acquiring lock simultaneously
+	# Expected: Only one process succeeds in acquiring lock, others detect conflict and exit gracefully
+	# Importance: Concurrent lock acquisition prevention ensures mutual exclusion even under race conditions
 	# Skip condition: Requires 'flock' command to be available for concurrent lock acquisition tests
 	if ! command -v flock >/dev/null 2>&1; then
 		skip "flock command not available (test requires flock for concurrent file locking tests)"
@@ -428,7 +465,8 @@ EOF
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -482,6 +520,9 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "multiple processes attempting to acquire lock simultaneously (fallback path)" {
+	# Purpose: Test verifies that fallback locking prevents multiple processes from acquiring lock simultaneously
+	# Expected: Only one process succeeds in acquiring lock using atomic file operations, others detect conflict
+	# Importance: Fallback mechanism must provide same mutual exclusion guarantees as flock-based locking
 	# Temporarily hide flock command to force fallback path
 	local test_bin="${TEST_DIR}/bin"
 	mkdir -p "$test_bin"
@@ -498,7 +539,8 @@ EOF
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -567,9 +609,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "lockfile removed between check and creation (TOCTOU race)" {
+	# Purpose: Test verifies that script handles TOCTOU race condition when lockfile is removed between check and creation
+	# Expected: Script handles race condition gracefully, either successfully acquiring lock or detecting conflict
+	# Importance: TOCTOU race handling ensures reliable lockfile acquisition even under concurrent access
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -619,9 +665,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "PID reuse scenario (old PID reused, lockfile appears valid but process is different)" {
+	# Purpose: Test verifies that script handles PID reuse scenario where old PID is reused by a different process
+	# Expected: Script detects that PID in lockfile belongs to a different process and treats lockfile as stale
+	# Importance: PID reuse handling prevents false positives when system reuses PIDs from terminated processes
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -675,9 +725,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "script crashes - lockfile should be detected as stale on next run" {
+	# Purpose: Test verifies that lockfile from crashed script is detected as stale on next script execution
+	# Expected: Script detects stale lockfile (old timestamp, dead PID) and removes it before proceeding
+	# Importance: Crash recovery ensures script can recover from previous crashes without manual intervention
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 LOCKFILE_TIMEOUT=1
 EOF
 
@@ -732,9 +786,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "trap handlers properly clean up lockfile in all exit scenarios" {
+	# Purpose: Test verifies that trap handlers clean up lockfile in all exit scenarios (EXIT, INT, TERM)
+	# Expected: Lockfile is removed by trap handlers regardless of how script exits (normal, SIGINT, SIGTERM)
+	# Importance: Comprehensive trap handling ensures lockfile cleanup in all termination scenarios
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -795,9 +853,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "lockfile file modification time cannot be read (permission issues)" {
+	# Purpose: Test verifies that script handles permission issues when reading lockfile modification time
+	# Expected: Script treats lockfile as stale when stat fails to read modification time (returns mtime=0)
+	# Importance: Permission error handling prevents script failures when lockfile permissions are restrictive
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -844,9 +906,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "lockfile exists but PID belongs to different user (permission denied on kill -0)" {
+	# Purpose: Test verifies that script handles permission denied errors when checking PID from different user
+	# Expected: Script treats lockfile as stale when kill -0 fails due to permission denied (different user)
+	# Importance: Permission error handling prevents false positives when checking processes owned by other users
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -893,9 +959,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "lockfile exists but PID is zombie process" {
+	# Purpose: Test verifies that script handles lockfiles containing PIDs of zombie processes correctly
+	# Expected: Script detects zombie process PID and treats lockfile as stale (zombie processes are not considered running)
+	# Importance: Zombie process handling prevents false positives from lockfiles containing zombie PIDs
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"

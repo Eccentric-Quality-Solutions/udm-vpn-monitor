@@ -150,7 +150,7 @@ service cron status
 **If ping checks are failing**:
 - Ping may be blocked by firewall
 - Disable ping checks: `ENABLE_PING_CHECK=0`
-- Or configure `INTERNAL_PEER_IPS` to a reachable IP
+- Or configure `LOCATION_*_INTERNAL` to a reachable IP
 
 **If thresholds are too low**:
 - Increase thresholds in config:
@@ -203,7 +203,7 @@ service cron status
 
 5. **Check rate limiting**:
    ```bash
-   cat /data/vpn-monitor/logs/restart_count
+   cat /data/vpn-monitor/state/restart_count
    ```
    This file contains Unix timestamps (one per line) of Tier 3 recovery actions (full IPsec restarts and successful xfrm-based per-connection recovery). If too many restarts occurred in the last hour (default: max 3), rate limiting may block further Tier 3 recovery actions.
 
@@ -259,11 +259,11 @@ service cron status
 
 2. **Check ping target configuration**:
    ```bash
-   grep INTERNAL_PEER_IPS /data/vpn-monitor/vpn-monitor.conf
+   grep LOCATION.*INTERNAL /data/vpn-monitor/vpn-monitor.conf
    ```
-   If empty, uses peer IP (external IP, may not be pingable).
+   If empty, uses external IP (may not be pingable).
 
-3. **Check LOCAL_UDM_IP configuration** (if using INTERNAL_PEER_IPS):
+3. **Check LOCAL_UDM_IP configuration** (if using INTERNAL IPs):
    ```bash
    grep LOCAL_UDM_IP /data/vpn-monitor/vpn-monitor.conf
    ```
@@ -299,9 +299,9 @@ service cron status
 - Monitor relies only on byte counters
 
 **If ping target is wrong**:
-- Configure `INTERNAL_PEER_IPS` to internal/private IPs on remote network
-- Example: `INTERNAL_PEER_IPS="192.168.100.1"`
-- See [README.md Configuration section](README.md#configuration) for INTERNAL_PEER_IPS details
+- Configure `LOCATION_*_INTERNAL` to internal/private IPs on remote network
+- Example: `LOCATION_NYC_INTERNAL="192.168.100.1"`
+- See [README.md Configuration section](README.md#configuration) for location-based configuration details
 
 **If LOCAL_UDM_IP is not configured**:
 - Set `LOCAL_UDM_IP` to your local UDM's internal IP address

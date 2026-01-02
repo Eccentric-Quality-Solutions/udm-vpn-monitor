@@ -3,7 +3,7 @@
 # VPN status detection for UDM VPN Monitor
 # Handles VPN detection using xfrm, ipsec, and ping checks
 #
-# Version: 0.4.2
+# Version: 0.4.3
 #
 
 # Source constants for magic numbers
@@ -21,7 +21,10 @@ if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	[[ -z "${IPV4_OCTET_COUNT:-}" ]] && readonly IPV4_OCTET_COUNT=4
 	[[ -z "${IPV4_CIDR_SINGLE_HOST:-}" ]] && readonly IPV4_CIDR_SINGLE_HOST=32
 	[[ -z "${PING_PACKET_LOSS_THRESHOLD:-}" ]] && readonly PING_PACKET_LOSS_THRESHOLD=100
+	[[ -z "${PING_SUCCESS_THRESHOLD:-}" ]] && readonly PING_SUCCESS_THRESHOLD=0.3
+	[[ -z "${PING_CEIL_ADJUSTMENT:-}" ]] && readonly PING_CEIL_ADJUSTMENT=0.999
 	[[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && readonly XFRM_OUTPUT_CONTEXT_LINES=10
+	[[ -z "${IPSEC_STATUS_TIMEOUT:-}" ]] && readonly IPSEC_STATUS_TIMEOUT=5
 fi
 
 # Source common utility functions
@@ -485,6 +488,69 @@ extract_spi() {
 	return 0
 }
 
+# Get xfrm state output for a peer IP
+#
+# Retrieves xfrm state output filtered for a specific peer IP address.
+# Uses fixed-string matching to prevent regex injection and ensure safe IP matching.
+#
+# Arguments:
+#   $1: Peer IP address to filter for
+#   $2: Optional number of context lines to include after match (default: XFRM_OUTPUT_CONTEXT_LINES)
+#
+# Returns:
+#   0: Success (output printed to stdout)
+#   1: Failed to query xfrm state
+#
+# Output:
+#   Prints filtered xfrm state output to stdout
+get_xfrm_state_for_peer() {
+	local peer_ip="$1"
+	local context_lines="${2:-${XFRM_OUTPUT_CONTEXT_LINES:-10}}"
+
+	if ! check_command_available "ip"; then
+		return 1
+	fi
+
+	ip xfrm state 2>/dev/null | grep -F "dst $peer_ip" -A "$context_lines" || true
+}
+
+# Get ipsec status output for a peer IP
+#
+# Retrieves ipsec status output filtered for a specific peer IP address.
+# Uses timeout to prevent hanging and fixed-string matching for safety.
+#
+# Arguments:
+#   $1: Peer IP address to filter for (optional, if empty returns full output)
+#
+# Returns:
+#   0: Success (output printed to stdout)
+#   1: Failed to query ipsec status or command unavailable
+#
+# Output:
+#   Prints filtered ipsec status output to stdout (or full output if no peer IP)
+get_ipsec_status_for_peer() {
+	local peer_ip="${1:-}"
+	local ipsec_output
+
+	if ! check_command_available "ipsec"; then
+		return 1
+	fi
+
+	# Get ipsec status with timeout
+	if command -v timeout >/dev/null 2>&1; then
+		ipsec_output=$(timeout "${IPSEC_STATUS_TIMEOUT:-5}" ipsec status 2>/dev/null || true)
+	else
+		ipsec_output=$(ipsec status 2>/dev/null || true)
+	fi
+
+	# Filter by peer IP if provided
+	if [[ -n "$peer_ip" ]]; then
+		echo "$ipsec_output" | grep -F "$peer_ip" || true
+	else
+		echo "$ipsec_output"
+	fi
+}
+
 # Get local UDM IP address from configuration
 #
 # Retrieves and validates the LOCAL_UDM_IP configuration value.
@@ -570,7 +636,7 @@ check_route_exists() {
 		return 1
 	fi
 
-	if ! check_command_available "ip"; then
+	if ! check_command_or_warn "ip" "Route check"; then
 		return 1
 	fi
 
@@ -612,8 +678,7 @@ add_route_if_needed() {
 		return 1
 	fi
 
-	if ! check_command_available "ip"; then
-		handle_error "WARNING" "Cannot add route: ip command not available"
+	if ! check_command_or_warn "ip" "Cannot add route"; then
 		return 1
 	fi
 
@@ -661,7 +726,7 @@ add_route_if_needed() {
 #   Uses LOCAL_UDM_IP as source IP if provided
 #
 # Note:
-#   Tries multiple ping command formats for compatibility (Linux/BSD)
+#   Uses Linux ping command format
 #   Requires log_message, PING_COUNT, PING_TIMEOUT to be set
 #   If local_ip is provided, uses ping -I flag and manages route on br0
 check_ping_connectivity() {
@@ -677,8 +742,7 @@ check_ping_connectivity() {
 	fi
 
 	# Check if ping command is available
-	if ! warn_if_missing "ping"; then
-		handle_error "WARNING" "Ping check enabled but ping command not available"
+	if ! check_command_or_warn "ping" "Ping check enabled"; then
 		return 1
 	fi
 
@@ -698,7 +762,7 @@ check_ping_connectivity() {
 	# Some systems have separate ping6, others use ping -6
 	local ping_cmd
 	local ping_args=()
-	if [[ "$target_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+	if validate_ipv4 "$target_ip"; then
 		# IPv4
 		ping_cmd="ping"
 		# Add -I flag if local_ip is provided
@@ -727,21 +791,58 @@ check_ping_connectivity() {
 	fi
 
 	# Perform ping check
-	# Try Linux-style ping first (-W for timeout), fallback to BSD-style (-w)
-	# -c: count of packets, -q: quiet (summary only), -W/-w: timeout per packet
+	# Uses Linux-style ping (-W for timeout)
+	# -c: count of packets, -q: quiet (summary only), -W: timeout per packet
 	# -I: source IP address (if local_ip provided)
+	# Wrap ping commands with timeout to prevent hanging
+	# Calculate timeout: min(ping_timeout + 1, min(ping_count * ping_timeout + 1, 5))
+	# This ensures we catch hanging commands quickly (ping_timeout + 1) while allowing
+	# normal pings to complete (ping_count * ping_timeout + 1), capped at 5 seconds
+	# We use the smaller timeout to ensure script remains responsive
+	local ping_wrapper_timeout
+	local quick_timeout=$((ping_timeout + 1))
+	local normal_timeout=$((ping_count * ping_timeout + 1))
+	# Use the smaller of the two to catch hangs quickly, but cap normal timeout at 5 seconds
+	if [[ $normal_timeout -gt 5 ]]; then
+		normal_timeout=5
+	fi
+	# Use the smaller timeout to ensure script remains responsive
+	if [[ $quick_timeout -lt $normal_timeout ]]; then
+		ping_wrapper_timeout=$quick_timeout
+	else
+		ping_wrapper_timeout=$normal_timeout
+	fi
 	local ping_result
 	local ping_success=0
+	local ping_exit_code=0
 
-	# Try Linux-style ping (most common on UDM)
-	if ping_result=$("$ping_cmd" "${ping_args[@]}" -c "$ping_count" -W "$ping_timeout" -q "$target_ip" 2>&1); then
-		ping_success=1
-	# Try BSD-style ping as fallback
-	elif ping_result=$("$ping_cmd" "${ping_args[@]}" -c "$ping_count" -w "$ping_timeout" -q "$target_ip" 2>&1); then
-		ping_success=1
-	# Try without timeout flag (some systems)
-	elif ping_result=$("$ping_cmd" "${ping_args[@]}" -c "$ping_count" -q "$target_ip" 2>&1); then
-		ping_success=1
+	# Use Linux-style ping with timeout wrapper
+	if command -v timeout >/dev/null 2>&1; then
+		# Try Linux-style ping with timeout wrapper
+		if ping_result=$(timeout "$ping_wrapper_timeout" "$ping_cmd" "${ping_args[@]}" -c "$ping_count" -W "$ping_timeout" -q "$target_ip" 2>&1); then
+			ping_success=1
+		else
+			ping_exit_code=$?
+			# If timeout occurred (exit code 124), don't try fallbacks
+			if [[ $ping_exit_code -eq 124 ]]; then
+				# Timeout occurred - ping command hung
+				ping_success=0
+			else
+				# Try without timeout flag as fallback (only if not timeout)
+				if [[ $ping_exit_code -ne 124 ]] && ping_result=$(timeout "$ping_wrapper_timeout" "$ping_cmd" "${ping_args[@]}" -c "$ping_count" -q "$target_ip" 2>&1); then
+					ping_success=1
+					ping_exit_code=0
+				fi
+			fi
+		fi
+	else
+		# Fallback if timeout command not available (shouldn't happen on UDM)
+		if ping_result=$("$ping_cmd" "${ping_args[@]}" -c "$ping_count" -W "$ping_timeout" -q "$target_ip" 2>&1); then
+			ping_success=1
+		# Try without timeout flag as fallback
+		elif ping_result=$("$ping_cmd" "${ping_args[@]}" -c "$ping_count" -q "$target_ip" 2>&1); then
+			ping_success=1
+		fi
 	fi
 
 	if [[ $ping_success -eq 1 ]]; then
@@ -767,11 +868,24 @@ check_ping_connectivity() {
 	else
 		# Ping command failed
 		# If route was added but ping still failed, this indicates a tunnel issue
-		if [[ -n "$local_ip" ]]; then
-			handle_error "WARNING" "Ping check failed: $target_ip from $local_ip (ping command error or timeout)"
+		local error_msg
+		# Check for timeout (exit code 124) only if timeout wrapper was used
+		if [[ $ping_exit_code -eq 124 ]] && command -v timeout >/dev/null 2>&1; then
+			# Timeout occurred (exit code 124 from timeout command)
+			if [[ -n "$local_ip" ]]; then
+				error_msg="Ping check timed out: $target_ip from $local_ip (command hung after ${ping_wrapper_timeout}s)"
+			else
+				error_msg="Ping check timed out: $target_ip (command hung after ${ping_wrapper_timeout}s)"
+			fi
 		else
-			handle_error "WARNING" "Ping check failed: $target_ip (ping command error or timeout)"
+			# Other error
+			if [[ -n "$local_ip" ]]; then
+				error_msg="Ping check failed: $target_ip from $local_ip (ping command error or timeout)"
+			else
+				error_msg="Ping check failed: $target_ip (ping command error or timeout)"
+			fi
 		fi
+		handle_error "WARNING" "$error_msg"
 		return 1
 	fi
 }
@@ -785,6 +899,7 @@ check_ping_connectivity() {
 # Arguments:
 #   $1: Current SPI value (from xfrm output, hex or decimal format)
 #   $2: Peer IP address (used for state lookup)
+#   $3: Location name (optional, used for state file naming)
 #
 # Returns:
 #   0: Rekey detected (SPI changed)
@@ -794,7 +909,7 @@ check_ping_connectivity() {
 #   None (read-only check)
 #
 # Examples:
-#   if check_sa_rekey_occurred "$current_spi" "$peer_ip"; then
+#   if check_sa_rekey_occurred "$current_spi" "$peer_ip" "$location_name"; then
 #       echo "SA rekey occurred"
 #   fi
 #
@@ -805,6 +920,7 @@ check_ping_connectivity() {
 check_sa_rekey_occurred() {
 	local current_spi="$1"
 	local peer_ip="$2"
+	local location_name="${3:-}"
 
 	# Validate SPI format
 	if [[ -z "$current_spi" ]] || [[ ! "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
@@ -817,12 +933,21 @@ check_sa_rekey_occurred() {
 	# So we check if the file exists first, or use a sentinel value
 	local last_spi
 	local spi_file
-	spi_file=$(get_peer_state_file_path "$peer_ip" "spi")
+	if [[ -n "$location_name" ]]; then
+		spi_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "spi")
+	else
+		# Fallback for backward compatibility (shouldn't happen in new code)
+		spi_file=$(get_peer_state_file_path "" "$peer_ip" "spi")
+	fi
 	if [[ ! -f "$spi_file" ]]; then
 		# No SPI file exists - no rekey
 		return 1
 	fi
-	last_spi=$(get_peer_state "$peer_ip" "spi" "")
+	if [[ -n "$location_name" ]]; then
+		last_spi=$(get_peer_state "$location_name" "$peer_ip" "spi" "")
+	else
+		last_spi=$(get_peer_state "" "$peer_ip" "spi" "")
+	fi
 
 	# If last_spi is empty or "0" and file doesn't exist, no rekey
 	# But we already checked file existence above, so if we get here, SPI exists
@@ -872,6 +997,7 @@ check_sa_rekey_occurred() {
 detect_sa_rekey() {
 	local current_spi="$1"
 	local peer_ip="$2"
+	local location_name="${3:-}"
 
 	# Validate SPI format
 	if [[ -z "$current_spi" ]] || [[ ! "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
@@ -882,17 +1008,45 @@ detect_sa_rekey() {
 	# Check if SPI file exists first to distinguish between "no file" and "file with value"
 	local last_spi
 	local spi_file
-	spi_file=$(get_peer_state_file_path "$peer_ip" "spi")
+	if [[ -n "$location_name" ]]; then
+		spi_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "spi")
+	else
+		# Fallback for backward compatibility (shouldn't happen in new code)
+		spi_file=$(get_peer_state_file_path "" "$peer_ip" "spi")
+	fi
 	if [[ ! -f "$spi_file" ]]; then
 		# No SPI file exists - store current SPI and return (no rekey)
-		set_peer_state_non_critical "$peer_ip" "spi" "$current_spi"
+		if [[ -n "$location_name" ]]; then
+			set_peer_state_non_critical "$location_name" "$peer_ip" "spi" "$current_spi"
+		else
+			set_peer_state_non_critical "" "$peer_ip" "spi" "$current_spi"
+		fi
 		return 1
 	fi
-	last_spi=$(get_peer_state "$peer_ip" "spi" "")
+	if [[ -n "$location_name" ]]; then
+		last_spi=$(get_peer_state "$location_name" "$peer_ip" "spi" "")
+	else
+		last_spi=$(get_peer_state "" "$peer_ip" "spi" "")
+	fi
+
+	# Validate stored SPI format - if corrupted, recover by storing current SPI
+	if [[ -n "$last_spi" ]] && [[ "$last_spi" != "0" ]] && [[ ! "$last_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+		# Stored SPI is corrupted - recover by storing current SPI
+		if [[ -n "$location_name" ]]; then
+			set_peer_state_non_critical "$location_name" "$peer_ip" "spi" "$current_spi"
+		else
+			set_peer_state_non_critical "" "$peer_ip" "spi" "$current_spi"
+		fi
+		return 1
+	fi
 
 	# If last_spi is empty or "0", treat as no stored SPI (shouldn't happen if file exists, but be safe)
 	if [[ -z "$last_spi" ]] || [[ "$last_spi" == "0" ]]; then
-		set_peer_state_non_critical "$peer_ip" "spi" "$current_spi"
+		if [[ -n "$location_name" ]]; then
+			set_peer_state_non_critical "$location_name" "$peer_ip" "spi" "$current_spi"
+		else
+			set_peer_state_non_critical "" "$peer_ip" "spi" "$current_spi"
+		fi
 		return 1
 	fi
 
@@ -902,10 +1056,13 @@ detect_sa_rekey() {
 		log_message "INFO" "SA rekey detected for $peer_ip: SPI changed from $last_spi to $current_spi"
 
 		# Reset byte counter baseline to 0 (allows new baseline after rekey)
-		set_peer_state_non_critical "$peer_ip" "last_bytes" "0"
-
-		# Update stored SPI
-		set_peer_state_non_critical "$peer_ip" "spi" "$current_spi"
+		if [[ -n "$location_name" ]]; then
+			set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "0"
+			set_peer_state_non_critical "$location_name" "$peer_ip" "spi" "$current_spi"
+		else
+			set_peer_state_non_critical "" "$peer_ip" "last_bytes" "0"
+			set_peer_state_non_critical "" "$peer_ip" "spi" "$current_spi"
+		fi
 
 		return 0
 	fi
@@ -922,10 +1079,11 @@ detect_sa_rekey() {
 # Detects SA rekey events before checking bytes to prevent false positives.
 #
 # Arguments:
-#   $1: Current byte count (integer from xfrm state)
-#   $2: Peer IP address (used for state management and logging)
-#   $3: Current SPI value (optional, used for rekey detection)
-#   $4: Internal peer IP address (optional, used for ping checks on idle detection)
+#   $1: Location name (required, sanitized)
+#   $2: Current byte count (integer from xfrm state)
+#   $3: Peer IP address (used for state management and logging)
+#   $4: Current SPI value (optional, used for rekey detection)
+#   $5: Internal peer IP address (optional, used for ping checks on idle detection)
 #
 # Returns:
 #   0: Byte counters are valid (traffic flowing, idle but healthy, first check, or after rekey)
@@ -939,7 +1097,7 @@ detect_sa_rekey() {
 #   - Logs warning messages for invalid counters
 #
 # Examples:
-#   if check_byte_counters "$current_bytes" "$peer_ip" "$current_spi"; then
+#   if check_byte_counters "NYC" "$current_bytes" "$peer_ip" "$current_spi"; then
 #       echo "VPN is passing traffic"
 #   fi
 #
@@ -950,23 +1108,24 @@ detect_sa_rekey() {
 #   If rekey detected, byte counter baseline is reset and check passes
 #   Uses abstraction layer for state management
 check_byte_counters() {
-	local current_bytes="$1"
-	local peer_ip="$2"
-	local current_spi="${3:-}"
-	local internal_peer_ip="${4:-}"
+	local location_name="$1"
+	local current_bytes="$2"
+	local peer_ip="$3"
+	local current_spi="${4:-}"
+	local internal_peer_ip="${5:-}"
 
 	# Check for SA rekey if SPI is provided
 	if [[ -n "$current_spi" ]]; then
-		if detect_sa_rekey "$current_spi" "$peer_ip"; then
+		if detect_sa_rekey "$current_spi" "$peer_ip" "$location_name"; then
 			# Rekey detected - byte counter baseline was reset to 0
 			# Clear idle state (rekey resets everything)
-			delete_peer_state "$peer_ip" "idle_detected" || true
+			delete_peer_state "$location_name" "$peer_ip" "idle_detected" || true
 			# Treat this as first check (allow any non-zero bytes)
 			local last_bytes
-			last_bytes=$(get_peer_state "$peer_ip" "last_bytes" "0")
+			last_bytes=$(get_peer_state "$location_name" "$peer_ip" "last_bytes" "0")
 			if [[ "$current_bytes" -gt 0 ]]; then
 				# Bytes are non-zero after rekey - update baseline
-				if set_peer_state "$peer_ip" "last_bytes" "$current_bytes"; then
+				if set_peer_state "$location_name" "$peer_ip" "last_bytes" "$current_bytes"; then
 					log_message "INFO" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset)"
 					return 0
 				else
@@ -980,7 +1139,7 @@ check_byte_counters() {
 
 	# Get last known bytes using abstraction layer
 	local last_bytes
-	last_bytes=$(get_peer_state "$peer_ip" "last_bytes" "0")
+	last_bytes=$(get_peer_state "$location_name" "$peer_ip" "last_bytes" "0")
 
 	# Check if bytes are zero
 	if [[ "$current_bytes" -eq 0 ]]; then
@@ -998,10 +1157,23 @@ check_byte_counters() {
 
 	# Bytes are non-zero - check if increasing
 	if [[ "$current_bytes" -gt "$last_bytes" ]] || [[ "$last_bytes" -eq 0 ]]; then
-		# Bytes are increasing or this is first check - definitely healthy
-		if set_peer_state "$peer_ip" "last_bytes" "$current_bytes"; then
+		# Bytes are increasing or this is first check - check ping if enabled
+		# Even if bytes are increasing, ping failure indicates a routing issue
+		if [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
+			local local_ip
+			local_ip=$(get_local_ip_for_ping)
+			# Check ping connectivity
+			# Errors are logged by check_ping_connectivity, so we don't suppress stderr
+			if ! check_ping_connectivity "$internal_peer_ip" "$local_ip"; then
+				# Ping fails even though bytes are increasing - routing issue
+				handle_error "WARNING" "VPN suspect: SA exists, bytes increasing ($current_bytes) but ping failed"
+				return 1
+			fi
+		fi
+		# Bytes are increasing and ping check passed (or disabled) - definitely healthy
+		if set_peer_state "$location_name" "$peer_ip" "last_bytes" "$current_bytes"; then
 			# Clear idle state if set (traffic is flowing again)
-			delete_peer_state "$peer_ip" "idle_detected" || true
+			delete_peer_state "$location_name" "$peer_ip" "idle_detected" || true
 			log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, traffic flowing)"
 			return 0
 		else
@@ -1011,6 +1183,12 @@ check_byte_counters() {
 	fi
 
 	# Bytes are not increasing (static or decreased) - use ping to check if healthy
+	# Special case: If bytes decreased significantly, log it explicitly
+	if [[ "$current_bytes" -lt "$last_bytes" ]]; then
+		# Bytes decreased - this is abnormal and should be logged
+		handle_error "WARNING" "VPN suspect: SA exists but bytes decreased (current=$current_bytes, last=$last_bytes) - bytes not increasing"
+	fi
+
 	if [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
 		local local_ip
 		local_ip=$(get_local_ip_for_ping)
@@ -1018,8 +1196,8 @@ check_byte_counters() {
 		# Errors are logged by check_ping_connectivity, so we don't suppress stderr
 		if check_ping_connectivity "$internal_peer_ip" "$local_ip"; then
 			# Ping succeeds - tunnel is idle but healthy
-			set_peer_state_non_critical "$peer_ip" "last_bytes" "$current_bytes"
-			set_peer_state_non_critical "$peer_ip" "idle_detected" "1"
+			set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "$current_bytes"
+			set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
 			log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (idle but healthy, ping check passed)"
 			# Check keepalive status and suggest action if needed
 			if [[ "${ENABLE_KEEPALIVE:-0}" -ne 1 ]]; then
@@ -1027,7 +1205,7 @@ check_byte_counters() {
 			else
 				# Keepalive is enabled - check if daemon is running
 				local keepalive_pidfile="${STATE_DIR:-/data/vpn-monitor}/vpn-keepalive.pid"
-				if [[ ! -f "$keepalive_pidfile" ]] || ! kill -0 "$(cat "$keepalive_pidfile" 2>/dev/null)" 2>/dev/null; then
+				if [[ ! -f "$keepalive_pidfile" ]] || ! file_exists_and_readable "$keepalive_pidfile" || ! kill -0 "$(cat "$keepalive_pidfile" 2>/dev/null)" 2>/dev/null; then
 					log_message "INFO" "Keepalive is enabled but daemon is not running - consider starting: vpn-keepalive.sh start"
 				fi
 			fi
@@ -1052,20 +1230,24 @@ check_byte_counters() {
 # Arguments:
 #   $1: External peer IP address (used for xfrm state checks)
 #   $2: Internal peer IP address (optional, used for ping checks in idle detection)
+#   $3: Location name (optional, used for state file naming)
 #
 # Returns:
-#   0: SA found and valid
-#   1: SA not found or invalid
+#   0: SA found and valid (byte counters validated successfully)
+#   1: SA not found, invalid, or byte counters unavailable
 #
 # Side effects:
 #   - Logs debug/warning messages
+#   - Returns failure (1) when byte counters cannot be extracted, allowing
+#     determine_vpn_status to detect failure type as "unknown"
 check_xfrm_status() {
 	local peer_ip="$1"
 	local internal_peer_ip="${2:-}"
+	local location_name="${3:-}"
 
 	# Try ip xfrm state first (most reliable)
 	# xfrm = Linux IPsec framework - shows Security Associations (SAs) and byte counters
-	if ! check_command_available "ip"; then
+	if ! check_command_or_warn "ip" "Checking xfrm status"; then
 		return 1
 	fi
 
@@ -1073,9 +1255,7 @@ check_xfrm_status() {
 	# Use fixed-string matching to prevent regex pattern injection and avoid partial IP matches
 	# Match on "dst $peer_ip" pattern which appears at the start of each SA entry
 	# This ensures we capture the complete SA block including lifetime information
-	# -A XFRM_OUTPUT_CONTEXT_LINES: show context lines after match (to get byte counter info)
-	# -F: fixed-string matching (treats IP address as literal, not regex pattern)
-	xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "dst $peer_ip" -A "$XFRM_OUTPUT_CONTEXT_LINES" || true)
+	xfrm_output=$(get_xfrm_state_for_peer "$peer_ip")
 
 	if [[ -z "$xfrm_output" ]]; then
 		handle_error "WARNING" "VPN suspect: No SA found for $peer_ip in xfrm state"
@@ -1090,11 +1270,11 @@ check_xfrm_status() {
 	local current_bytes
 	if current_bytes=$(extract_byte_counter "$xfrm_output"); then
 		# Successfully extracted byte counter - validate it using simple heuristics
-		# Pass SPI and internal IP to check_byte_counters for rekey detection and idle detection
-		if check_byte_counters "$current_bytes" "$peer_ip" "$current_spi" "$internal_peer_ip"; then
+		# Pass location_name, SPI and internal IP to check_byte_counters for rekey detection and idle detection
+		if check_byte_counters "$location_name" "$current_bytes" "$peer_ip" "$current_spi" "$internal_peer_ip"; then
 			# Update stored SPI if we have it (even if rekey not detected)
 			if [[ -n "$current_spi" ]]; then
-				set_peer_state_non_critical "$peer_ip" "spi" "$current_spi"
+				set_peer_state_non_critical "$location_name" "$peer_ip" "spi" "$current_spi"
 			fi
 			return 0
 		else
@@ -1105,10 +1285,12 @@ check_xfrm_status() {
 		# SA exists but no byte counter info (or extraction failed)
 		# Still update SPI if available for tracking
 		if [[ -n "$current_spi" ]]; then
-			set_peer_state_non_critical "$peer_ip" "spi" "$current_spi"
+			set_peer_state_non_critical "$location_name" "$peer_ip" "spi" "$current_spi"
 		fi
-		log_message "INFO" "VPN OK: SA exists for $peer_ip (no byte counter info)"
-		return 0
+		# Cannot determine VPN health without byte counters - treat as failure
+		# This allows determine_vpn_status to detect failure type as "unknown"
+		handle_error "WARNING" "VPN suspect: SA exists for $peer_ip but byte counter info unavailable"
+		return 1
 	fi
 }
 
@@ -1129,13 +1311,16 @@ check_ipsec_status() {
 	local peer_ip="$1"
 
 	# ipsec = legacy IPsec tools (libreswan/strongswan compatibility command)
-	if ! check_command_available "ipsec"; then
+	if ! check_command_or_warn "ipsec" "Checking IPsec status"; then
 		return 1
 	fi
 
 	local ipsec_output
 	# Use fixed-string matching (-F) for consistency and safety (IP addresses don't need case-insensitive matching)
-	ipsec_output=$(ipsec status 2>/dev/null | grep -F "$peer_ip" || true)
+	# Wrap ipsec status with timeout to prevent hanging
+	# Note: get_ipsec_status_for_peer handles command availability check, but we already checked above
+	# If it fails, output will be empty which is handled below
+	ipsec_output=$(get_ipsec_status_for_peer "$peer_ip" || true)
 
 	if [[ -n "$ipsec_output" ]]; then
 		log_message "INFO" "VPN OK: Connection found via ipsec status for $peer_ip"
@@ -1200,8 +1385,9 @@ discover_connection_name() {
 	fi
 
 	# Get ipsec status output
+	# Wrap ipsec status with timeout to prevent hanging
 	local ipsec_output
-	ipsec_output=$(ipsec status 2>/dev/null || true)
+	ipsec_output=$(get_ipsec_status_for_peer "") || ipsec_output=""
 
 	if [[ -z "$ipsec_output" ]]; then
 		echo ""
@@ -1234,14 +1420,104 @@ discover_connection_name() {
 	return 0
 }
 
+# Check ping connectivity for multiple internal IPs
+#
+# Pings multiple internal IPs sequentially and considers the check successful
+# if at least 30% of the IPs respond successfully (rounded up using ceil).
+# For a single IP, requires 100% success.
+#
+# Arguments:
+#   $1: Array of internal IP addresses (space-separated string or array reference)
+#   $2: Local IP address (for source IP, optional)
+#
+# Returns:
+#   0: Success threshold met (≥30% of IPs responded)
+#   1: Success threshold not met (<30% of IPs responded)
+#
+# Output:
+#   Logs detailed ping results including success count and percentage
+#
+# Examples:
+#   check_ping_multiple_ips "192.168.1.1 192.168.1.88" "192.168.1.1"
+#   # Pings both IPs, succeeds if at least 1 responds (30% of 2 = 0.6, ceil = 1)
+#
+# Note:
+#   - Uses awk for floating-point math (UDM OS doesn't have bc)
+#   - Sequential ping execution (no parallel - UDM OS limitation)
+#   - Single IP requires 100% success (not 30%)
+#   - Empty array falls back to external IP (handled by caller)
+check_ping_multiple_ips() {
+	local internal_ips_input="$1"
+	local local_ip="${2:-}"
+	local IFS=' '
+	local -a internal_ips_array
+	local ping_success_count=0
+	local ping_total_count=0
+	local ping_result
+
+	# Convert input to array
+	if [[ -z "$internal_ips_input" ]]; then
+		# Empty array - return failure (caller should handle fallback)
+		return 1
+	fi
+
+	read -ra internal_ips_array <<<"$internal_ips_input"
+	ping_total_count=${#internal_ips_array[@]}
+
+	# Edge case: single IP requires 100% success
+	if [[ $ping_total_count -eq 1 ]]; then
+		local single_ip="${internal_ips_array[0]}"
+		if check_ping_connectivity "$single_ip" "$local_ip"; then
+			log_message "INFO" "Ping check: 1/1 internal IP responded (100% success)"
+			return 0
+		else
+			handle_error "WARNING" "Ping check: 0/1 internal IP responded (0% success)"
+			return 1
+		fi
+	fi
+
+	# Ping all IPs sequentially
+	for internal_ip in "${internal_ips_array[@]}"; do
+		# Skip empty IPs
+		if [[ -z "$internal_ip" ]]; then
+			continue
+		fi
+
+		if check_ping_connectivity "$internal_ip" "$local_ip"; then
+			((ping_success_count++))
+		fi
+	done
+
+	# Calculate success threshold: ceil(PING_SUCCESS_THRESHOLD * count) using awk
+	local threshold
+	threshold=$(awk "BEGIN {print int(($ping_total_count * $PING_SUCCESS_THRESHOLD) + $PING_CEIL_ADJUSTMENT)}")
+
+	# Calculate percentage for logging
+	local success_percent=0
+	if [[ $ping_total_count -gt 0 ]]; then
+		success_percent=$(awk "BEGIN {printf \"%.0f\", ($ping_success_count * 100) / $ping_total_count}")
+	fi
+
+	# Check if threshold met
+	if [[ $ping_success_count -ge $threshold ]]; then
+		log_message "INFO" "Ping check: $ping_success_count/$ping_total_count internal IPs responded (${success_percent}% >= 30% threshold)"
+		return 0
+	else
+		handle_error "WARNING" "Ping check: $ping_success_count/$ping_total_count internal IPs responded (${success_percent}% < 30% threshold)"
+		return 1
+	fi
+}
+
 # Check ping connectivity if enabled
 #
 # Performs ping check if enabled, regardless of VPN status.
 # Used to verify end-to-end connectivity or diagnose issues.
+# Supports both single IP (legacy) and multiple IPs (array).
 #
 # Arguments:
 #   $1: VPN status (1 = OK, 0 = failed)
-#   $2: Ping target IP address (internal IP if provided, otherwise external IP)
+#   $2: Ping target IP address or array (internal IP(s) if provided, otherwise external IP)
+#   $3: Local IP address (for source IP, optional)
 #
 # Returns:
 #   0: Always succeeds (ping check is informational)
@@ -1251,9 +1527,11 @@ discover_connection_name() {
 #
 # Note:
 #   The provided IP should be the internal IP if available, falling back to external IP
+#   If $2 contains spaces (multiple IPs), calls check_ping_multiple_ips()
 check_ping_if_enabled() {
 	local vpn_ok="$1"
-	local ping_ip="$2"
+	local ping_target="$2"
+	local local_ip_param="${3:-}"
 
 	if [[ "${ENABLE_PING_CHECK:-0}" -ne 1 ]]; then
 		return 0
@@ -1261,25 +1539,45 @@ check_ping_if_enabled() {
 
 	# Get local UDM IP for ping source (if configured)
 	local local_ip
-	local_ip=$(get_local_ip_for_ping)
+	if [[ -n "$local_ip_param" ]]; then
+		local_ip="$local_ip_param"
+	else
+		local_ip=$(get_local_ip_for_ping)
+	fi
 
-	if [[ $vpn_ok -eq 1 ]]; then
-		# SA exists, verify connectivity with ping check
-		if ! check_ping_connectivity "$ping_ip" "$local_ip"; then
-			# SA exists but ping failed - tunnel may be broken
-			handle_error "WARNING" "VPN SA exists but ping check failed for $ping_ip - tunnel may not be routing traffic"
-			# Don't fail completely - SA exists, but mark as suspect
-			# This allows xfrm to pass but warns about connectivity
-			# If ping keeps failing, byte counters should also stop increasing
+	# Check if ping_target contains multiple IPs (has spaces)
+	if [[ "$ping_target" =~ [[:space:]] ]]; then
+		# Multiple IPs - use check_ping_multiple_ips
+		if [[ $vpn_ok -eq 1 ]]; then
+			# SA exists, verify connectivity with ping check
+			if ! check_ping_multiple_ips "$ping_target" "$local_ip"; then
+				# SA exists but ping failed - tunnel may be broken
+				handle_error "WARNING" "VPN SA exists but ping check failed for multiple internal IPs - tunnel may not be routing traffic"
+			else
+				log_message "INFO" "VPN connectivity verified: ping check passed for multiple internal IPs"
+			fi
 		else
-			log_message "INFO" "VPN connectivity verified: ping check passed for $ping_ip"
+			# SA doesn't exist, but try ping anyway to see if there's any connectivity
+			if check_ping_multiple_ips "$ping_target" "$local_ip"; then
+				handle_error "WARNING" "Ping check passed but no SA found - tunnel may be down but connectivity exists via other route"
+			fi
 		fi
 	else
-		# SA doesn't exist, but try ping anyway to see if there's any connectivity
-		if check_ping_connectivity "$ping_ip" "$local_ip"; then
-			handle_error "WARNING" "Ping check passed but no SA found - tunnel may be down but connectivity exists via other route"
+		# Single IP - use existing logic
+		if [[ $vpn_ok -eq 1 ]]; then
+			# SA exists, verify connectivity with ping check
+			if ! check_ping_connectivity "$ping_target" "$local_ip"; then
+				# SA exists but ping failed - tunnel may be broken
+				handle_error "WARNING" "VPN SA exists but ping check failed for $ping_target - tunnel may not be routing traffic"
+			else
+				log_message "INFO" "VPN connectivity verified: ping check passed for $ping_target"
+			fi
+		else
+			# SA doesn't exist, but try ping anyway to see if there's any connectivity
+			if check_ping_connectivity "$ping_target" "$local_ip"; then
+				handle_error "WARNING" "Ping check passed but no SA found - tunnel may be down but connectivity exists via other route"
+			fi
 		fi
-		# Note: If ping fails when SA doesn't exist, check_ping_connectivity already logs the failure
 	fi
 
 	return 0
@@ -1308,7 +1606,7 @@ check_ping_if_enabled() {
 check_ipsec_phase2() {
 	local peer_ip="$1"
 
-	if ! check_command_available "ip"; then
+	if ! check_command_or_warn "ip" "Checking IPsec Phase 2"; then
 		return 1
 	fi
 
@@ -1316,8 +1614,8 @@ check_ipsec_phase2() {
 	# Use fixed-string matching to prevent regex pattern injection and avoid partial IP matches
 	# Match on "dst $peer_ip" pattern which appears at the start of each SA entry
 	# This ensures we match the complete SA entry and avoid partial IP matches
-	# -F: fixed-string matching (treats IP address as literal, not regex pattern)
-	xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "dst $peer_ip" || true)
+	# Note: check_ipsec_phase2 doesn't need context lines, so we pass 0
+	xfrm_output=$(get_xfrm_state_for_peer "$peer_ip" 0)
 
 	if [[ -n "$xfrm_output" ]]; then
 		return 0
@@ -1342,6 +1640,7 @@ check_ipsec_phase2() {
 # Arguments:
 #   $1: External peer IP address (used for SA checks)
 #   $2: Internal peer IP address (optional, used for ping checks)
+#   $3: Location name (optional, used for state file naming)
 #
 # Returns:
 #   0: Failure type detected and printed to stdout
@@ -1354,7 +1653,7 @@ check_ipsec_phase2() {
 #   - Logs debug messages about failure type detection
 #
 # Examples:
-#   failure_type=$(detect_failure_type "203.0.113.1" "192.168.1.1")
+#   failure_type=$(detect_failure_type "203.0.113.1" "192.168.1.1" "NYC")
 #   case "$failure_type" in
 #       "tunnel_down") echo "VPN tunnel is down" ;;
 #       "routing_issue") echo "Routing issue detected" ;;
@@ -1367,6 +1666,14 @@ check_ipsec_phase2() {
 detect_failure_type() {
 	local external_peer_ip="$1"
 	local internal_peer_ip="${2:-}"
+	local location_name="${3:-}"
+
+	# Check if ip command is available (required for Phase 2 SA detection)
+	# If ip command is unavailable, we cannot determine failure type
+	if ! check_command_or_warn "ip" "Detecting failure type"; then
+		echo "unknown"
+		return 1
+	fi
 
 	# Check IPsec Phase 2 (ESP/AH SA)
 	# Phase 2 SA existence indicates tunnel is established (Phase 1 must be up for Phase 2 to exist)
@@ -1388,16 +1695,14 @@ detect_failure_type() {
 			# Use fixed-string matching to prevent regex pattern injection
 			# Match on "dst $external_peer_ip" pattern which appears at the start of each SA entry
 			# This ensures we capture the complete SA block including SPI information
-			# -F: fixed-string matching (treats IP address as literal, not regex pattern)
-			# -A XFRM_OUTPUT_CONTEXT_LINES: show context lines after match (to get SPI info)
-			xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "dst $external_peer_ip" -A "$XFRM_OUTPUT_CONTEXT_LINES" || true)
+			xfrm_output=$(get_xfrm_state_for_peer "$external_peer_ip")
 			if [[ -n "$xfrm_output" ]]; then
 				local current_spi=""
 				current_spi=$(extract_spi "$xfrm_output" 2>/dev/null || echo "")
 
 				# Check for rekey if SPI is available (read-only check)
 				if [[ -n "$current_spi" ]]; then
-					if check_sa_rekey_occurred "$current_spi" "$external_peer_ip" 2>/dev/null; then
+					if check_sa_rekey_occurred "$current_spi" "$external_peer_ip" "$location_name" 2>/dev/null; then
 						# Rekey detected - not a failure, but log for monitoring
 						# Note: We use read-only check here since detect_failure_type is called
 						# after VPN check failed. The actual rekey handling (baseline reset)
@@ -1419,9 +1724,7 @@ detect_failure_type() {
 			# Use fixed-string matching to prevent regex pattern injection
 			# Match on "dst $external_peer_ip" pattern which appears at the start of each SA entry
 			# This ensures we capture the complete SA block including lifetime information
-			# -F: fixed-string matching (treats IP address as literal, not regex pattern)
-			# -A XFRM_OUTPUT_CONTEXT_LINES: show context lines after match (to get byte counter info)
-			xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "dst $external_peer_ip" -A "$XFRM_OUTPUT_CONTEXT_LINES" || true)
+			xfrm_output=$(get_xfrm_state_for_peer "$external_peer_ip")
 			if [[ -n "$xfrm_output" ]]; then
 				local current_bytes=""
 				current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null || echo "")
@@ -1430,7 +1733,7 @@ detect_failure_type() {
 					# Successfully extracted byte counter - check if bytes are not increasing
 					# Use abstraction layer to get last bytes
 					local last_bytes
-					last_bytes=$(get_peer_state "$external_peer_ip" "last_bytes" "0")
+					last_bytes=$(get_peer_state "$location_name" "$external_peer_ip" "last_bytes" "0")
 
 					# If bytes exist but aren't increasing (and it's not the first check), it's a routing issue
 					if [[ "$current_bytes" -gt 0 ]] && [[ "$current_bytes" -le "$last_bytes" ]] && [[ "$last_bytes" -gt 0 ]]; then
@@ -1482,7 +1785,8 @@ detect_failure_type() {
 # This allows recovery actions to use failure-specific recovery strategies.
 #
 # Arguments:
-#   $1: Peer IP address
+#   $1: Location name (required, sanitized)
+#   $2: Peer IP address
 #
 # Returns:
 #   0: Failure type found and printed to stdout
@@ -1492,20 +1796,22 @@ detect_failure_type() {
 #   Prints failure type to stdout: "tunnel_down", "routing_issue", "rekey", or "unknown"
 #
 # Examples:
-#   failure_type=$(get_failure_type "203.0.113.1")
+#   failure_type=$(get_failure_type "NYC" "203.0.113.1")
 #   if [[ "$failure_type" == "tunnel_down" ]]; then
 #       echo "VPN tunnel is down"
 #   fi
 #
 # Note:
-#   Requires sanitize_peer_ip and STATE_DIR to be set
-#   Failure type is stored in: ${STATE_DIR}/failure_type_<sanitized_peer_ip>
+#   Requires get_peer_state_file_path, file_exists_and_readable and STATE_DIR to be set
+#   Failure type is stored using the abstraction layer: get_peer_state_file_path() with "failure_type" key
 #   Note: "rekey" is not a failure type but is stored for monitoring purposes
 get_failure_type() {
-	local peer_ip="$1"
-	local peer_sanitized
-	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
-	local failure_type_file="${STATE_DIR}/failure_type_${peer_sanitized}"
+	local location_name="$1"
+	local peer_ip="$2"
+	local failure_type_file
+
+	# Use abstraction layer to ensure consistent path format
+	failure_type_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "failure_type")
 
 	if file_exists_and_readable "$failure_type_file"; then
 		local failure_type
@@ -1527,6 +1833,7 @@ get_failure_type() {
 # Arguments:
 #   $1: External peer IP address (external/public IP of remote VPN gateway)
 #   $2: Internal peer IP address (optional, used for idle detection via ping checks)
+#   $3: Location name (optional, used for state file naming)
 #
 # Returns:
 #   0: VPN is healthy (SA exists and valid)
@@ -1537,10 +1844,11 @@ get_failure_type() {
 check_xfrm_primary() {
 	local external_peer_ip="$1"
 	local internal_peer_ip="${2:-}"
+	local location_name="${3:-}"
 
 	# Try detection using xfrm (most reliable method)
-	# Pass internal IP to check_xfrm_status for idle detection via ping checks
-	check_xfrm_status "$external_peer_ip" "$internal_peer_ip"
+	# Pass internal IP and location_name to check_xfrm_status for idle detection via ping checks
+	check_xfrm_status "$external_peer_ip" "$internal_peer_ip" "$location_name"
 }
 
 # Check VPN status using ipsec (fallback method)
@@ -1602,6 +1910,7 @@ check_ping_optional() {
 #   $2: External peer IP address (external/public IP of remote VPN gateway)
 #   $3: Internal peer IP address (optional, used for failure type detection)
 #   $4: Sanitized peer IP (for state file operations)
+#   $5: Location name (optional, used for state file naming)
 #
 # Returns:
 #   Outputs final VPN status (0 or 1) to stdout
@@ -1615,15 +1924,28 @@ determine_vpn_status() {
 	local external_peer_ip="$2"
 	local internal_peer_ip="${3:-}"
 	local peer_sanitized="$4"
+	local location_name="${5:-}"
 
 	# If VPN check failed, detect and log the failure type
 	# Also check for rekey events (which are not failures but should be logged)
 	if [[ $vpn_ok -eq 0 ]]; then
 		local failure_type
-		failure_type=$(detect_failure_type "$external_peer_ip" "$internal_peer_ip" 2>/dev/null || echo "unknown")
+		# Capture output and return code separately to avoid duplicate "unknown"
+		failure_type=$(detect_failure_type "$external_peer_ip" "$internal_peer_ip" "$location_name" 2>/dev/null)
+		# If detect_failure_type failed or returned empty, use "unknown"
+		if [[ -z "$failure_type" ]]; then
+			failure_type="unknown"
+		fi
 
 		# Store failure type in state file for recovery actions
-		local failure_type_file="${STATE_DIR}/failure_type_${peer_sanitized}"
+		# Use abstraction layer to ensure consistent path format with location component
+		local failure_type_file
+		if [[ -n "$location_name" ]]; then
+			failure_type_file=$(get_peer_state_file_path "$location_name" "$external_peer_ip" "failure_type")
+		else
+			# Fallback for backward compatibility (shouldn't happen in new code)
+			failure_type_file=$(get_peer_state_file_path "" "$external_peer_ip" "failure_type")
+		fi
 		atomic_write_file "$failure_type_file" "$failure_type" 2>/dev/null || true
 
 		case "$failure_type" in
@@ -1658,7 +1980,8 @@ determine_vpn_status() {
 #
 # Arguments:
 #   $1: External peer IP address (external/public IP of remote VPN gateway, used for xfrm state checks)
-#   $2: Internal peer IP address (optional, used for ping checks, falls back to external if not provided)
+#   $2: Internal peer IP address(es) (optional, can be single IP string or space-separated string of multiple IPs, falls back to external if not provided)
+#   $3: Location name (optional, used for state file naming, if not provided uses IP-only format)
 #
 # Returns:
 #   0: VPN is healthy (SA exists, bytes increasing or non-zero)
@@ -1668,18 +1991,20 @@ determine_vpn_status() {
 #   1. Checks ip xfrm state for SA matching external peer IP
 #   2. Validates byte counters are > 0 and increasing (if available)
 #   3. Falls back to ipsec status if xfrm doesn't confirm
-#   4. Optionally performs ping check if ENABLE_PING_CHECK=1 (uses internal IP if provided)
+#   4. Optionally performs ping check if ENABLE_PING_CHECK=1 (uses internal IP(s) if provided)
 #
 # Side effects:
 #   - Creates/updates per-peer last_bytes file if byte counters found
 #   - Logs debug/warning messages about VPN state
 #
 # Note:
-#   Requires validate_ip_address, sanitize_peer_ip, log_message, STATE_DIR, ENABLE_PING_CHECK to be set
-#   External IP is used for xfrm checks, internal IP is used for ping checks
+#   Requires validate_ip_address, sanitize_peer_ip, sanitize_location_name, log_message, STATE_DIR, ENABLE_PING_CHECK to be set
+#   External IP is used for xfrm checks, internal IP(s) are used for ping checks
+#   For multiple internal IPs, ping check succeeds if ≥30% respond
 check_vpn_status() {
 	local external_peer_ip="$1"
-	local internal_peer_ip="${2:-}"
+	local internal_peer_ips="${2:-}"
+	local location_name="${3:-}"
 	local vpn_ok=0
 
 	# Validate external peer IP format using proper validation function
@@ -1688,22 +2013,51 @@ check_vpn_status() {
 		return 1
 	fi
 
-	# Per-peer state tracking (use external IP for state management)
+	# Per-peer state tracking (use location name + external IP for state management)
+	# Location name is passed as optional parameter, if not provided use IP-only format for backward compat
 	local peer_sanitized
-	peer_sanitized=$(sanitize_peer_ip "$external_peer_ip")
+	local location_sanitized=""
+
+	if [[ -n "$location_name" ]]; then
+		# Use location-based naming: sanitize location name and combine with IP
+		if command -v sanitize_location_name >/dev/null 2>&1; then
+			location_sanitized=$(sanitize_location_name "$location_name")
+		else
+			# Fallback if sanitize_location_name not available (shouldn't happen)
+			location_sanitized="${location_name//[^A-Za-z0-9_]/_}"
+		fi
+		local ip_sanitized
+		ip_sanitized=$(sanitize_peer_ip "$external_peer_ip")
+		peer_sanitized="${location_sanitized}_${ip_sanitized}"
+	else
+		# No location name - use IP-only format (backward compat, shouldn't happen in new code)
+		peer_sanitized=$(sanitize_peer_ip "$external_peer_ip")
+	fi
 
 	# Try detection methods in order of reliability
-	if check_xfrm_primary "$external_peer_ip" "$internal_peer_ip"; then
+	# For xfrm check, use first internal IP if multiple provided (or empty if single/external)
+	local first_internal_ip=""
+	if [[ -n "$internal_peer_ips" ]]; then
+		local IFS=' '
+		local -a ips_array
+		read -ra ips_array <<<"$internal_peer_ips"
+		if [[ ${#ips_array[@]} -gt 0 ]]; then
+			first_internal_ip="${ips_array[0]}"
+		fi
+	fi
+
+	if check_xfrm_primary "$external_peer_ip" "$first_internal_ip" "$location_name"; then
 		vpn_ok=1
 	elif check_ipsec_fallback "$external_peer_ip"; then
 		vpn_ok=1
 	fi
 
-	# Perform optional ping check if enabled
-	check_ping_optional "$vpn_ok" "$external_peer_ip" "$internal_peer_ip"
+	# Perform optional ping check if enabled (pass all internal IPs for multiple IP support)
+	check_ping_optional "$vpn_ok" "$external_peer_ip" "$internal_peer_ips"
 
 	# Determine final VPN status based on failure type detection
-	vpn_ok=$(determine_vpn_status "$vpn_ok" "$external_peer_ip" "$internal_peer_ip" "$peer_sanitized")
+	# Pass location_name, first internal IP, and peer_sanitized for failure type detection
+	vpn_ok=$(determine_vpn_status "$vpn_ok" "$external_peer_ip" "$first_internal_ip" "$peer_sanitized" "$location_name")
 
 	# Return 0 if OK, 1 if failed (invert vpn_ok: 1 becomes 0, 0 becomes 1)
 	return $((1 - vpn_ok))
@@ -1722,7 +2076,7 @@ check_vpn_status() {
 #   Uses 'ip route show default' to check for default route
 #   Requires 'ip' command to be available
 check_default_route() {
-	if ! check_command_available "ip"; then
+	if ! check_command_or_warn "ip" "Checking default route"; then
 		return 1
 	fi
 
@@ -1797,7 +2151,7 @@ check_interface_state() {
 	local -a interface_array
 	read -ra interface_array <<<"$interfaces"
 
-	if ! check_command_available "ip"; then
+	if ! check_command_or_warn "ip" "Checking interfaces"; then
 		return 1
 	fi
 
@@ -1855,21 +2209,33 @@ check_network_partition() {
 	local partition_detected=0
 
 	# Check default route
+	local route_check_result
 	if ! check_default_route; then
+		route_check_result=1
 		handle_error "WARNING" "Network partition detected: default route not found" 0
 		partition_detected=1
+	else
+		route_check_result=0
 	fi
 
 	# Check DNS resolution
+	local dns_check_result
 	if ! check_dns_resolution "$dns_server" "$hostname" "$dns_timeout"; then
+		dns_check_result=1
 		handle_error "WARNING" "Network partition detected: DNS resolution failed (server: $dns_server, hostname: $hostname)" 0
 		partition_detected=1
+	else
+		dns_check_result=0
 	fi
 
 	# Check interface state
+	local interface_check_result
 	if ! check_interface_state "$interfaces"; then
+		interface_check_result=1
 		handle_error "WARNING" "Network partition detected: one or more critical interfaces are DOWN (checked: $interfaces)" 0
 		partition_detected=1
+	else
+		interface_check_result=0
 	fi
 
 	# If all checks passed, network is healthy

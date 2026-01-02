@@ -37,7 +37,7 @@ We will implement:
 
 ## Implementation Details
 - **Rate Limiting**:
-  - Tracks restart timestamps in `logs/restart_count` file (Unix timestamps, one per line)
+  - Tracks restart timestamps in `state/restart_count` file (Unix timestamps, one per line)
   - Records Tier 3 recovery actions only:
     - Full IPsec restarts (`ipsec restart`) that affect all tunnels
     - Successful xfrm-based per-connection recovery (when enabled)

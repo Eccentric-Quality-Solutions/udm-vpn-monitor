@@ -125,10 +125,19 @@ CHECK_UTILITIES_SCRIPT="${BATS_TEST_DIRNAME}/../check-utilities.sh"
 	# Purpose: Test verifies that script handles edge case of empty PATH.
 	# Expected: Script reports all utilities as missing when PATH is empty.
 	# Importance: Prevents script crashes in edge cases.
-	PATH="" run bash "$CHECK_UTILITIES_SCRIPT"
+	# Use full path to bash so it can be found even with empty PATH
+	local bash_path
+	bash_path=$(command -v bash || echo "/bin/bash")
+	PATH="" run "$bash_path" "$CHECK_UTILITIES_SCRIPT"
 
-	# Should still run (may report all utilities as missing)
-	[[ $status -ge 0 ]] || true
+	# Script should run successfully and report all utilities as missing
+	# Exit code should be 1 since all utilities are missing (expected behavior)
+	[[ $status -eq 1 ]]
+	assert_output --partial "Checking utility availability"
+	assert_output --partial "Summary:"
+	assert_output --partial "Available: 0/"
+	# All utilities should be reported as missing
+	assert_output --partial "[✗]"
 }
 
 # bats test_tags=category:unit

@@ -65,6 +65,8 @@ load test_helper
 	# Purpose: Test verifies that extract_spi handles malformed xfrm output gracefully.
 	# Expected: Function returns failure when SPI value is missing.
 	# Importance: Malformed SPI output could cause rekey detection failures.
+	source_function "extract_spi"
+
 	local xfrm_output="src 192.168.1.1 dst 192.168.1.1
     proto esp spi reqid 1 mode tunnel
     lifetime current: 123456 bytes, 10 packets"
@@ -79,6 +81,8 @@ load test_helper
 	# Purpose: Test verifies that extract_spi rejects invalid SPI formats.
 	# Expected: Function returns failure when SPI format is invalid.
 	# Importance: Invalid SPI formats could cause rekey detection failures.
+	source_function "extract_spi"
+
 	local xfrm_output="src 192.168.1.1 dst 192.168.1.1
     proto esp spi invalid_spi reqid 1 mode tunnel
     lifetime current: 123456 bytes, 10 packets"
@@ -115,8 +119,9 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	# Initialize state
-	setup_state_files "$peer_ip" 0
+	# Initialize state using location-aware functions
+	source_function "set_peer_state"
+	set_peer_state "" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_xfrm_status"
@@ -154,8 +159,9 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	# Initialize state
-	setup_state_files "$peer_ip" 0
+	# Initialize state using location-aware functions
+	source_function "set_peer_state"
+	set_peer_state "" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_xfrm_status"
@@ -191,8 +197,9 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	# Initialize state
-	setup_state_files "$peer_ip" 0
+	# Initialize state using location-aware functions
+	source_function "set_peer_state"
+	set_peer_state "" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_xfrm_status"
@@ -243,8 +250,9 @@ EOF
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	# Initialize state
-	setup_state_files "$peer_ip" 0
+	# Initialize state using location-aware functions
+	source_function "set_peer_state"
+	set_peer_state "" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_ipsec_status"
@@ -275,6 +283,8 @@ EOF
 	# Purpose: Test verifies that extract_spi handles empty xfrm output gracefully.
 	# Expected: Function returns failure when xfrm output is empty.
 	# Importance: Empty xfrm output could cause rekey detection failures.
+	source_function "extract_spi"
+
 	local xfrm_output=""
 
 	run extract_spi "$xfrm_output"
@@ -305,6 +315,8 @@ EOF
 	# Purpose: Test verifies that extract_spi extracts SPI from first SPI line found.
 	# Expected: Function extracts SPI from first SPI line found.
 	# Importance: Multiple SPI lines could cause incorrect SPI extraction if not handled properly.
+	source_function "extract_spi"
+
 	local xfrm_output="src 192.168.1.1 dst 192.168.1.1
     proto esp spi 0x12345678 reqid 1 mode tunnel
     proto ah spi 0x87654321 reqid 2 mode tunnel

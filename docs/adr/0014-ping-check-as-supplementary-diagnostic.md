@@ -46,11 +46,17 @@ We will design ping checks as a **supplementary diagnostic tool** that:
   - Diagnostic information for troubleshooting
   - Helps distinguish between different failure types
 - **Failure Detection**: Based on SA state and byte counter analysis, not ping results
+- **Multiple Internal IPs Support**:
+  - For locations with **single internal IP**: Requires 100% success (ping must succeed)
+  - For locations with **multiple internal IPs**: VPN considered healthy if ≥30% respond to pings (rounded up)
+  - Example: 3 internal IPs need at least 1 successful ping, 10 internal IPs need at least 3 successful pings
+  - Rationale: Allows for partial connectivity while still detecting complete failures
 - **Module**: Implemented in `lib/detection.sh` with `check_ping_connectivity()` function
 
 ## Related ADRs
 - ADR-0006: Multi-Method Detection with Fallback
 - ADR-0003: Tiered Recovery System
+- ADR-0024: Location-Based Configuration Format
 
 ## References
 - README.md: "Ping Check Behavior" section

@@ -14,6 +14,7 @@ load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
 load fixtures/vpn_xfrm_recovery
+load fixtures/vpn_at_tier
 
 # ============================================================================
 # RECOVERY ACTION PARTIAL FAILURES TESTS
@@ -21,9 +22,9 @@ load fixtures/vpn_xfrm_recovery
 
 # bats test_tags=category:high-risk,priority:high
 @test "recovery partial failures: some SAs deleted successfully, others fail - should continue and verify" {
-	# Test verifies that xfrm recovery continues when some SA deletions succeed and others fail.
-	# Expected: Function continues processing remaining SAs and verifies re-establishment.
-	# Importance: Partial failures shouldn't stop recovery process - should attempt all deletions.
+	# Purpose: Test verifies that xfrm recovery continues when some SA deletions succeed and others fail
+	# Expected: Function continues processing remaining SAs and verifies re-establishment
+	# Importance: Partial failures shouldn't stop recovery process - should attempt all deletions
 	# Use fixture to set up xfrm recovery scenario with partial failure (3 SAs, some deletions fail)
 	setup_vpn_xfrm_recovery_fixture "192.168.1.1" 3 "partial_failure" 'TIER3_THRESHOLD=5'
 
@@ -52,11 +53,15 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "recovery partial failures: xfrm recovery deletes SAs but re-establishment fails - should fall back" {
-	# Test verifies that when xfrm recovery deletes SAs but re-establishment fails, system falls back to full restart.
-	# Expected: Function attempts xfrm recovery, detects re-establishment failure, falls back to ipsec restart.
-	# Importance: Partial recovery success shouldn't leave system in inconsistent state - should escalate to full restart.
+	# Purpose: Test verifies that when xfrm recovery deletes SAs but re-establishment fails, system falls back to full restart
+	# Expected: Function attempts xfrm recovery, detects re-establishment failure, falls back to ipsec restart
+	# Importance: Partial recovery success shouldn't leave system in inconsistent state - should escalate to full restart
 	# Use fixture to set up xfrm recovery scenario with successful deletion
 	setup_vpn_xfrm_recovery_fixture "192.168.1.1" 1 "success" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=2'
+
+	# Override fixture's mock_ip with our stateful version
+	# Remove fixture's mock_ip file so we can create our own
+	rm -f "${TEST_DIR}/ip"
 
 	# Mock check_ipsec_phase2 to simulate SA re-establishment failure (never re-establishes)
 	local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
@@ -67,17 +72,85 @@ exit 1
 EOF
 	chmod +x "$mock_check_ipsec_phase2"
 
-	# Mock ipsec for fallback restart
+	# Mock ipsec for fallback reload (Tier 2 falls back to reload, not restart)
 	local mock_ipsec="${TEST_DIR}/ipsec"
 	cat >"$mock_ipsec" <<'EOF'
 #!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    echo "ipsec restart called"
+if [[ "$1" == "reload" ]]; then
+    echo "ipsec reload called"
     exit 0
 fi
 exec /usr/bin/ipsec "$@"
 EOF
 	chmod +x "$mock_ipsec"
+
+	# Mock ip command - stateful: return SAs during recovery, empty after deletion
+	# Uses log file content to determine recovery phase (more robust than counter-based approach)
+	# Ensure log directory exists and get log file path
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file_path="${LOG_FILE:-${TEST_DIR}/logs/vpn-monitor.log}"
+	local recovery_started_flag="${TEST_DIR}/recovery_started"
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'MOCK_IP_EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "delete" ]]; then
+    # Handle SA deletion - always succeed
+    # Mark that SAs have been deleted so subsequent checks return empty
+    touch "MOCK_SAS_DELETED_FILE" 2>/dev/null || true
+    exit 0
+elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    # Stateful xfrm state check
+    # If SAs have been deleted, return empty (so re-establishment check fails)
+    if [[ -f "MOCK_SAS_DELETED_FILE" ]]; then
+        # SAs have been deleted - return empty so re-establishment check fails
+        exit 0
+    fi
+    
+    # Check if recovery has started by looking for recovery messages in log file
+    # This is more reliable than a counter since it's based on actual recovery behavior
+    # Check for "Attempting xfrm-based" which is logged when xfrm recovery starts
+    if [[ -f "MOCK_LOG_FILE_PATH" ]] && grep -q "Attempting xfrm-based" "MOCK_LOG_FILE_PATH" 2>/dev/null; then
+        # Mark that recovery has started (for efficiency, avoid repeated log reads)
+        touch "MOCK_RECOVERY_STARTED_FLAG" 2>/dev/null || true
+        # Recovery phase: return SAs so they can be deleted
+        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+        echo "    replay-window 0"
+        echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
+        echo "    enc cbc(aes) 0x1234567890abcdef"
+        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
+        echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
+        echo "    current use: 1"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        exit 0
+    elif [[ -f "MOCK_RECOVERY_STARTED_FLAG" ]]; then
+        # Recovery has started (flag file exists), return SAs
+        # This avoids repeated log file reads for better performance
+        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+        echo "    replay-window 0"
+        echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
+        echo "    enc cbc(aes) 0x1234567890abcdef"
+        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
+        echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
+        echo "    current use: 1"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        exit 0
+    else
+        # Initial checks: return empty (VPN down, triggers recovery)
+        exit 0
+    fi
+fi
+# Handle other ip commands
+exec /usr/bin/ip "$@"
+MOCK_IP_EOF
+	# Replace placeholders with actual paths
+	sed -i "s|MOCK_SAS_DELETED_FILE|${TEST_DIR}/sas_deleted|g" "$mock_ip"
+	sed -i "s|MOCK_LOG_FILE_PATH|${log_file_path}|g" "$mock_ip"
+	sed -i "s|MOCK_RECOVERY_STARTED_FLAG|${recovery_started_flag}|g" "$mock_ip"
+	chmod +x "$mock_ip"
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -88,18 +161,17 @@ EOF
 	assert_file_exist "$LOG_FILE"
 	# Verify xfrm recovery was attempted
 	assert_file_contains "$LOG_FILE" "xfrm recovery" || assert_file_contains "$LOG_FILE" "xfrm"
-	# Verify fallback to restart was attempted
-	assert_file_contains "$LOG_FILE" "restart" || assert_file_contains "$LOG_FILE" "fallback"
+	# Verify fallback to reload was attempted (Tier 2 falls back to reload, not restart)
+	assert_file_contains "$LOG_FILE" "falling back" || assert_file_contains "$LOG_FILE" "fallback" || assert_file_contains "$LOG_FILE" "reload"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
 @test "recovery partial failures: recovery verification timeout but SAs actually re-established - should detect on next check" {
-	# Test verifies that when recovery verification times out but SAs are actually re-established,
-	# the next check cycle should detect the recovery.
-	# Expected: First check times out verification, second check detects VPN is healthy.
-	# Importance: Verification timeouts shouldn't prevent detection of successful recovery on subsequent checks.
+	# Purpose: Test verifies that when recovery verification times out but SAs are actually re-established, the next check cycle should detect the recovery
+	# Expected: First check times out verification, second check detects VPN is healthy
+	# Importance: Verification timeouts shouldn't prevent detection of successful recovery on subsequent checks
 	# Use fixture to set up xfrm recovery scenario with successful deletion
 	setup_vpn_xfrm_recovery_fixture "192.168.1.1" 1 "success" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=2'
 
@@ -177,11 +249,11 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "recovery partial failures: multiple recovery actions triggered simultaneously - should be prevented by lockfile" {
-	# Test verifies that lockfile prevents multiple recovery actions from running simultaneously.
-	# Expected: Only one recovery action executes at a time, others wait for lockfile.
-	# Importance: Concurrent recovery actions could cause system instability or inconsistent state.
+	# Purpose: Test verifies that lockfile prevents multiple recovery actions from running simultaneously
+	# Expected: Only one recovery action executes at a time, others wait for lockfile
+	# Importance: Concurrent recovery actions could cause system instability or inconsistent state
 	# Use fixture to set up VPN down scenario (creates state files and basic setup)
-	setup_vpn_down_fixture "192.168.1.1" 3 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'LOCKFILE_TIMEOUT=5'
+	setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'LOCKFILE_TIMEOUT=5'
 
 	# Run first instance in background
 	bash "$TEST_SCRIPT" &

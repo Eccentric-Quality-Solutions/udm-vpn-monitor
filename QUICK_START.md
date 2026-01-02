@@ -107,7 +107,7 @@ Once installed, the monitor will:
    
    See the [Recovery Behavior section in README.md](README.md#-important-recovery-behavior) for complete details on recovery behavior, including which actions affect all tunnels vs per-connection recovery options. For technical implementation details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-4. **Track failures per peer** independently (multiple VPNs supported)
+4. **Track failures per location** independently (multiple VPNs supported)
 5. **Rate limit restarts** to prevent loops (max 3 per hour)
 6. **Cooldown period** after restart (15 minutes default)
 
@@ -132,6 +132,12 @@ All actions are logged to `/data/vpn-monitor/logs/vpn-monitor.log`.
 For complete configuration options, descriptions, and examples, see the [Configuration section in README.md](README.md#configuration).
 
 **Essential settings:**
-- `EXTERNAL_PEER_IPS` - **Required**: External/public IPs of remote VPN gateways
-- `INTERNAL_PEER_IPS` - **Optional**: Internal/private IPs for ping checks (uses EXTERNAL_PEER_IPS if not set)
+- `LOCATION_<NAME>_EXTERNAL` - **Required**: External/public IP of remote VPN gateway for location `<NAME>`
+- `LOCATION_<NAME>_INTERNAL` - **Optional**: Internal/private IP(s) for ping checks (space-separated, uses EXTERNAL IP if not set)
+
+**Note**: If you have an existing configuration using `EXTERNAL_PEER_IPS`/`INTERNAL_PEER_IPS`, use the migration script:
+```bash
+/data/vpn-monitor/scripts/migrate-config-to-locations.sh
+```
+See [MIGRATION.md](docs/MIGRATION.md) for detailed migration instructions.
 

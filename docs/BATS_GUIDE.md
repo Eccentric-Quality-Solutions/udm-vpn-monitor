@@ -196,25 +196,12 @@ load bats-file/load.bash
 
 ### Current Test Suite Structure
 
-Our project uses BATS extensively with **389 tests** across multiple test files:
+For complete test suite structure, organization, and current test counts, see:
 
-- `test_helper_functions.sh`: 119 unit tests for helper functions
-- High-risk test suite (124 tests split into modular files):
-  - `test_config.sh`: 26 tests for configuration loading and validation
-  - `test_lockfile.sh`: 18 tests for lockfile management
-  - `test_detection.sh`: 15 tests for VPN status detection
-  - `test_recovery.sh`: 36 tests for recovery actions and rate limiting
-  - `test_state.sh`: 8 tests for state file management
-  - `test_logging.sh`: 8 tests for logging failure scenarios
-  - `test_connection.sh`: 8 tests for connection name discovery and caching
-  - `test_errors.sh`: 3 tests for error handling during critical operations
-  - `test_main.sh`: 2 tests for main execution edge cases
-- `test_integration.sh`: 18 integration tests
-- `test_vpn_monitor.sh`: 33 tests for main script
-- `test_install.sh`: 18 installation tests
-- `test_uninstall.sh`: 34 uninstallation tests
-- `test_analyze_logs.sh`: 28 log analysis tests
-- `test_prepare_install_package.sh`: 12 package preparation tests
+- **[Test Structure](../tests/README.md#test-structure)** - Complete test file organization
+- **[Test Categories](../tests/README.md#test-categories)** - Fast vs. slow tests and categorization
+
+**Summary**: Our project uses BATS extensively with tests organized by functionality. See [Test Categories](../tests/README.md#test-categories) for current test counts and organization.
 
 ### Test Helper Infrastructure
 
@@ -226,7 +213,7 @@ We have a comprehensive `test_helper.bash` file that provides:
 
 3. **Mock Functions**: Utilities to create mock commands (`mock_ip_xfrm_state`, `mock_ping`, `mock_ipsec`) that simulate system behavior for isolated testing.
 
-4. **Setup Helpers**: Functions like `setup_test_vpn_monitor`, `setup_test_config`, `setup_state_files` that create consistent test environments.
+4. **Setup Helpers**: Functions like `setup_test_vpn_monitor`, `setup_test_config` that create consistent test environments. For state files, use `set_peer_state` directly.
 
 5. **Environment Setup**: Functions to create test directories and configure test environments.
 
@@ -240,35 +227,27 @@ We have a comprehensive `test_helper.bash` file that provides:
 
 ### Test Execution
 
-Our `run_tests.sh` script provides comprehensive test execution capabilities:
+For comprehensive test execution documentation including all command-line options, parallel execution, coverage reporting, checkpoint/resume, and more, see:
 
-- **Test Filtering**: Fast vs. slow tests (slow tests excluded by default). Fast tests (419 tests) run by default, while slow tests (220 tests including integration and high-risk scenarios) can be included with `--slow` flag. High-risk tests are split into modular files (`test_config.sh`, `test_lockfile.sh`, `test_detection.sh`, `test_recovery.sh`, `test_state.sh`, `test_logging.sh`, `test_connection.sh`, `test_errors.sh`, `test_main.sh`) for better organization and maintainability.
+- **[Running Tests](../tests/README.md#running-tests)** - Complete guide to running tests with all options
+- **[Parallel Execution](../tests/README.md#parallel-execution)** - Parallel test execution setup and usage
+- **[Test Coverage Reporting](../tests/README.md#test-coverage-reporting)** - Coverage reporting setup and usage
+- **[Checkpoint and Resume](../tests/README.md#checkpoint-and-resume)** - Resuming interrupted test runs
 
-- **Coverage Reporting**: Integration with kcov for code coverage. Generate coverage reports with `--coverage` flag. Coverage reports are generated in HTML format in the `coverage` directory.
-
-- **Parallel Execution**: Support for GNU parallel or rush (disabled by default for output streaming, can be enabled with `--jobs auto` or `--jobs N`). Automatically detects available parallel tools and can reduce test execution time by 3-4x on multi-core systems. Disabled by default to ensure output streams properly to terminal for real-time feedback.
-
-- **Timeout Handling**: Per-test timeouts (2 minutes default, configurable via `TEST_TIMEOUT`). Tests that exceed the timeout are automatically skipped to prevent hanging tests from blocking execution.
-
-- **Output Streaming**: Unbuffered output using `stdbuf` for real-time test results. This ensures test output appears immediately rather than being buffered.
-
-- **Failed Test Rerun**: Support for rerunning only failed tests with `--failed` flag. This allows quick iteration on failing tests without rerunning the entire suite.
-
-- **Fast-Fail Mode**: Option to stop on first failure (disabled by default). Use `--all` flag to run all tests regardless of failures.
-
-For detailed usage instructions, command-line options, and examples, see [tests/README.md](../tests/README.md).
+**Summary**: The `run_tests.sh` script provides comprehensive test execution capabilities including test filtering (fast vs. slow), coverage reporting (kcov), parallel execution (GNU parallel/rush), timeout handling, output streaming, failed test rerun, checkpoint/resume, and fast-fail mode.
 
 ### CI/CD Integration
 
-We have integrated BATS testing into our CI/CD pipeline via GitHub Actions (`.github/workflows/tests.yml`). The workflow:
-- Automatically runs tests on pushes and pull requests
-- Includes slow tests in CI runs (via `RUN_SLOW_TESTS=1`)
-- Generates coverage reports
-- Provides test results in TAP format for CI integration
+For detailed CI/CD integration information including workflow configuration, environment setup, and test execution in CI, see:
 
-For detailed CI/CD integration information, see [tests/README.md](../tests/README.md).
+- **[Continuous Integration](../tests/README.md#continuous-integration)** - CI/CD integration details
+- **[Test Environment Requirements](../tests/README.md#test-environment-requirements)** - CI/CD environment requirements
+
+**Summary**: BATS testing is integrated into our CI/CD pipeline via GitHub Actions. The workflow automatically runs tests on pushes and pull requests, includes slow tests in CI runs, generates coverage reports, and provides test results in TAP format for CI integration.
 
 ### Usage Pattern Examples
+
+> **Note**: For standardized patterns and best practices, see **[Test Patterns](../tests/TEST_PATTERNS.md)**. The examples below demonstrate common usage patterns.
 
 **1. Test Structure**:
 ```bash
@@ -319,7 +298,10 @@ We use advanced bats-assert features for precise validation:
 ```bash
 @test "test with state" {
     setup_test_vpn_monitor "192.168.1.1"
-    setup_state_files "192.168.1.1" 2 500  # failure_count=2, last_bytes=500
+    # Use set_peer_state directly (setup_state_files has been removed)
+    source_function "set_peer_state"
+    set_peer_state "" "192.168.1.1" "failure_count" "2"
+    set_peer_state "" "192.168.1.1" "last_bytes" "500"
     run bash "$TEST_SCRIPT"
     # Verify behavior with existing state
 }
@@ -336,32 +318,18 @@ We use concise conditional skipping patterns in our tests:
 This pattern is used in `test_install.sh` and `test_uninstall.sh` for tests that require specific conditions to be met.
 
 **5. Test Tagging for High-Risk Tests**:
-Our high-risk test suite uses BATS test tags to mark critical tests with multiple tag categories:
+Our high-risk test suite uses BATS test tags to mark critical tests. For comprehensive tagging documentation including tag categories, usage patterns, and slow test tagging, see:
+
+- **[Test Categories](../tests/README.md#test-categories)** - Test categorization and tagging
+- **[BATS Guide - Test Tagging](#test-tagging)** - Tag format and common tags (see Quick Reference section below)
+
+**Quick Example**:
 ```bash
 # bats test_tags=category:high-risk,priority:high
 @test "config file contains syntax errors" {
     # Test implementation for critical path
 }
-
-# bats test_tags=slow,category:integration,priority:medium
-@test "VPN flapping scenario" {
-    # Slow integration test
-}
 ```
-
-**Tag Categories**:
-- `category:high-risk` - Critical path tests that could cause production failures
-- `category:integration` - Integration tests that test full workflows
-- `category:unit` - Unit tests for individual functions
-- `priority:high` - High priority tests that should be run frequently
-- `priority:medium` - Medium priority tests
-- `slow` - Tests that take longer than the threshold (default: 5 seconds)
-
-**Multiple Tags**: Tests can have multiple tags separated by commas. The `slow` tag is automatically added by `tag_slow_tests.sh` script when tests exceed the threshold.
-
-**Slow Test Tagging**: Use `./tests/tag_slow_tests.sh` to automatically identify and tag slow tests. The script runs all tests with timing enabled and tags tests exceeding `SLOW_THRESHOLD` (default: 5 seconds). Tests tagged as `slow` are excluded from default test runs but can be included with `--slow` flag.
-
-These tests are organized into modular files (`test_config.sh`, `test_lockfile.sh`, `test_detection.sh`, `test_recovery.sh`, `test_state.sh`, `test_logging.sh`, `test_connection.sh`, `test_errors.sh`, `test_main.sh`) and are recognized by the test runner as slow tests that require the `--slow` flag. This modular approach improves maintainability and makes it easier to focus on specific areas when debugging or enhancing tests.
 
 **6. Advanced bats-assert Usage**:
 Our test suite extensively uses advanced bats-assert features (112 instances across 6 files) for precise validation:
@@ -424,6 +392,11 @@ load fixtures/vpn_failing
 - `fixtures/vpn_rekey.bash` - VPN has undergone a rekey (`setup_vpn_rekey_fixture`)
 - `fixtures/vpn_multiple_peers.bash` - Multiple VPN peers scenario (`setup_vpn_multiple_peers_fixture`)
 - `fixtures/vpn_recovery_disabled.bash` - Recovery actions disabled (`setup_vpn_recovery_disabled_fixture`)
+- `fixtures/vpn_at_tier.bash` - VPN at specific tier threshold (`setup_vpn_at_tier_fixture`)
+- `fixtures/vpn_idle.bash` - VPN idle tunnel scenario (`setup_vpn_idle_fixture`)
+- `fixtures/vpn_network_partition.bash` - Network partition scenario (`setup_vpn_network_partition_fixture`)
+- `fixtures/vpn_rate_limited.bash` - Rate limiting scenario (`setup_vpn_rate_limited_fixture`)
+- `fixtures/vpn_xfrm_recovery.bash` - XFRM recovery scenario (`setup_vpn_xfrm_recovery_fixture`)
 
 **Example Usage**:
 ```bash
@@ -471,7 +444,45 @@ For testing library functions directly (unit testing), source the library files 
 
 This pattern is useful for unit testing individual functions without running the full script.
 
-**9. Test Documentation Best Practices**:
+**9. Helper Functions for Test Setup**:
+
+Several helper functions simplify test setup and configuration:
+
+**`enable_fake_mode()`**: Enables fake mode for testing (sets `NO_ESCALATE=1` and exports it). This prevents actual system commands from executing during tests:
+```bash
+@test "test with fake mode" {
+    enable_fake_mode
+    # NO_ESCALATE=1 is now set and exported
+    run bash "$TEST_SCRIPT" --fake
+    assert_success
+}
+```
+
+**`setup_test_location_config(config_file, ...)`**: Creates a location-based config file with common test settings. Takes the config file path and variable assignments as arguments:
+```bash
+@test "test with location config" {
+    local config_file="${TEST_DIR}/vpn-monitor.conf"
+    setup_test_location_config "$config_file" \
+        'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+        'LOCATION_NYC_INTERNAL="192.168.1.1"'
+    # Config file created with location-based format
+}
+```
+
+**`setup_location_config_and_load(config_file)`**: Sets up test environment, sets `CONFIG_FILE`, and loads configuration. Automatically exports `CONFIG_FILE`. Call this after creating a config file:
+```bash
+@test "test with loaded location config" {
+    local config_file="${TEST_DIR}/vpn-monitor.conf"
+    setup_test_location_config "$config_file" \
+        'LOCATION_NYC_EXTERNAL="203.0.113.1"'
+    setup_location_config_and_load "$config_file"
+    # CONFIG_FILE is now set and exported, config is loaded
+    run bash "$TEST_SCRIPT" --fake
+    assert_success
+}
+```
+
+**10. Test Documentation Best Practices**:
 Our tests include detailed comments explaining purpose, expected behavior, and importance:
 ```bash
 # bats test_tags=category:high-risk,priority:high
@@ -486,7 +497,7 @@ Our tests include detailed comments explaining purpose, expected behavior, and i
 
 This documentation helps maintainers understand test intent and importance, especially for high-risk tests.
 
-**10. Advanced Mock Command Patterns**:
+**11. Advanced Mock Command Patterns**:
 Beyond basic mocks, we have specialized mock functions for network and system testing:
 
 **Network Partition Mocks**:
@@ -515,7 +526,7 @@ mock_ping_success  # Always succeeds, outputs packet loss info
 
 These mocks enable comprehensive testing of network partition detection and interface state checks.
 
-**11. Comprehensive bats-file Assertions**:
+**12. Comprehensive bats-file Assertions**:
 Our test suite uses comprehensive bats-file assertions for thorough filesystem testing:
 ```bash
 @test "verifies file permissions after setting them" {
@@ -564,7 +575,7 @@ This comprehensive approach to filesystem testing ensures better validation of f
 
 ### Strengths
 
-1. **Comprehensive Coverage**: 389 tests covering unit, integration, and high-risk scenarios
+1. **Comprehensive Coverage**: See [Test Categories](../tests/README.md#test-categories) for current test counts covering unit, integration, and high-risk scenarios
 2. **Good Isolation**: Each test gets a clean environment via `setup()`/`teardown()`
 3. **Mock Infrastructure**: Well-developed mocking system for system commands
 4. **Standard Helper Libraries**: Uses bats-support, bats-assert, and bats-file for consistent, well-maintained assertions
@@ -836,17 +847,12 @@ This example demonstrates:
 
 ## Summary
 
-BATS is a powerful testing framework for Bash scripts. Our current implementation is comprehensive with **389 tests** across multiple test files, covering unit, integration, and high-risk scenarios.
+BATS is a powerful testing framework for Bash scripts. Our current implementation is comprehensive with tests covering unit, integration, and high-risk scenarios.
 
-### Current Test Suite Statistics
+For current test suite statistics including test counts, coverage, and organization, see:
 
-- **Total Tests**: 389 tests
-- **Test Coverage**: 46.9% (1141/2433 lines)
-- **Fast Tests**: 244 tests (run by default)
-- **Slow Tests**: 142 tests (integration and high-risk, excluded by default)
-- **Test Files**: 16 test files covering unit, integration, and high-risk scenarios
-- **High-Risk Tests**: 124 tests split across 9 modular files for better organization:
-  - Configuration, lockfile, detection, recovery, state, logging, connection, errors, and main execution
+- **[Test Categories](../tests/README.md#test-categories)** - Current test counts and organization
+- **[Test Coverage](../tests/README.md#test-coverage)** - Current coverage statistics and goals
 
 ### Key Features Implemented
 
@@ -874,6 +880,8 @@ Our test suite leverages BATS best practices and includes:
 
 This section provides quick access to the most common patterns and commands used in our BATS test suite.
 
+> **Note**: For standardized patterns and best practices, see **[Test Patterns](../tests/TEST_PATTERNS.md)**. This Quick Reference is for quick lookup of common syntax and patterns.
+
 ### Essential Test Structure
 
 ```bash
@@ -901,15 +909,26 @@ setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'ENABLE_PING_CHECK=0'
 ```
 
+**Location-Based Config**:
+```bash
+local config_file="${TEST_DIR}/vpn-monitor.conf"
+setup_test_location_config "$config_file" \
+    'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+    'LOCATION_NYC_INTERNAL="192.168.1.1"'
+setup_location_config_and_load "$config_file"
+```
+
 **Using Fixtures**:
 ```bash
 load fixtures/vpn_active
 setup_vpn_active_fixture "192.168.1.1"
 ```
 
-**With State Files**:
+**With State Files** (⚠️ Preferred approach):
 ```bash
-setup_state_files "192.168.1.1" 2 500  # failure_count=2, last_bytes=500
+source_function "set_peer_state"
+set_peer_state "" "192.168.1.1" "failure_count" "2"
+set_peer_state "" "192.168.1.1" "last_bytes" "500"
 ```
 
 ### Common Assertions
@@ -1042,11 +1061,16 @@ bats tests/ -f "VPN status"
 
 **Setup Functions**:
 - `setup_test_vpn_monitor` - Complete VPN monitor setup
-- `setup_test_config` - Create config file
-- `setup_state_files` - Create state files
+- `setup_test_config` - Create config file (legacy format)
+- `setup_test_location_config` - Create location-based config file
+- `setup_location_config_and_load` - Create and load location config
 - `setup_mock_vpn_environment` - Setup mocks
+- `enable_fake_mode` - Enable fake mode (NO_ESCALATE=1)
 - `setup_vpn_active_fixture` - VPN active fixture
 - `setup_vpn_down_fixture` - VPN down fixture
+
+**State Management**:
+- Use `set_peer_state` directly for creating state files (see examples below)
 
 **Mock Functions**:
 - `mock_ip_xfrm_state` - Mock ip xfrm state
@@ -1090,10 +1114,12 @@ run check_network_partition "192.168.1.1"
 assert_success
 ```
 
-**State Management Test**:
+**State Management Test** (⚠️ Preferred approach):
 ```bash
 setup_test_vpn_monitor "192.168.1.1"
-setup_state_files "192.168.1.1" 3 1000
+source_function "set_peer_state"
+set_peer_state "" "192.168.1.1" "failure_count" "3"
+set_peer_state "" "192.168.1.1" "last_bytes" "1000"
 run bash "$TEST_SCRIPT" --fake
 assert_file_contains "$LOG_FILE" "Tier"
 ```
@@ -1120,270 +1146,212 @@ bats --list-tests tests/
 ./tests/tag_slow_tests.sh
 SLOW_THRESHOLD=10 ./tests/tag_slow_tests.sh  # Custom threshold
 ```
+
+**Debugging Test Hangs (Unreadable Files)**:
+
+If tests hang indefinitely, check for unreadable file issues:
+
+1. **Check for unreadable files in test**:
+   ```bash
+   # Look for chmod 000 or permission issues
+   find "${TEST_DIR}" -type f ! -perm 644 ! -perm 755
+   ```
+
+2. **Use timeout wrapper**:
+   ```bash
+   run timeout 15 bash "$TEST_SCRIPT"
+   if [[ "$status" -eq 124 ]]; then
+       echo "ERROR: Test script hung (timeout after 15 seconds)" >&2
+       false
+   fi
+   ```
+
+3. **Check for file operations without readability checks**:
+   - Search for `cat`, `grep`, `wc`, `cp`, `mv` operations
+   - Verify each has `file_exists_and_readable` check before use
+   - Remember: `2>/dev/null` does NOT prevent hangs
+
+4. **Debug with strace**:
+   ```bash
+   strace -e trace=openat,read,write,stat,access,newfstatat -f bash "$TEST_SCRIPT" 2>&1 | \
+       grep -E "(EACCES|EAGAIN|ETIMEDOUT)"
+   ```
+
+5. **Check for race conditions**:
+   - File becomes unreadable between check and operation
+   - Multiple processes accessing same file
+   - Timing-dependent behavior in BATS environment
+
+**Common Causes of Test Hangs**:
+- Unreadable files (`chmod 000`) without readability checks
+- Missing `file_exists_and_readable` before file operations
+- Using `2>/dev/null` instead of readability checks
+- Functions that should output values but only return exit codes
+- Race conditions with file permissions
+
+**Common Pitfalls**:
+
+1. **XFRM Mock Format Requirements**: When mocking `ip xfrm state` output, you must include the complete xfrm format including the `lifetime current:` line with byte counters. The `extract_byte_counter()` function requires this format to extract bytes. Use the `mock_ip_xfrm_state` helper function instead of manually creating mocks to ensure proper format:
+   ```bash
+   # ✅ Correct: Use helper function
+   mock_ip_xfrm_state "203.0.113.1" "3000" "0x12345678" >/dev/null
+   mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+   
+   # ❌ Incorrect: Missing lifetime line - byte extraction will fail
+   cat >"$mock_ip" <<'EOF'
+   #!/bin/bash
+   if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+       echo "src 192.168.1.1 dst 203.0.113.1"
+       exit 0
+   fi
+   EOF
+   ```
+
+2. **Byte Counter Comparison**: When testing recovery scenarios, ensure byte counters are increasing (current > last) to pass the byte counter validation. Mock the `last_bytes` state file with a lower value than the xfrm output:
+   ```bash
+   # Mock xfrm shows 3000 bytes
+   mock_ip_xfrm_state "203.0.113.1" "3000" >/dev/null
+   mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+   
+   # Mock last_bytes file shows 2000 (lower value = increasing traffic)
+   local mock_cat="${TEST_DIR}/cat"
+   cat >"$mock_cat" <<'EOF'
+   #!/bin/bash
+   if [[ "$1" =~ last_bytes ]]; then
+       echo "2000"
+   else
+       /bin/cat "$@"
+   fi
+   EOF
+   chmod +x "$mock_cat"
+   add_mock_to_path
+   ```
+
+3. **The `local` Keyword Trap in Mock Scripts**: ⚠️ **CRITICAL** - Never use `local` keyword at the top level of mock scripts created via heredocs. The `local` keyword can only be used inside functions, not at script top level. This causes the script to fail silently with "local: can only be used in a function" error.
+   ```bash
+   # ❌ WRONG - Script will fail silently:
+   cat >"$mock_ip" <<EOF
+   #!/bin/bash
+   local count=\$(cat "${TEST_DIR}/count" 2>/dev/null || echo "0")
+   if [[ \$count -eq 1 ]]; then
+       exit 1
+   fi
+   EOF
+   
+   # ✅ CORRECT - Use regular variable assignment:
+   cat >"$mock_ip" <<EOF
+   #!/bin/bash
+   count=\$(cat "${TEST_DIR}/count" 2>/dev/null || echo "0")
+   if [[ \$count -eq 1 ]]; then
+       exit 1
+   fi
+   EOF
+   ```
+   **Why This Matters**: Mock scripts appear to exist and be executable, `command -v` finds them correctly, PATH is set correctly, but the script never executes because it fails immediately on the `local` line. Always add a simple `echo` statement at the very beginning of mock scripts to verify execution.
+
+4. **Mock Command Resolution Order**: Mock commands must be created BEFORE `add_mock_to_path()` is called. Commands executed via `timeout` (e.g., `timeout dig`) still use PATH resolution, so PATH must be set before script execution.
+   ```bash
+   # ✅ CORRECT order:
+   local mock_ip="${TEST_DIR}/ip"
+   cat >"$mock_ip" <<'EOF'
+   #!/bin/bash
+   # ... mock implementation ...
+   EOF
+   chmod +x "$mock_ip"
+   add_mock_to_path  # Must be called AFTER creating mocks
+   run bash "$TEST_SCRIPT"  # PATH is set before script runs
+   ```
+
+5. **Fixture Mock Overwriting**: Test fixtures (e.g., `setup_vpn_down_fixture`) create their own mock commands. Tests that need different mock behavior must properly overwrite these. Use `rm -f "$mock_ip"` before creating new mock to ensure clean overwrite.
+   ```bash
+   # Fixture creates mock ip with only xfrm handler
+   setup_vpn_down_fixture "192.168.1.1" 3
+   
+   # Test needs to overwrite with route/link handlers
+   local mock_ip="${TEST_DIR}/ip"
+   rm -f "$mock_ip"  # Remove fixture's mock
+   cat >"$mock_ip" <<EOF
+   #!/bin/bash
+   # Handle xfrm (preserve fixture behavior)
+   if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+       exit 0
+   fi
+   # Add route handler
+   if [[ "\$1" == "route" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "default" ]]; then
+       # ... route logic ...
+   fi
+   exec /usr/bin/ip "\$@"  # Fallback
+   EOF
+   chmod +x "$mock_ip"
+   ```
+
+6. **Mock Output Format Must Match Real Commands**: Mock commands must produce output that matches what the real commands produce, otherwise parsing/grepping fails.
+   ```bash
+   # ❌ WRONG - missing "state UP"
+   echo "1: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+   
+   # ✅ CORRECT - includes "state UP"
+   echo "1: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default"
+   ```
+
+7. **Variable Expansion in Heredocs**: Variables in heredocs need careful handling - use `<<EOF` (not `<<'EOF'`) for expansion, escape `$` for shell variables.
+   ```bash
+   local test_dir="${TEST_DIR}"
+   cat >"$mock_ip" <<EOF
+   #!/bin/bash
+   # ${test_dir} expands at heredoc creation time
+   # \$1, \$2 are shell variables (escaped for mock script)
+   count=\$(cat "${test_dir}/count" 2>/dev/null || echo "0")
+   if [[ \$count -eq 1 ]]; then
+       exit 1
+   fi
+   EOF
+   ```
+
+8. **State Tracking Across Multiple Calls**: Mocks need to track state across multiple calls to the same command (e.g., first call fails, second succeeds). Use files in `${TEST_DIR}` to track state, initialize state files before creating mocks.
+   ```bash
+   # Initialize state file
+   local route_call_count_file="${TEST_DIR}/route_call_count"
+   echo "0" >"$route_call_count_file"
+   
+   # In mock script:
+   route_call_count=\$(cat "${route_call_count_file}" 2>/dev/null || echo "0")
+   route_call_count=\$((route_call_count + 1))
+   echo "\$route_call_count" >"${route_call_count_file}"
+   if [[ \$route_call_count -eq 1 ]]; then
+       exit 1  # First call fails
+   else
+       exit 0  # Subsequent calls succeed
+   fi
+   ```
+
+### Mock Setup Debugging Checklist
+
+When mocks aren't working, use this checklist:
+
+1. ✅ **Verify mock script executes at all**: Add `echo "Mock script is running" >&2` at the very beginning of the mock script
+2. ✅ **Check for `local` keyword misuse**: Search for `local` in mock scripts - it can only be used inside functions
+3. ✅ **Verify mock files exist**: `ls -la "${TEST_DIR}/ip" "${TEST_DIR}/dig"`
+4. ✅ **Verify mocks are executable**: `test -x "${TEST_DIR}/ip"`
+5. ✅ **Verify `add_mock_to_path()` is called AFTER creating mocks**
+6. ✅ **Verify PATH includes TEST_DIR**: `echo "$PATH" | grep -q "${TEST_DIR}"`
+7. ✅ **Add logging to mocks**: `echo "mock_ip called with args: \$*" >> "${TEST_DIR}/mock_calls.log"`
+8. ✅ **Check mock output format matches real command output**
+9. ✅ **Verify state files are initialized before mocks are created**
+10. ✅ **Check if fixture mocks need to be overwritten**
+11. ✅ **Verify heredoc variable expansion is correct**
+12. ✅ **Check if commands are resolved before PATH is modified**
+13. ✅ **Test mock script directly**: `bash "${TEST_DIR}/ip" route show default` to verify it works
 
 ---
 
 ## Document Organization
 
-**Current Size**: ~1389 lines
+This document covers BATS framework usage and patterns for our test suite. For related documentation, see:
 
-This document is comprehensive and covers all aspects of BATS testing in our project. It has grown beyond the initial size and could benefit from splitting into multiple focused documents for better navigation:
+- **[Test Patterns](../tests/TEST_PATTERNS.md)** - Standardized test patterns and best practices
+- **[tests/README.md](../tests/README.md)** - Complete test suite documentation including running tests, coverage, and troubleshooting
+- **[Test Strategy](TEST_STRATEGY.md)** - Test strategy and approach
+- **[Test Maintenance](TEST_MAINTENANCE.md)** - Test maintenance procedures
 
-**Potential Split Structure**:
-- `BATS_GUIDE.md` - Core guide (introduction, basics, quick reference)
-- `BATS_PATTERNS.md` - Detailed usage patterns and examples
-- `BATS_ADVANCED.md` - Advanced features, debugging, optimization
-- `BATS_REFERENCE.md` - Complete API reference and helper functions
-
-This would improve navigation and make it easier to find specific information. For now, the single document structure works well and the Quick Reference section below provides quick access to common patterns.
-
-## Quick Reference
-
-This section provides quick access to the most common patterns and commands used in our BATS test suite.
-
-### Essential Test Structure
-
-```bash
-#!/usr/bin/env bats
-load test_helper
-
-# bats test_tags=category:high-risk,priority:high
-@test "test description" {
-    setup_test_vpn_monitor "192.168.1.1"
-    run bash "$TEST_SCRIPT" --fake
-    assert_success
-    assert_file_contains "$LOG_FILE" "expected message"
-}
-```
-
-### Common Setup Patterns
-
-**Basic VPN Monitor Setup**:
-```bash
-setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
-```
-
-**With Custom Config**:
-```bash
-setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'ENABLE_PING_CHECK=0'
-```
-
-**Using Fixtures**:
-```bash
-load fixtures/vpn_active
-setup_vpn_active_fixture "192.168.1.1"
-```
-
-**With State Files**:
-```bash
-setup_state_files "192.168.1.1" 2 500  # failure_count=2, last_bytes=500
-```
-
-### Common Assertions
-
-**Exit Status**:
-```bash
-assert_success
-assert_failure
-```
-
-**Output Matching**:
-```bash
-assert_output "exact match"
-assert_output --partial "partial match"
-assert_output --regexp 'pattern.*match'
-assert_line --partial "line content"
-```
-
-**File Checks**:
-```bash
-assert_file_exist "$file"
-assert_file_not_exist "$file"
-assert_file_empty "$file"
-assert_file_not_empty "$file"
-assert_file_contains "$file" "pattern"
-assert_file_permission 755 "$file"
-```
-
-**Log Checks**:
-```bash
-assert_log_contains "$LOG_FILE" "message"
-assert_log_not_contains "$LOG_FILE" "message"
-```
-
-**Value Comparisons**:
-```bash
-assert_equal "$var" "expected"
-assert_regex "$var" '^pattern$'
-```
-
-### Common Mock Patterns
-
-**VPN Environment**:
-```bash
-setup_mock_vpn_environment "192.168.1.1" 1000 0x12345678
-add_mock_to_path
-```
-
-**Network Partition**:
-```bash
-mock_ip_route "1" "default via 192.168.1.1 dev eth0"  # Route exists
-mock_dig "1" "8.8.8.8"  # DNS succeeds
-mock_ip_interfaces_up "br0,eth0" "1"
-add_mock_to_path
-```
-
-**Ping**:
-```bash
-mock_ping "192.168.1.1" "1"  # Success
-mock_ping_success  # Always succeeds
-add_mock_to_path
-```
-
-### Direct Library Function Testing
-
-**Test Detection Functions**:
-```bash
-source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
-source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
-run check_vpn_status "192.168.1.1"
-assert_success
-```
-
-**Test Recovery Functions**:
-```bash
-source_recovery_module
-run attempt_xfrm_recovery "192.168.1.1"
-assert_success
-```
-
-### Test Tagging
-
-**Tag Format**:
-```bash
-# bats test_tags=category:high-risk,priority:high
-# bats test_tags=slow,category:integration,priority:medium
-```
-
-**Common Tags**:
-- `category:high-risk` - Critical path tests
-- `category:integration` - Integration tests
-- `category:unit` - Unit tests
-- `priority:high` - High priority
-- `priority:medium` - Medium priority
-- `slow` - Slow tests (>5 seconds)
-
-### Running Tests
-
-**Fast Tests Only** (default):
-```bash
-./tests/run_tests.sh
-```
-
-**Include Slow Tests**:
-```bash
-./tests/run_tests.sh --slow
-```
-
-**Specific Test File**:
-```bash
-bats tests/test_detection.sh
-```
-
-**Filter by Name**:
-```bash
-bats tests/ -f "VPN status"
-```
-
-**Failed Tests Only**:
-```bash
-./tests/run_tests.sh --failed
-```
-
-**With Coverage**:
-```bash
-./tests/run_tests.sh --coverage
-```
-
-### Helper Functions Quick Reference
-
-**Setup Functions**:
-- `setup_test_vpn_monitor` - Complete VPN monitor setup
-- `setup_test_config` - Create config file
-- `setup_state_files` - Create state files
-- `setup_mock_vpn_environment` - Setup mocks
-- `setup_vpn_active_fixture` - VPN active fixture
-- `setup_vpn_down_fixture` - VPN down fixture
-
-**Mock Functions**:
-- `mock_ip_xfrm_state` - Mock ip xfrm state
-- `mock_ping` - Mock ping command
-- `mock_ipsec` - Mock ipsec command
-- `mock_ip_route` - Mock ip route
-- `mock_dig` - Mock DNS resolution
-- `add_mock_to_path` - Add mocks to PATH
-- `remove_mock_from_path` - Remove mocks from PATH
-
-**Assertion Functions**:
-- `assert_log_contains` - Check log content
-- `assert_log_not_contains` - Check log doesn't contain
-- `assert_file_executable` - Check file is executable
-- `assert_state_file` - Check state file value
-
-### Common Patterns by Test Type
-
-**Unit Test** (testing functions directly):
-```bash
-source_recovery_module
-run attempt_xfrm_recovery "192.168.1.1"
-assert_success
-```
-
-**Integration Test** (testing full script):
-```bash
-setup_test_vpn_monitor "192.168.1.1"
-run bash "$TEST_SCRIPT" --fake
-assert_success
-```
-
-**Network Partition Test**:
-```bash
-setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
-mock_ip_route "0"  # No route
-mock_dig "0" "8.8.8.8" "timeout"
-add_mock_to_path
-source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
-run check_network_partition "192.168.1.1"
-assert_success
-```
-
-**State Management Test**:
-```bash
-setup_test_vpn_monitor "192.168.1.1"
-setup_state_files "192.168.1.1" 3 1000
-run bash "$TEST_SCRIPT" --fake
-assert_file_contains "$LOG_FILE" "Tier"
-```
-
-### Troubleshooting
-
-**Preserve Temp Directories on Failure**:
-```bash
-BATSLIB_TEMP_PRESERVE_ON_FAILURE=1 bats tests/
-```
-
-**Verbose Output**:
-```bash
-bats --verbose tests/
-```
-
-**List All Tests**:
-```bash
-bats --list-tests tests/
-```
-
-**Tag Slow Tests**:
-```bash
-./tests/tag_slow_tests.sh
-SLOW_THRESHOLD=10 ./tests/tag_slow_tests.sh  # Custom threshold
-```
+The Quick Reference section below provides quick access to common patterns. For comprehensive documentation, see the cross-referenced documents above.

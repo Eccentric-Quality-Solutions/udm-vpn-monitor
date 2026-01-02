@@ -46,13 +46,16 @@ We will implement a schema-based configuration validation system with:
   - Default value
   - Validation rules (ranges, allowed values)
   - Required/optional flag
+- **Configuration Format**: Supports location-based configuration format (`LOCATION_<NAME>_EXTERNAL`/`LOCATION_<NAME>_INTERNAL`)
 - **Validation**: `lib/config.sh` validates configuration against schema
 - **Default Application**: Defaults applied from schema if values not provided
 - **Error Handling**: Invalid values logged with warnings, defaults used
+- **Location Parsing**: Location-based configuration parsed separately from standard configuration variables
 
 ## Related ADRs
 - ADR-0005: Modular Library Architecture
 - ADR-0011: Security Measures (IP Validation, Fixed-String Matching)
+- ADR-0024: Location-Based Configuration Format
 
 ## References
 - ARCHITECTURE.md: "Modular Library Architecture" section

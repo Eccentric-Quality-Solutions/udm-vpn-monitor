@@ -19,13 +19,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:high
 @test "xfrm SA exists but byte counter is exactly 0" {
-	# Test verifies that the detection function correctly identifies VPN failures when xfrm SA exists
-	# but byte counter is exactly 0, indicating no traffic has passed through the tunnel.
-	# Expected: Function detects bytes=0 as suspect condition and may mark VPN as failed.
-	# Importance: Zero byte counter indicates VPN tunnel is established but not passing traffic, a failure condition.
+	# Purpose: Test verifies that the detection function correctly identifies VPN failures when xfrm SA exists but byte counter is exactly 0
+	# Expected: Function detects bytes=0 as suspect condition and may mark VPN as failed
+	# Importance: Zero byte counter indicates VPN tunnel is established but not passing traffic, a failure condition
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 ENABLE_NETWORK_PARTITION_CHECK=0
 EOF
 
@@ -50,7 +49,6 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	add_mock_to_path
 	run bash "$test_script" --fake
 
 	# Should detect bytes=0 as suspect (may fail VPN check)
@@ -62,20 +60,24 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "xfrm SA exists but byte counter decreases" {
-	# Test verifies that the detection function correctly identifies VPN failures when byte counter
-	# decreases between checks, which could indicate counter wrap-around or VPN re-establishment.
-	# Expected: Function detects bytes not increasing and may mark VPN as suspect or failed.
-	# Importance: Decreasing byte counters indicate abnormal VPN state that requires investigation.
+	# Purpose: Test verifies that the detection function correctly identifies VPN failures when byte counter decreases between checks
+	# Expected: Function detects bytes not increasing and may mark VPN as suspect or failed
+	# Importance: Decreasing byte counters indicate abnormal VPN state that requires investigation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 ENABLE_NETWORK_PARTITION_CHECK=0
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}"
-	local last_bytes_file="${state_dir}/last_bytes_192_168_1_1"
+
+	# Source state functions to get correct file path
+	export STATE_DIR="${state_dir}"
+	ensure_state_functions_loaded
+	local last_bytes_file
+	last_bytes_file=$(get_peer_state_file_path "NYC" "192.168.1.1" "last_bytes")
 
 	# Set initial byte count (high value)
 	echo "10000" >"$last_bytes_file"
@@ -97,7 +99,6 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	add_mock_to_path
 	run bash "$test_script" --fake
 
 	# Should detect bytes not increasing (may fail VPN check)
@@ -109,11 +110,11 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "xfrm SA exists but byte counter stays same" {
-	# Test verifies that the detection function correctly identifies VPN failures when byte counter
-	# remains unchanged between checks, indicating no traffic is passing through the tunnel.
-	# Expected: Function detects bytes not increasing and marks VPN as suspect or failed.
-	# Importance: Stagnant byte counters indicate VPN tunnel is not passing traffic, a critical failure condition.
-	setup_vpn_failing_fixture "192.168.1.1" 0 1000 1000
+	# Purpose: Test verifies that the detection function correctly identifies VPN failures when byte counter remains unchanged between checks
+	# Expected: Function detects bytes not increasing and marks VPN as suspect or failed
+	# Importance: Stagnant byte counters indicate VPN tunnel is not passing traffic, a critical failure condition
+	# Disable ping check so that bytes not increasing is detected as suspect (not idle but healthy)
+	setup_vpn_failing_fixture "192.168.1.1" 0 1000 1000 "0x12345678" 'ENABLE_PING_CHECK=0'
 
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
@@ -127,13 +128,16 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "byte counter file corrupted" {
-	# Test verifies that the script handles corrupted byte counter files gracefully without crashing.
-	# Expected: Script treats corrupted file as 0 or resets it, continuing normal operation.
-	# Importance: File corruption can occur due to disk errors or manual editing; script must handle it robustly.
+	# Purpose: Test verifies that the script handles corrupted byte counter files gracefully without crashing
+	# Expected: Script treats corrupted file as 0 or resets it, continuing normal operation
+	# Importance: File corruption can occur due to disk errors or manual editing; script must handle it robustly
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
+	# Source state functions to get correct file path
+	ensure_state_functions_loaded
 	# Create corrupted byte counter file (non-numeric)
-	local last_bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
+	local last_bytes_file
+	last_bytes_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "last_bytes")
 	echo "invalid-value" >"$last_bytes_file"
 
 	add_mock_to_path
@@ -148,10 +152,16 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "byte counter file contains negative number" {
+	# Purpose: Test verifies that the script handles byte counter files containing negative numbers gracefully
+	# Expected: Script treats negative value as invalid and either resets to 0 or uses current bytes value
+	# Importance: Negative values can occur from file corruption or manual editing; script must handle them robustly
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
+	# Source state functions to get correct file path
+	ensure_state_functions_loaded
 	# Create byte counter file with negative number
-	local last_bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
+	local last_bytes_file
+	last_bytes_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "last_bytes")
 	echo "-1000" >"$last_bytes_file"
 
 	add_mock_to_path
@@ -166,10 +176,16 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "byte counter file is empty" {
+	# Purpose: Test verifies that the script handles empty byte counter files gracefully
+	# Expected: Script treats empty file as 0, then updates it with current bytes value from xfrm output
+	# Importance: Empty files can occur from file deletion or initialization; script must handle them robustly
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
+	# Source state functions to get correct file path
+	ensure_state_functions_loaded
 	# Clear byte counter file to test empty file handling
-	local last_bytes_file="${STATE_DIR}/last_bytes_192_168_1_1"
+	local last_bytes_file
+	last_bytes_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "last_bytes")
 	# Remove file if it exists (from fixture setup), then create empty file
 	rm -f "$last_bytes_file"
 	touch "$last_bytes_file"
@@ -197,13 +213,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "all detection methods unavailable" {
-	# Test verifies that the script handles the edge case where all VPN detection methods (ip xfrm, ipsec)
-	# are unavailable on the system without crashing.
-	# Expected: Script handles missing detection tools gracefully, may log warnings or exit early.
-	# Importance: Ensures script fails gracefully in environments where required tools are missing.
+	# Purpose: Test verifies that the script handles the edge case where all VPN detection methods are unavailable without crashing
+	# Expected: Script handles missing detection tools gracefully, may log warnings or exit early
+	# Importance: Ensures script fails gracefully in environments where required tools are missing
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 ENABLE_NETWORK_PARTITION_CHECK=0
 EOF
 
@@ -236,9 +251,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "xfrm output contains multiple lifetime lines" {
+	# Purpose: Test verifies that the script correctly handles xfrm output containing multiple lifetime lines
+	# Expected: Script extracts the first lifetime line correctly and uses it for byte counter detection
+	# Importance: xfrm output can contain multiple lifetime entries; script must parse them correctly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 ENABLE_NETWORK_PARTITION_CHECK=0
 EOF
 
@@ -265,7 +283,6 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	add_mock_to_path
 	run bash "$test_script" --fake
 
 	# Should extract first lifetime line correctly
@@ -276,7 +293,10 @@ EOF
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "ping check enabled but INTERNAL_PEER_IPS not set" {
+@test "ping check enabled but LOCATION_*_INTERNAL not set" {
+	# Purpose: Test verifies that ping check works correctly when LOCATION_*_INTERNAL is not set
+	# Expected: Script uses peer IP for ping check when internal IPs are not configured
+	# Importance: Ensures ping check works even when internal IPs are not specified in configuration
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1'
 
 	# Mock ping - should use peer IP
@@ -284,7 +304,6 @@ EOF
 	mock_ping=$(mock_ping "192.168.1.1" "1")
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 
 	# Should use peer IP for ping check

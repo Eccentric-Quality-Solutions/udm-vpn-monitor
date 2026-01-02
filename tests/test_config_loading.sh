@@ -15,13 +15,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:high
 @test "config file contains syntax errors" {
-	# Test verifies that the script handles configuration files with syntax errors gracefully.
-	# Expected: Script detects syntax error during config loading and logs error message without crashing.
-	# Importance: Syntax errors can occur from manual editing or file corruption; script must handle them robustly.
+	# Purpose: Test verifies that the script handles configuration files with syntax errors gracefully
+	# Expected: Script detects syntax error during config loading and logs error message without crashing
+	# Importance: Syntax errors can occur from manual editing or file corruption; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Create config with syntax error (unclosed quote)
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1
+LOCATION_NYC_EXTERNAL="192.168.1.1
 VPN_NAME="Test VPN"
 EOF
 
@@ -45,12 +45,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "config file is unreadable" {
-	# Test verifies that the script handles unreadable configuration files gracefully.
-	# Expected: Script detects permission issue and logs error message without crashing.
-	# Importance: Permission issues can occur from incorrect file ownership or chmod operations; script must handle gracefully.
+	# Purpose: Test verifies that the script handles unreadable configuration files gracefully
+	# Expected: Script detects permission issue and logs error message without crashing
+	# Importance: Permission issues can occur from incorrect file ownership or chmod operations; script must handle gracefully
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 EOF
 
 	# Make config file unreadable
@@ -81,6 +82,9 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "config file is a directory" {
+	# Purpose: Test verifies that the script handles configuration file paths that point to directories instead of files gracefully
+	# Expected: Script detects that config path is a directory and logs warning or error message without crashing
+	# Importance: Directory paths can occur from misconfiguration or symlink issues; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Create directory instead of file
 	mkdir -p "$config_file"
@@ -103,9 +107,12 @@ EOF
 }
 
 @test "LOG_FILE override in config recalculates LOGS_DIR" {
+	# Purpose: Test verifies that when LOG_FILE is overridden in config, LOGS_DIR is recalculated correctly
+	# Expected: Script recalculates LOGS_DIR based on LOG_FILE path and creates the custom log directory
+	# Importance: Ensures log file paths work correctly when custom LOG_FILE paths are specified
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 LOG_FILE="/tmp/custom-logs/vpn-monitor.log"
 EOF
 
@@ -138,9 +145,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "negative threshold values in config" {
+	# Purpose: Test verifies that the script handles negative threshold values in configuration files
+	# Expected: Script processes negative thresholds without crashing, though behavior may be unexpected
+	# Importance: Negative thresholds can occur from manual editing errors; script must handle them without crashing
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 TIER1_THRESHOLD=-1
 TIER2_THRESHOLD=-3
 TIER3_THRESHOLD=-5
@@ -176,9 +186,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "threshold values out of order" {
+	# Purpose: Test verifies that the script handles threshold values that are out of order (TIER2 < TIER1, etc.)
+	# Expected: Script processes out-of-order thresholds without crashing, though behavior may skip tiers or be unexpected
+	# Importance: Out-of-order thresholds can occur from manual editing errors; script must handle them without crashing
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_NYC_EXTERNAL="192.168.1.1"
 TIER1_THRESHOLD=5
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=1

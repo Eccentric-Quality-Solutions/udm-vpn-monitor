@@ -10,18 +10,18 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh exists and is executable" {
-	# Test verifies that the uninstall script file exists and has execute permissions.
-	# Expected: Uninstall script file is present and executable.
-	# Importance: Ensures the uninstallation script can be run directly without requiring bash explicitly.
+	# Purpose: Test verifies that the uninstall script file exists and has execute permissions
+	# Expected: Uninstall script file is present and executable
+	# Importance: Ensures the uninstallation script can be run directly without requiring bash explicitly
 	assert_file_exist "$UNINSTALL_SCRIPT"
 	assert_file_executable "$UNINSTALL_SCRIPT"
 }
 
 # bats test_tags=category:unit
 @test "uninstall.sh requires root" {
-	# Test verifies that the uninstall script enforces root requirement for uninstallation.
-	# Expected: Script exits with failure status and displays error message when run without root privileges.
-	# Importance: Uninstallation requires root access to remove system files and cron entries.
+	# Purpose: Test verifies that the uninstall script enforces root requirement for uninstallation
+	# Expected: Script exits with failure status and displays error message when run without root privileges
+	# Importance: Uninstallation requires root access to remove system files and cron entries
 	# Skip condition: Cannot test non-root requirement when running as root (test requires non-root user to verify root requirement)
 	[[ $EUID -eq 0 ]] && skip "Cannot test root requirement when running as root (test requires non-root user to verify uninstall fails without root privileges)"
 	run bash "$UNINSTALL_SCRIPT"
@@ -31,9 +31,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh handles missing installation gracefully" {
-	# Test verifies that the uninstall script handles cases where installation doesn't exist gracefully.
-	# Expected: Script exits successfully with informative message when no installation is found.
-	# Importance: Prevents errors when uninstall is run multiple times or on systems without installation.
+	# Purpose: Test verifies that the uninstall script handles cases where installation doesn't exist gracefully
+	# Expected: Script exits successfully with informative message when no installation is found
+	# Importance: Prevents errors when uninstall is run multiple times or on systems without installation
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -48,9 +48,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh removes installation directory" {
-	# Test verifies that the uninstall script removes the installation directory and all its contents.
-	# Expected: Installation directory is completely removed during uninstallation process.
-	# Importance: Ensures complete removal of all installed files and directories.
+	# Purpose: Test verifies that the uninstall script removes the installation directory and all its contents
+	# Expected: Installation directory is completely removed during uninstallation process
+	# Importance: Ensures complete removal of all installed files and directories
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -72,9 +72,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh removes cron entry" {
-	# Test verifies that the uninstall script removes the cron job entry during uninstallation.
-	# Expected: Script removes vpn-monitor cron entry from crontab, preventing scheduled execution.
-	# Importance: Ensures complete removal of all installation components including scheduled tasks.
+	# Purpose: Test verifies that the uninstall script removes the cron job entry during uninstallation
+	# Expected: Script removes vpn-monitor cron entry from crontab, preventing scheduled execution
+	# Importance: Ensures complete removal of all installation components including scheduled tasks
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -102,9 +102,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh removes cron entry even if installation directory missing" {
-	# Test verifies that the uninstall script removes cron entry even when installation directory is missing.
-	# Expected: Script removes cron entry regardless of installation directory state, ensuring complete cleanup.
-	# Importance: Handles partial installations where cron was created but directory was removed separately.
+	# Purpose: Test verifies that the uninstall script removes cron entry even when installation directory is missing
+	# Expected: Script removes cron entry regardless of installation directory state, ensuring complete cleanup
+	# Importance: Handles partial installations where cron was created but directory was removed separately
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -128,9 +128,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh verifies uninstallation" {
-	# Test verifies that the uninstall script performs post-uninstallation verification checks.
-	# Expected: Script verifies that all components are removed and outputs success message.
-	# Importance: Verification ensures uninstallation completed successfully and no components remain.
+	# Purpose: Test verifies that the uninstall script performs post-uninstallation verification checks
+	# Expected: Script verifies that all components are removed and outputs success message
+	# Importance: Verification ensures uninstallation completed successfully and no components remain
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -155,9 +155,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh prompts for confirmation in interactive mode" {
-	# Test verifies that the uninstall script prompts for user confirmation before proceeding.
-	# Expected: Script displays confirmation prompt and cancels uninstallation when user responds "no".
-	# Importance: Confirmation prompt prevents accidental uninstallation and data loss.
+	# Purpose: Test verifies that the uninstall script prompts for user confirmation before proceeding
+	# Expected: Script displays confirmation prompt and cancels uninstallation when user responds "no"
+	# Importance: Confirmation prompt prevents accidental uninstallation and data loss
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -180,9 +180,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh skips prompt with --yes flag" {
-	# Test verifies that the uninstall script skips confirmation prompt when --yes flag is provided.
-	# Expected: Script proceeds with uninstallation immediately without prompting for confirmation.
-	# Importance: Allows automated uninstallation in scripts and CI/CD environments without user interaction.
+	# Purpose: Test verifies that the uninstall script skips confirmation prompt when --yes flag is provided
+	# Expected: Script proceeds with uninstallation immediately without prompting for confirmation
+	# Importance: Allows automated uninstallation in scripts and CI/CD environments without user interaction
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -203,6 +203,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh skips prompt in CI environment" {
+	# Purpose: Test verifies that the uninstall script skips confirmation prompt when CI environment variable is set
+	# Expected: Script proceeds with uninstallation automatically without prompting when CI=1 is set
+	# Importance: Allows automated uninstallation in CI/CD environments without requiring --yes flag
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 	export CI=1
@@ -225,9 +228,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh lists files before removal" {
-	# Test verifies that the uninstall script displays list of files that will be removed before uninstallation.
-	# Expected: Script lists all files and directories that will be deleted, providing transparency to users.
-	# Importance: File listing helps users understand what will be removed and prevents accidental data loss.
+	# Purpose: Test verifies that the uninstall script displays list of files that will be removed before uninstallation
+	# Expected: Script lists all files and directories that will be deleted, providing transparency to users
+	# Importance: File listing helps users understand what will be removed and prevents accidental data loss
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -251,9 +254,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh cleans up stale lockfiles" {
-	# Test verifies that the uninstall script removes lockfiles during uninstallation cleanup.
-	# Expected: Script removes lockfiles along with installation directory, preventing stale lock issues.
-	# Importance: Lockfile cleanup ensures clean uninstallation and prevents lockfile conflicts on reinstall.
+	# Purpose: Test verifies that the uninstall script removes lockfiles during uninstallation cleanup
+	# Expected: Script removes lockfiles along with installation directory, preventing stale lock issues
+	# Importance: Lockfile cleanup ensures clean uninstallation and prevents lockfile conflicts on reinstall
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -277,6 +280,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh displays summary after successful uninstall" {
+	# Purpose: Test verifies that the uninstall script displays summary information after successful uninstallation
+	# Expected: Script outputs summary message listing what was removed and confirming successful uninstallation
+	# Importance: Summary output provides user feedback and confirmation that uninstallation completed successfully
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -298,6 +304,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh removes logrotate configuration when it exists" {
+	# Purpose: Test verifies that the uninstall script removes logrotate configuration file when it exists
+	# Expected: Script removes logrotate configuration file from /etc/logrotate.d/ during uninstallation
+	# Importance: Ensures complete cleanup of all installation components including log rotation configuration
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -325,6 +334,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh handles missing logrotate configuration gracefully" {
+	# Purpose: Test verifies that the uninstall script handles missing logrotate configuration gracefully
+	# Expected: Script continues uninstallation successfully and reports that logrotate config was not found
+	# Importance: Prevents errors when logrotate config doesn't exist, allowing uninstallation to proceed normally
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -349,6 +361,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh handles read-only logrotate directory gracefully" {
+	# Purpose: Test verifies that the uninstall script handles read-only logrotate directory gracefully
+	# Expected: Script reports that logrotate config cannot be removed and provides manual removal instructions
+	# Importance: Prevents script failure when logrotate directory is read-only, allowing uninstallation to continue
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -380,6 +395,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh verifies uninstallation includes logrotate config check" {
+	# Purpose: Test verifies that uninstallation verification includes checking for logrotate configuration removal
+	# Expected: Script verifies that logrotate config was removed and includes it in verification success message
+	# Importance: Ensures verification process checks all components including logrotate configuration
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -407,6 +425,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh verification fails when logrotate config still exists" {
+	# Purpose: Test verifies that uninstallation verification detects when logrotate config still exists
+	# Expected: Script reports verification failure when logrotate config cannot be removed (e.g., read-only file)
+	# Importance: Verification failure detection alerts users to incomplete uninstallation requiring manual cleanup
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -436,6 +457,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh check_installation returns 0 when installation exists" {
+	# Purpose: Test verifies that check_installation function correctly detects when installation exists
+	# Expected: Function returns success (0) and script proceeds with uninstallation when installation directory exists
+	# Importance: Ensures installation detection works correctly before attempting uninstallation
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -456,6 +480,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh check_installation returns 1 when installation missing" {
+	# Purpose: Test verifies that check_installation function correctly detects when installation is missing
+	# Expected: Function detects missing installation and script exits with informative message
+	# Importance: Prevents unnecessary uninstallation attempts when no installation exists
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -474,6 +501,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh remove_cron handles crontab with only vpn-monitor entry" {
+	# Purpose: Test verifies that remove_cron function handles crontab containing only vpn-monitor entry correctly
+	# Expected: Function removes vpn-monitor cron entry and handles empty crontab gracefully
+	# Importance: Ensures cron removal works correctly even when vpn-monitor is the only cron job
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -503,6 +533,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh remove_cron handles missing cron entry gracefully" {
+	# Purpose: Test verifies that remove_cron function handles missing cron entry gracefully
+	# Expected: Function reports that cron job was not found and continues uninstallation successfully
+	# Importance: Prevents errors when cron entry doesn't exist, allowing uninstallation to proceed normally
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -525,6 +558,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh remove_logrotate_config handles removal failure" {
+	# Purpose: Test verifies that remove_logrotate_config function handles removal failures gracefully
+	# Expected: Function reports removal failure and provides manual removal instructions when directory is read-only
+	# Importance: Prevents script failure when logrotate config cannot be removed, allowing uninstallation to continue
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -556,6 +592,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh remove_installation_dir handles missing directory gracefully" {
+	# Purpose: Test verifies that remove_installation_dir function handles missing directory gracefully
+	# Expected: Function completes successfully even when installation directory doesn't exist
+	# Importance: Prevents errors when directory is already removed, allowing uninstallation to complete normally
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -579,6 +618,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh remove_installation_dir lists files before removal" {
+	# Purpose: Test verifies that remove_installation_dir function lists files before removing installation directory
+	# Expected: Function displays list of files that will be removed and confirms successful directory removal
+	# Importance: File listing provides transparency to users about what will be deleted during uninstallation
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -605,6 +647,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh cleanup_lockfile handles missing lockfile" {
+	# Purpose: Test verifies that cleanup_lockfile function handles missing lockfile gracefully
+	# Expected: Function completes successfully without errors when lockfile doesn't exist
+	# Importance: Prevents errors when lockfile is already removed or never existed
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -624,6 +669,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh cleanup_lockfile removes stale lockfile" {
+	# Purpose: Test verifies that cleanup_lockfile function removes stale lockfiles during uninstallation
+	# Expected: Function detects and removes stale lockfile, reporting successful cleanup
+	# Importance: Lockfile cleanup prevents lock conflicts on reinstallation and ensures clean uninstallation
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -649,6 +697,9 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 # bats test_tags=category:unit
 @test "uninstall.sh verify_uninstallation detects cron entry still exists" {
+	# Purpose: Test verifies that verify_uninstallation function detects when cron entry still exists after uninstallation
+	# Expected: Function returns failure status and reports that cron entry still exists
+	# Importance: Verification failure detection alerts users to incomplete uninstallation requiring manual cleanup
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -685,6 +736,9 @@ EOF
 
 # bats test_tags=category:unit
 @test "uninstall.sh verify_uninstallation detects installation directory still exists" {
+	# Purpose: Test verifies that verify_uninstallation function detects when installation directory still exists
+	# Expected: Function returns failure status and reports that installation directory still exists
+	# Importance: Verification failure detection alerts users to incomplete uninstallation requiring manual cleanup
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -718,6 +772,9 @@ EOF
 
 # bats test_tags=category:unit
 @test "uninstall.sh verify_uninstallation detects multiple remaining components" {
+	# Purpose: Test verifies that verify_uninstallation function detects multiple remaining components after uninstallation
+	# Expected: Function returns failure status and reports all remaining components (directory, cron, logrotate)
+	# Importance: Comprehensive verification ensures all components are checked and users are informed of all issues
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -761,6 +818,9 @@ EOF
 
 # bats test_tags=category:unit
 @test "uninstall.sh verify_uninstallation succeeds when all components removed" {
+	# Purpose: Test verifies that verify_uninstallation function succeeds when all components are removed
+	# Expected: Function returns success status and confirms all components (directory, cron, logrotate) were removed
+	# Importance: Successful verification confirms complete uninstallation and provides user confidence
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -792,6 +852,9 @@ EOF
 
 # bats test_tags=category:unit
 @test "uninstall.sh full uninstallation flow with all components" {
+	# Purpose: Test verifies complete uninstallation flow removes all components (directory, cron, logrotate)
+	# Expected: Script removes installation directory, cron entry, and logrotate config, then verifies successful removal
+	# Importance: End-to-end test ensures all uninstallation components work together correctly
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -838,6 +901,9 @@ EOF
 
 # bats test_tags=category:unit
 @test "uninstall.sh handles interactive confirmation with yes" {
+	# Purpose: Test verifies that uninstall script handles interactive confirmation when user responds "yes"
+	# Expected: Script proceeds with uninstallation when user confirms with "yes" response
+	# Importance: Ensures interactive mode works correctly for users who want to confirm uninstallation
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -860,6 +926,9 @@ EOF
 
 # bats test_tags=category:unit
 @test "uninstall.sh remove_cron preserves other cron entries" {
+	# Purpose: Test verifies that remove_cron function only removes vpn-monitor cron entry, preserving other entries
+	# Expected: Function removes vpn-monitor cron entry while leaving other cron entries intact
+	# Importance: Prevents accidental removal of unrelated cron jobs during uninstallation
 	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
@@ -896,4 +965,180 @@ EOF
 	# Clean up
 	rm -rf "$install_dir" 2>/dev/null || true
 	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+}
+
+# bats test_tags=category:unit
+@test "uninstall.sh removes config file with --remove-config flag" {
+	# Purpose: Test verifies that the uninstall script removes the configuration file when --remove-config flag is provided
+	# Expected: Configuration file is removed during uninstallation when --remove-config flag is used
+	# Importance: Ensures users can explicitly request config file removal for non-interactive uninstallation
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
+
+	# Create mock installation directory with config file
+	local install_dir="/data/vpn-monitor"
+	mkdir -p "$install_dir"
+	echo "test" >"${install_dir}/vpn-monitor.sh"
+	echo "LOCATION_TEST_EXTERNAL=\"192.168.1.1\"" >"${install_dir}/vpn-monitor.conf"
+	echo "LOCATION_TEST_INTERNAL=\"192.168.1.1\"" >>"${install_dir}/vpn-monitor.conf"
+
+	run bash "$UNINSTALL_SCRIPT" --yes --remove-config
+	assert_success
+
+	# Check directory was removed (including config file)
+	assert_dir_not_exist "$install_dir"
+
+	# Clean up if test failed
+	rm -rf "$install_dir" 2>/dev/null || true
+}
+
+# bats test_tags=category:unit
+@test "uninstall.sh keeps config file in-place with --keep-config flag" {
+	# Purpose: Test verifies that the uninstall script keeps the configuration file in-place when --keep-config flag is provided
+	# Expected: Configuration file is preserved at /data/vpn-monitor/vpn-monitor.conf, other files are removed
+	# Importance: Ensures users can preserve their configuration during uninstallation for future reference or reuse
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
+
+	# Create mock installation directory with config file and other files
+	local install_dir="/data/vpn-monitor"
+	mkdir -p "$install_dir"
+	echo "test" >"${install_dir}/vpn-monitor.sh"
+	mkdir -p "${install_dir}/logs"
+	echo "log content" >"${install_dir}/logs/vpn-monitor.log"
+	local config_content="LOCATION_TEST_EXTERNAL=\"192.168.1.1\"
+LOCATION_TEST_INTERNAL=\"192.168.1.1\"
+VPN_NAME=\"Test VPN\""
+	echo "$config_content" >"${install_dir}/vpn-monitor.conf"
+
+	run bash "$UNINSTALL_SCRIPT" --yes --keep-config
+	assert_success
+
+	# Check directory still exists
+	assert_dir_exist "$install_dir"
+	# Check config file is preserved
+	assert_file_exist "${install_dir}/vpn-monitor.conf"
+	# Check config content matches original
+	assert_file_contains "${install_dir}/vpn-monitor.conf" "LOCATION_TEST_EXTERNAL"
+	assert_file_contains "${install_dir}/vpn-monitor.conf" "VPN_NAME"
+	# Check other files are removed
+	assert_file_not_exist "${install_dir}/vpn-monitor.sh"
+	assert_dir_not_exist "${install_dir}/logs"
+	# Check output mentions config preserved
+	assert_output --partial "Configuration file preserved at"
+
+	# Clean up
+	rm -rf "$install_dir" 2>/dev/null || true
+}
+
+# bats test_tags=category:unit
+@test "uninstall.sh handles missing config file gracefully" {
+	# Purpose: Test verifies that the uninstall script handles cases where config file doesn't exist gracefully
+	# Expected: Script continues uninstallation successfully even if config file is missing
+	# Importance: Prevents errors when config file was never created or already removed
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
+
+	# Create mock installation directory without config file
+	local install_dir="/data/vpn-monitor"
+	mkdir -p "$install_dir"
+	echo "test" >"${install_dir}/vpn-monitor.sh"
+	# Intentionally don't create config file
+
+	run bash "$UNINSTALL_SCRIPT" --yes --keep-config
+	assert_success
+
+	# Check directory was removed (since no config file existed)
+	assert_dir_not_exist "$install_dir"
+	# Check output doesn't mention config preserved (since it didn't exist)
+	refute_output --partial "Configuration file preserved at"
+
+	# Clean up if test failed
+	rm -rf "$install_dir" 2>/dev/null || true
+}
+
+# bats test_tags=category:unit
+@test "uninstall.sh displays config location in summary when config is kept" {
+	# Purpose: Test verifies that the uninstall script displays the config file location in the summary when config file is kept
+	# Expected: Summary output includes information about config file location
+	# Importance: Helps users locate their preserved configuration file after uninstallation
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
+
+	# Create mock installation directory with config file
+	local install_dir="/data/vpn-monitor"
+	mkdir -p "$install_dir"
+	echo "test" >"${install_dir}/vpn-monitor.sh"
+	echo "LOCATION_TEST_EXTERNAL=\"192.168.1.1\"" >"${install_dir}/vpn-monitor.conf"
+	echo "LOCATION_TEST_INTERNAL=\"192.168.1.1\"" >>"${install_dir}/vpn-monitor.conf"
+
+	run bash "$UNINSTALL_SCRIPT" --yes --keep-config
+	assert_success
+
+	# Check summary mentions config location
+	assert_output --partial "Configuration file preserved at"
+	assert_output --partial "/data/vpn-monitor/vpn-monitor.conf"
+
+	# Clean up
+	rm -rf "$install_dir" 2>/dev/null || true
+}
+
+# bats test_tags=category:unit
+@test "uninstall.sh detects conflicting config flags" {
+	# Purpose: Test verifies that the uninstall script detects and errors on conflicting flags
+	# Expected: Script exits with error when both --remove-config and --keep-config are provided
+	# Importance: Prevents user confusion and ensures clear behavior
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
+
+	# Create mock installation directory
+	local install_dir="/data/vpn-monitor"
+	mkdir -p "$install_dir"
+	echo "test" >"${install_dir}/vpn-monitor.sh"
+
+	# Test with conflicting flags
+	run bash "$UNINSTALL_SCRIPT" --yes --remove-config --keep-config
+	assert_failure
+	assert_output --partial "Conflicting flags"
+	assert_output --partial "--remove-config and --keep-config cannot be used together"
+
+	# Clean up
+	rm -rf "$install_dir" 2>/dev/null || true
+	rm -f /root/vpn-monitor.conf.backup* 2>/dev/null || true
+}
+
+# bats test_tags=category:unit
+@test "uninstall.sh keeps config file when keeping config multiple times" {
+	# Purpose: Test verifies that config file is preserved in-place when keeping config
+	# Expected: Config file remains at original location after uninstall with --keep-config
+	# Importance: Ensures config file is preserved correctly for reuse
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
+
+	# Create mock installation directory with config file
+	local install_dir="/data/vpn-monitor"
+	mkdir -p "$install_dir"
+	echo "test" >"${install_dir}/vpn-monitor.sh"
+	echo "LOCATION_TEST_EXTERNAL=\"192.168.1.1\"" >"${install_dir}/vpn-monitor.conf"
+	echo "LOCATION_TEST_INTERNAL=\"192.168.1.1\"" >>"${install_dir}/vpn-monitor.conf"
+
+	# First uninstall with keep-config
+	run bash "$UNINSTALL_SCRIPT" --yes --keep-config
+	assert_success
+	assert_file_exist "${install_dir}/vpn-monitor.conf"
+
+	# Recreate other files
+	echo "test2" >"${install_dir}/vpn-monitor.sh"
+	mkdir -p "${install_dir}/logs"
+	echo "log" >"${install_dir}/logs/vpn-monitor.log"
+
+	# Second uninstall with keep-config - config should still be there
+	run bash "$UNINSTALL_SCRIPT" --yes --keep-config
+	assert_success
+	assert_file_exist "${install_dir}/vpn-monitor.conf"
+	assert_file_not_exist "${install_dir}/vpn-monitor.sh"
+	assert_dir_not_exist "${install_dir}/logs"
+
+	# Clean up
+	rm -rf "$install_dir" 2>/dev/null || true
 }

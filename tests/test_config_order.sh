@@ -15,12 +15,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:medium
 @test "relative validation - TIER2_THRESHOLD >= TIER1_THRESHOLD (TIER1 has default)" {
-	# Test verifies that relative validation works when TIER2 is validated before TIER1.
-	# Expected: TIER2 validation uses TIER1 default value (1) when TIER1 hasn't been validated yet.
-	# Importance: Ensures relative validation works correctly regardless of validation order.
+	# Purpose: Test verifies that relative validation works when TIER2 is validated before TIER1
+	# Expected: TIER2 validation uses TIER1 default value (1) when TIER1 hasn't been validated yet
+	# Importance: Ensures relative validation works correctly regardless of validation order
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
 # TIER1_THRESHOLD not set - will use default (1)
@@ -47,12 +48,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "relative validation - TIER2_THRESHOLD >= TIER1_THRESHOLD (TIER1 has config value)" {
-	# Test verifies that relative validation works when TIER1 is validated before TIER2.
-	# Expected: TIER2 validation uses TIER1 config value when TIER1 has been validated.
-	# Importance: Ensures relative validation uses validated values when available.
+	# Purpose: Test verifies that relative validation works when TIER1 is validated before TIER2
+	# Expected: TIER2 validation uses TIER1 config value when TIER1 has been validated
+	# Importance: Ensures relative validation uses validated values when available
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 TIER1_THRESHOLD=2
 TIER2_THRESHOLD=4
 TIER3_THRESHOLD=6
@@ -79,12 +81,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "relative validation - TIER3_THRESHOLD >= TIER2_THRESHOLD (TIER2 has default)" {
-	# Test verifies that relative validation works when TIER3 is validated before TIER2.
-	# Expected: TIER3 validation uses TIER2 default value (3) when TIER2 hasn't been validated yet.
-	# Importance: Ensures relative validation works correctly for nested dependencies.
+	# Purpose: Test verifies that relative validation works when TIER3 is validated before TIER2
+	# Expected: TIER3 validation uses TIER2 default value (3) when TIER2 hasn't been validated yet
+	# Importance: Ensures relative validation works correctly for nested dependencies
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER3_THRESHOLD=5
 # TIER2_THRESHOLD not set - will use default (3)
@@ -111,12 +114,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "relative validation - Referenced variable doesn't exist - Should use default" {
-	# Test verifies that relative validation uses default value when referenced variable doesn't exist.
-	# Expected: When TIER1_THRESHOLD doesn't exist, TIER2 validation uses TIER1 default (1).
-	# Importance: Ensures relative validation gracefully handles missing referenced variables.
+	# Purpose: Test verifies that relative validation uses default value when referenced variable doesn't exist
+	# Expected: When TIER1_THRESHOLD doesn't exist, TIER2 validation uses TIER1 default (1)
+	# Importance: Ensures relative validation gracefully handles missing referenced variables
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 TIER2_THRESHOLD=2
 TIER3_THRESHOLD=4
 # TIER1_THRESHOLD not set - will use default (1) for relative validation
@@ -143,12 +147,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "relative validation - Multiple relative validations in sequence" {
-	# Test verifies that multiple relative validations work correctly in sequence.
-	# Expected: TIER2 >= TIER1 and TIER3 >= TIER2 both validate correctly.
-	# Importance: Ensures complex dependency chains work correctly regardless of validation order.
+	# Purpose: Test verifies that multiple relative validations work correctly in sequence
+	# Expected: TIER2 >= TIER1 and TIER3 >= TIER2 both validate correctly
+	# Importance: Ensures complex dependency chains work correctly regardless of validation order
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5

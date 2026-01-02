@@ -43,11 +43,11 @@ We will detect SA rekey events by tracking SPI (Security Parameter Index) change
   3. If SPI changed: Rekey detected
   4. If SPI unchanged: No rekey (normal operation)
 - **Rekey Handling**:
-  - Reset byte counter baseline to 0 (`last_bytes_<peer_ip>` set to 0)
+  - Reset byte counter baseline to 0 (`last_bytes_<location>_<peer_ip>` set to 0)
   - Update stored SPI to new value
   - Log rekey event for monitoring
   - Treat as first check for byte counter validation (accept any non-zero bytes)
-- **SPI Storage**: Per-peer SPI values stored in `spi_<peer_ip>` files
+- **SPI Storage**: Per-location, per-peer SPI values stored in `spi_<location>_<peer_ip>` files
 - **Format Support**: Handles both hex format (0x12345678) and decimal format (305419896)
 - **Integration Points**:
   - `check_byte_counters()`: Checks for rekey before validating byte counters
@@ -60,9 +60,10 @@ We will detect SA rekey events by tracking SPI (Security Parameter Index) change
 
 ## Related ADRs
 - ADR-0019: Byte Counter Detection Method (rekey handling prevents false positives in byte counter detection)
-- ADR-0004: Per-Peer State Tracking (SPI tracked per-peer)
+- ADR-0004: Per-Peer State Tracking (SPI tracked per-location, per-peer)
 - ADR-0015: File-Based State Storage (SPI stored in state files)
 - ADR-0012: Atomic File Operations (SPI updates use atomic writes)
+- ADR-0024: Location-Based Configuration Format (location names included in state file names)
 
 ## References
 - ARCHITECTURE.md: "State Management" section (SPI storage)

@@ -43,16 +43,18 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh exits with error if EXTERNAL_PEER_IPS not configured - should exit with error message" {
+@test "vpn-monitor.sh exits with error if LOCATION_*_EXTERNAL not configured - should exit with error message" {
 	# Purpose: Test verifies that the script validates required configuration and exits with error
-	# when EXTERNAL_PEER_IPS is missing or empty.
+	# when LOCATION_*_EXTERNAL is missing or empty.
 	# Expected: Script exits with failure status and outputs error message about missing configuration.
 	# Importance: Prevents script from running with invalid configuration that would cause runtime errors.
-	# Create temporary config without EXTERNAL_PEER_IPS
+	# Create temporary config without LOCATION_*_EXTERNAL
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<'EOF'
 VPN_NAME="Test VPN"
-EXTERNAL_PEER_IPS=""
+TIER1_THRESHOLD=1
+TIER2_THRESHOLD=3
+TIER3_THRESHOLD=5
 EOF
 
 	# Create state directory and ensure log directory exists
@@ -66,7 +68,7 @@ EOF
 	run bash "$test_script"
 
 	assert_failure
-	assert_output --partial "EXTERNAL_PEER_IPS is required but not configured"
+	assert_output --partial "No location-based configuration found"
 }
 
 # bats test_tags=category:unit
@@ -87,7 +89,7 @@ EOF
 # bats test_tags=category:unit
 @test "vpn-monitor.sh initializes state files - should create restart_count file" {
 	# Purpose: Test verifies that the script creates necessary state files during initialization.
-	# Expected: restart_count file is created in logs directory.
+	# Expected: restart_count file is created in state directory.
 	# Importance: State files are required for tracking restart history and rate limiting.
 	# Note: Per-peer failure counters are created on-demand, not during initialization.
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
@@ -97,7 +99,7 @@ EOF
 	# State files should be created in logs directory
 	# Note: Per-peer failure counters are created on-demand, not during initialization
 	# Only restart_count is created during initialization
-	assert_file_exist "${LOGS_DIR}/restart_count"
+	assert_file_exist "${STATE_DIR}/restart_count"
 }
 
 # bats test_tags=category:unit
@@ -167,7 +169,7 @@ EOF
 	run bash "$TEST_SCRIPT" --fake
 
 	# Should reject invalid IP format (new validation function checks format, not just dangerous chars)
-	assert_file_contains "$LOG_FILE" "Invalid peer IP format"
+	assert_file_contains "$LOG_FILE" "Invalid external IP format"
 }
 
 # bats test_tags=slow,category:unit
@@ -189,15 +191,26 @@ EOF
 	# Expected: Each peer has a separate counter file that increments independently based on that peer's status.
 	# Importance: Ensures failures in one VPN tunnel don't affect monitoring of other tunnels.
 	setup_test_vpn_monitor "192.168.1.1 10.0.0.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
-	setup_state_files "192.168.1.1" 2
-	setup_state_files "10.0.0.1" 4
-	setup_mock_vpn_environment "192.168.1.1" 0
+	# Set up state files using location-aware functions
+	# setup_test_vpn_monitor creates locations TEST1 and TEST2 for the two IPs
+	source_function "set_peer_state"
+	set_peer_state "TEST1" "192.168.1.1" "failure_count" "2"
+	set_peer_state "TEST2" "10.0.0.1" "failure_count" "4"
+
+	# Create mock ip command that returns empty output (VPN down, no SA) for both peers
+	mock_ip_vpn_down
+	add_mock_to_path
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
+	# Use get_peer_state_file_path to get correct paths dynamically
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+
 	# Each peer should have its own independent counter
 	# Peer 1 should have incremented from 2
-	local failure_counter1="${LOGS_DIR}/failure_counter_192_168_1_1"
+	local failure_counter1
+	failure_counter1=$(get_peer_state_file_path "TEST1" "192.168.1.1" "failure_count")
 	if [[ -f "$failure_counter1" ]]; then
 		local count1
 		count1=$(cat "$failure_counter1")
@@ -205,7 +218,8 @@ EOF
 	fi
 
 	# Peer 2 should have incremented from 4
-	local failure_counter2="${LOGS_DIR}/failure_counter_10_0_0_1"
+	local failure_counter2
+	failure_counter2=$(get_peer_state_file_path "TEST2" "10.0.0.1" "failure_count")
 	if [[ -f "$failure_counter2" ]]; then
 		local count2
 		count2=$(cat "$failure_counter2")
@@ -235,8 +249,13 @@ EOF
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
+	# Use get_peer_state_file_path to get correct path dynamically
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+
 	# Per-peer failure counter should be incremented
-	local failure_counter="${LOGS_DIR}/failure_counter_192_168_1_1"
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -253,13 +272,21 @@ EOF
 	# Importance: Ensures recovery actions are only triggered for consecutive failures, not transient issues.
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
-	# Set initial failure count
-	setup_state_files "192.168.1.1" 5 1000
+	# Set initial failure count using location-based state functions
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+	set_peer_state "" "192.168.1.1" "failure_count" "5" || true
+	set_peer_state "" "192.168.1.1" "last_bytes" "1000" || true
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
+	# Use get_peer_state_file_path to get correct path dynamically
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+
 	# Per-peer failure counter should be reset (if script ran successfully)
-	local failure_counter="${LOGS_DIR}/failure_counter_192_168_1_1"
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -289,10 +316,10 @@ EOF
 	# Purpose: Test verifies that the script handles stale lockfiles that exceed the timeout period.
 	# Expected: Script detects stale lockfile (older than LOCKFILE_TIMEOUT) and handles it appropriately.
 	# Importance: Prevents script from being blocked indefinitely by abandoned lockfiles from crashed processes.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'LOCKFILE_TIMEOUT=300'
+	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'LOCKFILE_TIMEOUT=60'
 
 	# Create stale lockfile (old timestamp)
-	local old_timestamp=$(($(date +%s) - 400)) # 400 seconds ago
+	local old_timestamp=$(($(date +%s) - 70)) # 70 seconds ago (older than 60s timeout)
 	echo "${old_timestamp}:12345" >"$LOCKFILE"
 
 	# Touch lockfile to make it old
@@ -347,12 +374,13 @@ EOF
 	local config_file="${TEST_DIR}/nonexistent.conf"
 
 	# Don't create config file - create test script pointing to non-existent config
+	# Ensure logs directory exists for log file
+	mkdir -p "${TEST_DIR}/logs"
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
 
-	# Set EXTERNAL_PEER_IPS via environment since config file doesn't exist
-	EXTERNAL_PEER_IPS="192.168.1.1" \
-		run bash "$test_script" --fake
+	# Don't create config file - test should handle missing config gracefully
+	run bash "$test_script" --fake
 
 	# Should use defaults and warn
 	assert_file_contains "$log_file" "Configuration file not found"
@@ -361,12 +389,15 @@ EOF
 # bats test_tags=category:unit
 @test "vpn-monitor.sh handles ping check when enabled - should perform ping checks" {
 	# Purpose: Test verifies that the script performs ping checks when ENABLE_PING_CHECK is enabled in configuration.
-	# Expected: Script executes ping checks to internal peer IPs as an additional VPN health verification method.
+	# Expected: Script executes ping checks to internal location IPs as an additional VPN health verification method.
 	# Importance: Ping checks provide an additional layer of VPN connectivity verification beyond xfrm state checks.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "0x12345678" 'ENABLE_PING_CHECK=1' 'INTERNAL_PEER_IPS="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=2'
-
-	# Mock ping
-	setup_mock_vpn_environment "192.168.1.1" 1000 "0x12345678" "192.168.1.1" 1
+	setup_location_test_vpn_monitor "${TEST_DIR}" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		'LOCATION_NYC_INTERNAL="192.168.1.1"' \
+		'ENABLE_PING_CHECK=1' \
+		'PING_COUNT=3' \
+		'PING_TIMEOUT=2'
+	setup_mock_vpn_environment "203.0.113.1" 2000 "0x12345678" "192.168.1.1" 1
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -411,7 +442,7 @@ EOF
 }
 
 # ============================================================================
-# Tests for main execution flow functions (initialize_monitor, validate_monitor_state, process_peer_ips)
+# Tests for main execution flow functions (initialize_monitor, validate_monitor_state, process_locations)
 # ============================================================================
 
 # bats test_tags=category:unit
@@ -451,7 +482,7 @@ EOF
 # bats test_tags=category:unit
 @test "vpn-monitor.sh initialize_monitor initializes state files - should create restart_count file" {
 	# Purpose: Test verifies that initialize_monitor function creates necessary state files during initialization.
-	# Expected: restart_count file is created in logs directory during script startup.
+	# Expected: restart_count file is created in state directory during script startup.
 	# Importance: State file initialization ensures proper tracking of restart history from first run.
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000
 
@@ -459,7 +490,7 @@ EOF
 
 	assert_success
 	# State files should be initialized
-	assert_file_exist "${LOGS_DIR}/restart_count"
+	assert_file_exist "${STATE_DIR}/restart_count"
 
 	remove_mock_from_path
 }
@@ -486,8 +517,12 @@ EOF
 	# Importance: Ensures script resumes normal monitoring after cooldown period expires.
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'COOLDOWN_MINUTES=15'
 
-	# Set expired cooldown timestamp
-	setup_state_files "192.168.1.1" 0 1000 "" $(($(date +%s) - 900))
+	# Set expired cooldown timestamp using location-based state functions
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+	set_peer_state "" "192.168.1.1" "last_bytes" "1000" || true
+	local cooldown_file="${STATE_DIR}/cooldown_until"
+	echo $(($(date +%s) - 900)) >"$cooldown_file"
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -522,41 +557,79 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh process_peer_ips processes single peer - should process peer and check status" {
-	# Purpose: Test verifies that process_peer_ips function correctly processes a single peer IP address.
-	# Expected: Script processes the peer IP and performs VPN status check, logging peer information.
-	# Importance: Core functionality test ensures single-peer monitoring works correctly.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+@test "vpn-monitor.sh process_locations processes single location - should process location and check status" {
+	# Purpose: Test verifies that process_locations function correctly processes a single location.
+	# Expected: Script processes the location and performs VPN status check, logging location information.
+	# Importance: Core functionality test ensures single-location monitoring works correctly.
+	# Note: Use setup_test_location_config directly to avoid duplicate locations from setup_location_test_vpn_monitor defaults
+	setup_test_environment "${TEST_DIR}"
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		'LOCATION_NYC_INTERNAL="192.168.1.1"'
+
+	TEST_CONFIG_FILE="$config_file"
+	TEST_SCRIPT=$(create_test_vpn_monitor_script \
+		"$VPN_MONITOR_SCRIPT" \
+		"${TEST_DIR}/vpn-monitor.sh" \
+		"$TEST_CONFIG_FILE" \
+		"$STATE_DIR" \
+		"$LOG_FILE")
+	export TEST_CONFIG_FILE TEST_SCRIPT
+
+	setup_mock_vpn_environment "203.0.113.1" 1000
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	assert_success
-	# Should process the peer IP
+	# Should process the location
 	assert_file_exist "$LOG_FILE"
-	# Log should contain peer processing (check for VPN status check)
-	assert_file_contains "$LOG_FILE" "192.168.1.1" || true
+	# Log should contain location processing (check for VPN status check)
+	# Check for location name or external IP in log
+	assert_file_contains "$LOG_FILE" "NYC" || assert_file_contains "$LOG_FILE" "203.0.113.1"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=slow,category:unit
-@test "vpn-monitor.sh process_peer_ips processes multiple peers - should process all peers independently" {
-	# Purpose: Test verifies that process_peer_ips function correctly processes multiple peer IP addresses.
-	# Expected: Script processes all configured peer IPs and performs VPN status checks for each.
-	# Importance: Ensures multi-tunnel monitoring works correctly with independent status tracking per peer.
-	setup_test_vpn_monitor "192.168.1.1 10.0.0.1" "${TEST_DIR}"
+@test "vpn-monitor.sh process_locations processes multiple locations - should process all locations independently" {
+	# Purpose: Test verifies that process_locations function correctly processes multiple locations.
+	# Expected: Script processes all configured locations and performs VPN status checks for each.
+	# Importance: Ensures multi-tunnel monitoring works correctly with independent status tracking per location.
+	# Note: Use setup_test_location_config directly to avoid duplicate locations from setup_location_test_vpn_monitor defaults
+	setup_test_environment "${TEST_DIR}"
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		'LOCATION_NYC_INTERNAL="192.168.1.1"' \
+		'LOCATION_DC_EXTERNAL="198.51.100.1"' \
+		'LOCATION_DC_INTERNAL="192.168.2.1"'
 
-	# Mock ip command - VPN healthy (handles both peer IPs)
-	# Create a mock that handles multiple peer IPs
+	TEST_CONFIG_FILE="$config_file"
+	TEST_SCRIPT=$(create_test_vpn_monitor_script \
+		"$VPN_MONITOR_SCRIPT" \
+		"${TEST_DIR}/vpn-monitor.sh" \
+		"$TEST_CONFIG_FILE" \
+		"$STATE_DIR" \
+		"$LOG_FILE")
+	export TEST_CONFIG_FILE TEST_SCRIPT
+
+	# Mock ip command - VPN healthy (handles both locations)
+	# Create a mock that handles multiple location external IPs
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'EOF'
 #!/bin/bash
 if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    # Return SA for any peer IP
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    lifetime current: 1000 bytes"
-    echo "src 10.0.0.1 dst 10.0.0.1"
-    echo "    lifetime current: 1000 bytes"
+    # Return SA for NYC location (external IP: 203.0.113.1)
+    echo "src 192.168.1.1 dst 203.0.113.1"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: 1000 bytes, 10 packets"
+    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    # Return SA for DC location (external IP: 198.51.100.1)
+    echo "src 192.168.2.1 dst 198.51.100.1"
+    echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
+    echo "    lifetime current: 1000 bytes, 10 packets"
+    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
 fi
 EOF
 	chmod +x "$mock_ip"
@@ -565,39 +638,68 @@ EOF
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	assert_success
-	# Should process both peer IPs
+	# Should process both locations
 	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=slow,category:unit
-@test "vpn-monitor.sh process_peer_ips skips empty peer IP - should skip and log warning" {
-	# Purpose: Test verifies that process_peer_ips function handles empty peer IP entries gracefully.
-	# Expected: Script skips empty peer IPs (from extra whitespace) and logs warning message.
-	# Importance: Prevents errors from malformed configuration with extra spaces between IPs.
-	setup_test_vpn_monitor "192.168.1.1  10.0.0.1" "${TEST_DIR}"
-	setup_mock_vpn_environment "192.168.1.1" 1000
+@test "vpn-monitor.sh process_locations handles empty location external IP - should skip and log error" {
+	# Purpose: Test verifies that process_locations function handles empty location external IP gracefully.
+	# Expected: Script skips locations with empty external IP and logs error message.
+	# Importance: Prevents errors from malformed configuration with empty location external IPs.
+	# Use setup_test_location_config directly to avoid duplicate NYC location from setup_location_test_vpn_monitor
+	setup_test_environment "${TEST_DIR}"
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		'LOCATION_NYC_INTERNAL="192.168.1.1"' \
+		'LOCATION_DC_EXTERNAL=""' \
+		'LOCATION_DC_INTERNAL=""'
+
+	TEST_CONFIG_FILE="$config_file"
+	local vpn_monitor_script="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
+	TEST_SCRIPT=$(create_test_vpn_monitor_script \
+		"$vpn_monitor_script" \
+		"${TEST_DIR}/vpn-monitor.sh" \
+		"$TEST_CONFIG_FILE" \
+		"$STATE_DIR" \
+		"$LOG_FILE")
+	export TEST_CONFIG_FILE TEST_SCRIPT
+
+	setup_mock_vpn_environment "203.0.113.1" 1000
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
+	# Should handle empty external IP for DC location gracefully
+	# The script skips empty locations and logs a warning, but continues processing other locations
 	assert_success
-	# Should skip empty peer IPs with warning
-	assert_file_contains "$LOG_FILE" "Skipping empty peer IP" || true
+	# Check for the warning message about empty external IP
+	assert_file_contains "$LOG_FILE" "EXTERNAL IP is empty" || assert_output --partial "EXTERNAL IP is empty"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh process_peer_ips validates configuration - should exit with error if invalid" {
-	# Purpose: Test verifies that process_peer_ips function validates configuration before processing peers.
-	# Expected: Script exits with failure status when EXTERNAL_PEER_IPS is empty or missing.
+@test "vpn-monitor.sh process_locations validates configuration - should exit with error if invalid" {
+	# Purpose: Test verifies that process_locations function validates configuration before processing locations.
+	# Expected: Script exits with failure status when LOCATION_*_EXTERNAL is missing.
 	# Importance: Configuration validation prevents script execution with invalid settings.
-	setup_test_vpn_monitor "" "${TEST_DIR}"
+	setup_test_location_config "${TEST_DIR}/vpn-monitor.conf"
+	setup_test_environment "${TEST_DIR}"
+	TEST_SCRIPT=$(create_test_vpn_monitor_script \
+		"$VPN_MONITOR_SCRIPT" \
+		"${TEST_DIR}/vpn-monitor.sh" \
+		"${TEST_DIR}/vpn-monitor.conf" \
+		"${TEST_DIR}" \
+		"${TEST_DIR}/logs/vpn-monitor.log")
 
 	run bash "$TEST_SCRIPT" --fake
 
-	# Should fail due to invalid configuration
+	# Should fail due to invalid configuration (no locations)
+	# parse_location_config() will fail with "No location-based configuration found..."
+	# or process_locations() will fail with "No locations configured"
 	assert_failure
-	assert_output --partial "EXTERNAL_PEER_IPS is required"
+	assert_output --partial "No location" || assert_output --partial "No locations configured"
 }

@@ -37,8 +37,13 @@ setup_vpn_rekey_fixture() {
 	# Set up test VPN monitor with config
 	setup_test_vpn_monitor "$peer_ip" "${TEST_DIR}" "${extra_config[@]}"
 
-	# Set up state files with old SPI and old bytes (before rekey)
-	setup_state_files "$peer_ip" 0 "$old_bytes" "$old_spi"
+	# Set up state files with old SPI and old bytes (before rekey) using location-aware functions
+	# setup_test_vpn_monitor creates location "TEST1" for single IP
+	ensure_state_functions_loaded
+	set_peer_state "TEST1" "$peer_ip" "last_bytes" "$old_bytes" || true
+	if [[ -n "$old_spi" ]]; then
+		set_peer_state "TEST1" "$peer_ip" "spi" "$old_spi" || true
+	fi
 
 	# Create mock ip command that returns new SPI (rekey occurred)
 	local mock_ip="${TEST_DIR}/ip"
