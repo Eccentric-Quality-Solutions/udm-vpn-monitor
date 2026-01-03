@@ -91,6 +91,7 @@ declare -gA CONFIG_SCHEMA=(
 	["LOCAL_UDM_IP"]="optional|string||default:"
 	["PING_COUNT"]="optional|integer|min:1|max:10|default:3"
 	["PING_TIMEOUT"]="optional|integer|min:1|max:30|default:2"
+	["PING_SUMMARY_INTERVAL_MINUTES"]="optional|integer|min:1|max:1440|default:7"
 	["ENABLE_KEEPALIVE"]="optional|integer|values:0,1|default:1"
 	["KEEPALIVE_INTERVAL"]="optional|integer|min:10|max:300|default:30"
 	["KEEPALIVE_PING_COUNT"]="optional|integer|min:1|max:5|default:1"

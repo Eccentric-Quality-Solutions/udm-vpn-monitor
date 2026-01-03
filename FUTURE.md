@@ -87,3 +87,17 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Tests for combined retention scenarios (config + logs + state)
     - Tests for verification of preserved logs/state directories
     - Note: Existing tests pass, but new retention features need coverage
+
+- Add IPv6 support to anonymize-logs.sh
+    - Currently, `anonymize-logs.sh` only handles IPv4 addresses
+    - `analyze-logs.sh` already supports IPv6 addresses in logs
+    - Would need to add IPv6 address extraction and anonymization functions
+    - Low priority - IPv6 is less common in VPN logs, but would improve completeness
+    - See `docs/ANONYMIZE_LOGS_REVIEW.md` for details
+
+- Make routes persistent across reboots
+    - Routes added via `ip addr add` are not persistent across reboots
+    - Currently, routes are automatically re-added during config validation on each script execution, which handles the reboot case
+    - For true persistence, routes could be added to a startup script or systemd service
+    - This would ensure routes are available immediately on boot, before the first VPN monitor execution
+    - Low priority - current approach (re-adding on each execution) works well and handles reboots

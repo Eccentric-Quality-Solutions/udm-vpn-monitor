@@ -136,6 +136,10 @@ EOF
 	local restart_file="${STATE_DIR}/restart_count"
 
 	# Setup VPN as DOWN so recovery is triggered
+	# Set last_bytes > 0 so that bytes=0 is detected as a failure (bytes dropped to 0)
+	# This ensures VPN is detected as down rather than idle
+	ensure_state_functions_loaded
+	set_peer_state "TEST1" "192.168.1.1" "last_bytes" "1000" || true
 	setup_mock_vpn_environment "192.168.1.1" 0
 
 	# Create mock ipsec (should NOT be called due to rate limit)
@@ -201,6 +205,9 @@ EOF
 	# Don't create cooldown file
 
 	# Setup VPN as DOWN so recovery is triggered
+	# Set last_bytes > 0 so that bytes=0 is detected as a failure (bytes dropped to 0)
+	ensure_state_functions_loaded
+	set_peer_state "TEST1" "192.168.1.1" "last_bytes" "1000" || true
 	setup_mock_vpn_environment "192.168.1.1" 0
 
 	# Create mock ipsec (should be called since both protections allow restart)

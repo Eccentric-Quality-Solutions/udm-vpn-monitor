@@ -283,6 +283,25 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 }
 
 # bats test_tags=category:unit
+@test "extract_byte_counter extracts bytes from UDM OS format with (bytes) syntax" {
+	# Purpose: Test verifies that extract_byte_counter function correctly parses byte count from UDM OS xfrm output format
+	# Expected: Function extracts numeric byte count from multi-line format where bytes appear as "  39492(bytes), 609(packets)"
+	# Importance: UDM OS uses different xfrm output format than standard Linux; this format must be supported
+	# Source the function
+	# shellcheck source=/dev/null
+	source_function "extract_byte_counter"
+
+	# UDM OS format: lifetime current: on one line, bytes on next line as "  39492(bytes), 609(packets)"
+	local xfrm_output="lifetime current:
+  39492(bytes), 609(packets)
+  add 2026-01-03 12:19:25 use 2026-01-03 12:19:34"
+
+	run extract_byte_counter "$xfrm_output"
+	assert_success
+	assert_output "39492"
+}
+
+# bats test_tags=category:unit
 @test "extract_byte_counter handles missing lifetime line" {
 	# Purpose: Test verifies that extract_byte_counter function handles xfrm output without lifetime line gracefully
 	# Expected: Function returns failure when lifetime line is missing from xfrm output

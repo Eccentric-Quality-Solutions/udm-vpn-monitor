@@ -139,6 +139,17 @@ service cron status
    ```
    Check debug output for detailed information.
 
+5. **Check for false positive detection patterns**:
+   Look for these log patterns that indicate false positives:
+   ```
+   [WARNING] VPN suspect: SA exists for <IP> but byte counter info unavailable
+   [WARNING] VPN suspect: No connection found via ipsec status for <IP>
+   [INFO] Ping check OK: <internal_IP> from <local_IP> (0% packet loss)
+   [WARNING] Ping check passed but no SA found - tunnel may be down but connectivity exists via other route
+   [WARNING] VPN failure type: Unknown (unable to determine specific failure type)
+   ```
+   If you see this pattern with successful ping checks, the VPN may actually be healthy but detection is failing due to byte counter extraction issues. The system should automatically fall back to ping checks when byte counters are unavailable (if `ENABLE_PING_CHECK=1` and internal IPs are configured).
+
 ### Solutions
 
 **If VPN is idle (no traffic)**:
@@ -206,6 +217,13 @@ service cron status
    cat /data/vpn-monitor/state/restart_count
    ```
    This file contains Unix timestamps (one per line) of Tier 3 recovery actions (full IPsec restarts and successful xfrm-based per-connection recovery). If too many restarts occurred in the last hour (default: max 3), rate limiting may block further Tier 3 recovery actions.
+   
+   **Important Note**: Log messages showing "Tier 3: Attempting..." are logged BEFORE the rate limit check. If you see many "Tier 3: Attempting..." messages but no actual restart commands executing, this indicates rate limiting is working correctly. The restart command only executes if rate limiting allows it. If you see "Rate limit exceeded: 3 restarts in last hour (max: 3)", this confirms rate limiting is blocking the restart.
+   
+   **Why 0 restarts when limit is 3?** If you see many restart attempts but 0 completed restarts, possible explanations:
+   - Restart count file already contained 3 entries from before the current monitoring period (within the last hour)
+   - All restart attempts occurred after the first 3 restarts had already been recorded
+   - Check the restart count file timestamps to verify when the last 3 restarts occurred
 
 6. **Check cooldown period**:
    ```bash
@@ -224,6 +242,7 @@ service cron status
 - Too many restarts in last hour (default: max 3)
 - Wait for rate limit to expire (1 hour)
 - Or increase `MAX_RESTARTS_PER_HOUR` in config
+- **Note**: If you see "Tier 3: Attempting..." messages but no actual restart, rate limiting is working as designed. The log message appears before the rate limit check, but the restart only executes if allowed.
 
 **If in cooldown**:
 - Cooldown period after restart (default: 15 minutes)
@@ -248,6 +267,43 @@ service cron status
 - Logs show "Ping check failed" warnings
 - VPN is working but ping fails
 - "Route not found on br0" or "Failed to add route" messages in logs
+
+### How Routes Work
+
+Routes (IP addresses on the `br0` interface) are automatically managed by the VPN monitor in three scenarios:
+
+1. **During Installation** (`install.sh`):
+   - Function: `check_and_setup_routes()`
+   - When: Runs during installation if `ENABLE_PING_CHECK=1` and internal IPs are configured
+   - What it does:
+     - Checks if `LOCAL_UDM_IP` is configured (auto-detects from br0 if not)
+     - Adds route: `ip addr add <LOCAL_UDM_IP>/32 dev br0`
+     - Tests ping connectivity to all internal IPs from all locations
+
+2. **During Config Validation** (`lib/config.sh`):
+   - Function: `setup_routes_if_needed()`
+   - When: Called automatically during `validate_config()` when config is loaded
+   - What it does:
+     - Checks if ping checks are enabled and internal IPs are configured
+     - Retrieves `LOCAL_UDM_IP` using `get_local_ip_for_ping()`
+     - Checks if route exists via `check_route_exists()`
+     - If route doesn't exist, calls `add_route_if_needed()` to add it
+     - Fails validation if route setup fails when routes are actually needed
+   - **Key Benefit:** Routes are set up proactively before any checks run, ensuring they're available even if VPN checks are skipped
+
+3. **During Normal Operation** (`lib/detection.sh`):
+   - Function: `check_ping_connectivity()`
+   - When: Called during VPN monitoring when ping checks are enabled
+   - What it does:
+     - Checks if route exists via `check_route_exists()`
+     - If route doesn't exist, calls `add_route_if_needed()` to add it
+     - Then performs ping check with `-I <local_ip>` flag
+   - **Note:** This now serves as a fallback/re-check mechanism, since routes should already be set up during config validation
+
+**Key Functions:**
+- `check_route_exists()`: Checks if IP exists on br0 interface
+- `add_route_if_needed()`: Adds IP to br0 if it doesn't exist
+- `get_local_ip_for_ping()`: Retrieves `LOCAL_UDM_IP` from config
 
 ### Diagnosis Steps
 
@@ -314,6 +370,17 @@ service cron status
 - Manually add route: `ip addr add <LOCAL_UDM_IP>/32 dev br0`
 - Verify route exists: `ip addr show br0 | grep <LOCAL_UDM_IP>`
 - The script will automatically re-add the route when needed (route is temporary and lost on reboot)
+- **Verify route setup during config validation:**
+  ```bash
+  # Routes should be added automatically when config is validated
+  /data/vpn-monitor/vpn-monitor.sh --check-config
+  ip addr show br0 | grep <LOCAL_UDM_IP>
+  ```
+- **Check logs for route setup messages:**
+  ```bash
+  grep -i "route" /data/vpn-monitor/logs/vpn-monitor.log
+  ```
+- If route setup fails during validation, you'll see clear ERROR messages with manual fix instructions
 
 **If ping command not available**:
 - Install ping: `apt-get install iputils-ping`

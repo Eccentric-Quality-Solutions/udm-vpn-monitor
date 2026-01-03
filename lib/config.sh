@@ -724,6 +724,13 @@ handle_fatal_config_error() {
 load_config() {
 	local config_file="$1"
 
+	# Save LOG_FILE before any processing to preserve it if explicitly set by caller
+	# This allows scripts like vpn-keepalive.sh to set their own log file before calling load_config()
+	local log_file_before_load="${LOG_FILE:-}"
+	# Compute basename once for reuse (DRY)
+	local log_file_basename
+	log_file_basename=$(basename "$log_file_before_load" 2>/dev/null || echo "")
+
 	# Set default configuration values from schema
 	# This ensures variables have values before config file is parsed,
 	# allowing scripts to reference config variables safely.
@@ -753,6 +760,13 @@ load_config() {
 			handle_fatal_config_error "Critical configuration variables are missing after parsing: $config_file" "${EXIT_CONFIG_ERROR:-2}"
 		fi
 
+		# Preserve LOG_FILE if it was set before load_config() AND it's not the default monitor log
+		# This ensures log_message() uses the correct log file for custom log files (e.g., keepalive)
+		# but allows config file to override the default monitor log
+		if [[ -n "$log_file_before_load" ]] && [[ "$log_file_basename" != "vpn-monitor.log" ]]; then
+			LOG_FILE="$log_file_before_load"
+		fi
+
 		log_message "INFO" "Configuration loaded from: $config_file"
 	else
 		# File doesn't exist or isn't readable
@@ -767,12 +781,12 @@ load_config() {
 
 	# Compute log paths after config loading (consolidated path computation)
 	# Priority:
-	#   1. If LOGS_DIR was explicitly set in config (changed after parsing), use that value
-	#   2. If LOG_FILE was explicitly overridden (via config or environment), derive LOGS_DIR from it
-	#   3. Otherwise, ensure LOG_FILE matches LOGS_DIR (LOGS_DIR is already set correctly from config)
+	#   1. If LOG_FILE was explicitly set before load_config() was called, preserve it (unless config file overrides it)
+	#   2. If LOG_FILE was explicitly set in config file, use that value
+	#   3. If LOGS_DIR was explicitly set in config (changed after parsing), use that value
+	#   4. Otherwise, ensure LOG_FILE matches LOGS_DIR (LOGS_DIR is already set correctly from config)
 	local log_filename
 	log_filename=$(basename "$LOG_FILE" 2>/dev/null || echo "vpn-monitor.log")
-	local original_log_file="${LOG_FILE}" # Save original LOG_FILE before updating
 	local log_file_dir
 	log_file_dir=$(dirname "$LOG_FILE" 2>/dev/null)
 
@@ -781,8 +795,26 @@ load_config() {
 		LOGS_DIR="$log_file_dir"
 	fi
 
-	# Ensure LOG_FILE matches LOGS_DIR (this happens in all cases)
-	LOG_FILE="${LOGS_DIR}/${log_filename}"
+	# Preserve LOG_FILE if it was explicitly set before load_config() AND it's not the default monitor log
+	# This allows scripts like vpn-keepalive.sh to set their own log file (e.g., vpn-keepalive.log)
+	# while still allowing config file to override the default monitor log (vpn-monitor.log)
+	if [[ -n "$log_file_before_load" ]] && [[ "$log_file_basename" != "vpn-monitor.log" ]]; then
+		# LOG_FILE was explicitly set before load_config() and it's a custom log file - preserve it
+		# But update its directory if LOGS_DIR changed (preserving filename)
+		if [[ "$logs_dir_before_parse" != "${LOGS_DIR:-}" ]]; then
+			# LOGS_DIR changed, update LOG_FILE to use new directory but keep filename
+			local preserved_log_filename
+			preserved_log_filename=$(basename "$log_file_before_load" 2>/dev/null || echo "vpn-monitor.log")
+			LOG_FILE="${LOGS_DIR}/${preserved_log_filename}"
+		else
+			# LOGS_DIR didn't change, preserve original LOG_FILE exactly
+			LOG_FILE="$log_file_before_load"
+		fi
+	else
+		# LOG_FILE wasn't set before load_config(), or it was the default monitor log - use computed value
+		# This respects LOG_FILE from config file or uses default based on LOGS_DIR
+		LOG_FILE="${LOGS_DIR}/${log_filename}"
+	fi
 
 	# Compute state paths after config loading (consolidated path computation)
 	# Update paths that depend on STATE_DIR (STATE_DIR is already set correctly from config)
@@ -803,13 +835,13 @@ load_config() {
 		# Directory creation failed - in fake mode this returns 1, in normal mode it exits
 		# If we get here in fake mode, try to fallback to original log file location
 		# log_message will fallback to stderr if this also fails
-		if is_fake_mode && [[ -n "$original_log_file" ]] && [[ "$original_log_file" != "${LOGS_DIR}/${log_filename}" ]]; then
+		if is_fake_mode && [[ -n "$log_file_before_load" ]] && [[ "$log_file_before_load" != "${LOGS_DIR}/${log_filename}" ]]; then
 			local original_log_file_dir
-			original_log_file_dir=$(dirname "$original_log_file" 2>/dev/null)
+			original_log_file_dir=$(dirname "$log_file_before_load" 2>/dev/null)
 			if [[ -n "$original_log_file_dir" ]] && mkdir -p "$original_log_file_dir" 2>/dev/null && [[ -w "$original_log_file_dir" ]]; then
 				# Fallback to original log file location
 				LOGS_DIR="$original_log_file_dir"
-				LOG_FILE="$original_log_file"
+				LOG_FILE="$log_file_before_load"
 				handle_error "WARNING" "Failed to create logs directory: $original_logs_dir, using original log file location: $LOG_FILE"
 			else
 				# Can't fallback - log_message will write to stderr

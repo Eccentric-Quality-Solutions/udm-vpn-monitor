@@ -695,3 +695,51 @@ EOF
 	assert_output --partial "Existing:"
 	assert_output --partial "vpn-monitor.conf"
 }
+
+# bats test_tags=category:unit
+@test "compare-config.sh does not flag customer-specific LOCATION variables as deprecated" {
+	# Purpose: Test verifies that customer-specific LOCATION variables (e.g., LOCATION_CUSTOMER1_EXTERNAL)
+	# are not flagged as deprecated when template only has example locations (e.g., LOCATION_NYC_EXTERNAL)
+	# Expected: Customer-specific LOCATION variables are recognized as valid pattern matches
+	# Importance: Allows customers to use their own location names without false deprecation warnings
+	local test_dir="${TEST_DIR}/test-compare"
+	mkdir -p "$test_dir"
+
+	local template_config="${test_dir}/template.conf"
+	local existing_config="${test_dir}/existing.conf"
+
+	# Template has example location (NYC)
+	create_test_config "$template_config" \
+		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		'LOCATION_NYC_INTERNAL="192.168.1.1"' \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3' \
+		'TIER3_THRESHOLD=5' \
+		'COOLDOWN_MINUTES=15' \
+		'MAX_RESTARTS_PER_HOUR=3'
+
+	# Existing config has customer-specific locations
+	create_test_config "$existing_config" \
+		'LOCATION_CUSTOMER1_EXTERNAL="10.0.0.1"' \
+		'LOCATION_CUSTOMER1_INTERNAL="10.0.0.1"' \
+		'LOCATION_OFFICE2_EXTERNAL="10.0.0.2"' \
+		'LOCATION_OFFICE2_INTERNAL="10.0.0.2"' \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3' \
+		'TIER3_THRESHOLD=5' \
+		'COOLDOWN_MINUTES=15' \
+		'MAX_RESTARTS_PER_HOUR=3' \
+		'OLD_DEPRECATED_SETTING="value"'
+
+	run bash "$COMPARE_CONFIG_SCRIPT" --template "$template_config" --existing "$existing_config"
+
+	assert_success
+	# Should NOT flag customer-specific LOCATION variables as deprecated
+	assert_output --partial "Deprecated Settings in Existing Config"
+	assert_output --partial "OLD_DEPRECATED_SETTING"
+	# Should not include LOCATION variables in deprecated list
+	refute_output --partial "LOCATION_CUSTOMER1_EXTERNAL"
+	refute_output --partial "LOCATION_CUSTOMER1_INTERNAL"
+	refute_output --partial "LOCATION_OFFICE2_EXTERNAL"
+	refute_output --partial "LOCATION_OFFICE2_INTERNAL"
+}

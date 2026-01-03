@@ -123,7 +123,38 @@ escape_sed_regex() {
 	echo "$result"
 }
 
-# Function to get current version from a file
+# Get current version number from a file
+#
+# Extracts the version number from a file by checking for SCRIPT_VERSION variable
+# assignments or # Version: comments. Tries SCRIPT_VERSION first (for main scripts),
+# then falls back to # Version: comment (for library and utility scripts).
+#
+# Arguments:
+#   $1: Path to the file to extract version from
+#
+# Returns:
+#   0: Version found and printed to stdout
+#   1: File doesn't exist or version not found
+#
+# Output:
+#   Prints version number to stdout (e.g., "0.4.2") if found
+#
+# Side effects:
+#   None
+#
+# Examples:
+#   version=$(get_current_version_from_file "vpn-monitor.sh")
+#   # Sets version to "0.4.2" if found
+#
+#   if get_current_version_from_file "lib/config.sh"; then
+#       echo "Version found"
+#   fi
+#
+# Note:
+#   Handles both SCRIPT_VERSION="..." and SCRIPT_VERSION='...' formats
+#   Handles # Version: comment format
+#   Trims whitespace from extracted version
+#   Returns first match if multiple version declarations exist
 get_current_version_from_file() {
 	local file="$1"
 	if [[ ! -f "$file" ]]; then
@@ -147,7 +178,41 @@ get_current_version_from_file() {
 	return 1
 }
 
-# Function to update version in a file
+# Update version number in a file
+#
+# Replaces the old version number with a new version number in a file. Updates
+# both SCRIPT_VERSION variable assignments and # Version: comments. Uses sed
+# for in-place editing with proper regex escaping to handle version numbers
+# containing dots.
+#
+# Arguments:
+#   $1: Path to the file to update
+#   $2: Old version number to replace (e.g., "0.4.1")
+#   $3: New version number to set (e.g., "0.4.2")
+#   $4: Dry run flag (1 for dry run, 0 for actual update)
+#
+# Returns:
+#   0: File updated successfully (or would be updated in dry run)
+#   1: File not found or update failed
+#
+# Side effects:
+#   - Modifies file in-place if dry_run is 0 (creates .tmp backup, then removes it)
+#   - Prints update status to stdout (colored output)
+#   - Prints warning to stderr if file not found
+#
+# Examples:
+#   update_version_in_file "vpn-monitor.sh" "0.4.1" "0.4.2" 0
+#   # Updates version in vpn-monitor.sh
+#
+#   update_version_in_file "lib/config.sh" "0.4.1" "0.4.2" 1
+#   # Shows what would be updated without making changes
+#
+# Note:
+#   Escapes old_version for sed regex patterns (dots are special characters)
+#   new_version doesn't need escaping (used in replacement string)
+#   Updates SCRIPT_VERSION="..." or SCRIPT_VERSION='...' formats
+#   Updates # Version: comment format
+#   Creates temporary .tmp file during update, then removes it
 update_version_in_file() {
 	local file="$1"
 	local old_version="$2"
@@ -202,7 +267,38 @@ update_version_in_file() {
 	return 0
 }
 
-# Find all files that need version updates
+# Find all files in the project that contain version numbers
+#
+# Discovers all files that should have version numbers updated, including:
+# main scripts (vpn-monitor.sh, vpn-keepalive.sh), installation scripts
+# (install.sh, uninstall.sh), utility scripts (analyze-logs.sh, etc.),
+# and all library files in lib/ directory.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints file paths to stdout, one per line
+#
+# Side effects:
+#   None
+#
+# Examples:
+#   mapfile -t files < <(find_files_with_versions)
+#   # Collects all files with versions into array
+#
+#   for file in $(find_files_with_versions); do
+#       echo "Found: $file"
+#   done
+#
+# Note:
+#   Only includes files that actually exist
+#   Searches lib/ directory recursively for .sh files
+#   Includes specific utility scripts by name
+#   Files are sorted alphabetically
 find_files_with_versions() {
 	local files=()
 
@@ -239,7 +335,39 @@ find_files_with_versions() {
 	printf '%s\n' "${files[@]}"
 }
 
-# Main execution
+# Main execution function
+#
+# Orchestrates the version update process. Validates the new version format,
+# determines the current version from vpn-monitor.sh, finds all files that
+# need updates, updates each file, and verifies the updates were successful.
+# Supports dry-run mode to preview changes without modifying files.
+#
+# Arguments:
+#   None (uses global NEW_VERSION and DRY_RUN variables set by argument parsing)
+#
+# Returns:
+#   0: All files updated successfully
+#   1: Update failed or validation error
+#
+# Side effects:
+#   - Modifies version numbers in multiple project files (unless dry run)
+#   - Prints progress and results to stdout (colored output)
+#   - Prints warnings/errors to stderr
+#   - Exits script with appropriate exit code
+#
+# Examples:
+#   NEW_VERSION="0.4.2" DRY_RUN=0 main
+#   # Updates all files to version 0.4.2
+#
+#   NEW_VERSION="1.0.0" DRY_RUN=1 main
+#   # Shows what would be updated without making changes
+#
+# Note:
+#   Requires NEW_VERSION and DRY_RUN to be set before calling
+#   Validates version format (SemVer: MAJOR.MINOR.PATCH)
+#   Gets current version from vpn-monitor.sh as reference
+#   Verifies all files were updated correctly after changes
+#   Exits early if new version matches current version
 main() {
 	echo -e "${BLUE}Version Update Script${NC}"
 	echo "======================"

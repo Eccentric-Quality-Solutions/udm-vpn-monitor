@@ -15,6 +15,7 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
 ## Recovery Behavior
 
 - **Detection**: Uses `ip xfrm state` (primary) → `ipsec status` (fallback). For detailed detection flow, see [ARCHITECTURE.md](docs/ARCHITECTURE.md#detection-method-flow)
+- **Detection Reliability Safeguard**: Recovery escalation (Tier 2/3) is automatically blocked when detection is unreliable. If both `ip` and `ipsec` commands are unavailable and the failure type is "unknown", the system cannot reliably determine if the VPN is actually down, so recovery actions are skipped to prevent false recovery actions. Failures are still logged for monitoring, but Tier 2/3 recovery actions are not executed when detection tools are unavailable.
 - **Tier 2 Recovery**: 
   - **Default**: xfrm-based per-connection recovery (enabled by default, `ENABLE_XFRM_RECOVERY=1`) - affects only the failing tunnel
   - **Fallback**: `ipsec reload` (affects **all connections**) if xfrm recovery fails or is disabled
@@ -32,7 +33,7 @@ For detailed recovery tier flow diagrams and technical implementation, see the [
 - **Resource Monitoring**: Monitors CPU, RAM, and disk space usage and throttles execution when resources are constrained to prevent system overload
 - **Tiered Recovery**: Escalates from logging → surgical SA cleanup → full restart
 - **VPN Keepalive Daemon**: Optional background daemon sends periodic pings to prevent idle VPN tunnels from timing out
-- **Safety Controls**: Lockfiles with timeout detection, cooldown timers, and rate limiting prevent restart loops
+- **Safety Controls**: Lockfiles with timeout detection, cooldown timers, rate limiting, and detection reliability safeguards prevent restart loops and false recovery actions
 - **Persistent Logging**: Logs stored in `/data/` survive reboots
 - **Cron-Based**: More resilient than long-running processes on UDM
 - **Location-Based Configuration**: Organize VPNs by location with named locations and multiple internal IPs per location
@@ -174,7 +175,7 @@ The install package (recommended) includes all required files with proper direct
    ```bash
    /data/vpn-monitor/scripts/migrate-config-to-locations.sh
    ```
-   See [MIGRATION.md](docs/MIGRATION.md) for detailed migration instructions.
+   The migration script runs in **interactive mode by default** (prompts for location names). Use `--auto` for automatic generation (`LOCATION_1`, `LOCATION_2`, etc.) or `--csv FILE` for bulk import from CSV. See [MIGRATION.md](docs/MIGRATION.md) for detailed migration instructions.
 
 5. **Monitor logs**:
    ```bash
@@ -201,6 +202,7 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `ENABLE_PING_CHECK` | Enable ping connectivity verification (0 or 1) | 1 |
 | `PING_COUNT` | Number of ping packets to send | 3 |
 | `PING_TIMEOUT` | Ping timeout per packet (seconds) | 2 |
+| `PING_SUMMARY_INTERVAL_MINUTES` | Interval for logging ping check summaries (minutes, 1-1440) | 7 |
 | `ENABLE_KEEPALIVE` | Enable VPN keepalive daemon (0 or 1, see [Keepalive Daemon](#keepalive-daemon)) | 1 |
 | `KEEPALIVE_INTERVAL` | Keepalive ping interval (seconds, 10-300) | 30 |
 | `KEEPALIVE_PING_COUNT` | Number of ping packets per keepalive ping (1-5) | 1 |
@@ -416,7 +418,7 @@ The monitor uses a multi-layered approach to verify VPN tunnel health and automa
 
 **Recovery**: Three-tier escalation system (see [Important: Recovery Behavior](#-important-recovery-behavior) section above for details).
 
-**Safety**: Lockfile protection, cooldown periods, rate limiting, and per-location failure tracking prevent restart loops and ensure safe operation.
+**Safety**: Lockfile protection, cooldown periods, rate limiting, per-location failure tracking, and detection reliability safeguards prevent restart loops and ensure safe operation. The system includes a detection reliability safeguard that prevents recovery escalation when detection tools (`ip` and `ipsec` commands) are unavailable, avoiding false recovery actions when detection is unreliable.
 
 For detailed architecture information including detection flow diagrams, recovery tier details, failure type detection, ping check behavior, state management, and technical implementation, see [ARCHITECTURE.md](docs/ARCHITECTURE.md). For design decisions behind these choices, see [Architecture Decision Records](docs/adr/README.md).
 
@@ -477,6 +479,40 @@ cat /data/vpn-monitor/reports/vpn-monitor-report.txt
 
 Reports include summary statistics, tier action analysis, and event timelines. CSV exports are available for spreadsheet analysis.
 
+**Note:** The script supports both the old log format (peer IP only, e.g., `VPN check failed for 203.0.113.1`) and the new location-based format (e.g., `VPN check failed for location NYC (203.0.113.1)`). Peer IPs are automatically extracted from either format.
+
+### Anonymize Logs
+
+The `anonymize-logs.sh` script anonymizes IP addresses and location names in VPN monitor logs while maintaining consistency, making logs safe to share for troubleshooting without exposing sensitive information:
+
+```bash
+# Anonymize log file and save to output file
+/data/vpn-monitor/scripts/anonymize-logs.sh -i /data/vpn-monitor/logs/vpn-monitor.log -o anonymized.log
+
+# Anonymize and view directly (stdout)
+/data/vpn-monitor/scripts/anonymize-logs.sh -i vpn-monitor.log | less
+
+# Anonymize with verbose output
+/data/vpn-monitor/scripts/anonymize-logs.sh -i vpn-monitor.log -o anonymized.log -v
+```
+
+**Features:**
+- **IP Address Anonymization**: Replaces all IP addresses with anonymized IPs in the 10.x.x.x range
+- **Location Name Anonymization**: Replaces location names with anonymized city names
+- **Consistency**: Same IPs and locations always map to the same anonymized values across multiple runs
+- **Preserves Log Structure**: Maintains log formatting, timestamps, and structure for readability
+
+**Options:**
+- `-i, --input FILE`: Input log file (required)
+- `-o, --output FILE`: Output file for anonymized log (default: stdout)
+- `-v, --verbose`: Verbose output showing anonymization progress
+- `-h, --help`: Show help message
+
+**Use Cases:**
+- Sharing logs for troubleshooting without exposing network topology
+- Creating sanitized log samples for documentation or testing
+- Preparing logs for external analysis or support requests
+
 ### Configuration Utilities
 
 The installation includes utility scripts to help manage and validate your configuration:
@@ -509,6 +545,8 @@ This script compares your configuration file against the **schema** (the code-ba
 This script compares the **template configuration file** (the `vpn-monitor.conf` file that ships with the code) with your existing configuration file. It shows:
 - New settings in the template that aren't in your existing config (fields you might want to add) - with template values shown
 - Deprecated settings in your existing config that aren't in the template (fields that may have been removed)
+
+**Special handling for LOCATION variables:** The script uses pattern matching for `LOCATION_*_EXTERNAL` and `LOCATION_*_INTERNAL` variables. If the template has any LOCATION variables (e.g., `LOCATION_NYC_EXTERNAL`), your customer-specific location variables (e.g., `LOCATION_CUSTOMER1_EXTERNAL`) will not be flagged as deprecated, even if they don't exactly match the template. This allows you to use your own location names without false warnings.
 
 **Use this when:** You want to see what's new in the template during upgrades without overwriting your existing config.
 

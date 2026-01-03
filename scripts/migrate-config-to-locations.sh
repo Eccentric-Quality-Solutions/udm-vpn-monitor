@@ -100,7 +100,7 @@ generate_location_names() {
 		;;
 	interactive)
 		# Prompt user for each location name (default behavior)
-		echo "Enter location names for each IP pair:"
+		echo "Enter location names for each IP pair:" >&2
 		for ((i = 1; i <= count; i++)); do
 			read -r -p "Location $i name (e.g., NYC, DC, SF): " name
 			if [[ -z "$name" ]]; then

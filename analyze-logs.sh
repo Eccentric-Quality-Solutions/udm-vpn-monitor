@@ -121,6 +121,7 @@ parse_args() {
 # Extract peer IP from log message
 #
 # Extracts peer IP address from log messages that contain peer IP information.
+# Supports both old format ("for IP") and new location-based format ("location name (IP)").
 #
 # Arguments:
 #   $1: Log message
@@ -133,12 +134,23 @@ parse_args() {
 #   Prints peer IP to stdout if found
 extract_peer_ip() {
 	local message="$1"
-	# Pattern: "for 203.0.113.1" or "for 198.51.100.1"
+	# Pattern: New location-based format "location name (203.0.113.1)" or "location name (198.51.100.1)"
+	# Matches: "for location NYC (203.0.113.1)" or "location NYC (203.0.113.1)"
+	if [[ $message =~ \(([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})\) ]]; then
+		echo "${BASH_REMATCH[1]}"
+		return 0
+	fi
+	# Pattern: Old format "for 203.0.113.1" or "for 198.51.100.1"
 	if [[ $message =~ for\ ([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}) ]]; then
 		echo "${BASH_REMATCH[1]}"
 		return 0
 	fi
-	# Pattern: IPv6 addresses (simplified)
+	# Pattern: IPv6 addresses in parentheses (new format)
+	if [[ $message =~ \(([0-9a-fA-F:]+)\) ]]; then
+		echo "${BASH_REMATCH[1]}"
+		return 0
+	fi
+	# Pattern: IPv6 addresses (old format, simplified)
 	if [[ $message =~ for\ ([0-9a-fA-F:]+) ]]; then
 		echo "${BASH_REMATCH[1]}"
 		return 0
@@ -326,6 +338,7 @@ analyze_logs() {
 		fi
 
 		# Categorize log entries
+		# Note: Patterns support both old format (peer IP only) and new location-based format
 		case "$message" in
 		*"VPN check failed"* | *"check failed"*)
 			local failure_count=0
@@ -344,17 +357,20 @@ analyze_logs() {
 		*"Tier 1:"*)
 			TIER1_ACTIONS+=("${timestamp}|${peer_ip}|${level}")
 			;;
-		*"Tier 2:"*"surgical"* | *"Tier 2:"*"cleanup"*)
+		*"Tier 2:"*"surgical"* | *"Tier 2:"*"cleanup"* | *"Tier 2:"*"Attempting"*)
 			TIER2_ACTIONS+=("${timestamp}|${peer_ip}|${level}")
 			;;
 		*"Surgical cleanup completed"*)
 			TIER2_COMPLETED+=("${timestamp}|${peer_ip}|${level}")
 			;;
-		*"Tier 3:"*"restart"*)
-			TIER3_ACTIONS+=("${timestamp}|${peer_ip}|${level}")
-			;;
-		*"Full IPsec restart completed"*)
+		*"Full IPsec restart completed"* | *"Tier 3:"*"Full IPsec restart completed"*)
 			TIER3_COMPLETED+=("${timestamp}|${peer_ip}|${level}")
+			;;
+		*"Tier 3:"*"successful"* | *"xfrm-based recovery completed successfully"* | *"xfrm-based per-connection recovery successful"*)
+			TIER3_COMPLETED+=("${timestamp}|${peer_ip}|${level}")
+			;;
+		*"Tier 3:"*"restart"* | *"Tier 3:"*"Performing"* | *"Tier 3:"*"Attempting"* | *"Tier 3:"*"xfrm"*)
+			TIER3_ACTIONS+=("${timestamp}|${peer_ip}|${level}")
 			;;
 		esac
 	done <"$log_file"

@@ -1788,6 +1788,70 @@ fi
 - See `CODE_PATTERNS.md` section "Error Handling Patterns" → "Distinguish Between Script Execution Success and Recovery Success" for the consolidated pattern
 - See `lib/recovery.sh:monitor_location()` lines 1514-1523 for implementation
 - Recovery failures are logged via `handle_error()` and `log_message()`
+
+---
+
+## 18. Override Functions, Not Just Commands, When Testing Recovery
+
+### Problem
+When testing recovery method tracking, tests need to mock `check_ipsec_phase2()` which is a function from `detection.sh`, not a command. Simply creating a mock command file won't work because the code calls the function directly, not via `command -v`.
+
+### Impact
+- Tests may fail silently or produce incorrect results
+- Recovery verification may not work as expected in tests
+- Difficult to diagnose why tests aren't working correctly
+
+### Lesson
+**When testing recovery functions that call other functions (not just commands), override the function directly in the test.** Functions are invoked directly, not through PATH lookup.
+
+### Pattern to Follow
+```bash
+# ✅ GOOD: Override function to use mock command
+local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
+cat >"$mock_check_ipsec_phase2" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+chmod +x "$mock_check_ipsec_phase2"
+add_mock_to_path
+
+source_recovery_module
+
+# Override the function to use mock
+check_ipsec_phase2() {
+    "$mock_check_ipsec_phase2" "$@"
+}
+
+# ❌ BAD: Only create mock command (function won't use it)
+local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
+cat >"$mock_check_ipsec_phase2" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+chmod +x "$mock_check_ipsec_phase2"
+add_mock_to_path
+# Missing: Function override - check_ipsec_phase2() will use original function, not mock
+```
+
+### Functions That Need Overriding
+- `check_ipsec_phase2()` - Function from `detection.sh`, used by `attempt_xfrm_recovery()` for verification
+- `verify_byte_counters_resume()` - Function from `recovery.sh`, used for byte counter verification
+- `count_sas_for_peer()` - Function from `recovery.sh`, used for SA counting
+
+### Commands vs Functions
+- **Commands** (e.g., `ip`, `ipsec`): Mock by creating executable file in PATH
+- **Functions** (e.g., `check_ipsec_phase2`, `verify_byte_counters_resume`): Override function definition after sourcing module
+
+### Systematic Application
+- When testing recovery functions, identify which functions they call
+- Check if those functions are commands (use PATH mock) or functions (override definition)
+- Review `lib/recovery.sh` and `lib/detection.sh` to see function dependencies
+- Override functions after sourcing modules, before calling recovery functions
+
+### Related Patterns
+- See `tests/test_recovery_method_tracking.sh` for examples of function overriding
+- See `tests/test_recovery.sh` lines 987-990 for another example
+- See `lib/recovery.sh:attempt_xfrm_recovery()` for function usage
 - Script exit codes should reflect execution success, not operational outcomes
 - Operational failures (VPN down, recovery failed) are logged but don't prevent successful script completion
 
@@ -1846,6 +1910,108 @@ fi
 
 ---
 
+## 28. Handle Hash Collisions in Anonymization Functions
+
+### Problem
+The `anonymize_location()` function in `scripts/anonymize-logs.sh` used hash-based mapping to anonymize location names:
+- Hash function: `hash_string()` creates deterministic hash from location name
+- Mapping: `hash % ${#CITY_NAMES[@]}` selects city name from array
+- **Issue:** Multiple different location names can hash to the same city index, causing collisions
+
+**Example:**
+- Location "LOCATION_A" → hash → index 5 → "CHICAGO"
+- Location "LOCATION_B" → hash → index 5 → "CHICAGO" (collision!)
+- Location "LOCATION_C" → hash → index 5 → "CHICAGO" (collision!)
+
+This caused duplicate anonymized location names in logs:
+```
+Found 11 location(s): LAS_VEGAS, CHICAGO, PHILADELPHIA, COLUMBUS, SACRAMENTO, CHICAGO, OMAHA, HONOLULU, SACRAMENTO, CHICAGO, OMAHA
+```
+
+### Impact
+- Duplicate anonymized location names in anonymized logs
+- Confusing log analysis (appears as if same location checked multiple times)
+- Loss of information (can't distinguish between different original locations)
+- Misleading log analysis results
+
+### Root Cause
+Hash-based mapping without collision resolution. Hash functions are designed to distribute values, but collisions are inevitable when mapping many inputs to fewer outputs (e.g., many locations to 50 city names).
+
+### Lesson
+**When using hash-based mapping to ensure uniqueness, always implement collision resolution.** Hash collisions are inevitable when mapping many inputs to fewer outputs. Collision resolution strategies:
+1. **Track used values** - Maintain a set of already-assigned values
+2. **Linear probing** - If hash-selected value is used, find next available
+3. **Handle exhaustion** - When all values are used, append suffixes or use alternative mapping
+
+### Pattern to Follow
+```bash
+# ✅ GOOD: Hash-based mapping with collision resolution
+declare -A used_cities=()
+while IFS= read -r location || [[ -n "$location" ]]; do
+    if [[ -z "${location_map[$location]:-}" ]]; then
+        # Use hash as starting point (deterministic)
+        local hash
+        hash=$(hash_string "$location")
+        local start_index=$((hash % ${#CITY_NAMES[@]}))
+        local city_index=$start_index
+        local attempts=0
+        
+        # Find next available city (collision resolution)
+        while [[ -n "${used_cities[${CITY_NAMES[$city_index]}]:-}" ]] && [[ $attempts -lt ${#CITY_NAMES[@]} ]]; do
+            city_index=$(((city_index + 1) % ${#CITY_NAMES[@]}))
+            attempts=$((attempts + 1))
+        done
+        
+        # Handle exhaustion (all cities used)
+        if [[ $attempts -ge ${#CITY_NAMES[@]} ]]; then
+            # Append numeric suffix for uniqueness
+            local suffix=1
+            while [[ -n "${used_cities[${CITY_NAMES[$start_index]}_${suffix}]:-}" ]]; do
+                suffix=$((suffix + 1))
+            done
+            anonymized_city="${CITY_NAMES[$start_index]}_${suffix}"
+        else
+            anonymized_city="${CITY_NAMES[$city_index]}"
+        fi
+        
+        location_map["$location"]="$anonymized_city"
+        used_cities["$anonymized_city"]=1
+    fi
+done < <(extract_locations "$input_file")
+
+# ❌ BAD: Hash-based mapping without collision resolution
+anonymize_location() {
+    local original_location="$1"
+    local hash
+    hash=$(hash_string "$original_location")
+    local city_index=$((hash % ${#CITY_NAMES[@]}))
+    echo "${CITY_NAMES[$city_index]}"  # No collision checking!
+}
+```
+
+### Systematic Application
+- When using hash-based mapping, always check if the mapped value is already used
+- Implement collision resolution (linear probing, chaining, or suffix appending)
+- Track used values in an associative array or set
+- Handle edge case where all values are exhausted
+- Test with inputs that will cause collisions
+- Ensure mapping remains deterministic (same input → same output) within a single run
+
+### Related Patterns
+- See `scripts/anonymize-logs.sh` lines 312-325 for implementation
+- Hash-based mapping is used for both IP and location anonymization
+- IP anonymization doesn't have collision issues (maps to 10.x.x.x range with 256^3 possible values)
+- Location anonymization needed collision resolution (maps to 50 city names)
+- Determinism is maintained by using hash as starting point and processing locations in sorted order
+
+### Notes
+- **Determinism:** Mapping is deterministic within a single run because locations are sorted before processing (`extract_locations` uses `sort -u`)
+- **Edge case:** When more locations than city names exist, numeric suffixes are appended (e.g., "CHICAGO_1", "CHICAGO_2")
+- **Performance:** Linear probing is O(n) worst case, but acceptable for typical use (fewer than 50 locations)
+- **Alternative approaches:** Could use perfect hashing or larger city name array, but current approach is pragmatic and sufficient
+
+---
+
 ## Summary: Key Takeaways
 
 These lessons should be applied systematically in future development and code reviews to prevent similar issues:
@@ -1879,6 +2045,7 @@ These lessons should be applied systematically in future development and code re
 25. **Simplify complex conditionals when all branches converge** - Extract common operations outside conditionals
 26. **Distinguish between script execution success and recovery success** - Script execution success ≠ Operational success
 27. **Always re-check critical state instead of relying on cached values** - Cached state can become stale, especially when state changes can occur between checks
-28. **When adding similar functionality, consider code duplication vs. clarity trade-offs** - When adding retention options for logs and state directories similar to config file retention, the three handler functions (`handle_config_file`, `handle_logs_dir`, `handle_state_dir`) have similar structure. While this creates some duplication, keeping them separate improves readability and maintainability. Extracting common logic would reduce duplication but make the code harder to understand. **Decision:** Keep similar but separate functions when clarity benefits outweigh DRY benefits, especially for user-facing interactive prompts where explicit code paths are easier to debug and modify.
+28. **Handle hash collisions in anonymization functions** - When using hash-based mapping to ensure uniqueness, always implement collision resolution. Hash collisions are inevitable when mapping many inputs to fewer outputs. Track used values and implement linear probing or suffix appending to handle collisions and exhaustion.
+29. **When adding similar functionality, consider code duplication vs. clarity trade-offs** - When adding retention options for logs and state directories similar to config file retention, the three handler functions (`handle_config_file`, `handle_logs_dir`, `handle_state_dir`) have similar structure. While this creates some duplication, keeping them separate improves readability and maintainability. Extracting common logic would reduce duplication but make the code harder to understand. **Decision:** Keep similar but separate functions when clarity benefits outweigh DRY benefits, especially for user-facing interactive prompts where explicit code paths are easier to debug and modify.
 
 ---

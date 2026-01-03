@@ -18,10 +18,11 @@ CONFIG_FILE="${SCRIPT_DIR}/vpn-monitor.conf"
 STATE_DIR="${SCRIPT_DIR}/state"
 LOGS_DIR="${SCRIPT_DIR}/logs"
 PIDFILE="${STATE_DIR}/vpn-keepalive.pid"
+# Set keepalive log file before load_config() - load_config() will preserve it
 LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"
 
 # Script version
-SCRIPT_VERSION="0.4.2"
+SCRIPT_VERSION="0.4.3"
 
 # Source library modules
 # shellcheck source=lib/logging.sh
@@ -91,6 +92,8 @@ fi
 
 # Load configuration
 # Note: Path recalculation (log paths and state paths) is now handled inside load_config()
+# Note: load_config() will preserve LOG_FILE since it's a custom log file (vpn-keepalive.log, not vpn-monitor.log)
+#       and will update its directory if LOGS_DIR changed
 if ! load_config "$CONFIG_FILE"; then
 	die "Failed to load configuration from $CONFIG_FILE"
 fi
@@ -137,6 +140,8 @@ start_daemon() {
 
 	# Validate configuration - load and validate location-based config
 	# This ensures at least one location is configured before starting daemon
+	# Set LOG_FILE before load_config() so it's preserved (load_config() preserves custom log files)
+	LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"
 	if ! load_config "$CONFIG_FILE"; then
 		die "Failed to load configuration from $CONFIG_FILE"
 	fi
@@ -159,6 +164,10 @@ start_daemon() {
 		set +e
 		set +u
 		set +o pipefail
+
+		# Ensure keepalive log file is set correctly in daemon
+		# LOG_FILE should already be set correctly by load_config() above, but ensure it's set
+		LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"
 
 		# Detach from terminal
 		exec >/dev/null 2>&1
@@ -217,6 +226,9 @@ start_daemon() {
 				log_message "ERROR" "Failed to reload configuration from $CONFIG_FILE (exit code: $load_result)" || true
 				# Continue with existing configuration rather than failing completely
 			fi
+
+			# Set LOG_FILE before load_config() so it's preserved (load_config() preserves custom log files)
+			LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"
 
 			# Reparse peer IPs from reloaded config
 			parse_peer_config

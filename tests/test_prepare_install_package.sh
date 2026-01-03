@@ -34,6 +34,7 @@ EXPECTED_LIB_FILES=(
 
 EXPECTED_SCRIPT_FILES=(
 	"scripts/migrate-config-to-locations.sh"
+	"scripts/anonymize-logs.sh"
 )
 
 # bats test_tags=category:unit

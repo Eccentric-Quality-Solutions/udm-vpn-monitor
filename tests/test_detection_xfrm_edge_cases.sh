@@ -327,3 +327,84 @@ EOF
 	# Should extract first SPI (0x12345678)
 	assert_output "0x12345678"
 }
+
+# bats test_tags=category:detection,priority:high
+@test "check_xfrm_status falls back to ping check when byte counters unavailable" {
+	# Purpose: Test verifies that check_xfrm_status falls back to ping check when byte counter extraction fails
+	# Expected: Function treats VPN as healthy (idle but healthy) when SA exists, byte counters unavailable, but ping succeeds
+	# Importance: Prevents false positives when xfrm output format differs or byte counters aren't available but VPN is working
+	setup_test_environment "${TEST_DIR}"
+	local peer_ip="192.168.1.1"
+	local internal_peer_ip="10.0.0.1"
+	local location_name="TEST"
+
+	# Mock ip command - SA exists but no lifetime current section (byte counter extraction will fail)
+	# Must handle both "ip -s xfrm state" and "ip xfrm state" formats
+	# Also handle route commands that check_ping_connectivity may call
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    echo "src 192.168.1.1 dst 192.168.1.1"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime config:"
+    echo "      limit: soft (INF)(bytes), hard (INF)(bytes)"
+    echo "      limit: soft (INF)(packets), hard (INF)(packets)"
+    # Note: No lifetime current section - byte counter extraction will fail
+    exit 0
+elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "src 192.168.1.1 dst 192.168.1.1"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime config:"
+    echo "      limit: soft (INF)(bytes), hard (INF)(bytes)"
+    # Note: No lifetime current section - byte counter extraction will fail
+    exit 0
+elif [[ "$1" == "addr" ]] && [[ "$2" == "show" ]] && [[ "$3" == "br0" ]]; then
+    # Handle route check - return empty (route doesn't exist, will be added)
+    exit 0
+elif [[ "$1" == "addr" ]] && [[ "$2" == "add" ]]; then
+    # Handle route add - simulate success
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# Mock ping command - ping succeeds (using helper function pattern)
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<'EOF'
+#!/bin/bash
+# Simulate successful ping - output format similar to real ping
+echo "PING 10.0.0.1 (10.0.0.1) 56(84) bytes of data."
+echo "64 bytes from 10.0.0.1: icmp_seq=1 ttl=64 time=0.123 ms"
+echo ""
+echo "--- 10.0.0.1 ping statistics ---"
+echo "1 packets transmitted, 1 received, 0% packet loss"
+exit 0
+EOF
+	chmod +x "$mock_ping"
+	add_mock_to_path
+
+	# Set ENABLE_PING_CHECK=1 and LOCAL_UDM_IP for this test
+	export ENABLE_PING_CHECK=1
+	export LOCAL_UDM_IP="192.168.1.100"
+
+	# Initialize state
+	source_function "set_peer_state"
+	set_peer_state "$location_name" "$peer_ip" "failure_count" "0"
+
+	# Source required functions
+	source_function "check_xfrm_status"
+	source_function "get_local_ip_for_ping"
+	source_function "check_ping_connectivity"
+
+	# Test that check_xfrm_status falls back to ping and treats as healthy
+	run check_xfrm_status "$peer_ip" "$internal_peer_ip" "$location_name"
+	assert_success
+
+	# Cleanup
+	unset ENABLE_PING_CHECK
+	unset LOCAL_UDM_IP
+	remove_mock_from_path
+}

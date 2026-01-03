@@ -45,6 +45,7 @@ We will implement:
   - Automatically cleans up entries older than 24 hours
   - Default limit: `MAX_RESTARTS_PER_HOUR=3` (configurable)
   - Checks restart count in last hour before allowing Tier 3 action
+  - **Logging Behavior**: "Tier 3: Attempting..." log messages appear before the rate limit check. If rate limiting blocks the restart, you'll see both the "Attempting..." message and a "Rate limit exceeded" warning. The restart command only executes if rate limiting allows it.
 - **Cooldown Period**:
   - Tracks cooldown expiration in `cooldown_until` file
   - Default duration: `COOLDOWN_MINUTES=15` (configurable)

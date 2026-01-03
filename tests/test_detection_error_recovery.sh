@@ -609,3 +609,170 @@ EOF
 		skip "State file does not exist for testing"
 	fi
 }
+
+# bats test_tags=category:detection,priority:medium
+@test "check_vpn_status combines diagnostic messages when both xfrm and ipsec fail" {
+	# Purpose: Test verifies that check_vpn_status combines diagnostic messages from both detection methods
+	# Expected: When both xfrm and ipsec status checks fail, a single combined diagnostic message is logged
+	#           that includes detection method names and context about why each method failed
+	# Importance: Combined diagnostic messages improve log readability and make it easier to correlate
+	#              related warnings from the same diagnostic check
+	setup_test_environment "${TEST_DIR}"
+	local peer_ip="192.168.1.1"
+	local internal_ip="10.0.0.1"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local location_name="TEST"
+
+	# Set up logging
+	export LOG_FILE="$log_file"
+	mkdir -p "$(dirname "$log_file")"
+
+	# Mock ip command - xfrm check finds SA but byte counter extraction fails
+	# This simulates the scenario where SA exists but byte counter info is unavailable
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    # Return xfrm output with SA but without byte counter info in lifetime current
+    # This simulates byte counter extraction failure
+    echo "src 192.168.1.1 dst 192.168.1.1"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime config: 1000000 bytes, 1000 packets"
+    # Note: No "lifetime current:" line, which causes byte counter extraction to fail
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+
+	# Mock ipsec command - ipsec check fails (no connection found)
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	cat >"$mock_ipsec" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "status" ]]; then
+    # ipsec check fails - no connection found
+    exit 1
+fi
+exec /usr/bin/ipsec "$@"
+EOF
+	chmod +x "$mock_ipsec"
+	add_mock_to_path
+
+	# Initialize state
+	source_function "set_peer_state"
+	set_peer_state "$location_name" "$peer_ip" "failure_count" "0"
+
+	# Source required functions
+	source_function "check_vpn_status"
+
+	# Disable ping check to test the byte counter unavailable path
+	# This ensures we get the diagnostic message about byte counter info unavailable
+	export ENABLE_PING_CHECK=0
+
+	# Call check_vpn_status - both methods should fail
+	run check_vpn_status "$peer_ip" "$internal_ip" "$location_name"
+	assert_failure
+
+	# Verify combined diagnostic message was logged
+	assert_file_exist "$log_file"
+	
+	# Verify the combined message format:
+	# 1. Should contain "VPN suspect for" with peer IP
+	assert_log_contains "$log_file" "VPN suspect for $peer_ip"
+	
+	# 2. Should include xfrm detection method name
+	assert_log_contains "$log_file" "Detection method: xfrm (ip xfrm state)"
+	
+	# 3. Should include ipsec detection method name
+	assert_log_contains "$log_file" "Detection method: ipsec status"
+	
+	# 4. Should include context about byte counter availability
+	#    (either "byte counter info unavailable" or specific reason)
+	assert_log_contains "$log_file" "byte counter info unavailable"
+	
+	# 5. Should include context about why byte counter check failed
+	#    (ping check disabled or internal IP not provided)
+	assert_log_contains "$log_file" "ping check disabled"
+	
+	# 6. Should include "No connection found via ipsec status"
+	assert_log_contains "$log_file" "No connection found via ipsec status"
+	
+	# 7. Verify the message is combined (contains semicolon separator)
+	assert_log_contains "$log_file" ";"
+	
+	# 8. Verify we don't have separate warning messages (old behavior)
+	#    Count occurrences of "VPN suspect" - should be 1 (the combined message)
+	local suspect_count
+	suspect_count=$(grep -c "VPN suspect" "$log_file" || echo "0")
+	[ "$suspect_count" -eq 1 ] || fail "Should have exactly one combined diagnostic message, found $suspect_count"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:detection,priority:medium
+@test "check_vpn_status combined diagnostic includes internal IP context when not provided" {
+	# Purpose: Test verifies that combined diagnostic messages include context about internal IP availability
+	# Expected: When internal IP is not provided, the diagnostic message should indicate "internal IP not provided"
+	#          instead of "ping check disabled"
+	# Importance: Different diagnostic contexts help identify the root cause of detection failures
+	setup_test_environment "${TEST_DIR}"
+	local peer_ip="192.168.1.1"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local location_name="TEST"
+
+	# Set up logging
+	export LOG_FILE="$log_file"
+	mkdir -p "$(dirname "$log_file")"
+
+	# Mock ip command - xfrm check finds SA but byte counter extraction fails
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "src 192.168.1.1 dst 192.168.1.1"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime config: 1000000 bytes, 1000 packets"
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+
+	# Mock ipsec command - ipsec check fails
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	cat >"$mock_ipsec" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "status" ]]; then
+    exit 1
+fi
+exec /usr/bin/ipsec "$@"
+EOF
+	chmod +x "$mock_ipsec"
+	add_mock_to_path
+
+	# Initialize state
+	source_function "set_peer_state"
+	set_peer_state "$location_name" "$peer_ip" "failure_count" "0"
+
+	# Source required functions
+	source_function "check_vpn_status"
+
+	# Enable ping check but don't provide internal IP
+	# This should result in "internal IP not provided" message
+	export ENABLE_PING_CHECK=1
+
+	# Call check_vpn_status without internal IP - both methods should fail
+	run check_vpn_status "$peer_ip" "" "$location_name"
+	assert_failure
+
+	# Verify combined diagnostic message was logged
+	assert_file_exist "$log_file"
+	
+	# Verify the diagnostic includes "internal IP not provided" context
+	assert_log_contains "$log_file" "internal IP not provided"
+	
+	# Verify it does NOT say "ping check disabled" (since ping check is enabled)
+	assert_log_not_contains "$log_file" "ping check disabled"
+
+	remove_mock_from_path
+}

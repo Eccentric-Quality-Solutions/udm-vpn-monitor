@@ -71,6 +71,7 @@ This document describes the architecture and design of the UDM VPN Monitor syste
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  Log Files (${SCRIPT_DIR}/logs/)                        │  │
 │  │  • vpn-monitor.log                                       │  │
+│  │  • vpn-keepalive.log (if keepalive daemon enabled)      │  │
 │  │  • failure_counter_<location>_<peer_ip>  # Per-location (in state/) │  │
 │  │  • restart_count (in state/)                            │  │
 │  └──────────────────────────────────────────────────────────┘  │
@@ -421,6 +422,7 @@ State files are organized into two categories:
 - `${STATE_DIR}/spi_<location>_<peer_ip>`: Stores SPI (Security Parameter Index) for location connection tracking
 - `${STATE_DIR}/idle_detected_<location>_<peer_ip>`: Tracks idle detection state for the location
 - `${STATE_DIR}/last_status_log_<location>_<peer_ip>`: Timestamp of last status log entry for the location
+- `${STATE_DIR}/recovery_method_<location>_<peer_ip>`: Tracks recovery method used when recovery was attempted (cleared after restoration is logged)
 
 **System-Wide State Files** (shared across all peers):
 - `${STATE_DIR}/cooldown_until`: Cooldown expiration timestamp (prevents immediate re-restarts)
@@ -502,6 +504,28 @@ All per-location state files use sanitized location names and peer IP addresses 
    - **Independence**: Each location has its own last status log timestamp, allowing independent throttling per location
    - **Update**: Updated each time a periodic status log entry is written
    - **Location**: Stored in `${STATE_DIR}` directory
+
+7. **Recovery Method** (`recovery_method_<location>_<peer_ip>`)
+   - **Purpose**: Tracks which recovery method was used when recovery was attempted (e.g., "xfrm", "ipsec_reload", "ipsec_restart")
+   - **Creation**: Created on-demand when a recovery action is attempted (Tier 2 or Tier 3)
+   - **Usage**: Used to include recovery method information in "VPN restored" log messages, providing visibility into which recovery method successfully restored the VPN tunnel
+   - **Independence**: Each location has its own recovery method tracking, allowing correlation between recovery attempts and restoration events per location
+   - **Update**: Updated when recovery is attempted:
+     - Stored before recovery action is executed
+     - Updated if fallback recovery method is used (e.g., xfrm fails, falls back to ipsec_reload)
+     - Cleared after VPN restoration is logged to prevent stale information
+   - **Values**: 
+     - `"xfrm"`: xfrm-based per-connection recovery was used
+     - `"ipsec_reload"`: ipsec reload recovery was used
+     - `"ipsec_restart"`: ipsec restart recovery was used
+   - **Display**: Recovery method is formatted for display in log messages:
+     - `"xfrm"` → `"xfrm-based recovery"`
+     - `"ipsec_reload"` → `"ipsec reload"`
+     - `"ipsec_restart"` → `"ipsec restart"`
+   - **Location**: Stored in `${STATE_DIR}` directory
+   - **Example Log Messages**:
+     - `"VPN restored for location NYC (203.0.113.1) after 3 failures (recovery method: xfrm-based recovery)"`
+     - `"VPN restored for location NYC (203.0.113.1) (recovery method: ipsec reload)"`
 
 **Benefits of Per-Location Tracking**:
 - **Independent Recovery**: Each tunnel can be recovered independently based on its own failure count
@@ -600,7 +624,8 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │   └── state.sh                # State file management (counters, cooldown, rate limiting)
 │
 ├── logs/                       # Logs directory
-│   └── vpn-monitor.log         # Main log file
+│   ├── vpn-monitor.log         # Main monitor log file
+│   └── vpn-keepalive.log       # Keepalive daemon log file (if keepalive enabled)
 │
 └── state/                      # State directory
     ├── cooldown_until          # Cooldown expiration timestamp
@@ -657,6 +682,18 @@ The system uses a modular library architecture where functionality is organized 
 - `load_config()` - Loads and validates configuration from `vpn-monitor.conf`
 - `recalculate_log_paths()` - Updates log paths after config changes
 - `validate_config()` - Validates configuration against schema
+
+**LOG_FILE Preservation Behavior**:
+- `load_config()` preserves `LOG_FILE` if it was set before calling `load_config()` AND the filename is not the default monitor log (`vpn-monitor.log`)
+- This allows scripts like `vpn-keepalive.sh` to set their own log file (e.g., `vpn-keepalive.log`) before calling `load_config()`, and the custom log file will be preserved
+- Config file `LOG_FILE` settings can override the default monitor log (`vpn-monitor.log`), but not custom log files
+- If `LOGS_DIR` changes in the config file, custom log files are updated to use the new directory while preserving the filename
+- **Pattern**: Scripts that need custom log files should set `LOG_FILE` before calling `load_config()`:
+  ```bash
+  LOG_FILE="${LOGS_DIR}/custom-log.log"
+  load_config "$CONFIG_FILE"
+  # LOG_FILE is preserved if filename is not "vpn-monitor.log"
+  ```
 
 **Dependencies**: `lib/config_schema.sh`, `lib/logging.sh`, `lib/common.sh`
 
@@ -794,6 +831,7 @@ The system includes an optional VPN keepalive daemon (`vpn-keepalive.sh`) that r
 - Script: `vpn-keepalive.sh` (daemon implementation)
 - Configuration: Uses same `vpn-monitor.conf` configuration
 - Operation: Runs continuously, sends pings at configured intervals
+- **Log File Separation**: Uses its own log file (`vpn-keepalive.log`) separate from the monitor log (`vpn-monitor.log`). The keepalive script sets `LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"` before calling `load_config()`, and `load_config()` preserves custom log files (see `lib/config.sh` documentation above for LOG_FILE preservation behavior).
 - **Config Reloading**: Automatically reloads configuration every 10 iterations (or every 5 minutes, whichever is longer) to pick up configuration changes without requiring service restart. This allows configuration updates (e.g., adding/removing locations, changing intervals) to take effect automatically.
 - **LOCAL_UDM_IP Support**: Supports `LOCAL_UDM_IP` configuration for proper ping source routing when using `INTERNAL_PEER_IPS`, matching the behavior of `vpn-monitor.sh` ping checks.
 

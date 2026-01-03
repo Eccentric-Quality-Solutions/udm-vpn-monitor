@@ -1142,3 +1142,196 @@ VPN_NAME=\"Test VPN\""
 	# Clean up
 	rm -rf "$install_dir" 2>/dev/null || true
 }
+
+# bats test_tags=category:unit,priority:high
+@test "uninstall.sh validate_install_dir_safety rejects empty INSTALL_DIR" {
+	# Purpose: Test verifies that validate_install_dir_safety() rejects empty INSTALL_DIR
+	# Expected: Script exits with error when INSTALL_DIR is empty
+	# Importance: Prevents accidental deletion when INSTALL_DIR is unset or empty
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
+
+	# Create a test script that sources uninstall.sh and sets INSTALL_DIR to empty
+	local test_script="${TEST_DIR}/test_uninstall_safety.sh"
+	cat >"$test_script" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+# Source the uninstall script functions
+source "$(dirname "$0")/../uninstall.sh"
+# Set INSTALL_DIR to empty to test validation
+INSTALL_DIR=""
+# This should exit with error
+validate_install_dir_safety
+EOF
+	chmod +x "$test_script"
+
+	# Run the test script - it should fail
+	run bash "$test_script"
+	assert_failure
+	assert_output --partial "INSTALL_DIR is empty"
+	assert_output --partial "unsafe"
+
+	# Clean up
+	rm -f "$test_script" 2>/dev/null || true
+}
+
+# bats test_tags=category:unit,priority:high
+@test "uninstall.sh validate_install_dir_safety rejects wrong path" {
+	# Purpose: Test verifies that validate_install_dir_safety() rejects incorrect INSTALL_DIR paths
+	# Expected: Script exits with error when INSTALL_DIR doesn't match expected path
+	# Importance: Prevents accidental deletion of files outside intended directory
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
+
+	# Create a test script that sources uninstall.sh and sets INSTALL_DIR to wrong path
+	local test_script="${TEST_DIR}/test_uninstall_safety.sh"
+	cat >"$test_script" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+# Source the uninstall script functions
+source "$(dirname "$0")/../uninstall.sh"
+# Set INSTALL_DIR to wrong path to test validation
+INSTALL_DIR="/etc/passwd"
+# This should exit with error
+validate_install_dir_safety
+EOF
+	chmod +x "$test_script"
+
+	# Run the test script - it should fail
+	run bash "$test_script"
+	assert_failure
+	assert_output --partial "path mismatch"
+	assert_output --partial "Expected: /data/vpn-monitor"
+	assert_output --partial "Actual:   /etc/passwd"
+	assert_output --partial "unsafe"
+
+	# Clean up
+	rm -f "$test_script" 2>/dev/null || true
+}
+
+# bats test_tags=category:unit,priority:high
+@test "uninstall.sh validate_install_dir_safety rejects root directory" {
+	# Purpose: Test verifies that validate_install_dir_safety() rejects root directory (/)
+	# Expected: Script exits with error when INSTALL_DIR is root directory
+	# Importance: Prevents catastrophic deletion of entire filesystem
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
+
+	# Create a test script that sources uninstall.sh and sets INSTALL_DIR to root
+	local test_script="${TEST_DIR}/test_uninstall_safety.sh"
+	cat >"$test_script" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+# Source the uninstall script functions
+source "$(dirname "$0")/../uninstall.sh"
+# Set INSTALL_DIR to root directory to test validation
+INSTALL_DIR="/"
+# This should exit with error
+validate_install_dir_safety
+EOF
+	chmod +x "$test_script"
+
+	# Run the test script - it should fail
+	run bash "$test_script"
+	assert_failure
+	assert_output --partial "root directory"
+	assert_output --partial "extremely unsafe"
+
+	# Clean up
+	rm -f "$test_script" 2>/dev/null || true
+}
+
+# bats test_tags=category:unit,priority:high
+@test "uninstall.sh validate_install_dir_safety accepts correct path" {
+	# Purpose: Test verifies that validate_install_dir_safety() accepts correct INSTALL_DIR path
+	# Expected: Function returns successfully when INSTALL_DIR matches expected path
+	# Importance: Ensures validation doesn't reject valid paths
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
+
+	# Create a test script that sources uninstall.sh and tests with correct path
+	local test_script="${TEST_DIR}/test_uninstall_safety.sh"
+	cat >"$test_script" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+# Source the uninstall script functions
+source "$(dirname "$0")/../uninstall.sh"
+# INSTALL_DIR should already be set correctly by uninstall.sh
+# This should succeed
+validate_install_dir_safety
+echo "Validation passed"
+EOF
+	chmod +x "$test_script"
+
+	# Run the test script - it should succeed
+	run bash "$test_script"
+	assert_success
+	assert_output --partial "Validation passed"
+
+	# Clean up
+	rm -f "$test_script" 2>/dev/null || true
+}
+
+# bats test_tags=category:unit,priority:high
+@test "uninstall.sh skips symlinks pointing outside installation directory" {
+	# Purpose: Test verifies that uninstall script skips symlinks pointing outside INSTALL_DIR
+	# Expected: Symlinks pointing outside installation directory are skipped during deletion
+	# Importance: Prevents accidental deletion of files outside intended directory via symlinks
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
+
+	# Create mock installation directory
+	local install_dir="/data/vpn-monitor"
+	mkdir -p "$install_dir"
+	echo "test" >"${install_dir}/vpn-monitor.sh"
+	echo "test" >"${install_dir}/vpn-monitor.conf"
+
+	# Create a file outside the installation directory that we want to protect
+	local protected_file="${TEST_DIR}/protected-file.txt"
+	echo "protected content" >"$protected_file"
+
+	# Create a symlink inside installation directory pointing to protected file
+	ln -sf "$protected_file" "${install_dir}/malicious-symlink"
+
+	# Run uninstallation
+	run bash "$UNINSTALL_SCRIPT" --yes
+	assert_success
+
+	# Verify installation directory was removed
+	assert_dir_not_exist "$install_dir"
+
+	# Verify protected file still exists (symlink was skipped, not followed)
+	assert_file_exist "$protected_file"
+
+	# Clean up
+	rm -rf "$install_dir" 2>/dev/null || true
+	rm -f "$protected_file" 2>/dev/null || true
+}
+
+# bats test_tags=category:unit,priority:high
+@test "uninstall.sh removes symlinks pointing within installation directory" {
+	# Purpose: Test verifies that uninstall script removes symlinks pointing within INSTALL_DIR
+	# Expected: Symlinks pointing within installation directory are removed normally
+	# Importance: Ensures normal symlinks are cleaned up during uninstallation
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
+
+	# Create mock installation directory
+	local install_dir="/data/vpn-monitor"
+	mkdir -p "$install_dir"
+	echo "test" >"${install_dir}/vpn-monitor.sh"
+	echo "test content" >"${install_dir}/target-file.txt"
+
+	# Create a symlink inside installation directory pointing to another file in same directory
+	ln -sf "target-file.txt" "${install_dir}/normal-symlink"
+
+	# Run uninstallation
+	run bash "$UNINSTALL_SCRIPT" --yes
+	assert_success
+
+	# Verify installation directory was removed (including symlink)
+	assert_dir_not_exist "$install_dir"
+
+	# Clean up
+	rm -rf "$install_dir" 2>/dev/null || true
+}

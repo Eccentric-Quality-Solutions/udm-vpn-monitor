@@ -115,6 +115,7 @@ LIB_FILES=(
 # Script files (utility scripts)
 SCRIPT_FILES=(
 	"scripts/migrate-config-to-locations.sh"
+	"scripts/anonymize-logs.sh"
 )
 
 echo "Preparing install package..."

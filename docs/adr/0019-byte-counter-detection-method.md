@@ -38,15 +38,28 @@ We will use byte counters from `ip xfrm state` as the primary method for detecti
 - **Counter Extraction Dependency**: Relies on parsing `ip xfrm state` output, which may vary across UDM OS versions
 - **Zero Byte Edge Case**: Tunnels with exactly 0 bytes may be flagged as suspect even if healthy (mitigated by allowing non-zero static counters)
 - **Ping Check Dependency**: Idle detection requires ping checks to be enabled and internal peer IPs to be configured
+- **Format Variations**: UDM OS uses `ip -s xfrm state` format where byte counters appear as `  39492(bytes)` on a separate line after `lifetime current:`, requiring format-specific parsing
 
 ## Implementation Details
 - **Detection Flow**:
-  1. Extract byte counters from `ip xfrm state` output for the peer IP
+  1. Extract byte counters from `ip xfrm state` output for the peer IP (uses `ip -s xfrm state` first for UDM OS compatibility)
   2. Compare current bytes to last known bytes (stored in `last_bytes_<location>_<peer_ip>`)
   3. If bytes are increasing: VPN is healthy (traffic flowing)
   4. If bytes are static and ping fails: VPN is broken (failure detected)
   5. If bytes are static and ping succeeds: VPN is idle but healthy (no failure, keepalive suggested)
   6. If bytes are zero or decreasing: VPN is suspect (may indicate failure)
+  7. If byte counters unavailable but SA exists and ping succeeds: VPN is idle but healthy (fallback to ping check)
+- **XFRM Output Format (UDM OS)**:
+  - Uses `ip -s xfrm state` command which provides detailed statistics
+  - Format: `lifetime current:` appears on one line, followed by `  39492(bytes), 609(packets)` on the next line
+  - Example:
+    ```
+    lifetime current:
+      39492(bytes), 609(packets)
+      add 2026-01-03 12:19:25 use 2026-01-03 12:19:34
+    ```
+  - Extraction handles both single-line format (`lifetime current: 123456 bytes`) and multi-line UDM format (`  39492(bytes)`)
+  - Falls back to ping check when byte counter extraction fails but SA exists
 - **Idle Detection**:
   - When tunnel is idle (static bytes for extended period), ping checks are used to verify tunnel health
   - If ping succeeds: Tunnel is idle but healthy (no failure, keepalive suggested)

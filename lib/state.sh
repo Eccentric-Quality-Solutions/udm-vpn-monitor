@@ -825,7 +825,7 @@ set_cooldown() {
 #   1: Rate limit exceeded (restart blocked)
 #
 # Side effects:
-#   - Logs warning if rate limit exceeded
+#   - Logs warning if rate limit exceeded (includes reset time, countdown, and restart list)
 #   - Reads RESTART_COUNT_FILE to count recent restarts
 #
 # Examples:
@@ -836,9 +836,14 @@ set_cooldown() {
 #
 # Note:
 #   Checks RESTART_COUNT_FILE for timestamps within the last hour
-#   Requires RESTART_COUNT_FILE, MAX_RESTARTS_PER_HOUR, SECONDS_PER_HOUR, and log_message to be set
+#   Requires RESTART_COUNT_FILE, MAX_RESTARTS_PER_HOUR, SECONDS_PER_HOUR, get_formatted_timestamp,
+#   safe_timestamp_add, safe_timestamp_diff, and handle_error to be set
 #   Uses awk to filter timestamps > (now - SECONDS_PER_HOUR)
 #   Counts filtered lines with wc -l
+#   When rate limit is exceeded, logs detailed information including:
+#   - Reset timestamp (when oldest restart will expire)
+#   - Countdown (time remaining until reset)
+#   - List of restart timestamps that count toward the limit
 check_rate_limit() {
 	local now
 	now=$(get_unix_timestamp)
@@ -856,13 +861,84 @@ check_rate_limit() {
 		return 0 # Allow restart (file unreadable, treat as no previous restarts)
 	fi
 
-	# Count restarts in the last hour
-	# awk filters timestamps > one_hour_ago, wc -l counts lines, tr removes whitespace
+	# Get all restart timestamps within the last hour (sorted)
+	# awk filters timestamps > one_hour_ago, sort -n sorts numerically
+	local recent_timestamps
+	recent_timestamps=$(awk -v cutoff="$one_hour_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | sort -n)
+
+	# Count recent restarts
 	local recent_restarts
-	recent_restarts=$(awk -v cutoff="$one_hour_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | wc -l | tr -d ' ')
+	recent_restarts=$(echo "$recent_timestamps" | grep -c . || echo "0")
 
 	if [[ "$recent_restarts" -ge "$MAX_RESTARTS_PER_HOUR" ]]; then
-		handle_error "WARNING" "Rate limit exceeded: $recent_restarts restarts in last hour (max: $MAX_RESTARTS_PER_HOUR)"
+		# Find oldest restart timestamp (first in sorted list)
+		local oldest_restart
+		oldest_restart=$(echo "$recent_timestamps" | head -n 1)
+
+		# Calculate when rate limit will reset (oldest restart + 1 hour)
+		local reset_timestamp
+		reset_timestamp=$(safe_timestamp_add "$oldest_restart" "$SECONDS_PER_HOUR" 2>/dev/null || echo "0")
+
+		# Calculate countdown (time remaining until reset)
+		local countdown_seconds
+		countdown_seconds=$(safe_timestamp_diff "$reset_timestamp" "$now" 2>/dev/null || echo "0")
+		# Clamp negative values to 0 (shouldn't happen, but handle edge cases like clock skew)
+		if [[ "$countdown_seconds" -lt 0 ]]; then
+			countdown_seconds=0
+		fi
+
+		# Format reset timestamp for human readability
+		local reset_formatted
+		if [[ "$reset_timestamp" != "0" ]] && validate_timestamp "$reset_timestamp"; then
+			reset_formatted=$(date -d "@$reset_timestamp" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")
+		else
+			reset_formatted="unknown"
+		fi
+
+		# Format countdown as minutes:seconds or just seconds
+		local countdown_formatted
+		if [[ "$countdown_seconds" -gt 0 ]]; then
+			local minutes=$((countdown_seconds / 60))
+			local seconds=$((countdown_seconds % 60))
+			if [[ $minutes -gt 0 ]]; then
+				countdown_formatted="${minutes}m ${seconds}s"
+			else
+				countdown_formatted="${seconds}s"
+			fi
+		else
+			countdown_formatted="0s"
+		fi
+
+		# Format restart timestamps for logging (limit to first 10 to avoid overly long messages)
+		local restart_list=""
+		local restart_count=0
+		while IFS= read -r timestamp || [[ -n "$timestamp" ]]; do
+			[[ -z "$timestamp" ]] && continue
+			if [[ $restart_count -lt 10 ]]; then
+				local formatted_ts
+				formatted_ts=$(date -d "@$timestamp" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$timestamp")
+				if [[ -n "$restart_list" ]]; then
+					restart_list="${restart_list}, ${formatted_ts}"
+				else
+					restart_list="${formatted_ts}"
+				fi
+			fi
+			restart_count=$((restart_count + 1))
+		done <<<"$recent_timestamps"
+
+		# Add indicator if there are more restarts
+		if [[ $restart_count -gt 10 ]]; then
+			restart_list="${restart_list} (and $((restart_count - 10)) more)"
+		fi
+
+		# Build detailed error message
+		local error_msg="Rate limit exceeded: $recent_restarts restarts in last hour (max: $MAX_RESTARTS_PER_HOUR)"
+		error_msg="${error_msg}. Reset at: $reset_formatted (in $countdown_formatted)"
+		if [[ -n "$restart_list" ]]; then
+			error_msg="${error_msg}. Recent restarts: $restart_list"
+		fi
+
+		handle_error "WARNING" "$error_msg"
 		return 1 # Rate limited
 	fi
 

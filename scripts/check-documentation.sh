@@ -22,7 +22,34 @@ NC='\033[0m' # No Color
 # Track if any errors were found
 ERRORS_FOUND=0
 
-# Function to check if a function has proper documentation
+# Check if a function has proper documentation according to ADR-0007
+#
+# Validates that a function has a documentation block before its definition
+# and that the documentation includes required sections (Arguments and Returns).
+# Reads backwards from the function definition line to find documentation comments.
+#
+# Arguments:
+#   $1: Path to the file containing the function
+#   $2: Line number where the function is defined
+#   $3: Name of the function to check
+#
+# Returns:
+#   0: Function has proper documentation with required sections
+#   1: Function is missing documentation or required sections
+#
+# Side effects:
+#   - Prints error messages to stdout if documentation is missing or incomplete
+#   - Sets ERRORS_FOUND global variable to 1 if issues are found
+#
+# Examples:
+#   check_function_documentation "lib/config.sh" 42 "validate_config"
+#   # Checks if validate_config() at line 42 has proper documentation
+#
+# Note:
+#   Stops reading backwards when it encounters a non-comment, non-blank line
+#   (indicating another function or code block)
+#   Looks for "Arguments:" and "Returns:" sections in documentation comments
+#   Documentation must be in comment blocks (lines starting with #)
 check_function_documentation() {
 	local file="$1"
 	local func_line="$2"
@@ -92,7 +119,33 @@ check_function_documentation() {
 	return 0
 }
 
-# Function to check a single file
+# Check a single file for function documentation compliance
+#
+# Scans a shell script file for function definitions and validates that each
+# function has proper documentation. Uses grep to find function definitions
+# matching common patterns (function_name() { or function function_name() {),
+# then checks each function's documentation.
+#
+# Arguments:
+#   $1: Path to the shell script file to check
+#
+# Returns:
+#   0: File has no functions or all functions have proper documentation
+#   1: One or more functions are missing documentation or required sections
+#
+# Side effects:
+#   - Prints error messages to stdout for functions with missing documentation
+#   - Sets ERRORS_FOUND global variable to 1 if issues are found
+#   - Skips files that don't exist (prints warning to stderr)
+#
+# Examples:
+#   check_file "lib/config.sh"
+#   # Checks all functions in lib/config.sh for documentation compliance
+#
+# Note:
+#   Only processes files that exist
+#   Handles both function definition styles: name() { and function name() {
+#   Skips files with no function definitions
 check_file() {
 	local file="$1"
 
@@ -149,7 +202,38 @@ check_file() {
 	done <<<"$func_defs"
 }
 
-# Main execution
+# Main execution function
+#
+# Orchestrates the documentation checking process. Determines which files to
+# check (either from command-line arguments or from git staged files), runs
+# documentation checks on each file, and reports results. Exits with error
+# code if any documentation issues are found.
+#
+# Arguments:
+#   $@: Optional list of specific files to check. If not provided, checks all
+#       staged .sh files in the git repository.
+#
+# Returns:
+#   0: All checked functions have proper documentation
+#   1: One or more functions are missing documentation or required sections
+#
+# Side effects:
+#   - Prints check progress and results to stdout
+#   - Prints colored output (green for success, red for errors)
+#   - Exits script with appropriate exit code
+#   - Requires git repository (if no files provided as arguments)
+#
+# Examples:
+#   main
+#   # Checks all staged .sh files in git repository
+#
+#   main "lib/config.sh" "lib/detection.sh"
+#   # Checks only the specified files
+#
+# Note:
+#   Requires git repository if checking staged files
+#   Only processes .sh files (skips other file types)
+#   If no files are provided and no staged .sh files exist, returns success
 main() {
 	local files_to_check=()
 

@@ -37,6 +37,9 @@ These patterns should be followed consistently when writing or modifying code in
 17. [Associative Array Patterns](#associative-array-patterns)
 18. [Variable Initialization Patterns](#variable-initialization-patterns)
 19. [Bash Strict Mode and Safety Patterns](#bash-strict-mode-and-safety-patterns)
+    - [Validate Paths Before Deletion Operations](#pattern-validate-paths-before-deletion-operations)
+    - [Protect Against Symlink Attacks in Deletion Operations](#pattern-protect-against-symlink-attacks-in-deletion-operations)
+    - [Defense-in-Depth for Critical Operations](#pattern-defense-in-depth-for-critical-operations)
 20. [Quoting and Variable Expansion Patterns](#quoting-and-variable-expansion-patterns)
 21. [UDM-Specific Constraints](#udm-specific-constraints)
 
@@ -657,6 +660,24 @@ atomic_write_file "$state_file" "$value"
 - Before writing state files, check if `get_peer_state_file_path()` supports the key
 - If not, add the key to the abstraction layer
 
+**Important for Tests:**
+- **Always use the abstraction layer in tests** - hardcoded paths may not match the format used by the code
+- Hardcoded paths like `${STATE_DIR}/failure_type_TEST_192_168_1_1` may fail because:
+  - The abstraction layer may use different sanitization (e.g., location name format)
+  - Path format changes would break hardcoded paths but not abstraction layer usage
+  - The code checks for files using `get_peer_state_file_path()`, so tests must use the same function
+- Example test pattern:
+  ```bash
+  # ✅ GOOD: Use abstraction layer in tests
+  source_function "get_peer_state_file_path"
+  local failure_type_file
+  failure_type_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_type")
+  echo "tunnel_down" >"$failure_type_file"
+  
+  # ❌ BAD: Hardcoded path in test (may not match code's path format)
+  echo "tunnel_down" >"${STATE_DIR}/failure_type_TEST_192_168_1_1"
+  ```
+
 **Files Intentionally Outside the Abstraction Layer:**
 
 Some state files are intentionally **not** managed by `get_peer_state_file_path()` because they represent **global system state** rather than per-peer or per-location state.
@@ -1020,6 +1041,15 @@ fi
 - Maintain fail-safe behavior: if supplementary diagnostics are unavailable, default to conservative (fail-safe) behavior
 - Only use supplementary diagnostics when they provide meaningful additional information
 - Log the diagnostic result clearly to help with troubleshooting
+
+**XFRM Output Format Handling:**
+- UDM OS uses `ip -s xfrm state` format where byte counters appear as `  39492(bytes)` on a separate line
+- Always try `ip -s xfrm state` first (provides more detail), fall back to `ip xfrm state` if needed
+- Increase context lines when parsing to ensure `lifetime current:` section is captured (appears after `lifetime config:`)
+- Handle both formats:
+  - Single-line: `lifetime current: 123456 bytes, 789 packets`
+  - Multi-line (UDM OS): `lifetime current:` followed by `  39492(bytes), 609(packets)` on next line
+- When byte counter extraction fails but SA exists, fall back to ping check if enabled (treats as "idle but healthy")
 - Distinguish between "uncertain but likely healthy" (idle state) and "definitely broken" states
 - Update state appropriately based on diagnostic results (e.g., mark as idle but healthy)
 
@@ -1170,6 +1200,10 @@ load_config() {
 - Unknown variables are rejected during schema validation
 - Type validation and rule validation happen after loading
 - Use `get_config_default()` to get defaults from schema
+- **LOG_FILE preservation:** `load_config()` preserves `LOG_FILE` if it was set before calling `load_config()` AND it's not the default monitor log filename (`vpn-monitor.log`)
+  - Scripts that need custom log files (e.g., `vpn-keepalive.sh`) should set `LOG_FILE` before calling `load_config()`
+  - Config file `LOG_FILE` settings can override the default monitor log, but not custom log files
+  - Pattern: `LOG_FILE="${LOGS_DIR}/custom-log.log"` before `load_config()` call
 
 ### Pattern: Safe Config File Parsing
 
@@ -2420,6 +2454,143 @@ command_that_might_fail 2>/dev/null  # Script exits if command fails!
 - Use `|| true` or `2>/dev/null || true` to prevent exit on expected failures
 - Always handle errors explicitly, don't rely on strict mode to hide them
 
+### Pattern: Validate Paths Before Deletion Operations
+
+**When to Use:** Scripts that perform destructive file/directory deletion operations (uninstall scripts, cleanup scripts)
+
+**Pattern:**
+```bash
+# ✅ GOOD: Validate installation directory path before deletion
+validate_install_dir_safety() {
+    local expected_dir="/data/vpn-monitor"
+
+    # Check INSTALL_DIR is not empty
+    if [[ -z "$INSTALL_DIR" ]]; then
+        log_error "INSTALL_DIR is empty - this is unsafe. Aborting uninstallation."
+        exit 1
+    fi
+
+    # Check INSTALL_DIR matches expected path exactly
+    if [[ "$INSTALL_DIR" != "$expected_dir" ]]; then
+        log_error "INSTALL_DIR path mismatch detected!"
+        log_error "Expected: $expected_dir"
+        log_error "Actual:   $INSTALL_DIR"
+        log_error "This is unsafe - aborting uninstallation to prevent accidental file deletion."
+        exit 1
+    fi
+
+    # Additional safety: ensure path doesn't contain dangerous patterns
+    if [[ "$INSTALL_DIR" == "/" ]]; then
+        log_error "INSTALL_DIR is root directory (/) - this is extremely unsafe. Aborting."
+        exit 1
+    fi
+
+    return 0
+}
+
+# Call validation before any deletion operations
+validate_install_dir_safety
+remove_installation_dir
+
+# ❌ BAD: No validation before deletion
+INSTALL_DIR="/data/vpn-monitor"  # Could be modified or empty
+rm -rf "$INSTALL_DIR"  # Dangerous if INSTALL_DIR is wrong!
+```
+
+**Key Points:**
+- Always validate paths before performing destructive operations (`rm -rf`, `rm -f`)
+- Check that paths are not empty before use
+- Validate paths match expected values exactly (exact string match, not prefix)
+- Use defense-in-depth: validate at multiple points (entry point and before deletion)
+- Exit immediately with clear error messages if validation fails
+- Never trust hardcoded paths without validation (paths could be modified)
+
+### Pattern: Protect Against Symlink Attacks in Deletion Operations
+
+**When to Use:** Scripts that delete files/directories that might contain symlinks
+
+**Pattern:**
+```bash
+# ✅ GOOD: Check symlinks point within intended directory before deletion
+for item in "$INSTALL_DIR"/*; do
+    if [[ ! -e "$item" ]]; then
+        continue
+    fi
+    # Safety check: ensure item is actually within INSTALL_DIR
+    # This prevents issues with symlinks or path traversal attempts
+    local item_realpath
+    if command -v readlink >/dev/null 2>&1; then
+        item_realpath=$(readlink -f "$item" 2>/dev/null || echo "$item")
+    else
+        item_realpath="$item"
+    fi
+    local install_dir_realpath
+    if command -v readlink >/dev/null 2>&1; then
+        install_dir_realpath=$(readlink -f "$INSTALL_DIR" 2>/dev/null || echo "$INSTALL_DIR")
+    else
+        install_dir_realpath="$INSTALL_DIR"
+    fi
+    # Check that item_realpath starts with install_dir_realpath followed by /
+    if [[ "$item_realpath" != "$install_dir_realpath"/* ]]; then
+        log_warn "Skipping item outside installation directory: $item"
+        continue
+    fi
+    # Safe to delete - item is within intended directory
+    rm -rf "$item" 2>/dev/null || true
+done
+
+# ❌ BAD: No symlink checking - could delete files outside intended directory
+for item in "$INSTALL_DIR"/*; do
+    rm -rf "$item"  # Dangerous if $item is a symlink pointing outside!
+done
+```
+
+**Key Points:**
+- Always resolve symlinks using `readlink -f` before checking if items are within intended directory
+- Check command availability before using `readlink` (may not be available on all systems)
+- Use pattern matching (`"$item_realpath" != "$install_dir_realpath"/*`) to verify path is within directory
+- Skip items that resolve outside the intended directory (log warning)
+- Only delete items that are confirmed to be within the intended directory
+
+### Pattern: Defense-in-Depth for Critical Operations
+
+**When to Use:** Any script that performs critical or destructive operations
+
+**Pattern:**
+```bash
+# ✅ GOOD: Validate at multiple points (defense-in-depth)
+main() {
+    # First validation: at script entry point
+    validate_install_dir_safety
+
+    # ... other operations ...
+
+    # Second validation: before deletion (defense-in-depth)
+    remove_installation_dir() {
+        # Re-validate INSTALL_DIR before deletion
+        if [[ "$INSTALL_DIR" != "/data/vpn-monitor" ]]; then
+            log_error "INSTALL_DIR validation failed in remove_installation_dir - aborting"
+            return 1
+        fi
+        # Proceed with deletion...
+    }
+}
+
+# ❌ BAD: Single point of validation (could be bypassed)
+main() {
+    validate_install_dir_safety
+    # If validation is bypassed or modified, no protection
+    remove_installation_dir
+}
+```
+
+**Key Points:**
+- Use multiple validation points for critical operations
+- Validate at script entry point (early failure)
+- Re-validate before critical operations (defense-in-depth)
+- Each validation point should be independent and check the same conditions
+- This prevents accidental deletion even if one validation point is bypassed
+
 ---
 
 ## Quoting and Variable Expansion Patterns
@@ -2625,6 +2796,43 @@ ip xfrm state  # May fail if ip not available
 - Log warnings when optional commands unavailable
 - Return errors when required commands missing
 
+### Pattern: Interactive User Input
+
+**When to Use:** Scripts that prompt users for input interactively
+
+**Pattern:**
+```bash
+# ✅ GOOD: Prompts go to stderr, don't interfere with stdin redirection
+echo "Enter location names for each IP pair:" >&2
+for ((i = 1; i <= count; i++)); do
+    read -r -p "Location $i name (e.g., NYC, DC, SF): " name
+    if [[ -z "$name" ]]; then
+        name="$i"
+    fi
+    names+=("$(sanitize_location_name "$name")")
+done
+
+# ✅ GOOD: Error messages to stderr
+echo "ERROR: Config file not found: $CONFIG_FILE" >&2
+
+# ❌ BAD: Prompt to stdout interferes with stdin redirection in tests
+echo "Enter location names for each IP pair:"  # Goes to stdout!
+read -r -p "Location name: " name  # Prompt text may be read as input
+```
+
+**Key Points:**
+- **Always redirect prompts and informational messages to stderr (`>&2`)** when using `read` to accept user input
+- This prevents prompts from interfering with stdin redirection in tests (heredoc input)
+- The `read -p` flag automatically writes to stderr, but any `echo` statements before `read` should also go to stderr
+- Error messages should always go to stderr (`>&2`)
+- User-facing informational messages can go to stdout, but prompts that precede `read` must go to stderr
+- This pattern ensures scripts work correctly both interactively and when stdin is redirected (e.g., in tests)
+
+**Why This Matters:**
+- When stdin is redirected (e.g., `script.sh <<EOF\ninput\nEOF`), any output to stdout before `read` can be consumed as input
+- Redirecting prompts to stderr keeps them visible to users while preventing them from interfering with input redirection
+- This is critical for testability - tests can provide input via heredoc without the prompt text being read as input
+
 ---
 
 ## Summary
@@ -2650,8 +2858,10 @@ This document consolidates code patterns used throughout the UDM VPN Monitor cod
 17. **Associative Arrays**: Use namerefs to pass arrays by reference, initialize properly
 18. **Variable Initialization**: Use conditional readonly for multi-source modules, provide default parameter values, pre-declare arrays (use `declare -gA` for global arrays to avoid scoping issues)
 19. **Bash Strict Mode**: Use `set -euo pipefail` in main scripts, handle errors explicitly in library modules
+    - **Deletion Safety**: Validate paths before deletion operations, protect against symlink attacks, use defense-in-depth
 20. **Quoting**: Always quote variable expansions, use `$()` for command substitution, quote heredoc delimiters appropriately
 21. **UDM Constraints**: Target UDM OS 4.3+, use `/data` for persistent storage, check command availability, provide fallbacks
+22. **Interactive Input**: Redirect prompts to stderr (`>&2`) before `read` to prevent interference with stdin redirection in tests
 
 For more detailed information about specific patterns, see:
 - `CODE_REVIEW_LESSONS_LEARNED.md` - Historical lessons learned from code reviews (includes bug context and how patterns were discovered)

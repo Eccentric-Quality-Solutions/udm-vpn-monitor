@@ -31,7 +31,40 @@ ISSUES_FOUND=0
 TEMP_ISSUES=$(mktemp)
 trap 'rm -f "$TEMP_ISSUES" "$TEMP_ISSUES.issues"' EXIT
 
-# Function to audit a single test file using Python
+# Audit a single test file for mock cleanup compliance
+#
+# Analyzes a BATS test file to ensure all add_mock_to_path() calls have
+# corresponding remove_mock_from_path() calls. This prevents test pollution
+# and ensures proper test isolation. Uses Python for reliable parsing of test
+# file structure and mock call detection.
+#
+# The function processes each test case in the file, counting add_mock_to_path()
+# and remove_mock_from_path() calls within each test. Tests with mismatched
+# counts are flagged as issues.
+#
+# Arguments:
+#   $1: Path to test file to audit
+#
+# Returns:
+#   0: Always succeeds (errors are logged but don't fail the function)
+#
+# Side effects:
+#   - Prints audit results to stdout (test status, line numbers)
+#   - Writes statistics to TEMP_ISSUES file (pipe-delimited format)
+#   - Writes issue details to TEMP_ISSUES.issues file
+#   - Updates global variables: TOTAL_TESTS, TESTS_WITH_MOCKS,
+#     TESTS_MISSING_CLEANUP, TOTAL_ADD_CALLS, TOTAL_REMOVE_CALLS, ISSUES_FOUND
+#
+# Examples:
+#   audit_test_file "tests/test_config_validation.sh"
+#   # Outputs: "Auditing: tests/test_config_validation.sh"
+#   #          "  ✓ Test 'test_name' (line 10): 2 add, 2 remove"
+#
+# Note:
+#   Requires Python 3 for parsing test files
+#   Requires TEMP_ISSUES and TEMP_ISSUES.issues files to exist
+#   Global variables must be initialized before calling this function
+#   Clears TEMP_ISSUES file after processing for next iteration
 audit_test_file() {
 	local test_file="$1"
 
@@ -187,7 +220,40 @@ PYTHON_SCRIPT
 	>"$TEMP_ISSUES"
 }
 
-# Main execution
+# Main execution function
+#
+# Orchestrates the mock cleanup audit process. Collects test files to audit
+# (either from command-line arguments or by discovering all test files in the
+# tests/ directory), runs the audit on each file, and displays a summary of
+# results. Exits with error code if any issues are found.
+#
+# Arguments:
+#   $@: Optional list of specific test files to audit. If not provided,
+#       discovers all test files in tests/ directory (excluding bats-file
+#       directory and fixture files).
+#
+# Returns:
+#   0: All tests have proper mock cleanup
+#   1: One or more tests are missing cleanup calls
+#
+# Side effects:
+#   - Creates and manages TEMP_ISSUES and TEMP_ISSUES.issues temporary files
+#   - Prints audit progress and results to stdout
+#   - Prints colored output (green for success, red for issues, yellow for warnings)
+#   - Exits script with appropriate exit code
+#
+# Examples:
+#   main
+#   # Audits all test files in tests/ directory
+#
+#   main "tests/test_config.sh" "tests/test_detection.sh"
+#   # Audits only the specified test files
+#
+# Note:
+#   Requires find command to discover test files
+#   Requires TEMP_ISSUES and TEMP_ISSUES.issues files (created at script level)
+#   Skips files in bats-file/ and fixtures/ directories
+#   Only processes files matching test_*.sh pattern
 main() {
 	local test_files=()
 

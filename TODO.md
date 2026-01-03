@@ -21,6 +21,7 @@ This file tracks planned improvements and tasks for the UDM VPN Monitor project.
 **Action:** Consider adding tests to verify reference links are valid  
 **Action:** Schedule periodic reviews to ensure documentation stays aligned with recommendations
 
+
 ## Low Priority
 
 ### 4. Refactor Long Functions (Opportunistic)
@@ -42,6 +43,20 @@ This file tracks planned improvements and tasks for the UDM VPN Monitor project.
    - Overflow scenarios (addition exceeding max timestamp)
    - Underflow scenarios (subtraction resulting in negative)
    - Boundary conditions (year 2100 limit, zero values)
+
+### 7. Add Tests for anonymize-logs.sh
+**Source:** Code Review (ANONYMIZE_LOGS_REVIEW.md)  
+**Action:** Create test file `tests/test_anonymize_logs.sh` similar to `test_analyze_logs.sh` with tests for:
+   - Basic anonymization (IPs and locations)
+   - Consistency across multiple runs
+   - Empty file handling
+   - Missing file error handling
+   - Unreadable file error handling
+   - Help/usage output
+   - Verbose mode output
+   - Output to file vs stdout
+**Effort:** MEDIUM (create test file with 8-10 test cases)  
+**Benefit:** Ensures anonymization script works correctly and maintains consistency
 
 ## Optional / Future
 

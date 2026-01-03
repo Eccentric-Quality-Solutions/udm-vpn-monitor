@@ -199,6 +199,13 @@ get_config_value() {
 # - Deprecated variables (in existing config but not in template)
 # - Common variables (in both)
 #
+# Special handling for LOCATION variables:
+#   LOCATION_*_EXTERNAL and LOCATION_*_INTERNAL variables are pattern-matched.
+#   If the template has any LOCATION_*_EXTERNAL or LOCATION_*_INTERNAL variable,
+#   customer-specific LOCATION variables (e.g., LOCATION_CUSTOMER1_EXTERNAL) are
+#   considered valid even if they don't exactly match template variables (e.g., LOCATION_NYC_EXTERNAL).
+#   This allows customers to use their own location names without false deprecation warnings.
+#
 # Returns:
 #   0: Comparison completed successfully
 #   1: Error during comparison
@@ -298,6 +305,20 @@ main() {
 		fi
 	done
 
+	# Check if template has any LOCATION variable matching a pattern
+	# This is used to avoid flagging customer-specific LOCATION variables as deprecated
+	# when the template only has example LOCATION variables (e.g., LOCATION_NYC_EXTERNAL)
+	has_template_location_external=0
+	has_template_location_internal=0
+	for var_name in "${!template_vars_map[@]}"; do
+		if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+			has_template_location_external=1
+		fi
+		if [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+			has_template_location_internal=1
+		fi
+	done
+
 	# Find new variables (in template but not in existing)
 	# Iterate through unique template variables only (use map keys to avoid duplicates)
 	for var_name in "${!template_vars_map[@]}"; do
@@ -311,9 +332,28 @@ main() {
 	# Find deprecated variables (in existing but not in template)
 	# Iterate through unique existing variables only (use map keys to avoid duplicates)
 	for var_name in "${!existing_vars_map[@]}"; do
-		if [[ -z "${template_vars_map[$var_name]:-}" ]]; then
-			deprecated_vars+=("$var_name")
+		# Skip if variable exists in template (exact match)
+		if [[ -n "${template_vars_map[$var_name]:-}" ]]; then
+			continue
 		fi
+
+		# For LOCATION variables, check if template has any matching pattern variable
+		# This allows customer-specific location names (e.g., LOCATION_CUSTOMER1_EXTERNAL)
+		# to be valid even if template only has example locations (e.g., LOCATION_NYC_EXTERNAL)
+		if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+			# Template has LOCATION_*_EXTERNAL pattern, so this is valid
+			if [[ $has_template_location_external -eq 1 ]]; then
+				continue
+			fi
+		elif [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+			# Template has LOCATION_*_INTERNAL pattern, so this is valid
+			if [[ $has_template_location_internal -eq 1 ]]; then
+				continue
+			fi
+		fi
+
+		# Variable is not in template and doesn't match a valid pattern
+		deprecated_vars+=("$var_name")
 	done
 
 	# Report results

@@ -32,6 +32,49 @@ UNINSTALL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "${UNINSTALL_SCRIPT_DIR}/lib/common.sh"
 
+# Validate installation directory path is safe
+#
+# Validates that INSTALL_DIR is exactly the expected path to prevent
+# accidental deletion of unintended files. This is a critical safety check
+# that ensures we never delete files outside the intended installation directory.
+#
+# Returns:
+#   0: INSTALL_DIR is safe (matches expected path)
+#   1: INSTALL_DIR is unsafe (doesn't match expected path or is empty)
+#
+# Side effects:
+#   Exits script with error if INSTALL_DIR is unsafe
+#
+# Note:
+#   This prevents deletion if INSTALL_DIR has been modified or is empty
+validate_install_dir_safety() {
+	local expected_dir="/data/vpn-monitor"
+
+	# Check INSTALL_DIR is not empty
+	if [[ -z "$INSTALL_DIR" ]]; then
+		log_error "INSTALL_DIR is empty - this is unsafe. Aborting uninstallation."
+		exit 1
+	fi
+
+	# Check INSTALL_DIR matches expected path exactly
+	if [[ "$INSTALL_DIR" != "$expected_dir" ]]; then
+		log_error "INSTALL_DIR path mismatch detected!"
+		log_error "Expected: $expected_dir"
+		log_error "Actual:   $INSTALL_DIR"
+		log_error "This is unsafe - aborting uninstallation to prevent accidental file deletion."
+		exit 1
+	fi
+
+	# Additional safety: ensure path doesn't contain dangerous patterns
+	# Check it's not root directory
+	if [[ "$INSTALL_DIR" == "/" ]]; then
+		log_error "INSTALL_DIR is root directory (/) - this is extremely unsafe. Aborting."
+		exit 1
+	fi
+
+	return 0
+}
+
 # Check if installation exists
 #
 # Verifies that the VPN monitor installation directory exists.
@@ -357,6 +400,34 @@ handle_state_dir() {
 	return 0
 }
 
+# Build preserved items list string for logging
+#
+# Converts an array of preserved item names into a comma-separated string
+# for use in log messages.
+#
+# Arguments:
+#   $@: Array of preserved item names (passed as separate arguments)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints comma-separated list of preserved items to stdout
+#
+# Examples:
+#   preserved_list=$(build_preserved_list_string "${preserve_items[@]}")
+build_preserved_list_string() {
+	local preserved_list=""
+	for item in "$@"; do
+		if [[ -n "$preserved_list" ]]; then
+			preserved_list="${preserved_list}, ${item}"
+		else
+			preserved_list="$item"
+		fi
+	done
+	echo "$preserved_list"
+}
+
 # Remove installation directory
 #
 # Removes the installation directory and its contents.
@@ -372,6 +443,13 @@ handle_state_dir() {
 #   - Deletes ${INSTALL_DIR} and all contents (unless items are kept)
 #   - If items are kept, removes all files except preserved items
 remove_installation_dir() {
+	# Safety check: re-validate INSTALL_DIR before deletion (defense in depth)
+	if [[ "$INSTALL_DIR" != "/data/vpn-monitor" ]]; then
+		log_error "INSTALL_DIR validation failed in remove_installation_dir - aborting"
+		log_error "Expected: /data/vpn-monitor, Got: $INSTALL_DIR"
+		return 1
+	fi
+
 	# Build list of items to preserve
 	local preserve_items=()
 	if [[ $KEEP_CONFIG_IN_PLACE -eq 1 ]]; then
@@ -386,14 +464,8 @@ remove_installation_dir() {
 
 	if [[ ${#preserve_items[@]} -gt 0 ]]; then
 		# Keep some items in-place, remove everything else
-		local preserved_list=""
-		for item in "${preserve_items[@]}"; do
-			if [[ -n "$preserved_list" ]]; then
-				preserved_list="${preserved_list}, ${item}"
-			else
-				preserved_list="$item"
-			fi
-		done
+		local preserved_list
+		preserved_list=$(build_preserved_list_string "${preserve_items[@]}")
 		log_info "Removing files from installation directory (keeping: ${preserved_list}): $INSTALL_DIR"
 
 		if [[ -d "$INSTALL_DIR" ]]; then
@@ -426,6 +498,27 @@ remove_installation_dir() {
 			# Use a simpler approach: iterate and remove items that aren't preserved
 			for item in "$INSTALL_DIR"/*; do
 				if [[ ! -e "$item" ]]; then
+					continue
+				fi
+				# Safety check: ensure item is actually within INSTALL_DIR
+				# This prevents issues with symlinks or path traversal attempts
+				# Use readlink -f if available to resolve symlinks, otherwise use item path directly
+				local item_realpath
+				if command -v readlink >/dev/null 2>&1; then
+					item_realpath=$(readlink -f "$item" 2>/dev/null || echo "$item")
+				else
+					item_realpath="$item"
+				fi
+				local install_dir_realpath
+				if command -v readlink >/dev/null 2>&1; then
+					install_dir_realpath=$(readlink -f "$INSTALL_DIR" 2>/dev/null || echo "$INSTALL_DIR")
+				else
+					install_dir_realpath="$INSTALL_DIR"
+				fi
+				# Check that item_realpath starts with install_dir_realpath followed by /
+				# This ensures the item is actually within the installation directory
+				if [[ "$item_realpath" != "$install_dir_realpath"/* ]]; then
+					log_warn "Skipping item outside installation directory: $item"
 					continue
 				fi
 				local item_name
@@ -693,15 +786,12 @@ verify_uninstallation() {
 			# Count top-level items in directory
 			local top_level_count
 			top_level_count=$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 | wc -l)
+
+			# Build preserved list string for logging
+			local preserved_list
+			preserved_list=$(build_preserved_list_string "${preserved_items[@]}")
+
 			if [[ $top_level_count -eq $expected_count ]] && [[ $actual_count -eq $expected_count ]]; then
-				local preserved_list=""
-				for item in "${preserved_items[@]}"; do
-					if [[ -n "$preserved_list" ]]; then
-						preserved_list="${preserved_list}, ${item}"
-					else
-						preserved_list="$item"
-					fi
-				done
 				log_info "Installation directory cleaned (preserved: ${preserved_list})"
 			else
 				log_error "Installation directory should only contain preserved items (${preserved_list})"
@@ -962,6 +1052,9 @@ main() {
 
 	check_root
 
+	# Validate INSTALL_DIR is safe before any deletion operations
+	validate_install_dir_safety
+
 	# Check if installation exists
 	if ! check_installation; then
 		# Still try to remove cron entry in case it exists
@@ -1026,5 +1119,8 @@ main() {
 	fi
 }
 
-# Run main
-main "$@"
+# Run main only if script is executed directly (not sourced)
+# This allows the script to be sourced for testing without executing main()
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+	main "$@"
+fi

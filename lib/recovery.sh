@@ -544,19 +544,67 @@ attempt_xfrm_recovery() {
 	# Delete each parsed SA
 	for sa_entry in "${sa_list[@]}"; do
 		IFS='|' read -r sa_src sa_dst sa_proto sa_spi <<<"$sa_entry"
-		if ip xfrm state delete src "$sa_src" dst "$sa_dst" proto "$sa_proto" spi "$sa_spi" 2>/dev/null; then
+
+		# Capture stderr and exit code for diagnostic purposes
+		local delete_stderr
+		local delete_exit_code
+		delete_stderr=$(ip xfrm state delete src "$sa_src" dst "$sa_dst" proto "$sa_proto" spi "$sa_spi" 2>&1)
+		delete_exit_code=$?
+
+		if [[ $delete_exit_code -eq 0 ]]; then
 			log_message "INFO" "xfrm recovery: Deleted SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi"
 			((deleted_count++))
 		else
-			handle_error "WARNING" "xfrm recovery: Failed to delete SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi"
+			# Deletion failed - gather diagnostic information
+			local diagnostic_info="exit_code=$delete_exit_code"
+
+			# Add stderr output if present
+			if [[ -n "$delete_stderr" ]]; then
+				diagnostic_info="$diagnostic_info, stderr=\"$delete_stderr\""
+			fi
+
+			# Check if SA still exists (could indicate race condition or permissions issue)
+			# Query xfrm state for this peer and check if the specific SA (src+dst+proto+spi) still exists
+			# Use get_xfrm_state_for_peer to get full SA blocks, then check if all selectors appear together
+			local peer_xfrm_output
+			if peer_xfrm_output=$(get_xfrm_state_for_peer "$sa_dst" 2>/dev/null); then
+				# Check if all four selectors appear in the output (they may be on different lines)
+				# This is a simple check - if all selectors are present, the SA likely still exists
+				if [[ "$peer_xfrm_output" == *"src $sa_src"* ]] &&
+					[[ "$peer_xfrm_output" == *"dst $sa_dst"* ]] &&
+					[[ "$peer_xfrm_output" == *"proto $sa_proto"* ]] &&
+					[[ "$peer_xfrm_output" == *"spi $sa_spi"* ]]; then
+					diagnostic_info="$diagnostic_info, sa_still_exists=true"
+				else
+					diagnostic_info="$diagnostic_info, sa_still_exists=false"
+				fi
+			else
+				# Failed to query xfrm state - can't determine if SA exists
+				diagnostic_info="$diagnostic_info, sa_still_exists=unknown"
+			fi
+
+			# Log detailed diagnostic information
+			handle_error "WARNING" "xfrm recovery: Failed to delete SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi ($diagnostic_info)"
 			((failed_count++))
 		fi
 	done
 
 	# Also delete policies for this peer (less critical, but helps cleanup)
 	# Policies use different format, try to delete by destination
-	if ip xfrm policy delete dst "$peer_ip" 2>/dev/null; then
+	local policy_stderr
+	local policy_exit_code
+	policy_stderr=$(ip xfrm policy delete dst "$peer_ip" 2>&1)
+	policy_exit_code=$?
+
+	if [[ $policy_exit_code -eq 0 ]]; then
 		log_message "INFO" "xfrm recovery: Deleted xfrm policy for dst=$peer_ip"
+	else
+		# Policy deletion failed - log diagnostic info (non-fatal, so use INFO level)
+		local policy_diagnostic="exit_code=$policy_exit_code"
+		if [[ -n "$policy_stderr" ]]; then
+			policy_diagnostic="$policy_diagnostic, stderr=\"$policy_stderr\""
+		fi
+		[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "xfrm recovery: Failed to delete xfrm policy for dst=$peer_ip ($policy_diagnostic) - non-fatal, continuing"
 	fi
 
 	# If no SAs were deleted, check if any existed
@@ -969,6 +1017,7 @@ select_recovery_strategy() {
 #
 # Arguments:
 #   $1: Peer IP address to clean up
+#   $2: Location name (optional, used for recovery method tracking)
 #
 # Returns:
 #   0: Recovery succeeded (recovery actions completed successfully)
@@ -984,10 +1033,11 @@ select_recovery_strategy() {
 #   - If xfrm recovery enabled: Attempts xfrm-based recovery (surgical, per-connection)
 #   - If xfrm recovery fails or disabled: Calls ipsec reload (affects all connections, not surgical)
 #   - May temporarily disrupt VPN connections (scope depends on xfrm recovery availability)
+#   - Stores recovery method used for later inclusion in "VPN restored" message
 #   - Logs all actions and results
 #
 # Examples:
-#   surgical_cleanup "203.0.113.1"
+#   surgical_cleanup "203.0.113.1" "NYC"
 #   # If xfrm recovery enabled:
 #   #   Attempts: xfrm-based per-connection recovery (surgical)
 #   #   If xfrm fails: Runs ipsec reload (affects all tunnels)
@@ -1000,6 +1050,7 @@ select_recovery_strategy() {
 #   Requires warn_if_missing, log_message, and attempt_xfrm_recovery to be set
 surgical_cleanup() {
 	local peer_ip="$1"
+	local location_name="${2:-}"
 	local peer_display
 	peer_display=$(format_peer_display "$peer_ip")
 	log_message "INFO" "Attempting surgical SA cleanup for $peer_display"
@@ -1020,6 +1071,10 @@ surgical_cleanup() {
 		case "$RECOVERY_STRATEGY" in
 		"xfrm")
 			log_message "INFO" "Attempting xfrm-based per-connection recovery for $peer_ip"
+			# Store recovery method before attempting recovery
+			if [[ -n "$location_name" ]]; then
+				store_recovery_method "$location_name" "$peer_ip" "xfrm"
+			fi
 			if attempt_xfrm_recovery "$peer_ip"; then
 				log_message "INFO" "xfrm-based recovery completed successfully for $peer_ip"
 				log_message "INFO" "Surgical cleanup completed for $peer_ip (via xfrm)"
@@ -1039,6 +1094,11 @@ surgical_cleanup() {
 			;;
 		"ipsec_reload")
 			log_message "INFO" "Attempting ipsec reload (affects all tunnels)"
+			# Store recovery method before attempting recovery
+			local recovery_method_used="ipsec_reload"
+			if [[ -n "$location_name" ]]; then
+				store_recovery_method "$location_name" "$peer_ip" "$recovery_method_used"
+			fi
 			local reload_start_time
 			reload_start_time=$(get_unix_timestamp)
 			local command_succeeded=0
@@ -1048,6 +1108,11 @@ surgical_cleanup() {
 			else
 				local reload_exit_code=$?
 				handle_error "WARNING" "ipsec reload failed (exit code: ${reload_exit_code}), attempting ipsec restart"
+				# Update recovery method if fallback to restart
+				recovery_method_used="ipsec_restart"
+				if [[ -n "$location_name" ]]; then
+					store_recovery_method "$location_name" "$peer_ip" "$recovery_method_used"
+				fi
 				if ipsec restart >/dev/null 2>&1; then
 					command_succeeded=1
 					log_message "INFO" "Successfully restarted IPsec service via ipsec restart"
@@ -1116,6 +1181,7 @@ surgical_cleanup() {
 #
 # Arguments:
 #   $1: Optional peer IP address for per-connection recovery (if provided and xfrm enabled)
+#   $2: Location name (optional, used for recovery method tracking)
 #
 # Returns:
 #   0: Restart successful (command executed successfully)
@@ -1133,14 +1199,15 @@ surgical_cleanup() {
 #   - If xfrm recovery fails or disabled: Affects ALL IPsec tunnels
 #   - Temporarily disrupts VPN tunnels (scope depends on recovery method)
 #   - Sets cooldown period (COOLDOWN_MINUTES) to prevent immediate re-restarts
+#   - Stores recovery method used for later inclusion in "VPN restored" message
 #   - Appends command output to LOG_FILE (for full restart only)
 #   - Logs all actions and results
 #
 # Examples:
-#   if full_restart; then
+#   if full_restart "" "NYC"; then
 #       echo "VPN restarted successfully"
 #   fi
-#   if full_restart "203.0.113.1"; then
+#   if full_restart "203.0.113.1" "NYC"; then
 #       echo "Per-connection recovery attempted"
 #   fi
 #
@@ -1155,9 +1222,11 @@ surgical_cleanup() {
 #   Command output is both displayed and appended to log file (for full restart)
 full_restart() {
 	local peer_ip="${1:-}"
+	local location_name="${2:-}"
 
 	if ! check_rate_limit; then
-		handle_error "ERROR" "Rate limit exceeded, skipping Tier 3 recovery" 0
+		# check_rate_limit() already logs detailed warning with reset time, countdown, and restart list
+		handle_error "ERROR" "Rate limit exceeded, skipping Tier 3 recovery (see previous warning for reset time and details)" 0
 		return 1
 	fi
 
@@ -1175,6 +1244,10 @@ full_restart() {
 		case "$RECOVERY_STRATEGY" in
 		"xfrm")
 			log_message "INFO" "Tier 3: Attempting xfrm-based per-connection recovery for $peer_ip"
+			# Store recovery method before attempting recovery
+			if [[ -n "$location_name" ]] && [[ -n "$peer_ip" ]]; then
+				store_recovery_method "$location_name" "$peer_ip" "xfrm"
+			fi
 			if attempt_xfrm_recovery "$peer_ip"; then
 				log_message "INFO" "Tier 3: xfrm-based per-connection recovery successful for $peer_ip"
 				# Record restart for rate limiting (even though it's per-connection)
@@ -1195,6 +1268,11 @@ full_restart() {
 			;;
 		"ipsec_restart")
 			handle_error "WARNING" "Tier 3: Performing full IPsec restart (affects all VPN tunnels)"
+
+			# Store recovery method before attempting recovery
+			if [[ -n "$location_name" ]] && [[ -n "$peer_ip" ]]; then
+				store_recovery_method "$location_name" "$peer_ip" "ipsec_restart"
+			fi
 
 			# Record restart
 			record_restart
@@ -1306,6 +1384,161 @@ full_restart() {
 	return 0
 }
 
+# Store recovery method used for a location
+#
+# Stores the recovery method that was used when recovery was attempted.
+# This allows the "VPN restored" message to include which recovery method succeeded.
+#
+# Arguments:
+#   $1: Location name (required, sanitized)
+#   $2: External peer IP address
+#   $3: Recovery method name ("xfrm", "ipsec_reload", "ipsec_restart")
+#
+# Returns:
+#   0: Always succeeds (errors are non-critical)
+#
+# Side effects:
+#   - Creates/updates recovery method state file using abstraction layer
+#
+# Examples:
+#   store_recovery_method "NYC" "203.0.113.1" "xfrm"
+#   store_recovery_method "NYC" "203.0.113.1" "ipsec_reload"
+#
+# Note:
+#   Requires set_peer_state_non_critical from state.sh
+#   Uses "recovery_method" as the state key
+store_recovery_method() {
+	local location_name="$1"
+	local peer_ip="$2"
+	local recovery_method="$3"
+
+	# Validate recovery method
+	if [[ -z "$recovery_method" ]]; then
+		return 0
+	fi
+
+	# Store using abstraction layer (non-critical - failures are logged but don't interrupt)
+	if command -v set_peer_state_non_critical >/dev/null 2>&1; then
+		set_peer_state_non_critical "$location_name" "$peer_ip" "recovery_method" "$recovery_method"
+	fi
+
+	return 0
+}
+
+# Get recovery method used for a location
+#
+# Retrieves the recovery method that was stored when recovery was attempted.
+# Returns empty string if no recovery method was stored.
+#
+# Arguments:
+#   $1: Location name (required, sanitized)
+#   $2: External peer IP address
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints recovery method to stdout if found, empty string otherwise
+#
+# Examples:
+#   method=$(get_recovery_method "NYC" "203.0.113.1")
+#   if [[ -n "$method" ]]; then
+#       echo "Recovery method: $method"
+#   fi
+#
+# Note:
+#   Requires get_peer_state from state.sh
+#   Uses "recovery_method" as the state key
+get_recovery_method() {
+	local location_name="$1"
+	local peer_ip="$2"
+	local recovery_method=""
+
+	if command -v get_peer_state >/dev/null 2>&1; then
+		recovery_method=$(get_peer_state "$location_name" "$peer_ip" "recovery_method" "")
+	fi
+
+	echo "$recovery_method"
+	return 0
+}
+
+# Clear recovery method for a location
+#
+# Removes the stored recovery method after it has been logged.
+# This prevents stale recovery method information from being displayed.
+#
+# Arguments:
+#   $1: Location name (required, sanitized)
+#   $2: External peer IP address
+#
+# Returns:
+#   0: Always succeeds (errors are non-critical)
+#
+# Side effects:
+#   - Deletes recovery method state file using abstraction layer
+#
+# Examples:
+#   clear_recovery_method "NYC" "203.0.113.1"
+#
+# Note:
+#   Requires delete_peer_state from state.sh
+#   Uses "recovery_method" as the state key
+clear_recovery_method() {
+	local location_name="$1"
+	local peer_ip="$2"
+
+	if command -v delete_peer_state >/dev/null 2>&1; then
+		delete_peer_state "$location_name" "$peer_ip" "recovery_method" || true
+	fi
+
+	return 0
+}
+
+# Format recovery method for display
+#
+# Formats a recovery method name for display in log messages.
+# Converts internal method names to user-friendly descriptions.
+#
+# Arguments:
+#   $1: Recovery method name ("xfrm", "ipsec_reload", "ipsec_restart")
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints formatted recovery method description to stdout
+#
+# Examples:
+#   display=$(format_recovery_method "xfrm")
+#   # Returns: "xfrm-based recovery"
+#
+# Note:
+#   Returns "unknown recovery method" for unrecognized methods
+format_recovery_method() {
+	local method="$1"
+
+	case "$method" in
+	"xfrm")
+		echo "xfrm-based recovery"
+		;;
+	"ipsec_reload")
+		echo "ipsec reload"
+		;;
+	"ipsec_restart")
+		echo "ipsec restart"
+		;;
+	*)
+		if [[ -n "$method" ]]; then
+			echo "$method"
+		else
+			echo "unknown recovery method"
+		fi
+		;;
+	esac
+
+	return 0
+}
+
 # Format peer display name with optional connection name
 #
 # Formats a peer IP address for display, optionally including the connection name
@@ -1395,17 +1628,39 @@ monitor_location() {
 		fi
 
 		if [[ "$failure_count" -gt 0 ]] || [[ $had_failure_type -eq 1 ]]; then
+			# Check if a recovery method was used (stored when recovery was attempted)
+			local recovery_method=""
+			recovery_method=$(get_recovery_method "$location_name" "$external_peer_ip")
+			local recovery_method_display=""
+			if [[ -n "$recovery_method" ]]; then
+				recovery_method_display=$(format_recovery_method "$recovery_method")
+			fi
+
+			# Log recovery success with method if available
 			if [[ "$failure_count" -gt 0 ]]; then
-				log_message "INFO" "${VPN_NAME:-VPN} recovered for location $location_name ($external_peer_ip) after $failure_count failures"
+				if [[ -n "$recovery_method_display" ]]; then
+					log_message "INFO" "${VPN_NAME:-VPN} restored for location $location_name ($external_peer_ip) after $failure_count failures (recovery method: $recovery_method_display)"
+				else
+					log_message "INFO" "${VPN_NAME:-VPN} recovered for location $location_name ($external_peer_ip) after $failure_count failures"
+				fi
 				reset_failure_count "$location_name" "$external_peer_ip"
 			else
-				log_message "INFO" "${VPN_NAME:-VPN} recovered for location $location_name ($external_peer_ip)"
+				if [[ -n "$recovery_method_display" ]]; then
+					log_message "INFO" "${VPN_NAME:-VPN} restored for location $location_name ($external_peer_ip) (recovery method: $recovery_method_display)"
+				else
+					log_message "INFO" "${VPN_NAME:-VPN} recovered for location $location_name ($external_peer_ip)"
+				fi
 			fi
 
 			# Clear failure type file on recovery
 			# Use abstraction layer to ensure consistent path format
 			if [[ -n "$failure_type_file" ]] && [[ -f "$failure_type_file" ]]; then
 				rm -f "$failure_type_file" 2>/dev/null || true
+			fi
+
+			# Clear recovery method after logging (prevents stale information)
+			if [[ -n "$recovery_method" ]]; then
+				clear_recovery_method "$location_name" "$external_peer_ip"
 			fi
 		else
 			# VPN is healthy with no previous failures - log periodic status update
@@ -1526,7 +1781,7 @@ monitor_location() {
 				fi
 			else
 				handle_error "WARNING" "Tier 2: Attempting surgical SA cleanup for location $location_name ($external_peer_ip)"
-				surgical_cleanup "$external_peer_ip"
+				surgical_cleanup "$external_peer_ip" "$location_name"
 			fi
 		fi
 
@@ -1535,6 +1790,7 @@ monitor_location() {
 			recovery_attempted=1
 			if [[ "${NO_ESCALATE:-0}" -eq 1 ]]; then
 				if ! check_rate_limit; then
+					# check_rate_limit() already logs "Rate limit exceeded" via handle_error
 					log_message "INFO" "Tier 3: Would attempt IPsec restart (skipped in fake mode, rate limit would prevent)"
 				else
 					# In fake mode, still record restart for cleanup purposes (prevents restart count file from growing)
@@ -1553,7 +1809,7 @@ monitor_location() {
 				fi
 			else
 				handle_error "ERROR" "Tier 3: Attempting IPsec restart for location $location_name ($external_peer_ip)" 0
-				if full_restart "$external_peer_ip"; then
+				if full_restart "$external_peer_ip" "$location_name"; then
 					reset_failure_count "$location_name" "$external_peer_ip"
 				fi
 			fi

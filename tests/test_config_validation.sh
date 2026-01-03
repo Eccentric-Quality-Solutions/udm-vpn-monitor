@@ -449,13 +449,13 @@ EOF
 	# Note: The actual "log_message unavailable" scenario is hard to test directly because detection.sh provides
 	# a fallback log_message function. However, the code's check for log_message availability ensures test compatibility.
 	# This test verifies that existing tests work correctly, which demonstrates the test-friendly behavior.
-	
+
 	# This test serves as documentation that the route setup validation failure behavior
 	# is designed to be test-friendly. The actual behavior is verified by:
 	# 1. Test "validate_config calls route setup when routes are needed" - verifies route setup is called
 	# 2. Test "validate_config fails when route setup fails (main execution path)" - verifies failure in main path
 	# 3. Existing tests that work without route setup mocks - demonstrates test context compatibility
-	
+
 	# Verify that tests can run with routes needed but route setup mocked to succeed
 	# (This is what most existing tests do)
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
@@ -606,10 +606,14 @@ EOF
 	export LOG_FILE="$log_file"
 	export ENABLE_PING_CHECK=1
 	export LOCAL_UDM_IP="10.0.0.1"
-	export NO_ESCALATE=1
+	enable_fake_mode
 
-	# Load config to populate LOCATIONS array
+	# Load config to populate config variables
 	load_config
+	
+	# Parse location config to populate LOCATIONS array
+	# This is needed because load_config only loads variables, it doesn't parse location-based config
+	parse_location_config
 
 	# Verify detection.sh functions are not available (they shouldn't be since we didn't source detection.sh)
 	# This simulates the scenario where config.sh is sourced independently
@@ -743,7 +747,7 @@ EOF
 	export LOG_FILE="$log_file"
 	export ENABLE_PING_CHECK=1
 	export LOCAL_UDM_IP="10.0.0.1"
-	export NO_ESCALATE=1
+	enable_fake_mode
 
 	# Load config
 	load_config

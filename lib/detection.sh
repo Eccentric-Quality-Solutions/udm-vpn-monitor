@@ -409,28 +409,47 @@ extract_byte_counter() {
 	local xfrm_output="$1"
 	local bytes=""
 
-	# Find the line containing "lifetime current:"
-	local lifetime_line
-	lifetime_line=$(echo "$xfrm_output" | grep "lifetime current:" | head -1)
+	# UDM OS format: lifetime current: appears after lifetime config:, with bytes on next line
+	# Format: "lifetime current:" followed by "  39492(bytes), 609(packets)" on next line
+	# Example:
+	#   lifetime current:
+	#     39492(bytes), 609(packets)
+	#     add 2026-01-03 12:19:25 use 2026-01-03 12:19:34
 
-	if [[ -z "$lifetime_line" ]]; then
+	# Find "lifetime current:" section (get context lines for multi-line format)
+	local lifetime_section
+	lifetime_section=$(echo "$xfrm_output" | grep -A 5 "lifetime current:" | head -6)
+
+	if [[ -z "$lifetime_section" ]]; then
+		# No lifetime section found - log debug info if enabled
+		[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "extract_byte_counter: No 'lifetime current:' section found in xfrm output for peer"
 		return 1
 	fi
 
-	# Parse the lifetime line more robustly
-	# Format examples:
-	#   "lifetime current: 123456 bytes, 789 packets"
-	#   "lifetime current: 123456 bytes"
-	#   "lifetime current: 123456 bytes, 789 packets, 123 seconds"
+	# Debug: log the lifetime section if DEBUG enabled
+	[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "extract_byte_counter: Found lifetime section: $(echo "$lifetime_section" | head -3 | tr '\n' ' ')"
 
-	# Extract the number before "bytes" that comes after "lifetime current:"
-	# Use a more specific pattern: match digits immediately before "bytes" keyword
-	# This avoids matching other numbers in the line
-	if [[ "$lifetime_line" =~ lifetime[[:space:]]+current:[[:space:]]+([0-9]+)[[:space:]]+bytes ]]; then
-		bytes="${BASH_REMATCH[1]}"
-	else
-		# Fallback: try sed pattern matching
-		bytes=$(echo "$lifetime_line" | sed -n 's/.*lifetime[[:space:]]*current:[[:space:]]*\([0-9]*\)[[:space:]]*bytes.*/\1/p' 2>/dev/null || echo "")
+	# Primary method: UDM OS format - look for line with "N(bytes)" after "lifetime current:"
+	# This handles the format: "  39492(bytes), 609(packets)"
+	local bytes_line
+	bytes_line=$(echo "$lifetime_section" | grep -E "[0-9]+\(bytes\)" | head -1)
+	if [[ -n "$bytes_line" ]]; then
+		# Extract number before "(bytes)" - format: "  39492(bytes)" or "  0(bytes)"
+		if [[ "$bytes_line" =~ ([0-9]+)\(bytes\) ]]; then
+			bytes="${BASH_REMATCH[1]}"
+		fi
+	fi
+
+	# Fallback: Single-line format "lifetime current: 123456 bytes" (in case format differs)
+	if [[ -z "$bytes" ]] || [[ ! "$bytes" =~ ^[0-9]+$ ]]; then
+		local lifetime_line
+		lifetime_line=$(echo "$lifetime_section" | grep "lifetime current:" | head -1)
+		if [[ -n "$lifetime_line" ]]; then
+			# Extract the number before "bytes" that comes after "lifetime current:"
+			if [[ "$lifetime_line" =~ lifetime[[:space:]]+current:[[:space:]]+([0-9]+)[[:space:]]+bytes ]]; then
+				bytes="${BASH_REMATCH[1]}"
+			fi
+		fi
 	fi
 
 	# Validate extracted value
@@ -537,7 +556,21 @@ get_xfrm_state_for_peer() {
 		return 1
 	fi
 
-	ip xfrm state 2>/dev/null | grep -F "dst $peer_ip" -A "$context_lines" || true
+	# Try with statistics first (ip -s xfrm state) which may show more detail
+	# Increase context lines to ensure we capture lifetime current section which may appear after lifetime config
+	# lifetime config section can be long, so we need more lines to get to lifetime current
+	local extended_context=$((context_lines + 10))
+	local xfrm_output
+	if xfrm_output=$(ip -s xfrm state 2>/dev/null | grep -F "dst $peer_ip" -A "$extended_context" 2>/dev/null); then
+		if [[ -n "$xfrm_output" ]]; then
+			echo "$xfrm_output"
+			return 0
+		fi
+	fi
+
+	# Fall back to regular ip xfrm state (without -s)
+	# Also use extended context for consistency
+	ip xfrm state 2>/dev/null | grep -F "dst $peer_ip" -A "$extended_context" || true
 }
 
 # Get ipsec status output for a peer IP
@@ -755,6 +788,87 @@ add_route_if_needed() {
 #   Uses Linux ping command format
 #   Requires log_message, PING_COUNT, PING_TIMEOUT to be set
 #   If local_ip is provided, uses ping -I flag and manages route on br0
+#
+# Log periodic ping summary at configured interval
+#
+# Logs a summary of successful ping checks at INFO level at the interval specified by
+# PING_SUMMARY_INTERVAL_MINUTES (default: 7 minutes). Tracks the last summary timestamp
+# and ping count in a state file.
+#
+# Arguments:
+#   $1: Target IP address (for logging context)
+#   $2: Local IP address (optional, for logging context)
+#
+# Returns:
+#   0: Always succeeds (logging failures are non-fatal)
+#
+# Side effects:
+#   - Creates/updates ${STATE_DIR}/ping_summary_last_time with timestamp
+#   - Creates/updates ${STATE_DIR}/ping_summary_count with ping count
+#   - Logs summary message at INFO level when configured interval has elapsed
+#
+# Configuration:
+#   Uses PING_SUMMARY_INTERVAL_MINUTES from config (default: 7 minutes)
+#
+# Note:
+#   Requires STATE_DIR, SECONDS_PER_MINUTE, PING_SUMMARY_INTERVAL_MINUTES, get_unix_timestamp, log_message, and ensure_file_exists
+log_ping_summary_if_due() {
+	local target_ip="$1"
+	local local_ip="${2:-}"
+
+	# Only proceed if STATE_DIR is set
+	if [[ -z "${STATE_DIR:-}" ]]; then
+		return 0
+	fi
+
+	# Get summary interval from config (default: 7 minutes)
+	local summary_interval_minutes="${PING_SUMMARY_INTERVAL_MINUTES:-7}"
+	local summary_interval_seconds=$((summary_interval_minutes * ${SECONDS_PER_MINUTE:-60}))
+
+	# State files for tracking
+	local last_time_file="${STATE_DIR}/ping_summary_last_time"
+	local count_file="${STATE_DIR}/ping_summary_count"
+
+	# Get current timestamp
+	local current_time
+	current_time=$(get_unix_timestamp 2>/dev/null || echo "0")
+
+	# Initialize state files if they don't exist
+	ensure_file_exists "$last_time_file" "0" 2>/dev/null || return 0
+	ensure_file_exists "$count_file" "0" 2>/dev/null || return 0
+
+	# Read last summary time and current count
+	local last_time
+	last_time=$(cat "$last_time_file" 2>/dev/null || echo "0")
+	local ping_count
+	ping_count=$(cat "$count_file" 2>/dev/null || echo "0")
+
+	# Increment ping count
+	ping_count=$((ping_count + 1))
+	# Use atomic write for state file (per ADR-0012)
+	atomic_write_file "$count_file" "$ping_count" 2>/dev/null || true
+
+	# Check if configured interval has elapsed since last summary
+	local time_since_last=$((current_time - last_time))
+
+	if [[ $time_since_last -ge $summary_interval_seconds ]] || [[ $last_time -eq 0 ]]; then
+		# Time to log summary
+		if [[ $ping_count -gt 0 ]]; then
+			if [[ -n "$local_ip" ]]; then
+				log_message "INFO" "Ping check summary: $ping_count successful checks in the last ${summary_interval_minutes} minutes (target: $target_ip from $local_ip)"
+			else
+				log_message "INFO" "Ping check summary: $ping_count successful checks in the last ${summary_interval_minutes} minutes (target: $target_ip)"
+			fi
+		fi
+
+		# Reset count and update last time (use atomic writes per ADR-0012)
+		atomic_write_file "$count_file" "0" 2>/dev/null || true
+		atomic_write_file "$last_time_file" "$current_time" 2>/dev/null || true
+	fi
+
+	return 0
+}
+
 check_ping_connectivity() {
 	local target_ip="$1"
 	local local_ip="${2:-}"
@@ -877,11 +991,16 @@ check_ping_connectivity() {
 		packet_loss=$(echo "$ping_result" | grep -oE '[0-9]+% packet loss' | grep -oE '[0-9]+' || echo "0")
 
 		if [[ "$packet_loss" -lt $PING_PACKET_LOSS_THRESHOLD ]]; then
-			if [[ -n "$local_ip" ]]; then
-				log_message "INFO" "Ping check OK: $target_ip from $local_ip (${packet_loss}% packet loss)"
-			else
-				log_message "INFO" "Ping check OK: $target_ip (${packet_loss}% packet loss)"
+			# Log successful ping at DEBUG level
+			if [[ "${DEBUG:-0}" -eq 1 ]]; then
+				if [[ -n "$local_ip" ]]; then
+					log_message "DEBUG" "Ping check OK: $target_ip from $local_ip (${packet_loss}% packet loss)"
+				else
+					log_message "DEBUG" "Ping check OK: $target_ip (${packet_loss}% packet loss)"
+				fi
 			fi
+			# Log periodic summary at configured interval at INFO level
+			log_ping_summary_if_due "$target_ip" "$local_ip"
 			return 0
 		else
 			if [[ -n "$local_ip" ]]; then
@@ -1277,19 +1396,23 @@ check_byte_counters() {
 #   $1: External peer IP address (used for xfrm state checks)
 #   $2: Internal peer IP address (optional, used for ping checks in idle detection)
 #   $3: Location name (optional, used for state file naming)
+#   $4: Diagnostic variable name (optional, if provided, diagnostic message is stored here instead of logging)
 #
 # Returns:
-#   0: SA found and valid (byte counters validated successfully)
-#   1: SA not found, invalid, or byte counters unavailable
+#   0: SA found and valid (byte counters validated successfully, or byte counters unavailable but ping check succeeds)
+#   1: SA not found, invalid, or byte counters unavailable (and ping check fails or disabled)
 #
 # Side effects:
-#   - Logs debug/warning messages
-#   - Returns failure (1) when byte counters cannot be extracted, allowing
+#   - Logs debug/warning messages (unless diagnostic variable name is provided)
+#   - When byte counters unavailable: falls back to ping check if enabled (treats as "idle but healthy" if ping succeeds)
+#   - Returns failure (1) when byte counters cannot be extracted and ping check unavailable/fails, allowing
 #     determine_vpn_status to detect failure type as "unknown"
+#   - If diagnostic variable name is provided, stores diagnostic message in that variable instead of logging
 check_xfrm_status() {
 	local peer_ip="$1"
 	local internal_peer_ip="${2:-}"
 	local location_name="${3:-}"
+	local diagnostic_var="${4:-}"
 
 	# Try ip xfrm state first (most reliable)
 	# xfrm = Linux IPsec framework - shows Security Associations (SAs) and byte counters
@@ -1304,7 +1427,12 @@ check_xfrm_status() {
 	xfrm_output=$(get_xfrm_state_for_peer "$peer_ip")
 
 	if [[ -z "$xfrm_output" ]]; then
-		handle_error "WARNING" "VPN suspect: No SA found for $peer_ip in xfrm state"
+		local diagnostic_msg="Detection method: xfrm (ip xfrm state) - No SA found for $peer_ip in xfrm state"
+		if [[ -n "$diagnostic_var" ]]; then
+			printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
+		else
+			handle_error "WARNING" "VPN suspect: No SA found for $peer_ip in xfrm state"
+		fi
 		return 1
 	fi
 
@@ -1325,6 +1453,10 @@ check_xfrm_status() {
 			return 0
 		else
 			# SA exists but byte counters are suspect
+			if [[ -n "$diagnostic_var" ]]; then
+				local diagnostic_msg="Detection method: xfrm (ip xfrm state) - SA exists for $peer_ip but byte counter validation failed"
+				printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
+			fi
 			return 1
 		fi
 	else
@@ -1333,10 +1465,45 @@ check_xfrm_status() {
 		if [[ -n "$current_spi" ]]; then
 			set_peer_state_non_critical "$location_name" "$peer_ip" "spi" "$current_spi"
 		fi
-		# Cannot determine VPN health without byte counters - treat as failure
-		# This allows determine_vpn_status to detect failure type as "unknown"
-		handle_error "WARNING" "VPN suspect: SA exists for $peer_ip but byte counter info unavailable"
-		return 1
+
+		# When byte counters are unavailable, fall back to ping check if enabled
+		# This handles cases where xfrm output format differs or byte counters aren't available
+		if [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
+			local local_ip
+			local_ip=$(get_local_ip_for_ping)
+			# Check ping connectivity to determine if VPN is healthy despite missing byte counters
+			if check_ping_connectivity "$internal_peer_ip" "$local_ip" 2>/dev/null; then
+				# Ping succeeds - VPN is likely healthy but byte counters unavailable
+				# Treat as "idle but healthy" similar to check_byte_counters logic
+				set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
+				log_message "INFO" "VPN OK: SA exists for $peer_ip, byte counters unavailable but ping check passed (treating as idle but healthy)"
+				return 0
+			else
+				# Ping fails - cannot verify VPN health
+				local diagnostic_msg="Detection method: xfrm (ip xfrm state) - SA exists for $peer_ip but byte counter info unavailable and ping check failed"
+				if [[ -n "$diagnostic_var" ]]; then
+					printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
+				else
+					handle_error "WARNING" "VPN suspect: SA exists for $peer_ip but byte counter info unavailable and ping check failed"
+				fi
+				return 1
+			fi
+		else
+			# Ping check disabled or internal IP not provided - cannot verify VPN health
+			# Log debug info about why byte counter extraction failed
+			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "Byte counter extraction failed for $peer_ip - xfrm output format may differ. Consider enabling ENABLE_PING_CHECK=1 for fallback verification."
+			local reason="ping check disabled"
+			if [[ -z "$internal_peer_ip" ]]; then
+				reason="internal IP not provided"
+			fi
+			local diagnostic_msg="Detection method: xfrm (ip xfrm state) - SA exists for $peer_ip but byte counter info unavailable ($reason)"
+			if [[ -n "$diagnostic_var" ]]; then
+				printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
+			else
+				handle_error "WARNING" "VPN suspect: SA exists for $peer_ip but byte counter info unavailable (ping check disabled or internal IP not provided)"
+			fi
+			return 1
+		fi
 	fi
 }
 
@@ -1346,15 +1513,18 @@ check_xfrm_status() {
 #
 # Arguments:
 #   $1: Peer IP address
+#   $2: Diagnostic variable name (optional, if provided, diagnostic message is stored here instead of logging)
 #
 # Returns:
 #   0: Connection found
 #   1: Connection not found
 #
 # Side effects:
-#   - Logs debug/warning messages
+#   - Logs debug/warning messages (unless diagnostic variable name is provided)
+#   - If diagnostic variable name is provided, stores diagnostic message in that variable instead of logging
 check_ipsec_status() {
 	local peer_ip="$1"
+	local diagnostic_var="${2:-}"
 
 	# ipsec = legacy IPsec tools (libreswan/strongswan compatibility command)
 	if ! check_command_or_warn "ipsec" "Checking IPsec status"; then
@@ -1372,7 +1542,12 @@ check_ipsec_status() {
 		log_message "INFO" "VPN OK: Connection found via ipsec status for $peer_ip"
 		return 0
 	else
-		handle_error "WARNING" "VPN suspect: No connection found via ipsec status for $peer_ip"
+		local diagnostic_msg="Detection method: ipsec status - No connection found via ipsec status for $peer_ip"
+		if [[ -n "$diagnostic_var" ]]; then
+			printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
+		else
+			handle_error "WARNING" "VPN suspect: No connection found via ipsec status for $peer_ip"
+		fi
 		return 1
 	fi
 }
@@ -1721,6 +1896,7 @@ detect_failure_type() {
 	# Check if ip command is available (required for Phase 2 SA detection)
 	# If ip command is unavailable, we cannot determine failure type
 	if ! check_command_or_warn "ip" "Detecting failure type"; then
+		log_message "WARNING" "Failure type detection: 'ip' command unavailable, cannot determine failure type for $external_peer_ip"
 		echo "unknown"
 		return 1
 	fi
@@ -1738,29 +1914,31 @@ detect_failure_type() {
 		echo "tunnel_down"
 		return 0
 	elif [[ $ipsec_phase2_up -eq 1 ]]; then
-		# Phase 2 SA exists - tunnel is established, check for rekey first
-		# Check for SA rekey by comparing SPI
+		# Phase 2 SA exists - tunnel is established
+		# Fetch xfrm output once for reuse in rekey check, byte counter check, and diagnostics
+		local xfrm_output=""
+		local current_spi=""
+		local current_bytes=""
 		if [[ -n "$external_peer_ip" ]]; then
-			local xfrm_output
 			# Use fixed-string matching to prevent regex pattern injection
 			# Match on "dst $external_peer_ip" pattern which appears at the start of each SA entry
-			# This ensures we capture the complete SA block including SPI information
+			# This ensures we capture the complete SA block including SPI and lifetime information
 			xfrm_output=$(get_xfrm_state_for_peer "$external_peer_ip")
 			if [[ -n "$xfrm_output" ]]; then
-				local current_spi=""
 				current_spi=$(extract_spi "$xfrm_output" 2>/dev/null || echo "")
+				current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null || echo "")
+			fi
+		fi
 
-				# Check for rekey if SPI is available (read-only check)
-				if [[ -n "$current_spi" ]]; then
-					if check_sa_rekey_occurred "$current_spi" "$external_peer_ip" "$location_name" 2>/dev/null; then
-						# Rekey detected - not a failure, but log for monitoring
-						# Note: We use read-only check here since detect_failure_type is called
-						# after VPN check failed. The actual rekey handling (baseline reset)
-						# should have happened in check_byte_counters during the check.
-						echo "rekey"
-						return 0
-					fi
-				fi
+		# Check for SA rekey by comparing SPI
+		if [[ -n "$current_spi" ]]; then
+			if check_sa_rekey_occurred "$current_spi" "$external_peer_ip" "$location_name" 2>/dev/null; then
+				# Rekey detected - not a failure, but log for monitoring
+				# Note: We use read-only check here since detect_failure_type is called
+				# after VPN check failed. The actual rekey handling (baseline reset)
+				# should have happened in check_byte_counters during the check.
+				echo "rekey"
+				return 0
 			fi
 		fi
 
@@ -1769,30 +1947,18 @@ detect_failure_type() {
 		local has_routing_issue=0
 
 		# Check byte counters using abstraction layer (peer IP is available)
-		if [[ -n "$external_peer_ip" ]]; then
-			local xfrm_output
-			# Use fixed-string matching to prevent regex pattern injection
-			# Match on "dst $external_peer_ip" pattern which appears at the start of each SA entry
-			# This ensures we capture the complete SA block including lifetime information
-			xfrm_output=$(get_xfrm_state_for_peer "$external_peer_ip")
-			if [[ -n "$xfrm_output" ]]; then
-				local current_bytes=""
-				current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null || echo "")
+		if [[ -n "$current_bytes" ]] && [[ "$current_bytes" =~ ^[0-9]+$ ]]; then
+			# Successfully extracted byte counter - check if bytes are not increasing
+			# Use abstraction layer to get last bytes
+			local last_bytes
+			last_bytes=$(get_peer_state "$location_name" "$external_peer_ip" "last_bytes" "0")
 
-				if [[ -n "$current_bytes" ]] && [[ "$current_bytes" =~ ^[0-9]+$ ]]; then
-					# Successfully extracted byte counter - check if bytes are not increasing
-					# Use abstraction layer to get last bytes
-					local last_bytes
-					last_bytes=$(get_peer_state "$location_name" "$external_peer_ip" "last_bytes" "0")
-
-					# If bytes exist but aren't increasing (and it's not the first check), it's a routing issue
-					if [[ "$current_bytes" -gt 0 ]] && [[ "$current_bytes" -le "$last_bytes" ]] && [[ "$last_bytes" -gt 0 ]]; then
-						has_routing_issue=1
-					elif [[ "$current_bytes" -eq 0 ]] && [[ "$last_bytes" -gt 0 ]]; then
-						# Bytes dropped to zero after previously having traffic - routing issue
-						has_routing_issue=1
-					fi
-				fi
+			# If bytes exist but aren't increasing (and it's not the first check), it's a routing issue
+			if [[ "$current_bytes" -gt 0 ]] && [[ "$current_bytes" -le "$last_bytes" ]] && [[ "$last_bytes" -gt 0 ]]; then
+				has_routing_issue=1
+			elif [[ "$current_bytes" -eq 0 ]] && [[ "$last_bytes" -gt 0 ]]; then
+				# Bytes dropped to zero after previously having traffic - routing issue
+				has_routing_issue=1
 			fi
 		fi
 
@@ -1818,6 +1984,49 @@ detect_failure_type() {
 		#   - VPN check failed for another reason (e.g., byte counter validation in check_xfrm_status)
 		# In this case, we return "unknown" since we can't definitively determine the failure type
 		# without additional diagnostic information
+
+		# Build diagnostic message explaining why we couldn't determine the type
+		local diagnostic_parts=()
+		diagnostic_parts+=("Phase 2 SA exists")
+
+		# Check what detection methods were attempted and why they couldn't determine the type
+		# Reuse xfrm_output, current_bytes already fetched above
+		if [[ -z "$xfrm_output" ]]; then
+			diagnostic_parts+=("xfrm output unavailable")
+		elif [[ -z "$current_bytes" ]] || [[ ! "$current_bytes" =~ ^[0-9]+$ ]]; then
+			diagnostic_parts+=("byte counter extraction failed")
+		else
+			local last_bytes
+			last_bytes=$(get_peer_state "$location_name" "$external_peer_ip" "last_bytes" "0")
+			diagnostic_parts+=("byte counters available (current=$current_bytes, last=$last_bytes) but no routing issue detected")
+		fi
+
+		if [[ -z "$internal_peer_ip" ]]; then
+			diagnostic_parts+=("internal IP not provided")
+		fi
+
+		if [[ "${ENABLE_PING_CHECK:-0}" -ne 1 ]]; then
+			diagnostic_parts+=("ping check disabled")
+		elif [[ -n "$internal_peer_ip" ]]; then
+			# Ping check is enabled and internal IP provided, but we didn't detect routing issue
+			# This means ping check either passed or wasn't performed
+			local local_ip
+			local_ip=$(get_local_ip_for_ping)
+			diagnostic_parts+=("ping check enabled but routing issue not confirmed")
+		fi
+
+		# Join diagnostic parts with comma and space
+		local diagnostic_msg=""
+		local first=1
+		for part in "${diagnostic_parts[@]}"; do
+			if [[ $first -eq 1 ]]; then
+				diagnostic_msg="$part"
+				first=0
+			else
+				diagnostic_msg="$diagnostic_msg, $part"
+			fi
+		done
+		log_message "WARNING" "Failure type detection: Unable to determine specific failure type for $external_peer_ip - Detection method: Phase 2 SA check (SA exists), Reasons: $diagnostic_msg"
 	fi
 
 	# Unable to determine failure type (fallback)
@@ -1884,21 +2093,24 @@ get_failure_type() {
 #   $1: External peer IP address (external/public IP of remote VPN gateway)
 #   $2: Internal peer IP address (optional, used for idle detection via ping checks)
 #   $3: Location name (optional, used for state file naming)
+#   $4: Diagnostic variable name (optional, if provided, diagnostic message is stored here instead of logging)
 #
 # Returns:
 #   0: VPN is healthy (SA exists and valid)
 #   1: VPN check failed (no SA found or invalid)
 #
 # Side effects:
-#   - Logs debug/warning messages
+#   - Logs debug/warning messages (unless diagnostic variable name is provided)
+#   - If diagnostic variable name is provided, stores diagnostic message in that variable instead of logging
 check_xfrm_primary() {
 	local external_peer_ip="$1"
 	local internal_peer_ip="${2:-}"
 	local location_name="${3:-}"
+	local diagnostic_var="${4:-}"
 
 	# Try detection using xfrm (most reliable method)
 	# Pass internal IP and location_name to check_xfrm_status for idle detection via ping checks
-	check_xfrm_status "$external_peer_ip" "$internal_peer_ip" "$location_name"
+	check_xfrm_status "$external_peer_ip" "$internal_peer_ip" "$location_name" "$diagnostic_var"
 }
 
 # Check VPN status using ipsec (fallback method)
@@ -1907,18 +2119,21 @@ check_xfrm_primary() {
 #
 # Arguments:
 #   $1: External peer IP address (external/public IP of remote VPN gateway)
+#   $2: Diagnostic variable name (optional, if provided, diagnostic message is stored here instead of logging)
 #
 # Returns:
 #   0: VPN is healthy (connection found)
 #   1: VPN check failed (no connection found)
 #
 # Side effects:
-#   - Logs debug/warning messages
+#   - Logs debug/warning messages (unless diagnostic variable name is provided)
+#   - If diagnostic variable name is provided, stores diagnostic message in that variable instead of logging
 check_ipsec_fallback() {
 	local external_peer_ip="$1"
+	local diagnostic_var="${2:-}"
 
 	# Fallback to ipsec status check if xfrm didn't confirm
-	check_ipsec_status "$external_peer_ip"
+	check_ipsec_status "$external_peer_ip" "$diagnostic_var"
 }
 
 # Check ping connectivity if enabled (optional check)
@@ -1981,7 +2196,8 @@ determine_vpn_status() {
 	if [[ $vpn_ok -eq 0 ]]; then
 		local failure_type
 		# Capture output and return code separately to avoid duplicate "unknown"
-		failure_type=$(detect_failure_type "$external_peer_ip" "$internal_peer_ip" "$location_name" 2>/dev/null)
+		# Note: stderr is not redirected so diagnostic log messages from detect_failure_type are visible
+		failure_type=$(detect_failure_type "$external_peer_ip" "$internal_peer_ip" "$location_name")
 		# If detect_failure_type failed or returned empty, use "unknown"
 		if [[ -z "$failure_type" ]]; then
 			failure_type="unknown"
@@ -2012,7 +2228,8 @@ determine_vpn_status() {
 			handle_error "WARNING" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $external_peer_ip"
 			;;
 		*)
-			handle_error "WARNING" "VPN failure type: Unknown (unable to determine specific failure type) for $external_peer_ip"
+			# Detailed diagnostic information was already logged by detect_failure_type()
+			handle_error "WARNING" "VPN failure type: Unknown (unable to determine specific failure type) for $external_peer_ip - see previous diagnostic messages for detection method details"
 			;;
 		esac
 	fi
@@ -2046,11 +2263,14 @@ determine_vpn_status() {
 # Side effects:
 #   - Creates/updates per-peer last_bytes file if byte counters found
 #   - Logs debug/warning messages about VPN state
+#   - When both xfrm and ipsec status checks fail, logs a single combined diagnostic message
+#     that includes which detection methods were attempted and why each failed
 #
 # Note:
 #   Requires validate_ip_address, sanitize_peer_ip, sanitize_location_name, log_message, STATE_DIR, ENABLE_PING_CHECK to be set
 #   External IP is used for xfrm checks, internal IP(s) are used for ping checks
 #   For multiple internal IPs, ping check succeeds if ≥30% respond
+#   Diagnostic messages are combined when both primary (xfrm) and fallback (ipsec status) methods fail
 check_vpn_status() {
 	local external_peer_ip="$1"
 	local internal_peer_ips="${2:-}"
@@ -2096,10 +2316,44 @@ check_vpn_status() {
 		fi
 	fi
 
-	if check_xfrm_primary "$external_peer_ip" "$first_internal_ip" "$location_name"; then
+	# Collect diagnostic information from both methods to combine warnings when both fail
+	local xfrm_diagnostic=""
+	local ipsec_diagnostic=""
+
+	if check_xfrm_primary "$external_peer_ip" "$first_internal_ip" "$location_name" "xfrm_diagnostic"; then
 		vpn_ok=1
-	elif check_ipsec_fallback "$external_peer_ip"; then
-		vpn_ok=1
+	else
+		# xfrm check failed - try ipsec fallback
+		if check_ipsec_fallback "$external_peer_ip" "ipsec_diagnostic"; then
+			vpn_ok=1
+		else
+			# Both methods failed - log combined diagnostic message
+			local combined_diagnostics=()
+			if [[ -n "$xfrm_diagnostic" ]]; then
+				combined_diagnostics+=("$xfrm_diagnostic")
+			fi
+			if [[ -n "$ipsec_diagnostic" ]]; then
+				combined_diagnostics+=("$ipsec_diagnostic")
+			fi
+
+			if [[ ${#combined_diagnostics[@]} -gt 0 ]]; then
+				# Join diagnostics with semicolon and space
+				local diagnostic_msg=""
+				local first=1
+				for diag in "${combined_diagnostics[@]}"; do
+					if [[ $first -eq 1 ]]; then
+						diagnostic_msg="$diag"
+						first=0
+					else
+						diagnostic_msg="$diagnostic_msg; $diag"
+					fi
+				done
+				handle_error "WARNING" "VPN suspect for $external_peer_ip - $diagnostic_msg"
+			else
+				# Fallback if diagnostics weren't collected (shouldn't happen)
+				handle_error "WARNING" "VPN suspect: Both xfrm and ipsec status checks failed for $external_peer_ip"
+			fi
+		fi
 	fi
 
 	# Perform optional ping check if enabled (pass all internal IPs for multiple IP support)

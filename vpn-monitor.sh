@@ -22,7 +22,7 @@ LOCKFILE="${STATE_DIR}/vpn-monitor.lock"
 LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
 
 # Script version
-SCRIPT_VERSION="0.4.2"
+SCRIPT_VERSION="0.4.3"
 
 # Source library modules
 # shellcheck source=lib/logging.sh

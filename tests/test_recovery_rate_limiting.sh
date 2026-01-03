@@ -276,8 +276,9 @@ EOF
 
 	local restart_file="${STATE_DIR}/restart_count"
 
-	# Setup mock VPN environment without ipsec (we'll create custom one)
-	setup_mock_vpn_environment "192.168.1.1" 0 "" "" 0
+	# Create mock ip command that returns empty output (no SA) - VPN is definitely down
+	# This ensures VPN is detected as down, triggering Tier 3 recovery
+	mock_ip_vpn_down
 
 	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
@@ -327,8 +328,9 @@ EOF
 
 	local restart_file="${STATE_DIR}/restart_count"
 
-	# Setup mock VPN environment without ipsec (we'll create custom one)
-	setup_mock_vpn_environment "192.168.1.1" 0 "" "" 0
+	# Create mock ip command that returns empty output (no SA) - VPN is definitely down
+	# This ensures VPN is detected as down, triggering Tier 3 recovery
+	mock_ip_vpn_down
 
 	mock_ipsec_reload_restart 0 0
 	add_mock_to_path

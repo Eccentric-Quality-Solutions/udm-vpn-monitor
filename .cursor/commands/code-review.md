@@ -12,3 +12,4 @@
 - If this is a test, mock, fixture, etc. and you haven't been called from the [review-for-tests](review-for-tests.md) command, run that command.
 - Look for code with high cyclomatic complexity.
 - We want to write good code but also pragmatic code, we should not be writing code that covers edge cases that are unlikely to ever happen.
+- In the process of debugging you often write crappy code or refactor code that doesn't need to be. Make sure you review all the changes you've made and revert any that are unnecessary and don't make a significant improvement.

@@ -202,6 +202,30 @@ load fixtures/vpn_down
 }
 ```
 
+**Note**: When testing VPN down scenarios with `setup_mock_vpn_environment` using `bytes=0`, you must set `last_bytes > 0` first. This ensures bytes=0 is detected as "bytes dropped to 0" (a failure) rather than "first check with bytes=0" (which may be treated as idle if ping succeeds). Example:
+```bash
+# Set last_bytes > 0 so bytes=0 is detected as failure (bytes dropped)
+ensure_state_functions_loaded
+set_peer_state "TEST1" "192.168.1.1" "last_bytes" "1000" || true
+setup_mock_vpn_environment "192.168.1.1" 0
+```
+
+**Note for Recovery Detection Tests**: When testing VPN recovery scenarios (where VPN transitions from failed to healthy), you must set up both `last_bytes` and `spi` state files before setting up the mock VPN environment. This ensures the byte counter check can properly detect recovery (bytes increasing). Example:
+```bash
+# Step 1: VPN fails (creates failure_count)
+setup_vpn_down_fixture "192.168.1.1" 0
+run bash "$TEST_SCRIPT" --fake
+# Verify failure_count was incremented...
+
+# Step 2: VPN recovers - set up state files for byte counter check
+ensure_state_functions_loaded
+set_peer_state "TEST" "192.168.1.1" "last_bytes" "1000" || true
+set_peer_state "TEST" "192.168.1.1" "spi" "0x12345678" || true
+setup_mock_vpn_environment "192.168.1.1" 2000  # Bytes increasing = recovery
+run bash "$TEST_SCRIPT" --fake
+# Should detect recovery and log recovery message
+```
+
 ##### `vpn_failing.bash` - VPN with Recorded Failures
 
 Sets up a test environment where the VPN has recorded failures but is still being monitored. The VPN may be down or the byte counter may not be increasing.
@@ -754,7 +778,7 @@ EOF
 
 **Standard**: 
 - Use `assert_output --partial` for substring matching (more flexible)
-- Use `assert_file_contains` for log file checks (uses fixed string matching)
+- Use `assert_file_contains` for log file checks (uses regex matching - escape special characters like `\[` and `\]`)
 - Use `assert_log_contains_any` when log messages may vary slightly (e.g., "ipsec reload failed" vs "reload failed")
 - Use `assert_equal` for exact value comparisons
 - Prefer descriptive assertions over generic `assert`

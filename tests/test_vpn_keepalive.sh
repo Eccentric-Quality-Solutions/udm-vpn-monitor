@@ -570,3 +570,62 @@ EOF
 	cleanup_keepalive_daemon
 	remove_mock_from_path
 }
+
+# bats test_tags=category:high-risk,priority:high
+@test "Keepalive writes to its own log file, not monitor log file" {
+	# Purpose: Test verifies that keepalive daemon writes to vpn-keepalive.log and NOT to vpn-monitor.log
+	# Expected: Keepalive messages appear in vpn-keepalive.log but not in vpn-monitor.log
+	# Importance: Ensures log file separation is maintained (prevents regression of bug where load_config() overwrote LOG_FILE)
+	# Test Category: Logging, Configuration, Regression prevention
+	setup_keepalive_test 'LOG_FILE="'"${MOCK_INSTALL_DIR}/logs/vpn-monitor.log"'"'
+
+	# Mock ping command to succeed
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+	chmod +x "$mock_ping"
+	add_mock_to_path
+
+	local keepalive_log="${MOCK_INSTALL_DIR}/logs/vpn-keepalive.log"
+	local monitor_log="${MOCK_INSTALL_DIR}/logs/vpn-monitor.log"
+
+	# Ensure monitor log file exists (simulates monitor script having written to it)
+	touch "$monitor_log"
+	echo "[2026-01-03 12:00:00] [INFO] Monitor: Test message" >"$monitor_log"
+
+	cd "$MOCK_INSTALL_DIR"
+	bash "${MOCK_INSTALL_DIR}/vpn-keepalive.sh" start >/dev/null 2>&1 || true
+
+	# Wait for PID file to appear
+	local pidfile="${MOCK_INSTALL_DIR}/state/vpn-keepalive.pid"
+	wait_for_file "$pidfile" 2 || true
+
+	# Give daemon a moment to write log messages
+	sleep 1
+
+	# Stop daemon to ensure all messages are flushed
+	cleanup_keepalive_daemon
+
+	# Verify keepalive log file exists and contains keepalive messages
+	if [[ -f "$keepalive_log" ]]; then
+		# Keepalive log should contain keepalive-specific messages
+		# (e.g., "Starting VPN keepalive daemon" or "Keepalive:")
+		assert_file_contains "$keepalive_log" "keepalive" || assert_file_contains "$keepalive_log" "Keepalive"
+	fi
+
+	# Verify monitor log file does NOT contain keepalive messages
+	# (should only contain the test message we added)
+	if [[ -f "$monitor_log" ]]; then
+		# Monitor log should NOT contain keepalive daemon messages
+		if grep -q "keepalive\|Keepalive" "$monitor_log" 2>/dev/null; then
+			echo "ERROR: Monitor log contains keepalive messages (should be separate)"
+			echo "Monitor log contents:"
+			cat "$monitor_log"
+			return 1
+		fi
+	fi
+
+	remove_mock_from_path
+}

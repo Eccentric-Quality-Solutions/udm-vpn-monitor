@@ -633,6 +633,7 @@ compare_template_with_existing_config() {
 #   - Copies vpn-keepalive.sh to installation directory (if available)
 #   - Copies analyze-logs.sh to installation directory (if available)
 #   - Copies check-utilities.sh to installation directory (if available)
+#   - Copies scripts/anonymize-logs.sh to installation directory (if available)
 #   - Sets executable permissions on scripts
 #   - Installs config file (may prompt user in interactive mode)
 install_scripts() {
@@ -694,6 +695,15 @@ install_scripts() {
 		cp "${INSTALL_SCRIPT_DIR}/compare-config.sh" "${INSTALL_DIR}/compare-config.sh"
 		chmod 755 "${INSTALL_DIR}/compare-config.sh"
 		log_info "Installed compare-config.sh (template vs existing config comparison)"
+	fi
+
+	# Copy anonymize logs script (optional utility)
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/anonymize-logs.sh" ]]; then
+		# Create scripts directory in installation directory
+		mkdir -p "${INSTALL_DIR}/scripts"
+		cp "${INSTALL_SCRIPT_DIR}/scripts/anonymize-logs.sh" "${INSTALL_DIR}/scripts/anonymize-logs.sh"
+		chmod 755 "${INSTALL_DIR}/scripts/anonymize-logs.sh"
+		log_info "Installed scripts/anonymize-logs.sh (log anonymization utility)"
 	fi
 
 	# Handle config file installation
