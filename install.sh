@@ -567,6 +567,58 @@ display_upgrade_info() {
 	echo ""
 }
 
+# Compare template config with existing config
+#
+# Runs compare-config.sh to show differences between template and existing config.
+# Only runs when config file is preserved (not overwritten) and not in silent mode.
+#
+# Returns:
+#   0: Comparison completed (or skipped)
+#
+# Side effects:
+#   - Prints comparison results to terminal
+compare_template_with_existing_config() {
+	local existing_config="${INSTALL_DIR}/${CONFIG_NAME}"
+	local template_config="${INSTALL_SCRIPT_DIR}/${CONFIG_NAME}"
+	local compare_script="${INSTALL_DIR}/compare-config.sh"
+
+	# Skip in silent mode
+	if [[ $SILENT -eq 1 ]]; then
+		return 0
+	fi
+
+	# Skip if config file doesn't exist
+	if [[ ! -f "$existing_config" ]]; then
+		return 0
+	fi
+
+	# Skip if template doesn't exist
+	if [[ ! -f "$template_config" ]]; then
+		return 0
+	fi
+
+	# Skip if compare script doesn't exist (shouldn't happen, but be safe)
+	if [[ ! -f "$compare_script" ]] || [[ ! -x "$compare_script" ]]; then
+		return 0
+	fi
+
+	# Run comparison (suppress errors to avoid failing install)
+	echo ""
+	log_info "Comparing template configuration with your existing config..."
+	echo ""
+	if "$compare_script" --template "$template_config" --existing "$existing_config" 2>/dev/null; then
+		# Comparison succeeded
+		echo ""
+		log_info "To review configuration differences anytime, run: ${compare_script}"
+		echo ""
+	else
+		# Comparison failed (script may have issues, but don't fail install)
+		log_warn "Could not compare template with existing config (non-fatal)"
+	fi
+
+	return 0
+}
+
 # Install scripts
 #
 # Copies the main VPN monitor script, library files, and configuration file to the installation directory.
@@ -637,6 +689,13 @@ install_scripts() {
 		log_info "Installed check-config.sh (configuration validator)"
 	fi
 
+	# Copy config comparison script (optional utility)
+	if [[ -f "${INSTALL_SCRIPT_DIR}/compare-config.sh" ]]; then
+		cp "${INSTALL_SCRIPT_DIR}/compare-config.sh" "${INSTALL_DIR}/compare-config.sh"
+		chmod 755 "${INSTALL_DIR}/compare-config.sh"
+		log_info "Installed compare-config.sh (template vs existing config comparison)"
+	fi
+
 	# Handle config file installation
 	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
 		# Config file already exists
@@ -649,6 +708,8 @@ install_scripts() {
 				install_config_file "Overwriting existing config file (--overwrite-conf flag)"
 			else
 				log_info "Config file already exists, preserving: ${INSTALL_DIR}/${CONFIG_NAME}"
+				# Compare template with existing config to show what's new
+				compare_template_with_existing_config
 			fi
 		else
 			# Non-interactive, non-silent mode: ask user
@@ -660,6 +721,8 @@ install_scripts() {
 				install_config_file "Overwriting existing config file"
 			else
 				log_info "Preserving existing config file: ${INSTALL_DIR}/${CONFIG_NAME}"
+				# Compare template with existing config to show what's new
+				compare_template_with_existing_config
 			fi
 		fi
 	else
@@ -1152,7 +1215,7 @@ verify_installation() {
 #   Uses 'ip addr show br0' to extract the first IPv4 address
 #   Requires 'ip' command to be available
 detect_local_udm_ip() {
-	if ! command -v ip >/dev/null 2>&1; then
+	if ! check_command_available "ip"; then
 		return 1
 	fi
 
@@ -1249,8 +1312,7 @@ check_and_setup_routes() {
 	fi
 
 	# Check if route exists, add if needed
-	if ! command -v ip >/dev/null 2>&1; then
-		log_warn "ip command not available, cannot check/add route"
+	if ! check_command_or_warn "ip" "Cannot detect local IP"; then
 		return 1
 	fi
 

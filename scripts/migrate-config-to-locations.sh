@@ -20,11 +20,14 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Default to standard UDM installation location
 CONFIG_FILE="${CONFIG_FILE:-/data/vpn-monitor/vpn-monitor.conf}"
 
-# Source library modules for validation (optional - script works without them)
+# Source library modules for validation
+# Note: detection.sh is required for validate_ip_address() function
 # shellcheck source=lib/logging.sh
 source "${PROJECT_ROOT}/lib/logging.sh" 2>/dev/null || true
 # shellcheck source=lib/config.sh
 source "${PROJECT_ROOT}/lib/config.sh" 2>/dev/null || true
+# shellcheck source=lib/detection.sh
+source "${PROJECT_ROOT}/lib/detection.sh" 2>/dev/null || true
 
 # Fallback sanitize_location_name if library failed to load
 if ! command -v sanitize_location_name >/dev/null 2>&1; then
@@ -48,19 +51,6 @@ if ! command -v sanitize_location_name >/dev/null 2>&1; then
 		echo "$sanitized"
 	}
 fi
-
-# Function to validate IP address format
-validate_ip() {
-	local ip="$1"
-	if [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-		return 0
-	fi
-	# Check IPv6 format (simplified)
-	if [[ "$ip" =~ : ]]; then
-		return 0
-	fi
-	return 1
-}
 
 # Function to read old config values
 # Note: sanitize_location_name() is available from common.sh (sourced via config.sh)
@@ -217,12 +207,18 @@ migrate_config() {
 		echo ""
 	} >>"$temp_file"
 
+	# Check that validate_ip_address is available before processing IPs
+	if ! command -v validate_ip_address >/dev/null 2>&1; then
+		echo "ERROR: validate_ip_address function not available. detection.sh library is required." >&2
+		return 1
+	fi
+
 	for ((i = 0; i < external_count; i++)); do
 		local location_name="${location_names[$i]}"
 		local external_ip="${external_array[$i]}"
 
 		# Validate external IP
-		if ! validate_ip "$external_ip"; then
+		if ! validate_ip_address "$external_ip"; then
 			echo "WARNING: Skipping invalid external IP: $external_ip" >&2
 			continue
 		fi

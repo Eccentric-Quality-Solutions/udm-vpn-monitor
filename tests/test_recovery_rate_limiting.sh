@@ -90,16 +90,9 @@ EOF
 	# Set failure count to Tier 3 threshold
 	echo "5" >"$failure_counter"
 
-	setup_mock_vpn_environment "192.168.1.1" 0
+	setup_mock_vpn_environment "192.168.1.1" 0 "" "" 0
 
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	local test_script
@@ -153,16 +146,9 @@ EOF
 	# Set failure count to Tier 3 threshold
 	echo "5" >"$failure_counter"
 
-	setup_mock_vpn_environment "192.168.1.1" 0
+	setup_mock_vpn_environment "192.168.1.1" 0 "" "" 0
 
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	local test_script
@@ -232,14 +218,7 @@ EOF
 	# This ensures VPN is detected as down, triggering Tier 3 recovery
 	mock_ip_vpn_down
 
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	local test_script
@@ -300,15 +279,7 @@ EOF
 	# Setup mock VPN environment without ipsec (we'll create custom one)
 	setup_mock_vpn_environment "192.168.1.1" 0 "" "" 0
 
-	# Create custom mock ipsec
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -359,15 +330,7 @@ EOF
 	# Setup mock VPN environment without ipsec (we'll create custom one)
 	setup_mock_vpn_environment "192.168.1.1" 0 "" "" 0
 
-	# Create custom mock ipsec
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake

@@ -52,19 +52,20 @@ This guide provides information for developers contributing to the UDM VPN Monit
    All tests should pass. If not, check tool installation.
 
 6. **Read the architecture documentation**
-   - Start with [ARCHITECTURE.md](ARCHITECTURE.md) to understand system design, component interactions, and technical implementation
+   - Start with [ARCHITECTURE.md](docs/ARCHITECTURE.md) to understand system design, component interactions, and technical implementation
    - Review [Architecture Decision Records](docs/adr/README.md) to understand design decisions
-   - Review [ARCHITECTURAL_REVIEW.md](ARCHITECTURAL_REVIEW.md) for code quality analysis and improvement areas
+   - Review [docs/CODEBASE_REVIEW.md](docs/CODEBASE_REVIEW.md) for comprehensive codebase review and code quality analysis
+   - Review [docs/ACCEPTABLE_RISKS.md](docs/ACCEPTABLE_RISKS.md) for documented acceptable risks and limitations
    - Check [TODO.md](TODO.md) for planned features
 
 7. **Understand the codebase structure**
    - **Main Script**: `vpn-monitor.sh` - Entry point, orchestrates monitoring
    - **Library Modules**: Modular architecture with dedicated modules in `lib/` directory
-     - See [ARCHITECTURE.md](ARCHITECTURE.md) "Modular Library Architecture" section for complete module documentation
+     - See [ARCHITECTURE.md](docs/ARCHITECTURE.md) "Modular Library Architecture" section for complete module documentation
      - See [ADR-0005](docs/adr/0005-modular-library-architecture.md) for design decision rationale
 
 8. **Pick a small issue to start**
-   - Check [ARCHITECTURAL_REVIEW.md](ARCHITECTURAL_REVIEW.md) for improvement recommendations
+   - Check [docs/CODEBASE_REVIEW.md](docs/CODEBASE_REVIEW.md) for improvement recommendations
    - Review [TODO.md](TODO.md) for planned features
    - Start with documentation improvements or small refactorings
 
@@ -90,7 +91,7 @@ The test suite includes **827 tests** across multiple test files:
 - **Fast tests** (~605 tests): Run by default, include unit tests, script-specific tests, and split high-risk test files
 - **Slow tests** (~222 tests): High-risk tests and integration tests, excluded by default (use `--slow` flag to include)
 
-For test patterns and best practices, see [tests/TEST_PATTERNS.md](tests/TEST_PATTERNS.md).
+For test patterns and best practices, see [docs/TEST_PATTERNS.md](docs/TEST_PATTERNS.md).
 For BATS framework guide and advanced features, see [docs/BATS_GUIDE.md](docs/BATS_GUIDE.md).
 
 ### Common Development Tasks
@@ -948,8 +949,11 @@ udm-vpn-monitor/
 │   ├── run_tests.sh         # Test runner
 │   └── generate_coverage_report.sh
 ├── README.md                 # User documentation
-├── ARCHITECTURE.md           # Architecture documentation
-├── ARCHITECTURAL_REVIEW.md   # Code quality analysis and recommendations
+├── docs/
+│   ├── ARCHITECTURE.md       # Architecture documentation
+│   ├── CODEBASE_REVIEW.md    # Comprehensive codebase review
+│   ├── ACCEPTABLE_RISKS.md   # Documented acceptable risks and limitations
+│   └── ...                   # Additional documentation files
 ├── CHANGELOG.md              # Version history
 ├── DEVELOPER.md              # This file
 ├── QUICK_START.md            # 5-minute setup guide
@@ -1030,8 +1034,9 @@ If shfmt makes unexpected changes:
 ## Getting Help
 
 - Check existing documentation in this repository
-- Review [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions
-- Review [ARCHITECTURAL_REVIEW.md](ARCHITECTURAL_REVIEW.md) for code quality analysis
+- Review [ARCHITECTURE.md](docs/ARCHITECTURE.md) for design decisions
+- Review [docs/CODEBASE_REVIEW.md](docs/CODEBASE_REVIEW.md) for comprehensive codebase review and code quality analysis
+- Review [docs/ACCEPTABLE_RISKS.md](docs/ACCEPTABLE_RISKS.md) for documented acceptable risks and limitations
 - Review [TODO.md](TODO.md) for planned features
 - Open an issue on GitHub for bugs or questions
 

@@ -73,16 +73,7 @@ EOF
 	chmod +x "$mock_check_ipsec_phase2"
 
 	# Mock ipsec for fallback reload (Tier 2 falls back to reload, not restart)
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    echo "ipsec reload called"
-    exit 0
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 
 	# Mock ip command - stateful: return SAs during recovery, empty after deletion
 	# Uses log file content to determine recovery phase (more robust than counter-based approach)

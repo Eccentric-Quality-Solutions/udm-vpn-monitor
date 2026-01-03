@@ -314,12 +314,12 @@ start_daemon() {
 					# Determine if IPv6
 					if [[ ! "$ping_target" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
 						# IPv6
-						if command -v ping6 >/dev/null 2>&1; then
+						if check_command_available "ping6"; then
 							ping_cmd="ping6"
 							if [[ "$use_source_ip" == "true" ]]; then
 								ping_args=(-I "$local_udm_ip")
 							fi
-						elif ping -6 >/dev/null 2>&1; then
+						elif check_command_available "ping" && ping -6 >/dev/null 2>&1; then
 							ping_cmd="ping"
 							ping_args=(-6)
 							if [[ "$use_source_ip" == "true" ]]; then

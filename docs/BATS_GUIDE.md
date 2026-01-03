@@ -198,10 +198,10 @@ load bats-file/load.bash
 
 For complete test suite structure, organization, and current test counts, see:
 
-- **[Test Structure](../tests/README.md#test-structure)** - Complete test file organization
-- **[Test Categories](../tests/README.md#test-categories)** - Fast vs. slow tests and categorization
+- **[Test Structure](../tests/README.md#test-structure)** - Test file organization overview
+- **[Test Categories](#test-categories)** - Fast vs. slow tests and categorization
 
-**Summary**: Our project uses BATS extensively with tests organized by functionality. See [Test Categories](../tests/README.md#test-categories) for current test counts and organization.
+**Summary**: Our project uses BATS extensively with tests organized by functionality. See [Test Categories](#test-categories) for current test counts and organization.
 
 ### Test Helper Infrastructure
 
@@ -227,23 +227,15 @@ We have a comprehensive `test_helper.bash` file that provides:
 
 ### Test Execution
 
-For comprehensive test execution documentation including all command-line options, parallel execution, coverage reporting, checkpoint/resume, and more, see:
+The `run_tests.sh` script provides comprehensive test execution capabilities including test filtering (fast vs. slow), coverage reporting (kcov), parallel execution (GNU parallel/rush), timeout handling, output streaming, failed test rerun, checkpoint/resume, and fast-fail mode.
 
-- **[Running Tests](../tests/README.md#running-tests)** - Complete guide to running tests with all options
-- **[Parallel Execution](../tests/README.md#parallel-execution)** - Parallel test execution setup and usage
-- **[Test Coverage Reporting](../tests/README.md#test-coverage-reporting)** - Coverage reporting setup and usage
-- **[Checkpoint and Resume](../tests/README.md#checkpoint-and-resume)** - Resuming interrupted test runs
-
-**Summary**: The `run_tests.sh` script provides comprehensive test execution capabilities including test filtering (fast vs. slow), coverage reporting (kcov), parallel execution (GNU parallel/rush), timeout handling, output streaming, failed test rerun, checkpoint/resume, and fast-fail mode.
+For detailed test execution documentation, see [Running Tests](#running-tests) section below.
 
 ### CI/CD Integration
 
-For detailed CI/CD integration information including workflow configuration, environment setup, and test execution in CI, see:
+BATS testing is integrated into our CI/CD pipeline via GitHub Actions. The workflow automatically runs tests on pushes and pull requests, includes slow tests in CI runs, generates coverage reports, and provides test results in TAP format for CI integration.
 
-- **[Continuous Integration](../tests/README.md#continuous-integration)** - CI/CD integration details
-- **[Test Environment Requirements](../tests/README.md#test-environment-requirements)** - CI/CD environment requirements
-
-**Summary**: BATS testing is integrated into our CI/CD pipeline via GitHub Actions. The workflow automatically runs tests on pushes and pull requests, includes slow tests in CI runs, generates coverage reports, and provides test results in TAP format for CI integration.
+For detailed CI/CD integration information, see [CI/CD Integration](#cicd-integration) section below.
 
 ### Usage Pattern Examples
 
@@ -320,7 +312,7 @@ This pattern is used in `test_install.sh` and `test_uninstall.sh` for tests that
 **5. Test Tagging for High-Risk Tests**:
 Our high-risk test suite uses BATS test tags to mark critical tests. For comprehensive tagging documentation including tag categories, usage patterns, and slow test tagging, see:
 
-- **[Test Categories](../tests/README.md#test-categories)** - Test categorization and tagging
+- **[Test Categories](#test-categories)** - Test categorization and tagging
 - **[BATS Guide - Test Tagging](#test-tagging)** - Tag format and common tags (see Quick Reference section below)
 
 **Quick Example**:
@@ -411,7 +403,7 @@ load fixtures/vpn_active
 }
 ```
 
-See `tests/fixtures/README.md` for detailed fixture documentation.
+See [Test Patterns - Test Fixtures](../docs/TEST_PATTERNS.md#4-test-fixtures) for detailed fixture documentation with all arguments, examples, and usage patterns.
 
 **8. Direct Library Function Testing**:
 For testing library functions directly (unit testing), source the library files in your test:
@@ -575,7 +567,7 @@ This comprehensive approach to filesystem testing ensures better validation of f
 
 ### Strengths
 
-1. **Comprehensive Coverage**: See [Test Categories](../tests/README.md#test-categories) for current test counts covering unit, integration, and high-risk scenarios
+1. **Comprehensive Coverage**: See [Test Categories](#test-categories) for current test counts covering unit, integration, and high-risk scenarios
 2. **Good Isolation**: Each test gets a clean environment via `setup()`/`teardown()`
 3. **Mock Infrastructure**: Well-developed mocking system for system commands
 4. **Standard Helper Libraries**: Uses bats-support, bats-assert, and bats-file for consistent, well-maintained assertions
@@ -851,8 +843,8 @@ BATS is a powerful testing framework for Bash scripts. Our current implementatio
 
 For current test suite statistics including test counts, coverage, and organization, see:
 
-- **[Test Categories](../tests/README.md#test-categories)** - Current test counts and organization
-- **[Test Coverage](../tests/README.md#test-coverage)** - Current coverage statistics and goals
+- **[Test Categories](#test-categories)** - Current test counts and organization
+- **[Test Coverage](../docs/TEST_PATTERNS.md#test-coverage)** - Current coverage statistics and goals
 
 ### Key Features Implemented
 
@@ -992,6 +984,36 @@ mock_ping_success  # Always succeeds
 add_mock_to_path
 ```
 
+**IPsec (Simple Scenarios)**:
+```bash
+# Both reload and restart succeed
+mock_ipsec_reload_restart 0 0
+add_mock_to_path
+
+# Reload fails, restart succeeds (tests fallback)
+mock_ipsec_reload_restart 1 0
+add_mock_to_path
+
+# Both fail (tests error handling)
+mock_ipsec_reload_restart 1 1
+add_mock_to_path
+```
+
+**IPsec (Custom Scenarios)**:
+```bash
+# For custom behavior (file tracking, specific status output, etc.), create custom mock:
+local mock_ipsec="${TEST_DIR}/ipsec"
+cat >"$mock_ipsec" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "reload" ]]; then
+    echo "ipsec-reload-called" > /tmp/ipsec_called.txt
+    exit 0
+fi
+EOF
+chmod +x "$mock_ipsec"
+add_mock_to_path
+```
+
 ### Direct Library Function Testing
 
 **Test Detection Functions**:
@@ -1075,7 +1097,8 @@ bats tests/ -f "VPN status"
 **Mock Functions**:
 - `mock_ip_xfrm_state` - Mock ip xfrm state
 - `mock_ping` - Mock ping command
-- `mock_ipsec` - Mock ipsec command
+- `mock_ipsec` - Mock ipsec command (basic)
+- `mock_ipsec_reload_restart` - Mock ipsec with configurable reload/restart exit codes (preferred for simple scenarios)
 - `mock_ip_route` - Mock ip route
 - `mock_dig` - Mock DNS resolution
 - `add_mock_to_path` - Add mocks to PATH
@@ -1084,6 +1107,7 @@ bats tests/ -f "VPN status"
 **Assertion Functions**:
 - `assert_log_contains` - Check log content
 - `assert_log_not_contains` - Check log doesn't contain
+- `assert_log_contains_any` - Check log contains at least one of multiple patterns
 - `assert_file_executable` - Check file is executable
 - `assert_state_file` - Check state file value
 
@@ -1345,13 +1369,834 @@ When mocks aren't working, use this checklist:
 
 ---
 
+## Test Environment Requirements
+
+This section documents the complete requirements for running the test suite. The test suite is designed to work on both development machines (Linux, macOS) and CI/CD environments.
+
+### System Requirements
+
+**Operating System:**
+- **Linux**: Ubuntu 18.04+, Debian 10+, Fedora 30+, or similar distributions
+- **macOS**: macOS 10.15+ (Catalina or later)
+- **CI/CD**: Ubuntu 20.04+ (GitHub Actions default)
+
+**Shell:**
+- **bash** version 4.0 or higher (required for test execution)
+- Most modern Linux distributions and macOS include compatible bash versions
+
+**Disk Space:**
+- **Minimum**: 100 MB free space for test execution
+- **Recommended**: 500 MB+ for coverage reports and test artifacts
+- Coverage reports can generate significant data (HTML reports, JSON data)
+
+**Memory:**
+- **Minimum**: 512 MB RAM
+- **Recommended**: 1 GB+ RAM for parallel test execution
+- Coverage reporting (kcov) requires additional memory
+
+**CPU:**
+- Single core works but is slow
+- **Recommended**: Multi-core CPU for parallel test execution
+- Parallel execution can reduce test time by 3-4x on multi-core systems
+
+### Required Tools
+
+#### bats-core
+
+**Version**: 1.x or higher
+
+**Installation:**
+
+**macOS (Homebrew):**
+```bash
+brew install bats-core
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install -y bats
+```
+
+**Fedora/RHEL:**
+```bash
+sudo dnf install -y bats
+```
+
+**From Source:**
+```bash
+git clone https://github.com/bats-core/bats-core.git
+cd bats-core
+sudo ./install.sh /usr/local
+```
+
+**Verification:**
+```bash
+bats --version
+```
+
+**Note**: The test suite requires bats-core 1.x. Older versions (0.x) are not supported.
+
+### Optional Tools (Recommended)
+
+#### BATS Helper Libraries
+
+These libraries provide additional assertion functions and utilities that improve test readability and maintainability:
+
+- **bats-support** - Output and error handling helpers
+- **bats-assert** - Additional assertion functions
+- **bats-file** - File system assertions
+
+**Installation:**
+```bash
+cd tests
+./tests/install_bats_helpers.sh
+```
+
+This script automatically installs the helper libraries to the `tests/` directory. The test suite will work without these helpers, but some tests may be less readable.
+
+#### GNU parallel or rush
+
+**Purpose**: Parallel test execution (significantly faster)
+
+**GNU parallel Installation:**
+
+**macOS:**
+```bash
+brew install parallel
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get install parallel
+```
+
+**Fedora/RHEL:**
+```bash
+sudo dnf install parallel
+```
+
+**rush Installation:**
+```bash
+# rush is a Rust-based alternative to GNU parallel
+cargo install rush
+# or download from: https://github.com/shenwei356/rush
+```
+
+**Performance Impact:**
+- Without parallel: ~15 minutes (all tests)
+- With parallel (8 jobs): ~3-5 minutes (all tests)
+- With parallel (fast tests only): ~1-2 minutes
+
+The test runner automatically detects and uses parallel execution if available (see [Parallel Execution](#parallel-execution) below).
+
+### Coverage Reporting Tools
+
+#### kcov
+
+**Purpose**: Code coverage reporting for bash scripts
+
+**Installation:**
+
+**macOS (Homebrew):**
+```bash
+brew install kcov
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install -y kcov
+```
+
+**Fedora/RHEL:**
+```bash
+sudo dnf install -y kcov
+```
+
+**From Source (if package not available):**
+
+kcov requires build dependencies:
+```bash
+# Install build dependencies
+sudo apt-get install -y \
+  cmake \
+  build-essential \
+  libcurl4-openssl-dev \
+  libelf-dev \
+  libdw-dev \
+  binutils-dev \
+  libiberty-dev \
+  zlib1g-dev \
+  git
+
+# Build and install kcov
+git clone https://github.com/SimonKagstrom/kcov.git
+cd kcov
+mkdir build && cd build
+cmake ..
+make -j$(nproc)
+sudo make install
+```
+
+**Verification:**
+```bash
+kcov --version
+```
+
+**Note**: Coverage reporting is optional. Tests can run without kcov, but coverage reports will not be generated.
+
+### Development Environment Requirements
+
+For contributing to the project, additional tools are recommended:
+
+#### ShellCheck
+
+**Purpose**: Static analysis for shell scripts
+
+**Installation:**
+
+**macOS:**
+```bash
+brew install shellcheck
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get install -y shellcheck
+```
+
+**Fedora/RHEL:**
+```bash
+sudo dnf install -y ShellCheck
+```
+
+#### shfmt
+
+**Purpose**: Shell script formatter
+
+**Installation:**
+
+**macOS:**
+```bash
+brew install shfmt
+```
+
+**From Source:**
+```bash
+# Download pre-built binary from releases
+# https://github.com/mvdan/sh/releases
+```
+
+**Note**: shfmt is not available in most Linux package managers. Use Homebrew on Linux or download from releases.
+
+**Setup Script:**
+```bash
+# Configure PATH for development tools
+./scripts/setup-dev-env.sh
+```
+
+This script automatically detects tools installed via `apt` or Homebrew and configures your PATH accordingly.
+
+### CI/CD Environment Requirements
+
+The test suite is designed to work in CI/CD environments (GitHub Actions, GitLab CI, etc.). Additional requirements for CI/CD:
+
+**Required:**
+- `bats` - Test framework
+- `bash` - Shell interpreter
+- `jq` - JSON processor (for coverage extraction in CI)
+
+**Optional:**
+- `kcov` - For coverage reporting
+- `parallel` or `rush` - For parallel execution
+- `bats-support`, `bats-assert`, `bats-file` - Helper libraries
+
+**CI/CD Setup Example:**
+
+See `.github/workflows/ci.yml` for a complete CI/CD setup example. The workflow:
+1. Installs bats and GNU parallel from package manager
+2. Installs bats helper libraries
+3. Optionally builds and installs kcov from source
+4. Runs tests with parallel execution enabled (4 jobs) and appropriate environment variables
+
+### Environment Variables
+
+The test suite respects the following environment variables:
+
+**Test Execution:**
+- `RUN_SLOW_TESTS` - Set to `1` to include slow tests (default: `0`)
+- `PARALLEL_JOBS` - Number of parallel jobs (default: `auto` = batch/parallel mode)
+- `TEST_TIMEOUT` - Timeout for individual tests in seconds (default: `120`)
+- `FAST_FAIL` - Set to `1` to stop on first failure (default: `0`)
+
+**Coverage:**
+- Coverage is enabled via `--coverage` flag, not environment variable
+
+### Verification
+
+To verify your test environment is properly configured:
+
+```bash
+# Check required tools
+bats --version
+
+# Check optional tools
+command -v parallel >/dev/null && echo "GNU parallel: installed" || echo "GNU parallel: not installed"
+command -v kcov >/dev/null && echo "kcov: installed" || echo "kcov: not installed"
+
+# Run a simple test
+bats tests/test_helper_functions.sh -t "test_helper_functions.sh exists"
+```
+
+## Running Tests
+
+### Run Fast Tests (Default)
+
+By default, slow tests are excluded to speed up local development:
+
+```bash
+./tests/run_tests.sh
+```
+
+This runs all test files except the slow test files listed below. Fast tests include:
+- Script-specific tests: `test_analyze_logs.sh`, `test_check_config.sh`, `test_check_utilities.sh`, `test_helper_functions.sh`, `test_install.sh`, `test_uninstall.sh`, `test_vpn_monitor.sh`, `test_prepare_install_package.sh`, `test_vpn_keepalive.sh`, `test_migration.sh`
+- Configuration tests (split files): `test_config_loading.sh`, `test_config_validation.sh`, `test_config_large_values.sh`, `test_config_overrides.sh`, `test_config_security.sh`, `test_config_order.sh`, `test_config_schema.sh`, `test_config_location.sh`
+- Detection tests (split files): `test_detection_status.sh`, `test_detection_fallback.sh`, `test_detection_network_partition.sh`, `test_detection_rekey.sh`, `test_detection_failure_type.sh`, `test_detection_idle.sh`, `test_detection_xfrm_edge_cases.sh`, `test_detection_ping_multiple.sh`, `test_multiple_peer_edge_cases.sh`
+- Recovery tests (split files): `test_recovery_tier1.sh`, `test_recovery_tier2.sh`, `test_recovery_tier3.sh`, `test_recovery_rate_limiting.sh`, `test_recovery_cooldown_rate_limit_interaction.sh`, `test_recovery_network_partition.sh`, `test_recovery_partial_failures.sh`
+- Integration tests: `test_integration_e2e_recovery.sh`, `test_integration_location.sh`
+- Other tests: `test_state_concurrent_updates.sh`, `test_state_location.sh`, `test_rapid_state_changes.sh`, `test_resources.sh`
+
+**Total**: ~605 fast tests
+
+### Run All Tests (Including Slow Tests)
+
+To include slow tests (integration and high-risk tests):
+
+```bash
+./tests/run_tests.sh --slow
+# or
+RUN_SLOW_TESTS=1 ./tests/run_tests.sh
+```
+
+Slow tests include:
+- `test_integration.sh` - Integration tests for full monitoring flow (18 tests)
+- `test_config.sh` - Main configuration tests (53 tests)
+- `test_detection.sh` - Main detection tests (47 tests)
+- `test_recovery.sh` - Recovery strategy selection, XFRM recovery, and fallback logic tests (17 tests)
+- `test_lockfile.sh` - Lockfile management tests (18 tests)
+- `test_state.sh` - State file management tests (25 tests)
+- `test_logging.sh` - Logging failure scenario tests (8 tests)
+- `test_connection.sh` - Connection name discovery and caching tests (8 tests)
+- `test_errors.sh` - Error handling during critical operations tests (3 tests)
+- `test_main.sh` - Main execution edge cases tests (25 tests)
+
+**Total**: ~222 slow tests
+
+### Run with Coverage
+
+```bash
+./tests/run_tests.sh --coverage          # Fast tests only
+./tests/run_tests.sh --slow --coverage    # All tests with coverage
+```
+
+Coverage reports include:
+- **HTML Report**: Interactive browser-based report showing line-by-line coverage
+- **Text Summary**: Coverage percentages and statistics
+- **JSON Data**: Machine-readable coverage data for CI/CD integration
+
+### Coverage Reports Location
+
+All coverage reports are generated in the `coverage/` directory:
+- `coverage/index.html` - Main HTML report (open in browser)
+- `coverage/summary.txt` - Text summary
+- `coverage/index.json` - JSON data for programmatic access
+
+### Generating Coverage Summary
+
+After running tests with coverage, generate a summary report:
+
+```bash
+./tests/generate_coverage_report.sh
+```
+
+This creates a text summary with coverage percentages per file.
+
+### What Gets Covered
+
+Coverage reporting tracks execution of:
+- `vpn-monitor.sh` - Main monitoring script
+- `install.sh` - Installation script
+- `uninstall.sh` - Uninstallation script
+- `lib/common.sh` - Shared library functions
+
+Test files and helper scripts are excluded from coverage reports.
+
+### Run Tests Individually
+
+Run each test case separately with detailed per-test output. This mode is useful for debugging specific test failures and provides timing information for each test:
+
+```bash
+./tests/run_tests.sh --individual                # Fast tests only, individual mode
+./tests/run_tests.sh --individual --slow          # All tests including slow tests
+./tests/run_tests.sh --individual --coverage      # With coverage reporting
+```
+
+Individual mode provides:
+- Per-test timing information
+- Detailed results saved to `logs/test_results_TIMESTAMP.txt`
+- Clear pass/fail/timeout status for each test
+- Useful for debugging specific test failures
+- **Checkpoint/resume support** - Automatically saves progress and can resume from where you left off
+
+**Note:** Individual mode runs tests sequentially (parallel execution is disabled in this mode).
+
+#### Checkpoint and Resume
+
+When running tests individually, the test runner automatically saves a checkpoint file (`logs/test_checkpoint.txt`) after each test completes. This allows you to resume test execution from where you left off if tests fail or are interrupted.
+
+**How it works:**
+- Each test result (PASSED, FAILED, TIMEOUT) is saved to the checkpoint file
+- When resuming, tests that already passed are automatically skipped
+- Failed and timed-out tests are re-run when resuming
+- Checkpoint persists between terminal sessions
+
+**Usage:**
+
+```bash
+# Run tests normally (checkpoint is saved automatically)
+./tests/run_tests.sh --individual
+
+# If tests fail or are interrupted, resume from checkpoint
+./tests/run_tests.sh --individual --resume
+
+# Resume with slow tests included
+./tests/run_tests.sh --individual --resume --slow
+
+# Resume with coverage reporting
+./tests/run_tests.sh --individual --resume --coverage
+```
+
+**Checkpoint file format:**
+- Location: `logs/test_checkpoint.txt`
+- Format: `test_file::test_name|status|timestamp`
+- Example: `test_config.sh::config file contains syntax errors|PASSED|1234567890`
+
+**Benefits:**
+- **Time savings**: Skip tests that already passed, only re-run failures
+- **Resilience**: Resume after interruptions without losing progress
+- **Debugging**: Focus on fixing failures without re-running successful tests
+- **Long test suites**: Especially useful for large test suites that take a long time
+
+**Clearing checkpoint:**
+The checkpoint is automatically cleared when you start a fresh run (without `--resume`). To manually clear it:
+
+```bash
+rm logs/test_checkpoint.txt
+```
+
+### Parallel Execution
+
+The test runner supports parallel execution to significantly reduce test time. By default, tests run in batch/parallel mode (auto-detect CPU cores) if GNU parallel or rush is installed.
+
+```bash
+# Auto-detect CPU cores (default - batch/parallel mode)
+./tests/run_tests.sh
+
+# Use specific number of parallel jobs
+./tests/run_tests.sh --jobs 8
+
+# Run tests sequentially (disable parallel execution)
+./tests/run_tests.sh --sequential
+# or
+./tests/run_tests.sh --jobs 0
+
+# Set via environment variable
+PARALLEL_JOBS=4 ./tests/run_tests.sh
+```
+
+**Performance Impact:**
+- Without parallel: ~15 minutes (all tests)
+- With parallel (8 jobs): ~3-5 minutes (all tests)
+- With parallel (fast tests only): ~1-2 minutes
+
+**Requirements:**
+- GNU parallel or rush must be installed for parallel execution
+- If not available, tests automatically fall back to sequential execution (still works, just slower)
+
+**Note:** Coverage reporting may be slower with parallel execution due to kcov overhead, but is still supported.
+
+### Run Specific Test File
+
+```bash
+# Script-specific tests
+bats tests/test_install.sh
+bats tests/test_uninstall.sh
+bats tests/test_vpn_monitor.sh
+bats tests/test_analyze_logs.sh
+bats tests/test_check_config.sh
+bats tests/test_prepare_install_package.sh
+
+# Integration tests
+bats tests/test_integration.sh
+bats tests/test_integration_e2e_recovery.sh
+
+# Configuration tests
+bats tests/test_config.sh
+bats tests/test_config_loading.sh
+bats tests/test_config_validation.sh
+bats tests/test_config_security.sh
+# ... or run all config tests: bats tests/test_config*.sh
+
+# Detection tests
+bats tests/test_detection.sh
+bats tests/test_detection_status.sh
+bats tests/test_detection_network_partition.sh
+bats tests/test_detection_xfrm_edge_cases.sh
+# ... or run all detection tests: bats tests/test_detection*.sh
+
+# Recovery tests
+bats tests/test_recovery.sh
+bats tests/test_recovery_tier1.sh
+bats tests/test_recovery_cooldown_rate_limit_interaction.sh
+bats tests/test_recovery_network_partition.sh
+bats tests/test_recovery_partial_failures.sh
+# ... or run all recovery tests: bats tests/test_recovery*.sh
+
+# Other high-risk tests
+bats tests/test_lockfile.sh
+bats tests/test_state.sh
+bats tests/test_state_concurrent_updates.sh
+bats tests/test_main.sh
+bats tests/test_rapid_state_changes.sh
+```
+
+### Run Specific Test
+
+```bash
+bats tests/test_install.sh -t "install.sh creates installation directory"
+```
+
+### Run Tests Starting from a Specific Test Number
+
+**Note**: BATS does not natively support starting from a specific test number. After reviewing the [official BATS documentation](https://bats-core.readthedocs.io/en/stable/) and community discussions, there is no built-in feature for this. However, there are several practical workarounds:
+
+#### Method 1: Run Specific Test Files (Recommended)
+
+The most straightforward approach is to run only the test files that contain tests starting from your desired test number.
+
+**Example: Run from a specific test file onwards**
+
+If you know which test file contains the test you want to start from:
+
+```bash
+# Run specific test files and all subsequent ones
+bats tests/test_detection.sh tests/test_recovery.sh tests/test_state.sh
+
+# With parallelization (if GNU parallel is installed)
+bats --jobs auto tests/test_detection.sh tests/test_recovery.sh tests/test_state.sh
+
+# Or using the test runner (includes slow tests by default)
+./tests/run_tests.sh --slow
+```
+
+#### Method 2: Filter by Test Name Pattern
+
+If your test names follow a pattern, you can use BATS' `--filter` option with regex:
+
+```bash
+# Run tests matching a pattern (regex)
+bats tests/test_helper_functions.sh -f "check_xfrm_status"
+
+# Run tests NOT matching a pattern
+bats tests/test_helper_functions.sh --negative-filter "skip"
+
+# Example: Run tests with names containing "147" or higher numbers
+bats tests/test_*.sh -f "test.*(14[7-9]|1[5-9][0-9]|[2-9][0-9][0-9])"
+```
+
+#### Method 3: Use Test Tags (Requires Pre-tagging)
+
+BATS supports tagging tests (version 1.8.0+). You can tag tests and filter by tags:
+
+```bash
+# In your test file, add tags:
+# bats test_tags=number:147
+@test "check_xfrm_status detects rekey when SPI changes" {
+  # test code
+}
+
+# Then run with:
+bats --filter-tags number:147 tests/test_helper_functions.sh
+```
+
+**Note**: This method requires manually tagging tests beforehand, which may not be practical for large test suites.
+
+#### Method 4: Resume Failed Tests
+
+If tests failed previously and you want to rerun only failed tests:
+
+```bash
+# Rerun only tests that failed in the last completed run
+bats --filter-status failed tests/test_*.sh
+
+# Or use the test runner
+./tests/run_tests.sh --failed
+```
+
+**Note:** For individual test mode, the `--resume` flag provides a more robust checkpoint-based resume mechanism that automatically skips passed tests and re-runs failures. See [Checkpoint and Resume](#checkpoint-and-resume) section above for details.
+
+**Finding Which Test File Contains a Specific Test Number:**
+
+```bash
+# Count tests in each file to find test ranges
+total=0
+for f in tests/test_*.sh; do
+  count=$(grep -c '^@test' "$f" 2>/dev/null || echo 0)
+  echo "$f: $count (tests $((total + 1))-$((total + count)))"
+  total=$((total + count))
+done
+```
+
+### Verbose Output
+
+```bash
+bats --verbose tests/test_*.sh
+```
+
+### Tap Format (for CI)
+
+```bash
+bats --tap tests/test_*.sh
+```
+
+## Test Categories
+
+### Fast Tests (run by default)
+
+Fast tests include all test files except the slow test files listed below. This includes:
+- Script-specific tests: `test_analyze_logs.sh`, `test_check_config.sh`, `test_check_utilities.sh`, `test_helper_functions.sh`, `test_install.sh`, `test_uninstall.sh`, `test_vpn_monitor.sh`, `test_prepare_install_package.sh`, `test_vpn_keepalive.sh`, `test_migration.sh`
+- Configuration tests (split files): `test_config_loading.sh`, `test_config_validation.sh`, `test_config_large_values.sh`, `test_config_overrides.sh`, `test_config_security.sh`, `test_config_order.sh`, `test_config_schema.sh`, `test_config_location.sh`
+- Detection tests (split files): `test_detection_status.sh`, `test_detection_fallback.sh`, `test_detection_network_partition.sh`, `test_detection_rekey.sh`, `test_detection_failure_type.sh`, `test_detection_idle.sh`, `test_detection_xfrm_edge_cases.sh`, `test_detection_ping_multiple.sh`, `test_multiple_peer_edge_cases.sh`
+- Recovery tests (split files): `test_recovery_tier1.sh`, `test_recovery_tier2.sh`, `test_recovery_tier3.sh`, `test_recovery_rate_limiting.sh`, `test_recovery_cooldown_rate_limit_interaction.sh`, `test_recovery_network_partition.sh`, `test_recovery_partial_failures.sh`
+- Integration tests: `test_integration_e2e_recovery.sh`, `test_integration_location.sh`
+- Other tests: `test_state_concurrent_updates.sh`, `test_state_location.sh`, `test_rapid_state_changes.sh`, `test_resources.sh`
+
+**Total**: ~605 fast tests
+
+### Slow Tests (excluded by default)
+
+Slow tests are high-risk tests and integration tests that take longer to run:
+- `test_integration.sh` - Integration tests for full monitoring flow (18 tests)
+- `test_config.sh` - Main configuration tests (53 tests)
+- `test_detection.sh` - Main detection tests (47 tests)
+- `test_recovery.sh` - Recovery strategy selection, XFRM recovery, and fallback logic tests (17 tests)
+- `test_lockfile.sh` - Lockfile management tests (18 tests)
+- `test_state.sh` - State file management tests (25 tests)
+- `test_logging.sh` - Logging failure scenario tests (8 tests)
+- `test_connection.sh` - Connection name discovery and caching tests (8 tests)
+- `test_errors.sh` - Error handling during critical operations tests (3 tests)
+- `test_main.sh` - Main execution edge cases tests (25 tests)
+
+**Total Test Count**: 827 tests across all test files (~605 fast, ~222 slow)
+
+**Note**: Slow tests are automatically included in CI/CD via the `RUN_SLOW_TESTS=1` environment variable (see `.github/workflows/tests.yml`).
+
+## Troubleshooting
+
+### Tests Fail with Permission Errors
+
+- Some tests require root access (install/uninstall tests)
+- Run with `sudo` if needed: `sudo bats tests/test_install.sh`
+- Or use `--dev` mode in tests to avoid root requirement
+
+### Tests Fail Due to Missing Commands
+
+- Tests use mocks for system commands
+- Ensure mock functions are properly set up
+- Check PATH includes test directory with mocks
+
+### Tests Leave Temporary Files
+
+- Tests should clean up in teardown
+- Check `TEST_TMPDIR` environment variable
+- Manually clean `/tmp/bats-test-*` if needed
+
+### Bats Helpers Not Found
+
+- Install optional helper libraries
+- Or modify tests to not require them
+- Tests will work without helpers but with fewer assertions
+
+### Coverage Reporting Fails
+
+- Verify kcov is installed: `kcov --version`
+- Check kcov build dependencies if building from source
+- Coverage is optional - tests can run without it
+
+### Parallel Execution Not Working
+
+- Verify GNU parallel or rush is installed
+- Check PATH includes the tool: `which parallel` or `which rush`
+- Parallel execution is optional - tests will run sequentially if not available
+
+### Tests Leave Temporary Files
+
+- Tests should clean up automatically
+- Check `/tmp/bats-test-*` directories if cleanup fails
+- Manually clean if needed: `rm -rf /tmp/bats-test-*`
+
+## CI/CD Integration
+
+Tests can be run in CI environments. The test suite:
+
+- Works in non-interactive mode
+- Cleans up after itself
+- Uses temporary directories
+- Doesn't require root (for most tests)
+- Can run in parallel (with proper isolation)
+- Complete test isolation - each test gets a fresh environment
+
+### Example GitHub Actions Workflow
+
+```yaml
+- name: Install dependencies
+  run: |
+    sudo apt-get update
+    sudo apt-get install -y bats parallel
+
+- name: Install kcov for coverage
+  run: |
+    sudo apt-get update && sudo apt-get install -y kcov
+
+- name: Run tests with coverage
+  env:
+    PARALLEL_JOBS: 4
+  run: |
+    RUN_SLOW_TESTS=1 ./tests/run_tests.sh --coverage
+
+- name: Upload coverage report
+  uses: codecov/codecov-action@v3
+  with:
+    files: ./coverage/index.json
+    flags: unittests
+```
+
+## Flaky Test Detection
+
+The test suite includes automated flaky test detection to identify tests that pass inconsistently. Flaky tests are tests that pass in some runs but fail in others, indicating unreliable tests that need fixing.
+
+### Running Flaky Test Detection
+
+```bash
+# Run flaky test detection with default settings (3 runs, fast tests only)
+./tests/detect_flaky_tests.sh
+
+# Run with more iterations for better detection
+./tests/detect_flaky_tests.sh --runs 5
+
+# Include slow tests in detection
+./tests/detect_flaky_tests.sh --slow
+
+# Combine options
+./tests/detect_flaky_tests.sh --runs 5 --slow
+```
+
+### How It Works
+
+The flaky test detection script:
+1. Runs the test suite multiple times (default: 3 runs)
+2. Tracks test results across all runs
+3. Identifies tests with inconsistent results (flaky tests)
+4. Generates a detailed analysis report
+
+### Output
+
+The script generates:
+- **Console Summary**: Colored summary showing stable and flaky tests
+- **Analysis Report**: Detailed report saved to `logs/flaky_detection_<timestamp>/flaky_analysis.txt`
+- **CI Integration**: Automatically runs on pull requests in CI
+
+### CI Integration
+
+Flaky test detection runs automatically on pull requests via GitHub Actions. When flaky tests are detected:
+- A warning is posted in the workflow
+- Results are uploaded as artifacts
+- A comment is posted on the PR with details
+
+## Test Isolation
+
+The test suite implements **complete test isolation** to ensure tests don't affect each other. This prevents flaky tests and makes debugging easier.
+
+### How It Works
+
+Each test runs in a completely isolated environment:
+
+1. **Fresh Environment Variables**: All test-related environment variables are saved before each test and restored after each test
+2. **Isolated Test Directory**: Each test gets its own temporary directory (`TEST_DIR`) that is automatically cleaned up
+3. **PATH Restoration**: Mock commands added to PATH are automatically removed after each test
+4. **State Cleanup**: All state files, log files, and temporary files are cleaned up
+
+### Environment Variables Tracked
+
+The following environment variables are automatically saved and restored for each test:
+
+- `CONFIG_FILE` - Configuration file path
+- `STATE_DIR` - State directory path
+- `LOGS_DIR` - Logs directory path
+- `LOCKFILE` - Lockfile path
+- `LOG_FILE` - Log file path
+- `RESTART_COUNT_FILE` - Restart count file path
+- `COOLDOWN_UNTIL_FILE` - Cooldown file path
+- `MOCK_IP`, `MOCK_PING`, `MOCK_IPSEC` - Mock command paths
+- `NO_ESCALATE` - Error handling flag
+- `DEBUG` - Debug mode flag
+- `BASE_TIME` - Controllable time for testing
+- `TEST_CONFIG_FILE`, `TEST_SCRIPT` - Test-specific paths
+- `MOCK_DATA_DIR`, `MOCK_INSTALL_DIR` - Mock directory paths
+- `TEST_DIR` - Test temporary directory
+- `PATH` - Command search path
+
+### Verifying Test Isolation
+
+Use the test isolation verification script to detect if any tests are leaving state:
+
+```bash
+# Verify all test files
+./tests/verify_test_isolation.sh
+
+# Verify specific test files
+./tests/verify_test_isolation.sh test_config.sh test_detection.sh
+```
+
+The verification script:
+- Captures environment state before and after each test
+- Compares environment variables to detect modifications
+- Checks for files created outside `TEST_DIR`
+- Reports any state leakage detected
+
+### Best Practices
+
+To maintain test isolation:
+
+1. **Use Helper Functions**: Use `setup_test_environment()`, `setup_test_vpn_monitor()`, etc. instead of manually setting environment variables
+2. **Clean Up in Tests**: If your test creates files outside `TEST_DIR`, clean them up explicitly
+3. **Don't Modify Global State**: Avoid modifying system-wide configuration or files outside `TEST_DIR`
+4. **Use Mocks**: Use mock commands instead of modifying system commands
+5. **Verify Isolation**: Run `verify_test_isolation.sh` periodically to catch isolation issues early
+
 ## Document Organization
 
 This document covers BATS framework usage and patterns for our test suite. For related documentation, see:
 
-- **[Test Patterns](../tests/TEST_PATTERNS.md)** - Standardized test patterns and best practices
-- **[tests/README.md](../tests/README.md)** - Complete test suite documentation including running tests, coverage, and troubleshooting
+- **[Test Patterns](../tests/TEST_PATTERNS.md)** - Standardized test patterns, best practices, test coverage, and high-risk tests
+- **[tests/README.md](../tests/README.md)** - Quick start guide for running tests
 - **[Test Strategy](TEST_STRATEGY.md)** - Test strategy and approach
 - **[Test Maintenance](TEST_MAINTENANCE.md)** - Test maintenance procedures
+
+**Document Organization:**
+- **tests/README.md** - Minimal quick-start guide with basic commands and test structure overview
+- **docs/BATS_GUIDE.md** (this document) - Complete BATS framework guide, test environment setup, running tests, and advanced features
+- **docs/TEST_PATTERNS.md** - Standardized patterns for writing tests, test coverage goals, and high-risk test details
 
 The Quick Reference section below provides quick access to common patterns. For comprehensive documentation, see the cross-referenced documents above.

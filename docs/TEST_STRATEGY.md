@@ -118,9 +118,9 @@ This document outlines the comprehensive test strategy for the UDM VPN Monitor p
 
 For detailed information about test structure, file organization, test categories, and fast vs. slow tests, see:
 
-- **[Test Structure](../tests/README.md#test-structure)** - Complete test file organization and structure
-- **[Test Categories](../tests/README.md#test-categories)** - Fast vs. slow tests, test categorization, and test counts
-- **[Test Environment Requirements](../tests/README.md#test-environment-requirements)** - System requirements and tool installation
+- **[Test Structure](../tests/README.md#test-structure)** - Test file organization and structure overview
+- **[Test Categories](../docs/BATS_GUIDE.md#test-categories)** - Fast vs. slow tests, test categorization, and test counts
+- **[Test Environment Requirements](../docs/BATS_GUIDE.md#test-environment-requirements)** - System requirements and tool installation
 
 **Summary**: The test suite consists of ~900 tests organized by functionality (configuration, detection, recovery, integration, etc.) and categorized as fast (~605 tests, run by default) or slow (~295 tests, excluded by default for faster development feedback).
 
@@ -195,10 +195,10 @@ For comprehensive mocking documentation including patterns, best practices, help
 
 For comprehensive information about running tests, including all command-line options, parallel execution, coverage reporting, and CI/CD integration, see:
 
-- **[Running Tests](../tests/README.md#running-tests)** - Complete guide to running tests with all options
-- **[Test Coverage Reporting](../tests/README.md#test-coverage-reporting)** - Coverage reporting setup and usage
-- **[Flaky Test Detection](../tests/README.md#flaky-test-detection)** - Automated flaky test detection
-- **[Continuous Integration](../tests/README.md#continuous-integration)** - CI/CD integration details
+- **[Running Tests](../docs/BATS_GUIDE.md#running-tests)** - Complete guide to running tests with all options
+- **[Test Coverage Reporting](../docs/BATS_GUIDE.md#coverage-reports-location)** - Coverage reporting setup and usage
+- **[Flaky Test Detection](../docs/BATS_GUIDE.md#flaky-test-detection)** - Automated flaky test detection
+- **[CI/CD Integration](../docs/BATS_GUIDE.md#cicd-integration)** - CI/CD integration details
 
 **Quick Reference**:
 - **Local Development**: `./tests/run_tests.sh` (fast tests only)
@@ -210,13 +210,13 @@ For comprehensive information about running tests, including all command-line op
 
 For detailed coverage information including goals, measurement, reporting, and analysis, see:
 
-- **[Test Coverage](../tests/README.md#test-coverage)** - Complete coverage documentation including goals, current coverage, and module-specific targets
-- **[Test Coverage Reporting](../tests/README.md#test-coverage-reporting)** - How to generate and view coverage reports
+- **[Test Coverage](../docs/TEST_PATTERNS.md#test-coverage)** - Complete coverage documentation including goals, current coverage, and module-specific targets
+- **[Test Coverage Reporting](../docs/BATS_GUIDE.md#coverage-reports-location)** - How to generate and view coverage reports
 
 **Summary**:
 - **Tool**: kcov for line coverage
 - **Current Coverage**: 46.9% (1141/2433 lines)
-- **Coverage Goals**: See [Test Coverage Goals](../tests/README.md#coverage-goals) for detailed targets by module
+- **Coverage Goals**: See [Test Coverage Goals](../docs/TEST_PATTERNS.md#test-coverage) for detailed targets by module
 - **Strategy**: Focus on critical paths (P0) first, then high priority (P1), with reasonable coverage for all code
 
 ## Test Maintenance Strategy
@@ -274,8 +274,8 @@ For detailed test patterns and standards, see:
 
 For current test metrics including test counts, execution times, and quality indicators, see:
 
-- **[Test Categories](../tests/README.md#test-categories)** - Current test counts and organization
-- **[Running Tests](../tests/README.md#running-tests)** - Test execution times and performance
+- **[Test Categories](../docs/BATS_GUIDE.md#test-categories)** - Current test counts and organization
+- **[Running Tests](../docs/BATS_GUIDE.md#running-tests)** - Test execution times and performance
 
 **Summary**:
 - **Test Pass Rate**: Target 100% (all tests should pass)

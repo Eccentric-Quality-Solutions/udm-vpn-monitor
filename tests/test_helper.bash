@@ -704,6 +704,52 @@ assert_log_not_contains() {
 	fi
 }
 
+# Assert log file contains one of multiple patterns
+#
+# Checks if log file contains at least one of the specified patterns.
+# Useful for asserting log messages that may vary slightly.
+#
+# Arguments:
+#   $1: Log file path
+#   $2+: Patterns to search for (at least one must match)
+#
+# Returns:
+#   0: At least one pattern found
+#   1: No patterns found (fails test)
+#
+# Note: Uses BATS_TEST_NAME for better error messages when available
+#
+# Example:
+#   assert_log_contains_any "$log_file" "ipsec reload failed" "reload failed"
+assert_log_contains_any() {
+	local log_file="$1"
+	shift
+	local patterns=("$@")
+
+	assert_file_exist "$log_file"
+
+	local pattern
+	for pattern in "${patterns[@]}"; do
+		if grep -Fq -- "$pattern" "$log_file" 2>/dev/null; then
+			return 0
+		fi
+	done
+
+	# No patterns found - fail the test
+	local patterns_str
+	patterns_str=$(
+		IFS="' or '"
+		echo "${patterns[*]}"
+	)
+	# Use BATS_TEST_NAME in error message if available for better debugging
+	if [[ -n "${BATS_TEST_NAME:-}" ]]; then
+		fail "Expected log to contain one of: '$patterns_str' in test '${BATS_TEST_NAME}'"
+	else
+		fail "Expected log to contain one of: '$patterns_str'"
+	fi
+	return 1
+}
+
 # Create mock ip command output
 #
 # Creates a mock 'ip' command that returns fake xfrm state output.
@@ -722,7 +768,7 @@ assert_log_not_contains() {
 #
 # Side effects:
 #   Creates mock script in TEST_DIR
-	mock_ip_xfrm_state() {
+mock_ip_xfrm_state() {
 	local peer_ip="$1"
 	local bytes="${2:-1000}"
 	local spi="${3:-0x12345678}"

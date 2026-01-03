@@ -212,7 +212,7 @@ verify_ipsec_connections_active() {
 	# Wrap ipsec status with timeout to prevent hanging
 	local ipsec_output
 	local ipsec_exit_code=0
-	if command -v timeout >/dev/null 2>&1; then
+	if check_command_available "timeout"; then
 		ipsec_output=$(timeout "$IPSEC_STATUS_TIMEOUT" ipsec status 2>/dev/null)
 		ipsec_exit_code=$?
 	else

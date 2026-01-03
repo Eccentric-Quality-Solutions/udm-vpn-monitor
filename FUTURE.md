@@ -79,3 +79,11 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Low priority: current code works correctly, this is a style consistency improvement
     - See `lib/config.sh` lines 1108, 1154, 1179, 1212, 1405 for examples that could be refactored
     - Pattern documented in `docs/CODE_PATTERNS.md` under "Fake Mode Support" section
+
+- Add tests for uninstall.sh logs and state retention features
+    - Tests for `--keep-logs` / `--remove-logs` flags
+    - Tests for `--keep-state` / `--remove-state` flags
+    - Tests for interactive prompts for logs/state directories
+    - Tests for combined retention scenarios (config + logs + state)
+    - Tests for verification of preserved logs/state directories
+    - Note: Existing tests pass, but new retention features need coverage

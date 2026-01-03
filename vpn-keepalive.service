@@ -6,10 +6,9 @@ Wants=network-online.target
 
 [Service]
 Type=forking
-PIDFile=%INSTALL_DIR%/vpn-keepalive.pid
+PIDFile=%INSTALL_DIR%/state/vpn-keepalive.pid
 ExecStart=%INSTALL_DIR%/vpn-keepalive.sh start
 ExecStop=%INSTALL_DIR%/vpn-keepalive.sh stop
-ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -25,4 +24,3 @@ LimitNOFILE=1024
 
 [Install]
 WantedBy=multi-user.target
-

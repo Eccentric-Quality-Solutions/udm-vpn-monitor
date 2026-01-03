@@ -3770,9 +3770,31 @@ EOF
 	remove_mock_from_path
 
 	# Create a minimal PATH that doesn't include system commands
-	# This ensures ip and ipsec are not found
+	# This ensures ip and ipsec are not found via PATH
 	local original_path="$PATH"
 	PATH="${TEST_DIR}"
+
+	# Mock check_command_available to return false for ip and ipsec
+	# This simulates the scenario where commands are truly unavailable
+	# We override the function after sourcing libraries to shadow the original
+	# Source common.sh first to get the original function definition
+	if [[ -f "${LIB_DIR}/common.sh" ]]; then
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/common.sh" 2>/dev/null || true
+	fi
+	# Override check_command_available to return false for ip and ipsec
+	# This allows us to test the "unavailable" scenario even when commands exist on the system
+	# For other commands, we use a simple command -v check (sufficient for test purposes)
+	check_command_available() {
+		local cmd="$1"
+		# Return false (unavailable) for ip and ipsec to test unavailable scenario
+		if [[ "$cmd" == "ip" ]] || [[ "$cmd" == "ipsec" ]]; then
+			return 1
+		fi
+		# For other commands, use simple command -v check
+		# This is sufficient for test purposes and avoids complexity
+		command -v "$cmd" >/dev/null 2>&1
+	}
 
 	# Test strategy selection (call directly so global variables persist)
 	select_recovery_strategy "203.0.113.1" 2 || true

@@ -20,18 +20,7 @@ load fixtures/vpn_failing
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Mock ipsec for recovery actions
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    echo "Reloaded"
-    exit 0
-elif [[ "$1" == "restart" ]]; then
-    echo "Restarted"
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	# Step 1: VPN fails - Tier 1 (logging)
@@ -147,14 +136,7 @@ EOF
 	setup_test_vpn_monitor "192.168.1.1 10.0.0.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Mock ipsec for recovery
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]] || [[ "$1" == "restart" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 
 	# Mock ip - both peers down
 	local mock_ip="${TEST_DIR}/ip"
@@ -232,15 +214,7 @@ EOF
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Mock ipsec - recovery succeeds
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]] || [[ "$1" == "restart" ]]; then
-    echo "Recovery action succeeded"
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	# VPN fails, reaches Tier 2
@@ -278,15 +252,7 @@ EOF
 	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Mock ipsec - recovery fails
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]] || [[ "$1" == "restart" ]]; then
-    echo "Recovery action failed" >&2
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 1 1
 	add_mock_to_path
 
 	# VPN fails, reaches Tier 2
@@ -334,14 +300,7 @@ EOF
 		'ENABLE_XFRM_RECOVERY=0'
 
 	# Mock ipsec
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	# Mock VPN as down (no SA)

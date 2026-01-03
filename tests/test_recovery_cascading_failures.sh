@@ -87,16 +87,7 @@ EOF
 	setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	# Mock ipsec - reload succeeds
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    echo "ipsec reload succeeded"
-    exit 0
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 
 	# Mock VPN as recovered after reload
 	local mock_ip="${TEST_DIR}/ip"

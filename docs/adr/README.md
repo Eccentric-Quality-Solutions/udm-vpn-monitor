@@ -39,6 +39,8 @@ Architecture Decision Records are documents that capture important architectural
 | [ADR-0023](0023-resource-monitoring-and-throttling.md) | Resource Monitoring and Throttling | Accepted |
 | [ADR-0024](0024-location-based-configuration.md) | Location-Based Configuration Format | Accepted |
 | [ADR-0025](0025-network-partition-detection.md) | Network Partition Detection | Accepted |
+| [ADR-0026](0026-detection-reliability-safeguard.md) | Detection Reliability Safeguard | Accepted |
+| [ADR-0027](0027-enhanced-command-availability-checking.md) | Enhanced Command Availability Checking | Accepted |
 
 ## ADR Format
 

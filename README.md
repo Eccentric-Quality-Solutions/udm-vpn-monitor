@@ -477,6 +477,43 @@ cat /data/vpn-monitor/reports/vpn-monitor-report.txt
 
 Reports include summary statistics, tier action analysis, and event timelines. CSV exports are available for spreadsheet analysis.
 
+### Configuration Utilities
+
+The installation includes utility scripts to help manage and validate your configuration:
+
+**Check Configuration Against Schema (`check-config.sh`):**
+```bash
+# Validate your config file against the schema
+/data/vpn-monitor/check-config.sh
+
+# Check a specific config file
+/data/vpn-monitor/check-config.sh --config /path/to/vpn-monitor.conf
+```
+
+This script compares your configuration file against the **schema** (the code-based definition of what's valid). It reports:
+- Missing settings (in schema but not in your config) - shows what the code expects
+- Deprecated settings (in your config but not in schema) - shows what's no longer valid
+- Valid settings (in both)
+
+**Use this when:** You want to validate that your config matches what the code expects/accepts.
+
+**Compare Template with Existing Config (`compare-config.sh`):**
+```bash
+# Compare template config with your existing config
+/data/vpn-monitor/compare-config.sh
+
+# Compare specific files
+/data/vpn-monitor/compare-config.sh --template ./vpn-monitor.conf --existing /data/vpn-monitor/vpn-monitor.conf
+```
+
+This script compares the **template configuration file** (the `vpn-monitor.conf` file that ships with the code) with your existing configuration file. It shows:
+- New settings in the template that aren't in your existing config (fields you might want to add) - with template values shown
+- Deprecated settings in your existing config that aren't in the template (fields that may have been removed)
+
+**Use this when:** You want to see what's new in the template during upgrades without overwriting your existing config.
+
+**Note:** During installation/upgrade, if your existing config is preserved (not overwritten), `compare-config.sh` runs automatically to show you what's new in the template. You can also run it manually anytime to check for new configuration options.
+
 ### Manual Testing
 
 ```bash

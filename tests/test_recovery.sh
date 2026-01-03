@@ -721,14 +721,7 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock ipsec - reload succeeds
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -754,16 +747,7 @@ EOF
 	setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_XFRM_RECOVERY=0'
 
 	# Mock ipsec - reload fails, restart succeeds
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    exit 1
-elif [[ "$1" == "restart" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 1 0
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -791,14 +775,7 @@ EOF
 	mock_ip_vpn_down
 
 	# Mock ipsec - reload succeeds
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -847,14 +824,7 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock ipsec - reload succeeds
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"

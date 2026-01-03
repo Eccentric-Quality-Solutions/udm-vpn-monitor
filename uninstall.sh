@@ -13,11 +13,17 @@ set -euo pipefail
 # Installation paths (must match install.sh)
 INSTALL_DIR="/data/vpn-monitor"
 CONFIG_FILE="${INSTALL_DIR}/vpn-monitor.conf"
+LOGS_DIR="${INSTALL_DIR}/logs"
+STATE_DIR="${INSTALL_DIR}/state"
 
-# Flags for config file handling
+# Flags for file handling
 REMOVE_CONFIG=""       # Empty means prompt user, "yes" means remove, "no" means keep
+REMOVE_LOGS=""         # Empty means prompt user, "yes" means remove, "no" means keep
+REMOVE_STATE=""        # Empty means prompt user, "yes" means remove, "no" means keep
 SKIP_CONFIRMATION=0    # Set to 1 if --yes flag is provided
 KEEP_CONFIG_IN_PLACE=0 # Set to 1 if config file should be kept in installation directory
+KEEP_LOGS_IN_PLACE=0   # Set to 1 if logs directory should be kept in installation directory
+KEEP_STATE_IN_PLACE=0  # Set to 1 if state directory should be kept in installation directory
 
 # Get script directory for sourcing common functions
 UNINSTALL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -161,17 +167,18 @@ handle_config_file() {
 			should_remove="no"
 		fi
 	else
-		# No flag, prompt user (unless in CI or non-interactive mode)
+		# No flag, prompt user interactively (default behavior)
+		# Skip prompts only if CI env var is set or --yes flag was provided
 		if [[ -n "${CI:-}" ]] || [[ $SKIP_CONFIRMATION -eq 1 ]]; then
 			# CI or non-interactive mode: default to removing config
 			should_remove="yes"
 			if [[ -n "${CI:-}" ]]; then
 				log_info "CI mode detected, removing configuration file"
 			else
-				log_info "Non-interactive mode detected, removing configuration file"
+				log_info "Non-interactive mode detected (--yes flag), removing configuration file"
 			fi
 		else
-			# Interactive mode: ask user
+			# Interactive mode (default): ask user
 			echo ""
 			log_info "Configuration file found: $CONFIG_FILE"
 			read -p "Do you want to remove the configuration file? (yes/no) [no]: " -r
@@ -202,11 +209,159 @@ handle_config_file() {
 	return 0
 }
 
+# Handle logs directory removal
+#
+# Prompts user whether to remove the logs directory, or uses flag value.
+# If user wants to keep it, marks it to be kept in-place in the installation directory.
+#
+# Arguments:
+#   None (uses global REMOVE_LOGS flag)
+#
+# Returns:
+#   0: Logs directory handled successfully
+#   1: Failed to handle logs directory
+#
+# Side effects:
+#   - May prompt user for input
+#   - Sets global KEEP_LOGS_IN_PLACE flag if logs should be kept
+#   - Removes logs directory if user chooses to remove it
+#
+# Note:
+#   If REMOVE_LOGS is empty, prompts user interactively
+#   If REMOVE_LOGS is "yes", removes logs directory
+#   If REMOVE_LOGS is "no", keeps logs directory in-place (sets KEEP_LOGS_IN_PLACE=1)
+handle_logs_dir() {
+	if [[ ! -d "$LOGS_DIR" ]]; then
+		log_info "Logs directory not found: $LOGS_DIR"
+		return 0
+	fi
+
+	# Determine action based on flag or prompt user
+	local should_remove=""
+	if [[ -n "$REMOVE_LOGS" ]]; then
+		# Flag was set, use it
+		if [[ "$REMOVE_LOGS" == "yes" ]]; then
+			should_remove="yes"
+		else
+			should_remove="no"
+		fi
+	else
+		# No flag, prompt user interactively (default behavior)
+		# Skip prompts only if CI env var is set or --yes flag was provided
+		if [[ -n "${CI:-}" ]] || [[ $SKIP_CONFIRMATION -eq 1 ]]; then
+			# CI or non-interactive mode: default to removing logs
+			should_remove="yes"
+			if [[ -n "${CI:-}" ]]; then
+				log_info "CI mode detected, removing logs directory"
+			else
+				log_info "Non-interactive mode detected (--yes flag), removing logs directory"
+			fi
+		else
+			# Interactive mode (default): ask user
+			echo ""
+			log_info "Logs directory found: $LOGS_DIR"
+			read -p "Do you want to remove the logs directory? (yes/no) [no]: " -r
+			echo ""
+			if [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+				should_remove="yes"
+			else
+				should_remove="no"
+			fi
+		fi
+	fi
+
+	if [[ "$should_remove" == "yes" ]]; then
+		# Mark for removal (will be removed by remove_installation_dir)
+		KEEP_LOGS_IN_PLACE=0
+		log_info "Logs directory will be removed"
+	else
+		# Keep logs directory in-place
+		KEEP_LOGS_IN_PLACE=1
+		log_info "Logs directory will be kept in-place: $LOGS_DIR"
+	fi
+
+	return 0
+}
+
+# Handle state directory removal
+#
+# Prompts user whether to remove the state directory, or uses flag value.
+# If user wants to keep it, marks it to be kept in-place in the installation directory.
+#
+# Arguments:
+#   None (uses global REMOVE_STATE flag)
+#
+# Returns:
+#   0: State directory handled successfully
+#   1: Failed to handle state directory
+#
+# Side effects:
+#   - May prompt user for input
+#   - Sets global KEEP_STATE_IN_PLACE flag if state should be kept
+#   - Removes state directory if user chooses to remove it
+#
+# Note:
+#   If REMOVE_STATE is empty, prompts user interactively
+#   If REMOVE_STATE is "yes", removes state directory
+#   If REMOVE_STATE is "no", keeps state directory in-place (sets KEEP_STATE_IN_PLACE=1)
+handle_state_dir() {
+	if [[ ! -d "$STATE_DIR" ]]; then
+		log_info "State directory not found: $STATE_DIR"
+		return 0
+	fi
+
+	# Determine action based on flag or prompt user
+	local should_remove=""
+	if [[ -n "$REMOVE_STATE" ]]; then
+		# Flag was set, use it
+		if [[ "$REMOVE_STATE" == "yes" ]]; then
+			should_remove="yes"
+		else
+			should_remove="no"
+		fi
+	else
+		# No flag, prompt user interactively (default behavior)
+		# Skip prompts only if CI env var is set or --yes flag was provided
+		if [[ -n "${CI:-}" ]] || [[ $SKIP_CONFIRMATION -eq 1 ]]; then
+			# CI or non-interactive mode: default to removing state
+			should_remove="yes"
+			if [[ -n "${CI:-}" ]]; then
+				log_info "CI mode detected, removing state directory"
+			else
+				log_info "Non-interactive mode detected (--yes flag), removing state directory"
+			fi
+		else
+			# Interactive mode (default): ask user
+			echo ""
+			log_info "State directory found: $STATE_DIR"
+			read -p "Do you want to remove the state directory? (yes/no) [no]: " -r
+			echo ""
+			if [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+				should_remove="yes"
+			else
+				should_remove="no"
+			fi
+		fi
+	fi
+
+	if [[ "$should_remove" == "yes" ]]; then
+		# Mark for removal (will be removed by remove_installation_dir)
+		KEEP_STATE_IN_PLACE=0
+		log_info "State directory will be removed"
+	else
+		# Keep state directory in-place
+		KEEP_STATE_IN_PLACE=1
+		log_info "State directory will be kept in-place: $STATE_DIR"
+	fi
+
+	return 0
+}
+
 # Remove installation directory
 #
 # Removes the installation directory and its contents.
-# If config file is being kept in-place, removes all files except the config file
-# and keeps the directory. Otherwise, removes the entire directory.
+# If config file, logs, or state directories are being kept in-place, removes all files
+# except those preserved items and keeps the directory. Otherwise, removes the entire directory.
 #
 # Returns:
 #   0: Directory/files removed successfully (or didn't exist)
@@ -214,39 +369,105 @@ handle_config_file() {
 #
 # Side effects:
 #   - Displays list of files that will be removed
-#   - Deletes ${INSTALL_DIR} and all contents (unless config is kept)
-#   - If config is kept, removes all files except config file
+#   - Deletes ${INSTALL_DIR} and all contents (unless items are kept)
+#   - If items are kept, removes all files except preserved items
 remove_installation_dir() {
+	# Build list of items to preserve
+	local preserve_items=()
 	if [[ $KEEP_CONFIG_IN_PLACE -eq 1 ]]; then
-		# Keep config file in-place, remove everything else
-		log_info "Removing files from installation directory (keeping config file): $INSTALL_DIR"
+		preserve_items+=("$(basename "$CONFIG_FILE")")
+	fi
+	if [[ $KEEP_LOGS_IN_PLACE -eq 1 ]]; then
+		preserve_items+=("$(basename "$LOGS_DIR")")
+	fi
+	if [[ $KEEP_STATE_IN_PLACE -eq 1 ]]; then
+		preserve_items+=("$(basename "$STATE_DIR")")
+	fi
+
+	if [[ ${#preserve_items[@]} -gt 0 ]]; then
+		# Keep some items in-place, remove everything else
+		local preserved_list=""
+		for item in "${preserve_items[@]}"; do
+			if [[ -n "$preserved_list" ]]; then
+				preserved_list="${preserved_list}, ${item}"
+			else
+				preserved_list="$item"
+			fi
+		done
+		log_info "Removing files from installation directory (keeping: ${preserved_list}): $INSTALL_DIR"
 
 		if [[ -d "$INSTALL_DIR" ]]; then
 			# List what will be removed
 			log_info "The following will be removed:"
-			find "$INSTALL_DIR" -mindepth 1 ! -name "$(basename "$CONFIG_FILE")" -print 2>/dev/null | while read -r item; do
-				if [[ -d "$item" ]]; then
-					echo "  $(basename "$item")/ (directory)"
-				else
-					ls -lh "$item" 2>/dev/null | awk '{print "  " $0}' || echo "  $(basename "$item")"
+			# List items that are not preserved
+			for item in "$INSTALL_DIR"/*; do
+				if [[ ! -e "$item" ]]; then
+					continue
+				fi
+				local item_name
+				item_name=$(basename "$item")
+				local should_preserve=0
+				for preserve_item in "${preserve_items[@]}"; do
+					if [[ "$item_name" == "$preserve_item" ]]; then
+						should_preserve=1
+						break
+					fi
+				done
+				if [[ $should_preserve -eq 0 ]]; then
+					if [[ -d "$item" ]]; then
+						echo "  ${item_name}/ (directory)"
+					else
+						ls -lh "$item" 2>/dev/null | awk '{print "  " $0}' || echo "  ${item_name}"
+					fi
 				fi
 			done || true
 
-			# Remove all files and directories except the config file
-			find "$INSTALL_DIR" -mindepth 1 ! -name "$(basename "$CONFIG_FILE")" -exec rm -rf {} + 2>/dev/null || true
+			# Remove all files and directories except preserved items
+			# Use a simpler approach: iterate and remove items that aren't preserved
+			for item in "$INSTALL_DIR"/*; do
+				if [[ ! -e "$item" ]]; then
+					continue
+				fi
+				local item_name
+				item_name=$(basename "$item")
+				local should_preserve=0
+				for preserve_item in "${preserve_items[@]}"; do
+					if [[ "$item_name" == "$preserve_item" ]]; then
+						should_preserve=1
+						break
+					fi
+				done
+				if [[ $should_preserve -eq 0 ]]; then
+					rm -rf "$item" 2>/dev/null || true
+				fi
+			done || true
 
-			# Verify config file still exists
-			if [[ -f "$CONFIG_FILE" ]]; then
-				log_info "Installation files removed successfully (config file preserved)"
-			else
+			# Verify preserved items still exist
+			local verify_errors=0
+			if [[ $KEEP_CONFIG_IN_PLACE -eq 1 ]] && [[ ! -f "$CONFIG_FILE" ]]; then
 				log_error "Config file was unexpectedly removed"
+				verify_errors=$((verify_errors + 1))
+			fi
+			if [[ $KEEP_LOGS_IN_PLACE -eq 1 ]] && [[ ! -d "$LOGS_DIR" ]]; then
+				log_error "Logs directory was unexpectedly removed"
+				verify_errors=$((verify_errors + 1))
+			fi
+			if [[ $KEEP_STATE_IN_PLACE -eq 1 ]] && [[ ! -d "$STATE_DIR" ]]; then
+				log_error "State directory was unexpectedly removed"
+				verify_errors=$((verify_errors + 1))
+			fi
+
+			if [[ $verify_errors -eq 0 ]]; then
+				log_info "Installation files removed successfully (preserved items: ${preserved_list})"
+			else
+				log_error "Some preserved items were unexpectedly removed"
 				return 1
 			fi
 		else
 			log_warn "Installation directory not found: $INSTALL_DIR"
 		fi
 	else
-		# Remove entire directory including config file
+		# Remove entire directory including all files
 		log_info "Removing installation directory: $INSTALL_DIR"
 
 		if [[ -d "$INSTALL_DIR" ]]; then
@@ -338,7 +559,7 @@ remove_keepalive_service() {
 #   Falls back to manual PID file check and kill if script unavailable
 stop_keepalive_daemon() {
 	local keepalive_script="${INSTALL_DIR}/vpn-keepalive.sh"
-	local pidfile="${INSTALL_DIR}/vpn-keepalive.pid"
+	local pidfile="${INSTALL_DIR}/state/vpn-keepalive.pid"
 
 	# Try to use keepalive script's stop command if available
 	if [[ -f "$keepalive_script" ]] && [[ -x "$keepalive_script" ]]; then
@@ -347,7 +568,7 @@ stop_keepalive_daemon() {
 			"$keepalive_script" stop >/dev/null 2>&1 || log_warn "Failed to stop keepalive daemon via script"
 		fi
 	# Fallback: check PID file directly
-	elif [[ -f "$pidfile" ]]; then
+	elif [[ -f "$pidfile" ]] && file_exists_and_readable "$pidfile"; then
 		local pid
 		pid=$(cat "$pidfile" 2>/dev/null || echo "")
 		if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
@@ -396,18 +617,18 @@ cleanup_lockfile() {
 # Verify uninstallation
 #
 # Verifies that the uninstallation completed successfully by checking:
-#   - Installation directory no longer exists
+#   - Installation directory no longer exists (or only preserved items remain)
 #   - Cron entry no longer exists
 #   - Logrotate configuration no longer exists
-# Logs errors for any components that still exist.
+# Logs errors for any components that still exist unexpectedly.
 #
 # Returns:
-#   0: Uninstallation verified successfully (all components removed)
-#   1: Verification failed (some components still exist)
+#   0: Uninstallation verified successfully (all components removed or properly preserved)
+#   1: Verification failed (some components still exist unexpectedly)
 #
 # Side effects:
 #   - Logs info messages for successful removals
-#   - Logs error messages for components still present
+#   - Logs error messages for components still present unexpectedly
 #   - Counts errors and reports summary
 #
 # Examples:
@@ -420,30 +641,78 @@ cleanup_lockfile() {
 # Note:
 #   Checks INSTALL_DIR, crontab entries, and logrotate config
 #   Uses crontab -l and grep to check for cron entries
+#   Verifies preserved items (config, logs, state) are still present if kept
 verify_uninstallation() {
 	log_info "Verifying uninstallation..."
 
 	local errors=0
 
-	# Check installation directory is gone (or only config file remains if kept)
+	# Build list of preserved items
+	local preserved_items=()
 	if [[ $KEEP_CONFIG_IN_PLACE -eq 1 ]]; then
-		# If config is kept, directory should exist with only config file
-		if [[ -d "$INSTALL_DIR" ]] && [[ -f "$CONFIG_FILE" ]]; then
-			# Check that only config file remains
-			local file_count
-			file_count=$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 | wc -l)
-			if [[ $file_count -eq 1 ]] && [[ -f "$CONFIG_FILE" ]]; then
-				log_info "Installation directory cleaned (config file preserved)"
+		preserved_items+=("config file")
+	fi
+	if [[ $KEEP_LOGS_IN_PLACE -eq 1 ]]; then
+		preserved_items+=("logs directory")
+	fi
+	if [[ $KEEP_STATE_IN_PLACE -eq 1 ]]; then
+		preserved_items+=("state directory")
+	fi
+
+	# Check installation directory
+	if [[ ${#preserved_items[@]} -gt 0 ]]; then
+		# Some items are preserved, directory should exist with only preserved items
+		if [[ -d "$INSTALL_DIR" ]]; then
+			# Verify preserved items exist
+			if [[ $KEEP_CONFIG_IN_PLACE -eq 1 ]] && [[ ! -f "$CONFIG_FILE" ]]; then
+				log_error "Config file should be preserved but is missing"
+				errors=$((errors + 1))
+			fi
+			if [[ $KEEP_LOGS_IN_PLACE -eq 1 ]] && [[ ! -d "$LOGS_DIR" ]]; then
+				log_error "Logs directory should be preserved but is missing"
+				errors=$((errors + 1))
+			fi
+			if [[ $KEEP_STATE_IN_PLACE -eq 1 ]] && [[ ! -d "$STATE_DIR" ]]; then
+				log_error "State directory should be preserved but is missing"
+				errors=$((errors + 1))
+			fi
+
+			# Check that only preserved items remain
+			local expected_count=${#preserved_items[@]}
+			local actual_count=0
+			if [[ $KEEP_CONFIG_IN_PLACE -eq 1 ]] && [[ -f "$CONFIG_FILE" ]]; then
+				actual_count=$((actual_count + 1))
+			fi
+			if [[ $KEEP_LOGS_IN_PLACE -eq 1 ]] && [[ -d "$LOGS_DIR" ]]; then
+				actual_count=$((actual_count + 1))
+			fi
+			if [[ $KEEP_STATE_IN_PLACE -eq 1 ]] && [[ -d "$STATE_DIR" ]]; then
+				actual_count=$((actual_count + 1))
+			fi
+
+			# Count top-level items in directory
+			local top_level_count
+			top_level_count=$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 | wc -l)
+			if [[ $top_level_count -eq $expected_count ]] && [[ $actual_count -eq $expected_count ]]; then
+				local preserved_list=""
+				for item in "${preserved_items[@]}"; do
+					if [[ -n "$preserved_list" ]]; then
+						preserved_list="${preserved_list}, ${item}"
+					else
+						preserved_list="$item"
+					fi
+				done
+				log_info "Installation directory cleaned (preserved: ${preserved_list})"
 			else
-				log_error "Installation directory should only contain config file"
+				log_error "Installation directory should only contain preserved items (${preserved_list})"
 				errors=$((errors + 1))
 			fi
 		else
-			log_error "Config file should be preserved but is missing"
+			log_error "Installation directory should exist with preserved items but is missing"
 			errors=$((errors + 1))
 		fi
 	else
-		# Config not kept, directory should be completely gone
+		# Nothing preserved, directory should be completely gone
 		if [[ -d "$INSTALL_DIR" ]]; then
 			log_error "Installation directory still exists: $INSTALL_DIR"
 			errors=$((errors + 1))
@@ -491,7 +760,7 @@ verify_uninstallation() {
 #
 # Displays a summary of what was removed during uninstallation.
 # Shows confirmation that VPN Monitor has been completely removed.
-# If config file was backed up, reminds user of backup location.
+# Lists any preserved items (config, logs, state) if they were kept.
 #
 # Returns:
 #   0: Always succeeds
@@ -500,22 +769,52 @@ display_summary() {
 	log_info "Uninstallation complete!"
 	echo ""
 	log_info "Removed:"
-	if [[ $KEEP_CONFIG_IN_PLACE -eq 1 ]]; then
-		echo "  - Installation files (config file preserved at $CONFIG_FILE)"
-	else
-		echo "  - Installation directory: $INSTALL_DIR"
+	echo "  - Installation files"
+	if [[ $KEEP_CONFIG_IN_PLACE -eq 0 ]]; then
 		echo "  - Configuration file"
+	fi
+	if [[ $KEEP_LOGS_IN_PLACE -eq 0 ]]; then
+		echo "  - Log files"
+	fi
+	if [[ $KEEP_STATE_IN_PLACE -eq 0 ]]; then
+		echo "  - State files"
 	fi
 	echo "  - Cron job entry"
 	echo "  - VPN keepalive systemd service"
-	echo "  - All log files"
-	echo "  - All state files"
+	echo "  - Logrotate configuration"
 	echo ""
+
+	# List preserved items
+	local preserved_count=0
 	if [[ $KEEP_CONFIG_IN_PLACE -eq 1 ]]; then
-		log_info "Configuration file preserved at: $CONFIG_FILE"
+		preserved_count=$((preserved_count + 1))
+	fi
+	if [[ $KEEP_LOGS_IN_PLACE -eq 1 ]]; then
+		preserved_count=$((preserved_count + 1))
+	fi
+	if [[ $KEEP_STATE_IN_PLACE -eq 1 ]]; then
+		preserved_count=$((preserved_count + 1))
+	fi
+
+	if [[ $preserved_count -gt 0 ]]; then
+		log_info "Preserved:"
+		if [[ $KEEP_CONFIG_IN_PLACE -eq 1 ]]; then
+			echo "  - Configuration file: $CONFIG_FILE"
+		fi
+		if [[ $KEEP_LOGS_IN_PLACE -eq 1 ]]; then
+			echo "  - Logs directory: $LOGS_DIR"
+		fi
+		if [[ $KEEP_STATE_IN_PLACE -eq 1 ]]; then
+			echo "  - State directory: $STATE_DIR"
+		fi
 		echo ""
 	fi
-	log_info "VPN Monitor has been completely removed from your system."
+
+	if [[ $preserved_count -eq 0 ]]; then
+		log_info "VPN Monitor has been completely removed from your system."
+	else
+		log_info "VPN Monitor has been removed. Preserved items remain in: $INSTALL_DIR"
+	fi
 	echo ""
 }
 
@@ -528,19 +827,28 @@ display_summary() {
 #       --yes: Skip interactive confirmation (non-interactive mode)
 #       --remove-config: Automatically remove configuration file
 #       --keep-config: Automatically keep configuration file in-place
+#       --remove-logs: Automatically remove logs directory
+#       --keep-logs: Automatically keep logs directory in-place
+#       --remove-state: Automatically remove state directory
+#       --keep-state: Automatically keep state directory in-place
 #
 # Returns:
 #   0: Success
 #   1: Error (conflicting flags)
 #
 # Side effects:
-#   Sets global REMOVE_CONFIG flag
+#   Sets global REMOVE_CONFIG, REMOVE_LOGS, REMOVE_STATE flags
 #   Sets global SKIP_CONFIRMATION flag if --yes is found
 #   Exits script with error if conflicting flags are provided
 parse_args() {
+	# Default to interactive mode (prompts will be shown unless --yes flag or CI env var is set)
 	SKIP_CONFIRMATION=0
 	local remove_config_count=0
 	local keep_config_count=0
+	local remove_logs_count=0
+	local keep_logs_count=0
+	local remove_state_count=0
+	local keep_state_count=0
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -558,6 +866,26 @@ parse_args() {
 			keep_config_count=$((keep_config_count + 1))
 			shift
 			;;
+		--remove-logs)
+			REMOVE_LOGS="yes"
+			remove_logs_count=$((remove_logs_count + 1))
+			shift
+			;;
+		--keep-logs)
+			REMOVE_LOGS="no"
+			keep_logs_count=$((keep_logs_count + 1))
+			shift
+			;;
+		--remove-state)
+			REMOVE_STATE="yes"
+			remove_state_count=$((remove_state_count + 1))
+			shift
+			;;
+		--keep-state)
+			REMOVE_STATE="no"
+			keep_state_count=$((keep_state_count + 1))
+			shift
+			;;
 		*)
 			# Unknown argument, ignore
 			shift
@@ -569,6 +897,18 @@ parse_args() {
 	if [[ $remove_config_count -gt 0 ]] && [[ $keep_config_count -gt 0 ]]; then
 		log_error "Conflicting flags: --remove-config and --keep-config cannot be used together"
 		log_error "Please specify only one: --remove-config or --keep-config"
+		return 1
+	fi
+
+	if [[ $remove_logs_count -gt 0 ]] && [[ $keep_logs_count -gt 0 ]]; then
+		log_error "Conflicting flags: --remove-logs and --keep-logs cannot be used together"
+		log_error "Please specify only one: --remove-logs or --keep-logs"
+		return 1
+	fi
+
+	if [[ $remove_state_count -gt 0 ]] && [[ $keep_state_count -gt 0 ]]; then
+		log_error "Conflicting flags: --remove-state and --keep-state cannot be used together"
+		log_error "Please specify only one: --remove-state or --keep-state"
 		return 1
 	fi
 
@@ -585,6 +925,10 @@ parse_args() {
 #       --yes: Skip interactive confirmation (non-interactive mode)
 #       --remove-config: Automatically remove configuration file
 #       --keep-config: Automatically keep configuration file in-place
+#       --remove-logs: Automatically remove logs directory
+#       --keep-logs: Automatically keep logs directory in-place
+#       --remove-state: Automatically remove state directory
+#       --keep-state: Automatically keep state directory in-place
 #
 # Returns:
 #   0: Uninstallation successful
@@ -596,14 +940,16 @@ parse_args() {
 #   3. Check if installation exists
 #   4. Prompt for confirmation (unless --yes or CI environment)
 #   5. Handle configuration file (prompt or use flag)
-#   6. Remove cron entry
-#   7. Remove logrotate config
-#   8. Remove keepalive service
-#   9. Stop keepalive daemon
-#  10. Remove installation directory (or files except config if kept)
-#  11. Clean up stale lockfiles
-#  12. Verify uninstallation
-#  13. Display summary
+#   6. Handle logs directory (prompt or use flag)
+#   7. Handle state directory (prompt or use flag)
+#   8. Remove cron entry
+#   9. Remove logrotate config
+#  10. Remove keepalive service
+#  11. Stop keepalive daemon
+#  12. Remove installation directory (or files except preserved items if kept)
+#  13. Clean up stale lockfiles
+#  14. Verify uninstallation
+#  15. Display summary
 main() {
 	log_info "UDM VPN Monitor Uninstallation"
 	log_info "================================="
@@ -624,13 +970,15 @@ main() {
 		exit 0
 	fi
 
-	# Confirm with user (non-interactive mode if CI or --yes flag)
+	# Confirm with user (interactive mode by default, unless CI env var or --yes flag)
 	if [[ $SKIP_CONFIRMATION -eq 0 ]] && [[ -z "${CI:-}" ]]; then
 		echo ""
 		log_warn "This will remove:"
 		echo "  - Installation directory: $INSTALL_DIR"
-		echo "  - All configuration files (unless you choose to keep them)"
-		echo "  - All log files"
+		echo "  - All scripts and library files"
+		echo "  - Configuration file (unless you choose to keep it)"
+		echo "  - Log files (unless you choose to keep them)"
+		echo "  - State files (unless you choose to keep them)"
 		echo "  - Cron job entry"
 		echo "  - VPN keepalive daemon (if running)"
 		echo "  - VPN keepalive systemd service (if installed)"
@@ -647,6 +995,18 @@ main() {
 	# Handle configuration file (prompt or use flag)
 	if ! handle_config_file; then
 		log_error "Failed to handle configuration file"
+		exit 1
+	fi
+
+	# Handle logs directory (prompt or use flag)
+	if ! handle_logs_dir; then
+		log_error "Failed to handle logs directory"
+		exit 1
+	fi
+
+	# Handle state directory (prompt or use flag)
+	if ! handle_state_dir; then
+		log_error "Failed to handle state directory"
 		exit 1
 	fi
 

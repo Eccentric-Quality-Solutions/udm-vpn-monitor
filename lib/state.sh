@@ -129,11 +129,12 @@ sanitize_peer_ip() {
 # Handles different storage locations for different state types:
 #   - failure_count: stored in STATE_DIR
 #   - last_bytes: stored in STATE_DIR
+#   - connection_name: stored in STATE_DIR (per-peer only, no location)
 #
 # Arguments:
-#   $1: Location name (required, sanitized)
+#   $1: Location name (required for most keys, empty string for connection_name)
 #   $2: Peer IP address
-#   $3: State key name (e.g., "failure_count", "last_bytes")
+#   $3: State key name (e.g., "failure_count", "last_bytes", "connection_name")
 #
 # Returns:
 #   0: Always succeeds
@@ -146,11 +147,22 @@ sanitize_peer_ip() {
 #   # Returns: ${STATE_DIR}/failure_counter_NYC_203_0_113_1
 #   path=$(get_peer_state_file_path "NYC" "203.0.113.1" "last_bytes")
 #   # Returns: ${STATE_DIR}/last_bytes_NYC_203_0_113_1
+#   path=$(get_peer_state_file_path "" "203.0.113.1" "connection_name")
+#   # Returns: ${STATE_DIR}/connection_name_203_0_113_1
 #
 # Note:
 #   Requires LOGS_DIR, STATE_DIR, sanitize_location_name (from common.sh), and sanitize_peer_ip to be set
 #   Used internally by get_peer_state and set_peer_state
 #   Location name is sanitized before use in filename
+#   For connection_name key, location name is ignored (per-peer only, no location)
+#
+#   Files intentionally outside this abstraction layer (global state, not per-peer/location):
+#   - RESTART_COUNT_FILE: Global restart tracking
+#   - COOLDOWN_UNTIL_FILE: Global cooldown
+#   - NETWORK_PARTITION_STATE_FILE: Global network partition state
+#   - LOCKFILE: Global lockfile
+#   - PIDFILE: Global PID file for keepalive daemon
+#   See CODE_PATTERNS.md for details on when to use abstraction layer vs. global state files.
 get_peer_state_file_path() {
 	local location_name="$1"
 	local peer_ip="$2"
@@ -158,9 +170,17 @@ get_peer_state_file_path() {
 	local location_sanitized
 	local peer_sanitized
 
-	# Sanitize location name and peer IP
-	location_sanitized=$(sanitize_location_name "$location_name")
+	# Sanitize peer IP
 	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
+
+	# Handle connection_name specially (per-peer only, no location)
+	if [[ "$key" == "connection_name" ]]; then
+		echo "${STATE_DIR}/connection_name_${peer_sanitized}"
+		return 0
+	fi
+
+	# Sanitize location name for other keys
+	location_sanitized=$(sanitize_location_name "$location_name")
 
 	case "$key" in
 	failure_count)

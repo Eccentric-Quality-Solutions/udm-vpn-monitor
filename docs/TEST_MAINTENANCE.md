@@ -250,10 +250,9 @@ EOF
 
 For comprehensive troubleshooting information including common issues, debugging procedures, and solutions, see:
 
-- **[Troubleshooting](../tests/README.md#troubleshooting)** - Common test issues and solutions
-- **[BATS Guide - Troubleshooting](../docs/BATS_GUIDE.md#troubleshooting)** - Advanced debugging techniques and common pitfalls
+- **[BATS Guide - Troubleshooting](../docs/BATS_GUIDE.md#troubleshooting)** - Common test issues, advanced debugging techniques, and solutions
 - **[BATS Guide - Mock Setup Debugging](../docs/BATS_GUIDE.md#mock-setup-debugging-checklist)** - Mock-specific troubleshooting
-- **[Flaky Test Detection](../tests/README.md#flaky-test-detection)** - Identifying and fixing flaky tests
+- **[Flaky Test Detection](../docs/BATS_GUIDE.md#flaky-test-detection)** - Identifying and fixing flaky tests
 
 **Quick Reference**:
 - **Test Failures**: Run with `bats --verbose` or `BATSLIB_TEMP_PRESERVE_ON_FAILURE=1`

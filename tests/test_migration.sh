@@ -411,10 +411,10 @@ EOF
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "migration script - fallback sanitize_location_name when library fails" {
-	# Purpose: Test that script works when library files fail to load
-	# Expected: Fallback sanitize_location_name function is used
-	# Importance: Script should work even if libraries are unavailable
+@test "migration script - fails gracefully when detection.sh library is missing" {
+	# Purpose: Test that script fails with clear error when required library is missing
+	# Expected: Script fails with error message about missing validate_ip_address
+	# Importance: Ensures script provides clear error when dependencies are missing
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_old_config "$config_file" "203.0.113.1" ""
 
@@ -433,8 +433,8 @@ EOF
 		}
 	fi
 
-	# Run migration - should use fallback sanitize_location_name
-	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1 || true
+	# Run migration - should fail with clear error about missing library
+	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 
 	# Restore lib directory
 	if [[ -d "$lib_backup" ]]; then
@@ -445,12 +445,10 @@ EOF
 	# Clear trap
 	trap - EXIT
 
-	# Script should still work (may fail for other reasons, but not due to missing sanitize_location_name)
-	# If it succeeded, verify output
-	if [[ $status -eq 0 ]]; then
-		assert_file_exist "$config_file"
-		assert_file_contains "$config_file" "LOCATION_1_EXTERNAL"
-	fi
+	# Script should fail with error about missing validate_ip_address
+	assert_failure
+	assert_output --partial "validate_ip_address"
+	assert_output --partial "detection.sh"
 }
 
 # bats test_tags=category:high-risk,priority:high

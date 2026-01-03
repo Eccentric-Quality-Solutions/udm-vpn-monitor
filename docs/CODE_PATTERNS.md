@@ -56,7 +56,7 @@ if [[ ! -f "$CONFIG_FILE" ]] && [[ -z "${EXTERNAL_PEER_IPS:-}" ]]; then
 fi
 
 # Use die() for truly fatal errors that prevent script execution entirely
-if ! command -v ip >/dev/null 2>&1; then
+if ! check_command_available "ip"; then
     die "Required command 'ip' not found in PATH" "${EXIT_COMMAND_NOT_FOUND:-5}"
 fi
 ```
@@ -118,7 +118,7 @@ fi
 
 **Pattern:**
 ```bash
-if ! command -v ipsec >/dev/null 2>&1; then
+if ! check_command_or_warn "ipsec" "Checking IPsec status"; then
     log_message "WARNING" "ipsec command not available"
     # Handle missing ipsec command
 fi
@@ -342,6 +342,81 @@ fi
 - Check if feature is enabled before using
 - Log warnings but don't fail if optional feature fails
 - Continue execution even if optional feature fails
+
+### Pattern: Simplify Complex Conditionals When All Branches Converge
+
+**When to Use:** Conditionals where all branches end with the same operation
+
+**Pattern:**
+```bash
+# ❌ BAD: All branches do the same thing at the end
+if [[ condition1 ]]; then
+    # ... specific logic ...
+    LOG_FILE="${LOGS_DIR}/${log_filename}"
+elif [[ condition2 ]]; then
+    # ... different logic ...
+    LOG_FILE="${LOGS_DIR}/${log_filename}"
+else
+    # ... default logic ...
+    LOG_FILE="${LOGS_DIR}/${log_filename}"
+fi
+
+# ✅ GOOD: Extract common operation
+if [[ condition1 ]]; then
+    # ... specific logic ...
+elif [[ condition2 ]]; then
+    # ... different logic ...
+fi
+# Common operation happens in all cases
+LOG_FILE="${LOGS_DIR}/${log_filename}"
+```
+
+**Key Points:**
+- When all branches converge to the same operation, extract that operation outside the conditional
+- Identify what differs between branches (the condition)
+- Move common operations outside the conditional
+- Check if existing functions already handle the error case (like `log_message()` handling logging failures)
+- Simplify conditionals by removing unnecessary flags and intermediate variables
+- Verify logic equivalence after simplification
+
+**Related Patterns:**
+- See `CODE_REVIEW_LESSONS_LEARNED.md` section 25 for detailed examples and rationale
+
+### Pattern: Distinguish Between Script Execution Success and Recovery Success
+
+**When to Use:** Functions that attempt recovery actions and need to return appropriate exit codes
+
+**Pattern:**
+```bash
+# ✅ GOOD: Distinguish execution success from operational success
+if recovery_was_attempted; then
+    # Script completed successfully - recovery was attempted, failures are logged
+    return 0
+else
+    # No recovery attempted - script execution succeeded but VPN check failed
+    return 1
+fi
+
+# ❌ BAD: Treat recovery failures as script execution failures
+if recovery_failed; then
+    return 1  # Script execution didn't fail, recovery did
+fi
+```
+
+**Key Points:**
+- **Script execution success ≠ Operational success**
+- The script's job is to monitor and attempt recovery
+- If recovery is attempted (even if it fails), the script has successfully completed its monitoring task
+- Recovery failures are logged and can be detected via log monitoring, but they shouldn't cause the script to exit with failure
+- Script only returns failure (1) when:
+  - VPN check fails and no recovery was attempted (Tier 1 or below threshold)
+  - There's an actual script execution error
+- Script returns success (0) when recovery is attempted (Tier 2 or Tier 3), even if recovery fails
+
+**Related Patterns:**
+- See `CODE_REVIEW_LESSONS_LEARNED.md` section 26 for detailed rationale and examples
+- Recovery failures are logged via `handle_error()` and `log_message()`
+- Script exit codes should reflect execution success, not operational outcomes
 
 ### Pattern: Track Error State When Functions Log But Don't Exit
 
@@ -582,6 +657,73 @@ atomic_write_file "$state_file" "$value"
 - Before writing state files, check if `get_peer_state_file_path()` supports the key
 - If not, add the key to the abstraction layer
 
+**Files Intentionally Outside the Abstraction Layer:**
+
+Some state files are intentionally **not** managed by `get_peer_state_file_path()` because they represent **global system state** rather than per-peer or per-location state.
+
+**Evaluation Criteria:**
+- The abstraction layer is designed for: per-peer state, per-location state, or per-peer/per-location state
+- Files remain outside if they represent: global system state or system-wide operations that affect all tunnels/locations
+
+1. **`RESTART_COUNT_FILE`** (`${STATE_DIR}/restart_count`)
+   - **Purpose**: Tracks restart timestamps for rate limiting (prevents restart loops)
+   - **Scope**: Records Tier 3 recovery actions:
+     - Full IPsec restarts (`ipsec restart`) - **affects ALL tunnels**
+     - Successful xfrm-based per-connection recovery (when enabled)
+   - **Why Outside**: 
+     - `ipsec restart` command restarts the entire IPsec service, affecting all VPN tunnels
+     - Rate limiting must be global to prevent system-wide disruption from excessive restarts
+     - ADR-0008 explicitly states "Per-System Limits: Rate limiting applies globally (not per-peer) to prevent system-wide disruption"
+     - Even though xfrm recovery is per-connection, it's tracked globally for rate limiting
+   - **Usage**: Use `RESTART_COUNT_FILE` variable directly
+
+2. **`COOLDOWN_UNTIL_FILE`** (`${STATE_DIR}/cooldown_until`)
+   - **Purpose**: Prevents immediate re-restarts after a recovery action
+   - **Scope**: Set after Tier 3 recovery actions
+   - **Why Outside**: 
+     - Cooldown applies to the entire monitoring system
+     - Full restarts (`ipsec restart`) affect all tunnels, so the entire system needs stabilization time
+     - Even if triggered by one location, the entire system needs cooldown
+     - Prevents cascading recovery attempts across locations
+   - **Usage**: Use `COOLDOWN_UNTIL_FILE` variable directly
+
+3. **`NETWORK_PARTITION_STATE_FILE`** (`${STATE_DIR}/network_partition_state`)
+   - **Purpose**: Tracks network connectivity status (0 = healthy, 1 = partitioned)
+   - **Scope**: System-wide network condition
+   - **Why Outside**: 
+     - Network partition affects the entire system, not just one location
+     - If network is down, it affects all locations simultaneously
+     - Used to skip recovery for ALL locations when network is partitioned
+     - Per-location partition state would be redundant and confusing
+   - **Usage**: Use `get_network_partition_state_file()` function or `NETWORK_PARTITION_STATE_FILE` variable
+
+4. **`LOCKFILE`** (`${STATE_DIR}/vpn-monitor.lock`)
+   - **Purpose**: Prevents concurrent script execution
+   - **Scope**: System-wide lock
+   - **Why Outside**: 
+     - Only one instance of the monitoring script should run at a time
+     - Protects all state files (both per-peer and global) from concurrent access
+     - Per-location lockfiles would allow concurrent execution, causing conflicts
+   - **Usage**: Use `LOCKFILE` variable directly
+
+5. **`PIDFILE`** (`${STATE_DIR}/vpn-keepalive.pid`)
+   - **Purpose**: PID file for VPN keepalive daemon
+   - **Scope**: Single daemon process
+   - **Why Outside**: 
+     - There is only one keepalive daemon process
+     - Not a per-peer or per-location concept
+     - Standard Unix daemon pattern (single PID file)
+   - **Usage**: Use `PIDFILE` variable directly
+
+**When to Add to Abstraction Layer:**
+- If a new state file is **per-peer** or **per-location**, add it to `get_peer_state_file_path()`
+- If a new state file is **global** (applies to entire system), keep it outside and use a constant/variable
+
+**Edge Case: XFRM-Based Recovery Tracking**
+- XFRM-based recovery is per-connection (affects only one peer) but is tracked in the global `RESTART_COUNT_FILE`
+- This is intentional per ADR-0008: even though xfrm recovery is per-connection, it's tracked globally for rate limiting
+- Rationale: Prevents excessive recovery attempts even if they're per-connection
+
 ### Pattern: Per-Location State Tracking
 
 **When to Use:** All state operations that need per-location isolation
@@ -701,6 +843,45 @@ validate_state_files_by_pattern "last_bytes_*" "integer" "0" "Byte counter file"
 - Reduces code duplication when validating per-peer or pattern-based state files
 - Returns 0 if all files are valid or successfully recovered, 1 if any file fails validation
 - Always check return value and update validation_failed flag if needed
+
+### Pattern: Always Re-Check Critical State Instead of Relying on Cached Values
+
+**When to Use:** Making critical decisions based on state that can change
+
+**Pattern:**
+```bash
+# ✅ GOOD: Always re-check critical state
+if ! check_network_partition "$dns_server" "$dns_hostname" "$dns_timeout" "$interfaces"; then
+    # Network is partitioned - make decision based on fresh check
+    local prev_partition_state=$(get_network_partition_state)  # Only for logging
+    set_network_partition_state 1
+    # ... handle partition ...
+fi
+
+# ❌ BAD: Rely on cached state for critical decisions
+partition_state=$(get_network_partition_state)  # Cached value
+if [[ "$partition_state" -eq 1 ]]; then
+    # Only re-check if cached state says partitioned - misses state changes!
+    if check_network_partition ...; then
+        # ...
+    fi
+fi
+```
+
+**Key Points:**
+- When making critical decisions (e.g., skip recovery, perform actions), always re-check the actual state
+- Cached state is useful for:
+  - Logging (showing state transitions)
+  - Performance optimization (avoiding expensive checks)
+- Cached state should NOT be used for:
+  - Making critical decisions where stale state could cause incorrect behavior
+- If state can change between checks, always re-check before making decisions
+- Use cached state only for logging state transitions or performance optimization
+
+**Related Patterns:**
+- See `CODE_REVIEW_LESSONS_LEARNED.md` section 27 for detailed examples and rationale
+- Network partition state is checked in `vpn-monitor.sh` at script start, but recovery code always re-checks
+- Failure count increments before partition check to ensure accurate tracking even when recovery is skipped
 
 ### Pattern: Persist Corrected Values After Validation
 
@@ -920,6 +1101,41 @@ check_vpn_status() {
 ---
 
 ## Configuration Patterns
+
+### Pattern: Extract External IP from LOCATIONS Using Helper Function
+
+**When to Use:** Extracting external IP addresses from the `LOCATIONS` associative array
+
+**Pattern:**
+```bash
+# ✅ GOOD: Use helper function with fallback
+local external_ip=""
+if command -v get_location_external_ip >/dev/null 2>&1; then
+    external_ip=$(get_location_external_ip "$location_name" 2>/dev/null || echo "")
+else
+    # Fallback: extract from LOCATIONS format directly
+    local location_data="${LOCATIONS[$location_name]:-}"
+    if [[ "$location_data" =~ external:([^|]+) ]]; then
+        external_ip="${BASH_REMATCH[1]}"
+    fi
+fi
+
+# ❌ BAD: Direct array access (gets full delimited string)
+local external_ip="${LOCATIONS[$location_name]}"
+```
+
+**Key Points:**
+- The `LOCATIONS` array stores values in format: `"external:IP|internal:IPs"` (not just the IP)
+- Always use `get_location_external_ip()` helper function to extract external IP from `LOCATIONS` array
+- If helper function unavailable, use regex fallback: `external:([^|]+)`
+- Never assume `LOCATIONS[$name]` contains just the IP address
+- Always validate extracted IP is non-empty before use
+- Direct array access returns the full delimited string, which will cause validation failures
+
+**Related Patterns:**
+- See `CODE_REVIEW_LESSONS_LEARNED.md` section 24 for detailed examples and rationale
+- See `lib/recovery.sh:verify_ipsec_connections_active()` for correct pattern
+- `LOCATIONS` format: `"external:IP|internal:IPs"` (pipe separator)
 
 ### Pattern: Schema-Based Configuration Validation
 
@@ -1501,8 +1717,8 @@ main_func "$@"
 
 **Pattern:**
 ```bash
-# ✅ GOOD: Wrap network commands with timeout
-if command -v timeout >/dev/null 2>&1; then
+# ✅ GOOD: Wrap network commands with timeout (using helper function)
+if check_command_available "timeout"; then
     ipsec_output=$(timeout "$IPSEC_STATUS_TIMEOUT" ipsec status 2>/dev/null)
     ipsec_exit_code=$?
     
@@ -1530,7 +1746,7 @@ else
     ping_wrapper_timeout=$normal_timeout
 fi
 
-if command -v timeout >/dev/null 2>&1; then
+if check_command_available "timeout"; then
     ping_result=$(timeout "$ping_wrapper_timeout" ping -c "$ping_count" -W "$ping_timeout" "$target_ip" 2>&1)
     ping_exit_code=$?
     if [[ $ping_exit_code -eq 124 ]]; then
@@ -1573,15 +1789,15 @@ fi
 
 **Pattern:**
 ```bash
-# ✅ GOOD: Check command availability before use
-if command -v ipsec >/dev/null 2>&1; then
+# ✅ GOOD: Use check_command_available() helper for binary commands
+if check_command_available "ipsec"; then
     ipsec_output=$(ipsec status 2>/dev/null)
 else
     log_message "WARNING" "ipsec command not available, using fallback"
     # Use fallback method
 fi
 
-# ✅ GOOD: Use check_command_available() helper
+# ✅ GOOD: Use check_command_available() helper for required commands
 if ! check_command_available "ip"; then
     return 1
 fi
@@ -1592,13 +1808,25 @@ if ! check_command_or_warn "ping6" "IPv6 ping check enabled"; then
     return 0
 fi
 
+# ✅ GOOD: Direct command -v is acceptable for checking function availability
+# Functions are always in the same shell context, so PATH restrictions don't apply
+if command -v parse_location_config >/dev/null 2>&1; then
+    config=$(parse_location_config "$location")
+fi
+
+# ❌ BAD: Direct command -v for binary commands in cron/systemd contexts
+if command -v timeout >/dev/null 2>&1; then
+    timeout 5 ping ...
+fi
+
 # ❌ BAD: Execute command without checking availability
 ipsec_output=$(ipsec status 2>/dev/null)  # May fail if ipsec not available
 ```
 
 **Key Points:**
 - Always check command availability before executing optional commands
-- Use `command -v` for command availability checks (POSIX compliant)
+- **For binary commands in cron/systemd contexts: Use helper functions (`check_command_available()` or `check_command_or_warn()`)**
+- **For function availability checks: Direct `command -v` is acceptable** (functions are in same shell context, PATH restrictions don't apply)
 - Use `check_command_available()` helper for silent checks
 - Use `check_command_or_warn()` for optional commands that should log warnings
 - Provide fallback mechanisms when commands are unavailable
@@ -1608,14 +1836,28 @@ ipsec_output=$(ipsec status 2>/dev/null)  # May fail if ipsec not available
   - Uses `command -v` first (POSIX compliant)
   - Falls back to checking common system directories (`/usr/sbin`, `/usr/bin`, `/sbin`, `/bin`) if PATH is restricted
   - Handles cron/systemd environments where PATH may not include `/usr/sbin` (common on UDM OS)
+  - **Use this for all binary command checks in code that runs via cron/systemd**
 - `check_command_or_warn()` - Checks and logs warning if unavailable
+  - Wraps `check_command_available()` and adds logging
+  - **Use this for optional binary commands that should log warnings when unavailable**
 - `command -v` - POSIX compliant command availability check
+  - **Acceptable for checking function availability** (functions are in same shell context)
+  - **Avoid direct usage for binary commands in cron/systemd contexts** - use helper functions instead
 
 **Important Note on PATH Restrictions:**
 - Scripts run by cron or systemd often have restricted PATH that excludes `/usr/sbin`
 - This is a known issue on UDM OS and other Linux systems
+- `command -v` may fail to find binary commands even when they exist in system directories
 - `check_command_available()` handles this by checking system directories directly when `command -v` fails
-- Always use `check_command_available()` instead of raw `command -v` for better compatibility
+- **Always use `check_command_available()` or `check_command_or_warn()` for binary commands in code that runs via cron or systemd**
+- Direct `command -v` usage for binary commands should be avoided in files like `vpn-monitor.sh`, `vpn-keepalive.sh`, `lib/detection.sh`, `lib/recovery.sh`
+- **Exception: `command -v` is acceptable for checking function availability** since functions are always in the same shell context
+
+**When to Use Each Pattern:**
+- **Binary commands (ping, ip, ipsec, timeout, etc.)**: Use `check_command_available()` or `check_command_or_warn()`
+- **Function availability (parse_location_config, get_location_external_ip, etc.)**: Direct `command -v` is acceptable
+- **Required commands**: Use `check_command_available()` and return early if unavailable
+- **Optional commands**: Use `check_command_or_warn()` and handle gracefully if unavailable
 
 ### Pattern: Fallback Command Execution
 
@@ -1623,11 +1865,11 @@ ipsec_output=$(ipsec status 2>/dev/null)  # May fail if ipsec not available
 
 **Pattern:**
 ```bash
-# ✅ GOOD: Try primary command, fallback to alternative
+# ✅ GOOD: Try primary command, fallback to alternative (using helper functions)
 local ping_cmd="ping"
-if command -v ping6 >/dev/null 2>&1 && [[ "$ip_version" == "6" ]]; then
+if check_command_available "ping6" && [[ "$ip_version" == "6" ]]; then
     ping_cmd="ping6"
-elif command -v ping >/dev/null 2>&1; then
+elif check_command_available "ping"; then
     ping_cmd="ping"
 else
     log_message "WARNING" "Neither ping nor ping6 available"
@@ -2136,7 +2378,7 @@ set -euo pipefail
 set -euo pipefail
 
 # Script exits on any error
-if ! command -v ip >/dev/null 2>&1; then
+if ! check_command_available "ip"; then
     die "ip command not found"  # Script exits here if command fails
 fi
 
@@ -2155,8 +2397,8 @@ set -euo pipefail  # BAD: Affects scripts that source this module!
 # ✅ GOOD: Explicit error handling in strict mode
 set -euo pipefail
 
-# Check command availability without exiting
-if ! command -v optional_cmd >/dev/null 2>&1; then
+# Check command availability without exiting (using helper function)
+if ! check_command_or_warn "optional_cmd" "Optional feature"; then
     log_message "WARNING" "optional_cmd not available"
     # Continue execution
 fi
@@ -2313,7 +2555,7 @@ python3 script.py  # May not exist on UDM
 - Use `/data` directory for persistent storage (UDM-specific)
 - Available commands: `bash`, `ip`, `ipsec`, `ping`, `timeout`, `awk`, `sed`, `grep`, `cut`, `head`, `tail`
 - Not available by default: Python, Node.js, Perl, Ruby
-- Use `command -v` to check command availability before use
+- Use `check_command_available()` or `check_command_or_warn()` to check command availability before use (handles PATH restrictions in cron/systemd)
 - Provide fallbacks for optional commands
 - **Do NOT add BSD/macOS fallbacks** - code should use Linux-specific command syntax (e.g., `date -d`, `stat -c`, `ping -W`, `nproc`)
 
@@ -2353,18 +2595,18 @@ STATE_DIR="/tmp/vpn-monitor"  # Data lost on reboot!
 
 **Pattern:**
 ```bash
-# ✅ GOOD: Check for UDM-available commands
-if command -v ip >/dev/null 2>&1; then
+# ✅ GOOD: Check for UDM-available commands (using helper functions)
+if check_command_available "ip"; then
     ip xfrm state
-elif command -v ipsec >/dev/null 2>&1; then
+elif check_command_available "ipsec"; then
     ipsec status
 else
     log_message "ERROR" "Neither ip nor ipsec available"
     return 1
 fi
 
-# ✅ GOOD: Use timeout wrapper (available on UDM)
-if command -v timeout >/dev/null 2>&1; then
+# ✅ GOOD: Use timeout wrapper (available on UDM, using helper function)
+if check_command_available "timeout"; then
     timeout 5 ipsec status
 else
     # Fallback (shouldn't happen on UDM, but handle gracefully)
@@ -2376,9 +2618,10 @@ ip xfrm state  # May fail if ip not available
 ```
 
 **Key Points:**
-- Always check command availability with `command -v`
+- Always check command availability with `check_command_available()` or `check_command_or_warn()` (handles PATH restrictions in cron/systemd)
 - Provide fallbacks for optional commands
 - UDM OS 4.3+ includes: `bash`, `ip`, `ipsec`, `ping`, `timeout`, `awk`, `sed`, `grep`
+- **Exception:** Direct `command -v` is acceptable for checking function availability (functions are in same shell context)
 - Log warnings when optional commands unavailable
 - Return errors when required commands missing
 
@@ -2411,7 +2654,9 @@ This document consolidates code patterns used throughout the UDM VPN Monitor cod
 21. **UDM Constraints**: Target UDM OS 4.3+, use `/data` for persistent storage, check command availability, provide fallbacks
 
 For more detailed information about specific patterns, see:
-- `CODE_REVIEW_LESSONS_LEARNED.md` - Lessons learned from code reviews
+- `CODE_REVIEW_LESSONS_LEARNED.md` - Historical lessons learned from code reviews (includes bug context and how patterns were discovered)
 - `DEVELOPER.md` - Developer guidelines and coding standards
 - `ARCHITECTURE.md` - Architecture documentation and design decisions
 - `BATS_GUIDE.md` - Testing framework guide and patterns
+
+**Note:** This document (`CODE_PATTERNS.md`) consolidates actionable patterns from multiple sources, including `CODE_REVIEW_LESSONS_LEARNED.md`. For the historical context of how patterns were discovered (including specific bugs, their impact, and fixes), see `CODE_REVIEW_LESSONS_LEARNED.md`.

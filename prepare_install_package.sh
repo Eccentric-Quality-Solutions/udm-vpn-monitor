@@ -93,6 +93,7 @@ MAIN_FILES=(
 	"analyze-logs.sh"
 	"check-utilities.sh"
 	"check-config.sh"
+	"compare-config.sh"
 	"vpn-monitor.conf"
 	"vpn-keepalive.service"
 )

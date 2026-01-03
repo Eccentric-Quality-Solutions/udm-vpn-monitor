@@ -173,13 +173,9 @@ EOF
 	# Should handle partial success gracefully (fallback to restart)
 	assert_file_exist "$log_file"
 	# Verify that reload was attempted and failed (check for either pattern)
-	if ! grep -q "ipsec reload failed" "$log_file" && ! grep -q "reload failed" "$log_file"; then
-		fail "Expected log to contain 'ipsec reload failed' or 'reload failed'"
-	fi
+	assert_log_contains_any "$log_file" "ipsec reload failed" "reload failed"
 	# Verify that fallback to restart was attempted (check for either pattern)
-	if ! grep -q "ipsec restart" "$log_file" && ! grep -q "restart" "$log_file"; then
-		fail "Expected log to contain 'ipsec restart' or 'restart'"
-	fi
+	assert_log_contains_any "$log_file" "ipsec restart" "restart"
 
 	remove_mock_from_path
 }
@@ -230,9 +226,7 @@ EOF
 	# Recovery succeeds but VPN still fails - failure counter should continue incrementing
 	assert_file_exist "$log_file"
 	# Verify recovery action was attempted (check for any of the patterns)
-	if ! grep -q "Tier 2" "$log_file" && ! grep -q "surgical cleanup" "$log_file" && ! grep -q "reload" "$log_file"; then
-		fail "Expected log to contain 'Tier 2', 'surgical cleanup', or 'reload'"
-	fi
+	assert_log_contains_any "$log_file" "Tier 2" "surgical cleanup" "reload"
 	# Failure counter should be incremented (now 4, was 3)
 	if [[ -f "$failure_counter" ]]; then
 		local count
@@ -291,13 +285,9 @@ EOF
 	# Recovery fails - failure counter should continue incrementing
 	assert_file_exist "$log_file"
 	# Verify recovery action was attempted (check for any of the patterns)
-	if ! grep -q "Tier 2" "$log_file" && ! grep -q "surgical cleanup" "$log_file" && ! grep -q "reload" "$log_file"; then
-		fail "Expected log to contain 'Tier 2', 'surgical cleanup', or 'reload'"
-	fi
+	assert_log_contains_any "$log_file" "Tier 2" "surgical cleanup" "reload"
 	# Verify that reload failed (check for either pattern)
-	if ! grep -q "reload failed" "$log_file" && ! grep -q "failed" "$log_file"; then
-		fail "Expected log to contain 'reload failed' or 'failed'"
-	fi
+	assert_log_contains_any "$log_file" "reload failed" "failed"
 	# Failure counter should be incremented (now 4, was 3)
 	if [[ -f "$failure_counter" ]]; then
 		local count
@@ -369,9 +359,7 @@ EOF
 	# Both peers should trigger recovery actions
 	assert_file_exist "$log_file"
 	# Verify both peers triggered Tier 2 actions (check for either pattern)
-	if ! grep -q "Tier 2" "$log_file" && ! grep -q "surgical cleanup" "$log_file"; then
-		fail "Expected log to contain 'Tier 2' or 'surgical cleanup'"
-	fi
+	assert_log_contains_any "$log_file" "Tier 2" "surgical cleanup"
 	# Multiple reload calls should be made (one per peer at Tier 2)
 	if [[ -f "$reload_count_file" ]]; then
 		local reload_count

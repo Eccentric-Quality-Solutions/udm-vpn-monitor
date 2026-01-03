@@ -143,16 +143,7 @@ EOF
 	echo "3" >"$loc2_failure_file"
 
 	# Mock ipsec - reload succeeds
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    echo "ipsec reload succeeded"
-    exit 0
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 
 	# Mock ip command - LOC1 recovers, LOC2 still down
 	local check_state_file="${TEST_DIR}/check_state"
@@ -239,16 +230,7 @@ EOF
 	echo "3" >"$loc2_failure_file"
 
 	# Mock ipsec - reload succeeds
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    echo "ipsec reload succeeded"
-    exit 0
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 
 	# Mock ip command - both locations down (triggers recovery)
 	local mock_ip="${TEST_DIR}/ip"

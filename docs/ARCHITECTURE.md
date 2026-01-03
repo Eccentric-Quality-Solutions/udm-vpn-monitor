@@ -707,6 +707,8 @@ The system uses a modular library architecture where functionality is organized 
 
 **Dependencies**: `lib/logging.sh`, `lib/common.sh`, `lib/state.sh`
 
+**Dependency Handling**: `detection.sh` sources `logging.sh` conditionally with fallback functions (`log_message`, `handle_error`) to ensure it works when sourced independently (e.g., during installation by `install.sh`). The fallback functions output to stderr only and provide basic error handling.
+
 **Note**: See Design Decision #5 for detection strategy details.
 
 #### `lib/lockfile.sh`

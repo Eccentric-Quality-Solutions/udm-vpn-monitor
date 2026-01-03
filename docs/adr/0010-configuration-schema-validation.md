@@ -47,8 +47,12 @@ We will implement a schema-based configuration validation system with:
   - Validation rules (ranges, allowed values)
   - Required/optional flag
 - **Configuration Format**: Supports location-based configuration format (`LOCATION_<NAME>_EXTERNAL`/`LOCATION_<NAME>_INTERNAL`)
+- **Order of Operations**: Defaults are applied BEFORE config file parsing to ensure all variables have safe default values before being referenced:
+  1. `apply_schema_defaults()` sets defaults for all schema-defined variables
+  2. Config file is parsed and values override defaults
+  3. Validation runs against final values (defaults or config file values)
 - **Validation**: `lib/config.sh` validates configuration against schema
-- **Default Application**: Defaults applied from schema if values not provided
+- **Default Application**: Defaults applied from schema if values not provided (via `apply_schema_defaults()` function)
 - **Error Handling**: Invalid values logged with warnings, defaults used
 - **Location Parsing**: Location-based configuration parsed separately from standard configuration variables
 

@@ -72,15 +72,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	setup_vpn_at_tier_fixture 2 "192.168.1.1"
 
 	# Mock ipsec for surgical cleanup
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    echo "Reloaded"
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
@@ -204,12 +196,7 @@ EOF
 
 	# Script may exit with code 1, but ping check should still be logged
 	# Should log ping check failure warning (check for either message variant)
-	if ! grep -q "ping check failed" "$LOG_FILE" && ! grep -q "Ping check failed" "$LOG_FILE"; then
-		echo "Expected ping check failure message not found in log" >&2
-		echo "Log contents:" >&2
-		cat "$LOG_FILE" >&2
-		return 1
-	fi
+	assert_log_contains_any "$LOG_FILE" "ping check failed" "Ping check failed"
 
 	remove_mock_from_path
 }

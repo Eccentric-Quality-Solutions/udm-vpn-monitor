@@ -181,15 +181,7 @@ EOF
 	add_mock_to_path
 
 	# Mock ipsec for Tier 2 recovery
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    exit 0
-fi
-exit 1
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	# Create test version of script
@@ -402,15 +394,7 @@ EOF
 	add_mock_to_path
 
 	# Mock ipsec for Tier 3 recovery
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    exit 0
-fi
-exit 1
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	# Create test version of script
@@ -569,15 +553,7 @@ EOF
 	add_mock_to_path
 
 	# Mock ipsec for Tier 3 recovery
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    exit 0
-fi
-exit 1
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	# Create test version of script

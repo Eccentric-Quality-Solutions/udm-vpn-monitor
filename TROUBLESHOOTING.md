@@ -371,7 +371,7 @@ service cron status
 
 6. **Verify configuration**:
    ```bash
-   grep -E "KEEPALIVE|EXTERNAL_PEER_IPS|INTERNAL_PEER_IPS" /data/vpn-monitor/vpn-monitor.conf
+   grep -E "KEEPALIVE|LOCATION.*EXTERNAL|LOCATION.*INTERNAL" /data/vpn-monitor/vpn-monitor.conf
    ```
 
 ### Solutions
@@ -394,7 +394,7 @@ service cron status
    - Check systemd logs: `journalctl -u vpn-keepalive -n 50`
 
 4. **Keepalive pings failing**:
-   - Verify `INTERNAL_PEER_IPS` or `EXTERNAL_PEER_IPS` are configured
+   - Verify location-based configuration is set (e.g., `LOCATION_*_EXTERNAL` and `LOCATION_*_INTERNAL`)
    - Check if VPN tunnel is actually up
    - Test ping manually: `ping -c 1 <peer_ip>`
    - Check firewall rules that might block ping
@@ -512,9 +512,9 @@ For complete configuration documentation, including all parameters and their des
 
 3. **Check required values**:
    ```bash
-   grep EXTERNAL_PEER_IPS /data/vpn-monitor/vpn-monitor.conf
+   grep LOCATION.*EXTERNAL /data/vpn-monitor/vpn-monitor.conf
    ```
-   Should not be empty.
+   Should show at least one location configured (e.g., `LOCATION_NYC_EXTERNAL="203.0.113.1"`).
 
 4. **Check config file permissions**:
    ```bash
@@ -524,16 +524,25 @@ For complete configuration documentation, including all parameters and their des
 
 ### Solutions
 
-**If EXTERNAL_PEER_IPS is empty**:
+**If no locations are configured**:
 ```bash
 # Edit config
 nano /data/vpn-monitor/vpn-monitor.conf
-# Set EXTERNAL_PEER_IPS to your remote VPN gateway's external/public IP address(es)
-# Example: EXTERNAL_PEER_IPS="203.0.113.1"
-# Optionally set INTERNAL_PEER_IPS for ping checks
-# Example: INTERNAL_PEER_IPS="192.168.100.1"
+# Configure VPN locations using location-based format:
+# LOCATION_<NAME>_EXTERNAL="external_ip"
+# LOCATION_<NAME>_INTERNAL="internal_ip1 internal_ip2 ..."
+# Example:
+LOCATION_NYC_EXTERNAL="203.0.113.1"
+LOCATION_NYC_INTERNAL="192.168.100.1"
 ```
-See [README.md Configuration section](README.md#configuration) for details on configuring EXTERNAL_PEER_IPS and INTERNAL_PEER_IPS.
+See [README.md Configuration section](README.md#configuration) for details on location-based configuration.
+
+**If migrating from old format**:
+If you have an existing configuration using `EXTERNAL_PEER_IPS`/`INTERNAL_PEER_IPS`, use the migration script:
+```bash
+/data/vpn-monitor/scripts/migrate-config-to-locations.sh
+```
+The migration script runs in interactive mode by default (prompts for location names). Use `--auto` for automatic generation or `--csv FILE` for bulk import. See [MIGRATION.md](docs/MIGRATION.md) for detailed migration instructions.
 
 **If config syntax error**:
 - Check for unclosed quotes
@@ -569,11 +578,11 @@ See [README.md Configuration section](README.md#configuration) for details on co
    ```
    Should complete in < 30 seconds.
 
-2. **Check for multiple peers**:
+2. **Check for multiple locations**:
    ```bash
-   grep EXTERNAL_PEER_IPS /data/vpn-monitor/vpn-monitor.conf
+   grep LOCATION.*EXTERNAL /data/vpn-monitor/vpn-monitor.conf
    ```
-   More peers = longer execution time.
+   More locations = longer execution time.
 
 3. **Check ping timeout**:
    ```bash
@@ -589,8 +598,8 @@ See [README.md Configuration section](README.md#configuration) for details on co
 
 ### Solutions
 
-**If too many peers**:
-- Reduce number of peers monitored
+**If too many locations**:
+- Reduce number of locations monitored
 - Or increase cron interval (check less frequently)
 
 **If ping timeout too long**:
@@ -684,7 +693,7 @@ If you're still experiencing issues:
 2. **Enable debug mode**: `DEBUG=1` in config
 3. **Run manually**: `/data/vpn-monitor/vpn-monitor.sh` (not --fake)
 4. **Review documentation**: [README.md](README.md)
-5. **Check architectural review**: [ARCHITECTURAL_REVIEW.md](ARCHITECTURAL_REVIEW.md) for code quality analysis and known issues
+5. **Check architecture documentation**: [ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical implementation details and design decisions
 
 ## Reporting Issues
 

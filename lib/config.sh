@@ -2010,6 +2010,93 @@ get_location_internal_ips() {
 	return 0
 }
 
+# Setup routes for ping connectivity if needed
+#
+# Checks if routes need to be added based on configuration:
+# - ENABLE_PING_CHECK must be enabled
+# - At least one location must have internal IPs configured
+# - LOCAL_UDM_IP must be configured
+#
+# This function is called during config validation to ensure routes are set up
+# proactively, not just when ping checks run. Routes are added to the br0
+# interface to enable ping connectivity between UDM devices.
+#
+# Returns:
+#   0: Routes setup completed (or not needed)
+#   1: Route setup failed (logged as ERROR if routes are needed, non-critical in test contexts)
+#
+# Side effects:
+#   - Adds route to br0 interface if needed
+#   - Logs actions and results
+#
+# Note:
+#   Requires detection.sh functions: get_local_ip_for_ping(), check_route_exists(), add_route_if_needed()
+#   These functions may not be available if config.sh is sourced independently (e.g., in tests)
+#   Function gracefully handles missing dependencies by skipping route setup
+setup_routes_if_needed() {
+	# Check if ping checks enabled
+	if [[ "${ENABLE_PING_CHECK:-0}" -ne 1 ]]; then
+		return 0
+	fi
+
+	# Check if any location has internal IPs (needed to determine if routes are required)
+	local has_internal_ips=0
+	for location_name in "${!LOCATIONS[@]}"; do
+		local internal_ips
+		internal_ips=$(get_location_internal_ips "$location_name")
+		if [[ -n "$internal_ips" ]]; then
+			has_internal_ips=1
+			break
+		fi
+	done
+
+	# If no internal IPs configured, routes aren't needed
+	if [[ $has_internal_ips -eq 0 ]]; then
+		return 0
+	fi
+
+	# Routes are needed - check if detection.sh functions are available
+	# These functions are required for route setup but may not be available
+	# if config.sh is sourced independently (e.g., in check-config.sh or tests)
+	if ! command -v get_local_ip_for_ping >/dev/null 2>&1 || ! command -v check_route_exists >/dev/null 2>&1 || ! command -v add_route_if_needed >/dev/null 2>&1; then
+		# Detection functions not available - this is critical if routes are needed
+		# Check if log_message is available before using it (may not be available in all contexts)
+		if command -v log_message >/dev/null 2>&1; then
+			# If log_message is available, we're likely in the main execution path
+			# where detection.sh should have been sourced. This is a critical error because:
+			# - Routes are needed (ping checks enabled, internal IPs configured)
+			# - Routes won't be added during ping checks if VPN checks are skipped (network partition, cooldown, etc.)
+			# - This will cause ping checks to fail silently
+			handle_error "ERROR" "Cannot set up routes during config validation: detection.sh functions not available (get_local_ip_for_ping, check_route_exists, or add_route_if_needed). Routes are required for ping checks but may not be added if VPN checks are skipped. Ensure detection.sh is sourced before config.sh."
+		fi
+		# Return error to indicate route setup failed (non-critical in test contexts)
+		return 1
+	fi
+
+	# Get LOCAL_UDM_IP
+	local local_ip
+	local_ip=$(get_local_ip_for_ping)
+	if [[ -z "$local_ip" ]]; then
+		# LOCAL_UDM_IP not configured - route setup not needed
+		# (warning already logged during validation)
+		return 0
+	fi
+
+	# Check if route exists, add if needed
+	if ! check_route_exists "$local_ip"; then
+		log_message "INFO" "Route not found on br0 during config validation, attempting to add: $local_ip/${IPV4_CIDR_SINGLE_HOST:-32}"
+		if ! add_route_if_needed "$local_ip"; then
+			# Route setup failed - this is critical because routes are needed for ping checks
+			# and may not be added later if VPN checks are skipped
+			# Use exit_code=0 so we don't exit the script, but return 1 to fail validation
+			handle_error "ERROR" "Failed to add route during config validation: $local_ip/${IPV4_CIDR_SINGLE_HOST:-32}. Routes are required for ping checks but may not be added if VPN checks are skipped (network partition, cooldown, etc.). Manual route setup may be required: ip addr add $local_ip/32 dev br0" 0
+			return 1
+		fi
+	fi
+
+	return 0
+}
+
 # Validate configuration
 #
 # Validates that required configuration variables are set and have valid values.
@@ -2122,6 +2209,25 @@ validate_config() {
 	log_file_dir=$(dirname "$LOG_FILE")
 	if directory_exists "$log_file_dir" && ! directory_writable "$log_file_dir"; then
 		handle_error "WARNING" "LOG_FILE directory is not writable: $log_file_dir (log writes may fail, output will go to stderr)" 0
+	fi
+
+	# Setup routes for ping connectivity if needed
+	# This ensures routes are added proactively when config is loaded,
+	# not just when ping checks run during VPN monitoring
+	# Route setup failure fails validation when routes are actually needed
+	# (setup_routes_if_needed only returns 1 when routes are needed but setup failed)
+	if ! setup_routes_if_needed; then
+		# Route setup failed - if we're in main execution path, fail validation
+		# This ensures routes are available before ping checks run
+		# In test contexts (log_message not available), don't fail to allow tests to work
+		if command -v log_message >/dev/null 2>&1; then
+			# Main execution path - routes are needed, setup failed, fail validation
+			# setup_routes_if_needed already logged ERROR with details
+			handle_error_or_exit_fake_mode "Route setup failed during config validation and routes are required for ping checks. See previous error messages for details." "${EXIT_VALIDATION_ERROR:-3}"
+			return 1
+		fi
+		# Test context - don't fail validation (allows tests to work)
+		# ERROR was already logged by setup_routes_if_needed if log_message was available
 	fi
 
 	return 0

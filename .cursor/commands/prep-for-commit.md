@@ -5,4 +5,5 @@
 - Update documentation to reflect the latest changes.
 - Do we need to add or update any ADRs?
 - Did we add any files that we need to include in `prepare_install_package.sh` or in `install.sh`?
+- Did we lose any functionality in the diff between the last git commit and what is currently staged?
 - Provide a succinct git commit message I could use, it should be based off the CHANGELOG.md.

@@ -31,6 +31,32 @@ fi
 # shellcheck source=lib/common.sh
 source "${LIB_DIR}/common.sh"
 
+# Source logging functions (required for log_message and handle_error)
+# shellcheck source=lib/logging.sh
+# Note: logging.sh may require LOG_FILE to be set, but log_message will work
+# without it (outputs to stderr only). Source conditionally with fallback.
+if ! source "${LIB_DIR}/logging.sh" 2>/dev/null; then
+	# Fallback if logging.sh not found - define minimal log_message and handle_error
+	# These will output to stderr only (no log file)
+	log_message() {
+		local level="$1"
+		shift
+		local message="$*"
+		local timestamp
+		timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date +%s)
+		echo "[$timestamp] [$level] $message" >&2
+	}
+	handle_error() {
+		local severity="$1"
+		local message="$2"
+		local exit_code="${3:-1}"
+		log_message "$severity" "$message"
+		if [[ "$severity" == "ERROR" ]] && [[ $exit_code -ne 0 ]]; then
+			exit "$exit_code"
+		fi
+	}
+fi
+
 # Validate IPv4 address format
 #
 # Validates that an IP address is properly formatted as IPv4.
@@ -537,7 +563,7 @@ get_ipsec_status_for_peer() {
 	fi
 
 	# Get ipsec status with timeout
-	if command -v timeout >/dev/null 2>&1; then
+	if check_command_available "timeout"; then
 		ipsec_output=$(timeout "${IPSEC_STATUS_TIMEOUT:-5}" ipsec status 2>/dev/null || true)
 	else
 		ipsec_output=$(ipsec status 2>/dev/null || true)
@@ -777,7 +803,7 @@ check_ping_connectivity() {
 			if [[ -n "$local_ip" ]]; then
 				ping_args=(-I "$local_ip")
 			fi
-		elif ping -6 >/dev/null 2>&1; then
+		elif check_command_available "ping" && ping -6 >/dev/null 2>&1; then
 			ping_cmd="ping"
 			ping_args=(-6)
 			# Add -I flag if local_ip is provided
@@ -817,7 +843,7 @@ check_ping_connectivity() {
 	local ping_exit_code=0
 
 	# Use Linux-style ping with timeout wrapper
-	if command -v timeout >/dev/null 2>&1; then
+	if check_command_available "timeout"; then
 		# Try Linux-style ping with timeout wrapper
 		if ping_result=$(timeout "$ping_wrapper_timeout" "$ping_cmd" "${ping_args[@]}" -c "$ping_count" -W "$ping_timeout" -q "$target_ip" 2>&1); then
 			ping_success=1
@@ -870,7 +896,7 @@ check_ping_connectivity() {
 		# If route was added but ping still failed, this indicates a tunnel issue
 		local error_msg
 		# Check for timeout (exit code 124) only if timeout wrapper was used
-		if [[ $ping_exit_code -eq 124 ]] && command -v timeout >/dev/null 2>&1; then
+		if [[ $ping_exit_code -eq 124 ]] && check_command_available "timeout"; then
 			# Timeout occurred (exit code 124 from timeout command)
 			if [[ -n "$local_ip" ]]; then
 				error_msg="Ping check timed out: $target_ip from $local_ip (command hung after ${ping_wrapper_timeout}s)"
@@ -1368,7 +1394,9 @@ check_ipsec_status() {
 #   Prints connection name to stdout if found, empty string otherwise
 #
 # Side effects:
-#   - Caches connection name in ${STATE_DIR}/connection_name_<sanitized_peer_ip>
+#   - Caches connection name using abstraction layer (set_peer_state_non_critical)
+#   - Cache file: ${STATE_DIR}/connection_name_<sanitized_peer_ip>
+#   - Uses atomic writes for consistency with other state files
 #   - Logs debug messages if DEBUG=1
 #
 # Examples:
@@ -1376,19 +1404,20 @@ check_ipsec_status() {
 #   # Returns: "site-a" or empty string
 #
 # Note:
-#   Requires sanitize_peer_ip, STATE_DIR, and log_message to be set
+#   Requires get_peer_state_file_path and set_peer_state_non_critical (from state.sh), STATE_DIR, and log_message to be set
+#   Uses abstraction layer for consistent state file path management and atomic writes
 #   ipsec command is optional - cached values can be retrieved even if ipsec is unavailable
 #   Connection names are for logging only - recovery uses ipsec reload (all connections)
+#   connection_name is per-peer only (no location), so empty location is passed to abstraction layer
 discover_connection_name() {
 	local peer_ip="$1"
 	local connection_name=""
 
-	# Sanitize peer IP for cache filename
-	local peer_sanitized
-	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
-	local cache_file="${STATE_DIR}/connection_name_${peer_sanitized}"
-
 	# Check cache first - use cached value if available, even if ipsec is not available
+	# Get cache file path using abstraction layer for consistency
+	# connection_name is per-peer only (no location), so pass empty string for location
+	local cache_file
+	cache_file=$(get_peer_state_file_path "" "$peer_ip" "connection_name")
 	if file_exists_and_readable "$cache_file"; then
 		connection_name=$(cat "$cache_file" 2>/dev/null || echo "")
 		if [[ -n "$connection_name" ]]; then
@@ -1426,8 +1455,9 @@ discover_connection_name() {
 			# Extract connection name (everything before first colon, trimmed)
 			connection_name=$(echo "$line" | sed -n 's/^[[:space:]]*\([^:]*\):.*/\1/p' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 			if [[ -n "$connection_name" ]]; then
-				# Cache the result
-				echo "$connection_name" >"$cache_file" 2>/dev/null || true
+				# Cache the result using abstraction layer for atomic write consistency
+				# connection_name is per-peer only (no location), so pass empty string for location
+				set_peer_state_non_critical "" "$peer_ip" "connection_name" "$connection_name"
 				[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "Discovered connection name '$connection_name' for $peer_ip"
 				echo "$connection_name"
 				return 0

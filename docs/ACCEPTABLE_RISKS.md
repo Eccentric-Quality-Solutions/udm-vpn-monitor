@@ -8,7 +8,7 @@ This document tracks bugs and potential issues that have been reviewed and deter
 
 ## Race Condition Between `check_rate_limit()` and `record_restart()`
 
-**Location**: `lib/state.sh:812-840` and `lib/state.sh:866-888`
+**Location**: `lib/state.sh:842-870` and `lib/state.sh:898-940`
 
 **Issue**: `check_rate_limit()` reads `RESTART_COUNT_FILE` while `record_restart()` modifies it, potentially causing a race condition.
 
@@ -24,7 +24,7 @@ This document tracks bugs and potential issues that have been reviewed and deter
 
 ## Race Condition in `record_restart()` - Data Loss Risk
 
-**Location**: `lib/state.sh:866-888`
+**Location**: `lib/state.sh:898-940`
 
 **Issue**: `record_restart()` has a race condition where concurrent calls can cause data loss due to non-atomic append and read-modify-write operations.
 
@@ -41,13 +41,13 @@ This document tracks bugs and potential issues that have been reviewed and deter
 
 ## Race Condition in Lockfile Stale Removal
 
-**Location**: `lib/lockfile.sh:369-384`
+**Location**: `lib/lockfile.sh:402-410`
 
 **Issue**: Window between removing stale lockfile and retrying flock where another process could acquire the lock.
 
 **Why Acceptable**:
 - This is intentional and correct behavior, not a bug
-- Code comment (lines 380-382) explicitly acknowledges this scenario
+- Code comment (lines 412-413) explicitly acknowledges this scenario
 - If Process B legitimately acquires lock after Process A removes stale lockfile, Process A exiting is the correct response
 - Non-blocking flock design intentionally prioritizes avoiding concurrent execution over waiting
 - No actual negative impact - one process exits (as designed), other process continues normally
@@ -58,7 +58,7 @@ This document tracks bugs and potential issues that have been reviewed and deter
 
 ## Lockfile Write Race Condition
 
-**Location**: `lib/lockfile.sh:394-395`
+**Location**: `lib/lockfile.sh:448`
 
 **Issue**: File descriptor opening with `9>"$LOCKFILE"` truncates file before flock is acquired, creating a window where another process might read empty file.
 
@@ -67,7 +67,7 @@ This document tracks bugs and potential issues that have been reviewed and deter
 - File descriptor is opened in subshell `( ... ) 9>"$LOCKFILE"` - truncation happens when redirection is set up
 - `flock -n 9` acquires exclusive lock immediately after, preventing concurrent access
 - Even if another process reads between truncation and lock acquisition, it would see empty file and treat as "no lockfile" (correct behavior)
-- Pre-check at lines 321-339 reads lockfile BEFORE opening file descriptor, so PID is extracted before truncation
+- Pre-check at lines 300-339 reads lockfile BEFORE opening file descriptor, so PID is extracted before truncation
 - Impact is minimal: temporary empty lockfile read would cause process to attempt lock acquisition (correct behavior)
 
 **Date Accepted**: 2025-12-31

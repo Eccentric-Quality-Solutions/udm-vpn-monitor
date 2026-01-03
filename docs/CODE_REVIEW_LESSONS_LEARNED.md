@@ -1,12 +1,14 @@
 # Code Review Lessons Learned
 
 **Date:** 2025-01-15  
-**Last Updated:** 2026-01-02  
+**Last Updated:** 2026-01-03  
 **Context:** Comprehensive codebase review for errors, bugs, DRY violations, and bad practices
 
 ## Overview
 
 This document captures lessons learned from conducting systematic code reviews. These patterns should be applied systematically to prevent similar issues in the future.
+
+**Note:** Many of these lessons have been consolidated into actionable patterns in `CODE_PATTERNS.md`. This document preserves the historical context of how patterns were discovered, including specific bugs found, their impact, and how they were fixed. For current coding patterns and best practices, see `CODE_PATTERNS.md`.
 
 ---
 
@@ -1660,6 +1662,7 @@ local external_ip="${LOCATIONS[$location_name]}"
 - Check existing code patterns (like `verify_ipsec_connections_active()`) for reference
 
 ### Related Patterns
+- See `CODE_PATTERNS.md` section "Configuration Patterns" → "Extract External IP from LOCATIONS Using Helper Function" for the consolidated pattern
 - See `lib/recovery.sh:verify_ipsec_connections_active()` for correct pattern
 - See `lib/recovery.sh:full_restart()` for fixed pattern
 - `LOCATIONS` format: `"external:IP|internal:IPs"` (pipe separator)
@@ -1738,6 +1741,7 @@ fi
 - Verify logic equivalence after simplification
 
 ### Related Patterns
+- See `CODE_PATTERNS.md` section "Error Handling Patterns" → "Simplify Complex Conditionals When All Branches Converge" for the consolidated pattern
 - See `lib/config.sh:696-713` for simplified log path computation
 - **Update 2026-01-02**: Further simplified by removing unnecessary `expected_log_file` intermediate variable and redundant `dirname` call. The original code computed `expected_log_file` just to compare it, when direct directory comparison is clearer. Also removed unreachable error handling for empty `dirname` result (dirname always returns a value, even if it's `.`).
 - See `lib/state.sh:74-80` for simplified logging directory creation failure handling
@@ -1781,6 +1785,7 @@ fi
 **Script execution success ≠ Operational success.** The script's job is to monitor and attempt recovery. If recovery is attempted (even if it fails), the script has successfully completed its monitoring task. Recovery failures are logged and can be detected via log monitoring, but they shouldn't cause the script to exit with failure.
 
 ### Related Patterns
+- See `CODE_PATTERNS.md` section "Error Handling Patterns" → "Distinguish Between Script Execution Success and Recovery Success" for the consolidated pattern
 - See `lib/recovery.sh:monitor_location()` lines 1514-1523 for implementation
 - Recovery failures are logged via `handle_error()` and `log_message()`
 - Script exit codes should reflect execution success, not operational outcomes
@@ -1833,6 +1838,7 @@ fi
 - If state can change between checks, always re-check before making decisions
 
 ### Related Patterns
+- See `CODE_PATTERNS.md` section "State Management Patterns" → "Always Re-Check Critical State Instead of Relying on Cached Values" for the consolidated pattern
 - See `lib/recovery.sh:monitor_location()` lines 1433-1466 for implementation
 - Network partition state is checked in `vpn-monitor.sh` at script start, but recovery code always re-checks
 - Failure count increments before partition check to ensure accurate tracking even when recovery is skipped
@@ -1843,6 +1849,8 @@ fi
 ## Summary: Key Takeaways
 
 These lessons should be applied systematically in future development and code reviews to prevent similar issues:
+
+**Note:** Many of these lessons have been consolidated into actionable patterns in `CODE_PATTERNS.md`. For current coding patterns and best practices, refer to `CODE_PATTERNS.md`. This document preserves the historical context of how patterns were discovered.
 
 1. **Always use abstraction layers consistently** - Don't construct paths directly, use abstraction functions
 2. **Always use validation functions instead of inline regex** - Validation functions provide consistent, secure validation
@@ -1871,5 +1879,6 @@ These lessons should be applied systematically in future development and code re
 25. **Simplify complex conditionals when all branches converge** - Extract common operations outside conditionals
 26. **Distinguish between script execution success and recovery success** - Script execution success ≠ Operational success
 27. **Always re-check critical state instead of relying on cached values** - Cached state can become stale, especially when state changes can occur between checks
+28. **When adding similar functionality, consider code duplication vs. clarity trade-offs** - When adding retention options for logs and state directories similar to config file retention, the three handler functions (`handle_config_file`, `handle_logs_dir`, `handle_state_dir`) have similar structure. While this creates some duplication, keeping them separate improves readability and maintainability. Extracting common logic would reduce duplication but make the code harder to understand. **Decision:** Keep similar but separate functions when clarity benefits outweigh DRY benefits, especially for user-facing interactive prompts where explicit code paths are easier to debug and modify.
 
 ---
