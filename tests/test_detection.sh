@@ -458,6 +458,210 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:high-risk,priority:medium
+@test "ping succeeds but no SA - warning includes route information when available" {
+	# Purpose: Test verifies that when ping succeeds but VPN SA is not found, the warning message includes route information to identify the alternative route.
+	# Expected: Warning message includes route information (gateway and interface) when route detection succeeds.
+	# Importance: Route information helps identify how traffic is flowing when VPN tunnel is down, aiding troubleshooting.
+	# Test Category: Ping check, Route detection, Warning messages
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="172.31.13.239"' 'LOCAL_UDM_IP="172.31.19.169"'
+
+	# Mock ip command - no SA (VPN down), but handle route get command
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    # Return empty (no SA - VPN down)
+    exit 0
+elif [[ "$1" == "route" ]] && [[ "$2" == "get" ]]; then
+    # Return route information for alternative route
+    # Format: "172.31.13.239 via 192.168.1.1 dev eth0 src 172.31.19.169"
+    echo "172.31.13.239 via 192.168.1.1 dev eth0 src 172.31.19.169"
+    exit 0
+fi
+# Handle other ip commands (addr show/add for route setup)
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+
+	# Mock ping - succeeds (connectivity exists via alternative route)
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<'EOF'
+#!/bin/bash
+# Simulate successful ping
+echo "PING 172.31.13.239 (172.31.13.239) from 172.31.19.169: 56(84) bytes of data."
+echo "64 bytes from 172.31.13.239: icmp_seq=1 ttl=64 time=0.123 ms"
+echo ""
+echo "--- 172.31.13.239 ping statistics ---"
+echo "3 packets transmitted, 3 received, 0% packet loss"
+exit 0
+EOF
+	chmod +x "$mock_ping"
+	add_mock_to_path
+
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Should log warning with new message format and route information
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains "$LOG_FILE" "VPN tunnel is down (no SA found), but connectivity exists via alternative route"
+	assert_log_contains "$LOG_FILE" "route: via 192.168.1.1 dev eth0"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "ping succeeds but no SA - warning handles route info unavailable gracefully" {
+	# Purpose: Test verifies that when ping succeeds but VPN SA is not found, the warning message handles route detection failures gracefully.
+	# Expected: Warning message logs without route information when route detection fails, but still provides useful diagnostic information.
+	# Importance: Route detection may fail in some environments; system must handle gracefully without breaking functionality.
+	# Test Category: Ping check, Route detection, Error handling
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="172.31.13.239"' 'LOCAL_UDM_IP="172.31.19.169"'
+
+	# Mock ip command - no SA (VPN down), route get fails
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    # Return empty (no SA - VPN down)
+    exit 0
+elif [[ "$1" == "route" ]] && [[ "$2" == "get" ]]; then
+    # Simulate route get failure (route info unavailable)
+    exit 1
+fi
+# Handle other ip commands (addr show/add for route setup)
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+
+	# Mock ping - succeeds (connectivity exists via alternative route)
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<'EOF'
+#!/bin/bash
+# Simulate successful ping
+echo "PING 172.31.13.239 (172.31.13.239) from 172.31.19.169: 56(84) bytes of data."
+echo "64 bytes from 172.31.13.239: icmp_seq=1 ttl=64 time=0.123 ms"
+echo ""
+echo "--- 172.31.13.239 ping statistics ---"
+echo "3 packets transmitted, 3 received, 0% packet loss"
+exit 0
+EOF
+	chmod +x "$mock_ping"
+	add_mock_to_path
+
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Should log warning with new message format but without route information
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains "$LOG_FILE" "VPN tunnel is down (no SA found), but connectivity exists via alternative route"
+	# Should NOT contain route information (route detection failed)
+	assert_log_not_contains "$LOG_FILE" "route: via"
+	assert_log_not_contains "$LOG_FILE" "route: dev"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "ping succeeds but no SA - new warning message format (single IP)" {
+	# Purpose: Test verifies the new warning message format when ping succeeds but no SA exists for single IP configuration.
+	# Expected: Warning message uses clear language "VPN tunnel is down (no SA found)" instead of ambiguous "may be down".
+	# Importance: Clear messaging helps users understand VPN status and troubleshoot connectivity issues.
+	# Test Category: Ping check, Warning messages
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="172.31.13.239"'
+
+	# Mock ip command - no SA (VPN down)
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    # Return empty (no SA - VPN down)
+    exit 0
+fi
+# Handle other ip commands (addr show/add for route setup, route get)
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+
+	# Mock ping - succeeds
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<'EOF'
+#!/bin/bash
+echo "PING 172.31.13.239 (172.31.13.239): 56(84) bytes of data."
+echo "64 bytes from 172.31.13.239: icmp_seq=1 ttl=64 time=0.123 ms"
+echo "--- 172.31.13.239 ping statistics ---"
+echo "3 packets transmitted, 3 received, 0% packet loss"
+exit 0
+EOF
+	chmod +x "$mock_ping"
+	add_mock_to_path
+
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Should log warning with new clear message format
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains "$LOG_FILE" "VPN tunnel is down (no SA found)"
+	assert_log_contains "$LOG_FILE" "connectivity exists via alternative route"
+	# Should NOT contain old ambiguous "may be down" language
+	assert_log_not_contains "$LOG_FILE" "tunnel may be down"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "ping succeeds but no SA - new warning message format (multiple IPs)" {
+	# Purpose: Test verifies the new warning message format when ping succeeds but no SA exists for multiple IP configuration.
+	# Expected: Warning message uses clear language and includes route information for first IP when available.
+	# Importance: Ensures consistent messaging across single and multiple IP configurations.
+	# Test Category: Ping check, Warning messages, Multiple IPs
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="172.31.13.239 172.31.13.240"' 'LOCAL_UDM_IP="172.31.19.169"'
+
+	# Mock ip command - no SA (VPN down), handle route get for first IP
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    # Return empty (no SA - VPN down)
+    exit 0
+elif [[ "$1" == "route" ]] && [[ "$2" == "get" ]]; then
+    # Return route information for first IP
+    echo "172.31.13.239 via 192.168.1.1 dev eth0 src 172.31.19.169"
+    exit 0
+fi
+# Handle other ip commands (addr show/add for route setup)
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+
+	# Mock ping - succeeds for both IPs
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<'EOF'
+#!/bin/bash
+echo "PING $2 ($2): 56(84) bytes of data."
+echo "64 bytes from $2: icmp_seq=1 ttl=64 time=0.123 ms"
+echo "--- $2 ping statistics ---"
+echo "3 packets transmitted, 3 received, 0% packet loss"
+exit 0
+EOF
+	chmod +x "$mock_ping"
+	add_mock_to_path
+
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Should log warning with new clear message format for multiple IPs
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains "$LOG_FILE" "VPN tunnel is down (no SA found)"
+	assert_log_contains "$LOG_FILE" "connectivity exists via alternative route"
+	# Should include route information for first IP
+	assert_log_contains "$LOG_FILE" "route: via 192.168.1.1 dev eth0"
+	# Should NOT contain old ambiguous "may be down" language
+	assert_log_not_contains "$LOG_FILE" "tunnel may be down"
+
+	remove_mock_from_path
+}
+
 # ============================================================================
 # 3.3 FALLBACK CHAIN EDGE CASES (continued)
 # ============================================================================

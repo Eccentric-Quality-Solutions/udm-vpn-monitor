@@ -878,7 +878,7 @@ Fixes #123
 
 ### 8. Git Pre-commit Hook
 
-This repository includes a pre-commit hook that runs code quality checks and automatically regenerates the installer package (`udm-vpn-monitor-installer.zip`) before each commit. This ensures code quality and that the installer package is always up-to-date with the current codebase.
+This repository includes a pre-commit hook that runs code quality checks and automatically regenerates the installer package (`udm-vpn-monitor.zip`) before each commit. This ensures code quality and that the installer package is always up-to-date with the current codebase.
 
 **Setup:**
 
@@ -901,7 +901,7 @@ This should be run once after cloning the repository (see [First Time Setup](#fi
 
 2. **Package Regeneration**:
    - Runs `prepare_install_package.sh` to regenerate the installer package
-   - Adds the generated `udm-vpn-monitor-installer.zip` file to the commit
+   - Adds the generated `udm-vpn-monitor.zip` file to the commit
    - Ensures the package is always synchronized with source code changes
 
 **Note**: The hook will warn if ShellCheck or shfmt are not installed, but will still proceed with package regeneration. For best results and to catch issues early, install both tools (see [Required Tools](#required-tools) above).

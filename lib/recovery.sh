@@ -174,6 +174,8 @@ verify_byte_counters_resume() {
 #   Requires ipsec command to be available
 #   If no peer IPs provided, attempts to parse location config to get all external IPs
 #   Returns success if no locations configured (no peers to verify)
+#   Uses get_command_path() to resolve ipsec command path for reliable execution
+#   in PATH-restricted environments (cron/systemd)
 verify_ipsec_connections_active() {
 	local peer_ips="${1:-}"
 
@@ -182,6 +184,7 @@ verify_ipsec_connections_active() {
 		declare -A LOCATIONS
 		if parse_location_config; then
 			local external_ips=()
+			local location_name
 			for location_name in "${!LOCATIONS[@]}"; do
 				# Extract external IP from location data format: "external:IP|internal:IPs"
 				local external_ip=""
@@ -208,6 +211,18 @@ verify_ipsec_connections_active() {
 		return 1
 	fi
 
+	# Get resolved path to ipsec command for reliable execution in PATH-restricted environments
+	# Reuse _RECOVERY_IPSEC_PATH if available (set by recovery actions), otherwise resolve via get_command_path()
+	# This ensures consistency with recovery actions and avoids redundant path resolution
+	local ipsec_cmd="ipsec"
+	if [[ -n "${_RECOVERY_IPSEC_PATH:-}" ]]; then
+		# Reuse path already resolved by recovery actions
+		ipsec_cmd="${_RECOVERY_IPSEC_PATH}"
+	elif command -v get_command_path >/dev/null 2>&1; then
+		# Resolve path independently (when called standalone)
+		ipsec_cmd=$(get_command_path "ipsec")
+	fi
+
 	if [[ -z "$peer_ips" ]]; then
 		# No peers to verify
 		return 0
@@ -215,14 +230,15 @@ verify_ipsec_connections_active() {
 
 	# Get ipsec status output
 	# Wrap ipsec status with timeout to prevent hanging
+	# Use resolved path to ipsec command for reliable execution
 	local ipsec_output
 	local ipsec_exit_code=0
 	if check_command_available "timeout"; then
-		ipsec_output=$(timeout "$IPSEC_STATUS_TIMEOUT" ipsec status 2>/dev/null)
+		ipsec_output=$(timeout "$IPSEC_STATUS_TIMEOUT" "$ipsec_cmd" status 2>/dev/null)
 		ipsec_exit_code=$?
 	else
 		# Fallback if timeout command not available (shouldn't happen on UDM)
-		ipsec_output=$(ipsec status 2>/dev/null)
+		ipsec_output=$("$ipsec_cmd" status 2>/dev/null)
 		ipsec_exit_code=$?
 	fi
 
@@ -1410,21 +1426,23 @@ full_restart() {
 					local total_peers=0
 
 					# Count total peers and verify byte counters
-					for location_name in "${!LOCATIONS[@]}"; do
+					# Use a different variable name to avoid overwriting the function parameter
+					local iter_location_name
+					for iter_location_name in "${!LOCATIONS[@]}"; do
 						# Extract external IP from location data format: "external:IP|internal:IPs"
 						local external_ip=""
 						if command -v get_location_external_ip >/dev/null 2>&1; then
-							external_ip=$(get_location_external_ip "$location_name" 2>/dev/null || echo "")
+							external_ip=$(get_location_external_ip "$iter_location_name" 2>/dev/null || echo "")
 						else
 							# Fallback: extract from LOCATIONS format directly
-							local location_data="${LOCATIONS[$location_name]:-}"
+							local location_data="${LOCATIONS[$iter_location_name]:-}"
 							if [[ "$location_data" =~ external:([^|]+) ]]; then
 								external_ip="${BASH_REMATCH[1]:-}"
 							fi
 						fi
 						if [[ -n "$external_ip" ]]; then
 							((total_peers++))
-							if verify_byte_counters_resume "$external_ip" "$location_name" 2>/dev/null; then
+							if verify_byte_counters_resume "$external_ip" "$iter_location_name" 2>/dev/null; then
 								((peers_with_bytes++))
 							fi
 						fi

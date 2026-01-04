@@ -91,15 +91,15 @@ EXPECTED_SCRIPT_FILES=(
 	assert_success
 
 	# Check zip file was created in project root
-	assert_file_exist "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
+	assert_file_exist "${PROJECT_ROOT}/udm-vpn-monitor.zip"
 
 	# Verify zip file is not empty
-	if [[ ! -s "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip" ]]; then
+	if [[ ! -s "${PROJECT_ROOT}/udm-vpn-monitor.zip" ]]; then
 		fail "Zip file is empty"
 	fi
 
 	# Clean up
-	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
+	rm -f "${PROJECT_ROOT}/udm-vpn-monitor.zip"
 }
 
 # bats test_tags=category:unit
@@ -114,20 +114,20 @@ EXPECTED_SCRIPT_FILES=(
 	assert_success
 
 	# Check tar.gz file was created in project root
-	assert_file_exist "${PROJECT_ROOT}/udm-vpn-monitor-installer.tar.gz"
+	assert_file_exist "${PROJECT_ROOT}/udm-vpn-monitor.tar.gz"
 
 	# Verify tar.gz file is not empty
-	if [[ ! -s "${PROJECT_ROOT}/udm-vpn-monitor-installer.tar.gz" ]]; then
+	if [[ ! -s "${PROJECT_ROOT}/udm-vpn-monitor.tar.gz" ]]; then
 		fail "Tar.gz file is empty"
 	fi
 
 	# Verify zip file was NOT created
-	if [[ -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip" ]]; then
+	if [[ -f "${PROJECT_ROOT}/udm-vpn-monitor.zip" ]]; then
 		fail "Zip file should not exist when --tar option is used"
 	fi
 
 	# Clean up
-	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.tar.gz"
+	rm -f "${PROJECT_ROOT}/udm-vpn-monitor.tar.gz"
 }
 
 # bats test_tags=category:unit
@@ -145,7 +145,7 @@ EXPECTED_SCRIPT_FILES=(
 	local extract_dir="${TEST_DIR}/extracted"
 	mkdir -p "$extract_dir"
 	cd "$extract_dir"
-	unzip -q "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
+	unzip -q "${PROJECT_ROOT}/udm-vpn-monitor.zip"
 
 	# Check all main files are present
 	for file in "${EXPECTED_MAIN_FILES[@]}"; do
@@ -153,7 +153,7 @@ EXPECTED_SCRIPT_FILES=(
 	done
 
 	# Clean up
-	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
+	rm -f "${PROJECT_ROOT}/udm-vpn-monitor.zip"
 }
 
 # bats test_tags=category:unit
@@ -171,7 +171,7 @@ EXPECTED_SCRIPT_FILES=(
 	local extract_dir="${TEST_DIR}/extracted"
 	mkdir -p "$extract_dir"
 	cd "$extract_dir"
-	unzip -q "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
+	unzip -q "${PROJECT_ROOT}/udm-vpn-monitor.zip"
 
 	# Check lib directory exists
 	assert_dir_exist "${extract_dir}/lib"
@@ -182,7 +182,7 @@ EXPECTED_SCRIPT_FILES=(
 	done
 
 	# Clean up
-	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
+	rm -f "${PROJECT_ROOT}/udm-vpn-monitor.zip"
 }
 
 # bats test_tags=category:unit
@@ -200,7 +200,7 @@ EXPECTED_SCRIPT_FILES=(
 	local extract_dir="${TEST_DIR}/extracted-scripts"
 	mkdir -p "$extract_dir"
 	cd "$extract_dir"
-	unzip -q "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
+	unzip -q "${PROJECT_ROOT}/udm-vpn-monitor.zip"
 
 	# Check scripts directory exists
 	assert_dir_exist "${extract_dir}/scripts"
@@ -211,7 +211,7 @@ EXPECTED_SCRIPT_FILES=(
 	done
 
 	# Clean up
-	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
+	rm -f "${PROJECT_ROOT}/udm-vpn-monitor.zip"
 }
 
 # bats test_tags=category:unit
@@ -229,7 +229,7 @@ EXPECTED_SCRIPT_FILES=(
 	local extract_dir="${TEST_DIR}/extracted-tar"
 	mkdir -p "$extract_dir"
 	cd "$extract_dir"
-	tar -xzf "${PROJECT_ROOT}/udm-vpn-monitor-installer.tar.gz"
+	tar -xzf "${PROJECT_ROOT}/udm-vpn-monitor.tar.gz"
 
 	# Check all main files are present
 	for file in "${EXPECTED_MAIN_FILES[@]}"; do
@@ -253,7 +253,7 @@ EXPECTED_SCRIPT_FILES=(
 	done
 
 	# Clean up
-	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.tar.gz"
+	rm -f "${PROJECT_ROOT}/udm-vpn-monitor.tar.gz"
 }
 
 # bats test_tags=category:unit
@@ -268,13 +268,13 @@ EXPECTED_SCRIPT_FILES=(
 	assert_success
 
 	# Check zip file was created in project root
-	assert_file_exist "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
+	assert_file_exist "${PROJECT_ROOT}/udm-vpn-monitor.zip"
 
 	# Extract and verify actual files are included
 	local extract_dir="${TEST_DIR}/extracted-actual"
 	mkdir -p "$extract_dir"
 	cd "$extract_dir"
-	unzip -q "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
+	unzip -q "${PROJECT_ROOT}/udm-vpn-monitor.zip"
 
 	# Verify actual files exist and are not empty
 	for file in "${EXPECTED_MAIN_FILES[@]}"; do
@@ -302,7 +302,7 @@ EXPECTED_SCRIPT_FILES=(
 	done
 
 	# Clean up package file created during test
-	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
+	rm -f "${PROJECT_ROOT}/udm-vpn-monitor.zip"
 }
 
 # bats test_tags=category:unit
@@ -317,10 +317,10 @@ EXPECTED_SCRIPT_FILES=(
 
 	# Use assert_line for checking specific output lines
 	assert_line --partial "unzip"
-	assert_line --partial "udm-vpn-monitor-installer.zip"
+	assert_line --partial "udm-vpn-monitor.zip"
 
 	# Clean up
-	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.zip"
+	rm -f "${PROJECT_ROOT}/udm-vpn-monitor.zip"
 }
 
 # bats test_tags=category:unit
@@ -335,8 +335,8 @@ EXPECTED_SCRIPT_FILES=(
 
 	# Use assert_line for checking specific output lines
 	assert_line --partial "tar -xzf"
-	assert_line --partial "udm-vpn-monitor-installer.tar.gz"
+	assert_line --partial "udm-vpn-monitor.tar.gz"
 
 	# Clean up
-	rm -f "${PROJECT_ROOT}/udm-vpn-monitor-installer.tar.gz"
+	rm -f "${PROJECT_ROOT}/udm-vpn-monitor.tar.gz"
 }

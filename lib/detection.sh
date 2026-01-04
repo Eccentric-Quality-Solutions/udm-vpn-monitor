@@ -765,6 +765,115 @@ add_route_if_needed() {
 	fi
 }
 
+# Get route information for a destination IP
+#
+# Determines which interface and gateway (if any) is used to reach a destination IP.
+# This helps identify alternative routes when VPN tunnel is down but connectivity exists.
+#
+# Arguments:
+#   $1: Destination IP address (IPv4 format)
+#   $2: Source IP address (optional, for source-specific routing)
+#
+# Returns:
+#   0: Route information retrieved successfully
+#   1: Failed to retrieve route information
+#
+# Output:
+#   Prints route information in format: "via <gateway> dev <interface>" or "dev <interface>"
+#   Prints empty string if route check fails
+#
+# Note:
+#   Uses 'ip route get' command
+#   Requires 'ip' command to be available
+get_route_info() {
+	local dest_ip="$1"
+	local src_ip="${2:-}"
+
+	if [[ -z "$dest_ip" ]]; then
+		return 1
+	fi
+
+	# Validate IP address format
+	if ! validate_ip_address "$dest_ip"; then
+		return 1
+	fi
+
+	# Check if ip command is available (don't warn - this is optional diagnostic info)
+	if ! check_command_available "ip"; then
+		return 1
+	fi
+
+	# Get route information
+	# Format: "172.31.13.239 via 192.168.1.1 dev eth0 src 192.168.1.100"
+	# We want to extract: "via <gateway> dev <interface>" or "dev <interface>"
+	local route_output
+	if [[ -n "$src_ip" ]] && validate_ip_address "$src_ip"; then
+		# Use source-specific routing
+		if ! route_output=$(ip route get "$dest_ip" from "$src_ip" 2>/dev/null); then
+			return 1
+		fi
+	else
+		# Standard routing
+		if ! route_output=$(ip route get "$dest_ip" 2>/dev/null); then
+			return 1
+		fi
+	fi
+
+	if [[ -n "$route_output" ]]; then
+		# Extract gateway and interface
+		local gateway
+		local interface
+		gateway=$(echo "$route_output" | grep -oE 'via [0-9.]+' | sed 's/via //' || echo "")
+		interface=$(echo "$route_output" | grep -oE 'dev [a-zA-Z0-9_-]+' | sed 's/dev //' || echo "")
+
+		# Build route info string
+		local route_info=""
+		if [[ -n "$gateway" ]] && [[ -n "$interface" ]]; then
+			route_info="via $gateway dev $interface"
+		elif [[ -n "$interface" ]]; then
+			route_info="dev $interface"
+		fi
+
+		if [[ -n "$route_info" ]]; then
+			echo "$route_info"
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+# Build route message for alternative route warning
+#
+# Helper function to get route information and format it for warning messages.
+# Used when VPN tunnel is down but ping succeeds, indicating alternative route exists.
+#
+# Arguments:
+#   $1: Destination IP address (IPv4 format)
+#   $2: Source IP address (optional, for source-specific routing)
+#
+# Returns:
+#   0: Always succeeds (gracefully handles failures)
+#
+# Output:
+#   Prints formatted route message: " (route: via <gateway> dev <interface>)" or " (route: dev <interface>)" or empty string
+#
+# Note:
+#   Returns empty string if route info cannot be determined (non-fatal)
+build_route_message() {
+	local dest_ip="$1"
+	local src_ip="${2:-}"
+	local route_info
+	local route_msg=""
+
+	if route_info=$(get_route_info "$dest_ip" "$src_ip" 2>/dev/null); then
+		route_msg=" (route: $route_info)"
+	fi
+
+	echo "$route_msg"
+	return 0
+}
+
 # Check connectivity via ping
 #
 # Verifies end-to-end connectivity through the VPN tunnel by pinging a target IP.
@@ -1802,7 +1911,13 @@ check_ping_if_enabled() {
 		else
 			# SA doesn't exist, but try ping anyway to see if there's any connectivity
 			if check_ping_multiple_ips "$ping_target" "$local_ip" "$location_name"; then
-				handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check passed but no SA found - tunnel may be down but connectivity exists via other route${location_name:+ for $location_name}"
+				# VPN tunnel is down (no SA), but ping succeeded - connectivity exists via alternative route
+				# Get route info for first IP to identify the alternative route
+				local first_ip
+				first_ip=$(echo "$ping_target" | awk '{print $1}')
+				local route_msg
+				route_msg=$(build_route_message "$first_ip" "$local_ip")
+				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN tunnel is down (no SA found), but connectivity exists via alternative route${route_msg}${location_name:+ for $location_name}"
 			fi
 		fi
 	else
@@ -1818,7 +1933,10 @@ check_ping_if_enabled() {
 		else
 			# SA doesn't exist, but try ping anyway to see if there's any connectivity
 			if check_ping_connectivity "$ping_target" "$local_ip" "$location_name"; then
-				handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check passed but no SA found - tunnel may be down but connectivity exists via other route${location_name:+ for $location_name}"
+				# VPN tunnel is down (no SA), but ping succeeded - connectivity exists via alternative route
+				local route_msg
+				route_msg=$(build_route_message "$ping_target" "$local_ip")
+				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN tunnel is down (no SA found), but connectivity exists via alternative route${route_msg}${location_name:+ for $location_name}"
 			fi
 		fi
 	fi

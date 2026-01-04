@@ -10,7 +10,7 @@
 #   --tar    Create a tar.gz file instead of zip
 #
 # Output:
-#   udm-vpn-monitor-installer.zip (default) or udm-vpn-monitor-installer.tar.gz
+#   udm-vpn-monitor.zip (default) or udm-vpn-monitor.tar.gz
 #   Contains all required files for installation
 #
 
@@ -42,9 +42,9 @@ done
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ $USE_TAR -eq 1 ]]; then
-	PACKAGE_NAME="udm-vpn-monitor-installer.tar.gz"
+	PACKAGE_NAME="udm-vpn-monitor.tar.gz"
 else
-	PACKAGE_NAME="udm-vpn-monitor-installer.zip"
+	PACKAGE_NAME="udm-vpn-monitor.zip"
 fi
 TEMP_DIR=$(mktemp -d)
 

@@ -2416,6 +2416,85 @@ source "${BATS_TEST_DIRNAME}/../lib/config_schema.sh" 2>/dev/null || true  # Opt
 
 **Key Lesson:** When a test exposes a scoping issue in production code, fix the production code rather than working around it in tests. Using `declare -gA` instead of `declare -A` ensures associative arrays are always global, which is the correct behavior for configuration schemas that need to be accessible from anywhere.
 
+### Pattern: Always Declare Loop Variables as Local
+
+**When to Use:** All loops within bash functions
+
+**Pattern:**
+```bash
+# ✅ GOOD: Declare loop variable as local before use
+verify_ipsec_connections_active() {
+    local peer_ips="${1:-}"
+    
+    if parse_location_config; then
+        local external_ips=()
+        local location_name  # Declare as local before loop
+        for location_name in "${!LOCATIONS[@]}"; do
+            # Process location
+        done
+    fi
+}
+
+# ✅ GOOD: Use different variable name when loop variable conflicts with function parameter
+full_restart() {
+    local peer_ip="${1:-}"
+    local location_name="$2"  # Function parameter
+    
+    # Use different variable name to avoid overwriting parameter
+    local iter_location_name
+    for iter_location_name in "${!LOCATIONS[@]}"; do
+        # Process location using iter_location_name
+    done
+}
+
+# ❌ BAD: Loop variable not declared as local (can overwrite global variables)
+verify_ipsec_connections_active() {
+    local peer_ips="${1:-}"
+    
+    if parse_location_config; then
+        local external_ips=()
+        # Missing: local location_name
+        for location_name in "${!LOCATIONS[@]}"; do  # Overwrites global variable!
+            # Process location
+        done
+    fi
+}
+
+# ❌ BAD: Loop variable overwrites function parameter
+full_restart() {
+    local peer_ip="${1:-}"
+    local location_name="$2"  # Function parameter
+    
+    # Loop variable overwrites the parameter!
+    for location_name in "${!LOCATIONS[@]}"; do  # BUG: overwrites parameter
+        # Process location
+    done
+    # location_name is now the last location in LOCATIONS, not the original parameter!
+}
+```
+
+**Key Points:**
+- **Always declare loop variables as `local`** before the loop in bash functions
+- Loop variables that aren't declared as `local` can overwrite global variables
+- This can affect caller's local variables in unexpected ways
+- When a loop variable would conflict with a function parameter, use a different variable name
+- Bash doesn't have true lexical scoping - be explicit about variable scoping
+- This prevents subtle bugs where loop variables leak into global scope
+
+**Real-World Example:**
+```bash
+# Bug: location_name overwritten in recovery completion message
+surgical_cleanup() {
+    local location_name="$2"  # Function parameter
+    
+    # Call verify_ipsec_connections_active which iterates through locations
+    if verify_ipsec_connections_active; then
+        # location_name might be overwritten if loop variable wasn't declared as local!
+        log_message "INFO" "$location_name" "Surgical cleanup completed for $location_name"
+    fi
+}
+```
+
 ---
 
 ## Bash Strict Mode and Safety Patterns

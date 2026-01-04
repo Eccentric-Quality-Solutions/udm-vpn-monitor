@@ -195,9 +195,6 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 - **Config Parsing**: Improved error message validation in config schema tests
 - **Daemon Startup**: Fixed PID file handling in keepalive daemon for proper systemd integration
 
-### Removed
-- **Binary Artifacts**: Removed `udm-vpn-monitor-installer.zip` from repository (should be generated, not committed)
-
 ## 0.4.0 - 2025-12-29
 
 ### Added

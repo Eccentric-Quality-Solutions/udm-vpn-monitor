@@ -37,12 +37,12 @@ Before installation, gather:
 
 ### 1. Prepare Installation Package
 - [ ] Run `./prepare_install_package.sh` on development machine
-- [ ] Verify package created: `udm-vpn-monitor-installer.zip` (or `.tar.gz`)
-- [ ] Transfer package to UDM: `scp udm-vpn-monitor-installer.zip root@<UDM_IP>:/tmp/`
+- [ ] Verify package created: `udm-vpn-monitor.zip` (or `.tar.gz`)
+- [ ] Transfer package to UDM: `scp udm-vpn-monitor.zip root@<UDM_IP>:/tmp/`
 
 ### 2. Extract and Install
 - [ ] SSH into UDM: `ssh root@<UDM_IP>`
-- [ ] Extract package: `cd /tmp && unzip udm-vpn-monitor-installer.zip`
+- [ ] Extract package: `cd /tmp && unzip udm-vpn-monitor.zip`
 - [ ] Make installer executable: `chmod +x install.sh`
 - [ ] Run installer:
   - **Interactive mode** (recommended for first-time): `./install.sh --interactive`

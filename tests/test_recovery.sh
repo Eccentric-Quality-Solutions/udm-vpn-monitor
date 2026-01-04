@@ -1221,6 +1221,98 @@ EOF
 }
 
 # bats test_tags=category:high-risk,priority:high
+@test "verify_ipsec_connections_active - PATH-restricted environment (cron/systemd simulation)" {
+	# Purpose: Test verifies that verify_ipsec_connections_active works in PATH-restricted environments
+	# Expected: Function resolves ipsec command path via get_command_path() and successfully verifies connections
+	# Importance: Ensures verification works in cron/systemd environments where PATH may not include /usr/sbin
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	mkdir -p "${TEST_DIR}/logs"
+
+	# Save original PATH
+	local original_path="$PATH"
+
+	# Create mock ipsec in test directory
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	cat >"$mock_ipsec" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "status" ]]; then
+    echo "Connections:"
+    echo "  192.168.1.1: ESTABLISHED"
+    exit 0
+fi
+exec /usr/bin/ipsec "$@"
+EOF
+	chmod +x "$mock_ipsec"
+
+	# Restrict PATH to exclude system directories (simulating cron/systemd environment)
+	# PATH only includes /bin and /usr/bin (common minimal PATH, excludes /usr/sbin)
+	export PATH="/bin:/usr/bin"
+
+	# Verify ipsec is NOT found via PATH
+	if command -v ipsec >/dev/null 2>&1; then
+		# Clean up and skip if ipsec is found in restricted PATH
+		export PATH="$original_path"
+		skip "ipsec found in restricted PATH - cannot test PATH-restricted scenario"
+	fi
+
+	# Source recovery functions to test directly
+	source_recovery_module
+
+	# Initialize logging
+	LOG_FILE="$log_file"
+	LOGS_DIR="${TEST_DIR}/logs"
+
+	# Mock check_command_available to return success for ipsec
+	# This simulates the availability check that happens in PATH-restricted environments
+	# where check_command_available finds ipsec via system directory fallback
+	check_command_available() {
+		local cmd="$1"
+		if [[ "$cmd" == "ipsec" ]]; then
+			# Check if mock ipsec exists and is executable
+			if [[ -x "$mock_ipsec" ]]; then
+				return 0
+			fi
+		fi
+		# For other commands, use original function if available
+		if command -v check_command_available.original >/dev/null 2>&1; then
+			check_command_available.original "$@"
+		else
+			# Fallback to basic check
+			command -v "$cmd" >/dev/null 2>&1
+		fi
+	}
+
+	# Mock get_command_path to return path to our mock ipsec
+	# This simulates the path resolution that happens in PATH-restricted environments
+	get_command_path() {
+		local cmd="$1"
+		if [[ "$cmd" == "ipsec" ]]; then
+			echo "$mock_ipsec"
+			return 0
+		fi
+		# For other commands, use original function if available
+		if command -v get_command_path.original >/dev/null 2>&1; then
+			get_command_path.original "$@"
+		else
+			command -v "$cmd" 2>/dev/null || echo "$cmd"
+		fi
+	}
+
+	# Test verify_ipsec_connections_active function
+	# Should succeed because get_command_path() returns path to mock ipsec
+	run verify_ipsec_connections_active "192.168.1.1"
+	assert_success
+
+	# Verify that ipsec status was called (check log for connection active message)
+	assert_file_contains "$log_file" "Recovery verification: Connection active for 192.168.1.1"
+
+	# Restore PATH
+	export PATH="$original_path"
+}
+
+# bats test_tags=category:high-risk,priority:high
 @test "verify_byte_counters_resume - xfrm state query fails" {
 	# Purpose: Test verifies that verify_byte_counters_resume handles xfrm state query failures
 	# Expected: Function returns failure when ip xfrm state command fails

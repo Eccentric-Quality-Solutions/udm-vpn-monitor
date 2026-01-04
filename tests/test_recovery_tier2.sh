@@ -531,3 +531,80 @@ EOF
 	export PATH="$original_path"
 	TEST_SCRIPT="$original_test_script"
 }
+
+# bats test_tags=category:high-risk,priority:high
+@test "tier 2: surgical cleanup preserves location name when verification fails" {
+	# Purpose: Test verifies that surgical_cleanup preserves the location name parameter when verify_ipsec_connections_active parses location config
+	# Expected: Completion message logs the correct location name even when verify_ipsec_connections_active iterates through all locations
+	# Importance: Ensures location name is not overwritten by global variable modification in verify_ipsec_connections_active
+	# This test specifically addresses the bug where location name was incorrectly logged as a different location
+
+	# Set up test environment with multiple locations
+	setup_test_environment "${TEST_DIR}"
+
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+LOCATION_CHICAGO_EXTERNAL="172.31.23.27"
+LOCATION_CHICAGO_INTERNAL="172.31.23.27"
+LOCATION_LOS_ANGELES_EXTERNAL="172.31.15.215"
+LOCATION_LOS_ANGELES_INTERNAL="172.31.15.215"
+TIER1_THRESHOLD=1
+TIER2_THRESHOLD=3
+TIER3_THRESHOLD=5
+ENABLE_XFRM_RECOVERY=0
+ENABLE_NETWORK_PARTITION_CHECK=0
+EOF
+
+	export CONFIG_FILE="$config_file"
+	export STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR="${TEST_DIR}/logs"
+	mkdir -p "${LOGS_DIR}"
+	local log_file="${LOGS_DIR}/vpn-monitor.log"
+	export LOG_FILE="$log_file"
+
+	# Source recovery module and config module (needed for parse_location_config)
+	source_recovery_module
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	# Set up state for CHICAGO peer
+	local location_name="CHICAGO"
+	local peer_ip="172.31.23.27"
+	set_peer_state "$location_name" "$peer_ip" "failure_count" "3"
+
+	# Mock ipsec - reload succeeds, but status fails (exit code 127 - command not found)
+	# This will cause verify_ipsec_connections_active to parse location config
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	cat >"$mock_ipsec" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "reload" ]]; then
+	exit 0
+fi
+if [[ "$1" == "status" ]]; then
+	# Simulate command not found (exit code 127)
+	exit 127
+fi
+exec /usr/bin/ipsec "$@"
+EOF
+	chmod +x "$mock_ipsec"
+	add_mock_to_path
+
+	# Call surgical_cleanup with CHICAGO location name
+	# Note: surgical_cleanup will return failure when verification fails, but that's expected
+	# We're testing that the location name is preserved, not that the function succeeds
+	run surgical_cleanup "$peer_ip" "$location_name"
+	# Function returns failure when verification fails (expected)
+	assert_failure
+
+	# Verify that the completion message uses CHICAGO, not LOS_ANGELES
+	assert_file_exist "$log_file"
+	# The completion message should contain CHICAGO and the correct IP (172.31.23.27)
+	assert_file_contains "$log_file" "Surgical cleanup completed for CHICAGO (172.31.23.27)"
+	# Verify it does NOT contain LOS_ANGELES with CHICAGO's IP (the bug we're fixing)
+	if grep -q "Surgical cleanup completed for LOS_ANGELES (172.31.23.27)" "$log_file" 2>/dev/null; then
+		echo "ERROR: Found incorrect location name LOS_ANGELES with CHICAGO's IP in log"
+		return 1
+	fi
+
+	remove_mock_from_path
+}

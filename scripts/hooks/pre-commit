@@ -171,7 +171,7 @@ if ! "${REPO_ROOT}/prepare_install_package.sh"; then
 fi
 
 # Check if the zip file was created
-PACKAGE_FILE="${REPO_ROOT}/udm-vpn-monitor-installer.zip"
+PACKAGE_FILE="${REPO_ROOT}/udm-vpn-monitor.zip"
 if [[ ! -f "$PACKAGE_FILE" ]]; then
 	echo "Error: Package file not created: $PACKAGE_FILE" >&2
 	exit 1

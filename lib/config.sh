@@ -2073,6 +2073,7 @@ setup_routes_if_needed() {
 
 	# Check if any location has internal IPs (needed to determine if routes are required)
 	local has_internal_ips=0
+	local location_name
 	for location_name in "${!LOCATIONS[@]}"; do
 		local internal_ips
 		internal_ips=$(get_location_internal_ips "$location_name")

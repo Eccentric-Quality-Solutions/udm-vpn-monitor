@@ -9,13 +9,13 @@
 1. **Create install package and transfer to UDM**:
    ```bash
    ./prepare_install_package.sh
-   scp udm-vpn-monitor-installer.zip root@<UDM_IP>:/tmp/
+   scp udm-vpn-monitor.zip root@<UDM_IP>:/tmp/
    ```
 
 2. **SSH into UDM and install**:
    ```bash
    ssh root@<UDM_IP>
-   cd /tmp && unzip udm-vpn-monitor-installer.zip
+   cd /tmp && unzip udm-vpn-monitor.zip
    chmod +x install.sh
    ./install.sh --interactive
    ```

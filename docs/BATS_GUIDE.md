@@ -339,7 +339,7 @@ Our test suite extensively uses advanced bats-assert features (112 instances acr
     assert_success
     # Check specific lines in output
     assert_line --partial "tar -xzf"
-    assert_line --partial "udm-vpn-monitor-installer.tar.gz"
+    assert_line --partial "udm-vpn-monitor.tar.gz"
 }
 
 @test "compares values precisely" {
