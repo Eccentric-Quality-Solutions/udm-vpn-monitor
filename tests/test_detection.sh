@@ -26,16 +26,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	# Mock ip command - SA exists but bytes=0
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 0 bytes, 0 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state "192.168.1.1" "0" "0x12345678" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -68,16 +60,8 @@ EOF
 	echo "10000" >"$last_bytes_file"
 
 	# Mock ip command - bytes decreased (counter wrap-around scenario)
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 5000 bytes, 10 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state "192.168.1.1" "5000" "0x12345678" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -289,16 +273,7 @@ EOF
 	setup_vpn_down_fixture "192.168.1.1" 0
 
 	# Mock ipsec - returns error code but has output containing peer IP
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    # Return error code but output contains peer IP (simulates partial failure)
-    echo "192.168.1.1: ESTABLISHED 1 hour ago"
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 1 "192.168.1.1: ESTABLISHED 1 hour ago" >/dev/null
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -404,14 +379,7 @@ EOF
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=1'
 
 	# Mock ping to hang (simulates timeout)
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-# Simulate ping hanging (sleep longer than timeout)
-sleep 2
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping_hang >/dev/null
 	add_mock_to_path
 
 	# Use timeout of 10 seconds to allow script initialization, ping timeout handling, and completion
@@ -435,17 +403,7 @@ EOF
 	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="192.168.1.1"'
 
 	# Mock ping to return success but 100% packet loss (weird network state)
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-# Simulate ping command succeeds but 100% packet loss
-echo "PING 192.168.1.1 (192.168.1.1) 56(84) bytes of data."
-echo ""
-echo "--- 192.168.1.1 ping statistics ---"
-echo "3 packets transmitted, 0 received, 100% packet loss"
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping_packet_loss "192.168.1.1" >/dev/null
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -485,18 +443,8 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock ping - succeeds (connectivity exists via alternative route)
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-# Simulate successful ping
-echo "PING 172.31.13.239 (172.31.13.239) from 172.31.19.169: 56(84) bytes of data."
-echo "64 bytes from 172.31.13.239: icmp_seq=1 ttl=64 time=0.123 ms"
-echo ""
-echo "--- 172.31.13.239 ping statistics ---"
-echo "3 packets transmitted, 3 received, 0% packet loss"
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping "172.31.13.239" "1" >/dev/null
+	mv "${TEST_DIR}/mock_ping" "${TEST_DIR}/ping" 2>/dev/null || true
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -535,18 +483,8 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock ping - succeeds (connectivity exists via alternative route)
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-# Simulate successful ping
-echo "PING 172.31.13.239 (172.31.13.239) from 172.31.19.169: 56(84) bytes of data."
-echo "64 bytes from 172.31.13.239: icmp_seq=1 ttl=64 time=0.123 ms"
-echo ""
-echo "--- 172.31.13.239 ping statistics ---"
-echo "3 packets transmitted, 3 received, 0% packet loss"
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping "172.31.13.239" "1" >/dev/null
+	mv "${TEST_DIR}/mock_ping" "${TEST_DIR}/ping" 2>/dev/null || true
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -584,16 +522,8 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock ping - succeeds
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-echo "PING 172.31.13.239 (172.31.13.239): 56(84) bytes of data."
-echo "64 bytes from 172.31.13.239: icmp_seq=1 ttl=64 time=0.123 ms"
-echo "--- 172.31.13.239 ping statistics ---"
-echo "3 packets transmitted, 3 received, 0% packet loss"
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping "172.31.13.239" "1" >/dev/null
+	mv "${TEST_DIR}/mock_ping" "${TEST_DIR}/ping" 2>/dev/null || true
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -1053,16 +983,8 @@ EOF
 	set_peer_state "TEST" "192.168.1.1" "spi" "0x12345678" || true
 
 	# Mock ip command - new SPI (rekey occurred)
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
-    echo "    lifetime current: 1000 bytes, 10 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state "192.168.1.1" "1000" "0x87654321" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -1101,16 +1023,8 @@ EOF
 	set_peer_state "TEST" "192.168.1.1" "spi" "0x12345678" || true
 
 	# Mock ip command - new SPI (rekey) with new bytes
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
-    echo "    lifetime current: 2000 bytes, 20 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state "192.168.1.1" "2000" "0x87654321" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -1223,16 +1137,8 @@ EOF
 	# Don't set SPI file (first check)
 
 	# Mock ip command - first SPI
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 1000 bytes, 10 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state "192.168.1.1" "1000" "0x12345678" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -1269,16 +1175,8 @@ EOF
 	echo "invalid-value" >"$spi_file"
 
 	# Mock ip command
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 1000 bytes, 10 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state "192.168.1.1" "1000" "0x12345678" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -1312,16 +1210,8 @@ EOF
 	set_peer_state "TEST" "192.168.1.1" "spi" "0x12345678" || true
 
 	# First rekey
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
-    echo "    lifetime current: 2000 bytes, 20 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state "192.168.1.1" "2000" "0x87654321" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -1329,14 +1219,8 @@ EOF
 	assert_file_contains "$LOG_FILE" "SA rekey detected" || assert_file_contains "$LOG_FILE" "rekey"
 
 	# Second rekey (different SPI)
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0xABCDEF12 reqid 1 mode tunnel"
-    echo "    lifetime current: 3000 bytes, 30 packets"
-fi
-EOF
+	mock_ip_xfrm_state "192.168.1.1" "3000" "0xABCDEF12" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 
 	# Mock is already in PATH from first add_mock_to_path call
 	run bash "$TEST_SCRIPT" --fake
@@ -1369,16 +1253,7 @@ EOF
 	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
 
 	# Mock ip command - no SA (tunnel down)
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    # Return empty (no SA)
-    exit 0
-fi
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_empty >/dev/null
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -1604,15 +1479,7 @@ EOF
 
 	# Don't create ip mock (xfrm unavailable)
 	# Mock ipsec - no connection
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    # No connection found
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 0 >/dev/null
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -1736,16 +1603,8 @@ EOF
 	echo "1000" >"$last_bytes_file"
 
 	# Mock ip command - SA exists, bytes static
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 1000 bytes, 10 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state "192.168.1.1" "1000" "0x12345678" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 
 	# Mock ping - succeeds
 	mock_ping_success >/dev/null
@@ -1868,16 +1727,8 @@ EOF
 	echo "1000" >"$last_bytes_file"
 
 	# Mock ip command - SA exists, bytes static
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 1000 bytes, 10 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state "192.168.1.1" "1000" "0x12345678" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake

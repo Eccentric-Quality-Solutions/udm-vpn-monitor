@@ -1541,6 +1541,86 @@ When using EXIT traps for cleanup, the cleanup function must preserve the exit c
 
 ### Systematic Application
 - When using EXIT traps, always capture main function's exit code
+
+---
+
+## 23. Trap Cleanup Functions Must Handle Unset Variables with `set -u`
+
+### Problem
+When using EXIT traps with cleanup functions that access local variables, the cleanup function may execute after the function containing those variables has returned. With `set -u` (treat unset variables as errors), this causes "unbound variable" errors.
+
+**Example of the issue:**
+```bash
+# ❌ BAD: Fails with "unbound variable" error when set -u is enabled
+anonymize_log_file() {
+    local location_sed_script
+    local ip_sed_script
+    location_sed_script=$(mktemp)
+    ip_sed_script=$(mktemp)
+    
+    cleanup_temp_files() {
+        rm -f "$location_sed_script" "$ip_sed_script"  # Error: unbound variable
+    }
+    trap cleanup_temp_files EXIT
+    
+    # ... function code ...
+    # When function returns, local variables go out of scope
+    # EXIT trap executes later, variables are unbound
+}
+```
+
+### Impact
+- Script fails with "unbound variable" errors
+- Cleanup doesn't execute properly
+- Temporary files may not be cleaned up
+- Tests fail unexpectedly
+
+### Lesson
+**Always use default value expansion (`${var:-}`) in cleanup functions when accessing variables that might be unset.** This is especially important when:
+1. Script uses `set -u` or `set -euo pipefail`
+2. Cleanup function accesses local variables from a parent function
+3. EXIT trap executes after function return
+
+### Pattern to Follow
+```bash
+# ✅ GOOD: Uses default value expansion to handle unset variables
+anonymize_log_file() {
+    local location_sed_script
+    local ip_sed_script
+    location_sed_script=$(mktemp)
+    ip_sed_script=$(mktemp)
+    
+    cleanup_temp_files() {
+        # Use default value expansion to handle case where variables might be unset
+        rm -f "${location_sed_script:-}" "${ip_sed_script:-}"
+    }
+    trap cleanup_temp_files EXIT
+    
+    # ... function code ...
+}
+```
+
+### Key Principles
+
+1. **Default Value Expansion**
+   - Use `${var:-}` syntax to provide empty string default
+   - Prevents "unbound variable" errors with `set -u`
+   - Safe to use even when variable is set (returns actual value)
+
+2. **EXIT Trap Timing**
+   - EXIT trap executes when script exits, not when function returns
+   - Local variables may be out of scope when trap executes
+   - Always assume variables might be unset in cleanup functions
+
+3. **Idempotent Cleanup**
+   - Cleanup should be safe to run multiple times
+   - `rm -f` with default expansion handles missing files gracefully
+   - No errors if variables are unset or files don't exist
+
+### Systematic Application
+- When using EXIT traps with cleanup functions, always use default value expansion for variables
+- Test cleanup functions with `set -u` enabled to catch unbound variable errors
+- Prefer cleanup functions over inline trap commands for better error handling
 - Check if signal was received before using main function's exit code
 - Make cleanup functions idempotent with a flag
 - Test exit code preservation in test suite
@@ -2286,5 +2366,121 @@ fi
 - Set thresholds that account for all phases, not just the one being tested
 - Add comments explaining the threshold calculation
 - Consider resetting counters between phases if testing specific phase behavior
+
+---
+
+## Mock Helper Function Refactoring (2025-01-XX)
+
+### Format Consistency in Mock Output
+
+**Issue:** When creating mock helper functions, ensure output format matches what the actual system commands produce. The detection code supports multiple formats, but consistency improves test reliability.
+
+**Example:**
+- `mock_ip_xfrm_state()` uses single-line format: `lifetime current: 1000 bytes, 10 packets`
+- `mock_ip_xfrm_with_incrementing_bytes()` uses UDM OS multi-line format:
+  ```
+  lifetime current:
+    1000(bytes), 10(packets)
+  ```
+
+**Lesson:** While both formats work (detection code has fallback), using the actual UDM OS format (multi-line with parentheses) is preferred for better test realism.
+
+**Reference:** See `lib/detection.sh:extract_byte_counter()` which handles both formats but prioritizes the UDM OS format.
+
+### Helper Function Overlap
+
+**Issue:** `mock_ip_xfrm_empty()` and `mock_ip_vpn_down()` have overlapping functionality. Both create mocks that return empty xfrm state.
+
+**Difference:**
+- `mock_ip_vpn_down()` supports additional handlers via second parameter
+- `mock_ip_xfrm_empty()` is simpler, returns path, and is documented as a "simpler wrapper"
+
+**Lesson:** Having both is acceptable when one is clearly a simpler wrapper for common cases. The documentation should clearly explain when to use each.
+
+### Replacing Inline Mocks with Helpers
+
+**Best Practice:** When refactoring tests to use helper functions:
+1. Verify the helper produces the same output format as the original inline mock
+2. Test that the refactored tests still pass
+3. Document any format differences in the helper function documentation
+
+**Example:** When replacing inline `cat >EOF` mock creation with `mock_ip_xfrm_with_incrementing_bytes()`, ensure:
+- The byte counter format matches (parentheses vs no parentheses)
+- The state file tracking works the same way
+- Both `ip -s xfrm state` and `ip xfrm state` are handled
+
+### Preserving Test Intent
+
+**Issue:** When refactoring, ensure the test's intent is preserved. Some inline mocks have complex stateful logic that may not fit simple helpers.
+
+**Lesson:** Don't force complex mocks into simple helpers. It's acceptable to leave complex stateful mocks inline if they test specific edge cases that don't warrant a general-purpose helper.
+
+**Example:** Tests that simulate SA deletion and re-establishment with specific call count tracking may need inline mocks rather than simple helpers.
+
+---
+
+## 32. Avoid Over-Engineering Edge Case Protections
+
+### Problem
+Added a safeguard to prevent policy deletion when `peer_ip` matched `LOCAL_UDM_IP`, based on theoretical concern about misconfiguration.
+
+### Impact
+- Added unnecessary complexity for an edge case that shouldn't happen
+- Increased code maintenance burden
+- Added a test case for a scenario that wouldn't occur in normal operation
+
+### Root Cause
+Over-engineering based on theoretical concerns rather than practical risk assessment:
+- `peer_ip` comes from `LOCATION_*_EXTERNAL` config (remote public IPs)
+- `LOCAL_UDM_IP` is typically a private IP (192.168.x.x)
+- These should never match in normal operation
+- If misconfigured, VPN wouldn't work anyway
+- Existing safeguards (fixed-string matching, exact IP match, scoped deletion) are sufficient
+
+### Solution
+Removed the safeguard after pragmatic review:
+- Existing protections are sufficient
+- Edge case is extremely unlikely
+- If it happens, it would be caught by testing/deployment
+- Code is simpler and more maintainable
+
+### Lesson
+**Don't add safeguards for edge cases that:**
+1. Are extremely unlikely to occur
+2. Would be caught by normal testing/deployment
+3. Are protected by existing safeguards
+4. Add complexity without significant benefit
+
+**When to add safeguards:**
+- Realistic scenarios that could occur in production
+- Scenarios that could cause significant harm if not prevented
+- Scenarios that existing safeguards don't cover
+
+### Pattern to Follow
+```bash
+# ✅ GOOD: Trust existing safeguards when they're sufficient
+# peer_ip is validated, scoped deletion uses fixed-string matching
+# No need for additional edge case protection
+ip xfrm policy delete dst "$peer_ip" dir "$policy_dir"
+
+# ❌ BAD: Adding unnecessary safeguard for theoretical edge case
+if [[ "$peer_ip" == "$LOCAL_UDM_IP" ]]; then
+    # Skip deletion - but this shouldn't happen anyway
+    return
+fi
+```
+
+### Systematic Application
+- Before adding edge case protections, assess:
+  1. How likely is this scenario?
+  2. Would existing safeguards prevent it?
+  3. What's the actual risk if it occurs?
+  4. Does the protection add significant value?
+- Prefer simpler code with existing safeguards over complex code with theoretical protections
+- Document decisions to remove unnecessary safeguards
+
+### References
+- Implementation: `lib/recovery.sh:1055-1171` (policy deletion without LOCAL_UDM_IP safeguard)
+- Safety analysis: `POLICY_DELETION_SAFETY.md` (updated to reflect removal)
 
 ---

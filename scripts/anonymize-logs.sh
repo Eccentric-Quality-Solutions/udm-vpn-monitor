@@ -31,6 +31,9 @@ CITY_NAMES=(
 #
 # Displays help text for the script.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Always succeeds
 show_usage() {
@@ -58,6 +61,9 @@ EOF
 # Parse command line arguments
 #
 # Processes command line arguments and sets global variables.
+#
+# Arguments:
+#   $@: Command line arguments
 #
 # Returns:
 #   0: Success
@@ -326,60 +332,112 @@ anonymize_log_file() {
 
 	[[ $VERBOSE -eq 1 ]] && echo "Extracted $location_count unique location names" >&2
 
-	# Process log file line by line
-	[[ $VERBOSE -eq 1 ]] && echo "Anonymizing log file..." >&2
+	# Build sed scripts for replacements (separate scripts for locations and IPs)
+	[[ $VERBOSE -eq 1 ]] && echo "Building replacement scripts..." >&2
+	local location_sed_script
+	local ip_sed_script
+	location_sed_script=$(mktemp)
+	ip_sed_script=$(mktemp)
+	# Use cleanup function to defer variable expansion until trap executes
+	# This satisfies shellcheck SC2064: variables expand when trap executes, not when it's set
+	# Use default value expansion to handle case where variables might be unset (set -u)
+	#
+	# Cleanup temporary files
+	#
+	# Removes temporary sed script files created during anonymization.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	cleanup_temp_files() {
+		rm -f "${location_sed_script:-}" "${ip_sed_script:-}"
+	}
+	trap cleanup_temp_files EXIT
 
-	# Determine output destination
-	if [[ -n "$output_file" ]]; then
-		exec 3>"$output_file"
-	else
-		exec 3>&1
+	# Build location replacements script
+	# Process locations in reverse order of length to avoid partial replacements
+	if [[ -n "${!location_map[*]}" ]]; then
+		local sorted_locations
+		readarray -t sorted_locations < <(printf '%s\n' "${!location_map[@]}" | awk '{print length($0), $0}' | sort -rn | cut -d' ' -f2-)
+		for location in "${sorted_locations[@]}"; do
+			[[ -z "$location" ]] && continue
+			local anonymized_location="${location_map[$location]}"
+			# Escape special regex characters in location name
+			# Note: Use [*] and [?] to match literal * and ? in bash pattern substitution (not glob patterns)
+			local escaped_location="${location//\//\\/}"
+			escaped_location="${escaped_location//./\\.}"
+			escaped_location="${escaped_location//+/\\+}"
+			escaped_location="${escaped_location//[*]/\\*}"
+			escaped_location="${escaped_location//[?]/\\?}"
+			escaped_location="${escaped_location//[/\\[}"
+			escaped_location="${escaped_location//]/\\]}"
+			escaped_location="${escaped_location//^/\\^}"
+			escaped_location="${escaped_location//\$/\\\$}"
+			escaped_location="${escaped_location//|/\\|}"
+
+			# Escape special characters in anonymized location (for sed replacement)
+			local escaped_anon_location="${anonymized_location//\\/\\\\}"
+			escaped_anon_location="${escaped_anon_location//\//\\/}"
+			escaped_anon_location="${escaped_anon_location//&/\\&}"
+
+			# Replace "location LOCATION_NAME" patterns (lowercase)
+			# Escape literal parentheses in patterns for extended regex
+			# Group printf commands with same redirect to satisfy shellcheck SC2129
+			{
+				printf 's/location %s /location %s /g\n' "$escaped_location" "$escaped_anon_location"
+				printf 's/location %s\\(/location %s(/g\n' "$escaped_location" "$escaped_anon_location"
+				printf 's/for location %s /for location %s /g\n' "$escaped_location" "$escaped_anon_location"
+				printf 's/for location %s\\(/for location %s(/g\n' "$escaped_location" "$escaped_anon_location"
+				# Replace "Location LOCATION_NAME" patterns (capital L)
+				printf 's/Location %s /Location %s /g\n' "$escaped_location" "$escaped_anon_location"
+				printf 's/Location %s -/Location %s -/g\n' "$escaped_location" "$escaped_anon_location"
+				# Replace location names at start of log entries: [timestamp] [LEVEL] LOCATION:
+				# Pattern: ] LOCATION: (after log level)
+				printf 's/\\] %s:/] %s:/g\n' "$escaped_location" "$escaped_anon_location"
+				# Replace location names in comma-separated lists and standalone
+				# Use pattern that matches word boundaries: non-word char or start/end of line before/after
+				# This catches remaining instances (must be last to avoid conflicts with above patterns)
+				printf 's/(^|[^A-Z0-9_])%s([^A-Z0-9_]|$)/\\1%s\\2/g\n' "$escaped_location" "$escaped_anon_location"
+			} >>"$location_sed_script"
+		done
 	fi
 
-	local line_count=0
-	while IFS= read -r line || [[ -n "$line" ]]; do
-		local anonymized_line="$line"
-
-		# Replace location names first (before IPs, to avoid conflicts)
-		for location in "${!location_map[@]}"; do
-			local anonymized_location="${location_map[$location]}"
-			# Replace "location LOCATION_NAME" patterns (lowercase)
-			anonymized_line="${anonymized_line//location $location /location $anonymized_location }"
-			anonymized_line="${anonymized_line//location $location(/location $anonymized_location(}"
-			anonymized_line="${anonymized_line//for location $location /for location $anonymized_location }"
-			anonymized_line="${anonymized_line//for location $location(/for location $anonymized_location(}"
-			# Replace "Location LOCATION_NAME" patterns (capital L, e.g., "Location AUSTIN - ping failed")
-			anonymized_line="${anonymized_line//Location $location /Location $anonymized_location }"
-			anonymized_line="${anonymized_line//Location $location -/Location $anonymized_location -}"
-			# Replace location names in comma-separated lists (e.g., "Found 11 location(s): PHOENIX, SEATTLE...")
-			# Use sed for more complex pattern matching with word boundaries
-			anonymized_line=$(echo "$anonymized_line" | sed -E "s/\b${location}\b/${anonymized_location}/g")
+	# Build IP address replacements script
+	# Process IPs in reverse order of length to avoid partial replacements
+	# (e.g., replace 192.168.1.10 before 192.168.1.1)
+	if [[ -n "${!ip_map[*]}" ]]; then
+		local sorted_ips
+		readarray -t sorted_ips < <(printf '%s\n' "${!ip_map[@]}" | awk '{print length($0), $0}' | sort -rn | cut -d' ' -f2-)
+		for ip in "${sorted_ips[@]}"; do
+			[[ -z "$ip" ]] && continue
+			local anonymized_ip="${ip_map[$ip]}"
+			# Escape dots in IP for sed pattern
+			local escaped_ip="${ip//./\\.}"
+			# Escape special characters in anonymized IP (for sed replacement)
+			local escaped_anon_ip="${anonymized_ip//\\/\\\\}"
+			escaped_anon_ip="${escaped_anon_ip//\//\\/}"
+			escaped_anon_ip="${escaped_anon_ip//&/\\&}"
+			# Pattern: start of word or non-word char, then IP, then end of word or non-word char
+			printf 's/(^|[^0-9.])%s([^0-9.]|$)/\\1%s\\2/g\n' "$escaped_ip" "$escaped_anon_ip" >>"$ip_sed_script"
 		done
+	fi
 
-		# Replace IP addresses
-		# Use sed with proper escaping to handle word boundaries
-		# Process IPs in reverse order of length to avoid partial replacements
-		# (e.g., replace 192.168.1.10 before 192.168.1.1)
-		if [[ -n "${!ip_map[*]}" ]]; then
-			local sorted_ips
-			readarray -t sorted_ips < <(printf '%s\n' "${!ip_map[@]}" | awk '{print length($0), $0}' | sort -rn | cut -d' ' -f2-)
-			for ip in "${sorted_ips[@]}"; do
-				[[ -z "$ip" ]] && continue
-				local anonymized_ip="${ip_map[$ip]}"
-				# Escape dots in IP for sed pattern
-				local escaped_ip="${ip//./\\.}"
-				# Use sed with word boundaries - \b works for IP addresses at word boundaries
-				# Pattern: start of word or non-word char, then IP, then end of word or non-word char
-				anonymized_line=$(echo "$anonymized_line" | sed -E "s/(^|[^0-9.])${escaped_ip}([^0-9.]|$)/\1${anonymized_ip}\2/g")
-			done
-		fi
+	# Process log file with two sed invocations: locations first, then IPs
+	# This ensures locations are replaced before IPs to avoid conflicts
+	[[ $VERBOSE -eq 1 ]] && echo "Anonymizing log file..." >&2
 
-		echo "$anonymized_line" >&3
-		line_count=$((line_count + 1))
-	done <"$input_file"
+	# Use -E for extended regex to support backreferences
+	# Pipe location replacements into IP replacements
+	if [[ -n "$output_file" ]]; then
+		sed -Ef "$location_sed_script" "$input_file" | sed -Ef "$ip_sed_script" >"$output_file"
+	else
+		sed -Ef "$location_sed_script" "$input_file" | sed -Ef "$ip_sed_script"
+	fi
 
-	# Close output file descriptor
-	exec 3>&-
+	local line_count
+	line_count=$(wc -l <"$input_file" || echo "0")
 
 	[[ $VERBOSE -eq 1 ]] && echo "Processed $line_count lines" >&2
 	[[ $VERBOSE -eq 1 ]] && echo "Anonymization complete!" >&2
@@ -388,6 +446,15 @@ anonymize_log_file() {
 }
 
 # Main execution
+#
+# Main entry point for the script. Parses arguments and performs log anonymization.
+#
+# Arguments:
+#   $@: Command line arguments
+#
+# Returns:
+#   0: Success
+#   1: Error (exits script)
 main() {
 	# Parse command line arguments
 	parse_args "$@"

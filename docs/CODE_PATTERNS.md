@@ -2047,6 +2047,43 @@ fi
 
 **Key Points:**
 - Always trim leading/trailing whitespace from user input
+
+### Pattern: Bash Pattern Substitution with Special Characters
+
+**When to Use:** Escaping special characters in strings for use in regex patterns or sed commands
+
+**Pattern:**
+```bash
+# ✅ GOOD: Use character classes [*] and [?] to match literal characters
+escaped_location="${location//[*]/\\*}"   # Escape literal *
+escaped_location="${escaped_location//[?]/\\?}"  # Escape literal ?
+
+# ❌ BAD: Using * or ? directly matches any characters (glob pattern)
+escaped_location="${location//*/\\*}"     # BUG: Matches entire string!
+escaped_location="${escaped_location//?/\\?}"  # BUG: Matches every character!
+```
+
+**Why This Matters:**
+- In bash pattern substitution `${var//pattern/replacement}`, `*` and `?` are glob patterns
+- `*` matches any sequence of characters (including empty)
+- `?` matches any single character
+- Using them directly will replace the entire string or every character, not just literal `*` or `?`
+- Character classes `[*]` and `[?]` match literal characters
+
+**Example Bug:**
+```bash
+location="AUSTIN"
+# Wrong approach:
+escaped="${location//*/\\*}"  # Result: "\*" (entire string replaced!)
+# Correct approach:
+escaped="${location//[*]/\\*}"  # Result: "AUSTIN" (no * to escape)
+```
+
+**Key Points:**
+- Always use character classes `[*]` and `[?]` when escaping literal `*` or `?` characters
+- This applies to all bash pattern substitution operations: `${var//pattern/repl}`, `${var/#pattern/repl}`, `${var/%pattern/repl}`
+- Other special regex characters (`+`, `.`, `^`, `$`, `[`, `]`, `|`, `(`, `)`) should be escaped normally
+- Test escaping with strings that don't contain the special character to verify it doesn't break
 - Remove comments before processing (everything after `#`)
 - Normalize whitespace for consistent processing
 - Handle empty strings after trimming

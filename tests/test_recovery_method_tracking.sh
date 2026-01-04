@@ -23,37 +23,40 @@ load fixtures/vpn_at_tier
 	# Importance: Ensures recovery method tracking works for xfrm-based recovery
 	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'TIER2_THRESHOLD=3'
 
-	# Mock ip command for xfrm recovery
+	# Track phase2 calls for SA deletion/re-establishment simulation
+	local phase2_call_file="${TEST_DIR}/phase2_calls"
+	echo "0" >"$phase2_call_file"
+
+	# Mock ip command for xfrm recovery with incrementing byte counters
 	# Note: get_xfrm_state_for_peer may call "ip -s xfrm state" first, then fall back to "ip xfrm state"
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
-	# Handle "ip -s xfrm state" (with statistics flag)
-	echo "src 10.0.0.1 dst 192.168.1.1"
-	echo "  proto esp spi 0x12345678 reqid 1 mode tunnel"
-	echo "  lifetime current:"
-	echo "    1000(bytes), 10(packets)"
-	exit 0
-elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-	# Handle "ip xfrm state" (without statistics flag)
-	echo "src 10.0.0.1 dst 192.168.1.1"
-	echo "  proto esp spi 0x12345678 reqid 1 mode tunnel"
-	echo "  lifetime current:"
-	echo "    1000(bytes), 10(packets)"
-	exit 0
-fi
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
+	# Byte counters must increase over time for verify_byte_counters_increment to succeed
+	local verify_attempt_file="${TEST_DIR}/verify_attempts"
+	mock_ip_xfrm_with_incrementing_bytes "192.168.1.1" "1000" "1000" "0x12345678" "$verify_attempt_file" "10.0.0.1" >/dev/null
 	add_mock_to_path
 
-	# Mock check_ipsec_phase2 function to succeed (SA re-established)
+	# Mock check_ipsec_phase2 function to simulate SA deletion and re-establishment
+	# Tracks its own call count to coordinate with recovery phases
 	local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
-	cat >"$mock_check_ipsec_phase2" <<'EOF'
+	cat >"$mock_check_ipsec_phase2" <<EOF
 #!/bin/bash
-# Simulate SA re-established
-exit 0
+# Track call count for this function
+phase2_calls=\$(cat "$phase2_call_file" 2>/dev/null || echo "0")
+phase2_calls=\$((phase2_calls + 1))
+echo "\$phase2_calls" > "$phase2_call_file"
+
+# Initially: SAs exist (first call) - return success
+# After deletion check: SAs deleted (2nd call) - return failure  
+# During verification: SAs re-established (3rd+ call) - return success
+if [[ \$phase2_calls -eq 1 ]]; then
+	# Initial check: SAs exist
+	exit 0
+elif [[ \$phase2_calls -eq 2 ]]; then
+	# After deletion: SAs don't exist yet
+	exit 1
+else
+	# After re-establishment: SAs exist again
+	exit 0
+fi
 EOF
 	chmod +x "$mock_check_ipsec_phase2"
 	add_mock_to_path
@@ -61,6 +64,14 @@ EOF
 	source_recovery_module
 
 	# Override check_ipsec_phase2 function to use mock
+	#
+	# Overrides check_ipsec_phase2 to use mock script for testing.
+	#
+	# Arguments:
+	#   $@: All arguments passed to the function (forwarded to mock script)
+	#
+	# Returns:
+	#   Exit code from mock script
 	check_ipsec_phase2() {
 		"$mock_check_ipsec_phase2" "$@"
 	}
@@ -90,20 +101,7 @@ EOF
 	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=0' 'TIER2_THRESHOLD=3'
 
 	# Mock ipsec command for reload
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-	exit 0
-fi
-if [[ "$1" == "status" ]]; then
-	echo "Connections:"
-	echo "  test-conn: ESTABLISHED 1 hour ago, 192.168.1.1...10.0.0.1"
-	exit 0
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0 >/dev/null
 	add_mock_to_path
 
 	source_recovery_module
@@ -134,36 +132,11 @@ EOF
 
 	# Mock ip command - xfrm recovery will fail (no SAs found)
 	# Note: get_xfrm_state_for_peer may call "ip -s xfrm state" first, then fall back to "ip xfrm state"
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
-	# Handle "ip -s xfrm state" - return empty (no SAs found)
-	exit 0
-elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-	# Handle "ip xfrm state" - return empty (no SAs found)
-	exit 0
-fi
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_empty >/dev/null
 	add_mock_to_path
 
 	# Mock ipsec command for fallback reload
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-	exit 0
-fi
-if [[ "$1" == "status" ]]; then
-	echo "Connections:"
-	echo "  test-conn: ESTABLISHED 1 hour ago, 192.168.1.1...10.0.0.1"
-	exit 0
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0 >/dev/null
 	add_mock_to_path
 
 	source_recovery_module
@@ -192,36 +165,40 @@ EOF
 	# Importance: Provides visibility into which recovery method successfully restored the VPN
 	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'TIER2_THRESHOLD=3'
 
-	# Mock ip command for xfrm recovery
+	# Track phase2 calls for SA deletion/re-establishment simulation
+	local phase2_call_file="${TEST_DIR}/phase2_calls"
+	echo "0" >"$phase2_call_file"
+
+	# Mock ip command for xfrm recovery with incrementing byte counters
 	# Note: get_xfrm_state_for_peer may call "ip -s xfrm state" first, then fall back to "ip xfrm state"
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
-	# Handle "ip -s xfrm state" (with statistics flag)
-	echo "src 10.0.0.1 dst 192.168.1.1"
-	echo "  proto esp spi 0x12345678 reqid 1 mode tunnel"
-	echo "  lifetime current:"
-	echo "    12345(bytes), 100(packets)"
-	exit 0
-elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-	# Handle "ip xfrm state" (without statistics flag)
-	echo "src 10.0.0.1 dst 192.168.1.1"
-	echo "  proto esp spi 0x12345678 reqid 1 mode tunnel"
-	echo "  lifetime current:"
-	echo "    12345(bytes), 100(packets)"
-	exit 0
-fi
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
+	# Byte counters must increase over time for verify_byte_counters_increment to succeed
+	local verify_attempt_file="${TEST_DIR}/verify_attempts"
+	mock_ip_xfrm_with_incrementing_bytes "192.168.1.1" "12345" "1000" "0x12345678" "$verify_attempt_file" "10.0.0.1" >/dev/null
 	add_mock_to_path
 
-	# Mock check_ipsec_phase2 function to succeed (SA re-established)
+	# Mock check_ipsec_phase2 function to simulate SA deletion and re-establishment
+	# Tracks its own call count to coordinate with recovery phases
 	local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
-	cat >"$mock_check_ipsec_phase2" <<'EOF'
+	cat >"$mock_check_ipsec_phase2" <<EOF
 #!/bin/bash
-exit 0
+# Track call count for this function
+phase2_calls=\$(cat "$phase2_call_file" 2>/dev/null || echo "0")
+phase2_calls=\$((phase2_calls + 1))
+echo "\$phase2_calls" > "$phase2_call_file"
+
+# Initially: SAs exist (first call) - return success
+# After deletion check: SAs deleted (2nd call) - return failure  
+# During verification: SAs re-established (3rd+ call) - return success
+if [[ \$phase2_calls -eq 1 ]]; then
+	# Initial check: SAs exist
+	exit 0
+elif [[ \$phase2_calls -eq 2 ]]; then
+	# After deletion: SAs don't exist yet
+	exit 1
+else
+	# After re-establishment: SAs exist again
+	exit 0
+fi
 EOF
 	chmod +x "$mock_check_ipsec_phase2"
 	add_mock_to_path
@@ -229,6 +206,14 @@ EOF
 	source_recovery_module
 
 	# Override check_ipsec_phase2 function to use mock
+	#
+	# Overrides check_ipsec_phase2 to use mock script for testing.
+	#
+	# Arguments:
+	#   $@: All arguments passed to the function (forwarded to mock script)
+	#
+	# Returns:
+	#   Exit code from mock script
 	check_ipsec_phase2() {
 		"$mock_check_ipsec_phase2" "$@"
 	}
@@ -249,25 +234,8 @@ EOF
 	# Update mock ip to return active VPN (SA exists, bytes increasing)
 	# Format matches UDM OS format for proper parsing
 	# Note: get_xfrm_state_for_peer may call "ip -s xfrm state" first, then fall back to "ip xfrm state"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
-	# Handle "ip -s xfrm state" (with statistics flag)
-	echo "src 10.0.0.1 dst 192.168.1.1"
-	echo "  proto esp spi 0x12345678 reqid 1 mode tunnel"
-	echo "  lifetime current:"
-	echo "    20000(bytes), 200(packets)"
-	exit 0
-elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-	# Handle "ip xfrm state" (without statistics flag)
-	echo "src 10.0.0.1 dst 192.168.1.1"
-	echo "  proto esp spi 0x12345678 reqid 1 mode tunnel"
-	echo "  lifetime current:"
-	echo "    20000(bytes), 200(packets)"
-	exit 0
-fi
-exec /usr/bin/ip "$@"
-EOF
+	mock_ip_xfrm_state "192.168.1.1" "20000" "0x12345678" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 
 	# Call monitor_location - VPN should be detected as healthy
 	monitor_location "$location_name" "$peer_ip" ""
@@ -286,36 +254,40 @@ EOF
 	# Importance: Prevents stale recovery method information from being displayed
 	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'TIER2_THRESHOLD=3'
 
-	# Mock ip command for xfrm recovery
+	# Track phase2 calls for SA deletion/re-establishment simulation
+	local phase2_call_file="${TEST_DIR}/phase2_calls"
+	echo "0" >"$phase2_call_file"
+
+	# Mock ip command for xfrm recovery with incrementing byte counters
 	# Note: get_xfrm_state_for_peer may call "ip -s xfrm state" first, then fall back to "ip xfrm state"
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
-	# Handle "ip -s xfrm state" (with statistics flag)
-	echo "src 10.0.0.1 dst 192.168.1.1"
-	echo "  proto esp spi 0x12345678 reqid 1 mode tunnel"
-	echo "  lifetime current:"
-	echo "    12345(bytes), 100(packets)"
-	exit 0
-elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-	# Handle "ip xfrm state" (without statistics flag)
-	echo "src 10.0.0.1 dst 192.168.1.1"
-	echo "  proto esp spi 0x12345678 reqid 1 mode tunnel"
-	echo "  lifetime current:"
-	echo "    12345(bytes), 100(packets)"
-	exit 0
-fi
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
+	# Byte counters must increase over time for verify_byte_counters_increment to succeed
+	local verify_attempt_file="${TEST_DIR}/verify_attempts"
+	mock_ip_xfrm_with_incrementing_bytes "192.168.1.1" "12345" "1000" "0x12345678" "$verify_attempt_file" "10.0.0.1" >/dev/null
 	add_mock_to_path
 
-	# Mock check_ipsec_phase2 function to succeed
+	# Mock check_ipsec_phase2 function to simulate SA deletion and re-establishment
+	# Tracks its own call count to coordinate with recovery phases
 	local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
-	cat >"$mock_check_ipsec_phase2" <<'EOF'
+	cat >"$mock_check_ipsec_phase2" <<EOF
 #!/bin/bash
-exit 0
+# Track call count for this function
+phase2_calls=\$(cat "$phase2_call_file" 2>/dev/null || echo "0")
+phase2_calls=\$((phase2_calls + 1))
+echo "\$phase2_calls" > "$phase2_call_file"
+
+# Initially: SAs exist (first call) - return success
+# After deletion check: SAs deleted (2nd call) - return failure  
+# During verification: SAs re-established (3rd+ call) - return success
+if [[ \$phase2_calls -eq 1 ]]; then
+	# Initial check: SAs exist
+	exit 0
+elif [[ \$phase2_calls -eq 2 ]]; then
+	# After deletion: SAs don't exist yet
+	exit 1
+else
+	# After re-establishment: SAs exist again
+	exit 0
+fi
 EOF
 	chmod +x "$mock_check_ipsec_phase2"
 	add_mock_to_path
@@ -323,6 +295,14 @@ EOF
 	source_recovery_module
 
 	# Override check_ipsec_phase2 function to use mock
+	#
+	# Overrides check_ipsec_phase2 to use mock script for testing.
+	#
+	# Arguments:
+	#   $@: All arguments passed to the function (forwarded to mock script)
+	#
+	# Returns:
+	#   Exit code from mock script
 	check_ipsec_phase2() {
 		"$mock_check_ipsec_phase2" "$@"
 	}
@@ -348,25 +328,8 @@ EOF
 	# Update mock ip to return active VPN (SA exists, bytes increasing)
 	# Format matches UDM OS format for proper parsing
 	# Note: get_xfrm_state_for_peer may call "ip -s xfrm state" first, then fall back to "ip xfrm state"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
-	# Handle "ip -s xfrm state" (with statistics flag)
-	echo "src 10.0.0.1 dst 192.168.1.1"
-	echo "  proto esp spi 0x12345678 reqid 1 mode tunnel"
-	echo "  lifetime current:"
-	echo "    20000(bytes), 200(packets)"
-	exit 0
-elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-	# Handle "ip xfrm state" (without statistics flag)
-	echo "src 10.0.0.1 dst 192.168.1.1"
-	echo "  proto esp spi 0x12345678 reqid 1 mode tunnel"
-	echo "  lifetime current:"
-	echo "    20000(bytes), 200(packets)"
-	exit 0
-fi
-exec /usr/bin/ip "$@"
-EOF
+	mock_ip_xfrm_state "192.168.1.1" "20000" "0x12345678" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 
 	# Call monitor_location - VPN should be detected as healthy and recovery method cleared
 	monitor_location "$location_name" "$peer_ip" ""

@@ -36,25 +36,11 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock ipsec command - ipsec check fails
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    # ipsec check fails - no connection found
-    exit 1
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 1 >/dev/null
 
 	# Mock ping command - ping check fails
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-# Ping check fails
-exit 1
-EOF
-	chmod +x "$mock_ping"
+	mock_ping "192.168.1.1" "0" >/dev/null
+	mv "${TEST_DIR}/mock_ping" "${TEST_DIR}/ping" 2>/dev/null || true
 	add_mock_to_path
 
 	# Initialize state
@@ -171,13 +157,8 @@ EOF
 	local local_ip="10.0.0.1"
 
 	# Mock ping command that fails
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-# Ping command fails
-exit 1
-EOF
-	chmod +x "$mock_ping"
+	mock_ping "192.168.1.1" "0" >/dev/null
+	mv "${TEST_DIR}/mock_ping" "${TEST_DIR}/ping" 2>/dev/null || true
 	add_mock_to_path
 
 	# Source required functions

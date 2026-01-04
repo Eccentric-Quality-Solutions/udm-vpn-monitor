@@ -844,6 +844,134 @@ EOF
 	chmod +x "$mock_ip"
 }
 
+# Create mock ip command with incrementing byte counters
+#
+# Creates a mock 'ip' command that returns xfrm state output with byte counters
+# that increment on each call. Used for tests that need to verify byte counter
+# tracking or recovery verification that checks for increasing traffic.
+#
+# The mock tracks call count in a file and returns byte counters that increase
+# by a specified increment on each call. Supports both "ip -s xfrm state" and
+# "ip xfrm state" formats.
+#
+# Arguments:
+#   $1: Peer IP address to include in mock output (default: "192.168.1.1")
+#   $2: Initial byte counter value (default: 1000)
+#   $3: Byte increment per call (default: 1000)
+#   $4: SPI value (default: 0x12345678)
+#   $5: Optional path to state file for tracking calls (default: ${TEST_DIR}/xfrm_call_count)
+#   $6: Optional source IP (default: "10.0.0.1")
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   - Creates executable mock ip script in TEST_DIR
+#   - Creates state file to track call count
+#
+# Example:
+#   # Basic usage - bytes increment by 1000 each call
+#   mock_ip_xfrm_with_incrementing_bytes "192.168.1.1"
+#   add_mock_to_path
+#
+#   # Custom initial value and increment
+#   mock_ip_xfrm_with_incrementing_bytes "192.168.1.1" "5000" "2000"
+#
+#   # Custom state file for tracking
+#   mock_ip_xfrm_with_incrementing_bytes "192.168.1.1" "1000" "1000" "0x12345678" "${TEST_DIR}/custom_state"
+mock_ip_xfrm_with_incrementing_bytes() {
+	local peer_ip="${1:-192.168.1.1}"
+	local initial_bytes="${2:-1000}"
+	local increment="${3:-1000}"
+	local spi="${4:-0x12345678}"
+	local state_file="${5:-${TEST_DIR}/xfrm_call_count}"
+	local src_ip="${6:-10.0.0.1}"
+
+	local mock_ip="${TEST_DIR}/ip"
+
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+	# Handle "ip -s xfrm state" (with statistics flag)
+	verify_attempts=\$(cat "$state_file" 2>/dev/null || echo "0")
+	verify_attempts=\$((verify_attempts + 1))
+	echo "\$verify_attempts" > "$state_file"
+	
+	# Return increasing byte counter values to simulate traffic flow
+	local byte_count=\$((${initial_bytes} + (\$verify_attempts - 1) * ${increment}))
+	echo "src ${src_ip} dst ${peer_ip}"
+	echo "  proto esp spi ${spi} reqid 1 mode tunnel"
+	echo "  lifetime current:"
+	echo "    \${byte_count}(bytes), 10(packets)"
+	exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+	# Handle "ip xfrm state" (without statistics flag)
+	verify_attempts=\$(cat "$state_file" 2>/dev/null || echo "0")
+	verify_attempts=\$((verify_attempts + 1))
+	echo "\$verify_attempts" > "$state_file"
+	
+	# Return increasing byte counter values to simulate traffic flow
+	local byte_count=\$((${initial_bytes} + (\$verify_attempts - 1) * ${increment}))
+	echo "src ${src_ip} dst ${peer_ip}"
+	echo "  proto esp spi ${spi} reqid 1 mode tunnel"
+	echo "  lifetime current:"
+	echo "    \${byte_count}(bytes), 10(packets)"
+	exit 0
+fi
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	echo "$mock_ip"
+}
+
+# Create mock ip command for empty xfrm state (VPN down)
+#
+# Creates a mock 'ip' command that returns empty output for xfrm state queries,
+# simulating a VPN down scenario (no SAs found). This is a simpler wrapper
+# around mock_ip_vpn_down() for cases where only xfrm state handling is needed.
+#
+# Arguments:
+#   $1: Optional path to mock ip file (default: ${TEST_DIR}/ip)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates executable mock ip script at specified path
+#
+# Example:
+#   # Basic usage:
+#   mock_ip_xfrm_empty
+#   add_mock_to_path
+#
+#   # With custom path:
+#   mock_ip_xfrm_empty "${TEST_DIR}/custom_ip"
+#
+# Note:
+#   For more complex scenarios with additional ip command handlers,
+#   use mock_ip_vpn_down() instead.
+mock_ip_xfrm_empty() {
+	local mock_ip="${1:-${TEST_DIR}/ip}"
+
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+# Handle xfrm state - return empty (VPN down, no SA)
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    exit 0  # Return empty output (no SA found - VPN down)
+fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	echo "$mock_ip"
+}
+
 # Create mock ping command
 #
 # Creates a mock 'ping' command that simulates successful or failed ping.
@@ -888,6 +1016,258 @@ fi
 EOF
 	chmod +x "$mock_ping"
 	echo "$mock_ping"
+}
+
+# Create mock ping command that hangs (simulates timeout)
+#
+# Creates a mock 'ping' command that sleeps longer than typical timeout,
+# simulating a ping that hangs or times out.
+#
+# Arguments:
+#   $1: Sleep duration in seconds (default: 2)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR
+#
+# Example:
+#   mock_ping_hang
+#   add_mock_to_path
+mock_ping_hang() {
+	local sleep_duration="${1:-2}"
+
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<EOF
+#!/bin/bash
+# Simulate ping hanging (sleep longer than timeout)
+sleep ${sleep_duration}
+exit 0
+EOF
+	chmod +x "$mock_ping"
+	echo "$mock_ping"
+}
+
+# Create mock ping command with 100% packet loss
+#
+# Creates a mock 'ping' command that returns success exit code but shows
+# 100% packet loss, simulating a weird network state.
+#
+# Arguments:
+#   $1: Target IP address (default: "192.168.1.1")
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR
+#
+# Example:
+#   mock_ping_packet_loss "192.168.1.1"
+#   add_mock_to_path
+mock_ping_packet_loss() {
+	local target_ip="${1:-192.168.1.1}"
+
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<EOF
+#!/bin/bash
+# Simulate ping command succeeds but 100% packet loss
+echo "PING ${target_ip} (${target_ip}) 56(84) bytes of data."
+echo ""
+echo "--- ${target_ip} ping statistics ---"
+echo "3 packets transmitted, 0 received, 100% packet loss"
+exit 0
+EOF
+	chmod +x "$mock_ping"
+	echo "$mock_ping"
+}
+
+# Create mock ip command that passes through to real command
+#
+# Creates a mock 'ip' command that simply executes the real /usr/bin/ip command.
+# Used when tests need real ip command behavior but want to ensure it's in PATH.
+#
+# Arguments:
+#   $1: Optional path to mock ip file (default: ${TEST_DIR}/ip)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates executable mock ip script at specified path
+#
+# Example:
+#   mock_ip_pass_through
+#   add_mock_to_path
+mock_ip_pass_through() {
+	local mock_ip="${1:-${TEST_DIR}/ip}"
+
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+	echo "$mock_ip"
+}
+
+# Create mock ipsec command that passes through to real command
+#
+# Creates a mock 'ipsec' command that simply executes the real /usr/bin/ipsec command.
+# Used when tests need real ipsec command behavior but want to ensure it's in PATH.
+#
+# Arguments:
+#   $1: Optional path to mock ipsec file (default: ${TEST_DIR}/ipsec)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates executable mock ipsec script at specified path
+#
+# Example:
+#   mock_ipsec_pass_through
+#   add_mock_to_path
+mock_ipsec_pass_through() {
+	local mock_ipsec="${1:-${TEST_DIR}/ipsec}"
+
+	cat >"$mock_ipsec" <<'EOF'
+#!/bin/bash
+exec /usr/bin/ipsec "$@"
+EOF
+	chmod +x "$mock_ipsec"
+	echo "$mock_ipsec"
+}
+
+# Create mock dirname command that passes through to real command
+#
+# Creates a mock 'dirname' command that simply executes the real /usr/bin/dirname command.
+# Used when tests need real dirname behavior but want to ensure it's in PATH.
+#
+# Arguments:
+#   $1: Optional path to mock dirname file (default: ${TEST_DIR}/dirname)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates executable mock dirname script at specified path
+#
+# Example:
+#   mock_dirname_pass_through
+#   add_mock_to_path
+mock_dirname_pass_through() {
+	local mock_dirname="${1:-${TEST_DIR}/dirname}"
+
+	cat >"$mock_dirname" <<'EOF'
+#!/bin/bash
+exec /usr/bin/dirname "$@"
+EOF
+	chmod +x "$mock_dirname"
+	echo "$mock_dirname"
+}
+
+# Create mock basename command that passes through to real command
+#
+# Creates a mock 'basename' command that simply executes the real /usr/bin/basename command.
+# Used when tests need real basename behavior but want to ensure it's in PATH.
+#
+# Arguments:
+#   $1: Optional path to mock basename file (default: ${TEST_DIR}/basename)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates executable mock basename script at specified path
+#
+# Example:
+#   mock_basename_pass_through
+#   add_mock_to_path
+mock_basename_pass_through() {
+	local mock_basename="${1:-${TEST_DIR}/basename}"
+
+	cat >"$mock_basename" <<'EOF'
+#!/bin/bash
+exec /usr/bin/basename "$@"
+EOF
+	chmod +x "$mock_basename"
+	echo "$mock_basename"
+}
+
+# Create mock ipsec command with simple status handler
+#
+# Creates a mock 'ipsec' command that handles status with a simple exit code.
+# Used for tests that need ipsec status to succeed or fail without complex output.
+#
+# Arguments:
+#   $1: Status exit code ("0" for success, "1" for failure, default: "0")
+#   $2: Optional status output (default: empty)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "ipsec"
+#
+# Example:
+#   # Status succeeds with no output
+#   mock_ipsec_status 0
+#   add_mock_to_path
+#
+#   # Status fails
+#   mock_ipsec_status 1
+#   add_mock_to_path
+#
+#   # Status succeeds with output
+#   mock_ipsec_status 0 "192.168.1.1: ESTABLISHED"
+#   add_mock_to_path
+mock_ipsec_status() {
+	local status_exit="${1:-0}"
+	local status_output="${2:-}"
+
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	if [[ -n "$status_output" ]]; then
+		cat >"$mock_ipsec" <<EOF
+#!/bin/bash
+if [[ "\$1" == "status" ]]; then
+    echo "$status_output"
+    exit ${status_exit}
+fi
+exec /usr/bin/ipsec "\$@"
+EOF
+	else
+		cat >"$mock_ipsec" <<EOF
+#!/bin/bash
+if [[ "\$1" == "status" ]]; then
+    exit ${status_exit}
+fi
+exec /usr/bin/ipsec "\$@"
+EOF
+	fi
+	chmod +x "$mock_ipsec"
+	echo "$mock_ipsec"
 }
 
 # Create mock ipsec command

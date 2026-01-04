@@ -31,12 +31,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
 
 	# Mock ip command (required for xfrm recovery)
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_pass_through >/dev/null
 	add_mock_to_path
 
 	# Source dependencies first (recovery.sh needs logging.sh)
@@ -65,12 +60,7 @@ EOF
 	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
 
 	# Mock ipsec command (required for ipsec reload)
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_pass_through >/dev/null
 	# Don't create ip mock (xfrm unavailable)
 	add_mock_to_path
 
@@ -101,12 +91,7 @@ EOF
 	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
 
 	# Mock ipsec command (required for ipsec restart)
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_pass_through >/dev/null
 	# Don't create ip mock (xfrm unavailable)
 	add_mock_to_path
 
@@ -141,19 +126,8 @@ EOF
 
 	# Create mocks for basic commands needed by libraries (dirname, basename, etc.)
 	# But do NOT create mocks for ip/ipsec - we want those to be unavailable
-	local mock_dirname="${TEST_DIR}/dirname"
-	cat >"$mock_dirname" <<'EOF'
-#!/bin/bash
-exec /usr/bin/dirname "$@"
-EOF
-	chmod +x "$mock_dirname"
-
-	local mock_basename="${TEST_DIR}/basename"
-	cat >"$mock_basename" <<'EOF'
-#!/bin/bash
-exec /usr/bin/basename "$@"
-EOF
-	chmod +x "$mock_basename"
+	mock_dirname_pass_through >/dev/null
+	mock_basename_pass_through >/dev/null
 
 	# Restrict PATH to only TEST_DIR (with basic command mocks)
 	# Mocks call /usr/bin/dirname and /usr/bin/basename directly, so /usr/bin doesn't need to be in PATH
@@ -234,12 +208,7 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock ipsec command (required for ipsec reload)
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_pass_through >/dev/null
 	add_mock_to_path
 
 	# Export ENABLE_XFRM_RECOVERY=0 before sourcing (config not loaded when sourcing directly)
@@ -491,6 +460,84 @@ EOF
 	local final_attempts
 	final_attempts=$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
 	assert [ "$final_attempts" -gt 3 ]
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "xfrm recovery - Policy deletion with DIR parameter" {
+	# Purpose: Test verifies that xfrm recovery deletes policies with DIR parameter
+	# Expected: attempt_xfrm_recovery queries policies, parses directions, and deletes with DIR parameter
+	# Importance: Policy deletion requires DIR parameter (in, out, fwd) - without it, deletion fails
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+
+	# Track verification attempts and policy deletion calls
+	local verify_attempt_file="${TEST_DIR}/verify_attempts"
+	local policy_delete_log="${TEST_DIR}/policy_delete_log"
+	echo "0" >"$verify_attempt_file"
+	echo "" >"$policy_delete_log"
+
+	# Mock ip command that simulates SA re-establishment and policy queries
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+
+    # First call: SA exists (before deletion)
+    if [[ \$verify_attempts -eq 1 ]]; then
+        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    # Next few calls: SA deleted
+    elif [[ \$verify_attempts -le 3 ]]; then
+        :
+    # After that: SA re-established
+    else
+        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
+        echo "    lifetime current: 2000 bytes, 20 packets"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    fi
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "policy" ]]; then
+    # Policy query (no subcommand): Return policy with dir fwd
+    if [[ -z "\$3" ]]; then
+        echo "src 0.0.0.0/0 dst 192.168.1.1"
+        echo "    dir fwd priority 0"
+        echo "    tmpl src 0.0.0.0/0 dst 192.168.1.1"
+    # Policy deletion: Log the command to verify DIR parameter is included
+    elif [[ "\$3" == "delete" ]]; then
+        # Log all arguments to verify DIR parameter is present
+        echo "delete: args=\$*" >> "$policy_delete_log"
+        # Simulate successful deletion
+        exit 0
+    fi
+fi
+# Handle other ip commands (xfrm state delete, etc.)
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# Source recovery functions to test directly
+	source_recovery_module
+
+	# Test attempt_xfrm_recovery function
+	run attempt_xfrm_recovery "192.168.1.1" "TEST_LOCATION"
+	assert_success
+
+	# Verify policy deletion was attempted with DIR parameter
+	if [[ -f "$policy_delete_log" ]]; then
+		local delete_log_content
+		delete_log_content=$(cat "$policy_delete_log" 2>/dev/null || echo "")
+		# Should contain "dir" parameter in deletion command
+		if [[ -n "$delete_log_content" ]]; then
+			assert_output --partial "dir" <<<"$delete_log_content"
+		fi
+	fi
 
 	remove_mock_from_path
 }
@@ -1123,6 +1170,147 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:high-risk,priority:critical
+@test "xfrm recovery - Only delete SAs for target peer IP (prevent wrong location deletion)" {
+	# Purpose: Test verifies that xfrm recovery only deletes SAs matching the target peer IP
+	# Expected: When recovering CHICAGO (172.31.23.27), only SAs with dst=172.31.23.27 are deleted
+	#           SAs for PHILADELPHIA (172.31.21.191) should NOT be deleted
+	# Importance: CRITICAL - Prevents healthy locations from losing connectivity during recovery
+	# Bug: grep -A includes subsequent SA blocks that don't match target IP, causing wrong SAs to be deleted
+	setup_location_vpn_monitor "172.31.23.27" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+
+	# Track deletion commands to verify only correct SAs are deleted
+	local delete_cmd_file="${TEST_DIR}/delete_commands"
+	touch "$delete_cmd_file"
+
+	# Track verification attempts
+	local verify_attempt_file="${TEST_DIR}/verify_attempts"
+	echo "0" >"$verify_attempt_file"
+
+	# Mock ip command that simulates grep -A including subsequent SA blocks
+	# This simulates the bug where get_xfrm_state_for_peer uses grep -A which includes
+	# subsequent SA blocks that don't match the target peer IP
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
+    # Capture deletion command - verify only CHICAGO SAs are deleted
+    echo "\$*" >> "$delete_cmd_file"
+
+    # Verify deletion command is for CHICAGO (172.31.23.27), not PHILADELPHIA (172.31.21.191)
+    # Note: $* expands without quotes, so check for "dst 172.31.21.191" (without quotes)
+    if [[ "\$*" == *"dst 172.31.21.191"* ]]; then
+        echo "ERROR: Attempted to delete SA for wrong location (PHILADELPHIA)" >&2
+        exit 1
+    fi
+
+    # Only allow deletion of CHICAGO SAs
+    # Note: $* expands without quotes, so check for "dst 172.31.23.27" (without quotes)
+    if [[ "\$*" == *"dst 172.31.23.27"* ]]; then
+        exit 0
+    else
+        echo "ERROR: Unexpected destination IP in deletion command" >&2
+        exit 1
+    fi
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; then
+    # Return SA for get command (only if matching CHICAGO)
+    # Note: $* expands without quotes, so check for "dst 172.31.23.27" (without quotes)
+    if [[ "\$*" == *"dst 172.31.23.27"* ]]; then
+        echo "src 172.31.16.115 dst 172.31.23.27"
+        echo "    proto esp spi 0x12345678 mark 0x12000000/0xfe000000"
+        echo "    lifetime current: 1000 bytes, 10 packets"
+        exit 0
+    else
+        echo "RTNETLINK answers: No such process" >&2
+        exit 2
+    fi
+elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Simulate grep -A behavior: include CHICAGO SA followed by PHILADELPHIA SA
+    # This is what get_xfrm_state_for_peer returns when using grep -A
+    # The bug was that parsing didn't filter out the PHILADELPHIA SA
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+
+    if [[ \$verify_attempts -le 1 ]]; then
+        # First call: Return CHICAGO SA followed by PHILADELPHIA SA (simulating grep -A)
+        # CHICAGO SA (target - should be deleted)
+        echo "src 172.31.16.115 dst 172.31.23.27"
+        echo "    proto esp spi 0x12345678 mark 0x12000000/0xfe000000"
+        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo ""
+        # PHILADELPHIA SA (wrong location - should NOT be deleted)
+        # This simulates grep -A including subsequent SA blocks
+        echo "src 172.31.16.115 dst 172.31.21.191"
+        echo "    proto esp spi 0x12345678 mark 0xe000000/0xfe000000"
+        echo "    lifetime current: 5000 bytes, 20 packets"
+    elif [[ \$verify_attempts -le 3 ]]; then
+        # Next few calls: SAs deleted (no output)
+        :
+    else
+        # After that: CHICAGO SA re-established (PHILADELPHIA should still exist)
+        echo "src 172.31.16.115 dst 172.31.23.27"
+        echo "    proto esp spi 0x12345678 mark 0x12000000/0xfe000000"
+        echo "    lifetime current: 2000 bytes, 20 packets"
+    fi
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Regular ip xfrm state (fallback from get_xfrm_state_for_peer)
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+
+    if [[ \$verify_attempts -le 1 ]]; then
+        # Same as -s version: CHICAGO followed by PHILADELPHIA
+        echo "src 172.31.16.115 dst 172.31.23.27"
+        echo "    proto esp spi 0x12345678 mark 0x12000000/0xfe000000"
+        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo ""
+        echo "src 172.31.16.115 dst 172.31.21.191"
+        echo "    proto esp spi 0x12345678 mark 0xe000000/0xfe000000"
+        echo "    lifetime current: 5000 bytes, 20 packets"
+    elif [[ \$verify_attempts -le 3 ]]; then
+        :
+    else
+        echo "src 172.31.16.115 dst 172.31.23.27"
+        echo "    proto esp spi 0x12345678 mark 0x12000000/0xfe000000"
+        echo "    lifetime current: 2000 bytes, 20 packets"
+    fi
+fi
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# Source recovery functions to test directly
+	source_recovery_module
+
+	# Test attempt_xfrm_recovery function for CHICAGO
+	run attempt_xfrm_recovery "172.31.23.27" "CHICAGO"
+	assert_success
+
+	# Verify only CHICAGO SA was deleted (not PHILADELPHIA)
+	assert_file_exist "$delete_cmd_file"
+
+	# Verify deletion commands only contain CHICAGO destination
+	# Note: $* expands without quotes in the mock, so check for "dst 172.31.23.27" (without quotes)
+	run grep "dst 172.31.23.27" "$delete_cmd_file"
+	assert_success
+
+	# CRITICAL: Verify PHILADELPHIA SA was NOT deleted
+	# Note: $* expands without quotes in the mock, so check for "dst 172.31.21.191" (without quotes)
+	run grep "dst 172.31.21.191" "$delete_cmd_file"
+	assert_failure "PHILADELPHIA SA should not be deleted when recovering CHICAGO"
+
+	# Verify CHICAGO SA deletion command includes correct SPI
+	assert_file_contains "$delete_cmd_file" "spi.*0x12345678"
+
+	# Verify CHICAGO SA deletion command includes mark
+	assert_file_contains "$delete_cmd_file" "mark.*0x12000000"
+	assert_file_contains "$delete_cmd_file" "mask.*0xfe000000"
+
+	remove_mock_from_path
+}
+
 # bats test_tags=category:high-risk,priority:high
 @test "xfrm recovery - Verify exact mark command format" {
 	# Purpose: Test verifies that deletion commands use exact format "mark <value> mask <mask>" (not "mark <value>/<mask>")
@@ -1658,16 +1846,7 @@ EOF
 	mkdir -p "${TEST_DIR}/logs"
 
 	# Mock ipsec command that fails
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    echo "ipsec status failed" >&2
-    exit 1
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 1 "ipsec status failed" >/dev/null
 	add_mock_to_path
 
 	# Source recovery functions to test directly

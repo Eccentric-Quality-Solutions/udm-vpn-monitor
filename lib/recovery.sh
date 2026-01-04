@@ -190,6 +190,88 @@ verify_byte_counters_resume() {
 	fi
 }
 
+# Verify byte counters increment after SA re-establishment
+#
+# Verifies that byte counters have increased from an initial baseline value after SA re-establishment.
+# This handles the case where byte counters reset to zero after SA deletion/re-establishment.
+# Instead of checking for absolute non-zero values, this checks for counter increment which
+# indicates traffic is flowing through the tunnel.
+#
+# Arguments:
+#   $1: Peer IP address to verify
+#   $2: Initial byte counter value (baseline, may be zero)
+#   $3: Optional location name for logging context
+#
+# Returns:
+#   0: Byte counters have increased from initial value (or not available but SA exists)
+#   1: Byte counters have not increased or are unavailable
+#
+# Side effects:
+#   - Logs byte counter status and increment
+#
+# Examples:
+#   initial_bytes=0
+#   if verify_byte_counters_increment "203.0.113.1" "$initial_bytes" "NYC"; then
+#       echo "Byte counters incrementing"
+#   fi
+#
+# Note:
+#   Requires extract_byte_counter from detection.sh
+#   If byte counters are not available, returns success if SA exists (graceful degradation)
+#   This function is designed for post-recovery verification where counters may reset to zero
+verify_byte_counters_increment() {
+	local peer_ip="$1"
+	local initial_bytes="$2"
+	local location_name="$3"
+	local xfrm_output
+
+	if ! check_command_or_warn "ip" "Verifying byte counter increment"; then
+		return 1
+	fi
+
+	# Get xfrm output for this peer
+	xfrm_output=$(get_xfrm_state_for_peer "$peer_ip")
+
+	if [[ -z "$xfrm_output" ]]; then
+		return 1
+	fi
+
+	# Extract byte counter
+	local current_bytes
+	if current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null); then
+		# Validate initial_bytes is numeric (default to 0 if not)
+		if [[ ! "$initial_bytes" =~ ^[0-9]+$ ]]; then
+			initial_bytes=0
+		fi
+		# Validate current_bytes is numeric
+		if [[ ! "$current_bytes" =~ ^[0-9]+$ ]]; then
+			handle_error "WARNING" "$location_name" "Recovery verification: Invalid byte counter value for $location_name ($peer_ip) (current=$current_bytes)"
+			return 1
+		fi
+		# Check if counters have increased from initial value
+		if [[ "$current_bytes" -gt "$initial_bytes" ]]; then
+			local increment=$((current_bytes - initial_bytes))
+			log_message "INFO" "$location_name" "Recovery verification: Byte counters incrementing for $location_name ($peer_ip) (initial=$initial_bytes, current=$current_bytes, increment=$increment)"
+			return 0
+		else
+			# Counters haven't increased yet - log status but don't fail immediately
+			# This allows the verification loop to continue waiting
+			if [[ "$current_bytes" -eq 0 ]] && [[ "$initial_bytes" -eq 0 ]]; then
+				# Both are zero - counters reset but haven't started incrementing yet
+				handle_error "WARNING" "$location_name" "Recovery verification: Byte counters are zero for $location_name ($peer_ip) (waiting for traffic to resume)"
+			else
+				# Counters haven't increased (may have decreased or stayed same)
+				handle_error "WARNING" "$location_name" "Recovery verification: Byte counters not incrementing for $location_name ($peer_ip) (initial=$initial_bytes, current=$current_bytes)"
+			fi
+			return 1
+		fi
+	else
+		# Byte counters not available, but SA exists - log and return success
+		log_message "INFO" "$location_name" "Recovery verification: Byte counters not available for $location_name ($peer_ip) (SA exists, verification limited)"
+		return 0
+	fi
+}
+
 # Verify IPsec connections are active
 #
 # Verifies that IPsec connections are active (not just that command succeeded).
@@ -406,13 +488,17 @@ verify_ipsec_connections_active() {
 #   - Verification checks:
 #     * SA existence via check_ipsec_phase2()
 #     * SA count via count_sas_for_peer()
-#     * Byte counter status via verify_byte_counters_resume()
+#     * Byte counter increment via verify_byte_counters_increment()
+#       - Captures initial byte counter value when SA is first re-established (may be zero)
+#       - Checks for counter increment from initial value (indicates traffic is flowing)
+#       - Handles case where counters reset to zero after SA deletion/re-establishment
 #
 # Assumptions:
 #   - UDM OS 4.3+ uses consistent xfrm output format (tested format)
 #   - strongSwan will automatically re-establish SAs after deletion
 #   - Re-establishment typically occurs within 30 seconds
-#   - Byte counters may be zero immediately after re-establishment (acceptable)
+#   - Byte counters may reset to zero after SA deletion/re-establishment (handled by increment check)
+#   - Verification checks for counter increment rather than absolute non-zero value
 #   - Multiple SAs may exist for a single peer (common with multiple subnets)
 #
 # Error Handling:
@@ -422,7 +508,7 @@ verify_ipsec_connections_active() {
 #   - Parse errors: Fails only if no valid SAs found (partial success allowed)
 #   - Delete failures: Tracks failed_count, fails if all deletions failed
 #   - Re-establishment timeout: Returns error to trigger fallback recovery strategy
-#   - Byte counter verification failure: Returns error if SA re-established but byte counters don't resume within timeout
+#   - Byte counter verification failure: Returns error if SA re-established but byte counters don't increment within timeout
 #
 # Examples:
 #   # Delete and re-establish SAs for peer 203.0.113.1
@@ -570,29 +656,51 @@ attempt_xfrm_recovery() {
 			# Complete SA requires: src, dst, proto, and spi all present
 			# This handles the case where we've finished parsing one SA and found the next
 			if [[ $in_sa_block -eq 1 ]] && [[ -n "$current_src" ]] && [[ -n "$current_dst" ]] && [[ -n "$current_proto" ]] && [[ -n "$current_spi" ]]; then
-				# Validate selectors before adding to list
-				# Proto must be "esp" or "ah" (case-insensitive, already normalized)
-				# SPI must be hex (0x...) or decimal format
-				if [[ "$current_proto" =~ ^(esp|ah)$ ]] && [[ "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
-					# Store complete SA as delimited string for later processing
-					# Format: "src|dst|proto|spi|mark" (pipe separator avoids IP address conflicts)
-					# Mark may be empty (backward compatibility with SAs without marks)
-					sa_list+=("$current_src|$current_dst|$current_proto|$current_spi|${current_mark:-}")
-					[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi mark=${current_mark:-<none>} for $location_name ($peer_ip)"
+				# CRITICAL: Verify that the SA's destination matches the target peer IP
+				# This prevents deleting SAs for wrong locations when grep -A includes subsequent SA blocks
+				if [[ "$current_dst" == "$peer_ip" ]]; then
+					# Validate selectors before adding to list
+					# Proto must be "esp" or "ah" (case-insensitive, already normalized)
+					# SPI must be hex (0x...) or decimal format
+					if [[ "$current_proto" =~ ^(esp|ah)$ ]] && [[ "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+						# Store complete SA as delimited string for later processing
+						# Format: "src|dst|proto|spi|mark" (pipe separator avoids IP address conflicts)
+						# Mark may be empty (backward compatibility with SAs without marks)
+						sa_list+=("$current_src|$current_dst|$current_proto|$current_spi|${current_mark:-}")
+						[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi mark=${current_mark:-<none>} for $location_name ($peer_ip)"
+					else
+						# Invalid selectors: log warning but continue parsing (may have valid SAs later)
+						handle_error "WARNING" "$location_name" "xfrm recovery: Invalid SA selectors: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi for $location_name ($peer_ip)"
+						((parse_errors++))
+					fi
 				else
-					# Invalid selectors: log warning but continue parsing (may have valid SAs later)
-					handle_error "WARNING" "$location_name" "xfrm recovery: Invalid SA selectors: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi for $location_name ($peer_ip)"
-					((parse_errors++))
+					# SA destination doesn't match target peer IP - skip this SA
+					# This can happen when grep -A includes subsequent SA blocks from other locations
+					[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Skipping SA with dst=$current_dst (does not match target peer_ip=$peer_ip)"
 				fi
 			fi
 
-			# Start new SA block: extract src and dst from regex match
-			current_src="$extracted_src"
-			current_dst="$extracted_dst"
-			current_proto="" # Will be extracted from continuation lines
-			current_spi=""   # Will be extracted from continuation lines
-			current_mark=""  # Will be extracted from continuation lines (optional)
-			in_sa_block=1    # Mark that we're now parsing an SA block
+			# CRITICAL: Only start parsing this SA block if destination matches target peer IP
+			# This prevents parsing SAs for wrong locations when grep -A includes subsequent SA blocks
+			if [[ "$extracted_dst" == "$peer_ip" ]]; then
+				# Start new SA block: extract src and dst from regex match
+				current_src="$extracted_src"
+				current_dst="$extracted_dst"
+				current_proto="" # Will be extracted from continuation lines
+				current_spi=""   # Will be extracted from continuation lines
+				current_mark=""  # Will be extracted from continuation lines (optional)
+				in_sa_block=1    # Mark that we're now parsing an SA block
+			else
+				# Destination doesn't match target peer IP - skip this SA block entirely
+				# Reset parsing state to skip all continuation lines for this SA
+				in_sa_block=0
+				current_src=""
+				current_dst=""
+				current_proto=""
+				current_spi=""
+				current_mark=""
+				[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Skipping SA block with dst=$extracted_dst (does not match target peer_ip=$peer_ip)"
+			fi
 
 		# State: Continuation line (within an SA block)
 		# Extract proto and spi from indented continuation lines
@@ -631,13 +739,21 @@ attempt_xfrm_recovery() {
 	# This handles the case where the last SA in the output doesn't have a following "src ... dst ..." line
 	# to trigger the save logic in the main loop
 	if [[ $in_sa_block -eq 1 ]] && [[ -n "$current_src" ]] && [[ -n "$current_dst" ]] && [[ -n "$current_proto" ]] && [[ -n "$current_spi" ]]; then
-		# Validate selectors before adding to list (same validation as in main loop)
-		if [[ "$current_proto" =~ ^(esp|ah)$ ]] && [[ "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
-			sa_list+=("$current_src|$current_dst|$current_proto|$current_spi|${current_mark:-}")
-			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "SYSTEM" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi mark=${current_mark:-<none>}"
+		# CRITICAL: Verify that the SA's destination matches the target peer IP
+		# This prevents deleting SAs for wrong locations when grep -A includes subsequent SA blocks
+		if [[ "$current_dst" == "$peer_ip" ]]; then
+			# Validate selectors before adding to list (same validation as in main loop)
+			if [[ "$current_proto" =~ ^(esp|ah)$ ]] && [[ "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+				sa_list+=("$current_src|$current_dst|$current_proto|$current_spi|${current_mark:-}")
+				[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi mark=${current_mark:-<none>} for $location_name ($peer_ip)"
+			else
+				handle_error "WARNING" "$location_name" "xfrm recovery: Invalid SA selectors: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi for $location_name ($peer_ip)"
+				((parse_errors++))
+			fi
 		else
-			handle_error "WARNING" "$location_name" "xfrm recovery: Invalid SA selectors: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi for $location_name ($peer_ip)"
-			((parse_errors++))
+			# SA destination doesn't match target peer IP - skip this SA
+			# This can happen when grep -A includes subsequent SA blocks from other locations
+			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Skipping final SA with dst=$current_dst (does not match target peer_ip=$peer_ip)"
 		fi
 	fi
 
@@ -937,46 +1053,119 @@ attempt_xfrm_recovery() {
 	fi
 
 	# Also delete policies for this peer (less critical, but helps cleanup)
-	# Policies use different format, try to delete by destination
+	# Policies require DIR (direction) parameter for deletion: in, out, or fwd
+	# Query existing policies first to determine which directions exist, then delete each
 	# Enhanced diagnostics: Add timing and more detailed policy deletion diagnostics
-	local policy_stderr
-	local policy_exit_code
-	local policy_start_time
-	policy_start_time=$(get_unix_timestamp 2>/dev/null || echo "0")
-	local policy_cmd="ip xfrm policy delete dst \"$peer_ip\""
-	log_message "INFO" "$location_name" "xfrm recovery: Executing policy deletion command: $policy_cmd"
-	policy_stderr=$(eval "$policy_cmd" 2>&1)
-	policy_exit_code=$?
-	local policy_duration=0
-	if [[ "$policy_start_time" != "0" ]]; then
-		local policy_end_time
-		policy_end_time=$(get_unix_timestamp 2>/dev/null || echo "0")
-		if [[ "$policy_end_time" != "0" ]]; then
-			policy_duration=$(safe_timestamp_diff "$policy_end_time" "$policy_start_time" 2>/dev/null || echo "0")
-			# Ensure non-negative duration
-			if [[ $policy_duration -lt 0 ]]; then
-				policy_duration=0
+	#
+	# Safety: Policy deletion is scoped to ONLY the failing peer IP:
+	#   - Uses fixed-string matching (grep -F) to prevent regex injection
+	#   - Matches exact "dst $peer_ip" pattern (space after "dst " provides natural boundary)
+	#   - Only deletes policies for the specific peer IP that triggered recovery
+	#   - Policies are automatically recreated by strongSwan when SAs re-establish
+	#   - Policy deletion failures are non-fatal and don't affect recovery success
+	#
+	# When policies are deleted:
+	#   - Only during xfrm recovery for a specific failing peer IP
+	#   - Only after SAs for that peer IP have been deleted
+	#   - Only policies matching dst=$peer_ip (exact match, not partial)
+	#   - Policies for other peer IPs are never touched
+	#
+	# Note: peer_ip is the external IP of remote locations (from LOCATION_*_EXTERNAL config)
+	local existing_policies
+	existing_policies=$(ip xfrm policy 2>/dev/null | grep -F "dst $peer_ip" -A 5 2>/dev/null || echo "")
+
+	local policy_deleted_count=0
+	local policy_failed_count=0
+	local policy_directions=()
+
+	# Parse directions from existing policies
+	# Policy format: "src <ip> dst <ip> dir <direction> ..."
+	# Directions can be: in, out, fwd
+	if [[ -n "$existing_policies" ]]; then
+		while IFS= read -r policy_line || [[ -n "$policy_line" ]]; do
+			# Extract direction from policy line (format: "dir <direction>")
+			if [[ "$policy_line" =~ dir[[:space:]]+([a-z]+) ]]; then
+				local dir="${BASH_REMATCH[1]}"
+				# Validate direction is one of the expected values
+				if [[ "$dir" == "in" ]] || [[ "$dir" == "out" ]] || [[ "$dir" == "fwd" ]]; then
+					# Add to array if not already present (avoid duplicates)
+					local dir_exists=0
+					for existing_dir in "${policy_directions[@]}"; do
+						if [[ "$existing_dir" == "$dir" ]]; then
+							dir_exists=1
+							break
+						fi
+					done
+					if [[ $dir_exists -eq 0 ]]; then
+						policy_directions+=("$dir")
+					fi
+				fi
 			fi
+		done <<<"$existing_policies"
+	fi
+
+	# If no directions found in existing policies, try deleting for all common directions
+	# This handles cases where policy format may differ or policies exist but weren't parsed
+	if [[ ${#policy_directions[@]} -eq 0 ]]; then
+		# Try common directions: fwd (most common for VPN tunnels), out, in
+		policy_directions=("fwd" "out" "in")
+		log_message "INFO" "$location_name" "xfrm recovery: No policy directions parsed for dst=$peer_ip, attempting deletion for common directions (fwd, out, in)"
+	else
+		log_message "INFO" "$location_name" "xfrm recovery: Found policy directions for dst=$peer_ip: ${policy_directions[*]}"
+	fi
+
+	# Delete policies for each direction found
+	for policy_dir in "${policy_directions[@]}"; do
+		local policy_stderr
+		local policy_exit_code
+		local policy_start_time
+		policy_start_time=$(get_unix_timestamp 2>/dev/null || echo "0")
+		local policy_cmd="ip xfrm policy delete dst \"$peer_ip\" dir \"$policy_dir\""
+		log_message "INFO" "$location_name" "xfrm recovery: Executing policy deletion command: $policy_cmd"
+		policy_stderr=$(eval "$policy_cmd" 2>&1)
+		policy_exit_code=$?
+		local policy_duration=0
+		if [[ "$policy_start_time" != "0" ]]; then
+			local policy_end_time
+			policy_end_time=$(get_unix_timestamp 2>/dev/null || echo "0")
+			if [[ "$policy_end_time" != "0" ]]; then
+				policy_duration=$(safe_timestamp_diff "$policy_end_time" "$policy_start_time" 2>/dev/null || echo "0")
+				# Ensure non-negative duration
+				if [[ $policy_duration -lt 0 ]]; then
+					policy_duration=0
+				fi
+			fi
+		fi
+
+		if [[ $policy_exit_code -eq 0 ]]; then
+			((policy_deleted_count++))
+			log_message "INFO" "$location_name" "xfrm recovery: Deleted xfrm policy for dst=$peer_ip dir=$policy_dir ($location_name) (duration: ${policy_duration}s)"
+		else
+			# Policy deletion failed - log diagnostic info (non-fatal, so use INFO level)
+			# Enhanced diagnostics: Always log policy deletion failures (not just DEBUG mode)
+			((policy_failed_count++))
+			local policy_diagnostic="exit_code=$policy_exit_code, duration=${policy_duration}s"
+			if [[ -n "$policy_stderr" ]]; then
+				policy_diagnostic="$policy_diagnostic, stderr=\"$policy_stderr\""
+			fi
+			log_message "INFO" "$location_name" "xfrm recovery: Failed to delete xfrm policy for dst=$peer_ip dir=$policy_dir ($location_name) ($policy_diagnostic) - non-fatal, continuing"
+		fi
+	done
+
+	# Log summary of policy deletion results
+	if [[ $policy_deleted_count -gt 0 ]] || [[ $policy_failed_count -gt 0 ]]; then
+		if [[ $policy_deleted_count -gt 0 ]] && [[ $policy_failed_count -eq 0 ]]; then
+			log_message "INFO" "$location_name" "xfrm recovery: Policy deletion summary for dst=$peer_ip ($location_name): ${policy_deleted_count} succeeded, 0 failed"
+		elif [[ $policy_deleted_count -eq 0 ]] && [[ $policy_failed_count -gt 0 ]]; then
+			log_message "INFO" "$location_name" "xfrm recovery: Policy deletion summary for dst=$peer_ip ($location_name): 0 succeeded, ${policy_failed_count} failed (non-fatal)"
+		else
+			log_message "INFO" "$location_name" "xfrm recovery: Policy deletion summary for dst=$peer_ip ($location_name): ${policy_deleted_count} succeeded, ${policy_failed_count} failed (non-fatal)"
 		fi
 	fi
 
-	if [[ $policy_exit_code -eq 0 ]]; then
-		log_message "INFO" "$location_name" "xfrm recovery: Deleted xfrm policy for dst=$peer_ip ($location_name) (duration: ${policy_duration}s)"
-	else
-		# Policy deletion failed - log diagnostic info (non-fatal, so use INFO level)
-		# Enhanced diagnostics: Always log policy deletion failures (not just DEBUG mode)
-		local policy_diagnostic="exit_code=$policy_exit_code, duration=${policy_duration}s"
-		if [[ -n "$policy_stderr" ]]; then
-			policy_diagnostic="$policy_diagnostic, stderr=\"$policy_stderr\""
-		fi
-		log_message "INFO" "$location_name" "xfrm recovery: Failed to delete xfrm policy for dst=$peer_ip ($location_name) ($policy_diagnostic) - non-fatal, continuing"
-		# Enhanced diagnostics: Try to query existing policies to see what's there
-		local existing_policies
-		if existing_policies=$(ip xfrm policy 2>/dev/null | grep -F "dst $peer_ip" -A 5 2>/dev/null | head -20); then
-			if [[ -n "$existing_policies" ]]; then
-				log_message "INFO" "$location_name" "xfrm recovery: Existing policies for dst=$peer_ip:\n$existing_policies"
-			fi
-		fi
+	# Enhanced diagnostics: Log existing policies if deletion failed for all directions
+	if [[ $policy_deleted_count -eq 0 ]] && [[ -n "$existing_policies" ]]; then
+		log_message "INFO" "$location_name" "xfrm recovery: Existing policies for dst=$peer_ip:\n$existing_policies"
 	fi
 
 	# If no SAs were deleted, check if any existed
@@ -1029,6 +1218,9 @@ attempt_xfrm_recovery() {
 		local elapsed_time
 		local sa_count=0
 		local byte_counter_status="unknown"
+		local initial_byte_counter=""
+		local initial_byte_counter_set=0
+		local ping_skip_logged=0
 
 		# Verification loop: Poll until SA re-established or timeout
 		# Timeout check: Compare elapsed time against configured timeout
@@ -1064,10 +1256,85 @@ attempt_xfrm_recovery() {
 						log_message "INFO" "$location_name" "xfrm recovery: SA re-established for $location_name ($peer_ip) after ${elapsed_time}s (attempt $verify_attempt)"
 					fi
 
-					# Verify byte counters resume (indicates tunnel is passing traffic)
-					# This is a best-effort check: byte counters may be zero immediately after
-					# re-establishment, which is acceptable (traffic will resume shortly)
-					if verify_byte_counters_resume "$peer_ip" "$location_name" 2>/dev/null; then
+					# Capture initial byte counter value when SA is first re-established
+					# Byte counters may reset to zero after SA deletion/re-establishment, so we
+					# need to track the baseline and check for increment rather than absolute value
+					if [[ $initial_byte_counter_set -eq 0 ]]; then
+						local xfrm_output
+						xfrm_output=$(get_xfrm_state_for_peer "$peer_ip" 2>/dev/null)
+						if [[ -n "$xfrm_output" ]] && command -v extract_byte_counter >/dev/null 2>&1; then
+							if initial_byte_counter=$(extract_byte_counter "$xfrm_output" 2>/dev/null); then
+								# Validate initial_byte_counter is numeric (default to 0 if not)
+								if [[ ! "$initial_byte_counter" =~ ^[0-9]+$ ]]; then
+									initial_byte_counter=0
+								fi
+								initial_byte_counter_set=1
+								log_message "INFO" "$location_name" "xfrm recovery: Captured initial byte counter for $location_name ($peer_ip) (initial=$initial_byte_counter)"
+							else
+								# Byte counters not available - set to 0 and mark as set
+								initial_byte_counter=0
+								initial_byte_counter_set=1
+								log_message "INFO" "$location_name" "xfrm recovery: Byte counters not available for $location_name ($peer_ip) (using initial=0)"
+							fi
+						else
+							# Failed to get xfrm output - set to 0 and mark as set
+							initial_byte_counter=0
+							initial_byte_counter_set=1
+							log_message "INFO" "$location_name" "xfrm recovery: Failed to get initial byte counter for $location_name ($peer_ip) (using initial=0)"
+						fi
+					fi
+
+					# Verify byte counters increment from initial value (indicates tunnel is passing traffic)
+					# This handles the case where byte counters reset to zero after SA deletion/re-establishment
+					# We check for increment rather than absolute non-zero value to verify traffic is flowing
+					#
+					# Enhancement: If counters are zero, ping internal IP to generate traffic, then check again
+					# This actively verifies the tunnel can pass traffic rather than waiting passively
+					if [[ "$initial_byte_counter" -eq 0 ]]; then
+						if [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
+							# Get internal IPs for this location to ping
+							local internal_ips=""
+							if command -v get_location_internal_ips >/dev/null 2>&1 && command -v parse_location_config >/dev/null 2>&1; then
+								# Ensure location config is parsed (may not be if called directly)
+								if ! declare -p LOCATIONS &>/dev/null 2>&1; then
+									parse_location_config 2>/dev/null || true
+								fi
+								internal_ips=$(get_location_internal_ips "$location_name" 2>/dev/null || echo "")
+							fi
+
+							# If we have internal IPs, ping the first one to generate traffic
+							if [[ -n "$internal_ips" ]]; then
+								local first_internal_ip
+								first_internal_ip=$(echo "$internal_ips" | awk '{print $1}')
+								if [[ -n "$first_internal_ip" ]] && command -v check_ping_connectivity >/dev/null 2>&1; then
+									local local_ip
+									local_ip=$(get_local_ip_for_ping 2>/dev/null || echo "")
+									log_message "INFO" "$location_name" "xfrm recovery: Byte counters are zero, pinging internal IP $first_internal_ip to generate traffic for $location_name ($peer_ip)"
+									# Ping to generate traffic (ignore ping result - we only care about byte counter increment)
+									check_ping_connectivity "$first_internal_ip" "$local_ip" "$location_name" >/dev/null 2>&1 || true
+									# Small delay to allow counters to update
+									sleep 1
+								else
+									# Ping function not available - log at debug level (non-critical)
+									[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Ping function not available, skipping ping-based traffic generation for $location_name ($peer_ip)"
+								fi
+							else
+								# No internal IPs configured - log at info level (helpful for debugging, only once)
+								if [[ $ping_skip_logged -eq 0 ]]; then
+									log_message "INFO" "$location_name" "xfrm recovery: Byte counters are zero but no internal IPs configured for $location_name ($peer_ip), waiting for natural traffic flow"
+									ping_skip_logged=1
+								fi
+							fi
+						else
+							# Ping check disabled - log at info level (helpful for debugging, only once)
+							if [[ $ping_skip_logged -eq 0 ]]; then
+								log_message "INFO" "$location_name" "xfrm recovery: Byte counters are zero but ping check is disabled (ENABLE_PING_CHECK=0) for $location_name ($peer_ip), waiting for natural traffic flow"
+								ping_skip_logged=1
+							fi
+						fi
+					fi
+
+					if verify_byte_counters_increment "$peer_ip" "$initial_byte_counter" "$location_name" 2>/dev/null; then
 						byte_counter_status="resumed"
 						log_message "INFO" "$location_name" "xfrm recovery: Verification complete for $location_name ($peer_ip) (duration: ${elapsed_time}s, SA count: ${sa_count}, byte counters: ${byte_counter_status})"
 						break # Exit verification loop on success (SA re-established AND byte counters verified)

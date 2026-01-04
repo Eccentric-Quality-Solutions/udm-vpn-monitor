@@ -9,6 +9,14 @@ load test_helper
 KEEPALIVE_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-keepalive.sh"
 
 # Teardown function to ensure cleanup after each test
+#
+# BATS teardown function that runs after each test case to clean up resources.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
 teardown() {
 	# Clean up any running daemon processes
 	cleanup_keepalive_daemon
@@ -24,6 +32,9 @@ teardown() {
 #
 # Arguments:
 #   $1: Optional config overrides (e.g., "ENABLE_KEEPALIVE=1")
+#
+# Returns:
+#   0: Always succeeds
 setup_keepalive_test() {
 	local config_overrides="${1:-}"
 	local config_file="${MOCK_INSTALL_DIR}/vpn-monitor.conf"
@@ -69,6 +80,12 @@ EOF
 #
 # Stops and removes PID file if daemon is running.
 # Also kills any child processes to ensure complete cleanup.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
 cleanup_keepalive_daemon() {
 	local pidfile="${MOCK_INSTALL_DIR}/state/vpn-keepalive.pid"
 	if [[ -f "$pidfile" ]]; then
@@ -186,12 +203,8 @@ cleanup_keepalive_daemon() {
 	setup_keepalive_test
 
 	# Mock ping command to avoid actual network calls
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping "192.168.1.1" "1" >/dev/null
+	mv "${TEST_DIR}/mock_ping" "${TEST_DIR}/ping" 2>/dev/null || true
 	add_mock_to_path
 
 	cd "$MOCK_INSTALL_DIR"

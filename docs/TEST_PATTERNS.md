@@ -1161,6 +1161,143 @@ EOF
 - Verify recovery actions continue after partition clears
 - Use call counters to track which check is being performed
 
+### 17. Byte Counter Increment Pattern for XFRM Recovery Verification
+
+**Pattern**: Mock `ip` command to return increasing byte counter values when testing xfrm recovery verification
+
+**When to use**: When testing xfrm-based recovery that includes byte counter verification. The `verify_byte_counters_increment()` function requires byte counters to increase from an initial baseline value to verify that traffic is flowing through the tunnel after SA re-establishment.
+
+**Key Insight**: 
+- `verify_byte_counters_increment()` captures an initial byte counter value when SA re-establishment is detected
+- It then checks that byte counters have increased from this initial value
+- Static byte counter values will cause verification to fail
+- Byte counters must increase over time to simulate traffic flow
+
+**Example - Basic Byte Counter Increment**:
+```bash
+@test "xfrm recovery - byte counter verification succeeds" {
+    setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" \
+        'ENABLE_XFRM_RECOVERY=1' 'TIER2_THRESHOLD=3'
+    
+    # Track verification attempts for byte counter increment
+    local verify_attempt_file="${TEST_DIR}/verify_attempts"
+    echo "0" >"$verify_attempt_file"
+    
+    # Mock ip command - returns increasing byte counter values
+    local mock_ip="${TEST_DIR}/ip"
+    cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag)
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+    
+    # Return increasing byte counter values to simulate traffic flow
+    # Initial value: 1000, then increase by 1000 each call
+    byte_count=\$((1000 + (\$verify_attempts - 1) * 1000))
+    echo "src 10.0.0.1 dst 192.168.1.1"
+    echo "  proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "  lifetime current:"
+    echo "    \${byte_count}(bytes), 10(packets)"
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Handle "ip xfrm state" (without statistics flag)
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+    
+    # Return increasing byte counter values
+    byte_count=\$((1000 + (\$verify_attempts - 1) * 1000))
+    echo "src 10.0.0.1 dst 192.168.1.1"
+    echo "  proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "  lifetime current:"
+    echo "    \${byte_count}(bytes), 10(packets)"
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
+EOF
+    chmod +x "$mock_ip"
+    add_mock_to_path
+    
+    # Mock check_ipsec_phase2 to simulate SA lifecycle
+    local phase2_call_file="${TEST_DIR}/phase2_calls"
+    echo "0" >"$phase2_call_file"
+    
+    local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
+    cat >"$mock_check_ipsec_phase2" <<EOF
+#!/bin/bash
+phase2_calls=\$(cat "$phase2_call_file" 2>/dev/null || echo "0")
+phase2_calls=\$((phase2_calls + 1))
+echo "\$phase2_calls" > "$phase2_call_file"
+
+# Initially: SAs exist (first call) - return success
+# After deletion check: SAs deleted (2nd call) - return failure  
+# During verification: SAs re-established (3rd+ call) - return success
+if [[ \$phase2_calls -eq 1 ]]; then
+    exit 0  # Initial check: SAs exist
+elif [[ \$phase2_calls -eq 2 ]]; then
+    exit 1  # After deletion: SAs don't exist yet
+else
+    exit 0  # After re-establishment: SAs exist again
+fi
+EOF
+    chmod +x "$mock_check_ipsec_phase2"
+    add_mock_to_path
+    
+    source_recovery_module
+    check_ipsec_phase2() {
+        "$mock_check_ipsec_phase2" "$@"
+    }
+    
+    # Set up failure count at Tier 2 threshold
+    local location_name="TEST"
+    local peer_ip="192.168.1.1"
+    set_peer_state "$location_name" "$peer_ip" "failure_count" "3"
+    
+    # Call surgical_cleanup - should succeed with byte counter verification
+    run surgical_cleanup "$peer_ip" "$location_name"
+    assert_success
+    
+    remove_mock_from_path
+}
+```
+
+**Important Notes**:
+- **Byte counters must increase**: The mock must return different byte counter values on each call, not static values
+- **Handle both `ip -s xfrm state` and `ip xfrm state`**: `get_xfrm_state_for_peer()` tries `-s` flag first, then falls back to regular command
+- **Coordinate with `check_ipsec_phase2` mock**: Use separate counter files for `ip` calls vs `check_ipsec_phase2` calls to properly simulate SA lifecycle
+- **Initial value matters**: The first byte counter value becomes the baseline; subsequent values must be higher
+- **Increment amount**: Use reasonable increments (e.g., 1000 bytes per call) to simulate realistic traffic flow
+- **Never use `local` keyword**: At top level of mock scripts (see pattern 5)
+
+**Common Mistakes**:
+```bash
+# ❌ WRONG - Static byte counter (verification will fail)
+cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+echo "    lifetime current: 1000(bytes), 10(packets)"
+EOF
+
+# ✅ CORRECT - Increasing byte counter
+cat >"$mock_ip" <<EOF
+#!/bin/bash
+verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+verify_attempts=\$((verify_attempts + 1))
+echo "\$verify_attempts" > "$verify_attempt_file"
+byte_count=\$((1000 + (\$verify_attempts - 1) * 1000))
+echo "    lifetime current: \${byte_count}(bytes), 10(packets)"
+EOF
+```
+
+**Standard**: 
+- Use file-based counters to track `ip` command calls
+- Return increasing byte counter values (initial + (attempt - 1) * increment)
+- Handle both `ip -s xfrm state` and `ip xfrm state` command formats
+- Coordinate `check_ipsec_phase2` mock separately using its own counter file
+- Initialize counter files before creating mocks: `echo "0" >"$counter_file"`
+- Use reasonable increment values (1000-10000 bytes per call) to simulate realistic traffic
+
 ## Helper Functions
 
 ### `enable_fake_mode()`
