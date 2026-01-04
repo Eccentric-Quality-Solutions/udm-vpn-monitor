@@ -1392,7 +1392,7 @@ check_and_setup_routes() {
 						# Use check_ping_connectivity() which logs its own messages and has proper fallback logic
 						# This function handles ping6 fallback, timeout wrapping, and proper error messages
 						# Note: check_ping_connectivity() uses log_message() which outputs to log file or stderr
-						if ! check_ping_connectivity "$internal_ip" "$local_udm_ip"; then
+						if ! check_ping_connectivity "$internal_ip" "$local_udm_ip" "$location_name"; then
 							ping_failed_any=1
 						fi
 					done

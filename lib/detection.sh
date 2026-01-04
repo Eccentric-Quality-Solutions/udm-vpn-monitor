@@ -872,12 +872,13 @@ log_ping_summary_if_due() {
 check_ping_connectivity() {
 	local target_ip="$1"
 	local local_ip="${2:-}"
+	local location_name="${3:-}"
 	local ping_count="${PING_COUNT:-3}"
 	local ping_timeout="${PING_TIMEOUT:-2}"
 
 	# Validate ping target
 	if [[ -z "$target_ip" ]]; then
-		handle_error "WARNING" "SYSTEM" "Ping check enabled but target IP not configured"
+		handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check enabled but target IP not configured"
 		return 1
 	fi
 
@@ -890,9 +891,9 @@ check_ping_connectivity() {
 	if [[ -n "$local_ip" ]]; then
 		# Check if route exists, add if needed
 		if ! check_route_exists "$local_ip"; then
-			log_message "INFO" "SYSTEM" "Route not found on br0, attempting to add: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
+			log_message "INFO" "${location_name:-SYSTEM}" "Route not found on br0, attempting to add: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
 			if ! add_route_if_needed "$local_ip"; then
-				handle_error "WARNING" "SYSTEM" "Failed to add route for ping check, continuing anyway"
+				handle_error "WARNING" "${location_name:-SYSTEM}" "Failed to add route for ping check, continuing anyway"
 				# Continue with ping attempt - it may still work or fail naturally
 			fi
 		fi
@@ -925,7 +926,7 @@ check_ping_connectivity() {
 				ping_args=(-6 -I "$local_ip")
 			fi
 		else
-			handle_error "WARNING" "SYSTEM" "IPv6 ping not available"
+			handle_error "WARNING" "${location_name:-SYSTEM}" "IPv6 ping not available"
 			return 1
 		fi
 	fi
@@ -994,9 +995,9 @@ check_ping_connectivity() {
 			# Log successful ping at DEBUG level
 			if [[ "${DEBUG:-0}" -eq 1 ]]; then
 				if [[ -n "$local_ip" ]]; then
-					log_message "DEBUG" "SYSTEM" "Ping check OK: $target_ip from $local_ip (${packet_loss}% packet loss)"
+					log_message "DEBUG" "${location_name:-SYSTEM}" "Ping check OK: $target_ip from $local_ip (${packet_loss}% packet loss)"
 				else
-					log_message "DEBUG" "SYSTEM" "Ping check OK: $target_ip (${packet_loss}% packet loss)"
+					log_message "DEBUG" "${location_name:-SYSTEM}" "Ping check OK: $target_ip (${packet_loss}% packet loss)"
 				fi
 			fi
 			# Log periodic summary at configured interval at INFO level
@@ -1004,9 +1005,9 @@ check_ping_connectivity() {
 			return 0
 		else
 			if [[ -n "$local_ip" ]]; then
-				handle_error "WARNING" "SYSTEM" "Ping check failed: $target_ip from $local_ip (${packet_loss}% packet loss)"
+				handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check failed: $target_ip from $local_ip (${packet_loss}% packet loss)"
 			else
-				handle_error "WARNING" "SYSTEM" "Ping check failed: $target_ip (${packet_loss}% packet loss)"
+				handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check failed: $target_ip (${packet_loss}% packet loss)"
 			fi
 			return 1
 		fi
@@ -1030,7 +1031,7 @@ check_ping_connectivity() {
 				error_msg="Ping check failed: $target_ip (ping command error or timeout)"
 			fi
 		fi
-		handle_error "WARNING" "SYSTEM" "$error_msg"
+		handle_error "WARNING" "${location_name:-SYSTEM}" "$error_msg"
 		return 1
 	fi
 }
@@ -1667,6 +1668,7 @@ discover_connection_name() {
 # Arguments:
 #   $1: Array of internal IP addresses (space-separated string or array reference)
 #   $2: Local IP address (for source IP, optional)
+#   $3: Location name (optional, used for logging)
 #
 # Returns:
 #   0: Success threshold met (≥30% of IPs responded)
@@ -1676,7 +1678,7 @@ discover_connection_name() {
 #   Logs detailed ping results including success count and percentage
 #
 # Examples:
-#   check_ping_multiple_ips "192.168.1.1 192.168.1.88" "192.168.1.1"
+#   check_ping_multiple_ips "192.168.1.1 192.168.1.88" "192.168.1.1" "NYC"
 #   # Pings both IPs, succeeds if at least 1 responds (30% of 2 = 0.6, ceil = 1)
 #
 # Note:
@@ -1687,6 +1689,7 @@ discover_connection_name() {
 check_ping_multiple_ips() {
 	local internal_ips_input="$1"
 	local local_ip="${2:-}"
+	local location_name="${3:-}"
 	local IFS=' '
 	local -a internal_ips_array
 	local ping_success_count=0
@@ -1705,8 +1708,8 @@ check_ping_multiple_ips() {
 	# Edge case: single IP requires 100% success
 	if [[ $ping_total_count -eq 1 ]]; then
 		local single_ip="${internal_ips_array[0]}"
-		if check_ping_connectivity "$single_ip" "$local_ip"; then
-			log_message "INFO" "SYSTEM" "Ping check: 1/1 internal IP responded (100% success)"
+		if check_ping_connectivity "$single_ip" "$local_ip" "$location_name"; then
+			log_message "INFO" "${location_name:-SYSTEM}" "Ping check: 1/1 internal IP responded (100% success)"
 			return 0
 		else
 			handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check: 0/1 internal IP responded (0% success)${location_name:+ for $location_name}"
@@ -1721,7 +1724,7 @@ check_ping_multiple_ips() {
 			continue
 		fi
 
-		if check_ping_connectivity "$internal_ip" "$local_ip"; then
+		if check_ping_connectivity "$internal_ip" "$local_ip" "$location_name"; then
 			((ping_success_count++))
 		fi
 	done
@@ -1738,7 +1741,7 @@ check_ping_multiple_ips() {
 
 	# Check if threshold met
 	if [[ $ping_success_count -ge $threshold ]]; then
-		log_message "INFO" "SYSTEM" "Ping check: $ping_success_count/$ping_total_count internal IPs responded (${success_percent}% >= 30% threshold)"
+		log_message "INFO" "${location_name:-SYSTEM}" "Ping check: $ping_success_count/$ping_total_count internal IPs responded (${success_percent}% >= 30% threshold)"
 		return 0
 	else
 		handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check: $ping_success_count/$ping_total_count internal IPs responded (${success_percent}% < 30% threshold)${location_name:+ for $location_name}"
@@ -1756,6 +1759,7 @@ check_ping_multiple_ips() {
 #   $1: VPN status (1 = OK, 0 = failed)
 #   $2: Ping target IP address or array (internal IP(s) if provided, otherwise external IP)
 #   $3: Local IP address (for source IP, optional)
+#   $4: Location name (optional, used for logging)
 #
 # Returns:
 #   0: Always succeeds (ping check is informational)
@@ -1770,6 +1774,7 @@ check_ping_if_enabled() {
 	local vpn_ok="$1"
 	local ping_target="$2"
 	local local_ip_param="${3:-}"
+	local location_name="${4:-}"
 
 	if [[ "${ENABLE_PING_CHECK:-0}" -ne 1 ]]; then
 		return 0
@@ -1788,15 +1793,15 @@ check_ping_if_enabled() {
 		# Multiple IPs - use check_ping_multiple_ips
 		if [[ $vpn_ok -eq 1 ]]; then
 			# SA exists, verify connectivity with ping check
-			if ! check_ping_multiple_ips "$ping_target" "$local_ip"; then
+			if ! check_ping_multiple_ips "$ping_target" "$local_ip" "$location_name"; then
 				# SA exists but ping failed - tunnel may be broken
 				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN SA exists but ping check failed for multiple internal IPs - tunnel may not be routing traffic${location_name:+ for $location_name}"
 			else
-				log_message "INFO" "SYSTEM" "VPN connectivity verified: ping check passed for multiple internal IPs"
+				log_message "INFO" "${location_name:-SYSTEM}" "VPN connectivity verified: ping check passed for multiple internal IPs"
 			fi
 		else
 			# SA doesn't exist, but try ping anyway to see if there's any connectivity
-			if check_ping_multiple_ips "$ping_target" "$local_ip"; then
+			if check_ping_multiple_ips "$ping_target" "$local_ip" "$location_name"; then
 				handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check passed but no SA found - tunnel may be down but connectivity exists via other route${location_name:+ for $location_name}"
 			fi
 		fi
@@ -1804,15 +1809,15 @@ check_ping_if_enabled() {
 		# Single IP - use existing logic
 		if [[ $vpn_ok -eq 1 ]]; then
 			# SA exists, verify connectivity with ping check
-			if ! check_ping_connectivity "$ping_target" "$local_ip"; then
+			if ! check_ping_connectivity "$ping_target" "$local_ip" "$location_name"; then
 				# SA exists but ping failed - tunnel may be broken
 				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN SA exists but ping check failed for $ping_target - tunnel may not be routing traffic${location_name:+ for $location_name}"
 			else
-				log_message "INFO" "SYSTEM" "VPN connectivity verified: ping check passed for $ping_target"
+				log_message "INFO" "${location_name:-SYSTEM}" "VPN connectivity verified: ping check passed for $ping_target"
 			fi
 		else
 			# SA doesn't exist, but try ping anyway to see if there's any connectivity
-			if check_ping_connectivity "$ping_target" "$local_ip"; then
+			if check_ping_connectivity "$ping_target" "$local_ip" "$location_name"; then
 				handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check passed but no SA found - tunnel may be down but connectivity exists via other route${location_name:+ for $location_name}"
 			fi
 		fi
@@ -2160,6 +2165,7 @@ check_ipsec_fallback() {
 #   $1: Current VPN status (0 = failed, 1 = OK)
 #   $2: External peer IP address (external/public IP of remote VPN gateway)
 #   $3: Internal peer IP address (optional, used for ping checks, falls back to external if not provided)
+#   $4: Location name (optional, used for logging)
 #
 # Returns:
 #   0: Always returns 0 (doesn't affect VPN status)
@@ -2170,11 +2176,12 @@ check_ping_optional() {
 	local vpn_ok="$1"
 	local external_peer_ip="$2"
 	local internal_peer_ip="${3:-}"
+	local location_name="${4:-}"
 
 	# Perform ping check if enabled (informational, doesn't affect vpn_ok)
 	# Use internal IP if provided, otherwise fall back to external IP
 	local ping_ip="${internal_peer_ip:-$external_peer_ip}"
-	check_ping_if_enabled "$vpn_ok" "$ping_ip"
+	check_ping_if_enabled "$vpn_ok" "$ping_ip" "" "$location_name"
 
 	return 0
 }
@@ -2378,7 +2385,7 @@ check_vpn_status() {
 	fi
 
 	# Perform optional ping check if enabled (pass all internal IPs for multiple IP support)
-	check_ping_optional "$vpn_ok" "$external_peer_ip" "$internal_peer_ips"
+	check_ping_optional "$vpn_ok" "$external_peer_ip" "$internal_peer_ips" "$location_name"
 
 	# Determine final VPN status based on failure type detection
 	# Pass location_name, first internal IP, and peer_sanitized for failure type detection

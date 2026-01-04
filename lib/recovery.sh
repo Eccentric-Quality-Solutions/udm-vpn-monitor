@@ -453,6 +453,8 @@ attempt_xfrm_recovery() {
 	local sa_list=()
 
 	[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Parsing xfrm output for $location_name ($peer_ip)"
+	# Track if we've logged raw xfrm output (to avoid excessive logging on multiple failures)
+	local raw_xfrm_output_logged=0
 
 	# Parse loop: Process each line of xfrm output
 	# State machine transitions:
@@ -552,6 +554,47 @@ attempt_xfrm_recovery() {
 	for sa_entry in "${sa_list[@]}"; do
 		IFS='|' read -r sa_src sa_dst sa_proto sa_spi <<<"$sa_entry"
 
+		# Enhanced diagnostics: Query xfrm state right before deletion to check for race conditions
+		# and to capture the exact format the kernel sees
+		local pre_delete_xfrm_output
+		local pre_delete_query_success=0
+		if pre_delete_xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "dst $sa_dst" -A 20 2>/dev/null); then
+			pre_delete_query_success=1
+			# Check if this specific SA (with all selectors) appears in the output
+			if [[ "$pre_delete_xfrm_output" == *"src $sa_src"* ]] &&
+				[[ "$pre_delete_xfrm_output" == *"dst $sa_dst"* ]] &&
+				[[ "$pre_delete_xfrm_output" == *"proto $sa_proto"* ]] &&
+				[[ "$pre_delete_xfrm_output" == *"spi $sa_spi"* ]]; then
+				# Extract the exact SA block for this specific SA to see what the kernel sees
+				# This helps identify if there are additional attributes we're missing
+				local exact_sa_block
+				exact_sa_block=$(echo "$pre_delete_xfrm_output" | awk '
+					/^src '"$sa_src"'[[:space:]]+dst '"$sa_dst"'/ {found=1; print; next}
+					found && /^src/ {found=0}
+					found {print}
+				' | head -15)
+				[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Pre-delete SA block for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi:\n$exact_sa_block"
+			fi
+		fi
+
+		# Try to query the exact SA using ip xfrm state get to see what the kernel expects
+		# This helps identify if we need additional selectors
+		# Note: We capture output with 2>&1 - on success (exit 0), output is stdout (SA details)
+		# On failure (non-zero exit), output is stderr (error message)
+		local get_sa_output
+		local get_sa_stderr=""
+		local get_sa_exit_code
+		get_sa_output=$(ip xfrm state get src "$sa_src" dst "$sa_dst" proto "$sa_proto" spi "$sa_spi" 2>&1)
+		get_sa_exit_code=$?
+		# Separate stdout from stderr based on exit code
+		if [[ $get_sa_exit_code -ne 0 ]]; then
+			# On failure, the captured output is stderr
+			get_sa_stderr="$get_sa_output"
+			get_sa_output=""
+		fi
+		[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Executing delete command: ip xfrm state delete src \"$sa_src\" dst \"$sa_dst\" proto \"$sa_proto\" spi \"$sa_spi\""
+		[[ "${DEBUG:-0}" -eq 1 ]] && [[ $get_sa_exit_code -eq 0 ]] && [[ -n "$get_sa_output" ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Kernel SA get output for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi:\n$get_sa_output"
+
 		# Capture stderr and exit code for diagnostic purposes
 		local delete_stderr
 		local delete_exit_code
@@ -562,7 +605,7 @@ attempt_xfrm_recovery() {
 			log_message "INFO" "$location_name" "xfrm recovery: Deleted SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi for $location_name ($peer_ip)"
 			((deleted_count++))
 		else
-			# Deletion failed - gather diagnostic information
+			# Deletion failed - gather comprehensive diagnostic information
 			local diagnostic_info="exit_code=$delete_exit_code"
 
 			# Add stderr output if present
@@ -570,28 +613,64 @@ attempt_xfrm_recovery() {
 				diagnostic_info="$diagnostic_info, stderr=\"$delete_stderr\""
 			fi
 
-			# Check if SA still exists (could indicate race condition or permissions issue)
-			# Query xfrm state for this peer and check if the specific SA (src+dst+proto+spi) still exists
-			# Use get_xfrm_state_for_peer to get full SA blocks, then check if all selectors appear together
-			local peer_xfrm_output
-			if peer_xfrm_output=$(get_xfrm_state_for_peer "$sa_dst" 2>/dev/null); then
-				# Check if all four selectors appear in the output (they may be on different lines)
-				# This is a simple check - if all selectors are present, the SA likely still exists
-				if [[ "$peer_xfrm_output" == *"src $sa_src"* ]] &&
-					[[ "$peer_xfrm_output" == *"dst $sa_dst"* ]] &&
-					[[ "$peer_xfrm_output" == *"proto $sa_proto"* ]] &&
-					[[ "$peer_xfrm_output" == *"spi $sa_spi"* ]]; then
-					diagnostic_info="$diagnostic_info, sa_still_exists=true"
+			# Add information about pre-delete query
+			if [[ $pre_delete_query_success -eq 1 ]]; then
+				# Check if SA still exists (could indicate race condition or permissions issue)
+				# Query xfrm state for this peer and check if the specific SA (src+dst+proto+spi) still exists
+				# Use get_xfrm_state_for_peer to get full SA blocks, then check if all selectors appear together
+				local peer_xfrm_output
+				if peer_xfrm_output=$(get_xfrm_state_for_peer "$sa_dst" 2>/dev/null); then
+					# Check if all four selectors appear in the output (they may be on different lines)
+					# This is a simple check - if all selectors are present, the SA likely still exists
+					if [[ "$peer_xfrm_output" == *"src $sa_src"* ]] &&
+						[[ "$peer_xfrm_output" == *"dst $sa_dst"* ]] &&
+						[[ "$peer_xfrm_output" == *"proto $sa_proto"* ]] &&
+						[[ "$peer_xfrm_output" == *"spi $sa_spi"* ]]; then
+						diagnostic_info="$diagnostic_info, sa_still_exists=true"
+						# If SA exists but deletion failed, extract the exact SA block for detailed logging
+						# This helps identify if there are additional attributes we're missing
+						local sa_block_details
+						sa_block_details=$(echo "$peer_xfrm_output" | awk '
+							/^src '"$sa_src"'[[:space:]]+dst '"$sa_dst"'/ {found=1; print; next}
+							found && /^src/ {found=0}
+							found {print}
+						' | head -15)
+						# Log the exact SA block separately to avoid breaking log message formatting
+						# Only log if we have block details (avoids empty logs)
+						if [[ -n "$sa_block_details" ]]; then
+							log_message "INFO" "$location_name" "xfrm recovery: SA block that exists but couldn't be deleted for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi:\n$sa_block_details"
+						fi
+					else
+						diagnostic_info="$diagnostic_info, sa_still_exists=false"
+					fi
 				else
-					diagnostic_info="$diagnostic_info, sa_still_exists=false"
+					# Failed to query xfrm state - can't determine if SA exists
+					diagnostic_info="$diagnostic_info, sa_still_exists=unknown"
 				fi
 			else
-				# Failed to query xfrm state - can't determine if SA exists
-				diagnostic_info="$diagnostic_info, sa_still_exists=unknown"
+				diagnostic_info="$diagnostic_info, pre_delete_query_failed=true"
 			fi
 
-			# Log detailed diagnostic information
+			# Add information about get command attempt
+			if [[ $get_sa_exit_code -eq 0 ]] && [[ -n "$get_sa_output" ]]; then
+				diagnostic_info="$diagnostic_info, get_sa_succeeded=true"
+			elif [[ -n "$get_sa_stderr" ]]; then
+				diagnostic_info="$diagnostic_info, get_sa_failed=\"$get_sa_stderr\""
+			fi
+
+			# Log comprehensive diagnostic information
 			handle_error "WARNING" "$location_name" "xfrm recovery: Failed to delete SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi for $location_name ($peer_ip) ($diagnostic_info)"
+
+			# Log the raw xfrm output we parsed (helps identify parsing issues vs kernel state)
+			# Only log once per recovery attempt to avoid excessive logging
+			if [[ $raw_xfrm_output_logged -eq 0 ]]; then
+				# Truncate very long output to avoid log bloat (first 50 lines should be enough)
+				local truncated_xfrm_output
+				truncated_xfrm_output=$(echo "$xfrm_output" | head -50)
+				log_message "INFO" "$location_name" "xfrm recovery: Raw xfrm output parsed (first 50 lines):\n$truncated_xfrm_output"
+				raw_xfrm_output_logged=1
+			fi
+
 			((failed_count++))
 		fi
 	done
