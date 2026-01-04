@@ -145,7 +145,7 @@ service cron status
    [WARNING] VPN suspect: SA exists for <IP> but byte counter info unavailable
    [WARNING] VPN suspect: No connection found via ipsec status for <IP>
    [INFO] Ping check OK: <internal_IP> from <local_IP> (0% packet loss)
-   [WARNING] Ping check passed but no SA found - tunnel may be down but connectivity exists via other route
+   [WARNING] VPN tunnel is down (no SA found), but connectivity exists via alternative route
    [WARNING] VPN failure type: Unknown (unable to determine specific failure type)
    ```
    If you see this pattern with successful ping checks, the VPN may actually be healthy but detection is failing due to byte counter extraction issues. The system should automatically fall back to ping checks when byte counters are unavailable (if `ENABLE_PING_CHECK=1` and internal IPs are configured).

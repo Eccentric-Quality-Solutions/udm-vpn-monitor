@@ -2069,5 +2069,149 @@ These lessons should be applied systematically in future development and code re
 27. **Always re-check critical state instead of relying on cached values** - Cached state can become stale, especially when state changes can occur between checks
 28. **Handle hash collisions in anonymization functions** - When using hash-based mapping to ensure uniqueness, always implement collision resolution. Hash collisions are inevitable when mapping many inputs to fewer outputs. Track used values and implement linear probing or suffix appending to handle collisions and exhaustion.
 29. **When adding similar functionality, consider code duplication vs. clarity trade-offs** - When adding retention options for logs and state directories similar to config file retention, the three handler functions (`handle_config_file`, `handle_logs_dir`, `handle_state_dir`) have similar structure. While this creates some duplication, keeping them separate improves readability and maintainability. Extracting common logic would reduce duplication but make the code harder to understand. **Decision:** Keep similar but separate functions when clarity benefits outweigh DRY benefits, especially for user-facing interactive prompts where explicit code paths are easier to debug and modify.
+30. **Parse all selectors when interacting with kernel interfaces** - When parsing structured output from kernel interfaces (netlink, xfrm, iproute2), parse ALL attributes that could be selectors, not just the required ones. Optional attributes become required selectors when present. Missing selectors cause operations to fail with "No such process" errors even when the object exists. Include all parsed selectors in operations (get, delete, modify) to ensure successful matching.
+
+---
+
+## 30. Parse All Selectors When Interacting with Kernel Interfaces
+
+### Problem
+During xfrm recovery implementation, we discovered that SA deletion was failing with "RTNETLINK answers: No such process" (exit code 2) even though the SAs existed. Root cause analysis revealed that SAs with `mark` attributes require the mark to be included as a selector in deletion commands. The code was only parsing and using `src`, `dst`, `proto`, and `spi` selectors, missing the `mark` selector.
+
+**Status:** ✅ **FIXED** (2026-01-04) - Added mark parsing and inclusion in deletion commands
+
+### Impact
+- xfrm recovery failed for all SAs with mark attributes
+- Always fell back to full IPsec restart (more disruptive than intended)
+- Error message was misleading ("No such process" suggests object doesn't exist, but it does)
+- Recovery was less surgical than intended (affected all tunnels instead of just the failed one)
+
+### Root Cause
+Linux kernel interfaces (netlink, xfrm, iproute2) use selectors to identify objects. When an object has optional attributes (like `mark`), those attributes become part of the object's identity when present. To match an object for operations (get, delete, modify), ALL selectors must be provided, including optional ones that are present.
+
+**Example:**
+```bash
+# SA exists with mark attribute
+ip xfrm state
+# Output:
+# src 172.31.16.115 dst 172.31.23.27
+#   proto esp spi 0x12345678
+#   mark 0x12000000/0xfe000000
+
+# ❌ BAD: Deletion without mark fails
+ip xfrm state delete src 172.31.16.115 dst 172.31.23.27 proto esp spi 0x12345678
+# Error: RTNETLINK answers: No such process
+
+# ✅ GOOD: Deletion with mark succeeds
+ip xfrm state delete src 172.31.16.115 dst 172.31.23.27 proto esp spi 0x12345678 mark 0x12000000/0xfe000000
+# Success
+```
+
+### Lesson
+**When parsing structured output from kernel interfaces, parse ALL attributes that could be selectors, not just the required ones.** Optional attributes become required selectors when present. Missing selectors cause operations to fail even when the object exists.
+
+### Pattern to Follow
+```bash
+# ✅ GOOD: Parse all potential selectors
+parse_xfrm_sa() {
+    local xfrm_output="$1"
+    local src="" dst="" proto="" spi="" mark=""
+    
+    # Parse required selectors
+    if [[ "$xfrm_output" =~ src[[:space:]]+([0-9.]+) ]]; then
+        src="${BASH_REMATCH[1]}"
+    fi
+    # ... parse dst, proto, spi ...
+    
+    # Parse optional selectors (become required when present)
+    if [[ "$xfrm_output" =~ mark[[:space:]]+(0x[0-9a-fA-F]+/0x[0-9a-fA-F]+) ]]; then
+        mark="${BASH_REMATCH[1]}"
+    fi
+    
+    # Include all selectors in operations
+    local delete_cmd="ip xfrm state delete src \"$src\" dst \"$dst\" proto \"$proto\" spi \"$spi\""
+    if [[ -n "$mark" ]]; then
+        delete_cmd="$delete_cmd mark \"$mark\""
+    fi
+    eval "$delete_cmd"
+}
+
+# ❌ BAD: Only parse required selectors
+parse_xfrm_sa() {
+    local xfrm_output="$1"
+    local src="" dst="" proto="" spi=""
+    
+    # Parse only required selectors
+    # ... parse src, dst, proto, spi ...
+    
+    # Missing: Don't parse mark (optional selector)
+    
+    # Deletion fails for SAs with mark
+    ip xfrm state delete src "$src" dst "$dst" proto "$proto" spi "$spi"
+    # Error: RTNETLINK answers: No such process (even though SA exists!)
+}
+```
+
+### Key Principles for Kernel Interface Parsing
+
+1. **Parse All Attributes**
+   - Don't assume optional attributes are irrelevant
+   - When an attribute is present, it becomes part of the object's identity
+   - Parse all attributes that could be selectors
+
+2. **Include All Selectors in Operations**
+   - When performing operations (get, delete, modify), include all selectors
+   - Optional selectors must be included when present
+   - Missing selectors cause "No such process" errors even when object exists
+
+3. **Handle Optional Selectors Gracefully**
+   - Store optional selectors as empty strings when not present
+   - Only include optional selectors in commands when they were parsed
+   - Maintain backward compatibility (objects without optional selectors still work)
+
+4. **Misleading Error Messages**
+   - "No such process" (ESRCH) doesn't mean object doesn't exist
+   - It means selectors don't match exactly
+   - Object exists but can't be matched without all selectors
+
+### Systematic Application
+- When parsing kernel interface output (netlink, xfrm, iproute2), parse all attributes
+- When performing operations on parsed objects, include all selectors
+- Don't assume optional attributes are optional for matching
+- Test with objects that have optional attributes to verify parsing
+- Document which attributes are selectors vs. metadata
+
+### Related Patterns
+- See `lib/recovery.sh:attempt_xfrm_recovery()` for mark selector parsing implementation
+- See `analyze/LOG_ANALYSIS_ISSUES.md` for root cause analysis
+- Kernel interfaces that use selectors: xfrm (SAs, policies), netlink (routes, addresses), iproute2 (various)
+- Error code ESRCH (No such process) often means "selector mismatch" not "object doesn't exist"
+
+### Example: XFRM SA Parsing
+
+**Before Fix:**
+```bash
+# Only parsed: src, dst, proto, spi
+# Missing: mark (optional selector)
+sa_list+=("$src|$dst|$proto|$spi")
+# Deletion command missing mark → fails with "No such process"
+ip xfrm state delete src "$src" dst "$dst" proto "$proto" spi "$spi"
+```
+
+**After Fix:**
+```bash
+# Parse all selectors including optional mark
+sa_list+=("$src|$dst|$proto|$spi|${mark:-}")
+# Deletion command includes mark when present → succeeds
+if [[ -n "$mark" ]]; then
+    delete_cmd="$delete_cmd mark \"$mark\""
+fi
+```
+
+### Test Coverage
+- ✅ Test mark parsing from xfrm output
+- ✅ Test mark inclusion in deletion commands
+- ✅ Test backward compatibility (SAs without marks)
+- ✅ Test mixed scenarios (some SAs with mark, some without)
 
 ---

@@ -38,6 +38,9 @@ source "${UNINSTALL_SCRIPT_DIR}/lib/common.sh"
 # accidental deletion of unintended files. This is a critical safety check
 # that ensures we never delete files outside the intended installation directory.
 #
+# Arguments:
+#   None (uses global INSTALL_DIR variable)
+#
 # Returns:
 #   0: INSTALL_DIR is safe (matches expected path)
 #   1: INSTALL_DIR is unsafe (doesn't match expected path or is empty)
@@ -80,6 +83,9 @@ validate_install_dir_safety() {
 # Verifies that the VPN monitor installation directory exists.
 # Used to determine if there's anything to uninstall.
 #
+# Arguments:
+#   None (uses global INSTALL_DIR variable)
+#
 # Returns:
 #   0: Installation directory exists
 #   1: Installation directory not found
@@ -96,6 +102,9 @@ check_installation() {
 #
 # Removes the VPN monitor cron job entry from the root crontab.
 # Filters out lines containing "vpn-monitor.sh" and updates crontab.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Cron entry removed successfully (or didn't exist)
@@ -143,6 +152,9 @@ remove_cron() {
 #
 # Removes the logrotate configuration file for application log rotation.
 # Only removes if the file exists and we have write access.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Logrotate config removed successfully (or didn't exist)
@@ -440,6 +452,9 @@ build_preserved_list_string() {
 # If config file, logs, or state directories are being kept in-place, removes all files
 # except those preserved items and keeps the directory. Otherwise, removes the entire directory.
 #
+# Arguments:
+#   None (uses global INSTALL_DIR and KEEP_*_IN_PLACE flags)
+#
 # Returns:
 #   0: Directory/files removed successfully (or didn't exist)
 #   1: Failed to remove directory/files
@@ -599,6 +614,9 @@ remove_installation_dir() {
 # Disables, stops, and removes the systemd service file for the VPN keepalive daemon.
 # Only removes if systemd is available and service exists.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Always succeeds (warnings logged but don't fail)
 #
@@ -646,6 +664,9 @@ remove_keepalive_service() {
 # Stops the VPN keepalive daemon if it is running.
 # This ensures the daemon is cleanly stopped before uninstallation.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Always succeeds (warnings logged but don't fail)
 #
@@ -690,6 +711,9 @@ stop_keepalive_daemon() {
 # When config is kept in-place, the find command should remove the lockfile,
 # but this provides an additional safety net.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Always succeeds (warnings logged but don't fail)
 #
@@ -720,6 +744,9 @@ cleanup_lockfile() {
 #   - Cron entry no longer exists
 #   - Logrotate configuration no longer exists
 # Logs errors for any components that still exist unexpectedly.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Uninstallation verified successfully (all components removed or properly preserved)
@@ -777,30 +804,71 @@ verify_uninstallation() {
 			fi
 
 			# Check that only preserved items remain
-			local expected_count=${#preserved_items[@]}
-			local actual_count=0
-			if [[ $KEEP_CONFIG_IN_PLACE -eq 1 ]] && [[ -f "$CONFIG_FILE" ]]; then
-				actual_count=$((actual_count + 1))
+			# Build list of preserved item basenames for comparison
+			local preserved_basenames=()
+			if [[ $KEEP_CONFIG_IN_PLACE -eq 1 ]]; then
+				preserved_basenames+=("$(basename "$CONFIG_FILE")")
 			fi
-			if [[ $KEEP_LOGS_IN_PLACE -eq 1 ]] && [[ -d "$LOGS_DIR" ]]; then
-				actual_count=$((actual_count + 1))
+			if [[ $KEEP_LOGS_IN_PLACE -eq 1 ]]; then
+				preserved_basenames+=("$(basename "$LOGS_DIR")")
 			fi
-			if [[ $KEEP_STATE_IN_PLACE -eq 1 ]] && [[ -d "$STATE_DIR" ]]; then
-				actual_count=$((actual_count + 1))
+			if [[ $KEEP_STATE_IN_PLACE -eq 1 ]]; then
+				preserved_basenames+=("$(basename "$STATE_DIR")")
 			fi
 
-			# Count top-level items in directory
-			local top_level_count
-			top_level_count=$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 | wc -l)
+			# Helper function to check if an item name is in the preserved list
+			# Arguments:
+			#   $1: Item name to check
+			# Returns:
+			#   0: Item is preserved
+			#   1: Item is not preserved
+			is_item_preserved() {
+				local item_name="$1"
+				for preserved_name in "${preserved_basenames[@]}"; do
+					if [[ "$item_name" == "$preserved_name" ]]; then
+						return 0
+					fi
+				done
+				return 1
+			}
+
+			# Check each item in the directory to ensure it's in the preserved list
+			local unexpected_items=()
+			# Check visible files/directories
+			for item in "$INSTALL_DIR"/*; do
+				# Skip if glob didn't match anything
+				if [[ ! -e "$item" ]]; then
+					continue
+				fi
+				local item_name
+				item_name=$(basename "$item")
+				if ! is_item_preserved "$item_name"; then
+					unexpected_items+=("$item_name")
+				fi
+			done
+
+			# Also check for hidden files/directories
+			for item in "$INSTALL_DIR"/.*; do
+				# Skip . and .. entries
+				if [[ ! -e "$item" ]] || [[ "$(basename "$item")" == "." ]] || [[ "$(basename "$item")" == ".." ]]; then
+					continue
+				fi
+				local item_name
+				item_name=$(basename "$item")
+				if ! is_item_preserved "$item_name"; then
+					unexpected_items+=("$item_name")
+				fi
+			done
 
 			# Build preserved list string for logging
 			local preserved_list
 			preserved_list=$(build_preserved_list_string "${preserved_items[@]}")
 
-			if [[ $top_level_count -eq $expected_count ]] && [[ $actual_count -eq $expected_count ]]; then
+			if [[ ${#unexpected_items[@]} -eq 0 ]]; then
 				log_info "Installation directory cleaned (preserved: ${preserved_list})"
 			else
 				log_error "Installation directory should only contain preserved items (${preserved_list})"
+				log_error "Found unexpected items: ${unexpected_items[*]}"
 				errors=$((errors + 1))
 			fi
 		else
@@ -857,6 +925,9 @@ verify_uninstallation() {
 # Displays a summary of what was removed during uninstallation.
 # Shows confirmation that VPN Monitor has been completely removed.
 # Lists any preserved items (config, logs, state) if they were kept.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Always succeeds

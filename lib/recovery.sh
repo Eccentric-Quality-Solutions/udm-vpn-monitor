@@ -28,8 +28,51 @@ fi
 # Using direct source pattern since detection.sh is sourced before common.sh
 source "${LIB_DIR}/detection.sh" 2>/dev/null || {
 	# Fallback if detection.sh not found
+	# Check for IPsec Phase 2 Security Association (fallback stub)
+	#
+	# Fallback stub function when detection.sh cannot be sourced.
+	# Always returns failure since detection functionality is unavailable.
+	#
+	# Arguments:
+	#   $1: Peer IP address to check (ignored in fallback)
+	#
+	# Returns:
+	#   1: Always returns failure (detection.sh unavailable)
+	#
+	# Note:
+	#   This is a fallback stub. The real implementation is in detection.sh.
 	check_ipsec_phase2() { return 1; }
+	# Extract byte counter from xfrm output (fallback stub)
+	#
+	# Fallback stub function when detection.sh cannot be sourced.
+	# Always returns failure since detection functionality is unavailable.
+	#
+	# Arguments:
+	#   $1: xfrm output text (ignored in fallback)
+	#
+	# Returns:
+	#   1: Always returns failure (detection.sh unavailable)
+	#
+	# Note:
+	#   This is a fallback stub. The real implementation is in detection.sh.
 	extract_byte_counter() { return 1; }
+	# Check byte counters for VPN status (fallback stub)
+	#
+	# Fallback stub function when detection.sh cannot be sourced.
+	# Always returns failure since detection functionality is unavailable.
+	#
+	# Arguments:
+	#   $1: Location name (ignored in fallback)
+	#   $2: Current byte count (ignored in fallback)
+	#   $3: Peer IP address (ignored in fallback)
+	#   $4: Current SPI value (optional, ignored in fallback)
+	#   $5: Internal peer IP address (optional, ignored in fallback)
+	#
+	# Returns:
+	#   1: Always returns failure (detection.sh unavailable)
+	#
+	# Note:
+	#   This is a fallback stub. The real implementation is in detection.sh.
 	check_byte_counters() { return 1; }
 }
 
@@ -260,6 +303,7 @@ verify_ipsec_connections_active() {
 	local active_count=0
 	local total_count=${#peer_ips_array[@]}
 
+	local peer_ip
 	for peer_ip in "${peer_ips_array[@]}"; do
 		# Check if peer IP appears in ipsec status output
 		# Use fixed-string matching for safety
@@ -395,7 +439,8 @@ verify_ipsec_connections_active() {
 #   #   ...
 #
 # Note:
-#   This function parses 'ip xfrm state' output to extract SA selectors (src, dst, proto, spi).
+#   This function parses 'ip xfrm state' output to extract SA selectors (src, dst, proto, spi, mark).
+#   Mark selector is optional - when present, it must be included in deletion commands for successful deletion.
 #   Parsing is optimized for UDM OS 4.3+ format. Supports both IPv4 and IPv6 addresses.
 #   Requires 'ip' command and root privileges.
 #   Uses check_ipsec_phase2() from detection.sh to verify SA re-establishment.
@@ -455,16 +500,19 @@ attempt_xfrm_recovery() {
 	# Parse xfrm output to extract and delete SAs
 	# Format: Each SA block starts with "src <ip> dst <ip>" followed by "proto <proto> spi <spi>"
 	# UDM OS 4.3+ uses consistent format: src and dst on first line, proto and spi on continuation lines
+	# Mark attribute (optional): "mark 0x<value>/0x<mask>" appears on continuation lines
 	#
 	# Parsing state variables:
 	#   current_src, current_dst: Source and destination IPs (extracted from SA header line)
 	#   current_proto, current_spi: Protocol and SPI (extracted from continuation lines)
+	#   current_mark: Mark selector (extracted from continuation lines, optional)
 	#   in_sa_block: Boolean flag indicating we're currently parsing an SA block
-	#   sa_list: Array of complete SA entries in format "src|dst|proto|spi"
+	#   sa_list: Array of complete SA entries in format "src|dst|proto|spi|mark" (mark may be empty)
 	local current_src=""
 	local current_dst=""
 	local current_proto=""
 	local current_spi=""
+	local current_mark=""
 	local in_sa_block=0
 	local sa_list=()
 
@@ -477,10 +525,11 @@ attempt_xfrm_recovery() {
 	#   1. New SA block detected (line starts with "src ... dst ..."):
 	#      - Save previous SA if complete (all selectors present)
 	#      - Start new SA block, extract src and dst
-	#      - Reset proto and spi (will be extracted from continuation lines)
+	#      - Reset proto, spi, and mark (will be extracted from continuation lines)
 	#   2. Continuation line (within SA block):
 	#      - Extract proto if present (may be on same line as spi)
 	#      - Extract spi if present (may be on same line as proto or separate line)
+	#      - Extract mark if present (format: "mark 0x<value>/0x<mask>")
 	#      - Note: Later spi match overwrites earlier one (handles both formats)
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		# Skip empty lines (don't affect parsing state)
@@ -499,9 +548,10 @@ attempt_xfrm_recovery() {
 				# SPI must be hex (0x...) or decimal format
 				if [[ "$current_proto" =~ ^(esp|ah)$ ]] && [[ "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
 					# Store complete SA as delimited string for later processing
-					# Format: "src|dst|proto|spi" (pipe separator avoids IP address conflicts)
-					sa_list+=("$current_src|$current_dst|$current_proto|$current_spi")
-					[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi for $location_name ($peer_ip)"
+					# Format: "src|dst|proto|spi|mark" (pipe separator avoids IP address conflicts)
+					# Mark may be empty (backward compatibility with SAs without marks)
+					sa_list+=("$current_src|$current_dst|$current_proto|$current_spi|${current_mark:-}")
+					[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi mark=${current_mark:-<none>} for $location_name ($peer_ip)"
 				else
 					# Invalid selectors: log warning but continue parsing (may have valid SAs later)
 					handle_error "WARNING" "$location_name" "xfrm recovery: Invalid SA selectors: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi for $location_name ($peer_ip)"
@@ -515,6 +565,7 @@ attempt_xfrm_recovery() {
 			current_dst="${BASH_REMATCH[2]:-}"
 			current_proto="" # Will be extracted from continuation lines
 			current_spi=""   # Will be extracted from continuation lines
+			current_mark=""  # Will be extracted from continuation lines (optional)
 			in_sa_block=1    # Mark that we're now parsing an SA block
 
 		# State: Continuation line (within an SA block)
@@ -541,6 +592,12 @@ attempt_xfrm_recovery() {
 			if [[ "$line" =~ ^[[:space:]]*spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+) ]]; then
 				current_spi="${BASH_REMATCH[1]:-}"
 			fi
+			# Look for "mark <value>/<mask>" line (optional selector, format: "mark 0x<value>/0x<mask>")
+			# Mark is a required selector when present - must be included in deletion commands
+			# Format examples: "mark 0x12000000/0xfe000000" or "mark 0x12345678/0xffffffff"
+			if [[ "$line" =~ ^[[:space:]]*mark[[:space:]]+(0x[0-9a-fA-F]+/0x[0-9a-fA-F]+) ]]; then
+				current_mark="${BASH_REMATCH[1]:-}"
+			fi
 		fi
 	done <<<"$xfrm_output"
 
@@ -550,8 +607,8 @@ attempt_xfrm_recovery() {
 	if [[ $in_sa_block -eq 1 ]] && [[ -n "$current_src" ]] && [[ -n "$current_dst" ]] && [[ -n "$current_proto" ]] && [[ -n "$current_spi" ]]; then
 		# Validate selectors before adding to list (same validation as in main loop)
 		if [[ "$current_proto" =~ ^(esp|ah)$ ]] && [[ "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
-			sa_list+=("$current_src|$current_dst|$current_proto|$current_spi")
-			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "SYSTEM" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
+			sa_list+=("$current_src|$current_dst|$current_proto|$current_spi|${current_mark:-}")
+			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "SYSTEM" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi mark=${current_mark:-<none>}"
 		else
 			handle_error "WARNING" "$location_name" "xfrm recovery: Invalid SA selectors: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi for $location_name ($peer_ip)"
 			((parse_errors++))
@@ -568,7 +625,7 @@ attempt_xfrm_recovery() {
 
 	# Delete each parsed SA
 	for sa_entry in "${sa_list[@]}"; do
-		IFS='|' read -r sa_src sa_dst sa_proto sa_spi <<<"$sa_entry"
+		IFS='|' read -r sa_src sa_dst sa_proto sa_spi sa_mark <<<"$sa_entry"
 
 		# Enhanced diagnostics: Query xfrm state right before deletion to check for race conditions
 		# and to capture the exact format the kernel sees
@@ -577,30 +634,56 @@ attempt_xfrm_recovery() {
 		if pre_delete_xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "dst $sa_dst" -A 20 2>/dev/null); then
 			pre_delete_query_success=1
 			# Check if this specific SA (with all selectors) appears in the output
+			# Include mark in check if present (mark is a required selector when present)
+			local sa_match=1
 			if [[ "$pre_delete_xfrm_output" == *"src $sa_src"* ]] &&
 				[[ "$pre_delete_xfrm_output" == *"dst $sa_dst"* ]] &&
 				[[ "$pre_delete_xfrm_output" == *"proto $sa_proto"* ]] &&
 				[[ "$pre_delete_xfrm_output" == *"spi $sa_spi"* ]]; then
-				# Extract the exact SA block for this specific SA to see what the kernel sees
-				# This helps identify if there are additional attributes we're missing
-				local exact_sa_block
-				exact_sa_block=$(echo "$pre_delete_xfrm_output" | awk '
-					/^src '"$sa_src"'[[:space:]]+dst '"$sa_dst"'/ {found=1; print; next}
-					found && /^src/ {found=0}
-					found {print}
-				' | head -15)
-				[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Pre-delete SA block for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi:\n$exact_sa_block"
+				# If mark is present, verify it matches too
+				if [[ -n "$sa_mark" ]]; then
+					# Mark format in output: "mark 0x<value>/0x<mask>"
+					if [[ ! "$pre_delete_xfrm_output" == *"mark $sa_mark"* ]]; then
+						sa_match=0
+					fi
+				fi
+				if [[ $sa_match -eq 1 ]]; then
+					# Extract the exact SA block for this specific SA to see what the kernel sees
+					# This helps identify if there are additional attributes we're missing
+					local exact_sa_block
+					exact_sa_block=$(echo "$pre_delete_xfrm_output" | awk '
+						/^src '"$sa_src"'[[:space:]]+dst '"$sa_dst"'/ {found=1; print; next}
+						found && /^src/ {found=0}
+						found {print}
+					' | head -15)
+					if [[ -n "$sa_mark" ]]; then
+						[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Pre-delete SA block for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=$sa_mark:\n$exact_sa_block"
+					else
+						[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Pre-delete SA block for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi:\n$exact_sa_block"
+					fi
+				fi
 			fi
+		fi
+
+		# Build deletion command with all selectors (including mark if present)
+		# Mark is a required selector when present - must be included for successful deletion
+		local delete_cmd="ip xfrm state delete src \"$sa_src\" dst \"$sa_dst\" proto \"$sa_proto\" spi \"$sa_spi\""
+		if [[ -n "$sa_mark" ]]; then
+			delete_cmd="$delete_cmd mark \"$sa_mark\""
 		fi
 
 		# Try to query the exact SA using ip xfrm state get to see what the kernel expects
 		# This helps identify if we need additional selectors
 		# Note: We capture output with 2>&1 - on success (exit 0), output is stdout (SA details)
 		# On failure (non-zero exit), output is stderr (error message)
+		local get_sa_cmd="ip xfrm state get src \"$sa_src\" dst \"$sa_dst\" proto \"$sa_proto\" spi \"$sa_spi\""
+		if [[ -n "$sa_mark" ]]; then
+			get_sa_cmd="$get_sa_cmd mark \"$sa_mark\""
+		fi
 		local get_sa_output
 		local get_sa_stderr=""
 		local get_sa_exit_code
-		get_sa_output=$(ip xfrm state get src "$sa_src" dst "$sa_dst" proto "$sa_proto" spi "$sa_spi" 2>&1)
+		get_sa_output=$(eval "$get_sa_cmd" 2>&1)
 		get_sa_exit_code=$?
 		# Separate stdout from stderr based on exit code
 		if [[ $get_sa_exit_code -ne 0 ]]; then
@@ -608,17 +691,21 @@ attempt_xfrm_recovery() {
 			get_sa_stderr="$get_sa_output"
 			get_sa_output=""
 		fi
-		[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Executing delete command: ip xfrm state delete src \"$sa_src\" dst \"$sa_dst\" proto \"$sa_proto\" spi \"$sa_spi\""
-		[[ "${DEBUG:-0}" -eq 1 ]] && [[ $get_sa_exit_code -eq 0 ]] && [[ -n "$get_sa_output" ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Kernel SA get output for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi:\n$get_sa_output"
+		[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Executing delete command: $delete_cmd"
+		[[ "${DEBUG:-0}" -eq 1 ]] && [[ $get_sa_exit_code -eq 0 ]] && [[ -n "$get_sa_output" ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Kernel SA get output for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=${sa_mark:-<none>}:\n$get_sa_output"
 
 		# Capture stderr and exit code for diagnostic purposes
 		local delete_stderr
 		local delete_exit_code
-		delete_stderr=$(ip xfrm state delete src "$sa_src" dst "$sa_dst" proto "$sa_proto" spi "$sa_spi" 2>&1)
+		delete_stderr=$(eval "$delete_cmd" 2>&1)
 		delete_exit_code=$?
 
 		if [[ $delete_exit_code -eq 0 ]]; then
-			log_message "INFO" "$location_name" "xfrm recovery: Deleted SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi for $location_name ($peer_ip)"
+			if [[ -n "$sa_mark" ]]; then
+				log_message "INFO" "$location_name" "xfrm recovery: Deleted SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=$sa_mark for $location_name ($peer_ip)"
+			else
+				log_message "INFO" "$location_name" "xfrm recovery: Deleted SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi for $location_name ($peer_ip)"
+			fi
 			((deleted_count++))
 		else
 			# Deletion failed - gather comprehensive diagnostic information
@@ -629,6 +716,11 @@ attempt_xfrm_recovery() {
 				diagnostic_info="$diagnostic_info, stderr=\"$delete_stderr\""
 			fi
 
+			# Add mark information if present
+			if [[ -n "$sa_mark" ]]; then
+				diagnostic_info="$diagnostic_info, mark=$sa_mark"
+			fi
+
 			# Add information about pre-delete query
 			if [[ $pre_delete_query_success -eq 1 ]]; then
 				# Check if SA still exists (could indicate race condition or permissions issue)
@@ -636,25 +728,42 @@ attempt_xfrm_recovery() {
 				# Use get_xfrm_state_for_peer to get full SA blocks, then check if all selectors appear together
 				local peer_xfrm_output
 				if peer_xfrm_output=$(get_xfrm_state_for_peer "$sa_dst" 2>/dev/null); then
-					# Check if all four selectors appear in the output (they may be on different lines)
+					# Check if all selectors appear in the output (they may be on different lines)
 					# This is a simple check - if all selectors are present, the SA likely still exists
+					# Include mark in check if present (mark is a required selector when present)
+					local sa_exists_check=1
 					if [[ "$peer_xfrm_output" == *"src $sa_src"* ]] &&
 						[[ "$peer_xfrm_output" == *"dst $sa_dst"* ]] &&
 						[[ "$peer_xfrm_output" == *"proto $sa_proto"* ]] &&
 						[[ "$peer_xfrm_output" == *"spi $sa_spi"* ]]; then
-						diagnostic_info="$diagnostic_info, sa_still_exists=true"
-						# If SA exists but deletion failed, extract the exact SA block for detailed logging
-						# This helps identify if there are additional attributes we're missing
-						local sa_block_details
-						sa_block_details=$(echo "$peer_xfrm_output" | awk '
-							/^src '"$sa_src"'[[:space:]]+dst '"$sa_dst"'/ {found=1; print; next}
-							found && /^src/ {found=0}
-							found {print}
-						' | head -15)
-						# Log the exact SA block separately to avoid breaking log message formatting
-						# Only log if we have block details (avoids empty logs)
-						if [[ -n "$sa_block_details" ]]; then
-							log_message "INFO" "$location_name" "xfrm recovery: SA block that exists but couldn't be deleted for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi:\n$sa_block_details"
+						# If mark is present, verify it matches too
+						if [[ -n "$sa_mark" ]]; then
+							# Mark format in output: "mark 0x<value>/0x<mask>"
+							if [[ ! "$peer_xfrm_output" == *"mark $sa_mark"* ]]; then
+								sa_exists_check=0
+							fi
+						fi
+						if [[ $sa_exists_check -eq 1 ]]; then
+							diagnostic_info="$diagnostic_info, sa_still_exists=true"
+							# If SA exists but deletion failed, extract the exact SA block for detailed logging
+							# This helps identify if there are additional attributes we're missing
+							local sa_block_details
+							sa_block_details=$(echo "$peer_xfrm_output" | awk '
+								/^src '"$sa_src"'[[:space:]]+dst '"$sa_dst"'/ {found=1; print; next}
+								found && /^src/ {found=0}
+								found {print}
+							' | head -15)
+							# Log the exact SA block separately to avoid breaking log message formatting
+							# Only log if we have block details (avoids empty logs)
+							if [[ -n "$sa_block_details" ]]; then
+								if [[ -n "$sa_mark" ]]; then
+									log_message "INFO" "$location_name" "xfrm recovery: SA block that exists but couldn't be deleted for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=$sa_mark:\n$sa_block_details"
+								else
+									log_message "INFO" "$location_name" "xfrm recovery: SA block that exists but couldn't be deleted for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi:\n$sa_block_details"
+								fi
+							fi
+						else
+							diagnostic_info="$diagnostic_info, sa_still_exists=false"
 						fi
 					else
 						diagnostic_info="$diagnostic_info, sa_still_exists=false"
@@ -675,7 +784,11 @@ attempt_xfrm_recovery() {
 			fi
 
 			# Log comprehensive diagnostic information
-			handle_error "WARNING" "$location_name" "xfrm recovery: Failed to delete SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi for $location_name ($peer_ip) ($diagnostic_info)"
+			if [[ -n "$sa_mark" ]]; then
+				handle_error "WARNING" "$location_name" "xfrm recovery: Failed to delete SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=$sa_mark for $location_name ($peer_ip) ($diagnostic_info)"
+			else
+				handle_error "WARNING" "$location_name" "xfrm recovery: Failed to delete SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi for $location_name ($peer_ip) ($diagnostic_info)"
+			fi
 
 			# Log the raw xfrm output we parsed (helps identify parsing issues vs kernel state)
 			# Only log once per recovery attempt to avoid excessive logging
@@ -859,6 +972,12 @@ attempt_xfrm_recovery() {
 #
 # Checks which recovery commands are available and stores results in global variables.
 # This centralizes command availability checks to simplify strategy selection logic.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds (results stored in global variables)
 #
 # Output (via global variables):
 #   _RECOVERY_IP_AVAILABLE: 1 if ip command available, 0 otherwise
