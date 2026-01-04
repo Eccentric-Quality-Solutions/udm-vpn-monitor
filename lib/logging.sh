@@ -54,7 +54,8 @@ get_formatted_timestamp() {
 #
 # Arguments:
 #   $1: Log level (INFO, WARNING, ERROR, DEBUG)
-#   $2+: Message text (all remaining arguments are concatenated with spaces)
+#   $2: Prefix name (location name or "SYSTEM" for system-level messages) - REQUIRED
+#   $3+: Message text (all remaining arguments are concatenated with spaces)
 #
 # Returns:
 #   0: Always returns 0 (never fails the script, even if file write fails)
@@ -64,7 +65,8 @@ get_formatted_timestamp() {
 #   - Outputs ERROR/WARNING to stderr (always)
 #   - Outputs DEBUG messages to stderr if DEBUG=1
 #   - Outputs INFO messages to stderr if running interactively (TTY attached)
-#   - Format: "[YYYY-MM-DD HH:MM:SS] [LEVEL] message"
+#   - Format: "[YYYY-MM-DD HH:MM:SS] [LEVEL] PREFIX: message"
+#   - PREFIX is either a location name (e.g., "NYC") or "SYSTEM" for system-level messages
 #
 # Side effects:
 #   - Creates log directory if it doesn't exist (mkdir -p)
@@ -72,9 +74,11 @@ get_formatted_timestamp() {
 #   - Outputs to stderr based on level and execution context
 #
 # Examples:
-#   log_message "INFO" "VPN monitor started"
-#   log_message "WARNING" "Config file not found:" "$config_file"
-#   log_message "ERROR" "Failed to restart VPN"
+#   log_message "INFO" "SYSTEM" "VPN monitor started"
+#   log_message "WARNING" "SYSTEM" "Config file not found:" "$config_file"
+#   log_message "ERROR" "SYSTEM" "Failed to restart VPN"
+#   log_message "INFO" "NYC" "VPN monitor started"
+#   log_message "WARNING" "NYC" "Config file not found:" "$config_file"
 #
 # Note:
 #   Requires LOG_FILE and DEBUG variables to be set (typically from config.sh)
@@ -82,15 +86,27 @@ get_formatted_timestamp() {
 #   DEBUG messages only output to stderr if DEBUG=1
 #   INFO messages output to stderr when running interactively (manual execution)
 #   When run via cron (no TTY), INFO messages only go to log file (quiet operation)
+#   Prefix should not contain spaces or colons (will be treated as part of message if it does)
+#   Prefix is REQUIRED - must be provided explicitly
 log_message() {
 	local level="$1"
-	shift
+	local prefix="$2"
+	shift 2
 	local message="$*"
+
+	# Require prefix (location name or "SYSTEM")
+	# Prefix must be provided - no default fallback
+	if [[ -z "$prefix" ]]; then
+		# This should never happen in production code
+		prefix="SYSTEM"
+		echo "[$(get_formatted_timestamp)] [ERROR] SYSTEM: log_message called without prefix - this is a bug" >&2
+	fi
+
 	local timestamp
 	timestamp=$(get_formatted_timestamp)
 
-	# Always output to stderr first for debugging
-	local log_entry="[$timestamp] [$level] $message"
+	# Format log entry with prefix (always present)
+	local log_entry="[$timestamp] [$level] $prefix: $message"
 
 	# Ensure log directory exists and is writable
 	# Note: We use try_ensure_directory_exists() instead of ensure_directory_exists()
@@ -99,7 +115,7 @@ log_message() {
 	log_dir=$(dirname "$LOG_FILE")
 	if ! try_ensure_directory_exists "$log_dir"; then
 		echo "$log_entry" >&2
-		echo "[$timestamp] [ERROR] Cannot create log directory: $log_dir" >&2
+		echo "[$timestamp] [ERROR] SYSTEM: Cannot create log directory: $log_dir" >&2
 		return 0 # Don't fail the script if logging fails
 	fi
 
@@ -110,7 +126,7 @@ log_message() {
 	} || {
 		# If write failed, at least we tried - output to stderr
 		echo "$log_entry" >&2
-		echo "[$timestamp] [ERROR] Failed to write to log file: $LOG_FILE" >&2
+		echo "[$timestamp] [ERROR] SYSTEM: Failed to write to log file: $LOG_FILE" >&2
 	}
 
 	# Determine if running interactively (TTY attached to stderr)
@@ -187,7 +203,7 @@ is_fake_mode() {
 die() {
 	local message="$1"
 	local exit_code="${2:-1}"
-	log_message "ERROR" "$message"
+	log_message "ERROR" "SYSTEM" "$message"
 	exit "$exit_code"
 }
 
@@ -199,8 +215,9 @@ die() {
 #
 # Arguments:
 #   $1: Severity level (ERROR, WARNING, INFO)
-#   $2: Error message to log
-#   $3: Exit code (optional, defaults to 1, only used for ERROR severity)
+#   $2: Prefix name (location name or "SYSTEM" for system-level messages) - REQUIRED
+#   $3: Error message to log
+#   $4: Exit code (optional, defaults to 1, only used for ERROR severity)
 #
 # Returns:
 #   0: Always returns 0 (unless severity is ERROR and exit_code is non-zero, then exits)
@@ -212,32 +229,69 @@ die() {
 #
 # Examples:
 #   # Non-fatal error (logs warning, continues execution)
-#   handle_error "WARNING" "Optional feature unavailable, using fallback"
+#   handle_error "WARNING" "SYSTEM" "Optional feature unavailable, using fallback"
+#   handle_error "WARNING" "NYC" "Optional feature unavailable, using fallback"
 #
 #   # Fatal error (logs error and exits)
-#   handle_error "ERROR" "Critical configuration missing" 1
+#   handle_error "ERROR" "SYSTEM" "Critical configuration missing" 1
+#   handle_error "ERROR" "NYC" "Critical configuration missing" 1
 #
 #   # Informational error (logs info, continues execution)
-#   handle_error "INFO" "Operation completed with minor issues"
+#   handle_error "INFO" "SYSTEM" "Operation completed with minor issues"
+#
+# Note: Prefix is REQUIRED - must be provided explicitly (no default fallback)
 #
 # Note:
 #   Requires log_message and die functions to be available (from this file)
 #   For ERROR severity with non-zero exit_code, calls die() which exits the script
 #   For other severities or zero exit_code, only logs the message
+#   Location name should not contain spaces or colons (will be treated as part of message if it does)
 handle_error() {
 	local severity="$1"
-	local message="$2"
-	local exit_code="${3:-1}"
+	local prefix="$2"
+	shift 2
+	local message="$*"
+	local exit_code="1"
+
+	# Parse arguments: prefix message [exit_code]
+	# Prefix is REQUIRED - must be provided explicitly
+	# Exit code is optional and must be numeric (last argument if present)
+
+	local arg_count=$#
+
+	# Check if last argument is numeric (exit code)
+	if [[ $arg_count -gt 0 ]]; then
+		# Use array indexing to get last argument (shellcheck SC2124)
+		local args_array=("$@")
+		local last_arg="${args_array[$((arg_count - 1))]}"
+		if [[ "$last_arg" =~ ^[0-9]+$ ]]; then
+			exit_code="$last_arg"
+			# Remove last arg from message
+			set -- "${args_array[@]:0:$((arg_count - 1))}"
+			message="$*"
+		else
+			message="$*"
+		fi
+	else
+		message=""
+	fi
+
+	# Require prefix - no default fallback
+	if [[ -z "$prefix" ]]; then
+		# This should never happen in production code
+		prefix="SYSTEM"
+		log_message "ERROR" "SYSTEM" "handle_error called without prefix - this is a bug"
+	fi
 
 	# Validate severity
 	if [[ "$severity" != "ERROR" ]] && [[ "$severity" != "WARNING" ]] && [[ "$severity" != "INFO" ]]; then
 		# Invalid severity, default to ERROR
-		log_message "ERROR" "Invalid severity '$severity' in handle_error, defaulting to ERROR"
+		log_message "ERROR" "SYSTEM" "Invalid severity '$severity' in handle_error, defaulting to ERROR"
 		severity="ERROR"
 	fi
 
-	# Log the message
-	log_message "$severity" "$message"
+	# Log the message with prefix (always present)
+	log_message "$severity" "$prefix" "$message"
 
 	# For ERROR severity with non-zero exit code, exit the script
 	if [[ "$severity" == "ERROR" ]] && [[ "$exit_code" -ne 0 ]]; then
@@ -254,8 +308,9 @@ handle_error() {
 # the pattern of handling errors differently based on fake mode.
 #
 # Arguments:
-#   $1: Error message to log
-#   $2: Exit code (optional, defaults to 1)
+#   $1: Prefix name (location name or "SYSTEM" for system-level messages) - REQUIRED
+#   $2: Error message to log
+#   $3: Exit code (optional, defaults to 1)
 #
 # Returns:
 #   1: In fake mode (allows calling function to return failure)
@@ -267,19 +322,54 @@ handle_error() {
 #   - Dies (exits with specified code) in normal mode
 #
 # Examples:
-#   handle_error_or_exit_fake_mode "Failed to parse configuration file: $config_file"
-#   handle_error_or_exit_fake_mode "Configuration validation failed" 2
+#   handle_error_or_exit_fake_mode "SYSTEM" "Failed to parse configuration file: $config_file"
+#   handle_error_or_exit_fake_mode "SYSTEM" "Configuration validation failed" 2
+#   handle_error_or_exit_fake_mode "NYC" "Failed to get external IP" 3
 #
 # Note:
 #   Requires handle_error, die, and is_fake_mode functions to be available (from this file)
 #   This function should be used for fatal errors that need fake mode support
 #   Use EXIT_* constants from constants.sh for exit codes
 #   In fake mode, returns 1 instead of exiting to allow tests to assert failure
+#   Location name should not contain spaces or colons (will be treated as part of message if it does)
 handle_error_or_exit_fake_mode() {
-	local message="$1"
-	local exit_code="${2:-1}"
+	local prefix="$1"
+	shift
+	local message="$*"
+	local exit_code="1"
+
+	# Parse arguments: prefix message [exit_code]
+	# Prefix is REQUIRED - must be provided explicitly
+	# Exit code is optional and must be numeric (last argument if present)
+
+	local arg_count=$#
+
+	# Check if last argument is numeric (exit code)
+	if [[ $arg_count -gt 0 ]]; then
+		# Use array indexing to get last argument (shellcheck SC2124)
+		local args_array=("$@")
+		local last_arg="${args_array[$((arg_count - 1))]}"
+		if [[ "$last_arg" =~ ^[0-9]+$ ]]; then
+			exit_code="$last_arg"
+			# Remove last arg from message
+			set -- "${args_array[@]:0:$((arg_count - 1))}"
+			message="$*"
+		else
+			message="$*"
+		fi
+	else
+		message=""
+	fi
+
+	# Require prefix - no default fallback
+	if [[ -z "$prefix" ]]; then
+		# This should never happen in production code
+		prefix="SYSTEM"
+		log_message "ERROR" "SYSTEM" "handle_error_or_exit_fake_mode called without prefix - this is a bug"
+	fi
+
 	if is_fake_mode; then
-		handle_error "ERROR" "$message" 0
+		handle_error "ERROR" "$prefix" "$message" 0
 		return 1
 	else
 		die "$message" "$exit_code"
@@ -316,7 +406,7 @@ handle_error_or_exit_fake_mode() {
 warn_if_missing() {
 	local cmd="$1"
 	if ! command -v "$cmd" >/dev/null 2>&1; then
-		log_message "WARNING" "$cmd not available"
+		log_message "WARNING" "SYSTEM" "$cmd not available"
 		return 1
 	fi
 	return 0

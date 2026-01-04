@@ -677,8 +677,8 @@ EOF
 	assert_file_exist "$log_file"
 
 	# Verify the combined message format:
-	# 1. Should contain "VPN suspect for" with peer IP
-	assert_log_contains "$log_file" "VPN suspect for $peer_ip"
+	# 1. Should contain "VPN suspect for" with location name and peer IP
+	assert_log_contains "$log_file" "VPN suspect for $location_name ($peer_ip)"
 
 	# 2. Should include xfrm detection method name
 	assert_log_contains "$log_file" "Detection method: xfrm (ip xfrm state)"

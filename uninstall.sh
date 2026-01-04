@@ -114,18 +114,24 @@ remove_cron() {
 		local filtered_content
 		filtered_content=$(echo "$crontab_content" | grep -v "vpn-monitor.sh")
 		if [ -n "$filtered_content" ]; then
-			echo "$filtered_content" | crontab -
+			if ! echo "$filtered_content" | crontab - 2>/dev/null; then
+				log_error "Failed to update crontab"
+				return 1
+			fi
 		else
 			# No other entries, clear crontab entirely
-			crontab -r 2>/dev/null || true
+			if ! crontab -r 2>/dev/null; then
+				log_warn "Failed to clear crontab (may not have permission or crontab already empty)"
+				# Don't fail if crontab is already empty - verification will catch if cron still exists
+			fi
 		fi
-		log_info "Cron job removed"
 
 		# Verify removal
 		if crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
-			log_error "Failed to remove cron job"
+			log_error "Failed to remove cron job - verification check failed"
 			return 1
 		fi
+		log_info "Cron job removed"
 	else
 		log_warn "Cron job not found (may have been removed already)"
 	fi
@@ -1103,12 +1109,23 @@ main() {
 		exit 1
 	fi
 
-	remove_cron
-	remove_logrotate_config
-	remove_keepalive_service
-	stop_keepalive_daemon
-	remove_installation_dir
-	cleanup_lockfile
+	# Remove components - continue even if individual steps fail
+	# to ensure maximum cleanup is attempted
+	if ! remove_cron; then
+		log_warn "Failed to remove cron job, but continuing with uninstallation"
+	fi
+	if ! remove_logrotate_config; then
+		log_warn "Failed to remove logrotate config, but continuing with uninstallation"
+	fi
+	if ! remove_keepalive_service; then
+		log_warn "Failed to remove keepalive service, but continuing with uninstallation"
+	fi
+	stop_keepalive_daemon || true
+	if ! remove_installation_dir; then
+		log_error "Failed to remove installation directory"
+		exit 1
+	fi
+	cleanup_lockfile || true
 
 	if verify_uninstallation; then
 		display_summary

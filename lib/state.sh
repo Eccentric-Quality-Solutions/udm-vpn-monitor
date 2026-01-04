@@ -76,20 +76,20 @@ init_state() {
 	if ! try_ensure_directory_exists "$LOGS_DIR"; then
 		# log_message() (called by handle_error) already handles logging failures gracefully
 		# by outputting to stderr if the log directory can't be created
-		handle_error "WARNING" "Failed to create logs directory: $LOGS_DIR" 0
+		handle_error "WARNING" "SYSTEM" "Failed to create logs directory: $LOGS_DIR" 0
 	fi
 	if ! try_ensure_directory_exists "$STATE_DIR"; then
-		handle_error "WARNING" "Failed to create state directory: $STATE_DIR"
+		handle_error "WARNING" "SYSTEM" "Failed to create state directory: $STATE_DIR"
 	fi
 
 	if ! ensure_file_exists "$RESTART_COUNT_FILE" "0"; then
-		handle_error "WARNING" "Failed to create restart count file"
+		handle_error "WARNING" "SYSTEM" "Failed to create restart count file"
 	fi
 	# Initialize network partition state file (0 = healthy, 1 = partitioned)
 	local network_partition_file
 	network_partition_file=$(get_network_partition_state_file)
 	if ! ensure_file_exists "$network_partition_file" "0"; then
-		handle_error "WARNING" "Failed to create network partition state file"
+		handle_error "WARNING" "SYSTEM" "Failed to create network partition state file"
 	fi
 	# Per-peer failure counters and byte counters are created on-demand
 }
@@ -205,7 +205,7 @@ get_peer_state_file_path() {
 		echo "${STATE_DIR}/recovery_method_${location_sanitized}_${peer_sanitized}"
 		;;
 	*)
-		handle_error "WARNING" "Unknown peer state key: $key" 0
+		handle_error "WARNING" "SYSTEM" "Unknown peer state key: $key" 0
 		echo "${STATE_DIR}/${key}_${location_sanitized}_${peer_sanitized}"
 		;;
 	esac
@@ -256,7 +256,7 @@ get_peer_state() {
 		case "$key" in
 		failure_count | last_bytes | last_status_log)
 			if [[ ! "$value" =~ ^[0-9]+$ ]]; then
-				handle_error "WARNING" "Corrupted peer state file (recovering): $state_file" 0
+				handle_error "WARNING" "SYSTEM" "Corrupted peer state file (recovering): $state_file" 0
 				recover_corrupted_state_file "$state_file" "$default_value" "integer"
 				echo "$default_value"
 				return 0
@@ -265,7 +265,7 @@ get_peer_state() {
 		spi)
 			# SPI can be hex (0x...) or decimal format
 			if [[ ! "$value" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
-				handle_error "WARNING" "Corrupted peer state file (recovering): $state_file" 0
+				handle_error "WARNING" "SYSTEM" "Corrupted peer state file (recovering): $state_file" 0
 				recover_corrupted_state_file "$state_file" "$default_value" "integer"
 				echo "$default_value"
 				return 0
@@ -317,14 +317,14 @@ set_peer_state() {
 	case "$key" in
 	failure_count | last_bytes | last_status_log)
 		if [[ ! "$value" =~ ^[0-9]+$ ]]; then
-			handle_error "ERROR" "Invalid value for $key (expected integer): $value" 0
+			handle_error "ERROR" "SYSTEM" "Invalid value for $key (expected integer): $value" 0
 			return 1
 		fi
 		;;
 	spi)
 		# SPI can be hex (0x...) or decimal format
 		if [[ ! "$value" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]] && [[ -n "$value" ]]; then
-			handle_error "ERROR" "Invalid value for $key (expected SPI format): $value" 0
+			handle_error "ERROR" "SYSTEM" "Invalid value for $key (expected SPI format): $value" 0
 			return 1
 		fi
 		;;
@@ -335,13 +335,13 @@ set_peer_state() {
 	local state_dir
 	state_dir=$(dirname "$state_file")
 	if ! try_ensure_directory_exists "$state_dir"; then
-		handle_error "ERROR" "Failed to create directory for peer state: $state_dir" 0
+		handle_error "ERROR" "SYSTEM" "Failed to create directory for peer state: $state_dir" 0
 		return 1
 	fi
 
 	# Atomic write: write to temp file first, then rename
 	if ! atomic_write_file "$state_file" "$value"; then
-		handle_error "ERROR" "Failed to update peer state for $peer_ip (key: $key, file: $state_file)" 0
+		handle_error "ERROR" "SYSTEM" "Failed to update peer state for $peer_ip (key: $key, file: $state_file)" 0
 		return 1
 	fi
 
@@ -417,7 +417,7 @@ delete_peer_state() {
 
 	if file_exists_and_readable "$state_file"; then
 		if ! rm -f "$state_file"; then
-			handle_error "WARNING" "Failed to delete peer state file: $state_file" 0
+			handle_error "WARNING" "SYSTEM" "Failed to delete peer state file: $state_file" 0
 			return 1
 		fi
 	fi
@@ -613,7 +613,7 @@ get_network_partition_state() {
 			echo "$value"
 		else
 			# Corrupted file, backup and recover
-			handle_error "WARNING" "Network partition state file corrupted (recovering): $state_file" 0
+			handle_error "WARNING" "SYSTEM" "Network partition state file corrupted (recovering): $state_file" 0
 			recover_corrupted_state_file "$state_file" "0" "integer"
 			echo "0"
 		fi
@@ -653,13 +653,13 @@ set_network_partition_state() {
 
 	# Validate value (must be 0 or 1)
 	if [[ ! "$state_value" =~ ^[01]$ ]]; then
-		handle_error "ERROR" "Invalid network partition state value (expected 0 or 1): $state_value" 0
+		handle_error "ERROR" "SYSTEM" "Invalid network partition state value (expected 0 or 1): $state_value" 0
 		return 1
 	fi
 
 	# Atomic write
 	if ! atomic_write_file "$state_file" "$state_value"; then
-		handle_error "ERROR" "Failed to update network partition state file: $state_file" 0
+		handle_error "ERROR" "SYSTEM" "Failed to update network partition state file: $state_file" 0
 		return 1
 	fi
 
@@ -693,7 +693,7 @@ get_timestamp_plus_minutes() {
 	# Use Linux date format, fallback to manual calculation
 	# +%s: output as seconds since epoch
 	date -d "+${minutes} minutes" +%s 2>/dev/null || safe_timestamp_add "$(get_unix_timestamp)" "$seconds_to_add" 2>/dev/null || {
-		handle_error "ERROR" "Failed to calculate future timestamp (overflow or invalid input)" 0
+		handle_error "ERROR" "SYSTEM" "Failed to calculate future timestamp (overflow or invalid input)" 0
 		echo "$(get_unix_timestamp)" # Fallback to current time
 	}
 }
@@ -759,7 +759,7 @@ check_cooldown() {
 
 	# Check if file is readable before attempting to read
 	if ! file_exists_and_readable "$COOLDOWN_UNTIL_FILE"; then
-		handle_error "WARNING" "Cooldown file is not readable, removing: $COOLDOWN_UNTIL_FILE" 0
+		handle_error "WARNING" "SYSTEM" "Cooldown file is not readable, removing: $COOLDOWN_UNTIL_FILE" 0
 		rm -f "$COOLDOWN_UNTIL_FILE" 2>/dev/null || true
 		return 1 # Not in cooldown (file unreadable, treat as no cooldown)
 	fi
@@ -776,7 +776,7 @@ check_cooldown() {
 		if [[ $remaining -lt 0 ]]; then
 			remaining=0
 		fi
-		log_message "INFO" "In cooldown period, $remaining seconds remaining"
+		log_message "INFO" "SYSTEM" "In cooldown period, $remaining seconds remaining"
 		return 0 # In cooldown
 	else
 		# Cooldown expired, remove file
@@ -815,12 +815,12 @@ set_cooldown() {
 	cooldown_until=$(get_timestamp_plus_minutes "$minutes")
 	# Atomic write: write to temp file first, then rename
 	if ! atomic_write_file "$COOLDOWN_UNTIL_FILE" "$cooldown_until"; then
-		handle_error "ERROR" "Failed to set cooldown period (file: $COOLDOWN_UNTIL_FILE)" 0
+		handle_error "ERROR" "SYSTEM" "Failed to set cooldown period (file: $COOLDOWN_UNTIL_FILE)" 0
 		# Continue execution but log the error
 		return 0
 	fi
 
-	log_message "INFO" "Cooldown period set for $minutes minutes"
+	log_message "INFO" "SYSTEM" "Cooldown period set for $minutes minutes"
 }
 
 # Check rate limiting
@@ -866,7 +866,7 @@ check_rate_limit() {
 
 	# Check if file is readable before attempting to read
 	if ! file_exists_and_readable "$RESTART_COUNT_FILE"; then
-		handle_error "WARNING" "Restart count file is not readable, treating as empty: $RESTART_COUNT_FILE" 0
+		handle_error "WARNING" "SYSTEM" "Restart count file is not readable, treating as empty: $RESTART_COUNT_FILE" 0
 		return 0 # Allow restart (file unreadable, treat as no previous restarts)
 	fi
 
@@ -947,7 +947,7 @@ check_rate_limit() {
 			error_msg="${error_msg}. Recent restarts: $restart_list"
 		fi
 
-		handle_error "WARNING" "$error_msg"
+		handle_error "WARNING" "SYSTEM" "$error_msg"
 		return 1 # Rate limited
 	fi
 
@@ -1014,13 +1014,13 @@ record_restart() {
 	local filtered_content
 	filtered_content=$(echo "$updated_content" | awk -v cutoff="$one_day_ago" '$1 > cutoff' 2>/dev/null)
 	if [[ $? -ne 0 ]]; then
-		handle_error "WARNING" "Failed to filter old restart timestamps"
+		handle_error "WARNING" "SYSTEM" "Failed to filter old restart timestamps"
 		return 0 # Continue even if filtering fails
 	fi
 
 	# Atomic write: write entire file atomically with error checking
 	if ! atomic_write_file "$RESTART_COUNT_FILE" "$filtered_content"; then
-		handle_error "WARNING" "Failed to record restart timestamp in $RESTART_COUNT_FILE"
+		handle_error "WARNING" "SYSTEM" "Failed to record restart timestamp in $RESTART_COUNT_FILE"
 		return 0 # Continue even if write fails
 	fi
 }
@@ -1064,7 +1064,7 @@ backup_corrupted_state_file() {
 	# If file is not readable, skip backup but allow recovery to proceed
 	# Recovery can still remove or overwrite unreadable files
 	if ! file_exists_and_readable "$state_file"; then
-		handle_error "WARNING" "Cannot backup unreadable state file (skipping backup): $state_file" 0
+		handle_error "WARNING" "SYSTEM" "Cannot backup unreadable state file (skipping backup): $state_file" 0
 		return 1
 	fi
 
@@ -1072,7 +1072,7 @@ backup_corrupted_state_file() {
 	while [[ $attempt -le $max_attempts ]]; do
 		# Create backup of state file
 		if cp "$state_file" "$backup_file" 2>/dev/null; then
-			handle_error "INFO" "Backed up corrupted state file: $state_file -> $backup_file" 0
+			handle_error "INFO" "SYSTEM" "Backed up corrupted state file: $state_file -> $backup_file" 0
 			return 0
 		fi
 
@@ -1080,10 +1080,10 @@ backup_corrupted_state_file() {
 		if [[ $attempt -lt $max_attempts ]]; then
 			timestamp=$(get_unix_timestamp)
 			backup_file="${state_file}.corrupted.${timestamp}"
-			handle_error "WARNING" "Backup attempt $attempt failed, retrying: $state_file" 0
+			handle_error "WARNING" "SYSTEM" "Backup attempt $attempt failed, retrying: $state_file" 0
 			attempt=$((attempt + 1))
 		else
-			handle_error "ERROR" "Failed to backup corrupted state file after $max_attempts attempts: $state_file" 0
+			handle_error "ERROR" "SYSTEM" "Failed to backup corrupted state file after $max_attempts attempts: $state_file" 0
 			return 1
 		fi
 	done
@@ -1137,7 +1137,7 @@ recover_corrupted_state_file() {
 	# If file is readable and backup fails, abort recovery to preserve corrupted file
 	if [[ $file_is_readable -eq 1 ]]; then
 		if ! backup_corrupted_state_file "$state_file"; then
-			handle_error "ERROR" "Failed to backup corrupted file before recovery (preserving corrupted file): $state_file" 0
+			handle_error "ERROR" "SYSTEM" "Failed to backup corrupted file before recovery (preserving corrupted file): $state_file" 0
 			return 1
 		fi
 	fi
@@ -1147,9 +1147,9 @@ recover_corrupted_state_file() {
 		# Remove file if default is empty
 		rm -f "$state_file" 2>/dev/null || true
 		if [[ $file_is_readable -eq 1 ]]; then
-			handle_error "INFO" "Recovered corrupted state file by removal: $state_file" 0
+			handle_error "INFO" "SYSTEM" "Recovered corrupted state file by removal: $state_file" 0
 		else
-			handle_error "INFO" "Recovered unreadable corrupted state file by removal: $state_file" 0
+			handle_error "INFO" "SYSTEM" "Recovered unreadable corrupted state file by removal: $state_file" 0
 		fi
 	else
 		# If file is unreadable, remove it first before writing (atomic_write_file can overwrite, but this is safer)
@@ -1158,14 +1158,14 @@ recover_corrupted_state_file() {
 		fi
 		# Set file to default value using atomic write
 		if ! atomic_write_file "$state_file" "$default_value"; then
-			handle_error "ERROR" "Failed to reset corrupted state file: $state_file" 0
+			handle_error "ERROR" "SYSTEM" "Failed to reset corrupted state file: $state_file" 0
 			return 1
 		fi
 
 		if [[ $file_is_readable -eq 1 ]]; then
-			handle_error "INFO" "Recovered corrupted state file by reset to default: $state_file (value: $default_value)" 0
+			handle_error "INFO" "SYSTEM" "Recovered corrupted state file by reset to default: $state_file (value: $default_value)" 0
 		else
-			handle_error "INFO" "Recovered unreadable corrupted state file by reset to default: $state_file (value: $default_value)" 0
+			handle_error "INFO" "SYSTEM" "Recovered unreadable corrupted state file by reset to default: $state_file (value: $default_value)" 0
 		fi
 	fi
 
@@ -1201,7 +1201,7 @@ validate_state_file() {
 	# Check file exists and is readable
 	# Use file_exists_and_readable for consistency and to prevent hangs on unreadable files
 	if ! file_exists_and_readable "$file"; then
-		handle_error "WARNING" "State file is not readable (cannot validate): $file" 0
+		handle_error "WARNING" "SYSTEM" "State file is not readable (cannot validate): $file" 0
 		return 1
 	fi
 
@@ -1210,14 +1210,14 @@ validate_state_file() {
 	integer)
 		# Should contain only digits (0-9), possibly with newlines
 		if ! grep -qE '^[0-9]+$' "$file" 2>/dev/null; then
-			handle_error "WARNING" "State file corrupted (expected integer): $file"
+			handle_error "WARNING" "SYSTEM" "State file corrupted (expected integer): $file"
 			return 1
 		fi
 		;;
 	timestamp)
 		# Should contain a single Unix timestamp (digits only)
 		if ! grep -qE '^[0-9]+$' "$file" 2>/dev/null || [[ $(wc -l <"$file" 2>/dev/null || echo "0") -ne 1 ]]; then
-			handle_error "WARNING" "State file corrupted (expected single timestamp): $file"
+			handle_error "WARNING" "SYSTEM" "State file corrupted (expected single timestamp): $file"
 			return 1
 		fi
 		;;
@@ -1225,12 +1225,12 @@ validate_state_file() {
 		# Should contain one or more Unix timestamps (one per line)
 		# Empty file is valid (no restarts recorded)
 		if [[ -s "$file" ]] && ! grep -qE '^[0-9]+$' "$file" 2>/dev/null; then
-			handle_error "WARNING" "State file corrupted (expected timestamp list): $file"
+			handle_error "WARNING" "SYSTEM" "State file corrupted (expected timestamp list): $file"
 			return 1
 		fi
 		;;
 	*)
-		handle_error "WARNING" "Unknown state file format: $expected_format"
+		handle_error "WARNING" "SYSTEM" "Unknown state file format: $expected_format"
 		return 1
 		;;
 	esac
@@ -1281,7 +1281,7 @@ validate_state_files_by_pattern() {
 		file_exists_and_readable "$state_file" || continue
 
 		if ! validate_state_file "$state_file" "$expected_format"; then
-			handle_error "WARNING" "$description corrupted, recovering: $state_file" 0
+			handle_error "WARNING" "SYSTEM" "$description corrupted, recovering: $state_file" 0
 			recover_corrupted_state_file "$state_file" "$default_value" "$expected_format"
 			validation_failed=1
 		fi
@@ -1313,7 +1313,7 @@ validate_state() {
 	# Validate restart count file (timestamp list)
 	if file_exists_and_readable "$RESTART_COUNT_FILE"; then
 		if ! validate_state_file "$RESTART_COUNT_FILE" "timestamp_list"; then
-			handle_error "WARNING" "Restart count file corrupted, recovering: $RESTART_COUNT_FILE" 0
+			handle_error "WARNING" "SYSTEM" "Restart count file corrupted, recovering: $RESTART_COUNT_FILE" 0
 			recover_corrupted_state_file "$RESTART_COUNT_FILE" "" "timestamp_list"
 			validation_failed=1
 		fi
@@ -1322,7 +1322,7 @@ validate_state() {
 	# Validate cooldown file (single timestamp)
 	if file_exists_and_readable "$COOLDOWN_UNTIL_FILE"; then
 		if ! validate_state_file "$COOLDOWN_UNTIL_FILE" "timestamp"; then
-			handle_error "WARNING" "Cooldown file corrupted, recovering: $COOLDOWN_UNTIL_FILE" 0
+			handle_error "WARNING" "SYSTEM" "Cooldown file corrupted, recovering: $COOLDOWN_UNTIL_FILE" 0
 			recover_corrupted_state_file "$COOLDOWN_UNTIL_FILE" "" "timestamp"
 			validation_failed=1
 		fi
@@ -1333,7 +1333,7 @@ validate_state() {
 	network_partition_file=$(get_network_partition_state_file)
 	if file_exists_and_readable "$network_partition_file"; then
 		if ! validate_state_file "$network_partition_file" "integer"; then
-			handle_error "WARNING" "Network partition state file corrupted, recovering: $network_partition_file" 0
+			handle_error "WARNING" "SYSTEM" "Network partition state file corrupted, recovering: $network_partition_file" 0
 			recover_corrupted_state_file "$network_partition_file" "0" "integer"
 			validation_failed=1
 		fi

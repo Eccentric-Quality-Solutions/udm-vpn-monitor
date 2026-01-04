@@ -314,7 +314,7 @@ create_valid_config() {
 
 	assert_success
 	# Should recognize all variables as common (not new or deprecated)
-	assert_output --partial "Common settings:"
+	assert_output --partial "Common settings found:"
 	# Should not report any new or deprecated settings since all variables exist in both
 	assert_output --partial "No new settings in template"
 	assert_output --partial "No deprecated settings found"
@@ -357,7 +357,7 @@ create_valid_config() {
 
 	assert_success
 	# Should recognize all variables as common
-	assert_output --partial "Common settings:"
+	assert_output --partial "Common settings found:"
 	assert_output --partial "No new settings in template"
 	assert_output --partial "No deprecated settings found"
 }
@@ -582,7 +582,7 @@ EOF
 
 	assert_success
 	assert_output --partial "Summary:"
-	assert_output --partial "Common settings:"
+	assert_output --partial "Common settings found:"
 }
 
 # bats test_tags=category:unit
@@ -613,7 +613,7 @@ EOF
 
 	assert_success
 	# Should parse correctly despite inline comments
-	assert_output --partial "Common settings:"
+	assert_output --partial "Common settings found:"
 }
 
 # bats test_tags=category:unit

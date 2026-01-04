@@ -483,18 +483,18 @@ EOF
 	# This allows us to test path resolution without modifying system files
 	local test_lib_dir="${TEST_DIR}/test_lib"
 	mkdir -p "$test_lib_dir"
-	
+
 	# Copy all lib files to test lib directory
 	cp -r "${BATS_TEST_DIRNAME}/../lib"/* "$test_lib_dir/"
-	
+
 	# Modify get_command_path in test common.sh to check test directory first
 	# Insert test directory at the beginning of system_dirs array
 	sed -i 's|local system_dirs=("/usr/sbin" "/usr/bin" "/sbin" "/bin")|local system_dirs=("'"${TEST_DIR}"'/usr/sbin" "/usr/sbin" "/usr/bin" "/sbin" "/bin")|' "${test_lib_dir}/common.sh"
-	
+
 	# Create modified test script that uses test lib directory
 	local modified_test_script="${TEST_DIR}/vpn-monitor-modified.sh"
 	cp "$TEST_SCRIPT" "$modified_test_script"
-	
+
 	# Replace lib directory path in test script
 	# The script sources lib files using ${SCRIPT_DIR}/lib/, so we need to modify SCRIPT_DIR
 	# or replace the source paths. Let's replace source paths to use test lib directory.
@@ -504,11 +504,11 @@ EOF
 	escaped_test_lib=$(echo "$test_lib_dir" | sed 's/[[\.*^$()+?{|]/\\&/g')
 	local escaped_project_lib
 	escaped_project_lib=$(echo "${project_root}/lib" | sed 's/[[\.*^$()+?{|]/\\&/g')
-	
+
 	# Replace source paths in the script
 	sed -i "s|source \"\${SCRIPT_DIR}/lib/|source \"${test_lib_dir}/|g" "$modified_test_script"
 	sed -i "s|source \"${escaped_project_lib}/|source \"${test_lib_dir}/|g" "$modified_test_script"
-	
+
 	# Update TEST_SCRIPT to use modified version
 	local original_test_script="$TEST_SCRIPT"
 	TEST_SCRIPT="$modified_test_script"

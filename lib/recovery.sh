@@ -94,6 +94,7 @@ count_sas_for_peer() {
 #
 # Arguments:
 #   $1: Peer IP address to verify
+#   $2: Optional location name for logging context
 #
 # Returns:
 #   0: Byte counters are present and non-zero (or not available but SA exists)
@@ -106,12 +107,16 @@ count_sas_for_peer() {
 #   if verify_byte_counters_resume "203.0.113.1"; then
 #       echo "Byte counters verified"
 #   fi
+#   if verify_byte_counters_resume "203.0.113.1" "NYC"; then
+#       echo "Byte counters verified for NYC"
+#   fi
 #
 # Note:
 #   Requires extract_byte_counter from detection.sh
 #   If byte counters are not available, returns success if SA exists (graceful degradation)
 verify_byte_counters_resume() {
 	local peer_ip="$1"
+	local location_name="$2"
 	local xfrm_output
 
 	if ! check_command_or_warn "ip" "Verifying byte counters"; then
@@ -129,15 +134,15 @@ verify_byte_counters_resume() {
 	local current_bytes
 	if current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null); then
 		if [[ "$current_bytes" -gt 0 ]]; then
-			log_message "INFO" "Recovery verification: Byte counters resumed for $peer_ip (bytes=$current_bytes)"
+			log_message "INFO" "$location_name" "Recovery verification: Byte counters resumed for $location_name ($peer_ip) (bytes=$current_bytes)"
 			return 0
 		else
-			handle_error "WARNING" "Recovery verification: Byte counters are zero for $peer_ip (tunnel may not be passing traffic)"
+			handle_error "WARNING" "$location_name" "Recovery verification: Byte counters are zero for $location_name ($peer_ip) (tunnel may not be passing traffic)"
 			return 1
 		fi
 	else
 		# Byte counters not available, but SA exists - log and return success
-		log_message "INFO" "Recovery verification: Byte counters not available for $peer_ip (SA exists, verification limited)"
+		log_message "INFO" "$location_name" "Recovery verification: Byte counters not available for $location_name ($peer_ip) (SA exists, verification limited)"
 		return 0
 	fi
 }
@@ -223,9 +228,9 @@ verify_ipsec_connections_active() {
 
 	if [[ $ipsec_exit_code -ne 0 ]]; then
 		if [[ $ipsec_exit_code -eq 124 ]]; then
-			handle_error "WARNING" "Recovery verification: ipsec status timed out after ${IPSEC_STATUS_TIMEOUT}s (unable to verify connections)"
+			handle_error "WARNING" "SYSTEM" "Recovery verification: ipsec status timed out after ${IPSEC_STATUS_TIMEOUT}s (unable to verify connections)"
 		else
-			handle_error "WARNING" "Recovery verification: Failed to query ipsec status (exit code: $ipsec_exit_code)"
+			handle_error "WARNING" "SYSTEM" "Recovery verification: Failed to query ipsec status (exit code: $ipsec_exit_code)"
 		fi
 		return 1
 	fi
@@ -244,18 +249,18 @@ verify_ipsec_connections_active() {
 		# Use fixed-string matching for safety
 		if echo "$ipsec_output" | grep -qF "$peer_ip"; then
 			((active_count++))
-			log_message "INFO" "Recovery verification: Connection active for $peer_ip"
+			log_message "INFO" "SYSTEM" "Recovery verification: Connection active for $peer_ip"
 		else
 			all_active=0
-			handle_error "WARNING" "Recovery verification: Connection not found for $peer_ip"
+			handle_error "WARNING" "SYSTEM" "Recovery verification: Connection not found for $peer_ip"
 		fi
 	done
 
 	if [[ $all_active -eq 1 ]]; then
-		log_message "INFO" "Recovery verification: All $total_count connection(s) are active"
+		log_message "INFO" "SYSTEM" "Recovery verification: All $total_count connection(s) are active"
 		return 0
 	else
-		handle_error "WARNING" "Recovery verification: Only $active_count/$total_count connection(s) are active"
+		handle_error "WARNING" "SYSTEM" "Recovery verification: Only $active_count/$total_count connection(s) are active"
 		return 1
 	fi
 }
@@ -270,6 +275,7 @@ verify_ipsec_connections_active() {
 #
 # Arguments:
 #   $1: Peer IP address to clean up
+#   $2: Location name (required for logging context)
 #
 # Returns:
 #   0: SAs deleted successfully and re-established (or no SAs found for this peer)
@@ -360,7 +366,7 @@ verify_ipsec_connections_active() {
 #
 # Examples:
 #   # Delete and re-establish SAs for peer 203.0.113.1
-#   if attempt_xfrm_recovery "203.0.113.1"; then
+#   if attempt_xfrm_recovery "203.0.113.1" "NYC"; then
 #       echo "Recovery successful"
 #   else
 #       echo "Recovery failed, will fall back to ipsec reload"
@@ -379,6 +385,7 @@ verify_ipsec_connections_active() {
 #   Uses check_ipsec_phase2() from detection.sh to verify SA re-establishment.
 attempt_xfrm_recovery() {
 	local peer_ip="$1"
+	local location_name="$2"
 	local deleted_count=0
 	local failed_count=0
 	local parse_errors=0
@@ -389,7 +396,7 @@ attempt_xfrm_recovery() {
 
 	# Validate peer IP before proceeding
 	if [[ -z "$peer_ip" ]]; then
-		handle_error "ERROR" "xfrm recovery: Peer IP not provided" 0
+		handle_error "ERROR" "$location_name" "xfrm recovery: Peer IP not provided" 0
 		return 1
 	fi
 
@@ -406,22 +413,22 @@ attempt_xfrm_recovery() {
 
 	# Check if helper function failed (ip command not available - should not happen since we check above)
 	if [[ $xfrm_result -ne 0 ]]; then
-		handle_error "WARNING" "xfrm recovery: Failed to query xfrm state"
+		handle_error "WARNING" "$location_name" "xfrm recovery: Failed to query xfrm state for $location_name ($peer_ip)"
 		return 1
 	fi
 
 	if [[ -z "$xfrm_output" ]]; then
-		log_message "INFO" "xfrm recovery: No SAs found for $peer_ip in xfrm state (may already be down)"
+		log_message "INFO" "$location_name" "xfrm recovery: No SAs found for $location_name ($peer_ip) in xfrm state (may already be down)"
 		# If no SAs exist, verify they're actually gone (not a parsing issue)
 		if command -v check_ipsec_phase2 >/dev/null 2>&1; then
 			if ! check_ipsec_phase2 "$peer_ip"; then
-				log_message "INFO" "xfrm recovery: Confirmed no SAs exist for $peer_ip"
+				log_message "INFO" "$location_name" "xfrm recovery: Confirmed no SAs exist for $location_name ($peer_ip)"
 				# No SAs exist - while we've successfully confirmed the state, xfrm recovery cannot
 				# accomplish the recovery goal (bringing the VPN back up) since there's nothing to
 				# delete/re-establish. Return failure to trigger fallback to ipsec reload/restart.
 				return 1
 			else
-				handle_error "WARNING" "xfrm recovery: SAs exist but parsing failed for $peer_ip"
+				handle_error "WARNING" "$location_name" "xfrm recovery: SAs exist but parsing failed for $location_name ($peer_ip)"
 				return 1
 			fi
 		fi
@@ -445,7 +452,7 @@ attempt_xfrm_recovery() {
 	local in_sa_block=0
 	local sa_list=()
 
-	[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "xfrm recovery: Parsing xfrm output for $peer_ip"
+	[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Parsing xfrm output for $location_name ($peer_ip)"
 
 	# Parse loop: Process each line of xfrm output
 	# State machine transitions:
@@ -476,10 +483,10 @@ attempt_xfrm_recovery() {
 					# Store complete SA as delimited string for later processing
 					# Format: "src|dst|proto|spi" (pipe separator avoids IP address conflicts)
 					sa_list+=("$current_src|$current_dst|$current_proto|$current_spi")
-					[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
+					[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi for $location_name ($peer_ip)"
 				else
 					# Invalid selectors: log warning but continue parsing (may have valid SAs later)
-					handle_error "WARNING" "xfrm recovery: Invalid SA selectors: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
+					handle_error "WARNING" "$location_name" "xfrm recovery: Invalid SA selectors: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi for $location_name ($peer_ip)"
 					((parse_errors++))
 				fi
 			fi
@@ -526,9 +533,9 @@ attempt_xfrm_recovery() {
 		# Validate selectors before adding to list (same validation as in main loop)
 		if [[ "$current_proto" =~ ^(esp|ah)$ ]] && [[ "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
 			sa_list+=("$current_src|$current_dst|$current_proto|$current_spi")
-			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
+			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "SYSTEM" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
 		else
-			handle_error "WARNING" "xfrm recovery: Invalid SA selectors: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi"
+			handle_error "WARNING" "$location_name" "xfrm recovery: Invalid SA selectors: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi for $location_name ($peer_ip)"
 			((parse_errors++))
 		fi
 	fi
@@ -537,7 +544,7 @@ attempt_xfrm_recovery() {
 	# This indicates a fundamental parsing problem (e.g., format changed, corrupted output)
 	# If we have some valid SAs, we continue (partial success is acceptable)
 	if [[ $parse_errors -gt 0 ]] && [[ ${#sa_list[@]} -eq 0 ]]; then
-		handle_error "WARNING" "xfrm recovery: Parsing failed for $peer_ip (found $parse_errors invalid SA(s))"
+		handle_error "WARNING" "$location_name" "xfrm recovery: Parsing failed for $location_name ($peer_ip) (found $parse_errors invalid SA(s))"
 		return 1
 	fi
 
@@ -552,7 +559,7 @@ attempt_xfrm_recovery() {
 		delete_exit_code=$?
 
 		if [[ $delete_exit_code -eq 0 ]]; then
-			log_message "INFO" "xfrm recovery: Deleted SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi"
+			log_message "INFO" "$location_name" "xfrm recovery: Deleted SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi for $location_name ($peer_ip)"
 			((deleted_count++))
 		else
 			# Deletion failed - gather diagnostic information
@@ -584,7 +591,7 @@ attempt_xfrm_recovery() {
 			fi
 
 			# Log detailed diagnostic information
-			handle_error "WARNING" "xfrm recovery: Failed to delete SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi ($diagnostic_info)"
+			handle_error "WARNING" "$location_name" "xfrm recovery: Failed to delete SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi for $location_name ($peer_ip) ($diagnostic_info)"
 			((failed_count++))
 		fi
 	done
@@ -597,37 +604,37 @@ attempt_xfrm_recovery() {
 	policy_exit_code=$?
 
 	if [[ $policy_exit_code -eq 0 ]]; then
-		log_message "INFO" "xfrm recovery: Deleted xfrm policy for dst=$peer_ip"
+		log_message "INFO" "$location_name" "xfrm recovery: Deleted xfrm policy for dst=$peer_ip ($location_name)"
 	else
 		# Policy deletion failed - log diagnostic info (non-fatal, so use INFO level)
 		local policy_diagnostic="exit_code=$policy_exit_code"
 		if [[ -n "$policy_stderr" ]]; then
 			policy_diagnostic="$policy_diagnostic, stderr=\"$policy_stderr\""
 		fi
-		[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "xfrm recovery: Failed to delete xfrm policy for dst=$peer_ip ($policy_diagnostic) - non-fatal, continuing"
+		[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Failed to delete xfrm policy for dst=$peer_ip ($location_name) ($policy_diagnostic) - non-fatal, continuing"
 	fi
 
 	# If no SAs were deleted, check if any existed
 	if [[ $deleted_count -eq 0 ]] && [[ $failed_count -eq 0 ]]; then
 		if [[ ${#sa_list[@]} -eq 0 ]]; then
-			log_message "INFO" "xfrm recovery: No SAs found to delete for $peer_ip"
+			log_message "INFO" "$location_name" "xfrm recovery: No SAs found to delete for $location_name ($peer_ip)"
 			return 0
 		else
-			handle_error "WARNING" "xfrm recovery: Parsed ${#sa_list[@]} SA(s) but failed to delete any for $peer_ip"
+			handle_error "WARNING" "$location_name" "xfrm recovery: Parsed ${#sa_list[@]} SA(s) but failed to delete any for $location_name ($peer_ip)"
 			return 1
 		fi
 	fi
 
 	# If we deleted SAs, verify they're gone and wait for re-establishment
 	if [[ $deleted_count -gt 0 ]]; then
-		log_message "INFO" "xfrm recovery: Deleted $deleted_count SA(s) for $peer_ip"
+		log_message "INFO" "$location_name" "xfrm recovery: Deleted $deleted_count SA(s) for $location_name ($peer_ip)"
 		# Wait a moment for strongSwan to detect SA deletion
 		sleep "$XFRM_RECOVERY_SLEEP_SECONDS"
 
 		# Verify SAs were deleted
 		if command -v check_ipsec_phase2 >/dev/null 2>&1; then
 			if check_ipsec_phase2 "$peer_ip"; then
-				handle_error "WARNING" "xfrm recovery: SAs still exist after deletion attempt for $peer_ip"
+				handle_error "WARNING" "$location_name" "xfrm recovery: SAs still exist after deletion attempt for $location_name ($peer_ip)"
 				# Continue anyway - may have deleted some but not all
 			fi
 		fi
@@ -649,7 +656,7 @@ attempt_xfrm_recovery() {
 		local max_interval="${XFRM_RECOVERY_MAX_INTERVAL:-16}"
 		local current_interval=$base_interval
 
-		log_message "INFO" "xfrm recovery: Waiting for SA re-establishment for $peer_ip (timeout: ${verify_timeout}s)"
+		log_message "INFO" "$location_name" "xfrm recovery: Waiting for SA re-establishment for $location_name ($peer_ip) (timeout: ${verify_timeout}s)"
 		local verify_start_time
 		verify_start_time=$(get_unix_timestamp)
 		local sa_reestablished=0
@@ -687,28 +694,28 @@ attempt_xfrm_recovery() {
 					# Count SAs for logging (may have multiple SAs for one peer)
 					# This provides visibility into how many SAs were re-established
 					if sa_count=$(count_sas_for_peer "$peer_ip" 2>/dev/null); then
-						log_message "INFO" "xfrm recovery: SA re-established for $peer_ip after ${elapsed_time}s (attempt $verify_attempt, SA count: $sa_count)"
+						log_message "INFO" "$location_name" "xfrm recovery: SA re-established for $location_name ($peer_ip) after ${elapsed_time}s (attempt $verify_attempt, SA count: $sa_count)"
 					else
-						log_message "INFO" "xfrm recovery: SA re-established for $peer_ip after ${elapsed_time}s (attempt $verify_attempt)"
+						log_message "INFO" "$location_name" "xfrm recovery: SA re-established for $location_name ($peer_ip) after ${elapsed_time}s (attempt $verify_attempt)"
 					fi
 
 					# Verify byte counters resume (indicates tunnel is passing traffic)
 					# This is a best-effort check: byte counters may be zero immediately after
 					# re-establishment, which is acceptable (traffic will resume shortly)
-					if verify_byte_counters_resume "$peer_ip" 2>/dev/null; then
+					if verify_byte_counters_resume "$peer_ip" "$location_name" 2>/dev/null; then
 						byte_counter_status="resumed"
-						log_message "INFO" "xfrm recovery: Verification complete for $peer_ip (duration: ${elapsed_time}s, SA count: ${sa_count}, byte counters: ${byte_counter_status})"
+						log_message "INFO" "$location_name" "xfrm recovery: Verification complete for $location_name ($peer_ip) (duration: ${elapsed_time}s, SA count: ${sa_count}, byte counters: ${byte_counter_status})"
 						break # Exit verification loop on success (SA re-established AND byte counters verified)
 					else
 						byte_counter_status="zero_or_unavailable"
 						# Log warning but continue waiting - byte counters may resume shortly
 						# Only break if timeout occurs (handled by timeout check at start of loop)
-						handle_error "WARNING" "xfrm recovery: SA re-established but byte counters not verified for $peer_ip (will continue waiting)"
+						handle_error "WARNING" "$location_name" "xfrm recovery: SA re-established but byte counters not verified for $location_name ($peer_ip) (will continue waiting)"
 					fi
 				fi
 			fi
 
-			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "xfrm recovery: Verification attempt $verify_attempt for $peer_ip (elapsed: ${elapsed_time}s/${verify_timeout}s, next interval: ${current_interval}s)"
+			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Verification attempt $verify_attempt for $location_name ($peer_ip) (elapsed: ${elapsed_time}s/${verify_timeout}s, next interval: ${current_interval}s)"
 
 			# Exponential backoff: Sleep before next check
 			# Interval doubles each attempt, capped at max_interval
@@ -726,9 +733,8 @@ attempt_xfrm_recovery() {
 			if [[ $elapsed_time -lt 0 ]]; then
 				elapsed_time=0
 			fi
-			handle_error "WARNING" "xfrm recovery: SA did not re-establish within ${verify_timeout}s for $peer_ip (verification duration: ${elapsed_time}s, attempts: $verify_attempt)"
-			# Re-establishment failed - return error to trigger fallback recovery
-			handle_error "WARNING" "xfrm recovery: Partial success - deleted SAs but re-establishment timeout for $peer_ip, will fall back to alternative recovery"
+			handle_error "WARNING" "$location_name" "xfrm recovery: SA did not re-establish within ${verify_timeout}s for $location_name ($peer_ip) (verification duration: ${elapsed_time}s, attempts: $verify_attempt)"
+			handle_error "WARNING" "$location_name" "xfrm recovery: Partial success - deleted SAs but re-establishment timeout for $location_name ($peer_ip), will fall back to alternative recovery"
 			return 1
 		fi
 
@@ -739,14 +745,14 @@ attempt_xfrm_recovery() {
 			if [[ $elapsed_time -lt 0 ]]; then
 				elapsed_time=0
 			fi
-			handle_error "WARNING" "xfrm recovery: SA re-established but byte counter verification failed within ${verify_timeout}s for $peer_ip (verification duration: ${elapsed_time}s, attempts: $verify_attempt)"
+			handle_error "WARNING" "$location_name" "xfrm recovery: SA re-established but byte counter verification failed within ${verify_timeout}s for $location_name ($peer_ip) (verification duration: ${elapsed_time}s, attempts: $verify_attempt)"
 			# Byte counter verification failed - return error to trigger fallback recovery
 			return 1
 		fi
 
 		return 0
 	elif [[ $failed_count -gt 0 ]]; then
-		handle_error "WARNING" "xfrm recovery: Failed to delete $failed_count SA(s) for $peer_ip"
+		handle_error "WARNING" "$location_name" "xfrm recovery: Failed to delete $failed_count SA(s) for $location_name ($peer_ip)"
 		return 1
 	fi
 
@@ -965,7 +971,7 @@ select_recovery_strategy() {
 	# Tier must be 2 (surgical cleanup) or 3 (full restart)
 	# Invalid tier is a critical error - fail immediately without checking strategies
 	if [[ "$tier" != "2" ]] && [[ "$tier" != "3" ]]; then
-		handle_error "ERROR" "Invalid tier: $tier (must be 2 or 3)" 0
+		handle_error "ERROR" "SYSTEM" "Invalid tier: $tier (must be 2 or 3)" 0
 		return 1
 	fi
 
@@ -1028,7 +1034,7 @@ select_recovery_strategy() {
 #
 # Arguments:
 #   $1: Peer IP address to clean up
-#   $2: Location name (optional, used for recovery method tracking)
+#   $2: Location name (required, used for recovery method tracking)
 #
 # Returns:
 #   0: Recovery succeeded (recovery actions completed successfully)
@@ -1061,17 +1067,17 @@ select_recovery_strategy() {
 #   Requires warn_if_missing, log_message, and attempt_xfrm_recovery to be set
 surgical_cleanup() {
 	local peer_ip="$1"
-	local location_name="${2:-}"
+	local location_name="$2"
 	local peer_display
 	peer_display=$(format_peer_display "$peer_ip")
-	log_message "INFO" "Attempting surgical SA cleanup for $peer_display"
+	log_message "INFO" "$location_name" "Attempting surgical SA cleanup for $location_name ($peer_display)"
 
 	# Select recovery strategy
 	if ! select_recovery_strategy "$peer_ip" 2; then
 		# No recovery strategy available
 		warn_if_missing "ip"
 		warn_if_missing "ipsec"
-		handle_error "WARNING" "No recovery strategy available for Tier 2 recovery"
+		handle_error "WARNING" "${location_name:-SYSTEM}" "No recovery strategy available for Tier 2 recovery${location_name:+ for $location_name}"
 		return 1
 	fi
 
@@ -1081,22 +1087,20 @@ surgical_cleanup() {
 	while [[ $strategy_executed -eq 0 ]]; do
 		case "$RECOVERY_STRATEGY" in
 		"xfrm")
-			log_message "INFO" "Attempting xfrm-based per-connection recovery for $peer_ip"
+			log_message "INFO" "$location_name" "Attempting xfrm-based per-connection recovery for $location_name ($peer_ip)"
 			# Store recovery method before attempting recovery
-			if [[ -n "$location_name" ]]; then
-				store_recovery_method "$location_name" "$peer_ip" "xfrm"
-			fi
-			if attempt_xfrm_recovery "$peer_ip"; then
-				log_message "INFO" "xfrm-based recovery completed successfully for $peer_ip"
-				log_message "INFO" "Surgical cleanup completed for $peer_ip (via xfrm)"
+			store_recovery_method "$location_name" "$peer_ip" "xfrm"
+			if attempt_xfrm_recovery "$peer_ip" "$location_name"; then
+				log_message "INFO" "$location_name" "xfrm-based recovery completed successfully for $location_name ($peer_ip)"
+				log_message "INFO" "$location_name" "Surgical cleanup completed for $location_name ($peer_ip) (via xfrm)"
 				return 0
 			else
 				# xfrm recovery failed - fall back to ipsec reload
-				handle_error "WARNING" "xfrm-based recovery failed, falling back to ipsec reload (affects all tunnels)"
+				handle_error "WARNING" "$location_name" "xfrm-based recovery failed for $location_name ($peer_ip), falling back to ipsec reload (affects all tunnels)"
 				# Re-select strategy for fallback (without peer IP to force ipsec reload)
 				if ! select_recovery_strategy "" 2; then
 					# Fallback strategy not available
-					handle_error "ERROR" "xfrm recovery failed and no fallback strategy available" 0
+					handle_error "ERROR" "$location_name" "xfrm recovery failed and no fallback strategy available for $location_name ($peer_ip)" 0
 					return 1
 				fi
 				# Continue loop to execute fallback strategy
@@ -1104,12 +1108,10 @@ surgical_cleanup() {
 			fi
 			;;
 		"ipsec_reload")
-			log_message "INFO" "Attempting ipsec reload (affects all tunnels)"
+			log_message "INFO" "$location_name" "Attempting ipsec reload for $location_name ($peer_ip) (affects all tunnels)"
 			# Store recovery method before attempting recovery
 			local recovery_method_used="ipsec_reload"
-			if [[ -n "$location_name" ]]; then
-				store_recovery_method "$location_name" "$peer_ip" "$recovery_method_used"
-			fi
+			store_recovery_method "$location_name" "$peer_ip" "$recovery_method_used"
 			local reload_start_time
 			reload_start_time=$(get_unix_timestamp)
 			local command_succeeded=0
@@ -1119,21 +1121,19 @@ surgical_cleanup() {
 			local ipsec_cmd="${_RECOVERY_IPSEC_PATH:-ipsec}"
 			if "$ipsec_cmd" reload >/dev/null 2>&1; then
 				command_succeeded=1
-				log_message "INFO" "Successfully reloaded IPsec connections via ipsec reload"
+				log_message "INFO" "$location_name" "Successfully reloaded IPsec connections via ipsec reload for $location_name ($peer_ip)"
 			else
 				reload_exit_code=$?
-				handle_error "WARNING" "ipsec reload failed (exit code: ${reload_exit_code}), attempting ipsec restart"
+				handle_error "WARNING" "$location_name" "ipsec reload failed for $location_name ($peer_ip) (exit code: ${reload_exit_code}), attempting ipsec restart"
 				# Update recovery method if fallback to restart
 				recovery_method_used="ipsec_restart"
-				if [[ -n "$location_name" ]]; then
-					store_recovery_method "$location_name" "$peer_ip" "$recovery_method_used"
-				fi
+				store_recovery_method "$location_name" "$peer_ip" "$recovery_method_used"
 				if "$ipsec_cmd" restart >/dev/null 2>&1; then
 					command_succeeded=1
-					log_message "INFO" "Successfully restarted IPsec service via ipsec restart"
+					log_message "INFO" "$location_name" "Successfully restarted IPsec service via ipsec restart for $location_name ($peer_ip)"
 				else
 					restart_exit_code=$?
-					handle_error "ERROR" "ipsec restart also failed (exit code: ${restart_exit_code})" 0
+					handle_error "ERROR" "$location_name" "ipsec restart also failed for $location_name ($peer_ip) (exit code: ${restart_exit_code})" 0
 					command_succeeded=0
 				fi
 			fi
@@ -1152,7 +1152,7 @@ surgical_cleanup() {
 					if [[ $reload_duration -lt 0 ]]; then
 						reload_duration=0
 					fi
-					log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback, verification: connections active, duration: ${reload_duration}s)"
+					log_message "INFO" "$location_name" "Surgical cleanup completed for $location_name ($peer_ip) (via ipsec fallback, verification: connections active, duration: ${reload_duration}s)"
 					recovery_succeeded=1
 				else
 					local current_time
@@ -1162,17 +1162,17 @@ surgical_cleanup() {
 					if [[ $reload_duration -lt 0 ]]; then
 						reload_duration=0
 					fi
-					handle_error "WARNING" "Surgical cleanup completed for $peer_ip (via ipsec fallback, verification: some connections not active, duration: ${reload_duration}s)"
+					handle_error "WARNING" "$location_name" "Surgical cleanup completed for $location_name ($peer_ip) (via ipsec fallback, verification: some connections not active, duration: ${reload_duration}s)"
 					recovery_succeeded=0
 				fi
 			else
-				handle_error "WARNING" "Surgical cleanup failed for $peer_ip (ipsec commands failed, exit codes: reload=${reload_exit_code:-unknown}, restart=${restart_exit_code:-unknown})"
+				handle_error "WARNING" "$location_name" "Surgical cleanup failed for $location_name ($peer_ip) (ipsec commands failed, exit codes: reload=${reload_exit_code:-unknown}, restart=${restart_exit_code:-unknown})"
 				recovery_succeeded=0
 			fi
 			strategy_executed=1
 			;;
 		*)
-			handle_error "ERROR" "Unknown recovery strategy: $RECOVERY_STRATEGY" 0
+			handle_error "ERROR" "$location_name" "Unknown recovery strategy: $RECOVERY_STRATEGY for $location_name ($peer_ip)" 0
 			return 1
 			;;
 		esac
@@ -1237,11 +1237,11 @@ surgical_cleanup() {
 #   Command output is both displayed and appended to log file (for full restart)
 full_restart() {
 	local peer_ip="${1:-}"
-	local location_name="${2:-}"
+	local location_name="$2"
 
 	if ! check_rate_limit; then
 		# check_rate_limit() already logs detailed warning with reset time, countdown, and restart list
-		handle_error "ERROR" "Rate limit exceeded, skipping Tier 3 recovery (see previous warning for reset time and details)" 0
+		handle_error "ERROR" "$location_name" "Rate limit exceeded, skipping Tier 3 recovery for $location_name (see previous warning for reset time and details)" 0
 		return 1
 	fi
 
@@ -1258,23 +1258,23 @@ full_restart() {
 	while [[ $strategy_executed -eq 0 ]]; do
 		case "$RECOVERY_STRATEGY" in
 		"xfrm")
-			log_message "INFO" "Tier 3: Attempting xfrm-based per-connection recovery for $peer_ip"
+			log_message "INFO" "$location_name" "Tier 3: Attempting xfrm-based per-connection recovery for $location_name ($peer_ip)"
 			# Store recovery method before attempting recovery
-			if [[ -n "$location_name" ]] && [[ -n "$peer_ip" ]]; then
+			if [[ -n "$peer_ip" ]]; then
 				store_recovery_method "$location_name" "$peer_ip" "xfrm"
 			fi
-			if attempt_xfrm_recovery "$peer_ip"; then
-				log_message "INFO" "Tier 3: xfrm-based per-connection recovery successful for $peer_ip"
+			if attempt_xfrm_recovery "$peer_ip" "$location_name"; then
+				log_message "INFO" "$location_name" "Tier 3: xfrm-based per-connection recovery successful for $location_name ($peer_ip)"
 				# Record restart for rate limiting (even though it's per-connection)
 				record_restart
 				set_cooldown "$COOLDOWN_MINUTES"
 				return 0
 			else
-				handle_error "WARNING" "Tier 3: xfrm-based recovery failed for $peer_ip, falling back to full restart"
+				handle_error "WARNING" "$location_name" "Tier 3: xfrm-based recovery failed for $location_name ($peer_ip), falling back to full restart"
 				# Re-select strategy for fallback (without peer IP to force ipsec restart)
 				if ! select_recovery_strategy "" 3; then
 					# Fallback strategy not available
-					handle_error "ERROR" "Tier 3: xfrm recovery failed and no fallback strategy available" 0
+					handle_error "ERROR" "$location_name" "Tier 3: xfrm recovery failed and no fallback strategy available for $location_name ($peer_ip)" 0
 					return 1
 				fi
 				# Continue loop to execute fallback strategy
@@ -1282,17 +1282,17 @@ full_restart() {
 			fi
 			;;
 		"ipsec_restart")
-			handle_error "WARNING" "Tier 3: Performing full IPsec restart (affects all VPN tunnels)"
+			handle_error "WARNING" "$location_name" "Tier 3: Performing full IPsec restart for $location_name (affects all VPN tunnels)"
 
 			# Store recovery method before attempting recovery
-			if [[ -n "$location_name" ]] && [[ -n "$peer_ip" ]]; then
+			if [[ -n "$peer_ip" ]]; then
 				store_recovery_method "$location_name" "$peer_ip" "ipsec_restart"
 			fi
 
 			# Record restart
 			record_restart
 
-			log_message "INFO" "Executing ipsec restart (affects all tunnels)"
+			log_message "INFO" "$location_name" "Executing ipsec restart for $location_name (affects all tunnels)"
 			local restart_start_time
 			restart_start_time=$(get_unix_timestamp)
 			# Use full path to ipsec if available, otherwise rely on PATH
@@ -1302,7 +1302,7 @@ full_restart() {
 			"$ipsec_cmd" restart 2>&1 | tee -a "$LOG_FILE"
 			local ipsec_exit_code=${PIPESTATUS[0]}
 			if [[ $ipsec_exit_code -ne 0 ]]; then
-				handle_error "ERROR" "Failed to restart IPsec service (exit code: $ipsec_exit_code)" 0
+				handle_error "ERROR" "$location_name" "Failed to restart IPsec service for $location_name (exit code: $ipsec_exit_code)" 0
 				return 1
 			fi
 
@@ -1319,7 +1319,7 @@ full_restart() {
 			if verify_ipsec_connections_active; then
 				connections_verified=1
 			else
-				handle_error "WARNING" "Tier 3: Some connections not active after ipsec restart"
+				handle_error "WARNING" "$location_name" "Tier 3: Some connections not active after ipsec restart for $location_name"
 			fi
 
 			# Verify byte counters resume for all configured locations
@@ -1345,7 +1345,7 @@ full_restart() {
 						fi
 						if [[ -n "$external_ip" ]]; then
 							((total_peers++))
-							if verify_byte_counters_resume "$external_ip" 2>/dev/null; then
+							if verify_byte_counters_resume "$external_ip" "$location_name" 2>/dev/null; then
 								((peers_with_bytes++))
 							fi
 						fi
@@ -1354,24 +1354,24 @@ full_restart() {
 					if [[ $total_peers -gt 0 ]]; then
 						if [[ $peers_with_bytes -eq $total_peers ]]; then
 							byte_counters_verified=1
-							log_message "INFO" "Tier 3: Byte counters resumed for all $total_peers location(s)"
+							log_message "INFO" "SYSTEM" "Tier 3: Byte counters resumed for all $total_peers location(s)"
 						else
-							handle_error "WARNING" "Tier 3: Byte counters resumed for only $peers_with_bytes/$total_peers location(s)"
+							handle_error "WARNING" "SYSTEM" "Tier 3: Byte counters resumed for only $peers_with_bytes/$total_peers location(s)"
 						fi
 					else
 						# No locations configured - skip byte counter verification
 						byte_counters_verified=1
-						log_message "INFO" "Tier 3: Byte counter verification skipped (no locations configured)"
+						log_message "INFO" "SYSTEM" "Tier 3: Byte counter verification skipped (no locations configured)"
 					fi
 				else
 					# Failed to parse locations - skip byte counter verification
 					byte_counters_verified=1
-					log_message "INFO" "Tier 3: Byte counter verification skipped (failed to parse location config)"
+					log_message "INFO" "SYSTEM" "Tier 3: Byte counter verification skipped (failed to parse location config)"
 				fi
 			else
 				# parse_location_config not available - skip byte counter verification
 				byte_counters_verified=1
-				log_message "INFO" "Tier 3: Byte counter verification skipped (location parsing not available)"
+				log_message "INFO" "SYSTEM" "Tier 3: Byte counter verification skipped (location parsing not available)"
 			fi
 
 			local current_time
@@ -1386,17 +1386,17 @@ full_restart() {
 			if [[ $verify_duration -lt 0 ]]; then
 				verify_duration=0
 			fi
-			log_message "INFO" "Tier 3: Full IPsec restart completed (duration: ${restart_duration}s, verification: ${verify_duration}s, connections: ${connections_verified}, byte counters: ${byte_counters_verified})"
+			log_message "INFO" "$location_name" "Tier 3: Full IPsec restart completed for $location_name (duration: ${restart_duration}s, verification: ${verify_duration}s, connections: ${connections_verified}, byte counters: ${byte_counters_verified})"
 			strategy_executed=1
 			;;
 		*)
-			handle_error "ERROR" "Unknown recovery strategy: $RECOVERY_STRATEGY" 0
+			handle_error "ERROR" "$location_name" "Unknown recovery strategy: $RECOVERY_STRATEGY for $location_name ($peer_ip)" 0
 			return 1
 			;;
 		esac
 	done
 
-	log_message "INFO" "Full IPsec restart completed"
+	log_message "INFO" "$location_name" "Full IPsec restart completed for $location_name"
 	set_cooldown "$COOLDOWN_MINUTES"
 	return 0
 }
@@ -1656,16 +1656,16 @@ monitor_location() {
 			# Log recovery success with method if available
 			if [[ "$failure_count" -gt 0 ]]; then
 				if [[ -n "$recovery_method_display" ]]; then
-					log_message "INFO" "${VPN_NAME:-VPN} restored for location $location_name ($external_peer_ip) after $failure_count failures (recovery method: $recovery_method_display)"
+					log_message "INFO" "$location_name" "${VPN_NAME:-VPN} restored for $location_name ($external_peer_ip) after $failure_count failures (recovery method: $recovery_method_display)"
 				else
-					log_message "INFO" "${VPN_NAME:-VPN} recovered for location $location_name ($external_peer_ip) after $failure_count failures"
+					log_message "INFO" "$location_name" "${VPN_NAME:-VPN} recovered for $location_name ($external_peer_ip) after $failure_count failures"
 				fi
 				reset_failure_count "$location_name" "$external_peer_ip"
 			else
 				if [[ -n "$recovery_method_display" ]]; then
-					log_message "INFO" "${VPN_NAME:-VPN} restored for location $location_name ($external_peer_ip) (recovery method: $recovery_method_display)"
+					log_message "INFO" "$location_name" "${VPN_NAME:-VPN} restored for $location_name ($external_peer_ip) (recovery method: $recovery_method_display)"
 				else
-					log_message "INFO" "${VPN_NAME:-VPN} recovered for location $location_name ($external_peer_ip)"
+					log_message "INFO" "$location_name" "${VPN_NAME:-VPN} recovered for $location_name ($external_peer_ip)"
 				fi
 			fi
 
@@ -1688,7 +1688,7 @@ monitor_location() {
 				local current_time
 				current_time=$(get_unix_timestamp)
 				if [[ -z "$current_time" ]] || [[ ! "$current_time" =~ ^[0-9]+$ ]]; then
-					handle_error "WARNING" "Invalid timestamp from get_unix_timestamp, skipping periodic status log" 0
+					handle_error "WARNING" "SYSTEM" "Invalid timestamp from get_unix_timestamp, skipping periodic status log" 0
 				else
 					local time_diff
 					time_diff=$(safe_timestamp_diff "$current_time" "$last_status_log" 2>/dev/null || echo "0")
@@ -1696,7 +1696,7 @@ monitor_location() {
 						time_diff=0
 					fi
 					if [[ $time_diff -ge $status_log_interval ]] || [[ "$last_status_log" -eq 0 ]]; then
-						log_message "INFO" "${VPN_NAME:-VPN} check OK for location $location_name ($external_peer_ip)"
+						log_message "INFO" "$location_name" "${VPN_NAME:-VPN} check OK for $location_name ($external_peer_ip)"
 						set_peer_state_non_critical "$location_name" "$external_peer_ip" "last_status_log" "$current_time"
 					fi
 				fi
@@ -1722,9 +1722,9 @@ monitor_location() {
 				prev_partition_state=$(get_network_partition_state)
 				set_network_partition_state 1
 				if [[ "$prev_partition_state" -eq 0 ]]; then
-					log_message "WARNING" "Network partition detected - skipping VPN recovery for location $location_name ($external_peer_ip) until connectivity restored"
+					log_message "WARNING" "$location_name" "Network partition detected - skipping VPN recovery for $location_name ($external_peer_ip) until connectivity restored"
 				else
-					log_message "INFO" "Skipping VPN recovery for location $location_name ($external_peer_ip) - network is still partitioned (failure count: $failure_count)"
+					log_message "INFO" "$location_name" "Skipping VPN recovery for $location_name ($external_peer_ip) - network is still partitioned (failure count: $failure_count)"
 				fi
 				return 0
 			else
@@ -1732,7 +1732,7 @@ monitor_location() {
 				local prev_partition_state
 				prev_partition_state=$(get_network_partition_state)
 				if [[ "$prev_partition_state" -eq 1 ]]; then
-					log_message "INFO" "Network connectivity restored - resuming VPN monitoring for location $location_name ($external_peer_ip)"
+					log_message "INFO" "$location_name" "Network connectivity restored - resuming VPN monitoring for $location_name ($external_peer_ip)"
 					set_network_partition_state 0
 				fi
 				# Continue with recovery below
@@ -1749,7 +1749,7 @@ monitor_location() {
 		"tunnel_down") failure_type_display=" (tunnel down)" ;;
 		"routing_issue") failure_type_display=" (routing issue)" ;;
 		esac
-		handle_error "WARNING" "${VPN_NAME:-VPN} check failed for location $location_name ($external_peer_ip) (failure count: $failure_count)$failure_type_display"
+		handle_error "WARNING" "$location_name" "${VPN_NAME:-VPN} check failed for $location_name ($external_peer_ip) (failure count: $failure_count)$failure_type_display"
 
 		# Safety check: Don't escalate recovery if detection is unreliable
 		# If failure type is "unknown" and required detection tools are unavailable,
@@ -1768,10 +1768,10 @@ monitor_location() {
 
 			# If neither tool is available, detection is unreliable - don't escalate recovery
 			if [[ $ip_available -eq 0 ]] && [[ $ipsec_available -eq 0 ]]; then
-				handle_error "ERROR" "Detection unreliable: Both 'ip' and 'ipsec' commands unavailable - skipping recovery escalation for location $location_name ($external_peer_ip) to prevent false recovery actions" 0
+				handle_error "ERROR" "$location_name" "Detection unreliable: Both 'ip' and 'ipsec' commands unavailable - skipping recovery escalation for $location_name ($external_peer_ip) to prevent false recovery actions" 0
 				# Still log the failure but don't escalate recovery
 				if [[ "$failure_count" -ge "$TIER1_THRESHOLD" ]]; then
-					log_message "INFO" "Tier 1: Logging ${VPN_NAME:-VPN} failure for location $location_name ($external_peer_ip)$failure_type_display (recovery skipped - detection unreliable)"
+					log_message "INFO" "$location_name" "Tier 1: Logging ${VPN_NAME:-VPN} failure for $location_name ($external_peer_ip)$failure_type_display (recovery skipped - detection unreliable)"
 				fi
 				return 0
 			fi
@@ -1779,7 +1779,7 @@ monitor_location() {
 
 		# Tier 1: Logging
 		if [[ "$failure_count" -ge "$TIER1_THRESHOLD" ]]; then
-			log_message "INFO" "Tier 1: Logging ${VPN_NAME:-VPN} failure for location $location_name ($external_peer_ip)$failure_type_display"
+			log_message "INFO" "$location_name" "Tier 1: Logging ${VPN_NAME:-VPN} failure for $location_name ($external_peer_ip)$failure_type_display"
 		fi
 
 		# Tier 2: Surgical cleanup
@@ -1789,15 +1789,15 @@ monitor_location() {
 			if [[ "${NO_ESCALATE:-0}" -eq 1 ]]; then
 				if select_recovery_strategy "$external_peer_ip" 2; then
 					if [[ "$RECOVERY_STRATEGY" == "xfrm" ]]; then
-						log_message "INFO" "Tier 2: Would attempt xfrm-based per-connection recovery for location $location_name ($external_peer_ip) (skipped in fake mode)"
+						log_message "INFO" "$location_name" "Tier 2: Would attempt xfrm-based per-connection recovery for $location_name ($external_peer_ip) (skipped in fake mode)"
 					else
 						# Log the specific command that would be executed
 						local command_display="${RECOVERY_COMMAND:-ipsec reload}"
-						log_message "INFO" "Tier 2: Would attempt surgical SA cleanup for location $location_name ($external_peer_ip) via $command_display (skipped in fake mode)"
+						log_message "INFO" "$location_name" "Tier 2: Would attempt surgical SA cleanup for $location_name ($external_peer_ip) via $command_display (skipped in fake mode)"
 					fi
 				fi
 			else
-				handle_error "WARNING" "Tier 2: Attempting surgical SA cleanup for location $location_name ($external_peer_ip)"
+				handle_error "WARNING" "$location_name" "Tier 2: Attempting surgical SA cleanup for $location_name ($external_peer_ip)"
 				surgical_cleanup "$external_peer_ip" "$location_name"
 			fi
 		fi
@@ -1808,24 +1808,25 @@ monitor_location() {
 			if [[ "${NO_ESCALATE:-0}" -eq 1 ]]; then
 				if ! check_rate_limit; then
 					# check_rate_limit() already logs "Rate limit exceeded" via handle_error
-					log_message "INFO" "Tier 3: Would attempt IPsec restart (skipped in fake mode, rate limit would prevent)"
+					# location_name should always be provided in production code
+					log_message "INFO" "${location_name:-SYSTEM}" "Tier 3: Would attempt IPsec restart${location_name:+ for $location_name} (skipped in fake mode, rate limit would prevent)"
 				else
 					# In fake mode, still record restart for cleanup purposes (prevents restart count file from growing)
 					# but skip the actual restart command
 					record_restart
 					if select_recovery_strategy "$external_peer_ip" 3; then
 						if [[ "$RECOVERY_STRATEGY" == "xfrm" ]]; then
-							log_message "INFO" "Tier 3: Would attempt xfrm-based per-connection recovery for location $location_name ($external_peer_ip) (skipped in fake mode)"
+							log_message "INFO" "$location_name" "Tier 3: Would attempt xfrm-based per-connection recovery for $location_name ($external_peer_ip) (skipped in fake mode)"
 						else
-							log_message "INFO" "Tier 3: Would attempt full IPsec restart (affects all tunnels, skipped in fake mode)"
+							log_message "INFO" "$location_name" "Tier 3: Would attempt full IPsec restart (affects all tunnels, skipped in fake mode)"
 						fi
 					else
 						# No recovery strategy available - log Tier 3 reached but no strategy available
-						log_message "WARNING" "Tier 3: Recovery threshold reached for location $location_name ($external_peer_ip) but no recovery strategy available (skipped in fake mode)"
+						log_message "WARNING" "$location_name" "Tier 3: Recovery threshold reached for $location_name ($external_peer_ip) but no recovery strategy available (skipped in fake mode)"
 					fi
 				fi
 			else
-				handle_error "ERROR" "Tier 3: Attempting IPsec restart for location $location_name ($external_peer_ip)" 0
+				handle_error "ERROR" "$location_name" "Tier 3: Attempting IPsec restart for $location_name ($external_peer_ip)" 0
 				if full_restart "$external_peer_ip" "$location_name"; then
 					reset_failure_count "$location_name" "$external_peer_ip"
 				fi

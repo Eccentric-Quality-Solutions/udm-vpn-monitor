@@ -101,7 +101,7 @@ fi
 # Check if keepalive is enabled
 if [[ "${ENABLE_KEEPALIVE:-0}" -ne 1 ]]; then
 	if [[ "$COMMAND" == "start" ]]; then
-		log_message "INFO" "VPN keepalive is disabled (ENABLE_KEEPALIVE=0), not starting"
+		log_message "INFO" "SYSTEM" "VPN keepalive is disabled (ENABLE_KEEPALIVE=0), not starting"
 		exit "${EXIT_SUCCESS:-0}"
 	fi
 	# For other commands, continue (may need to stop disabled daemon)
@@ -134,7 +134,7 @@ start_daemon() {
 	if is_running; then
 		local pid
 		pid=$(cat "$PIDFILE")
-		log_message "INFO" "VPN keepalive daemon is already running (PID: $pid)"
+		log_message "INFO" "SYSTEM" "VPN keepalive daemon is already running (PID: $pid)"
 		return 0
 	fi
 
@@ -155,7 +155,7 @@ start_daemon() {
 		die "No VPN locations configured - cannot start keepalive. At least one LOCATION_*_EXTERNAL variable is required."
 	fi
 
-	log_message "INFO" "Starting VPN keepalive daemon..."
+	log_message "INFO" "SYSTEM" "Starting VPN keepalive daemon..."
 
 	# Start daemon in background and capture PID
 	# For systemd Type=forking: parent must write PID file and exit immediately
@@ -197,7 +197,7 @@ start_daemon() {
 			# parse_location_config() populates global LOCATIONS array
 			if ! parse_location_config 2>/dev/null; then
 				# parse_location_config failed - log warning but don't exit daemon
-				log_message "WARNING" "Failed to parse location configuration - keepalive will not send pings until locations are configured" || true
+				log_message "WARNING" "SYSTEM" "Failed to parse location configuration - keepalive will not send pings until locations are configured" || true
 				return
 			fi
 
@@ -214,7 +214,7 @@ start_daemon() {
 		# load_config calls exit/die, the daemon will restart via systemd (Restart=on-failure).
 		reload_peer_config() {
 			# Log that we're reloading config
-			log_message "INFO" "Reloading configuration from $CONFIG_FILE" || true
+			log_message "INFO" "SYSTEM" "Reloading configuration from $CONFIG_FILE" || true
 
 			# Reload config (suppress output, errors won't kill daemon due to set +e)
 			# If config is invalid, load_config may call exit, which will kill the daemon.
@@ -223,7 +223,7 @@ start_daemon() {
 			if ! load_config "$CONFIG_FILE" >/dev/null 2>&1; then
 				load_result=$?
 				# load_config failed but didn't exit - log explicit error
-				log_message "ERROR" "Failed to reload configuration from $CONFIG_FILE (exit code: $load_result)" || true
+				log_message "ERROR" "SYSTEM" "Failed to reload configuration from $CONFIG_FILE (exit code: $load_result)" || true
 				# Continue with existing configuration rather than failing completely
 			fi
 
@@ -235,10 +235,10 @@ start_daemon() {
 
 			# Check if we have any locations configured after reload
 			if [[ ${#locations[@]} -eq 0 ]]; then
-				log_message "WARNING" "No VPN locations configured after config reload - keepalive will not send pings until locations are configured" || true
+				log_message "WARNING" "SYSTEM" "No VPN locations configured after config reload - keepalive will not send pings until locations are configured" || true
 			else
 				# Log successful reload with location count
-				log_message "INFO" "Configuration reloaded successfully (${#locations[@]} location(s) configured)" || true
+				log_message "INFO" "SYSTEM" "Configuration reloaded successfully (${#locations[@]} location(s) configured)" || true
 			fi
 
 			# Update keepalive interval if changed
@@ -248,7 +248,7 @@ start_daemon() {
 
 			# Log if interval changed
 			if [[ "$old_interval" != "$keepalive_interval" ]]; then
-				log_message "INFO" "Keepalive interval changed from ${old_interval}s to ${keepalive_interval}s" || true
+				log_message "INFO" "SYSTEM" "Keepalive interval changed from ${old_interval}s to ${keepalive_interval}s" || true
 			fi
 		}
 
@@ -256,7 +256,7 @@ start_daemon() {
 		parse_peer_config
 
 		# Log startup (errors ignored to prevent daemon exit)
-		log_message "INFO" "VPN keepalive daemon started (PID: $$, interval: ${keepalive_interval}s)" || true
+		log_message "INFO" "SYSTEM" "VPN keepalive daemon started (PID: $$, interval: ${keepalive_interval}s)" || true
 
 		# Main keepalive loop
 		while true; do
@@ -285,7 +285,7 @@ start_daemon() {
 				# Get external IP for this location
 				local external_ip
 				if ! external_ip=$(get_location_external_ip "$location_name"); then
-					log_message "WARNING" "Keepalive: Location $location_name - failed to get external IP (skipping)" || true
+					log_message "WARNING" "$location_name" "Keepalive: failed to get external IP (skipping)" || true
 					continue
 				fi
 
@@ -310,7 +310,7 @@ start_daemon() {
 				if [[ "$ping_target" =~ [[:space:]] ]]; then
 					# Multiple IPs - use check_ping_multiple_ips with 30% threshold
 					if ! check_ping_multiple_ips "$ping_target" "$local_udm_ip" >/dev/null 2>&1; then
-						log_message "WARNING" "Keepalive: Location $location_name - ping check failed (<30% of internal IPs responded)" || true
+						log_message "WARNING" "$location_name" "Keepalive: ping check failed (<30% of internal IPs responded)" || true
 					fi
 				else
 					# Single IP - use existing ping logic
@@ -355,9 +355,9 @@ start_daemon() {
 						# Log failure but continue (don't exit daemon)
 						# Errors in log_message are ignored to prevent daemon exit
 						if [[ "$ping_target" == "$external_ip" ]]; then
-							log_message "WARNING" "Keepalive: Location $location_name - ping failed for $external_ip" || true
+							log_message "WARNING" "$location_name" "Keepalive: ping failed for $external_ip" || true
 						else
-							log_message "WARNING" "Keepalive: Location $location_name - ping failed for $ping_target (external: $external_ip)" || true
+							log_message "WARNING" "$location_name" "Keepalive: ping failed for $ping_target (external: $external_ip)" || true
 						fi
 					fi
 				fi
@@ -376,33 +376,33 @@ start_daemon() {
 	if ! echo "$daemon_pid" >"$PIDFILE" 2>/dev/null; then
 		# Failed to write PID file, kill the daemon
 		kill "$daemon_pid" 2>/dev/null || true
-		handle_error "ERROR" "Failed to write PID file: $PIDFILE" 1
+		handle_error "ERROR" "SYSTEM" "Failed to write PID file: $PIDFILE" 1
 	fi
 
 	# Verify the process is still running (quick check)
 	if ! kill -0 "$daemon_pid" 2>/dev/null; then
 		# Process died immediately, remove PID file
 		rm -f "$PIDFILE"
-		handle_error "ERROR" "VPN keepalive daemon process died immediately after start" 1
+		handle_error "ERROR" "SYSTEM" "VPN keepalive daemon process died immediately after start" 1
 	fi
 
 	# For systemd Type=forking: parent must exit immediately after writing PID file
 	# Systemd will read the PID file and track the child process
-	log_message "INFO" "VPN keepalive daemon started successfully (PID: $daemon_pid)"
+	log_message "INFO" "SYSTEM" "VPN keepalive daemon started successfully (PID: $daemon_pid)"
 	return 0
 }
 
 # Stop the keepalive daemon
 stop_daemon() {
 	if ! is_running; then
-		log_message "INFO" "VPN keepalive daemon is not running"
+		log_message "INFO" "SYSTEM" "VPN keepalive daemon is not running"
 		return 0
 	fi
 
 	local pid
 	pid=$(cat "$PIDFILE")
 
-	log_message "INFO" "Stopping VPN keepalive daemon (PID: $pid)..."
+	log_message "INFO" "SYSTEM" "Stopping VPN keepalive daemon (PID: $pid)..."
 
 	# Send TERM signal
 	if kill -TERM "$pid" 2>/dev/null; then
@@ -415,7 +415,7 @@ stop_daemon() {
 
 		# Force kill if still running
 		if kill -0 "$pid" 2>/dev/null; then
-			log_message "WARNING" "Daemon did not exit gracefully, forcing termination"
+			log_message "WARNING" "SYSTEM" "Daemon did not exit gracefully, forcing termination"
 			kill -KILL "$pid" 2>/dev/null || true
 			sleep 1
 		fi
@@ -423,20 +423,20 @@ stop_daemon() {
 		# Remove PID file
 		rm -f "$PIDFILE"
 
-		log_message "INFO" "VPN keepalive daemon stopped"
+		log_message "INFO" "SYSTEM" "VPN keepalive daemon stopped"
 		return 0
 	else
 		# kill -TERM failed - check if process is still running
 		# If process already exited, that's fine - just clean up PID file
 		if ! kill -0 "$pid" 2>/dev/null; then
 			# Process already exited, clean up PID file
-			log_message "INFO" "VPN keepalive daemon process already exited (PID: $pid), cleaning up PID file"
+			log_message "INFO" "SYSTEM" "VPN keepalive daemon process already exited (PID: $pid), cleaning up PID file"
 			rm -f "$PIDFILE"
 			return 0
 		else
 			# Process is still running but we couldn't send TERM signal
 			# This is an error (permission issue, etc.)
-			handle_error "ERROR" "Failed to stop VPN keepalive daemon (PID: $pid)" 1
+			handle_error "ERROR" "SYSTEM" "Failed to stop VPN keepalive daemon (PID: $pid)" 1
 		fi
 	fi
 }

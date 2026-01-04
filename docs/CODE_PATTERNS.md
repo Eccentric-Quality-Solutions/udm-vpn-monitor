@@ -55,7 +55,7 @@ These patterns should be followed consistently when writing or modifying code in
 ```bash
 # Use handle_error_or_exit_fake_mode() for fatal errors that need fake mode support
 if [[ ! -f "$CONFIG_FILE" ]] && [[ -z "${EXTERNAL_PEER_IPS:-}" ]]; then
-    handle_error_or_exit_fake_mode "Configuration file not found and EXTERNAL_PEER_IPS not set" "${EXIT_CONFIG_ERROR:-2}"
+    handle_error_or_exit_fake_mode "SYSTEM" "Configuration file not found and EXTERNAL_PEER_IPS not set" "${EXIT_CONFIG_ERROR:-2}"
 fi
 
 # Use die() for truly fatal errors that prevent script execution entirely
@@ -89,7 +89,7 @@ check_vpn_status() {
     local peer_ip="$1"
     
     if ! validate_ip_address "$peer_ip"; then
-        log_message "ERROR" "Invalid peer IP format: $peer_ip"
+        log_message "ERROR" "SYSTEM" "Invalid peer IP format: $peer_ip"
         return 1  # Return error code, don't die
     fi
     
@@ -103,9 +103,13 @@ check_vpn_status() {
 }
 
 # Caller handles the error:
-if ! check_vpn_status "$peer_ip"; then
-    log_message "WARNING" "VPN check failed for $peer_ip"
-    increment_failure "$peer_ip"
+if ! check_vpn_status "$peer_ip" "$location_name"; then
+    if [[ -n "$location_name" ]]; then
+        log_message "WARNING" "$location_name" "VPN check failed for $location_name ($peer_ip)"
+    else
+        log_message "WARNING" "SYSTEM" "VPN check failed for $peer_ip"
+    fi
+    increment_failure "$location_name" "$peer_ip"
 fi
 ```
 
@@ -122,12 +126,12 @@ fi
 **Pattern:**
 ```bash
 if ! check_command_or_warn "ipsec" "Checking IPsec status"; then
-    log_message "WARNING" "ipsec command not available"
+    log_message "WARNING" "SYSTEM" "ipsec command not available"
     # Handle missing ipsec command
 fi
 
 if [[ ! -f "$cache_file" ]]; then
-    log_message "WARNING" "Cache file not found: $cache_file (will recreate)"
+    log_message "WARNING" "SYSTEM" "Cache file not found: $cache_file (will recreate)"
     # Continue and recreate cache
 fi
 ```
@@ -143,9 +147,9 @@ fi
 
 **Pattern:**
 ```bash
-# ✅ GOOD: Use handle_error_or_exit_fake_mode()
+# ✅ GOOD: Use handle_error_or_exit_fake_mode() with prefix
 if [[ $is_writable -eq 0 ]]; then
-    handle_error_or_exit_fake_mode "STATE_DIR is not writable: $lockfile_dir" "${EXIT_PERMISSION_ERROR:-4}"
+    handle_error_or_exit_fake_mode "SYSTEM" "STATE_DIR is not writable: $lockfile_dir" "${EXIT_PERMISSION_ERROR:-4}"
 fi
 
 # ❌ BAD: Manual is_fake_mode() check
@@ -172,7 +176,7 @@ When calling `handle_error_or_exit_fake_mode()` from a function that needs to re
 validate_config_type() {
     if [[ "$required" == "required" ]]; then
         # In fake mode, it returns 1; in normal mode it calls die() and never returns
-        if ! handle_error_or_exit_fake_mode "$var_name must be an integer" "${EXIT_VALIDATION_ERROR:-3}"; then
+        if ! handle_error_or_exit_fake_mode "SYSTEM" "$var_name must be an integer" "${EXIT_VALIDATION_ERROR:-3}"; then
             # In fake mode, handle_error_or_exit_fake_mode returns 1
             return 1
         fi
@@ -182,12 +186,12 @@ validate_config_type() {
 
 # ✅ GOOD: Use || return 1 pattern for simple cases
 if ! mkdir -p "$dir" 2>/dev/null; then
-    handle_error_or_exit_fake_mode "Cannot create directory: $dir" || return 1
+    handle_error_or_exit_fake_mode "SYSTEM" "Cannot create directory: $dir" || return 1
 fi
 
 # ❌ BAD: Don't call and then always return 1 without checking
 if [[ "$required" == "required" ]]; then
-    handle_error_or_exit_fake_mode "$var_name must be an integer" "${EXIT_VALIDATION_ERROR:-3}"
+    handle_error_or_exit_fake_mode "SYSTEM" "$var_name must be an integer" "${EXIT_VALIDATION_ERROR:-3}"
     return 1  # This always executes, even if function succeeded (though it never does)
 fi
 ```
@@ -205,16 +209,28 @@ fi
 **Pattern:**
 ```bash
 if [[ "${ENABLE_XFRM_RECOVERY:-1}" -eq 1 ]]; then
-    if ! attempt_xfrm_recovery "$peer_ip"; then
-        log_message "WARNING" "xfrm recovery failed, falling back"
+    if ! attempt_xfrm_recovery "$peer_ip" "$location_name"; then
+        if [[ -n "$location_name" ]]; then
+            log_message "WARNING" "$location_name" "xfrm recovery failed for $location_name ($peer_ip), falling back"
+        else
+            log_message "WARNING" "SYSTEM" "xfrm recovery failed, falling back"
+        fi
         if ! ipsec reload 2>/dev/null; then
-            log_message "ERROR" "ipsec reload also failed"
+            if [[ -n "$location_name" ]]; then
+                log_message "ERROR" "$location_name" "ipsec reload also failed for $location_name ($peer_ip)"
+            else
+                log_message "ERROR" "SYSTEM" "ipsec reload also failed"
+            fi
             return 1
         fi
     fi
 else
     if ! ipsec reload 2>/dev/null; then
-        log_message "ERROR" "ipsec reload failed"
+        if [[ -n "$location_name" ]]; then
+            log_message "ERROR" "$location_name" "ipsec reload failed for $location_name ($peer_ip)"
+        else
+            log_message "ERROR" "SYSTEM" "ipsec reload failed"
+        fi
         return 1
     fi
 fi
@@ -233,7 +249,11 @@ fi
 **Pattern:**
 ```bash
 if ! validate_ip_address "$peer_ip"; then
-    log_message "ERROR" "Invalid peer IP: $peer_ip"
+    if [[ -n "$location_name" ]]; then
+        log_message "ERROR" "$location_name" "Invalid peer IP: $location_name ($peer_ip)"
+    else
+        log_message "ERROR" "SYSTEM" "Invalid peer IP: $peer_ip"
+    fi
     return 1  # Return error, don't die
 fi
 # Continue with validated input
@@ -505,13 +525,13 @@ value=$(cat "$file" 2>/dev/null || echo "default")  # Can still hang!
 ```bash
 # ✅ GOOD: Use atomic_write_file() helper
 if ! atomic_write_file "$state_file" "$value"; then
-    log_message "ERROR" "Failed to write state file: $file"
+    log_message "ERROR" "SYSTEM" "Failed to write state file: $file"
     return 1
 fi
 
 # ✅ GOOD: Manual atomic write pattern
 if ! (echo "$data" > "${file}.tmp" && mv "${file}.tmp" "$file"); then
-    log_message "ERROR" "Failed to write state file: $file"
+    log_message "ERROR" "SYSTEM" "Failed to write state file: $file"
     return 1
 fi
 ```
@@ -1007,11 +1027,15 @@ if [[ "$current_bytes" -eq 0 ]]; then
                 # Ping succeeds - VPN is healthy but idle (newly established or idle)
                 set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "$current_bytes"
                 set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
-                log_message "INFO" "VPN OK: SA exists, bytes=0 (first check, idle but healthy, ping check passed)"
+                log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=0 (first check, idle but healthy, ping check passed)"
                 return 0
             else
                 # Ping fails - VPN is likely broken
-                handle_error "WARNING" "VPN suspect: SA exists but bytes=0 (first check, ping check failed)"
+                if [[ -n "$location_name" ]]; then
+                    handle_error "WARNING" "$location_name" "VPN suspect: SA exists but bytes=0 (first check, ping check failed) for $location_name ($peer_ip)"
+                else
+                    handle_error "WARNING" "SYSTEM" "VPN suspect: SA exists but bytes=0 (first check, ping check failed)"
+                fi
                 return 1
             fi
         else
@@ -1239,16 +1263,24 @@ source "$config_file"  # Dangerous! Allows arbitrary code execution
 **Pattern:**
 ```bash
 # Use log_message() for all logging
-log_message "INFO" "VPN monitor started"
-log_message "WARNING" "Config file not found:" "$config_file"
-log_message "ERROR" "Failed to restart VPN"
-log_message "DEBUG" "Debug information"  # Only if DEBUG=1
+# System-level messages use "SYSTEM" prefix
+log_message "INFO" "SYSTEM" "VPN monitor started"
+log_message "WARNING" "SYSTEM" "Config file not found:" "$config_file"
+log_message "ERROR" "SYSTEM" "Failed to restart VPN"
+log_message "DEBUG" "SYSTEM" "Debug information"  # Only if DEBUG=1
+
+# Location-specific messages use location name prefix
+log_message "INFO" "NYC" "VPN monitor started"
+log_message "WARNING" "NYC" "VPN check failed for NYC (192.168.1.1)"
+log_message "ERROR" "NYC" "Failed to restart VPN for NYC"
 ```
 
 **Key Points:**
 - Use `log_message()` function from `lib/logging.sh` for all logging
 - Log levels: INFO, WARNING, ERROR, DEBUG
-- Format: `[YYYY-MM-DD HH:MM:SS] [LEVEL] message`
+- Format: `[YYYY-MM-DD HH:MM:SS] [LEVEL] PREFIX: message`
+- PREFIX is either a location name (e.g., "NYC") or "SYSTEM" for system-level messages
+- All messages must have a prefix (defaults to "SYSTEM" if not provided)
 - Log file write errors don't fail the script (resilient logging)
 - DEBUG messages only output if DEBUG=1
 - INFO messages output to stderr when running interactively (TTY attached)
@@ -1265,10 +1297,10 @@ set_cooldown() {
     local cooldown_until
     cooldown_until=$(get_timestamp_plus_minutes "$minutes")
     if ! atomic_write_file "$COOLDOWN_UNTIL_FILE" "$cooldown_until"; then
-        handle_error "ERROR" "Failed to set cooldown period (file: $COOLDOWN_UNTIL_FILE)" 0
+        handle_error "ERROR" "SYSTEM" "Failed to set cooldown period (file: $COOLDOWN_UNTIL_FILE)" 0
         return 0  # Return early - don't log success
     fi
-    log_message "INFO" "Cooldown period set for $minutes minutes"  # Only logs on success
+    log_message "INFO" "SYSTEM" "Cooldown period set for $minutes minutes"  # Only logs on success
 }
 
 # ❌ BAD: Logs success even when write fails
@@ -1277,10 +1309,10 @@ set_cooldown() {
     local cooldown_until
     cooldown_until=$(get_timestamp_plus_minutes "$minutes")
     if ! atomic_write_file "$COOLDOWN_UNTIL_FILE" "$cooldown_until"; then
-        handle_error "ERROR" "Failed to set cooldown period" 0
+        handle_error "ERROR" "SYSTEM" "Failed to set cooldown period" 0
         # Bug: Function continues and logs success below!
     fi
-    log_message "INFO" "Cooldown period set for $minutes minutes"  # Wrong! Logs even on failure
+    log_message "INFO" "SYSTEM" "Cooldown period set for $minutes minutes"  # Wrong! Logs even on failure
 }
 ```
 

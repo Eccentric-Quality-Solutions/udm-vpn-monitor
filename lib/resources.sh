@@ -318,7 +318,7 @@ check_resource_constrained() {
 	if ! [[ "$usage" =~ ^-?[0-9]+$ ]]; then
 		# Not a number - invalid input
 		if command -v log_message >/dev/null 2>&1; then
-			log_message "WARNING" "check_resource_constrained: Invalid usage value for ${resource}: '${usage}' (not a number)"
+			log_message "WARNING" "SYSTEM" "check_resource_constrained: Invalid usage value for ${resource}: '${usage}' (not a number)"
 		fi
 		return 1
 	fi
@@ -327,7 +327,7 @@ check_resource_constrained() {
 	if [[ "$usage" -lt 0 ]] || [[ "$usage" -gt 100 ]]; then
 		# Out of range - log warning and return error for clearly invalid input
 		if command -v log_message >/dev/null 2>&1; then
-			log_message "WARNING" "check_resource_constrained: Usage value for ${resource} is out of expected range (0-100): ${usage}%"
+			log_message "WARNING" "SYSTEM" "check_resource_constrained: Usage value for ${resource} is out of expected range (0-100): ${usage}%"
 		fi
 		return 1
 	fi
@@ -437,7 +437,7 @@ check_system_resources() {
 	local cpu_usage
 	if cpu_usage=$(get_cpu_usage 2>/dev/null); then
 		if check_resource_constrained "cpu" "$cpu_usage" "$cpu_threshold" "$cpu_duration" "$state_dir"; then
-			handle_error "WARNING" "CPU usage has been at ${cpu_threshold}%+ (currently ${cpu_usage}%) for ${cpu_duration}s - throttling execution" 0
+			handle_error "WARNING" "SYSTEM" "CPU usage has been at ${cpu_threshold}%+ (currently ${cpu_usage}%) for ${cpu_duration}s - throttling execution" 0
 			return 1
 		fi
 	fi
@@ -446,7 +446,7 @@ check_system_resources() {
 	local ram_usage
 	if ram_usage=$(get_memory_usage 2>/dev/null); then
 		if check_resource_constrained "ram" "$ram_usage" "$ram_threshold" "$ram_duration" "$state_dir"; then
-			handle_error "WARNING" "RAM usage has been at ${ram_threshold}%+ (currently ${ram_usage}%) for ${ram_duration}s - throttling execution" 0
+			handle_error "WARNING" "SYSTEM" "RAM usage has been at ${ram_threshold}%+ (currently ${ram_usage}%) for ${ram_duration}s - throttling execution" 0
 			return 1
 		fi
 	fi
@@ -460,7 +460,7 @@ check_system_resources() {
 			if [[ ! -f "$disk_warning_state_file" ]]; then
 				local filesystem
 				filesystem=$(df -P "$check_path" 2>/dev/null | tail -n1 | awk '{print $1}')
-				handle_error "WARNING" "Free disk space is low: ${free_space}% free on ${filesystem}" 0
+				handle_error "WARNING" "SYSTEM" "Free disk space is low: ${free_space}% free on ${filesystem}" 0
 				# Mark that we've logged the warning
 				atomic_write_file "$disk_warning_state_file" "1" 2>/dev/null || true
 			fi
@@ -476,7 +476,7 @@ check_system_resources() {
 		if [[ $free_space -lt $disk_critical ]]; then
 			local filesystem
 			filesystem=$(df -P "$check_path" 2>/dev/null | tail -n1 | awk '{print $1}')
-			handle_error "WARNING" "Free disk space is critical: ${free_space}% free on ${filesystem}" 0
+			handle_error "WARNING" "SYSTEM" "Free disk space is critical: ${free_space}% free on ${filesystem}" 0
 
 			# Clear warning state file (so it can warn again if it recovers to warning level)
 			local disk_warning_state_file="${state_dir}/resource_disk_warning_logged"
@@ -490,14 +490,14 @@ check_system_resources() {
 				local new_free_space
 				if new_free_space=$(get_free_disk_space "$check_path" 2>/dev/null); then
 					if [[ $new_free_space -ge $disk_critical ]]; then
-						log_message "INFO" "Disk space recovered to ${new_free_space}% after log cleanup"
+						log_message "INFO" "SYSTEM" "Disk space recovered to ${new_free_space}% after log cleanup"
 						return 0
 					fi
 				fi
 			fi
 
 			# Still critical - throttle execution
-			handle_error "WARNING" "Disk space still critical after cleanup - throttling execution" 0
+			handle_error "WARNING" "SYSTEM" "Disk space still critical after cleanup - throttling execution" 0
 			return 1
 		fi
 	fi
@@ -549,7 +549,7 @@ manage_log_files_on_low_disk() {
 
 		# If log file is larger than 10MB, rotate it
 		if [[ -n "$log_size_kb" ]] && [[ "$log_size_kb" -gt 10240 ]]; then
-			handle_error "WARNING" "Log file is large (${log_size_kb}KB), rotating to free disk space" 0
+			handle_error "WARNING" "SYSTEM" "Log file is large (${log_size_kb}KB), rotating to free disk space" 0
 
 			# Create rotated log file name
 			local rotated_log="${LOG_FILE}.old"
@@ -561,7 +561,7 @@ manage_log_files_on_low_disk() {
 
 			# Move current log to rotated
 			if mv "$LOG_FILE" "$rotated_log" 2>/dev/null; then
-				log_message "INFO" "Log file rotated: $LOG_FILE -> $rotated_log"
+				log_message "INFO" "SYSTEM" "Log file rotated: $LOG_FILE -> $rotated_log"
 				# Create new empty log file
 				touch "$LOG_FILE" 2>/dev/null || true
 			fi
@@ -594,7 +594,7 @@ manage_log_files_on_low_disk() {
 		fi
 
 		if [[ $removed_count -gt 0 ]]; then
-			log_message "INFO" "Removed $removed_count old log file(s) to free disk space"
+			log_message "INFO" "SYSTEM" "Removed $removed_count old log file(s) to free disk space"
 		fi
 	fi
 

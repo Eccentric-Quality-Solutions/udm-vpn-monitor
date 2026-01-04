@@ -519,18 +519,24 @@ For consistent error handling, use the provided helper functions:
 
 ```bash
 # Logging (always available)
-log_message "INFO" "Operation completed successfully"
-log_message "WARNING" "Optional feature unavailable"
-log_message "ERROR" "Operation failed but continuing"
-log_message "DEBUG" "Debug information"  # Only if DEBUG=1
+# System-level messages use "SYSTEM" prefix
+log_message "INFO" "SYSTEM" "Operation completed successfully"
+log_message "WARNING" "SYSTEM" "Optional feature unavailable"
+log_message "ERROR" "SYSTEM" "Operation failed but continuing"
+log_message "DEBUG" "SYSTEM" "Debug information"  # Only if DEBUG=1
+
+# Location-specific messages use location name prefix
+log_message "INFO" "NYC" "VPN check OK for NYC (192.168.1.1)"
+log_message "WARNING" "NYC" "VPN check failed for NYC (192.168.1.1)"
 
 # Unified error handling (recommended for consistency)
-handle_error "WARNING" "Optional feature unavailable, using fallback"
-handle_error "ERROR" "Critical configuration missing" 1  # Logs and exits
-handle_error "INFO" "Operation completed with minor issues"
+handle_error "WARNING" "SYSTEM" "Optional feature unavailable, using fallback"
+handle_error "ERROR" "SYSTEM" "Critical configuration missing" 1  # Logs and exits
+handle_error "INFO" "SYSTEM" "Operation completed with minor issues"
+handle_error "WARNING" "NYC" "VPN check failed for NYC (192.168.1.1)"
 
 # Fatal errors (direct call)
-die "Fatal error message"  # Logs and exits with code 1
+die "Fatal error message"  # Logs and exits with code 1 (uses SYSTEM prefix automatically)
 
 # Check if command exists (logs warning if missing)
 if ! warn_if_missing "ipsec"; then
@@ -556,8 +562,10 @@ This function standardizes error handling patterns and makes it easier to mainta
 The `handle_error_or_exit_fake_mode()` function provides consistent error handling for fatal errors that need fake mode support:
 - **Fake mode (NO_ESCALATE=1)**: Logs error and exits with code 0 (graceful exit for testing)
 - **Normal mode**: Logs error and exits with specified exit code (default: 1)
-- **Usage**: `handle_error_or_exit_fake_mode "message" [exit_code]`
+- **Usage**: `handle_error_or_exit_fake_mode "prefix" "message" [exit_code]`
 - **Location**: Defined in `lib/logging.sh` (centralized error handling)
+
+**Important**: The prefix argument is REQUIRED. Use "SYSTEM" for system-level errors, or a location name for location-specific errors.
 
 This function should be used instead of manually checking `is_fake_mode()` for fatal errors. It standardizes the pattern of handling errors differently based on fake mode.
 
@@ -573,7 +581,8 @@ Standard exit codes are defined in `lib/constants.sh` for consistent error handl
 
 Use these constants instead of magic numbers for better readability:
 ```bash
-handle_error_or_exit_fake_mode "Configuration validation failed" "${EXIT_VALIDATION_ERROR:-3}"
+handle_error_or_exit_fake_mode "SYSTEM" "Configuration validation failed" "${EXIT_VALIDATION_ERROR:-3}"
+handle_error_or_exit_fake_mode "NYC" "Failed to get external IP" "${EXIT_VALIDATION_ERROR:-3}"
 ```
 
 **5. Error Handling Patterns by Function Type**

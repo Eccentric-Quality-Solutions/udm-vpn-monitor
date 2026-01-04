@@ -422,12 +422,12 @@ extract_byte_counter() {
 
 	if [[ -z "$lifetime_section" ]]; then
 		# No lifetime section found - log debug info if enabled
-		[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "extract_byte_counter: No 'lifetime current:' section found in xfrm output for peer"
+		[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "SYSTEM" "extract_byte_counter: No 'lifetime current:' section found in xfrm output for peer"
 		return 1
 	fi
 
 	# Debug: log the lifetime section if DEBUG enabled
-	[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "extract_byte_counter: Found lifetime section: $(echo "$lifetime_section" | head -3 | tr '\n' ' ')"
+	[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "SYSTEM" "extract_byte_counter: Found lifetime section: $(echo "$lifetime_section" | head -3 | tr '\n' ' ')"
 
 	# Primary method: UDM OS format - look for line with "N(bytes)" after "lifetime current:"
 	# This handles the format: "  39492(bytes), 609(packets)"
@@ -635,7 +635,7 @@ get_local_udm_ip() {
 
 	# Validate IP address format
 	if ! validate_ip_address "$LOCAL_UDM_IP"; then
-		handle_error "WARNING" "Invalid LOCAL_UDM_IP format: $LOCAL_UDM_IP"
+		handle_error "WARNING" "SYSTEM" "Invalid LOCAL_UDM_IP format: $LOCAL_UDM_IP"
 		return 1
 	fi
 
@@ -733,7 +733,7 @@ add_route_if_needed() {
 	local local_ip="$1"
 
 	if [[ -z "$local_ip" ]]; then
-		handle_error "WARNING" "Cannot add route: LOCAL_UDM_IP is not configured"
+		handle_error "WARNING" "SYSTEM" "Cannot add route: LOCAL_UDM_IP is not configured"
 		return 1
 	fi
 
@@ -743,24 +743,24 @@ add_route_if_needed() {
 
 	# Check if route already exists
 	if check_route_exists "$local_ip"; then
-		log_message "INFO" "Route already exists on br0: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
+		log_message "INFO" "SYSTEM" "Route already exists on br0: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
 		return 0
 	fi
 
 	# Add route: ip addr add <local_ip>/${IPV4_CIDR_SINGLE_HOST} dev br0
-	log_message "INFO" "Adding route to br0: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
+	log_message "INFO" "SYSTEM" "Adding route to br0: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
 	if ip addr add "${local_ip}/${IPV4_CIDR_SINGLE_HOST}" dev br0 2>/dev/null; then
-		log_message "INFO" "Route added successfully: $local_ip/${IPV4_CIDR_SINGLE_HOST} on br0"
+		log_message "INFO" "SYSTEM" "Route added successfully: $local_ip/${IPV4_CIDR_SINGLE_HOST} on br0"
 		return 0
 	else
 		# Check if error is "File exists" (route already present, race condition)
 		if check_route_exists "$local_ip"; then
-			log_message "INFO" "Route exists on br0 (added by another process): $local_ip/${IPV4_CIDR_SINGLE_HOST}"
+			log_message "INFO" "SYSTEM" "Route exists on br0 (added by another process): $local_ip/${IPV4_CIDR_SINGLE_HOST}"
 			return 0
 		fi
 
 		# Other error occurred
-		handle_error "WARNING" "Failed to add route to br0: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
+		handle_error "WARNING" "SYSTEM" "Failed to add route to br0: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
 		return 1
 	fi
 }
@@ -855,9 +855,9 @@ log_ping_summary_if_due() {
 		# Time to log summary
 		if [[ $ping_count -gt 0 ]]; then
 			if [[ -n "$local_ip" ]]; then
-				log_message "INFO" "Ping check summary: $ping_count successful checks in the last ${summary_interval_minutes} minutes (target: $target_ip from $local_ip)"
+				log_message "INFO" "SYSTEM" "Ping check summary: $ping_count successful checks in the last ${summary_interval_minutes} minutes (target: $target_ip from $local_ip)"
 			else
-				log_message "INFO" "Ping check summary: $ping_count successful checks in the last ${summary_interval_minutes} minutes (target: $target_ip)"
+				log_message "INFO" "SYSTEM" "Ping check summary: $ping_count successful checks in the last ${summary_interval_minutes} minutes (target: $target_ip)"
 			fi
 		fi
 
@@ -877,7 +877,7 @@ check_ping_connectivity() {
 
 	# Validate ping target
 	if [[ -z "$target_ip" ]]; then
-		handle_error "WARNING" "Ping check enabled but target IP not configured"
+		handle_error "WARNING" "SYSTEM" "Ping check enabled but target IP not configured"
 		return 1
 	fi
 
@@ -890,9 +890,9 @@ check_ping_connectivity() {
 	if [[ -n "$local_ip" ]]; then
 		# Check if route exists, add if needed
 		if ! check_route_exists "$local_ip"; then
-			log_message "INFO" "Route not found on br0, attempting to add: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
+			log_message "INFO" "SYSTEM" "Route not found on br0, attempting to add: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
 			if ! add_route_if_needed "$local_ip"; then
-				handle_error "WARNING" "Failed to add route for ping check, continuing anyway"
+				handle_error "WARNING" "SYSTEM" "Failed to add route for ping check, continuing anyway"
 				# Continue with ping attempt - it may still work or fail naturally
 			fi
 		fi
@@ -925,7 +925,7 @@ check_ping_connectivity() {
 				ping_args=(-6 -I "$local_ip")
 			fi
 		else
-			handle_error "WARNING" "IPv6 ping not available"
+			handle_error "WARNING" "SYSTEM" "IPv6 ping not available"
 			return 1
 		fi
 	fi
@@ -994,9 +994,9 @@ check_ping_connectivity() {
 			# Log successful ping at DEBUG level
 			if [[ "${DEBUG:-0}" -eq 1 ]]; then
 				if [[ -n "$local_ip" ]]; then
-					log_message "DEBUG" "Ping check OK: $target_ip from $local_ip (${packet_loss}% packet loss)"
+					log_message "DEBUG" "SYSTEM" "Ping check OK: $target_ip from $local_ip (${packet_loss}% packet loss)"
 				else
-					log_message "DEBUG" "Ping check OK: $target_ip (${packet_loss}% packet loss)"
+					log_message "DEBUG" "SYSTEM" "Ping check OK: $target_ip (${packet_loss}% packet loss)"
 				fi
 			fi
 			# Log periodic summary at configured interval at INFO level
@@ -1004,9 +1004,9 @@ check_ping_connectivity() {
 			return 0
 		else
 			if [[ -n "$local_ip" ]]; then
-				handle_error "WARNING" "Ping check failed: $target_ip from $local_ip (${packet_loss}% packet loss)"
+				handle_error "WARNING" "SYSTEM" "Ping check failed: $target_ip from $local_ip (${packet_loss}% packet loss)"
 			else
-				handle_error "WARNING" "Ping check failed: $target_ip (${packet_loss}% packet loss)"
+				handle_error "WARNING" "SYSTEM" "Ping check failed: $target_ip (${packet_loss}% packet loss)"
 			fi
 			return 1
 		fi
@@ -1030,7 +1030,7 @@ check_ping_connectivity() {
 				error_msg="Ping check failed: $target_ip (ping command error or timeout)"
 			fi
 		fi
-		handle_error "WARNING" "$error_msg"
+		handle_error "WARNING" "SYSTEM" "$error_msg"
 		return 1
 	fi
 }
@@ -1197,7 +1197,8 @@ detect_sa_rekey() {
 	# Compare SPI values
 	if [[ "$current_spi" != "$last_spi" ]]; then
 		# SPI changed - rekey detected
-		log_message "INFO" "SA rekey detected for $peer_ip: SPI changed from $last_spi to $current_spi"
+		# location_name should always be provided in production code
+		log_message "INFO" "${location_name:-SYSTEM}" "SA rekey detected${location_name:+ for $location_name ($peer_ip)}: SPI changed from $last_spi to $current_spi"
 
 		# Reset byte counter baseline to 0 (allows new baseline after rekey)
 		if [[ -n "$location_name" ]]; then
@@ -1270,10 +1271,12 @@ check_byte_counters() {
 			if [[ "$current_bytes" -gt 0 ]]; then
 				# Bytes are non-zero after rekey - update baseline
 				if set_peer_state "$location_name" "$peer_ip" "last_bytes" "$current_bytes"; then
-					log_message "INFO" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset)"
+					# location_name should always be provided in production code
+					log_message "INFO" "${location_name:-SYSTEM}" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset)${location_name:+ for $location_name ($peer_ip)}"
 					return 0
 				else
-					log_message "INFO" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset, state update failed)"
+					# location_name should always be provided in production code
+					log_message "INFO" "${location_name:-SYSTEM}" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset, state update failed)${location_name:+ for $location_name ($peer_ip)}"
 					return 0
 				fi
 			fi
@@ -1300,21 +1303,22 @@ check_byte_counters() {
 					# Ping succeeds - VPN is healthy but idle (newly established or idle)
 					set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "$current_bytes"
 					set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
-					log_message "INFO" "VPN OK: SA exists, bytes=0 (first check, idle but healthy, ping check passed)"
+					# location_name should always be provided in production code
+					log_message "INFO" "${location_name:-SYSTEM}" "VPN OK: SA exists, bytes=0 (first check, idle but healthy, ping check passed)${location_name:+ for $location_name ($peer_ip)}"
 					return 0
 				else
 					# Ping fails - VPN is likely broken
-					handle_error "WARNING" "VPN suspect: SA exists but bytes=0 (first check, ping check failed)"
+					handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but bytes=0 (first check, ping check failed)${location_name:+ for $location_name ($peer_ip)}"
 					return 1
 				fi
 			else
 				# Ping check disabled or internal_peer_ip not provided - fail-safe behavior
-				handle_error "WARNING" "VPN suspect: SA exists but bytes=0 (first check, may be idle, ping check disabled)"
+				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but bytes=0 (first check, may be idle, ping check disabled)${location_name:+ for $location_name ($peer_ip)}"
 				return 1
 			fi
 		else
 			# Bytes dropped to zero after previously having traffic - likely broken
-			handle_error "WARNING" "VPN suspect: SA exists but bytes dropped to 0 (was $last_bytes)"
+			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but bytes dropped to 0 (was $last_bytes)${location_name:+ for $location_name ($peer_ip)}"
 			return 1
 		fi
 	fi
@@ -1330,7 +1334,7 @@ check_byte_counters() {
 			# Errors are logged by check_ping_connectivity, so we don't suppress stderr
 			if ! check_ping_connectivity "$internal_peer_ip" "$local_ip"; then
 				# Ping fails even though bytes are increasing - routing issue
-				handle_error "WARNING" "VPN suspect: SA exists, bytes increasing ($current_bytes) but ping failed"
+				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists, bytes increasing ($current_bytes) but ping failed${location_name:+ for $location_name ($peer_ip)}"
 				return 1
 			fi
 		fi
@@ -1338,10 +1342,12 @@ check_byte_counters() {
 		if set_peer_state "$location_name" "$peer_ip" "last_bytes" "$current_bytes"; then
 			# Clear idle state if set (traffic is flowing again)
 			delete_peer_state "$location_name" "$peer_ip" "idle_detected" || true
-			log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, traffic flowing)"
+			# location_name should always be provided in production code
+			log_message "INFO" "${location_name:-SYSTEM}" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, traffic flowing)${location_name:+ for $location_name ($peer_ip)}"
 			return 0
 		else
-			log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, state update failed)"
+			# location_name should always be provided in production code
+			log_message "INFO" "${location_name:-SYSTEM}" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, state update failed)${location_name:+ for $location_name ($peer_ip)}"
 			return 0
 		fi
 	fi
@@ -1350,7 +1356,7 @@ check_byte_counters() {
 	# Special case: If bytes decreased significantly, log it explicitly
 	if [[ "$current_bytes" -lt "$last_bytes" ]]; then
 		# Bytes decreased - this is abnormal and should be logged
-		handle_error "WARNING" "VPN suspect: SA exists but bytes decreased (current=$current_bytes, last=$last_bytes) - bytes not increasing"
+		handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but bytes decreased (current=$current_bytes, last=$last_bytes) - bytes not increasing${location_name:+ for $location_name ($peer_ip)}"
 	fi
 
 	if [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
@@ -1362,15 +1368,18 @@ check_byte_counters() {
 			# Ping succeeds - tunnel is idle but healthy
 			set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "$current_bytes"
 			set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
-			log_message "INFO" "VPN OK: SA exists, bytes=$current_bytes (idle but healthy, ping check passed)"
+			# location_name should always be provided in production code
+			log_message "INFO" "${location_name:-SYSTEM}" "VPN OK: SA exists, bytes=$current_bytes (idle but healthy, ping check passed)${location_name:+ for $location_name ($peer_ip)}"
 			# Check keepalive status and suggest action if needed
 			if [[ "${ENABLE_KEEPALIVE:-0}" -ne 1 ]]; then
-				log_message "INFO" "Consider enabling ENABLE_KEEPALIVE=1 in config to prevent idle tunnel timeouts"
+				# location_name should always be provided in production code
+				log_message "INFO" "${location_name:-SYSTEM}" "Consider enabling ENABLE_KEEPALIVE=1 in config to prevent idle tunnel timeouts${location_name:+ for $location_name}"
 			else
 				# Keepalive is enabled - check if daemon is running
 				local keepalive_pidfile="${STATE_DIR:-/data/vpn-monitor}/vpn-keepalive.pid"
 				if [[ ! -f "$keepalive_pidfile" ]] || ! file_exists_and_readable "$keepalive_pidfile" || ! kill -0 "$(cat "$keepalive_pidfile" 2>/dev/null)" 2>/dev/null; then
-					log_message "INFO" "Keepalive is enabled but daemon is not running - consider starting: vpn-keepalive.sh start"
+					# location_name should always be provided in production code
+					log_message "INFO" "${location_name:-SYSTEM}" "Keepalive is enabled but daemon is not running - consider starting: vpn-keepalive.sh start${location_name:+ (for $location_name)}"
 				fi
 			fi
 			return 0
@@ -1382,7 +1391,7 @@ check_byte_counters() {
 	if [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
 		ping_status="failed"
 	fi
-	handle_error "WARNING" "VPN suspect: SA exists but bytes not increasing (current=$current_bytes, last=$last_bytes, ping check: $ping_status)"
+	handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but bytes not increasing (current=$current_bytes, last=$last_bytes, ping check: $ping_status)${location_name:+ for $location_name ($peer_ip)}"
 	return 1
 }
 
@@ -1430,7 +1439,7 @@ check_xfrm_status() {
 		if [[ -n "$diagnostic_var" ]]; then
 			printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
 		else
-			handle_error "WARNING" "VPN suspect: No SA found for $peer_ip in xfrm state"
+			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: No SA found${location_name:+ for $location_name ($peer_ip)} in xfrm state"
 		fi
 		return 1
 	fi
@@ -1475,7 +1484,8 @@ check_xfrm_status() {
 				# Ping succeeds - VPN is likely healthy but byte counters unavailable
 				# Treat as "idle but healthy" similar to check_byte_counters logic
 				set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
-				log_message "INFO" "VPN OK: SA exists for $peer_ip, byte counters unavailable but ping check passed (treating as idle but healthy)"
+				# location_name should always be provided in production code
+				log_message "INFO" "${location_name:-SYSTEM}" "VPN OK: SA exists${location_name:+ for $location_name ($peer_ip)}, byte counters unavailable but ping check passed (treating as idle but healthy)"
 				return 0
 			else
 				# Ping fails - cannot verify VPN health
@@ -1483,14 +1493,17 @@ check_xfrm_status() {
 				if [[ -n "$diagnostic_var" ]]; then
 					printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
 				else
-					handle_error "WARNING" "VPN suspect: SA exists for $peer_ip but byte counter info unavailable and ping check failed"
+					handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists${location_name:+ for $location_name ($peer_ip)} but byte counter info unavailable and ping check failed"
 				fi
 				return 1
 			fi
 		else
 			# Ping check disabled or internal IP not provided - cannot verify VPN health
 			# Log debug info about why byte counter extraction failed
-			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "Byte counter extraction failed for $peer_ip - xfrm output format may differ. Consider enabling ENABLE_PING_CHECK=1 for fallback verification."
+			if [[ "${DEBUG:-0}" -eq 1 ]]; then
+				# location_name should always be provided in production code
+				log_message "DEBUG" "${location_name:-SYSTEM}" "Byte counter extraction failed${location_name:+ for $location_name ($peer_ip)} - xfrm output format may differ. Consider enabling ENABLE_PING_CHECK=1 for fallback verification."
+			fi
 			local reason="ping check disabled"
 			if [[ -z "$internal_peer_ip" ]]; then
 				reason="internal IP not provided"
@@ -1499,7 +1512,7 @@ check_xfrm_status() {
 			if [[ -n "$diagnostic_var" ]]; then
 				printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
 			else
-				handle_error "WARNING" "VPN suspect: SA exists for $peer_ip but byte counter info unavailable (ping check disabled or internal IP not provided)"
+				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists${location_name:+ for $location_name ($peer_ip)} but byte counter info unavailable (ping check disabled or internal IP not provided)"
 			fi
 			return 1
 		fi
@@ -1538,14 +1551,15 @@ check_ipsec_status() {
 	ipsec_output=$(get_ipsec_status_for_peer "$peer_ip" || true)
 
 	if [[ -n "$ipsec_output" ]]; then
-		log_message "INFO" "VPN OK: Connection found via ipsec status for $peer_ip"
+		# location_name should always be provided in production code
+		log_message "INFO" "${location_name:-SYSTEM}" "VPN OK: Connection found via ipsec status${location_name:+ for $location_name ($peer_ip)}"
 		return 0
 	else
 		local diagnostic_msg="Detection method: ipsec status - No connection found via ipsec status for $peer_ip"
 		if [[ -n "$diagnostic_var" ]]; then
 			printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
 		else
-			handle_error "WARNING" "VPN suspect: No connection found via ipsec status for $peer_ip"
+			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: No connection found via ipsec status${location_name:+ for $location_name ($peer_ip)}"
 		fi
 		return 1
 	fi
@@ -1595,7 +1609,7 @@ discover_connection_name() {
 	if file_exists_and_readable "$cache_file"; then
 		connection_name=$(cat "$cache_file" 2>/dev/null || echo "")
 		if [[ -n "$connection_name" ]]; then
-			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "Using cached connection name '$connection_name' for $peer_ip"
+			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "SYSTEM" "Using cached connection name '$connection_name' for $peer_ip"
 			echo "$connection_name"
 			return 0
 		fi
@@ -1632,7 +1646,7 @@ discover_connection_name() {
 				# Cache the result using abstraction layer for atomic write consistency
 				# connection_name is per-peer only (no location), so pass empty string for location
 				set_peer_state_non_critical "" "$peer_ip" "connection_name" "$connection_name"
-				[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "Discovered connection name '$connection_name' for $peer_ip"
+				[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "SYSTEM" "Discovered connection name '$connection_name' for $peer_ip"
 				echo "$connection_name"
 				return 0
 			fi
@@ -1692,10 +1706,10 @@ check_ping_multiple_ips() {
 	if [[ $ping_total_count -eq 1 ]]; then
 		local single_ip="${internal_ips_array[0]}"
 		if check_ping_connectivity "$single_ip" "$local_ip"; then
-			log_message "INFO" "Ping check: 1/1 internal IP responded (100% success)"
+			log_message "INFO" "SYSTEM" "Ping check: 1/1 internal IP responded (100% success)"
 			return 0
 		else
-			handle_error "WARNING" "Ping check: 0/1 internal IP responded (0% success)"
+			handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check: 0/1 internal IP responded (0% success)${location_name:+ for $location_name}"
 			return 1
 		fi
 	fi
@@ -1724,10 +1738,10 @@ check_ping_multiple_ips() {
 
 	# Check if threshold met
 	if [[ $ping_success_count -ge $threshold ]]; then
-		log_message "INFO" "Ping check: $ping_success_count/$ping_total_count internal IPs responded (${success_percent}% >= 30% threshold)"
+		log_message "INFO" "SYSTEM" "Ping check: $ping_success_count/$ping_total_count internal IPs responded (${success_percent}% >= 30% threshold)"
 		return 0
 	else
-		handle_error "WARNING" "Ping check: $ping_success_count/$ping_total_count internal IPs responded (${success_percent}% < 30% threshold)"
+		handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check: $ping_success_count/$ping_total_count internal IPs responded (${success_percent}% < 30% threshold)${location_name:+ for $location_name}"
 		return 1
 	fi
 }
@@ -1776,14 +1790,14 @@ check_ping_if_enabled() {
 			# SA exists, verify connectivity with ping check
 			if ! check_ping_multiple_ips "$ping_target" "$local_ip"; then
 				# SA exists but ping failed - tunnel may be broken
-				handle_error "WARNING" "VPN SA exists but ping check failed for multiple internal IPs - tunnel may not be routing traffic"
+				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN SA exists but ping check failed for multiple internal IPs - tunnel may not be routing traffic${location_name:+ for $location_name}"
 			else
-				log_message "INFO" "VPN connectivity verified: ping check passed for multiple internal IPs"
+				log_message "INFO" "SYSTEM" "VPN connectivity verified: ping check passed for multiple internal IPs"
 			fi
 		else
 			# SA doesn't exist, but try ping anyway to see if there's any connectivity
 			if check_ping_multiple_ips "$ping_target" "$local_ip"; then
-				handle_error "WARNING" "Ping check passed but no SA found - tunnel may be down but connectivity exists via other route"
+				handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check passed but no SA found - tunnel may be down but connectivity exists via other route${location_name:+ for $location_name}"
 			fi
 		fi
 	else
@@ -1792,14 +1806,14 @@ check_ping_if_enabled() {
 			# SA exists, verify connectivity with ping check
 			if ! check_ping_connectivity "$ping_target" "$local_ip"; then
 				# SA exists but ping failed - tunnel may be broken
-				handle_error "WARNING" "VPN SA exists but ping check failed for $ping_target - tunnel may not be routing traffic"
+				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN SA exists but ping check failed for $ping_target - tunnel may not be routing traffic${location_name:+ for $location_name}"
 			else
-				log_message "INFO" "VPN connectivity verified: ping check passed for $ping_target"
+				log_message "INFO" "SYSTEM" "VPN connectivity verified: ping check passed for $ping_target"
 			fi
 		else
 			# SA doesn't exist, but try ping anyway to see if there's any connectivity
 			if check_ping_connectivity "$ping_target" "$local_ip"; then
-				handle_error "WARNING" "Ping check passed but no SA found - tunnel may be down but connectivity exists via other route"
+				handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check passed but no SA found - tunnel may be down but connectivity exists via other route${location_name:+ for $location_name}"
 			fi
 		fi
 	fi
@@ -1895,11 +1909,8 @@ detect_failure_type() {
 	# Check if ip command is available (required for Phase 2 SA detection)
 	# If ip command is unavailable, we cannot determine failure type
 	if ! check_command_or_warn "ip" "Detecting failure type"; then
-		if [[ -n "$location_name" ]]; then
-			log_message "WARNING" "Failure type detection: 'ip' command unavailable, cannot determine failure type for location $location_name ($external_peer_ip)"
-		else
-			log_message "WARNING" "Failure type detection: 'ip' command unavailable, cannot determine failure type for $external_peer_ip"
-		fi
+		# location_name should always be provided in production code
+		log_message "WARNING" "${location_name:-SYSTEM}" "Failure type detection: 'ip' command unavailable, cannot determine failure type${location_name:+ for $location_name ($external_peer_ip)}"
 		echo "unknown"
 		return 1
 	fi
@@ -2029,11 +2040,8 @@ detect_failure_type() {
 				diagnostic_msg="$diagnostic_msg, $part"
 			fi
 		done
-		if [[ -n "$location_name" ]]; then
-			log_message "WARNING" "Failure type detection: Unable to determine specific failure type for location $location_name ($external_peer_ip) - Detection method: Phase 2 SA check (SA exists), Reasons: $diagnostic_msg"
-		else
-			log_message "WARNING" "Failure type detection: Unable to determine specific failure type for $external_peer_ip - Detection method: Phase 2 SA check (SA exists), Reasons: $diagnostic_msg"
-		fi
+		# location_name should always be provided in production code
+		log_message "WARNING" "${location_name:-SYSTEM}" "Failure type detection: Unable to determine specific failure type${location_name:+ for $location_name ($external_peer_ip)} - Detection method: Phase 2 SA check (SA exists), Reasons: $diagnostic_msg"
 	fi
 
 	# Unable to determine failure type (fallback)
@@ -2225,34 +2233,22 @@ determine_vpn_status() {
 		"rekey")
 			# Rekey detected - not a failure, but log for monitoring
 			# Rekey is already logged in detect_sa_rekey, but we mark VPN as OK
-			if [[ -n "$location_name" ]]; then
-				log_message "INFO" "SA rekey detected for location $location_name ($external_peer_ip) (not a failure)"
-			else
-				log_message "INFO" "SA rekey detected for $external_peer_ip (not a failure)"
-			fi
+			# location_name should always be provided in production code
+			log_message "INFO" "${location_name:-SYSTEM}" "SA rekey detected${location_name:+ for $location_name ($external_peer_ip)} (not a failure)"
 			vpn_ok=1
 			;;
 		"tunnel_down")
-			if [[ -n "$location_name" ]]; then
-				handle_error "WARNING" "VPN failure type: Tunnel down (no Phase 2 SA found) for location $location_name ($external_peer_ip)"
-			else
-				handle_error "WARNING" "VPN failure type: Tunnel down (no Phase 2 SA found) for $external_peer_ip"
-			fi
+			# location_name should always be provided in production code
+			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN failure type: Tunnel down (no Phase 2 SA found)${location_name:+ for $location_name ($external_peer_ip)}"
 			;;
 		"routing_issue")
-			if [[ -n "$location_name" ]]; then
-				handle_error "WARNING" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for location $location_name ($external_peer_ip)"
-			else
-				handle_error "WARNING" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $external_peer_ip"
-			fi
+			# location_name should always be provided in production code
+			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN failure type: Routing issue (tunnel established but traffic not flowing)${location_name:+ for $location_name ($external_peer_ip)}"
 			;;
 		*)
 			# Detailed diagnostic information was already logged by detect_failure_type()
-			if [[ -n "$location_name" ]]; then
-				handle_error "WARNING" "VPN failure type: Unknown (unable to determine specific failure type) for location $location_name ($external_peer_ip) - see previous diagnostic messages for detection method details"
-			else
-				handle_error "WARNING" "VPN failure type: Unknown (unable to determine specific failure type) for $external_peer_ip - see previous diagnostic messages for detection method details"
-			fi
+			# location_name should always be provided in production code
+			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN failure type: Unknown (unable to determine specific failure type)${location_name:+ for $location_name ($external_peer_ip)} - see previous diagnostic messages for detection method details"
 			;;
 		esac
 	fi
@@ -2302,7 +2298,7 @@ check_vpn_status() {
 
 	# Validate external peer IP format using proper validation function
 	if ! validate_ip_address "$external_peer_ip"; then
-		handle_error "ERROR" "Invalid external peer IP format: $external_peer_ip" 0
+		handle_error "ERROR" "SYSTEM" "Invalid external peer IP format: $external_peer_ip" 0
 		return 1
 	fi
 
@@ -2371,18 +2367,12 @@ check_vpn_status() {
 						diagnostic_msg="$diagnostic_msg; $diag"
 					fi
 				done
-				if [[ -n "$location_name" ]]; then
-					handle_error "WARNING" "VPN suspect for location $location_name ($external_peer_ip) - $diagnostic_msg"
-				else
-					handle_error "WARNING" "VPN suspect for $external_peer_ip - $diagnostic_msg"
-				fi
+				# location_name should always be provided in production code
+				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect${location_name:+ for $location_name ($external_peer_ip)} - $diagnostic_msg"
 			else
 				# Fallback if diagnostics weren't collected (shouldn't happen)
-				if [[ -n "$location_name" ]]; then
-					handle_error "WARNING" "VPN suspect: Both xfrm and ipsec status checks failed for location $location_name ($external_peer_ip)"
-				else
-					handle_error "WARNING" "VPN suspect: Both xfrm and ipsec status checks failed for $external_peer_ip"
-				fi
+				# location_name should always be provided in production code
+				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: Both xfrm and ipsec status checks failed${location_name:+ for $location_name ($external_peer_ip)}"
 			fi
 		fi
 	fi
@@ -2547,7 +2537,7 @@ check_network_partition() {
 	local route_check_result
 	if ! check_default_route; then
 		route_check_result=1
-		handle_error "WARNING" "Network partition detected: default route not found" 0
+		handle_error "WARNING" "SYSTEM" "Network partition detected: default route not found" 0
 		partition_detected=1
 	else
 		route_check_result=0
@@ -2557,7 +2547,7 @@ check_network_partition() {
 	local dns_check_result
 	if ! check_dns_resolution "$dns_server" "$hostname" "$dns_timeout"; then
 		dns_check_result=1
-		handle_error "WARNING" "Network partition detected: DNS resolution failed (server: $dns_server, hostname: $hostname)" 0
+		handle_error "WARNING" "SYSTEM" "Network partition detected: DNS resolution failed (server: $dns_server, hostname: $hostname)" 0
 		partition_detected=1
 	else
 		dns_check_result=0
@@ -2567,7 +2557,7 @@ check_network_partition() {
 	local interface_check_result
 	if ! check_interface_state "$interfaces"; then
 		interface_check_result=1
-		handle_error "WARNING" "Network partition detected: one or more critical interfaces are DOWN (checked: $interfaces)" 0
+		handle_error "WARNING" "SYSTEM" "Network partition detected: one or more critical interfaces are DOWN (checked: $interfaces)" 0
 		partition_detected=1
 	else
 		interface_check_result=0

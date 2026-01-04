@@ -475,12 +475,12 @@ main() {
 	# Summary
 	echo "=========================================="
 	echo "Summary:"
-	echo "  Common settings: ${GREEN}${#common_vars[@]}${NC}"
+	echo -e "  Common settings found: ${GREEN}${#common_vars[@]}${NC}"
 	if [[ ${#new_vars[@]} -gt 0 ]]; then
-		echo "  New settings in template: ${YELLOW}${#new_vars[@]}${NC}"
+		echo -e "  New settings in template: ${YELLOW}${#new_vars[@]}${NC}"
 	fi
 	if [[ ${#deprecated_vars[@]} -gt 0 ]]; then
-		echo "  Deprecated settings: ${RED}${#deprecated_vars[@]}${NC}"
+		echo -e "  Deprecated settings: ${RED}${#deprecated_vars[@]}${NC}"
 	fi
 	echo ""
 

@@ -1378,8 +1378,10 @@ check_and_setup_routes() {
 				value=$(echo "$value" | sed "s/^[\"']//" | sed "s/[\"']$//" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
 				if [[ -n "$value" ]]; then
 					# Split space-separated IPs into array
-					local IFS=' '
-					read -ra internal_ips_array <<<"$value"
+					# Use inline IFS to avoid affecting while loop (critical: while loop uses IFS='=')
+					# Inline IFS=' ' only affects this read command, similar to while IFS='=' read
+					local internal_ips_array
+					IFS=' ' read -ra internal_ips_array <<<"$value"
 
 					# Test each internal IP for this location
 					for internal_ip in "${internal_ips_array[@]}"; do

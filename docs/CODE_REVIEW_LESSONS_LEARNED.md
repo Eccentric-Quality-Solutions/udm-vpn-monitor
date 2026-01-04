@@ -130,6 +130,28 @@ failure_type=$(get_failure_type "$location_name" "$external_peer_ip" 2>/dev/null
 - Update all call sites immediately
 - Add tests that verify correct arguments are passed
 - Consider using shellcheck or similar tools to catch mismatched arguments
+- **When changing function signatures, search for ALL call sites, not just obvious ones**
+- **Test function calls with missing arguments to catch signature mismatches**
+
+### Related Issue: Prefix Parameter Bug (2026-01-04)
+When `log_message` and `handle_error` were updated to require a `prefix` parameter, many call sites were missed:
+- `handle_error_or_exit_fake_mode` calls missing prefix parameter (20+ instances)
+- `log_message` calls missing prefix parameter (40+ instances)
+- `handle_error` calls missing prefix parameter (6+ instances)
+
+**Lesson:** When adding required parameters, use comprehensive grep patterns:
+```bash
+# Find all calls to function
+grep -rn "function_name(" lib/ scripts/ --include="*.sh"
+
+# Find calls missing new parameter
+grep -rn "function_name.*\"[^"]*\"[^,)]*$" lib/ scripts/ --include="*.sh"
+```
+
+**Also:** Bash parameter expansion patterns like `${location_name:+ ...}${location_name:- ...}` can be buggy:
+- `${var:-default}` expands to `var` if set, `default` if unset/empty
+- When `var` is set, the pattern `${var:+word1}${var:-word2}` expands to `word1` + `var` (not `word1` + `word2`)
+- **Fix:** Use only `${var:+word}` if `var` should always be provided, or use conditional logic
 
 ---
 
@@ -1137,10 +1159,10 @@ set_cooldown() {
     local cooldown_until
     cooldown_until=$(get_timestamp_plus_minutes "$minutes")
     if ! atomic_write_file "$COOLDOWN_UNTIL_FILE" "$cooldown_until"; then
-        handle_error "ERROR" "Failed to set cooldown period" 0
+        handle_error "ERROR" "SYSTEM" "Failed to set cooldown period" 0
         # Bug: Function continues and logs success below!
     fi
-    log_message "INFO" "Cooldown period set for $minutes minutes"  # Wrong! Logs even on failure
+    log_message "INFO" "SYSTEM" "Cooldown period set for $minutes minutes"  # Wrong! Logs even on failure
 }
 
 # ✅ GOOD: Return early on error, only log success when operation succeeds
@@ -1149,10 +1171,10 @@ set_cooldown() {
     local cooldown_until
     cooldown_until=$(get_timestamp_plus_minutes "$minutes")
     if ! atomic_write_file "$COOLDOWN_UNTIL_FILE" "$cooldown_until"; then
-        handle_error "ERROR" "Failed to set cooldown period (file: $COOLDOWN_UNTIL_FILE)" 0
+        handle_error "ERROR" "SYSTEM" "Failed to set cooldown period (file: $COOLDOWN_UNTIL_FILE)" 0
         return 0  # Return early - don't log success
     fi
-    log_message "INFO" "Cooldown period set for $minutes minutes"  # Only logs on success
+    log_message "INFO" "SYSTEM" "Cooldown period set for $minutes minutes"  # Only logs on success
 }
 ```
 

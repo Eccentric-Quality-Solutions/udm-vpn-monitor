@@ -621,7 +621,7 @@ check_directory_writable_for_lockfile() {
 		# Log error message first (respects fake mode for logging)
 		if type handle_error_or_exit_fake_mode >/dev/null 2>&1; then
 			# Log the error (this respects fake mode for logging)
-			handle_error_or_exit_fake_mode "$error_msg" "${EXIT_PERMISSION_ERROR:-4}" 2>/dev/null || true
+			handle_error_or_exit_fake_mode "SYSTEM" "$error_msg" "${EXIT_PERMISSION_ERROR:-4}" 2>/dev/null || true
 		fi
 		# Always exit with error code - this is fatal and prevents script execution
 		# Even in fake mode, we cannot proceed without a lockfile

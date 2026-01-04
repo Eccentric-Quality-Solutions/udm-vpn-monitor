@@ -948,9 +948,9 @@ check_command_or_warn() {
 
 	if ! check_command_available "$cmd"; then
 		if [[ -n "$context" ]]; then
-			handle_error "WARNING" "$context but $cmd command not available"
+			handle_error "WARNING" "SYSTEM" "$context but $cmd command not available"
 		else
-			handle_error "WARNING" "$cmd command not available"
+			handle_error "WARNING" "SYSTEM" "$cmd command not available"
 		fi
 		return 1
 	fi

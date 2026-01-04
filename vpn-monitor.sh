@@ -177,8 +177,8 @@ RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 #   Requires log_message function to be available
 check_cron_persistence() {
 	if ! crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
-		log_message "WARNING" "Cron job not found! Persistence may have been lost."
-		log_message "WARNING" "Re-run install.sh to restore cron job."
+		log_message "WARNING" "SYSTEM" "Cron job not found! Persistence may have been lost."
+		log_message "WARNING" "SYSTEM" "Re-run install.sh to restore cron job."
 	fi
 }
 
@@ -245,7 +245,7 @@ validate_args() {
 	# Report unknown arguments
 	if [[ ${#unknown_args[@]} -gt 0 ]]; then
 		for arg in "${unknown_args[@]}"; do
-			log_message "WARNING" "Unknown argument: $arg (use --help for usage)"
+			log_message "WARNING" "SYSTEM" "Unknown argument: $arg (use --help for usage)"
 		done
 	fi
 
@@ -290,7 +290,7 @@ parse_args() {
 			NO_ESCALATE=1
 			export NO_ESCALATE
 			NO_ESCALATE_SET_FROM_CMD=1
-			log_message "INFO" "Fake mode enabled: tier escalation disabled"
+			log_message "INFO" "SYSTEM" "Fake mode enabled: tier escalation disabled"
 			shift
 			;;
 		*)
@@ -357,9 +357,9 @@ initialize_monitor() {
 
 	# Log script start
 	if [[ "${NO_ESCALATE:-0}" -eq 1 ]]; then
-		log_message "INFO" "${VPN_NAME:-VPN} monitor script started in fake mode (PID: $$) - tier escalation disabled"
+		log_message "INFO" "SYSTEM" "${VPN_NAME:-VPN} monitor script started in fake mode (PID: $$) - tier escalation disabled"
 	else
-		log_message "INFO" "${VPN_NAME:-VPN} monitor script started (PID: $$)"
+		log_message "INFO" "SYSTEM" "${VPN_NAME:-VPN} monitor script started (PID: $$)"
 	fi
 
 	# Debug output (only if DEBUG=1)
@@ -403,14 +403,14 @@ initialize_monitor() {
 validate_monitor_state() {
 	# Validate state files (check for corruption)
 	if ! validate_state; then
-		log_message "WARNING" "State file validation detected issues - some state files may be corrupted"
+		log_message "WARNING" "SYSTEM" "State file validation detected issues - some state files may be corrupted"
 	fi
 
 	# Check system resources (CPU, RAM, disk space)
 	# This check happens early to throttle execution if resources are constrained
 	# Resource monitoring may exit early if resources are severely constrained
 	if ! check_system_resources "$STATE_DIR"; then
-		log_message "INFO" "Script exiting: system resources constrained"
+		log_message "INFO" "SYSTEM" "Script exiting: system resources constrained"
 		exit "${EXIT_SUCCESS:-0}"
 	fi
 
@@ -430,17 +430,17 @@ validate_monitor_state() {
 		if ! check_network_partition "$dns_server" "$dns_hostname" "$dns_timeout" "$interfaces"; then
 			# Network is partitioned - update state but continue to allow recovery code to check partition state
 			if [[ "$prev_partition_state" -eq 0 ]]; then
-				log_message "WARNING" "Network partition detected - skipping VPN checks until connectivity restored"
+				log_message "WARNING" "SYSTEM" "Network partition detected - skipping VPN checks until connectivity restored"
 				set_network_partition_state 1
 			else
-				log_message "INFO" "Network still partitioned - VPN checks skipped"
+				log_message "INFO" "SYSTEM" "Network still partitioned - VPN checks skipped"
 			fi
 			# Don't exit early - let recovery code check partition state and skip recovery actions
 			# This allows tests to verify that recovery is skipped when partition is detected
 		else
 			# Network is healthy - check if it was previously partitioned
 			if [[ "$prev_partition_state" -eq 1 ]]; then
-				log_message "INFO" "Network connectivity restored - resuming VPN monitoring"
+				log_message "INFO" "SYSTEM" "Network connectivity restored - resuming VPN monitoring"
 				set_network_partition_state 0
 			fi
 		fi
@@ -450,7 +450,7 @@ validate_monitor_state() {
 	debug_log "Checking cooldown"
 	if check_cooldown; then
 		debug_log "In cooldown, exiting"
-		log_message "INFO" "Script exiting: in cooldown period"
+		log_message "INFO" "SYSTEM" "Script exiting: in cooldown period"
 		exit "${EXIT_SUCCESS:-0}"
 	fi
 	debug_log "Not in cooldown, continuing"
@@ -461,7 +461,7 @@ validate_monitor_state() {
 		check_cron_persistence
 		# Create .cron_checked file - handle errors gracefully
 		if ! touch "${STATE_DIR}/.cron_checked" 2>/dev/null; then
-			handle_error "WARNING" "Cannot create .cron_checked file in ${STATE_DIR} (check permissions)"
+			handle_error "WARNING" "SYSTEM" "Cannot create .cron_checked file in ${STATE_DIR} (check permissions)"
 		fi
 	fi
 }
@@ -512,14 +512,14 @@ process_locations() {
 		fi
 		location_list="${location_list}${loc}"
 	done
-	log_message "INFO" "Found ${#LOCATIONS[@]} location(s): $location_list"
+	log_message "INFO" "SYSTEM" "Found ${#LOCATIONS[@]} location(s): $location_list"
 
 	# Process each location
 	for location_name in "${!LOCATIONS[@]}"; do
 		# Get external IP for this location
 		local external_ip
 		if ! external_ip=$(get_location_external_ip "$location_name"); then
-			handle_error "WARNING" "Location $location_name: Failed to get external IP (skipping)"
+			handle_error "WARNING" "$location_name" "Failed to get external IP (skipping)"
 			all_ok=1
 			continue
 		fi
@@ -585,9 +585,9 @@ main() {
 
 	# Log completion and exit
 	if [[ $all_ok -eq 0 ]]; then
-		log_message "INFO" "VPN monitor check completed successfully"
+		log_message "INFO" "SYSTEM" "VPN monitor check completed successfully"
 	else
-		log_message "WARNING" "VPN monitor check completed with warnings/errors"
+		log_message "WARNING" "SYSTEM" "VPN monitor check completed with warnings/errors"
 	fi
 
 	# In fake mode, always exit with 0 (we're just checking/logging, not taking action)

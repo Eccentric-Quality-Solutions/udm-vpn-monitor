@@ -113,14 +113,14 @@ ensure_directory_exists() {
 	# Try to create directory
 	if ! mkdir -p "$dir" 2>/dev/null; then
 		# In fake mode: returns 1, in normal mode: exits via die()
-		handle_error_or_exit_fake_mode "Cannot create ${description} directory: $dir" || return 1
+		handle_error_or_exit_fake_mode "SYSTEM" "Cannot create ${description} directory: $dir" || return 1
 	fi
 
 	# Verify directory was actually created (defensive check)
 	# This handles edge cases where mkdir -p might appear to succeed but directory doesn't exist
 	if [[ ! -d "$dir" ]]; then
 		# In fake mode: returns 1, in normal mode: exits via die()
-		handle_error_or_exit_fake_mode "Directory was not created: $dir" || return 1
+		handle_error_or_exit_fake_mode "SYSTEM" "Directory was not created: $dir" || return 1
 	fi
 
 	return 0
@@ -189,7 +189,7 @@ handle_config_error() {
 		full_message="$message"
 	fi
 
-	handle_error_or_exit_fake_mode "$full_message"
+	handle_error_or_exit_fake_mode "SYSTEM" "$full_message"
 }
 
 # Parse quoted or unquoted value from assignment
@@ -263,7 +263,7 @@ parse_quoted_value() {
 	if [[ "$in_quotes" == false ]]; then
 		# Unquoted value must not contain spaces, quotes, or comment markers
 		if [[ "$assignment" =~ [[:space:]\"\'\#] ]]; then
-			log_message "ERROR" "Invalid configuration line: $line (value must be quoted if it contains spaces, quotes, or comment markers) (line $line_num)"
+			log_message "ERROR" "SYSTEM" "Invalid configuration line: $line (value must be quoted if it contains spaces, quotes, or comment markers) (line $line_num)"
 			return 1
 		fi
 		result_array["value"]="$assignment"
@@ -290,7 +290,7 @@ parse_quoted_value() {
 						break
 					else
 						# Non-whitespace after quote - invalid (unexpected content)
-						log_message "ERROR" "Invalid configuration line: $line (unexpected content after closing quote) (line $line_num)"
+						log_message "ERROR" "SYSTEM" "Invalid configuration line: $line (unexpected content after closing quote) (line $line_num)"
 						return 1
 					fi
 				else
@@ -335,7 +335,7 @@ parse_quoted_value() {
 						break
 					else
 						# Non-whitespace after quote - invalid (unexpected content)
-						log_message "ERROR" "Invalid configuration line: $line (unexpected content after closing quote) (line $line_num)"
+						log_message "ERROR" "SYSTEM" "Invalid configuration line: $line (unexpected content after closing quote) (line $line_num)"
 						return 1
 					fi
 				else
@@ -356,7 +356,7 @@ parse_quoted_value() {
 	# If quote_closed is true, we successfully found and processed the closing quote
 	if [[ "$in_quotes" == true ]] && [[ "$quote_closed" == false ]]; then
 		# Quote was not closed - this is an error
-		log_message "ERROR" "Unclosed ${quote_char} quote in configuration line: $line (line $line_num)"
+		log_message "ERROR" "SYSTEM" "Unclosed ${quote_char} quote in configuration line: $line (line $line_num)"
 		return 1
 	fi
 
@@ -405,7 +405,7 @@ parse_assignment() {
 
 	# Check if line matches VAR=value pattern
 	if ! [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
-		log_message "ERROR" "Invalid configuration line: $line (expected VAR=value or VAR=\"value\") (line $line_num)"
+		log_message "ERROR" "SYSTEM" "Invalid configuration line: $line (expected VAR=value or VAR=\"value\") (line $line_num)"
 		return 1
 	fi
 
@@ -685,7 +685,7 @@ validate_critical_config_vars() {
 
 	# Report missing required variables
 	if [[ ${#missing_required[@]} -gt 0 ]]; then
-		handle_error "ERROR" "Missing required configuration variables: ${missing_required[*]}"
+		handle_error "ERROR" "SYSTEM" "Missing required configuration variables: ${missing_required[*]}"
 		return 1
 	fi
 
@@ -712,7 +712,7 @@ validate_critical_config_vars() {
 handle_fatal_config_error() {
 	local message="$1"
 	local exit_code="${2:-${EXIT_CONFIG_ERROR:-2}}"
-	if ! handle_error_or_exit_fake_mode "$message" "$exit_code"; then
+	if ! handle_error_or_exit_fake_mode "SYSTEM" "$message" "$exit_code"; then
 		# In fake mode, handle_error_or_exit_fake_mode returns 1
 		# Exit gracefully with code 0 in fake mode since load_config is called at top level
 		exit "${EXIT_SUCCESS:-0}"
@@ -743,8 +743,8 @@ load_config() {
 	# Check if config path is a directory (not a file)
 	if [[ -d "$config_file" ]]; then
 		# Config path is a directory, not a file
-		handle_error "WARNING" "Configuration path is a directory, not a file: $config_file"
-		handle_error "WARNING" "Using default configuration values"
+		handle_error "WARNING" "SYSTEM" "Configuration path is a directory, not a file: $config_file"
+		handle_error "WARNING" "SYSTEM" "Using default configuration values"
 	# Load configuration if it exists and is readable
 	elif file_exists_and_readable "$config_file"; then
 		# Safely parse config file instead of sourcing (prevents arbitrary code execution)
@@ -767,7 +767,7 @@ load_config() {
 			LOG_FILE="$log_file_before_load"
 		fi
 
-		log_message "INFO" "Configuration loaded from: $config_file"
+		log_message "INFO" "SYSTEM" "Configuration loaded from: $config_file"
 	else
 		# File doesn't exist or isn't readable
 		# Check if file exists but isn't readable (for better error message)
@@ -775,8 +775,8 @@ load_config() {
 			handle_fatal_config_error "Configuration file is not readable: $config_file" "${EXIT_CONFIG_ERROR:-2}"
 		fi
 
-		handle_error "WARNING" "Configuration file not found: $config_file"
-		handle_error "WARNING" "Using default configuration values"
+		handle_error "WARNING" "SYSTEM" "Configuration file not found: $config_file"
+		handle_error "WARNING" "SYSTEM" "Using default configuration values"
 	fi
 
 	# Compute log paths after config loading (consolidated path computation)
@@ -842,10 +842,10 @@ load_config() {
 				# Fallback to original log file location
 				LOGS_DIR="$original_log_file_dir"
 				LOG_FILE="$log_file_before_load"
-				handle_error "WARNING" "Failed to create logs directory: $original_logs_dir, using original log file location: $LOG_FILE"
+				handle_error "WARNING" "SYSTEM" "Failed to create logs directory: $original_logs_dir, using original log file location: $LOG_FILE"
 			else
 				# Can't fallback - log_message will write to stderr
-				handle_error "WARNING" "Failed to create logs directory: $original_logs_dir (continuing in fake mode, logs will go to stderr)"
+				handle_error "WARNING" "SYSTEM" "Failed to create logs directory: $original_logs_dir (continuing in fake mode, logs will go to stderr)"
 			fi
 		fi
 	fi
@@ -855,7 +855,7 @@ load_config() {
 		# Directory creation failed - in fake mode this returns 1, in normal mode it exits
 		# If we get here in fake mode, log warning but continue
 		if is_fake_mode; then
-			handle_error "WARNING" "Failed to create state directory: $STATE_DIR (continuing in fake mode)"
+			handle_error "WARNING" "SYSTEM" "Failed to create state directory: $STATE_DIR (continuing in fake mode)"
 		fi
 	fi
 }
@@ -996,7 +996,7 @@ apply_optional_default() {
 	# Apply default value
 	# Log warning if message provided
 	if [[ -n "$warning_msg" ]]; then
-		handle_error "WARNING" "$warning_msg"
+		handle_error "WARNING" "SYSTEM" "$warning_msg"
 	fi
 
 	# Set default value using safe indirect variable assignment
@@ -1048,7 +1048,7 @@ apply_config_default() {
 	# Check if required
 	if [[ "$required" == "required" ]] && [[ -z "$var_value" ]]; then
 		# Log error message that includes variable name for better debugging
-		handle_error_or_exit_fake_mode "$var_name is required but not configured" "${EXIT_VALIDATION_ERROR:-3}"
+		handle_error_or_exit_fake_mode "SYSTEM" "$var_name is required but not configured" "${EXIT_VALIDATION_ERROR:-3}"
 		# If handle_error_or_exit_fake_mode doesn't exit (e.g., in tests), return error
 		return 1
 	fi
@@ -1120,7 +1120,7 @@ validate_config_type() {
 			if [[ "$required" == "required" ]]; then
 				# Use handle_error_or_exit_fake_mode to respect fake mode
 				# In fake mode, it returns 1; in normal mode it calls die() and never returns
-				if ! handle_error_or_exit_fake_mode "$var_name must be an integer (current value: '$var_value')" "${EXIT_VALIDATION_ERROR:-3}"; then
+				if ! handle_error_or_exit_fake_mode "SYSTEM" "$var_name must be an integer (current value: '$var_value')" "${EXIT_VALIDATION_ERROR:-3}"; then
 					# In fake mode, handle_error_or_exit_fake_mode returns 1
 					return 1
 				fi
@@ -1129,11 +1129,11 @@ validate_config_type() {
 				# Validate default before applying to avoid setting invalid global variable
 				if [[ -z "$default_val" ]]; then
 					# No default available
-					handle_error "WARNING" "$var_name must be an integer (current value: '$var_value'), no default available"
+					handle_error "WARNING" "SYSTEM" "$var_name must be an integer (current value: '$var_value'), no default available"
 					return 1
 				elif ! [[ "$default_val" =~ ^[0-9]+$ ]]; then
 					# Default value is invalid - don't apply it
-					handle_error "ERROR" "Default value for $var_name is invalid (default: '$default_val'), cannot apply default" 0
+					handle_error "ERROR" "SYSTEM" "Default value for $var_name is invalid (default: '$default_val'), cannot apply default" 0
 					return 1
 				fi
 				# Default is valid, apply it (centralized logic)
@@ -1142,7 +1142,7 @@ validate_config_type() {
 					var_value="$updated_value"
 				else
 					# This should not happen since we validated default above, but handle gracefully
-					handle_error "WARNING" "$var_name must be an integer (current value: '$var_value'), failed to apply default"
+					handle_error "WARNING" "SYSTEM" "$var_name must be an integer (current value: '$var_value'), failed to apply default"
 					return 1
 				fi
 			fi
@@ -1209,7 +1209,7 @@ validate_config_rule() {
 				# Use handle_error_or_exit_fake_mode to respect fake mode
 				# Note: This function exits, so return 1 won't be reached
 				# but we include it for clarity and in case exit is trapped
-				handle_error_or_exit_fake_mode "$var_name cannot be empty" "${EXIT_VALIDATION_ERROR:-3}"
+				handle_error_or_exit_fake_mode "SYSTEM" "$var_name cannot be empty" "${EXIT_VALIDATION_ERROR:-3}"
 				# If handle_error_or_exit_fake_mode doesn't exit (e.g., in tests), return error
 				return 1
 			else
@@ -1218,7 +1218,7 @@ validate_config_rule() {
 				if updated_value=$(apply_optional_default "$var_name" "$var_value" "$required" "$default_val" "$var_name is empty, using default: $default_val"); then
 					var_value="$updated_value"
 				else
-					handle_error "WARNING" "$var_name is empty, no default available"
+					handle_error "WARNING" "SYSTEM" "$var_name is empty, no default available"
 					return 1
 				fi
 			fi
@@ -1255,7 +1255,7 @@ validate_config_rule() {
 				# Use handle_error_or_exit_fake_mode to respect fake mode
 				# Note: This function exits, so return 1 won't be reached
 				# but we include it for clarity and in case exit is trapped
-				handle_error_or_exit_fake_mode "$var_name must be at least $min_val (current value: $var_value)" "${EXIT_VALIDATION_ERROR:-3}"
+				handle_error_or_exit_fake_mode "SYSTEM" "$var_name must be at least $min_val (current value: $var_value)" "${EXIT_VALIDATION_ERROR:-3}"
 				# If handle_error_or_exit_fake_mode doesn't exit (e.g., in tests), return error
 				return 1
 			else
@@ -1264,7 +1264,7 @@ validate_config_rule() {
 				if updated_value=$(apply_optional_default "$var_name" "$var_value" "$required" "$default_val" "$var_name must be at least $min_val (current value: $var_value), using default: $default_val"); then
 					var_value="$updated_value"
 				else
-					handle_error "WARNING" "$var_name must be at least $min_val (current value: $var_value), no default available"
+					handle_error "WARNING" "SYSTEM" "$var_name must be at least $min_val (current value: $var_value), no default available"
 					return 1
 				fi
 			fi
@@ -1280,7 +1280,7 @@ validate_config_rule() {
 				# Use handle_error_or_exit_fake_mode to respect fake mode
 				# Note: This function exits, so return 1 won't be reached
 				# but we include it for clarity and in case exit is trapped
-				handle_error_or_exit_fake_mode "$var_name must be at most $max_val (current value: $var_value)" "${EXIT_VALIDATION_ERROR:-3}"
+				handle_error_or_exit_fake_mode "SYSTEM" "$var_name must be at most $max_val (current value: $var_value)" "${EXIT_VALIDATION_ERROR:-3}"
 				# If handle_error_or_exit_fake_mode doesn't exit (e.g., in tests), return error
 				return 1
 			else
@@ -1289,7 +1289,7 @@ validate_config_rule() {
 				if updated_value=$(apply_optional_default "$var_name" "$var_value" "$required" "$default_val" "$var_name must be at most $max_val (current value: $var_value), using default: $default_val"); then
 					var_value="$updated_value"
 				else
-					handle_error "WARNING" "$var_name must be at most $max_val (current value: $var_value), no default available"
+					handle_error "WARNING" "SYSTEM" "$var_name must be at most $max_val (current value: $var_value), no default available"
 					return 1
 				fi
 			fi
@@ -1313,7 +1313,7 @@ validate_config_rule() {
 				# Use handle_error_or_exit_fake_mode to respect fake mode
 				# Note: This function exits, so return 1 won't be reached
 				# but we include it for clarity and in case exit is trapped
-				handle_error_or_exit_fake_mode "$var_name must be one of: $allowed_values (current value: '$var_value')" "${EXIT_VALIDATION_ERROR:-3}"
+				handle_error_or_exit_fake_mode "SYSTEM" "$var_name must be one of: $allowed_values (current value: '$var_value')" "${EXIT_VALIDATION_ERROR:-3}"
 				# If handle_error_or_exit_fake_mode doesn't exit (e.g., in tests), return error
 				return 1
 			else
@@ -1322,7 +1322,7 @@ validate_config_rule() {
 				if updated_value=$(apply_optional_default "$var_name" "$var_value" "$required" "$default_val" "$var_name must be one of: $allowed_values (current value: '$var_value'), using default: $default_val"); then
 					var_value="$updated_value"
 				else
-					handle_error "WARNING" "$var_name must be one of: $allowed_values (current value: '$var_value'), no default available"
+					handle_error "WARNING" "SYSTEM" "$var_name must be one of: $allowed_values (current value: '$var_value'), no default available"
 					return 1
 				fi
 			fi
@@ -1479,7 +1479,7 @@ validate_config_var() {
 	# ============================================================
 	# Check if required variable is empty
 	if [[ "$required" == "required" ]] && [[ -z "$var_value" ]]; then
-		handle_error_or_exit_fake_mode "$var_name is required but not configured" "${EXIT_VALIDATION_ERROR:-3}"
+		handle_error_or_exit_fake_mode "SYSTEM" "$var_name is required but not configured" "${EXIT_VALIDATION_ERROR:-3}"
 		return 1
 	fi
 
@@ -1506,16 +1506,16 @@ validate_config_var() {
 	integer)
 		if ! [[ "$var_value" =~ ^[0-9]+$ ]]; then
 			if [[ "$required" == "required" ]]; then
-				handle_error_or_exit_fake_mode "$var_name must be an integer (current value: '$var_value')" "${EXIT_VALIDATION_ERROR:-3}"
+				handle_error_or_exit_fake_mode "SYSTEM" "$var_name must be an integer (current value: '$var_value')" "${EXIT_VALIDATION_ERROR:-3}"
 				return 1
 			else
 				# Optional variable with invalid type - try to apply default
 				if [[ -z "$default_val" ]]; then
-					handle_error "WARNING" "$var_name must be an integer (current value: '$var_value'), no default available"
+					handle_error "WARNING" "SYSTEM" "$var_name must be an integer (current value: '$var_value'), no default available"
 					return 1
 				elif ! [[ "$default_val" =~ ^[0-9]+$ ]]; then
 					# Default value is invalid - don't apply it
-					handle_error "ERROR" "Default value for $var_name is invalid (default: '$default_val'), cannot apply default" 0
+					handle_error "ERROR" "SYSTEM" "Default value for $var_name is invalid (default: '$default_val'), cannot apply default" 0
 					return 1
 				else
 					# Default is valid, apply it (using centralized function)
@@ -1524,7 +1524,7 @@ validate_config_var() {
 						var_value="$updated_value"
 					else
 						# This should not happen since we validated default above, but handle gracefully
-						handle_error "WARNING" "$var_name must be an integer (current value: '$var_value'), failed to apply default"
+						handle_error "WARNING" "SYSTEM" "$var_name must be an integer (current value: '$var_value'), failed to apply default"
 						return 1
 					fi
 				fi
@@ -1827,7 +1827,7 @@ parse_location_config() {
 			# load_config already logged warnings about this
 			return 0
 		fi
-		handle_error_or_exit_fake_mode "Config file not found: ${config_file:-<not set>}" "${EXIT_VALIDATION_ERROR:-3}"
+		handle_error_or_exit_fake_mode "SYSTEM" "Config file not found: ${config_file:-<not set>}" "${EXIT_VALIDATION_ERROR:-3}"
 		return 1
 	fi
 
@@ -1883,10 +1883,10 @@ parse_location_config() {
 				if location_name=$(extract_location_name "$var_name" 2>/dev/null); then
 					local sanitized_name
 					sanitized_name=$(sanitize_location_name "$location_name")
-					handle_error_or_exit_fake_mode "Duplicate location name detected: $sanitized_name (from variable $var_name)" "${EXIT_VALIDATION_ERROR:-3}"
+					handle_error_or_exit_fake_mode "SYSTEM" "Duplicate location name detected: $sanitized_name (from variable $var_name)" "${EXIT_VALIDATION_ERROR:-3}"
 					return 1
 				else
-					handle_error_or_exit_fake_mode "Duplicate location name detected: $var_name" "${EXIT_VALIDATION_ERROR:-3}"
+					handle_error_or_exit_fake_mode "SYSTEM" "Duplicate location name detected: $var_name" "${EXIT_VALIDATION_ERROR:-3}"
 					return 1
 				fi
 			fi
@@ -1918,7 +1918,7 @@ parse_location_config() {
 		# Example: "LOCATION_NYC_EXTERNAL" → "NYC"
 		# If extraction fails, variable format is invalid (skip with warning)
 		if ! location_name=$(extract_location_name "$var_name"); then
-			handle_error "WARNING" "Invalid location variable name format: $var_name (skipping)"
+			handle_error "WARNING" "SYSTEM" "Invalid location variable name format: $var_name (skipping)"
 			continue
 		fi
 
@@ -1932,7 +1932,7 @@ parse_location_config() {
 		#   LOCATION_NYC_EXTERNAL and LOCATION_nyc_EXTERNAL → both sanitize to "NYC"
 		#   LOCATION_NEW_YORK_EXTERNAL and LOCATION_NewYork_EXTERNAL → might conflict
 		if [[ -n "${seen_locations[$sanitized_name]:-}" ]]; then
-			handle_error_or_exit_fake_mode "Duplicate location name detected: $sanitized_name (from variable $var_name)" "${EXIT_VALIDATION_ERROR:-3}"
+			handle_error_or_exit_fake_mode "SYSTEM" "Duplicate location name detected: $sanitized_name (from variable $var_name)" "${EXIT_VALIDATION_ERROR:-3}"
 			return 1
 		fi
 		seen_locations[$sanitized_name]=1 # Mark location as processed
@@ -1944,7 +1944,7 @@ parse_location_config() {
 		# Empty external IP means no peer to monitor, so skip this location
 		# This is a non-critical error: log warning but don't fail entire config
 		if [[ -z "$external_ip" ]]; then
-			handle_error "WARNING" "Location $sanitized_name: EXTERNAL IP is empty (skipping empty peer)"
+			handle_error "WARNING" "$sanitized_name" "EXTERNAL IP is empty (skipping empty peer)"
 			continue
 		fi
 
@@ -1967,7 +1967,7 @@ parse_location_config() {
 	#   - All locations were skipped due to validation errors (empty IPs, etc.)
 	# This is a critical error: cannot proceed without at least one location to monitor
 	if [[ ${#LOCATIONS[@]} -eq 0 ]]; then
-		handle_error_or_exit_fake_mode "No location-based configuration found. At least one LOCATION_*_EXTERNAL variable is required." "${EXIT_VALIDATION_ERROR:-3}"
+		handle_error_or_exit_fake_mode "SYSTEM" "No location-based configuration found. At least one LOCATION_*_EXTERNAL variable is required." "${EXIT_VALIDATION_ERROR:-3}"
 		return 1
 	fi
 
@@ -2099,7 +2099,7 @@ setup_routes_if_needed() {
 			# - Routes are needed (ping checks enabled, internal IPs configured)
 			# - Routes won't be added during ping checks if VPN checks are skipped (network partition, cooldown, etc.)
 			# - This will cause ping checks to fail silently
-			handle_error "ERROR" "Cannot set up routes during config validation: detection.sh functions not available (get_local_ip_for_ping, check_route_exists, or add_route_if_needed). Routes are required for ping checks but may not be added if VPN checks are skipped. Ensure detection.sh is sourced before config.sh."
+			handle_error "ERROR" "SYSTEM" "Cannot set up routes during config validation: detection.sh functions not available (get_local_ip_for_ping, check_route_exists, or add_route_if_needed). Routes are required for ping checks but may not be added if VPN checks are skipped. Ensure detection.sh is sourced before config.sh."
 		fi
 		# Return error to indicate route setup failed (non-critical in test contexts)
 		return 1
@@ -2116,12 +2116,12 @@ setup_routes_if_needed() {
 
 	# Check if route exists, add if needed
 	if ! check_route_exists "$local_ip"; then
-		log_message "INFO" "Route not found on br0 during config validation, attempting to add: $local_ip/${IPV4_CIDR_SINGLE_HOST:-32}"
+		log_message "INFO" "SYSTEM" "Route not found on br0 during config validation, attempting to add: $local_ip/${IPV4_CIDR_SINGLE_HOST:-32}"
 		if ! add_route_if_needed "$local_ip"; then
 			# Route setup failed - this is critical because routes are needed for ping checks
 			# and may not be added later if VPN checks are skipped
 			# Use exit_code=0 so we don't exit the script, but return 1 to fail validation
-			handle_error "ERROR" "Failed to add route during config validation: $local_ip/${IPV4_CIDR_SINGLE_HOST:-32}. Routes are required for ping checks but may not be added if VPN checks are skipped (network partition, cooldown, etc.). Manual route setup may be required: ip addr add $local_ip/32 dev br0" 0
+			handle_error "ERROR" "SYSTEM" "Failed to add route during config validation: $local_ip/${IPV4_CIDR_SINGLE_HOST:-32}. Routes are required for ping checks but may not be added if VPN checks are skipped (network partition, cooldown, etc.). Manual route setup may be required: ip addr add $local_ip/32 dev br0" 0
 			return 1
 		fi
 	fi
@@ -2156,18 +2156,18 @@ validate_config() {
 	# - Value enumeration (allowed values)
 	# - Relative validation (e.g., TIER2_THRESHOLD >= TIER1_THRESHOLD)
 	if ! validate_config_schema; then
-		handle_error_or_exit_fake_mode "Configuration validation failed - check schema rules" "${EXIT_VALIDATION_ERROR:-3}"
+		handle_error_or_exit_fake_mode "SYSTEM" "Configuration validation failed - check schema rules" "${EXIT_VALIDATION_ERROR:-3}"
 	fi
 
 	# Check for old format variables (should not exist)
 	if [[ -n "${EXTERNAL_PEER_IPS:-}" ]] || [[ -n "${INTERNAL_PEER_IPS:-}" ]]; then
-		handle_error_or_exit_fake_mode "Old configuration format detected (EXTERNAL_PEER_IPS/INTERNAL_PEER_IPS). Please migrate to location-based format using the migration script." "${EXIT_VALIDATION_ERROR:-3}"
+		handle_error_or_exit_fake_mode "SYSTEM" "Old configuration format detected (EXTERNAL_PEER_IPS/INTERNAL_PEER_IPS). Please migrate to location-based format using the migration script." "${EXIT_VALIDATION_ERROR:-3}"
 		return 1
 	fi
 
 	# Parse location-based configuration
 	if ! parse_location_config; then
-		handle_error_or_exit_fake_mode "Failed to parse location-based configuration" "${EXIT_VALIDATION_ERROR:-3}"
+		handle_error_or_exit_fake_mode "SYSTEM" "Failed to parse location-based configuration" "${EXIT_VALIDATION_ERROR:-3}"
 		return 1
 	fi
 
@@ -2181,13 +2181,13 @@ validate_config() {
 	for location_name in "${!LOCATIONS[@]}"; do
 		# Get external IP for this location
 		if ! external_ip=$(get_location_external_ip "$location_name"); then
-			handle_error_or_exit_fake_mode "Location $location_name: Failed to get external IP" "${EXIT_VALIDATION_ERROR:-3}"
+			handle_error_or_exit_fake_mode "$location_name" "Failed to get external IP" "${EXIT_VALIDATION_ERROR:-3}"
 			return 1
 		fi
 
 		# Validate external IP format
 		if ! validate_ip_address "$external_ip"; then
-			handle_error_or_exit_fake_mode "Location $location_name: Invalid external IP format: $external_ip" "${EXIT_VALIDATION_ERROR:-3}"
+			handle_error_or_exit_fake_mode "$location_name" "Invalid external IP format: $external_ip" "${EXIT_VALIDATION_ERROR:-3}"
 			return 1
 		fi
 
@@ -2205,7 +2205,7 @@ validate_config() {
 
 				# Validate IP address format
 				if ! validate_ip_address "$internal_ip"; then
-					handle_error_or_exit_fake_mode "Location $location_name: Invalid internal IP format: $internal_ip" "${EXIT_VALIDATION_ERROR:-3}"
+					handle_error_or_exit_fake_mode "$location_name" "Invalid internal IP format: $internal_ip" "${EXIT_VALIDATION_ERROR:-3}"
 					return 1
 				fi
 			done
@@ -2213,8 +2213,8 @@ validate_config() {
 			# Validate LOCAL_UDM_IP is configured when ping checks are enabled with internal IPs
 			if [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
 				if [[ -z "${LOCAL_UDM_IP:-}" ]]; then
-					handle_error "WARNING" "LOCAL_UDM_IP is not configured but ENABLE_PING_CHECK=1 and location $location_name has internal IPs"
-					handle_error "WARNING" "LOCAL_UDM_IP is required for ping checks with internal IPs. Ping checks may fail without it."
+					handle_error "WARNING" "$location_name" "LOCAL_UDM_IP is not configured but ENABLE_PING_CHECK=1 and $location_name has internal IPs"
+					handle_error "WARNING" "$location_name" "LOCAL_UDM_IP is required for ping checks with internal IPs. Ping checks may fail without it."
 				else
 					# Validate LOCAL_UDM_IP format
 					if ! validate_ip_address "$LOCAL_UDM_IP"; then
@@ -2228,19 +2228,19 @@ validate_config() {
 	# Validate file paths are writable (if they exist)
 	# Check STATE_DIR is writable
 	if directory_exists "$STATE_DIR" && ! directory_writable "$STATE_DIR"; then
-		handle_error "WARNING" "STATE_DIR is not writable: $STATE_DIR (state file writes may fail, output will go to stderr)" 0
+		handle_error "WARNING" "SYSTEM" "STATE_DIR is not writable: $STATE_DIR (state file writes may fail, output will go to stderr)" 0
 	fi
 
 	# Check LOGS_DIR is writable (if it exists)
 	if directory_exists "$LOGS_DIR" && ! directory_writable "$LOGS_DIR"; then
-		handle_error "WARNING" "LOGS_DIR is not writable: $LOGS_DIR (log writes may fail, output will go to stderr)" 0
+		handle_error "WARNING" "SYSTEM" "LOGS_DIR is not writable: $LOGS_DIR (log writes may fail, output will go to stderr)" 0
 	fi
 
 	# Check LOG_FILE parent directory is writable (if it exists)
 	local log_file_dir
 	log_file_dir=$(dirname "$LOG_FILE")
 	if directory_exists "$log_file_dir" && ! directory_writable "$log_file_dir"; then
-		handle_error "WARNING" "LOG_FILE directory is not writable: $log_file_dir (log writes may fail, output will go to stderr)" 0
+		handle_error "WARNING" "SYSTEM" "LOG_FILE directory is not writable: $log_file_dir (log writes may fail, output will go to stderr)" 0
 	fi
 
 	# Setup routes for ping connectivity if needed
@@ -2255,7 +2255,7 @@ validate_config() {
 		if command -v log_message >/dev/null 2>&1; then
 			# Main execution path - routes are needed, setup failed, fail validation
 			# setup_routes_if_needed already logged ERROR with details
-			handle_error_or_exit_fake_mode "Route setup failed during config validation and routes are required for ping checks. See previous error messages for details." "${EXIT_VALIDATION_ERROR:-3}"
+			handle_error_or_exit_fake_mode "SYSTEM" "Route setup failed during config validation and routes are required for ping checks. See previous error messages for details." "${EXIT_VALIDATION_ERROR:-3}"
 			return 1
 		fi
 		# Test context - don't fail validation (allows tests to work)
