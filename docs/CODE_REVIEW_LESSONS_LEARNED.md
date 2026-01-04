@@ -1,7 +1,7 @@
 # Code Review Lessons Learned
 
-**Date:** 2025-01-15  
-**Last Updated:** 2026-01-03  
+**Date:** 2025-01-15
+**Last Updated:** 2026-01-03
 **Context:** Comprehensive codebase review for errors, bugs, DRY violations, and bad practices
 
 ## Overview
@@ -399,11 +399,11 @@ parse_quoted_value() {
     local escaped=false
     local quote_closed=false
     local result=""
-    
+
     # Track state as we parse character by character
     for ((i=0; i<${#assignment}; i++)); do
         local char="${assignment:$i:1}"
-        
+
         if [[ "$escaped" == true ]]; then
             # Handle escaped characters based on quote type
             escaped=false
@@ -415,7 +415,7 @@ parse_quoted_value() {
         fi
         # ... more state tracking
     done
-    
+
     # Validate final state
     if [[ "$in_quotes" == true ]] && [[ "$quote_closed" == false ]]; then
         return 1  # Unclosed quote
@@ -512,25 +512,25 @@ Found bug in `validate_config_var()` where validation corrections were not persi
 validate_config_var() {
     local var_name="$1"
     local var_value="${2:-}"
-    
+
     # Get value if not provided
     if [[ -z "$var_value" ]]; then
         var_value="${!var_name:-}"
     fi
-    
+
     # Apply defaults
     var_value=$(apply_config_default "$var_name" "$var_value")
-    
+
     # Validate type
     var_value=$(validate_config_type "$var_name" "$var_value")
-    
+
     # Validate rules
     var_value=$(validate_config_rules "$var_name" "$var_value")
-    
+
     # CRITICAL: Persist corrected value to global variable
     # This ensures corrections (defaults, type corrections, rule corrections) are not lost
     safe_set_variable "$var_name" "$var_value"
-    
+
     return 0
 }
 
@@ -538,9 +538,9 @@ validate_config_var() {
 validate_config_var() {
     local var_name="$1"
     local var_value="${2:-}"
-    
+
     # ... validation steps that correct var_value ...
-    
+
     # Bug: Corrected value never persisted to global variable
     return 0
 }
@@ -1447,7 +1447,7 @@ When using EXIT traps for cleanup, the cleanup function must preserve the exit c
         exit "$signal_exit_code"  # Always 0 if no signal received!
     }
     trap 'cleanup_and_exit' EXIT
-    
+
     main_func "$@"
     # If main_func returns 1, cleanup runs and exits with 0, losing the error code
 )
@@ -1472,38 +1472,38 @@ When using EXIT traps for cleanup, the cleanup function must preserve the exit c
 (
     local signal_exit_code=0
     local cleanup_done=0
-    
+
     cleanup_and_exit() {
         # Prevent double cleanup
         if [[ $cleanup_done -eq 1 ]]; then
             exit "${signal_exit_code:-0}"
         fi
         cleanup_done=1
-        
+
         # Close file descriptor first (more critical)
         exec 9>&- 2>/dev/null || true
-        
+
         # Remove lockfile only if we acquired it
         if [[ $lock_acquired -eq 1 ]]; then
             rm -f "$LOCKFILE" 2>/dev/null || true
         fi
-        
+
         exit "${signal_exit_code:-0}"
     }
-    
+
     trap 'signal_exit_code=130; cleanup_and_exit' INT
     trap 'signal_exit_code=143; cleanup_and_exit' TERM
     trap 'cleanup_and_exit' EXIT
-    
+
     # Run main function and capture exit code
     main_func "$@"
     local main_exit_code=$?
-    
+
     # If no signal was received, use main function's exit code
     if [[ ${signal_exit_code:-0} -eq 0 ]]; then
         signal_exit_code=$main_exit_code
     fi
-    
+
     # Explicit cleanup (EXIT trap will also run but cleanup_done prevents double cleanup)
     exec 9>&- 2>/dev/null || true
     if [[ $lock_acquired -eq 1 ]]; then
@@ -1555,7 +1555,7 @@ acquire_lockfile_flock() {
         local signal_exit_code=0
         local lock_acquired=0
         local cleanup_done=0
-        
+
         cleanup_and_exit() {
             if [[ $cleanup_done -eq 1 ]]; then
                 exit "${signal_exit_code:-0}"
@@ -1567,20 +1567,20 @@ acquire_lockfile_flock() {
             fi
             exit "${signal_exit_code:-0}"
         }
-        
+
         trap 'signal_exit_code=130; cleanup_and_exit' INT
         trap 'signal_exit_code=143; cleanup_and_exit' TERM
         trap 'cleanup_and_exit' EXIT
-        
+
         # ... lock acquisition ...
-        
+
         main_func "$@"
         local main_exit_code=$?
-        
+
         if [[ ${signal_exit_code:-0} -eq 0 ]]; then
             signal_exit_code=$main_exit_code
         fi
-        
+
         # Explicit cleanup
         exec 9>&- 2>/dev/null || true
         if [[ $lock_acquired -eq 1 ]]; then
@@ -1977,13 +1977,13 @@ while IFS= read -r location || [[ -n "$location" ]]; do
         local start_index=$((hash % ${#CITY_NAMES[@]}))
         local city_index=$start_index
         local attempts=0
-        
+
         # Find next available city (collision resolution)
         while [[ -n "${used_cities[${CITY_NAMES[$city_index]}]:-}" ]] && [[ $attempts -lt ${#CITY_NAMES[@]} ]]; do
             city_index=$(((city_index + 1) % ${#CITY_NAMES[@]}))
             attempts=$((attempts + 1))
         done
-        
+
         # Handle exhaustion (all cities used)
         if [[ $attempts -ge ${#CITY_NAMES[@]} ]]; then
             # Append numeric suffix for uniqueness
@@ -1995,7 +1995,7 @@ while IFS= read -r location || [[ -n "$location" ]]; do
         else
             anonymized_city="${CITY_NAMES[$city_index]}"
         fi
-        
+
         location_map["$location"]="$anonymized_city"
         used_cities["$anonymized_city"]=1
     fi
@@ -2071,6 +2071,8 @@ These lessons should be applied systematically in future development and code re
 29. **When adding similar functionality, consider code duplication vs. clarity trade-offs** - When adding retention options for logs and state directories similar to config file retention, the three handler functions (`handle_config_file`, `handle_logs_dir`, `handle_state_dir`) have similar structure. While this creates some duplication, keeping them separate improves readability and maintainability. Extracting common logic would reduce duplication but make the code harder to understand. **Decision:** Keep similar but separate functions when clarity benefits outweigh DRY benefits, especially for user-facing interactive prompts where explicit code paths are easier to debug and modify.
 30. **Parse all selectors when interacting with kernel interfaces** - When parsing structured output from kernel interfaces (netlink, xfrm, iproute2), parse ALL attributes that could be selectors, not just the required ones. Optional attributes become required selectors when present. Missing selectors cause operations to fail with "No such process" errors even when the object exists. Include all parsed selectors in operations (get, delete, modify) to ensure successful matching.
 
+31. **Add comprehensive diagnostics when debugging kernel interface failures** - When debugging failures with kernel interfaces (xfrm, netlink, etc.), add extensive diagnostic logging at INFO level (not just DEBUG) to capture: system/kernel versions, exact commands executed, timing information, full object blocks before operations, comparison of parsed vs kernel output, and all attributes found. This enables post-mortem debugging without requiring reproduction. See `lib/recovery.sh:attempt_xfrm_recovery()` for comprehensive diagnostic logging pattern.
+
 ---
 
 ## 30. Parse All Selectors When Interacting with Kernel Interfaces
@@ -2078,7 +2080,7 @@ These lessons should be applied systematically in future development and code re
 ### Problem
 During xfrm recovery implementation, we discovered that SA deletion was failing with "RTNETLINK answers: No such process" (exit code 2) even though the SAs existed. Root cause analysis revealed that SAs with `mark` attributes require the mark to be included as a selector in deletion commands. The code was only parsing and using `src`, `dst`, `proto`, and `spi` selectors, missing the `mark` selector.
 
-**Status:** ✅ **FIXED** (2026-01-04) - Added mark parsing and inclusion in deletion commands
+**Status:** ✅ **FIXED** (2026-01-04) - Added mark parsing and inclusion in deletion commands. Updated (2026-01-04) - Fixed mark syntax to use "mark <value> mask <mask>" format instead of "mark <value>/<mask>"
 
 ### Impact
 - xfrm recovery failed for all SAs with mark attributes
@@ -2102,8 +2104,8 @@ ip xfrm state
 ip xfrm state delete src 172.31.16.115 dst 172.31.23.27 proto esp spi 0x12345678
 # Error: RTNETLINK answers: No such process
 
-# ✅ GOOD: Deletion with mark succeeds
-ip xfrm state delete src 172.31.16.115 dst 172.31.23.27 proto esp spi 0x12345678 mark 0x12000000/0xfe000000
+# ✅ GOOD: Deletion with mark succeeds (correct format: separate mark and mask parameters)
+ip xfrm state delete src 172.31.16.115 dst 172.31.23.27 proto esp spi 0x12345678 mark 0x12000000 mask 0xfe000000
 # Success
 ```
 
@@ -2116,22 +2118,29 @@ ip xfrm state delete src 172.31.16.115 dst 172.31.23.27 proto esp spi 0x12345678
 parse_xfrm_sa() {
     local xfrm_output="$1"
     local src="" dst="" proto="" spi="" mark=""
-    
+
     # Parse required selectors
     if [[ "$xfrm_output" =~ src[[:space:]]+([0-9.]+) ]]; then
         src="${BASH_REMATCH[1]}"
     fi
     # ... parse dst, proto, spi ...
-    
+
     # Parse optional selectors (become required when present)
     if [[ "$xfrm_output" =~ mark[[:space:]]+(0x[0-9a-fA-F]+/0x[0-9a-fA-F]+) ]]; then
         mark="${BASH_REMATCH[1]}"
     fi
-    
+
     # Include all selectors in operations
+    # Note: Mark format in xfrm output is "0x<value>/0x<mask>", but ip xfrm commands require "mark <value> mask <mask>"
     local delete_cmd="ip xfrm state delete src \"$src\" dst \"$dst\" proto \"$proto\" spi \"$spi\""
     if [[ -n "$mark" ]]; then
-        delete_cmd="$delete_cmd mark \"$mark\""
+        # Parse mark value and mask from format "0x<value>/0x<mask>"
+        local mark_value mark_mask
+        if [[ "$mark" =~ ^(0x[0-9a-fA-F]+)/(0x[0-9a-fA-F]+)$ ]]; then
+            mark_value="${BASH_REMATCH[1]}"
+            mark_mask="${BASH_REMATCH[2]}"
+            delete_cmd="$delete_cmd mark \"$mark_value\" mask \"$mark_mask\""
+        fi
     fi
     eval "$delete_cmd"
 }
@@ -2140,12 +2149,12 @@ parse_xfrm_sa() {
 parse_xfrm_sa() {
     local xfrm_output="$1"
     local src="" dst="" proto="" spi=""
-    
+
     # Parse only required selectors
     # ... parse src, dst, proto, spi ...
-    
+
     # Missing: Don't parse mark (optional selector)
-    
+
     # Deletion fails for SAs with mark
     ip xfrm state delete src "$src" dst "$dst" proto "$proto" spi "$spi"
     # Error: RTNETLINK answers: No such process (even though SA exists!)
@@ -2213,5 +2222,69 @@ fi
 - ✅ Test mark inclusion in deletion commands
 - ✅ Test backward compatibility (SAs without marks)
 - ✅ Test mixed scenarios (some SAs with mark, some without)
+
+---
+
+## 50. Mock Counter Design: Account for All Phases When Testing Specific Behavior
+
+### Problem
+When testing exponential backoff in the verification loop, the mock's `verify_attempts` counter was incremented during:
+1. Initial SA fetch (before deletion)
+2. Deletion verification calls
+3. Post-deletion SA check
+4. Verification loop calls
+
+The mock threshold was set to 7, meaning it would return "SA re-established" when `verify_attempts > 7`. However, by the time the verification loop started, the counter was already at 7-8 due to calls in earlier phases, causing the loop to exit immediately without any sleep calls.
+
+### Impact
+- Test failed because only 1 sleep occurred instead of the expected 2+ sleeps
+- Exponential backoff behavior was not actually tested
+- Test appeared to pass but wasn't verifying the intended behavior
+
+### Root Cause
+Each `check_ipsec_phase2` call results in 2 mock calls (`ip -s xfrm state` + `ip xfrm state` fallback), so the counter increments twice per verification iteration. The mock threshold didn't account for:
+- Calls during deletion phase (~6 calls)
+- Multiple calls per verification iteration (2 calls per `check_ipsec_phase2`)
+- Need for multiple verification iterations to test exponential backoff
+
+### Fix
+Increased mock threshold from 7 to 12, accounting for:
+- ~6 calls during deletion phase
+- 2 calls per verification iteration
+- Need for at least 2 sleep calls (2 iterations × 2 calls = 4 calls)
+- Total: 6 + 4 = 10, so threshold > 10 (chose 12 for safety margin)
+
+### Lesson
+**When designing mocks with counters that span multiple phases, account for all calls that occur before the phase you're testing.** Consider:
+- How many calls happen in earlier phases?
+- How many calls occur per iteration of the phase being tested?
+- What's the minimum number of iterations needed to test the behavior?
+- Add a safety margin to account for implementation details (like fallback calls)
+
+### Pattern to Follow
+```bash
+# ✅ GOOD: Account for all phases when setting mock thresholds
+# Deletion phase: ~6 calls
+# Verification phase: 2 calls per iteration (ip -s xfrm state + ip xfrm state fallback)
+# Need 2+ iterations to test exponential backoff: 2 iterations × 2 calls = 4 calls
+# Total: 6 + 4 = 10, threshold > 10 (use 12 for safety)
+elif [[ \$verify_attempts -le 12 ]]; then
+    :  # Return empty (SA deleted)
+else
+    echo "SA re-established"  # Return SA
+fi
+
+# ❌ BAD: Threshold too low, doesn't account for earlier phases
+elif [[ \$verify_attempts -le 7 ]]; then
+    :  # Returns SA too early, before verification loop can test exponential backoff
+fi
+```
+
+### Systematic Application
+- When creating mocks with counters, trace through all code paths that call the mock
+- Document expected call counts for each phase
+- Set thresholds that account for all phases, not just the one being tested
+- Add comments explaining the threshold calculation
+- Consider resetting counters between phases if testing specific phase behavior
 
 ---

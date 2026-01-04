@@ -3,6 +3,7 @@
 - Was any functionality lost?
 - Do we need to DRY things up?
 - Are you overarchitecting for what the application actually needs?
+- Did you write any dangerous code? e.g., code that could accidentally delete system files or crash the entire system?
 - Run linting and formatting.
 - Are there any critical path tests we need to create or update?
 - Did you learn any important lessons during working with this code? If so, update the docs accordingly or create a new doc if an appropriate doc does not exist.

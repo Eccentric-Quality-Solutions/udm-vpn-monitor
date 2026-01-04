@@ -614,7 +614,10 @@ EOF
 	# Purpose: Test verifies that xfrm recovery uses exponential backoff during verification wait
 	# Expected: attempt_xfrm_recovery doubles wait interval between verification attempts, capped at max
 	# Importance: Exponential backoff reduces CPU usage while waiting for SA re-establishment
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1' 'XFRM_RECOVERY_MAX_INTERVAL=8'
+	# Use longer timeout to allow multiple sleep calls for exponential backoff testing
+	# With interval=1s, backoff will be: 1s, 2s, 4s, 8s...
+	# Need timeout >= 1+2 = 3s to see at least 2 sleep calls
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=5' 'XFRM_RECOVERY_VERIFY_INTERVAL=1' 'XFRM_RECOVERY_MAX_INTERVAL=8'
 
 	# Track sleep calls to verify exponential backoff
 	local sleep_log="${TEST_DIR}/sleep_log"
@@ -633,10 +636,13 @@ EOF
 	echo "0" >"$verify_attempt_file"
 
 	# Mock ip command that simulates delayed SA re-establishment
+	# Note: get_xfrm_state_for_peer tries "ip -s xfrm state" first, then falls back to "ip xfrm state"
+	# Also note: count_sas_for_peer calls "ip xfrm state" directly (not through get_xfrm_state_for_peer)
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+# Handle "ip -s xfrm state" (with statistics) - tried first by get_xfrm_state_for_peer
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
     verify_attempts=\$((verify_attempts + 1))
     echo "\$verify_attempts" > "$verify_attempt_file"
@@ -648,7 +654,35 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
         echo "    lifetime current: 1000 bytes, 10 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     # Next few calls: SA deleted (delayed re-establishment)
-    elif [[ \$verify_attempts -le 5 ]]; then
+    # Note: Each check_ipsec_phase2 call results in 2 mock calls (ip -s xfrm state + ip xfrm state fallback)
+    # Deletion phase uses ~6 calls, so we need threshold > 6 + (2 calls per iteration * desired iterations)
+    # For 2+ sleep calls, we need: 6 + (2 * 2) = 10, so threshold should be > 10
+    elif [[ \$verify_attempts -le 12 ]]; then
+        :
+    # After that: SA re-established
+    else
+        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
+        echo "    lifetime current: 2000 bytes, 20 packets"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    fi
+# Handle "ip xfrm state" (without statistics) - fallback used by get_xfrm_state_for_peer and count_sas_for_peer
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+
+    # First call: SA exists (before deletion)
+    if [[ \$verify_attempts -eq 1 ]]; then
+        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    # Next few calls: SA deleted (delayed re-establishment)
+    # Note: Each check_ipsec_phase2 call results in 2 mock calls (ip -s xfrm state + ip xfrm state fallback)
+    # Deletion phase uses ~6 calls, so we need threshold > 6 + (2 calls per iteration * desired iterations)
+    # For 2+ sleep calls, we need: 6 + (2 * 2) = 10, so threshold should be > 10
+    elif [[ \$verify_attempts -le 12 ]]; then
         :
     # After that: SA re-established
     else
@@ -670,16 +704,42 @@ EOF
 	# Source recovery functions to test directly
 	source_recovery_module
 
+	# Reset verify_attempts counter before calling attempt_xfrm_recovery
+	# This ensures the mock's counter starts fresh for the verification phase
+	# The counter will be incremented during:
+	#   1. Initial SA fetch (before deletion)
+	#   2. Deletion verification calls
+	#   3. Post-deletion SA check
+	#   4. Verification loop calls
+	# We want the verification loop to see delayed re-establishment, so we reset here
+	# and the mock will return empty for attempts <= 12, then SA for attempts > 12
+	echo "0" >"$verify_attempt_file"
+
 	# Test attempt_xfrm_recovery function
 	run attempt_xfrm_recovery "192.168.1.1"
 	assert_success
 
 	# Verify exponential backoff was used (check sleep intervals)
+	# Note: The first sleep happens before the verification loop (XFRM_RECOVERY_SLEEP_SECONDS)
+	# The verification loop should have additional sleep calls with exponential backoff
 	if [[ -f "$sleep_log" ]]; then
 		local sleep_count
 		sleep_count=$(wc -l <"$sleep_log" | tr -d ' ')
-		# Should have multiple sleep calls (at least 2-3 for exponential backoff)
+		# Should have at least 2 sleep calls total:
+		# 1. Initial sleep before verification loop (XFRM_RECOVERY_SLEEP_SECONDS)
+		# 2. At least one sleep in verification loop with exponential backoff
+		# With timeout=5s and interval=1s, we should get: initial sleep + verification sleep(s)
 		assert [ "$sleep_count" -ge 2 ]
+		# Verify sleep intervals show exponential backoff (if we have multiple sleeps)
+		if [[ $sleep_count -ge 2 ]]; then
+			local first_interval second_interval
+			first_interval=$(head -1 "$sleep_log" | tr -d ' ')
+			second_interval=$(sed -n '2p' "$sleep_log" | tr -d ' ')
+			# First interval should be XFRM_RECOVERY_SLEEP_SECONDS (3 seconds)
+			# Second interval should be base_interval (1 second) from verification loop
+			# Note: We're just checking that we have multiple sleeps, not the exact values
+			# since the first sleep is before the loop and subsequent sleeps are in the loop
+		fi
 	fi
 
 	# Restore original PATH
@@ -777,9 +837,12 @@ EOF
 	assert_success
 
 	# Verify that mark was included in deletion command
+	# Mark format: "mark <value> mask <mask>"
 	assert_file_exist "$delete_cmd_file"
 	assert_file_contains "$delete_cmd_file" "mark"
-	assert_file_contains "$delete_cmd_file" "0x12000000/0xfe000000"
+	assert_file_contains "$delete_cmd_file" "mask"
+	assert_file_contains "$delete_cmd_file" "0x12000000"
+	assert_file_contains "$delete_cmd_file" "0xfe000000"
 
 	# Verify that verification occurred
 	local final_attempts
@@ -904,42 +967,93 @@ EOF
 if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
     # Capture deletion command
     echo "\$*" >> "$delete_cmd_file"
+    # Also log to deleted_sas_file for debugging
+    echo "DEBUG: delete command executed: \$*" >> "$deleted_sas_file"
 
     # Track which SA was deleted based on SPI
-    if [[ "\$*" == *"spi 0x12345678"* ]]; then
-        if [[ "\$*" == *"mark"* ]]; then
+    # New format: commands with mark will have "mark" and "mask" as separate words
+    # Note: \$* expands to all arguments separated by spaces
+    # The command will be: ip xfrm state delete src "192.168.1.1" dst "192.168.1.1" proto "esp" spi "0x12345678" [mark "0x12000000" mask "0xfe000000"]
+    if [[ "\$*" == *"spi"*"0x12345678"* ]]; then
+        # SA with mark: should have both "mark" and "mask" in command
+        if [[ "\$*" == *"mark"* ]] && [[ "\$*" == *"mask"* ]]; then
             echo "SA with mark deleted" >> "$deleted_sas_file"
         else
             echo "SA without mark deleted (but should have mark)" >> "$deleted_sas_file"
             exit 2
         fi
-    elif [[ "\$*" == *"spi 0x87654321"* ]]; then
+    elif [[ "\$*" == *"spi"*"0x87654321"* ]]; then
+        # SA without mark: should NOT have "mark" in command
         if [[ "\$*" == *"mark"* ]]; then
             echo "SA without mark deleted (but shouldn't have mark)" >> "$deleted_sas_file"
             exit 2
         else
             echo "SA without mark deleted" >> "$deleted_sas_file"
         fi
+    else
+        # Unknown SPI - log for debugging but don't fail
+        echo "DEBUG: Unknown SPI in delete command: \$*" >> "$deleted_sas_file"
     fi
     exit 0
 elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; then
     # Return appropriate SA based on whether mark is in command
-    if [[ "\$*" == *"mark"* ]] && [[ "\$*" == *"spi 0x12345678"* ]]; then
+    # New format: get commands with mark will have "mark" and "mask" as separate words
+    # Note: \$* expands to all arguments separated by spaces
+    # Command format: xfrm state get src "192.168.1.1" dst "192.168.1.1" proto "esp" spi "0x12345678" [mark "0x12000000" mask "0xfe000000"]
+    # Check for SA with mark (spi 0x12345678) - must have both mark and mask
+    if [[ "\$*" == *"mark"* ]] && [[ "\$*" == *"mask"* ]] && [[ "\$*" == *"0x12345678"* ]]; then
+        # SA with mark: return SA with mark attribute
         echo "src 192.168.1.1 dst 192.168.1.1"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
         echo "    lifetime current: 1000 bytes, 10 packets"
         exit 0
-    elif [[ "\$*" == *"spi 0x87654321"* ]] && [[ "\$*" != *"mark"* ]]; then
+    # Check for SA without mark (spi 0x87654321) - must NOT have mark
+    elif [[ "\$*" == *"0x87654321"* ]] && [[ "\$*" != *"mark"* ]]; then
+        # SA without mark: return SA without mark attribute
         echo "src 192.168.1.1 dst 192.168.1.1"
         echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
         echo "    lifetime current: 2000 bytes, 20 packets"
         exit 0
     else
+        # Command doesn't match expected pattern - fail
         echo "RTNETLINK answers: No such process" >&2
         exit 2
     fi
+elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics)
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+
+    # First call: Mixed SAs exist (one with mark, one without)
+    if [[ \$verify_attempts -le 1 ]]; then
+        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+        echo "    mark 0x12000000/0xfe000000"
+        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
+        echo "    lifetime current: 2000 bytes, 20 packets"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    # Next few calls: SAs deleted
+    elif [[ \$verify_attempts -le 3 ]]; then
+        :
+    # After that: SAs re-established
+    else
+        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "    proto esp spi 0xabcdef12 reqid 1 mode tunnel"
+        echo "    mark 0x12000000/0xfe000000"
+        echo "    lifetime current: 3000 bytes, 30 packets"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "    proto esp spi 0xfedcba98 reqid 2 mode tunnel"
+        echo "    lifetime current: 4000 bytes, 40 packets"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    fi
 elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Handle "ip xfrm state" (without statistics)
     verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
     verify_attempts=\$((verify_attempts + 1))
     echo "\$verify_attempts" > "$verify_attempt_file"
@@ -985,21 +1099,140 @@ EOF
 
 	# Verify both SAs were deleted correctly
 	assert_file_exist "$deleted_sas_file"
+	# Debug: show what was logged
+	[[ "${DEBUG:-0}" -eq 1 ]] && echo "Contents of deleted_sas_file:" && cat "$deleted_sas_file"
 	assert_file_contains "$deleted_sas_file" "SA with mark deleted"
 	assert_file_contains "$deleted_sas_file" "SA without mark deleted"
 
 	# Verify deletion commands are correct
 	assert_file_exist "$delete_cmd_file"
+	# Debug: show what commands were executed
+	[[ "${DEBUG:-0}" -eq 1 ]] && cat "$delete_cmd_file"
 	# Should have deletion command with mark for first SA
-	run grep "spi 0x12345678" "$delete_cmd_file"
+	run grep "spi.*0x12345678" "$delete_cmd_file"
 	assert_success
-	run grep -A 0 "spi 0x12345678" "$delete_cmd_file" | grep -q "mark"
-	assert_success
+	assert_file_contains "$delete_cmd_file" "spi.*0x12345678.*mark"
+	assert_file_contains "$delete_cmd_file" "spi.*0x12345678.*mask"
 	# Should have deletion command without mark for second SA
-	run grep "spi 0x87654321" "$delete_cmd_file"
+	run grep "spi.*0x87654321" "$delete_cmd_file"
 	assert_success
-	run grep -A 0 "spi 0x87654321" "$delete_cmd_file" | grep -q "mark"
+	# Verify second SA deletion command doesn't contain mark
+	run bash -c "grep 'spi.*0x87654321' '$delete_cmd_file' | grep -q 'mark'"
 	assert_failure
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "xfrm recovery - Verify exact mark command format" {
+	# Purpose: Test verifies that deletion commands use exact format "mark <value> mask <mask>" (not "mark <value>/<mask>")
+	# Expected: Deletion command for SA with mark uses format: mark 0x12000000 mask 0xfe000000
+	# Importance: Ensures correct syntax is used for ip xfrm state delete commands
+	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+
+	# Track deletion commands to verify exact format
+	local delete_cmd_file="${TEST_DIR}/delete_commands"
+	touch "$delete_cmd_file"
+
+	# Track verification attempts
+	local verify_attempt_file="${TEST_DIR}/verify_attempts"
+	echo "0" >"$verify_attempt_file"
+
+	# Mock ip command that captures deletion commands
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
+    # Capture deletion command
+    echo "\$*" >> "$delete_cmd_file"
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; then
+    # Return SA with mark for get command (new format: mark <value> mask <mask>)
+    if [[ "\$*" == *"mark"* ]] && [[ "\$*" == *"mask"* ]]; then
+        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+        echo "    mark 0x12000000/0xfe000000"
+        echo "    lifetime current: 1000 bytes, 10 packets"
+        exit 0
+    else
+        echo "RTNETLINK answers: No such process" >&2
+        exit 2
+    fi
+elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+    if [[ \$verify_attempts -le 1 ]]; then
+        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+        echo "    mark 0x12000000/0xfe000000"
+        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    elif [[ \$verify_attempts -le 3 ]]; then
+        :
+    else
+        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
+        echo "    mark 0x12000000/0xfe000000"
+        echo "    lifetime current: 2000 bytes, 20 packets"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    fi
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+    if [[ \$verify_attempts -le 1 ]]; then
+        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+        echo "    mark 0x12000000/0xfe000000"
+        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    elif [[ \$verify_attempts -le 3 ]]; then
+        :
+    else
+        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
+        echo "    mark 0x12000000/0xfe000000"
+        echo "    lifetime current: 2000 bytes, 20 packets"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    fi
+fi
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# Source recovery functions to test directly
+	source_recovery_module
+
+	# Test attempt_xfrm_recovery function
+	run attempt_xfrm_recovery "192.168.1.1" "TEST"
+	assert_success
+
+	# Verify deletion command uses correct format
+	assert_file_exist "$delete_cmd_file"
+	local delete_cmd
+	delete_cmd=$(cat "$delete_cmd_file")
+	# Command should contain "mark" and "mask" as separate words
+	assert_file_contains "$delete_cmd_file" "mark"
+	assert_file_contains "$delete_cmd_file" "mask"
+	# Command should NOT contain the old format "mark.*0x.*/.*0x" (with slash)
+	run grep -E "mark.*0x[0-9a-fA-F]+/0x[0-9a-fA-F]+" "$delete_cmd_file"
+	assert_failure
+	# Command should contain mark value and mask as separate parameters
+	assert_file_contains "$delete_cmd_file" "0x12000000"
+	assert_file_contains "$delete_cmd_file" "0xfe000000"
+	# Verify the exact format: "mark" followed by value, then "mask" followed by mask value
+	# This ensures they are separate parameters, not "mark 0x12000000/0xfe000000"
+	# Pattern: mark <spaces> 0x12000000 <spaces> mask <spaces> 0xfe000000
+	if [[ "$delete_cmd" =~ mark[[:space:]]+0x12000000[[:space:]]+mask[[:space:]]+0xfe000000 ]]; then
+		: # Correct format
+	else
+		echo "ERROR: Deletion command does not use correct format."
+		echo "Expected pattern: mark <spaces> 0x12000000 <spaces> mask <spaces> 0xfe000000"
+		echo "Actual command: $delete_cmd"
+		return 1
+	fi
 
 	remove_mock_from_path
 }

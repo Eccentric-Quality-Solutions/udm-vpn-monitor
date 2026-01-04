@@ -461,6 +461,17 @@ attempt_xfrm_recovery() {
 		return 1
 	fi
 
+	# Enhanced diagnostics: Log system/kernel information that may affect xfrm operations
+	# This helps identify version-specific issues or permission problems
+	local kernel_version=""
+	local ip_version=""
+	if kernel_version=$(uname -r 2>/dev/null); then
+		log_message "INFO" "$location_name" "xfrm recovery: Starting recovery for $location_name ($peer_ip) - kernel: $kernel_version"
+	fi
+	if ip_version=$(ip -Version 2>&1 | head -1); then
+		log_message "INFO" "$location_name" "xfrm recovery: ip command version: $ip_version"
+	fi
+
 	# Get all xfrm state entries for this peer IP
 	# Match on "dst $peer_ip" pattern which appears at the start of each SA entry
 	# This ensures we capture complete SA blocks for proper deletion
@@ -537,8 +548,24 @@ attempt_xfrm_recovery() {
 
 		# State transition: New SA block detected
 		# Regex matches: "src <ipv4_or_ipv6> dst <ipv4_or_ipv6>"
-		# Captures source IP in BASH_REMATCH[1], destination IP in BASH_REMATCH[2]
-		if [[ "$line" =~ ^src[[:space:]]+([0-9.]+|[0-9a-fA-F:]+)[[:space:]]+dst[[:space:]]+([0-9.]+|[0-9a-fA-F:]+) ]]; then
+		# Try IPv4 first (more specific pattern to avoid matching hex digits from SPI values)
+		# Then fall back to IPv6 pattern if IPv4 doesn't match
+		local sa_header_match=0
+		local extracted_src=""
+		local extracted_dst=""
+		if [[ "$line" =~ ^src[[:space:]]+([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})[[:space:]]+dst[[:space:]]+([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}) ]]; then
+			# IPv4 addresses matched
+			extracted_src="${BASH_REMATCH[1]:-}"
+			extracted_dst="${BASH_REMATCH[2]:-}"
+			sa_header_match=1
+		elif [[ "$line" =~ ^src[[:space:]]+([0-9a-fA-F:]+)[[:space:]]+dst[[:space:]]+([0-9a-fA-F:]+) ]]; then
+			# IPv6 addresses matched (fallback)
+			extracted_src="${BASH_REMATCH[1]:-}"
+			extracted_dst="${BASH_REMATCH[2]:-}"
+			sa_header_match=1
+		fi
+
+		if [[ $sa_header_match -eq 1 ]]; then
 			# Before starting new SA, save previous SA if it's complete
 			# Complete SA requires: src, dst, proto, and spi all present
 			# This handles the case where we've finished parsing one SA and found the next
@@ -560,9 +587,8 @@ attempt_xfrm_recovery() {
 			fi
 
 			# Start new SA block: extract src and dst from regex match
-			# Use default empty string to handle set -u safely (shouldn't happen if regex matches, but defensive)
-			current_src="${BASH_REMATCH[1]:-}"
-			current_dst="${BASH_REMATCH[2]:-}"
+			current_src="$extracted_src"
+			current_dst="$extracted_dst"
 			current_proto="" # Will be extracted from continuation lines
 			current_spi=""   # Will be extracted from continuation lines
 			current_mark=""  # Will be extracted from continuation lines (optional)
@@ -623,9 +649,44 @@ attempt_xfrm_recovery() {
 		return 1
 	fi
 
+	# Enhanced diagnostics: Log summary of all SAs found before attempting deletion
+	# This provides visibility into what we're about to delete and helps identify parsing issues
+	log_message "INFO" "$location_name" "xfrm recovery: Found ${#sa_list[@]} SA(s) to delete for $location_name ($peer_ip)"
+	if [[ ${#sa_list[@]} -gt 0 ]]; then
+		local sa_summary=""
+		local sa_idx=0
+		for sa_entry in "${sa_list[@]}"; do
+			IFS='|' read -r sa_src sa_dst sa_proto sa_spi sa_mark <<<"$sa_entry"
+			sa_idx=$((sa_idx + 1))
+			if [[ -n "$sa_mark" ]]; then
+				sa_summary="${sa_summary}SA${sa_idx}: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=$sa_mark; "
+			else
+				sa_summary="${sa_summary}SA${sa_idx}: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi (no mark); "
+			fi
+		done
+		log_message "INFO" "$location_name" "xfrm recovery: SA summary: ${sa_summary% }"
+	fi
+
 	# Delete each parsed SA
 	for sa_entry in "${sa_list[@]}"; do
 		IFS='|' read -r sa_src sa_dst sa_proto sa_spi sa_mark <<<"$sa_entry"
+		[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Processing SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=${sa_mark:-<none>}"
+
+		# Parse mark value and mask if present (format: "0x<value>/0x<mask>")
+		# Mark format: ip xfrm expects "mark <value> mask <mask>"
+		local mark_value=""
+		local mark_mask=""
+		if [[ -n "$sa_mark" ]]; then
+			if [[ "$sa_mark" =~ ^(0x[0-9a-fA-F]+)/(0x[0-9a-fA-F]+)$ ]]; then
+				mark_value="${BASH_REMATCH[1]}"
+				mark_mask="${BASH_REMATCH[2]}"
+				# Enhanced diagnostics: Log mark parsing details
+				log_message "INFO" "$location_name" "xfrm recovery: Parsed mark for SA src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi: raw=$sa_mark, value=$mark_value, mask=$mark_mask"
+			else
+				# Fallback: if format doesn't match expected pattern, log warning
+				handle_error "WARNING" "$location_name" "xfrm recovery: Invalid mark format: $sa_mark (expected format: 0x<value>/0x<mask>) for SA src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi"
+			fi
+		fi
 
 		# Enhanced diagnostics: Query xfrm state right before deletion to check for race conditions
 		# and to capture the exact format the kernel sees
@@ -655,11 +716,31 @@ attempt_xfrm_recovery() {
 						/^src '"$sa_src"'[[:space:]]+dst '"$sa_dst"'/ {found=1; print; next}
 						found && /^src/ {found=0}
 						found {print}
-					' | head -15)
+					' | head -20)
+					# Enhanced diagnostics: Always log full SA block (not just DEBUG mode)
+					# This is critical for debugging deletion failures
 					if [[ -n "$sa_mark" ]]; then
-						[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Pre-delete SA block for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=$sa_mark:\n$exact_sa_block"
+						log_message "INFO" "$location_name" "xfrm recovery: Pre-delete SA block for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=$sa_mark:\n$exact_sa_block"
 					else
-						[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Pre-delete SA block for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi:\n$exact_sa_block"
+						log_message "INFO" "$location_name" "xfrm recovery: Pre-delete SA block for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi:\n$exact_sa_block"
+					fi
+					# Enhanced diagnostics: Extract and log all attributes found in SA block
+					# This helps identify any selectors we might be missing (e.g., reqid, mode, etc.)
+					local all_attrs=""
+					if [[ "$exact_sa_block" =~ reqid[[:space:]]+([0-9]+) ]]; then
+						all_attrs="${all_attrs}reqid=${BASH_REMATCH[1]}; "
+					fi
+					if [[ "$exact_sa_block" =~ mode[[:space:]]+([a-z]+) ]]; then
+						all_attrs="${all_attrs}mode=${BASH_REMATCH[1]}; "
+					fi
+					if [[ "$exact_sa_block" =~ replay-window[[:space:]]+([0-9]+) ]]; then
+						all_attrs="${all_attrs}replay-window=${BASH_REMATCH[1]}; "
+					fi
+					if [[ "$exact_sa_block" =~ flag[[:space:]]+([a-z-]+) ]]; then
+						all_attrs="${all_attrs}flag=${BASH_REMATCH[1]}; "
+					fi
+					if [[ -n "$all_attrs" ]]; then
+						log_message "INFO" "$location_name" "xfrm recovery: Additional SA attributes found: ${all_attrs% }"
 					fi
 				fi
 			fi
@@ -668,8 +749,8 @@ attempt_xfrm_recovery() {
 		# Build deletion command with all selectors (including mark if present)
 		# Mark is a required selector when present - must be included for successful deletion
 		local delete_cmd="ip xfrm state delete src \"$sa_src\" dst \"$sa_dst\" proto \"$sa_proto\" spi \"$sa_spi\""
-		if [[ -n "$sa_mark" ]]; then
-			delete_cmd="$delete_cmd mark \"$sa_mark\""
+		if [[ -n "$mark_value" ]] && [[ -n "$mark_mask" ]]; then
+			delete_cmd="$delete_cmd mark \"$mark_value\" mask \"$mark_mask\""
 		fi
 
 		# Try to query the exact SA using ip xfrm state get to see what the kernel expects
@@ -677,39 +758,85 @@ attempt_xfrm_recovery() {
 		# Note: We capture output with 2>&1 - on success (exit 0), output is stdout (SA details)
 		# On failure (non-zero exit), output is stderr (error message)
 		local get_sa_cmd="ip xfrm state get src \"$sa_src\" dst \"$sa_dst\" proto \"$sa_proto\" spi \"$sa_spi\""
-		if [[ -n "$sa_mark" ]]; then
-			get_sa_cmd="$get_sa_cmd mark \"$sa_mark\""
+		if [[ -n "$mark_value" ]] && [[ -n "$mark_mask" ]]; then
+			get_sa_cmd="$get_sa_cmd mark \"$mark_value\" mask \"$mark_mask\""
 		fi
 		local get_sa_output
 		local get_sa_stderr=""
 		local get_sa_exit_code
+		local get_sa_start_time
+		get_sa_start_time=$(get_unix_timestamp 2>/dev/null || echo "0")
 		get_sa_output=$(eval "$get_sa_cmd" 2>&1)
 		get_sa_exit_code=$?
+		local get_sa_duration=0
+		if [[ "$get_sa_start_time" != "0" ]]; then
+			local get_sa_end_time
+			get_sa_end_time=$(get_unix_timestamp 2>/dev/null || echo "0")
+			if [[ "$get_sa_end_time" != "0" ]]; then
+				get_sa_duration=$(safe_timestamp_diff "$get_sa_end_time" "$get_sa_start_time" 2>/dev/null || echo "0")
+				# Ensure non-negative duration
+				if [[ $get_sa_duration -lt 0 ]]; then
+					get_sa_duration=0
+				fi
+			fi
+		fi
 		# Separate stdout from stderr based on exit code
 		if [[ $get_sa_exit_code -ne 0 ]]; then
 			# On failure, the captured output is stderr
 			get_sa_stderr="$get_sa_output"
 			get_sa_output=""
 		fi
-		[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Executing delete command: $delete_cmd"
-		[[ "${DEBUG:-0}" -eq 1 ]] && [[ $get_sa_exit_code -eq 0 ]] && [[ -n "$get_sa_output" ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Kernel SA get output for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=${sa_mark:-<none>}:\n$get_sa_output"
+		# Enhanced diagnostics: Always log the exact commands we're executing (not just DEBUG mode)
+		# This is critical for debugging deletion failures
+		log_message "INFO" "$location_name" "xfrm recovery: Executing delete command: $delete_cmd"
+		if [[ $get_sa_exit_code -eq 0 ]] && [[ -n "$get_sa_output" ]]; then
+			log_message "INFO" "$location_name" "xfrm recovery: Kernel SA get succeeded (${get_sa_duration}s) for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=${sa_mark:-<none>}:\n$get_sa_output"
+			# Enhanced diagnostics: Compare parsed selectors vs what kernel returns
+			# Extract all attributes from kernel output to identify any we're missing
+			local kernel_attrs=""
+			if [[ "$get_sa_output" =~ mark[[:space:]]+(0x[0-9a-fA-F]+/0x[0-9a-fA-F]+) ]]; then
+				kernel_attrs="${kernel_attrs}mark=${BASH_REMATCH[1]}; "
+			fi
+			if [[ -n "$kernel_attrs" ]]; then
+				log_message "INFO" "$location_name" "xfrm recovery: Kernel SA attributes: ${kernel_attrs% }"
+			fi
+		elif [[ -n "$get_sa_stderr" ]]; then
+			log_message "INFO" "$location_name" "xfrm recovery: Kernel SA get failed (exit_code=$get_sa_exit_code, ${get_sa_duration}s) for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=${sa_mark:-<none>}: $get_sa_stderr"
+		fi
 
 		# Capture stderr and exit code for diagnostic purposes
+		# Enhanced diagnostics: Add timing information for deletion operations
 		local delete_stderr
 		local delete_exit_code
+		local delete_start_time
+		delete_start_time=$(get_unix_timestamp 2>/dev/null || echo "0")
 		delete_stderr=$(eval "$delete_cmd" 2>&1)
 		delete_exit_code=$?
+		local delete_duration=0
+		if [[ "$delete_start_time" != "0" ]]; then
+			local delete_end_time
+			delete_end_time=$(get_unix_timestamp 2>/dev/null || echo "0")
+			if [[ "$delete_end_time" != "0" ]]; then
+				delete_duration=$(safe_timestamp_diff "$delete_end_time" "$delete_start_time" 2>/dev/null || echo "0")
+				# Ensure non-negative duration
+				if [[ $delete_duration -lt 0 ]]; then
+					delete_duration=0
+				fi
+			fi
+		fi
 
 		if [[ $delete_exit_code -eq 0 ]]; then
+			# Enhanced diagnostics: Include timing information in success messages
 			if [[ -n "$sa_mark" ]]; then
-				log_message "INFO" "$location_name" "xfrm recovery: Deleted SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=$sa_mark for $location_name ($peer_ip)"
+				log_message "INFO" "$location_name" "xfrm recovery: Deleted SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=$sa_mark for $location_name ($peer_ip) (duration: ${delete_duration}s)"
 			else
-				log_message "INFO" "$location_name" "xfrm recovery: Deleted SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi for $location_name ($peer_ip)"
+				log_message "INFO" "$location_name" "xfrm recovery: Deleted SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi for $location_name ($peer_ip) (duration: ${delete_duration}s)"
 			fi
 			((deleted_count++))
 		else
 			# Deletion failed - gather comprehensive diagnostic information
-			local diagnostic_info="exit_code=$delete_exit_code"
+			# Enhanced diagnostics: Include timing information in failure diagnostics
+			local diagnostic_info="exit_code=$delete_exit_code, duration=${delete_duration}s"
 
 			# Add stderr output if present
 			if [[ -n "$delete_stderr" ]]; then
@@ -804,22 +931,52 @@ attempt_xfrm_recovery() {
 		fi
 	done
 
+	# Enhanced diagnostics: Log summary of deletion results
+	if [[ $deleted_count -gt 0 ]] || [[ $failed_count -gt 0 ]]; then
+		log_message "INFO" "$location_name" "xfrm recovery: Deletion summary for $location_name ($peer_ip): ${deleted_count} succeeded, ${failed_count} failed out of ${#sa_list[@]} total SA(s)"
+	fi
+
 	# Also delete policies for this peer (less critical, but helps cleanup)
 	# Policies use different format, try to delete by destination
+	# Enhanced diagnostics: Add timing and more detailed policy deletion diagnostics
 	local policy_stderr
 	local policy_exit_code
-	policy_stderr=$(ip xfrm policy delete dst "$peer_ip" 2>&1)
+	local policy_start_time
+	policy_start_time=$(get_unix_timestamp 2>/dev/null || echo "0")
+	local policy_cmd="ip xfrm policy delete dst \"$peer_ip\""
+	log_message "INFO" "$location_name" "xfrm recovery: Executing policy deletion command: $policy_cmd"
+	policy_stderr=$(eval "$policy_cmd" 2>&1)
 	policy_exit_code=$?
+	local policy_duration=0
+	if [[ "$policy_start_time" != "0" ]]; then
+		local policy_end_time
+		policy_end_time=$(get_unix_timestamp 2>/dev/null || echo "0")
+		if [[ "$policy_end_time" != "0" ]]; then
+			policy_duration=$(safe_timestamp_diff "$policy_end_time" "$policy_start_time" 2>/dev/null || echo "0")
+			# Ensure non-negative duration
+			if [[ $policy_duration -lt 0 ]]; then
+				policy_duration=0
+			fi
+		fi
+	fi
 
 	if [[ $policy_exit_code -eq 0 ]]; then
-		log_message "INFO" "$location_name" "xfrm recovery: Deleted xfrm policy for dst=$peer_ip ($location_name)"
+		log_message "INFO" "$location_name" "xfrm recovery: Deleted xfrm policy for dst=$peer_ip ($location_name) (duration: ${policy_duration}s)"
 	else
 		# Policy deletion failed - log diagnostic info (non-fatal, so use INFO level)
-		local policy_diagnostic="exit_code=$policy_exit_code"
+		# Enhanced diagnostics: Always log policy deletion failures (not just DEBUG mode)
+		local policy_diagnostic="exit_code=$policy_exit_code, duration=${policy_duration}s"
 		if [[ -n "$policy_stderr" ]]; then
 			policy_diagnostic="$policy_diagnostic, stderr=\"$policy_stderr\""
 		fi
-		[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Failed to delete xfrm policy for dst=$peer_ip ($location_name) ($policy_diagnostic) - non-fatal, continuing"
+		log_message "INFO" "$location_name" "xfrm recovery: Failed to delete xfrm policy for dst=$peer_ip ($location_name) ($policy_diagnostic) - non-fatal, continuing"
+		# Enhanced diagnostics: Try to query existing policies to see what's there
+		local existing_policies
+		if existing_policies=$(ip xfrm policy 2>/dev/null | grep -F "dst $peer_ip" -A 5 2>/dev/null | head -20); then
+			if [[ -n "$existing_policies" ]]; then
+				log_message "INFO" "$location_name" "xfrm recovery: Existing policies for dst=$peer_ip:\n$existing_policies"
+			fi
+		fi
 	fi
 
 	# If no SAs were deleted, check if any existed
