@@ -1874,6 +1874,11 @@ ipsec_output=$(ipsec status 2>/dev/null)  # May fail if ipsec not available
 - `check_command_or_warn()` - Checks and logs warning if unavailable
   - Wraps `check_command_available()` and adds logging
   - **Use this for optional binary commands that should log warnings when unavailable**
+- `get_command_path()` - Returns full path to command, or command name if not found
+  - Uses same fallback logic as `check_command_available()` but returns path
+  - Returns command name if path cannot be determined (fallback to PATH at execution time)
+  - **Use this when you need the full path for reliable command execution in PATH-restricted environments**
+  - Example: `ipsec_cmd=$(get_command_path "ipsec"); "$ipsec_cmd" reload`
 - `command -v` - POSIX compliant command availability check
   - **Acceptable for checking function availability** (functions are in same shell context)
   - **Avoid direct usage for binary commands in cron/systemd contexts** - use helper functions instead
@@ -1889,6 +1894,9 @@ ipsec_output=$(ipsec status 2>/dev/null)  # May fail if ipsec not available
 
 **When to Use Each Pattern:**
 - **Binary commands (ping, ip, ipsec, timeout, etc.)**: Use `check_command_available()` or `check_command_or_warn()`
+- **Command execution in PATH-restricted environments**: Use `get_command_path()` to get full path before executing
+  - Example: `ipsec_cmd=$(get_command_path "ipsec"); "$ipsec_cmd" reload`
+  - Ensures commands execute reliably even when PATH doesn't include system directories
 - **Function availability (parse_location_config, get_location_external_ip, etc.)**: Direct `command -v` is acceptable
 - **Required commands**: Use `check_command_available()` and return early if unavailable
 - **Optional commands**: Use `check_command_or_warn()` and handle gracefully if unavailable

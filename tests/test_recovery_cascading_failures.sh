@@ -24,7 +24,7 @@ load fixtures/vpn_at_tier
 	# Purpose: Test verifies that script handles cascading recovery failures gracefully
 	# Expected: Script attempts all recovery methods, logs failures, and continues without crashing
 	# Importance: Cascading failures can occur in production; script must handle them robustly
-	setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0'
+	setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_PING_CHECK=0'
 
 	# Mock ip command - xfrm recovery fails (can't delete SAs)
 	local mock_ip="${TEST_DIR}/ip"
@@ -35,8 +35,10 @@ if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "delete" ]]; then
     exit 1
 elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
     # Return SAs so recovery is attempted
+    # Include zero byte counters to ensure VPN is detected as DOWN
     echo "src 192.168.1.1 dst 192.168.1.1"
     echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: 0 bytes, 0 packets"
     exit 0
 fi
 exec /usr/bin/ip "$@"

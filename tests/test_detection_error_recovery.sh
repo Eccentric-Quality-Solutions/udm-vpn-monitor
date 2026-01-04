@@ -675,31 +675,31 @@ EOF
 
 	# Verify combined diagnostic message was logged
 	assert_file_exist "$log_file"
-	
+
 	# Verify the combined message format:
 	# 1. Should contain "VPN suspect for" with peer IP
 	assert_log_contains "$log_file" "VPN suspect for $peer_ip"
-	
+
 	# 2. Should include xfrm detection method name
 	assert_log_contains "$log_file" "Detection method: xfrm (ip xfrm state)"
-	
+
 	# 3. Should include ipsec detection method name
 	assert_log_contains "$log_file" "Detection method: ipsec status"
-	
+
 	# 4. Should include context about byte counter availability
 	#    (either "byte counter info unavailable" or specific reason)
 	assert_log_contains "$log_file" "byte counter info unavailable"
-	
+
 	# 5. Should include context about why byte counter check failed
 	#    (ping check disabled or internal IP not provided)
 	assert_log_contains "$log_file" "ping check disabled"
-	
+
 	# 6. Should include "No connection found via ipsec status"
 	assert_log_contains "$log_file" "No connection found via ipsec status"
-	
+
 	# 7. Verify the message is combined (contains semicolon separator)
 	assert_log_contains "$log_file" ";"
-	
+
 	# 8. Verify we don't have separate warning messages (old behavior)
 	#    Count occurrences of "VPN suspect" - should be 1 (the combined message)
 	local suspect_count
@@ -767,10 +767,10 @@ EOF
 
 	# Verify combined diagnostic message was logged
 	assert_file_exist "$log_file"
-	
+
 	# Verify the diagnostic includes "internal IP not provided" context
 	assert_log_contains "$log_file" "internal IP not provided"
-	
+
 	# Verify it does NOT say "ping check disabled" (since ping check is enabled)
 	assert_log_not_contains "$log_file" "ping check disabled"
 

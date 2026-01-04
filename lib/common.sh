@@ -736,7 +736,7 @@ update_config_value() {
 			# Insert after specified pattern
 			# Note: insert_after is used as a regex pattern in sed, so special regex
 			# characters should be escaped by the caller if literal matching is desired
-			sed -i "/${insert_after}/a ${var_name}=\"${var_value}\"" "$config_file"
+			sed -i "/${insert_after}/a ${var_name}=\"${escaped_value}\"" "$config_file"
 		else
 			# Append to end of file
 			echo "${var_name}=\"${var_value}\"" >>"$config_file"
@@ -855,6 +855,59 @@ check_command_available() {
 	else
 		return 0
 	fi
+}
+
+# Get full path to a command
+#
+# Attempts to find the full path to a command, handling PATH restrictions
+# common in cron/systemd environments. Returns the command name itself if
+# path cannot be determined (fallback to PATH at execution time).
+#
+# Arguments:
+#   $1: Command name to find (e.g., "ip", "ipsec", "ping")
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints full path to stdout if found, or command name if not found
+#
+# Examples:
+#   ip_path=$(get_command_path "ip")
+#   # Returns: "/usr/sbin/ip" or "ip" if not found
+#
+#   ipsec_cmd=$(get_command_path "ipsec")
+#   "$ipsec_cmd" reload
+#
+# Note:
+#   Uses same fallback logic as check_command_available() but returns path
+#   Falls back to command name if path cannot be determined
+#   Useful for executing commands in PATH-restricted environments (cron/systemd)
+get_command_path() {
+	local cmd="$1"
+	local cmd_path=""
+
+	# First try command -v (POSIX compliant, checks PATH)
+	cmd_path=$(command -v "$cmd" 2>/dev/null || echo "")
+	if [[ -n "$cmd_path" ]]; then
+		echo "$cmd_path"
+		return 0
+	fi
+
+	# Fallback: Check common system directories
+	# This handles cases where PATH doesn't include /usr/sbin or /sbin
+	# (common in cron/systemd environments on UDM systems)
+	local system_dirs=("/usr/sbin" "/usr/bin" "/sbin" "/bin")
+	for dir in "${system_dirs[@]}"; do
+		if [[ -x "${dir}/${cmd}" ]]; then
+			echo "${dir}/${cmd}"
+			return 0
+		fi
+	done
+
+	# Path not found - return command name (will rely on PATH at execution time)
+	echo "$cmd"
+	return 0
 }
 
 # Check command availability and log warning if missing

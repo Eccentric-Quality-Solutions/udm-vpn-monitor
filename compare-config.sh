@@ -319,14 +319,46 @@ main() {
 		fi
 	done
 
+	# Check if existing config has any LOCATION variable matching a pattern
+	# This is used to avoid flagging template LOCATION variables as new
+	# when the existing config already has LOCATION variables matching the pattern
+	has_existing_location_external=0
+	has_existing_location_internal=0
+	for var_name in "${!existing_vars_map[@]}"; do
+		if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+			has_existing_location_external=1
+		fi
+		if [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+			has_existing_location_internal=1
+		fi
+	done
+
 	# Find new variables (in template but not in existing)
 	# Iterate through unique template variables only (use map keys to avoid duplicates)
 	for var_name in "${!template_vars_map[@]}"; do
-		if [[ -z "${existing_vars_map[$var_name]:-}" ]]; then
-			new_vars+=("$var_name")
-		else
+		# Skip if variable exists in existing config (exact match)
+		if [[ -n "${existing_vars_map[$var_name]:-}" ]]; then
 			common_vars+=("$var_name")
+			continue
 		fi
+
+		# For LOCATION variables, check if existing config has any matching pattern variable
+		# This allows template example locations (e.g., LOCATION_NYC_EXTERNAL) to be skipped
+		# when existing config already has LOCATION variables matching the pattern (e.g., LOCATION_CUSTOMER1_EXTERNAL)
+		if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+			# Existing config has LOCATION_*_EXTERNAL pattern, so template example is not needed
+			if [[ $has_existing_location_external -eq 1 ]]; then
+				continue
+			fi
+		elif [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+			# Existing config has LOCATION_*_INTERNAL pattern, so template example is not needed
+			if [[ $has_existing_location_internal -eq 1 ]]; then
+				continue
+			fi
+		fi
+
+		# Variable is not in existing config and doesn't match a pattern that already exists
+		new_vars+=("$var_name")
 	done
 
 	# Find deprecated variables (in existing but not in template)

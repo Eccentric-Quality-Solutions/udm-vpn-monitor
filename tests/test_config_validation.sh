@@ -610,7 +610,7 @@ EOF
 
 	# Load config to populate config variables
 	load_config
-	
+
 	# Parse location config to populate LOCATIONS array
 	# This is needed because load_config only loads variables, it doesn't parse location-based config
 	parse_location_config

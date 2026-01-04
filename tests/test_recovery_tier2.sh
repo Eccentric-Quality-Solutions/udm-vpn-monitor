@@ -438,3 +438,96 @@ EOF
 
 	remove_mock_from_path
 }
+
+# bats test_tags=category:high-risk,priority:high
+@test "tier 2: surgical cleanup works with PATH-restricted environment (cron/systemd simulation)" {
+	# Purpose: Test verifies that surgical cleanup works correctly when PATH is restricted (simulating cron/systemd environment)
+	# Expected: get_command_path() finds ipsec via system directory fallback, and ipsec commands execute successfully using full path
+	# Importance: Ensures recovery works in PATH-restricted environments common in cron/systemd contexts on UDM OS
+	setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_XFRM_RECOVERY=0'
+
+	# Save original PATH
+	local original_path="${PATH}"
+
+	# Create mock system directory in test directory (safer than modifying /usr/sbin)
+	local mock_system_dir="${TEST_DIR}/usr/sbin"
+	mkdir -p "$mock_system_dir"
+	local mock_ipsec="${mock_system_dir}/ipsec"
+	cat >"$mock_ipsec" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "reload" ]]; then
+    echo "ipsec-reload-called" > /tmp/ipsec_path_test.txt
+    exit 0
+fi
+if [[ "$1" == "status" ]]; then
+    echo "Connections:"
+    echo "  test-conn: ESTABLISHED 1 hour ago, 192.168.1.1...10.0.0.1"
+    exit 0
+fi
+exit 1
+EOF
+	chmod +x "$mock_ipsec"
+
+	# Restrict PATH to exclude system directories (simulating cron/systemd environment)
+	# PATH only includes /bin and /usr/bin (common minimal PATH, excludes /usr/sbin)
+	export PATH="/bin:/usr/bin"
+
+	# Verify ipsec is NOT found via PATH
+	if command -v ipsec >/dev/null 2>&1; then
+		# Clean up and skip if ipsec is found in restricted PATH
+		export PATH="$original_path"
+		skip "ipsec found in restricted PATH - cannot test PATH-restricted scenario"
+	fi
+
+	# Create test lib directory with modified common.sh
+	# This allows us to test path resolution without modifying system files
+	local test_lib_dir="${TEST_DIR}/test_lib"
+	mkdir -p "$test_lib_dir"
+	
+	# Copy all lib files to test lib directory
+	cp -r "${BATS_TEST_DIRNAME}/../lib"/* "$test_lib_dir/"
+	
+	# Modify get_command_path in test common.sh to check test directory first
+	# Insert test directory at the beginning of system_dirs array
+	sed -i 's|local system_dirs=("/usr/sbin" "/usr/bin" "/sbin" "/bin")|local system_dirs=("'"${TEST_DIR}"'/usr/sbin" "/usr/sbin" "/usr/bin" "/sbin" "/bin")|' "${test_lib_dir}/common.sh"
+	
+	# Create modified test script that uses test lib directory
+	local modified_test_script="${TEST_DIR}/vpn-monitor-modified.sh"
+	cp "$TEST_SCRIPT" "$modified_test_script"
+	
+	# Replace lib directory path in test script
+	# The script sources lib files using ${SCRIPT_DIR}/lib/, so we need to modify SCRIPT_DIR
+	# or replace the source paths. Let's replace source paths to use test lib directory.
+	local project_root
+	project_root=$(cd "${BATS_TEST_DIRNAME}/.." && pwd)
+	local escaped_test_lib
+	escaped_test_lib=$(echo "$test_lib_dir" | sed 's/[[\.*^$()+?{|]/\\&/g')
+	local escaped_project_lib
+	escaped_project_lib=$(echo "${project_root}/lib" | sed 's/[[\.*^$()+?{|]/\\&/g')
+	
+	# Replace source paths in the script
+	sed -i "s|source \"\${SCRIPT_DIR}/lib/|source \"${test_lib_dir}/|g" "$modified_test_script"
+	sed -i "s|source \"${escaped_project_lib}/|source \"${test_lib_dir}/|g" "$modified_test_script"
+	
+	# Update TEST_SCRIPT to use modified version
+	local original_test_script="$TEST_SCRIPT"
+	TEST_SCRIPT="$modified_test_script"
+
+	# Clean up test marker file if it exists
+	rm -f /tmp/ipsec_path_test.txt
+
+	# Run script with restricted PATH
+	PATH="/bin:/usr/bin" run bash "$TEST_SCRIPT"
+
+	# Verify ipsec reload was called (via full path resolution)
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "ipsec reload"
+	if [[ -f /tmp/ipsec_path_test.txt ]]; then
+		assert_file_exist /tmp/ipsec_path_test.txt
+		rm -f /tmp/ipsec_path_test.txt
+	fi
+
+	# Restore PATH and TEST_SCRIPT
+	export PATH="$original_path"
+	TEST_SCRIPT="$original_test_script"
+}

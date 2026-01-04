@@ -197,28 +197,21 @@ EOF
 	# Importance: Validates recovery tracking works with location-based state files
 	setup_location_test_vpn_monitor
 
-	# Set initial failure count
+	# Set initial failure count using proper helper to ensure correct path
 	mkdir -p "$LOGS_DIR"
-	echo "3" >"${STATE_DIR}/failure_counter_NYC_203_0_113_1"
+	ensure_state_functions_loaded
+	set_peer_state "NYC" "203.0.113.1" "failure_count" "3" || true
+	# Set last_bytes to 2000 so bytes appear to increase from 2000 to 3000
+	set_peer_state "NYC" "203.0.113.1" "last_bytes" "2000" || true
+	# Ensure no recovery_method is stored (should log "recovered" not "restored")
+	# delete_peer_state is available after ensure_state_functions_loaded
+	delete_peer_state "NYC" "203.0.113.1" "recovery_method" || true
 
 	# Mock VPN as recovered (active)
 	# Use mock_ip_xfrm_state helper to create proper xfrm output format
-	# Set bytes to 3000 (higher than mocked last_bytes of 2000) to show increasing traffic
+	# Set bytes to 3000 (higher than last_bytes of 2000) to show increasing traffic
 	mock_ip_xfrm_state "203.0.113.1" "3000" "0x12345678" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
-
-	# Mock byte counters - return 2000 for last_bytes file (lower than xfrm output of 3000)
-	# This simulates bytes increasing from 2000 to 3000, indicating healthy VPN
-	local mock_cat="${TEST_DIR}/cat"
-	cat >"$mock_cat" <<'EOF'
-#!/bin/bash
-if [[ "$1" =~ last_bytes ]]; then
-    echo "2000"
-else
-    /bin/cat "$@"
-fi
-EOF
-	chmod +x "$mock_cat"
 	add_mock_to_path
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
@@ -226,13 +219,15 @@ EOF
 	assert_success
 
 	# Failure counter should be reset
-	local failure_counter="${STATE_DIR}/failure_counter_NYC_203_0_113_1"
+	ensure_state_functions_loaded
+	local failure_counter
+	failure_counter=$(get_peer_state_file_path "NYC" "203.0.113.1" "failure_count")
 	assert_file_exist "$failure_counter"
 	local count
 	count=$(cat "$failure_counter")
 	assert_equal "$count" 0
 
-	# Should log recovery message
+	# Should log recovery message (should be "recovered" since no recovery method was used)
 	assert_file_contains "$LOG_FILE" "recovered"
 
 	remove_mock_from_path

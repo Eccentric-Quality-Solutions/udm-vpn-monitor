@@ -762,13 +762,16 @@ attempt_xfrm_recovery() {
 # Output (via global variables):
 #   _RECOVERY_IP_AVAILABLE: 1 if ip command available, 0 otherwise
 #   _RECOVERY_IPSEC_AVAILABLE: 1 if ipsec command available, 0 otherwise
+#   _RECOVERY_IPSEC_PATH: Full path to ipsec command if found, or "ipsec" if relying on PATH
 #
 # Note:
 #   This is a helper function for select_recovery_strategy()
 #   Uses global variables with underscore prefix to indicate internal use
+#   Stores full path to ipsec command to ensure reliable execution even when PATH is restricted
 _check_recovery_command_availability() {
 	declare -g _RECOVERY_IP_AVAILABLE=0
 	declare -g _RECOVERY_IPSEC_AVAILABLE=0
+	declare -g _RECOVERY_IPSEC_PATH=""
 
 	if check_command_available "ip"; then
 		_RECOVERY_IP_AVAILABLE=1
@@ -776,6 +779,14 @@ _check_recovery_command_availability() {
 
 	if check_command_available "ipsec"; then
 		_RECOVERY_IPSEC_AVAILABLE=1
+		# Get full path to ipsec command for reliable execution
+		# Uses get_command_path() helper which handles PATH restrictions
+		if command -v get_command_path >/dev/null 2>&1; then
+			_RECOVERY_IPSEC_PATH=$(get_command_path "ipsec")
+		else
+			# Fallback if get_command_path not available (shouldn't happen)
+			_RECOVERY_IPSEC_PATH="ipsec"
+		fi
 	fi
 }
 
@@ -1102,22 +1113,26 @@ surgical_cleanup() {
 			local reload_start_time
 			reload_start_time=$(get_unix_timestamp)
 			local command_succeeded=0
-			if ipsec reload >/dev/null 2>&1; then
+			local reload_exit_code=""
+			local restart_exit_code=""
+			# Use full path to ipsec if available, otherwise rely on PATH
+			local ipsec_cmd="${_RECOVERY_IPSEC_PATH:-ipsec}"
+			if "$ipsec_cmd" reload >/dev/null 2>&1; then
 				command_succeeded=1
 				log_message "INFO" "Successfully reloaded IPsec connections via ipsec reload"
 			else
-				local reload_exit_code=$?
+				reload_exit_code=$?
 				handle_error "WARNING" "ipsec reload failed (exit code: ${reload_exit_code}), attempting ipsec restart"
 				# Update recovery method if fallback to restart
 				recovery_method_used="ipsec_restart"
 				if [[ -n "$location_name" ]]; then
 					store_recovery_method "$location_name" "$peer_ip" "$recovery_method_used"
 				fi
-				if ipsec restart >/dev/null 2>&1; then
+				if "$ipsec_cmd" restart >/dev/null 2>&1; then
 					command_succeeded=1
 					log_message "INFO" "Successfully restarted IPsec service via ipsec restart"
 				else
-					local restart_exit_code=$?
+					restart_exit_code=$?
 					handle_error "ERROR" "ipsec restart also failed (exit code: ${restart_exit_code})" 0
 					command_succeeded=0
 				fi
@@ -1151,7 +1166,7 @@ surgical_cleanup() {
 					recovery_succeeded=0
 				fi
 			else
-				log_message "INFO" "Surgical cleanup completed for $peer_ip (via ipsec fallback, verification skipped due to command failure)"
+				handle_error "WARNING" "Surgical cleanup failed for $peer_ip (ipsec commands failed, exit codes: reload=${reload_exit_code:-unknown}, restart=${restart_exit_code:-unknown})"
 				recovery_succeeded=0
 			fi
 			strategy_executed=1
@@ -1280,9 +1295,11 @@ full_restart() {
 			log_message "INFO" "Executing ipsec restart (affects all tunnels)"
 			local restart_start_time
 			restart_start_time=$(get_unix_timestamp)
+			# Use full path to ipsec if available, otherwise rely on PATH
+			local ipsec_cmd="${_RECOVERY_IPSEC_PATH:-ipsec}"
 			# Capture exit code explicitly to avoid PIPESTATUS being cleared
 			# PIPESTATUS[0] = exit code of first command in pipe (ipsec), not tee
-			ipsec restart 2>&1 | tee -a "$LOG_FILE"
+			"$ipsec_cmd" restart 2>&1 | tee -a "$LOG_FILE"
 			local ipsec_exit_code=${PIPESTATUS[0]}
 			if [[ $ipsec_exit_code -ne 0 ]]; then
 				handle_error "ERROR" "Failed to restart IPsec service (exit code: $ipsec_exit_code)" 0

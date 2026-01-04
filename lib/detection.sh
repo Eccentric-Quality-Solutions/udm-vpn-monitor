@@ -1073,9 +1073,8 @@ check_sa_rekey_occurred() {
 	fi
 
 	# Get last known SPI using abstraction layer
-	# Use a sentinel value to detect if SPI was actually stored
-	# get_peer_state with empty default returns "0" if file doesn't exist
-	# So we check if the file exists first, or use a sentinel value
+	# Check if the file exists first for efficiency (avoid unnecessary function call)
+	# get_peer_state now properly handles empty string defaults
 	local last_spi
 	local spi_file
 	if [[ -n "$location_name" ]]; then
@@ -1896,7 +1895,11 @@ detect_failure_type() {
 	# Check if ip command is available (required for Phase 2 SA detection)
 	# If ip command is unavailable, we cannot determine failure type
 	if ! check_command_or_warn "ip" "Detecting failure type"; then
-		log_message "WARNING" "Failure type detection: 'ip' command unavailable, cannot determine failure type for $external_peer_ip"
+		if [[ -n "$location_name" ]]; then
+			log_message "WARNING" "Failure type detection: 'ip' command unavailable, cannot determine failure type for location $location_name ($external_peer_ip)"
+		else
+			log_message "WARNING" "Failure type detection: 'ip' command unavailable, cannot determine failure type for $external_peer_ip"
+		fi
 		echo "unknown"
 		return 1
 	fi
@@ -2026,7 +2029,11 @@ detect_failure_type() {
 				diagnostic_msg="$diagnostic_msg, $part"
 			fi
 		done
-		log_message "WARNING" "Failure type detection: Unable to determine specific failure type for $external_peer_ip - Detection method: Phase 2 SA check (SA exists), Reasons: $diagnostic_msg"
+		if [[ -n "$location_name" ]]; then
+			log_message "WARNING" "Failure type detection: Unable to determine specific failure type for location $location_name ($external_peer_ip) - Detection method: Phase 2 SA check (SA exists), Reasons: $diagnostic_msg"
+		else
+			log_message "WARNING" "Failure type detection: Unable to determine specific failure type for $external_peer_ip - Detection method: Phase 2 SA check (SA exists), Reasons: $diagnostic_msg"
+		fi
 	fi
 
 	# Unable to determine failure type (fallback)
@@ -2218,18 +2225,34 @@ determine_vpn_status() {
 		"rekey")
 			# Rekey detected - not a failure, but log for monitoring
 			# Rekey is already logged in detect_sa_rekey, but we mark VPN as OK
-			log_message "INFO" "SA rekey detected for $external_peer_ip (not a failure)"
+			if [[ -n "$location_name" ]]; then
+				log_message "INFO" "SA rekey detected for location $location_name ($external_peer_ip) (not a failure)"
+			else
+				log_message "INFO" "SA rekey detected for $external_peer_ip (not a failure)"
+			fi
 			vpn_ok=1
 			;;
 		"tunnel_down")
-			handle_error "WARNING" "VPN failure type: Tunnel down (no Phase 2 SA found) for $external_peer_ip"
+			if [[ -n "$location_name" ]]; then
+				handle_error "WARNING" "VPN failure type: Tunnel down (no Phase 2 SA found) for location $location_name ($external_peer_ip)"
+			else
+				handle_error "WARNING" "VPN failure type: Tunnel down (no Phase 2 SA found) for $external_peer_ip"
+			fi
 			;;
 		"routing_issue")
-			handle_error "WARNING" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $external_peer_ip"
+			if [[ -n "$location_name" ]]; then
+				handle_error "WARNING" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for location $location_name ($external_peer_ip)"
+			else
+				handle_error "WARNING" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $external_peer_ip"
+			fi
 			;;
 		*)
 			# Detailed diagnostic information was already logged by detect_failure_type()
-			handle_error "WARNING" "VPN failure type: Unknown (unable to determine specific failure type) for $external_peer_ip - see previous diagnostic messages for detection method details"
+			if [[ -n "$location_name" ]]; then
+				handle_error "WARNING" "VPN failure type: Unknown (unable to determine specific failure type) for location $location_name ($external_peer_ip) - see previous diagnostic messages for detection method details"
+			else
+				handle_error "WARNING" "VPN failure type: Unknown (unable to determine specific failure type) for $external_peer_ip - see previous diagnostic messages for detection method details"
+			fi
 			;;
 		esac
 	fi
@@ -2348,10 +2371,18 @@ check_vpn_status() {
 						diagnostic_msg="$diagnostic_msg; $diag"
 					fi
 				done
-				handle_error "WARNING" "VPN suspect for $external_peer_ip - $diagnostic_msg"
+				if [[ -n "$location_name" ]]; then
+					handle_error "WARNING" "VPN suspect for location $location_name ($external_peer_ip) - $diagnostic_msg"
+				else
+					handle_error "WARNING" "VPN suspect for $external_peer_ip - $diagnostic_msg"
+				fi
 			else
 				# Fallback if diagnostics weren't collected (shouldn't happen)
-				handle_error "WARNING" "VPN suspect: Both xfrm and ipsec status checks failed for $external_peer_ip"
+				if [[ -n "$location_name" ]]; then
+					handle_error "WARNING" "VPN suspect: Both xfrm and ipsec status checks failed for location $location_name ($external_peer_ip)"
+				else
+					handle_error "WARNING" "VPN suspect: Both xfrm and ipsec status checks failed for $external_peer_ip"
+				fi
 			fi
 		fi
 	fi

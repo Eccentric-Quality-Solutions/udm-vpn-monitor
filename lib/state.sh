@@ -201,6 +201,9 @@ get_peer_state_file_path() {
 	failure_type)
 		echo "${STATE_DIR}/failure_type_${location_sanitized}_${peer_sanitized}"
 		;;
+	recovery_method)
+		echo "${STATE_DIR}/recovery_method_${location_sanitized}_${peer_sanitized}"
+		;;
 	*)
 		handle_error "WARNING" "Unknown peer state key: $key" 0
 		echo "${STATE_DIR}/${key}_${location_sanitized}_${peer_sanitized}"
@@ -236,7 +239,13 @@ get_peer_state() {
 	local location_name="$1"
 	local peer_ip="$2"
 	local key="$3"
-	local default_value="${4:-0}"
+	# Handle default value: if 4th arg is provided (even if empty), use it; otherwise default to "0"
+	# This allows empty string defaults for non-numeric keys like "recovery_method" and "spi"
+	if [[ $# -ge 4 ]]; then
+		local default_value="$4"
+	else
+		local default_value="0"
+	fi
 	local state_file
 	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "$key")
 

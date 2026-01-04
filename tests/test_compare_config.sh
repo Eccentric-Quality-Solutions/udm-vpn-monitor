@@ -743,3 +743,48 @@ EOF
 	refute_output --partial "LOCATION_OFFICE2_EXTERNAL"
 	refute_output --partial "LOCATION_OFFICE2_INTERNAL"
 }
+
+# bats test_tags=category:unit
+@test "compare-config.sh does not flag template LOCATION variables as new when existing config has LOCATION pattern" {
+	# Purpose: Test verifies that template LOCATION variables (e.g., LOCATION_NYC_EXTERNAL with empty value)
+	# are not flagged as new when existing config already has LOCATION variables matching the pattern
+	# (e.g., LOCATION_CUSTOMER1_EXTERNAL)
+	# Expected: Template example LOCATION variables are recognized as pattern matches and not reported as new
+	# Importance: Prevents false positives when template has example locations but user has their own location names
+	local test_dir="${TEST_DIR}/test-compare"
+	mkdir -p "$test_dir"
+
+	local template_config="${test_dir}/template.conf"
+	local existing_config="${test_dir}/existing.conf"
+
+	# Template has example locations with empty values
+	create_test_config "$template_config" \
+		'LOCATION_NYC_EXTERNAL=""' \
+		'LOCATION_NYC_INTERNAL=""' \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3' \
+		'TIER3_THRESHOLD=5' \
+		'COOLDOWN_MINUTES=15' \
+		'MAX_RESTARTS_PER_HOUR=3' \
+		'VPN_NAME="My VPN"'
+
+	# Existing config has customer-specific locations
+	create_test_config "$existing_config" \
+		'LOCATION_CUSTOMER1_EXTERNAL="10.0.0.1"' \
+		'LOCATION_CUSTOMER1_INTERNAL="10.0.0.1"' \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3' \
+		'TIER3_THRESHOLD=5' \
+		'COOLDOWN_MINUTES=15' \
+		'MAX_RESTARTS_PER_HOUR=3'
+
+	run bash "$COMPARE_CONFIG_SCRIPT" --template "$template_config" --existing "$existing_config"
+
+	assert_success
+	# Should report VPN_NAME as new (not in existing config)
+	assert_output --partial "New Settings in Template"
+	assert_output --partial "VPN_NAME"
+	# Should NOT flag template LOCATION variables as new since existing config has LOCATION pattern
+	refute_output --partial "LOCATION_NYC_EXTERNAL"
+	refute_output --partial "LOCATION_NYC_INTERNAL"
+}
