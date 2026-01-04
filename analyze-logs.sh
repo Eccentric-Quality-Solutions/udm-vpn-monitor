@@ -19,6 +19,19 @@ LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
 # shellcheck source=lib/logging.sh
 source "${SCRIPT_DIR}/lib/logging.sh" 2>/dev/null || {
 	# Fallback if logging.sh not found - define minimal get_formatted_timestamp
+	# Get formatted timestamp string
+	#
+	# Generates a formatted timestamp string in the format YYYY-MM-DD HH:MM:SS.
+	# This is a fallback implementation used when logging.sh is not available.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#
+	# Output:
+	#   Prints formatted timestamp to stdout (format: YYYY-MM-DD HH:MM:SS)
 	get_formatted_timestamp() {
 		date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S'
 	}
@@ -41,6 +54,9 @@ NC='\033[0m' # No Color
 # Print usage information
 #
 # Displays help text for the script.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Always succeeds
@@ -72,6 +88,9 @@ EOF
 # Parse command line arguments
 #
 # Processes command line arguments and sets global variables.
+#
+# Arguments:
+#   $@: Command line arguments to parse
 #
 # Returns:
 #   0: Success
@@ -360,7 +379,7 @@ analyze_logs() {
 		*"Tier 2:"*"surgical"* | *"Tier 2:"*"cleanup"* | *"Tier 2:"*"Attempting"*)
 			TIER2_ACTIONS+=("${timestamp}|${peer_ip}|${level}")
 			;;
-		*"Surgical cleanup completed"*)
+		*"Surgical cleanup completed"* | *"Recovery completed"*"via ipsec fallback"*)
 			TIER2_COMPLETED+=("${timestamp}|${peer_ip}|${level}")
 			;;
 		*"Full IPsec restart completed"* | *"Tier 3:"*"Full IPsec restart completed"*)
@@ -448,6 +467,9 @@ calculate_float_division() {
 # Calculate statistics
 #
 # Calculates failure frequency and recovery success rate from parsed data.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Success
@@ -770,6 +792,16 @@ generate_csv() {
 }
 
 # Main execution
+#
+# Main entry point for the log analysis script. Parses command line arguments,
+# analyzes log files, calculates statistics, and generates reports.
+#
+# Arguments:
+#   $@: Command line arguments to parse
+#
+# Returns:
+#   0: Success
+#   1: Error (exits script on error)
 main() {
 	# Parse command line arguments
 	parse_args "$@"

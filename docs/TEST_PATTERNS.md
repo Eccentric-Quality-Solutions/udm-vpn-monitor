@@ -1161,7 +1161,199 @@ EOF
 - Verify recovery actions continue after partition clears
 - Use call counters to track which check is being performed
 
-### 17. Byte Counter Increment Pattern for XFRM Recovery Verification
+### 17. Mock All Commands Used by Recovery Verification
+
+**Pattern**: When testing recovery actions, mock all commands used by verification functions, not just the recovery command itself.
+
+**When to use**: When testing Tier 2 or Tier 3 recovery actions that include verification steps. Recovery functions often call verification functions that use additional commands beyond the recovery command.
+
+**Key Insight**: Recovery functions call verification functions after performing recovery actions. These verification functions use additional commands (e.g., `ipsec status`, `ip xfrm state`) that must also be mocked. If verification commands aren't mocked, tests may timeout or fail unexpectedly.
+
+**Example**:
+```bash
+@test "Tier 3 recovery - mock restart and status" {
+    # ✅ GOOD: Mock both restart and status
+    local mock_ipsec="${TEST_DIR}/ipsec"
+    cat >"$mock_ipsec" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "restart" ]]; then
+    echo "ipsec restart succeeded"
+    exit 0
+elif [[ "$1" == "status" ]]; then
+    # Return status output that includes the peer IP for verification
+    echo "192.168.1.1"
+    exit 0
+fi
+exec /usr/bin/ipsec "$@"
+EOF
+    chmod +x "$mock_ipsec"
+    add_mock_to_path
+    
+    # Test recovery
+    run bash "$TEST_SCRIPT" --fake
+    assert_success
+    
+    remove_mock_from_path
+}
+
+# ❌ BAD: Only mock restart (verification will fail/hang)
+# If ipsec status isn't mocked, it falls through to exec /usr/bin/ipsec "$@"
+# which may hang or fail, causing test timeout
+```
+
+**Verification Functions That Need Mocks**:
+- `verify_ipsec_connections_active()` - calls `ipsec status`
+- `verify_byte_counters_resume()` - calls `ip xfrm state`
+- `check_ipsec_phase2()` - calls `ipsec status` or `ip xfrm state`
+
+**Systematic Application**:
+- When testing Tier 2 or Tier 3 recovery, check what verification functions are called
+- Mock all commands used by verification functions, not just the recovery command
+- Review `lib/recovery.sh` to see what commands verification functions use
+- Test with timeout to catch missing mocks early
+
+**Related Patterns**:
+- See `tests/test_recovery_cascading_failures.sh` for examples of complete mocking
+- See `tests/test_recovery_cooldown_rate_limit_interaction.sh` for realistic ipsec status output format
+- See `lib/recovery.sh:verify_ipsec_connections_active()` for verification requirements
+
+### 18. Schema Validation Order Affects Test Expectations
+
+**Pattern**: When adding validation layers, update tests to reflect the new validation order.
+
+**When to use**: When adding new validation layers (e.g., schema validation) that run before existing validation or parsing logic.
+
+**Key Insight**: Validation happens in a specific order. Schema validation runs during `load_config()` before `parse_location_config()` runs. Tests that expect invalid variables to be skipped by downstream parsing will fail because schema validation rejects them first.
+
+**Example**:
+```bash
+# ✅ GOOD: Test reflects schema validation happens first
+@test "invalid variables rejected by schema" {
+    # Schema validation rejects unknown variables during load_config
+    local config_file="${TEST_DIR}/vpn-monitor.conf"
+    cat >"$config_file" <<'EOF'
+LOCATION_NYC_EXTERNAL="203.0.113.1"
+INVALID_VAR="value"
+EOF
+    
+    run load_config "$config_file"
+    assert_failure
+    assert_output --partial "Unknown configuration variable"
+}
+
+# ❌ BAD: Test expects downstream parsing to skip invalid vars
+@test "invalid variables skipped by parse_location_config" {
+    # This test will fail because load_config fails first
+    load_config "$config_file"  # Fails here, never reaches parse_location_config
+    parse_location_config  # Never reached
+}
+```
+
+**Systematic Application**:
+- When adding validation layers, identify all affected tests
+- Update test expectations to match validation order
+- Document validation order in test comments
+- Consider testing validation at each layer separately
+
+**Related Patterns**:
+- See `lib/config.sh:safe_parse_config_file()` for schema validation
+- See `lib/config.sh:parse_location_config()` for location parsing
+- See `tests/test_config_location.sh` for updated test patterns
+
+### 19. Test Helper Functions Can Create Duplicate Configurations
+
+**Pattern**: When test helpers add default configurations, either use the helper and accept the defaults, OR use lower-level helpers directly to avoid defaults.
+
+**When to use**: When test helper functions automatically add default configurations (e.g., default location names) and your test needs custom configurations.
+
+**Key Insight**: High-level helper functions (like `setup_location_test_vpn_monitor()`) add default configurations. If your test then adds the same configurations again, you'll get duplicate configuration errors. Use lower-level helpers when you need custom configurations.
+
+**Example**:
+```bash
+# ✅ GOOD: Use lower-level helper to avoid defaults
+setup_test_environment "${TEST_DIR}"
+local config_file="${TEST_DIR}/vpn-monitor.conf"
+setup_test_location_config "$config_file" \
+    'LOCATION_CUSTOM_EXTERNAL="..."' \
+    'LOCATION_CUSTOM_INTERNAL="..."'
+TEST_CONFIG_FILE="$config_file"
+TEST_SCRIPT=$(create_test_vpn_monitor_script ...)
+export TEST_CONFIG_FILE TEST_SCRIPT
+
+# ✅ GOOD: Use helper and accept defaults
+setup_location_test_vpn_monitor "${TEST_DIR}"
+# Uses default NYC and LA locations - don't add them again
+
+# ❌ BAD: Use helper then add same locations again
+setup_location_test_vpn_monitor "${TEST_DIR}" \
+    'LOCATION_NYC_EXTERNAL="..."'  # Duplicate! Helper already added this
+```
+
+**Systematic Application**:
+- Document what defaults helper functions add
+- When tests need custom configs, use lower-level helpers
+- When tests can use defaults, use higher-level helpers
+- Consider helper functions that don't add defaults for custom scenarios
+
+**Related Patterns**:
+- See `tests/test_helper.bash:setup_location_test_vpn_monitor()` for helper with defaults
+- See `tests/test_helper.bash:setup_test_location_config()` for lower-level helper
+- See `tests/test_integration_location.sh` for examples of avoiding duplicates
+
+### 20. Test Setup: Heredoc Variable Expansion
+
+**Pattern**: When creating test config files with heredocs, use `<<EOF` (without quotes) if you need variable expansion, or `<<'EOF'` (with quotes) if you want literal strings.
+
+**When to use**: When creating test configuration files or other test files using heredoc syntax.
+
+**Key Insight**: Heredoc syntax with quotes (`<<'EOF'`) prevents variable expansion, while without quotes (`<<EOF`) allows expansion. This is a common source of test failures when variables like `${TEST_DIR}` don't expand.
+
+**Important Security Note**: The config parser rejects variable references like `${VAR}` or `$(command)` as dangerous content (security feature to prevent code injection). When writing test config files, you **must** expand variables before writing them to the config file. Use `<<EOF` (without quotes) to allow variable expansion.
+
+**Example**:
+```bash
+# ✅ GOOD: Variable expansion needed (config parser rejects ${TEST_PEER_IP} as literal)
+local config_file="${TEST_DIR}/vpn-monitor.conf"
+cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
+EOF
+# ${TEST_PEER_IP} expands to "192.168.1.1" before being written to config file
+
+# ❌ BAD: Literal variable reference (config parser rejects as dangerous content)
+cat >"$config_file" <<'EOF'
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
+EOF
+# Config parser rejects this because it contains ${TEST_PEER_IP} (contains $ and ())
+
+# ✅ GOOD: Literal string needed (no variable references)
+cat >"$config_file" <<'EOF'
+LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_INTERNAL="192.168.1.1"
+EOF
+# No variable references, so quoted heredoc is fine
+
+# ❌ BAD: Wrong choice for the use case
+cat >"$config_file" <<'EOF'
+LOGS_DIR="${TEST_DIR}/readonly-parent/readonly-logs"  # Won't expand!
+EOF
+# Test fails because script tries to create directory with literal "${TEST_DIR}" in path
+```
+
+**Systematic Application**:
+- Before writing test config files, determine if variables need expansion
+- Use `<<EOF` when variables should be expanded (most common case for test IPs)
+- **Always expand variables before writing to config files** - the config parser rejects variable references as dangerous content
+- Use `<<'EOF'` only when you truly want literal strings with no variable expansion (rare)
+- When debugging test failures, check if heredoc expansion is the issue
+- Use `cat "$config_file"` in test debugging to verify expansion
+
+**Related Patterns**:
+- See `tests/test_main.sh:923` for correct usage
+- Always verify test config files contain expected values after creation
+
+### 21. Byte Counter Increment Pattern for XFRM Recovery Verification
 
 **Pattern**: Mock `ip` command to return increasing byte counter values when testing xfrm recovery verification
 
@@ -1297,6 +1489,86 @@ EOF
 - Coordinate `check_ipsec_phase2` mock separately using its own counter file
 - Initialize counter files before creating mocks: `echo "0" >"$counter_file"`
 - Use reasonable increment values (1000-10000 bytes per call) to simulate realistic traffic
+
+### 22. Mock Counter Design: Account for All Phases When Testing Specific Behavior
+
+**Pattern**: When designing mocks with counters that span multiple phases, account for all calls that occur before the phase you're testing.
+
+**When to use**: When creating stateful mocks with counters that need to change behavior at specific thresholds, especially when testing behavior in later phases of execution (e.g., verification loops after deletion phases).
+
+**Key Insight**: Mock counters increment across all phases of execution, not just the phase being tested. If you're testing behavior in a later phase (e.g., exponential backoff in verification loop), the counter may already be high from earlier phases (e.g., deletion phase). Set thresholds that account for all phases.
+
+**Example**:
+```bash
+@test "exponential backoff in verification loop" {
+    # Mock counter increments during:
+    # 1. Initial SA fetch (before deletion) - ~2 calls
+    # 2. Deletion verification calls - ~2 calls
+    # 3. Post-deletion SA check - ~2 calls
+    # 4. Verification loop calls - 2 calls per iteration (ip -s xfrm state + ip xfrm state fallback)
+    
+    # ✅ GOOD: Account for all phases when setting mock thresholds
+    # Deletion phase: ~6 calls total
+    # Verification phase: 2 calls per iteration
+    # Need 2+ iterations to test exponential backoff: 2 iterations × 2 calls = 4 calls
+    # Total: 6 + 4 = 10, threshold > 10 (use 12 for safety margin)
+    local verify_attempt_file="${TEST_DIR}/verify_attempts"
+    echo "0" >"$verify_attempt_file"
+    
+    local mock_ip="${TEST_DIR}/ip"
+    cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+    
+    # Return SA re-established after threshold accounts for all phases
+    if [[ \$verify_attempts -le 12 ]]; then
+        :  # Return empty (SA deleted, verification loop continues)
+    else
+        echo "src 10.0.0.1 dst 192.168.1.1"
+        echo "  proto esp spi 0x12345678 reqid 1 mode tunnel"
+        exit 0  # SA re-established
+    fi
+fi
+exec /usr/bin/ip "\$@"
+EOF
+    chmod +x "$mock_ip"
+    add_mock_to_path
+    
+    # Test should show multiple sleep calls (exponential backoff)
+    run bash "$TEST_SCRIPT" --fake
+    assert_success
+    
+    remove_mock_from_path
+}
+
+# ❌ BAD: Threshold too low, doesn't account for earlier phases
+# If threshold is 7, but deletion phase already used 6-8 calls,
+# verification loop exits immediately without testing exponential backoff
+elif [[ \$verify_attempts -le 7 ]]; then
+    :  # Returns SA too early, before verification loop can test exponential backoff
+fi
+```
+
+**Key Considerations**:
+- **Trace all code paths**: Count calls in all phases, not just the one being tested
+- **Multiple calls per iteration**: Some functions make multiple mock calls per iteration (e.g., `check_ipsec_phase2` calls both `ip -s xfrm state` and `ip xfrm state`)
+- **Safety margin**: Add a safety margin to account for implementation details and edge cases
+- **Document calculation**: Add comments explaining how the threshold was calculated
+
+**Systematic Application**:
+- When creating mocks with counters, trace through all code paths that call the mock
+- Document expected call counts for each phase
+- Set thresholds that account for all phases, not just the one being tested
+- Add comments explaining the threshold calculation
+- Consider resetting counters between phases if testing specific phase behavior
+
+**Related Patterns**:
+- See pattern 15 (Stateful Mocks for Testing State Transitions) for call counter patterns
+- See pattern 21 (Byte Counter Increment Pattern) for incrementing counter patterns
+- Each `check_ipsec_phase2` call results in 2 mock calls (`ip -s xfrm state` + `ip xfrm state` fallback)
 
 ## Helper Functions
 

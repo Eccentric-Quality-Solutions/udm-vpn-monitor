@@ -38,6 +38,20 @@ source "${LIB_DIR}/common.sh"
 if ! source "${LIB_DIR}/logging.sh" 2>/dev/null; then
 	# Fallback if logging.sh not found - define minimal log_message and handle_error
 	# These will output to stderr only (no log file)
+	# Log a message with timestamp and level
+	#
+	# Outputs a formatted log message to stderr with timestamp and log level.
+	# This is a fallback implementation used when logging.sh is not available.
+	#
+	# Arguments:
+	#   $1: Log level (e.g., INFO, WARN, ERROR)
+	#   $@: Remaining arguments form the log message
+	#
+	# Returns:
+	#   0: Always succeeds
+	#
+	# Output:
+	#   Prints formatted log message to stderr (format: [YYYY-MM-DD HH:MM:SS] [LEVEL] message)
 	log_message() {
 		local level="$1"
 		shift
@@ -46,6 +60,19 @@ if ! source "${LIB_DIR}/logging.sh" 2>/dev/null; then
 		timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date +%s)
 		echo "[$timestamp] [$level] $message" >&2
 	}
+	# Handle error with logging and optional exit
+	#
+	# Logs an error message and optionally exits the script. This is a fallback
+	# implementation used when logging.sh is not available.
+	#
+	# Arguments:
+	#   $1: Error severity level (e.g., ERROR, WARN)
+	#   $2: Error message
+	#   $3: Exit code (optional, default: 1)
+	#
+	# Returns:
+	#   0: Success (if not exiting)
+	#   Exits script with specified exit code if severity is ERROR and exit_code is non-zero
 	handle_error() {
 		local severity="$1"
 		local message="$2"
@@ -615,6 +642,9 @@ get_ipsec_status_for_peer() {
 # Retrieves and validates the LOCAL_UDM_IP configuration value.
 # This is the internal IP address of the local UDM device used as source IP for ping checks.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: LOCAL_UDM_IP is configured and valid
 #   1: LOCAL_UDM_IP is not configured or invalid
@@ -647,6 +677,9 @@ get_local_udm_ip() {
 #
 # Retrieves LOCAL_UDM_IP for use as ping source IP.
 # Returns empty string if not configured (ping will work without -I flag).
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Always succeeds
@@ -978,6 +1011,24 @@ log_ping_summary_if_due() {
 	return 0
 }
 
+# Check ping connectivity to target IP
+#
+# Performs a ping connectivity check to the specified target IP address.
+# Optionally uses a local source IP for the ping. Manages routes on br0 interface
+# if local_ip is provided. Supports both IPv4 and IPv6 addresses.
+#
+# Arguments:
+#   $1: Target IP address to ping (required)
+#   $2: Local source IP address (optional, for ping -I flag)
+#   $3: Location name for logging (optional)
+#
+# Returns:
+#   0: Ping successful (packet loss below threshold)
+#   1: Ping failed (packet loss above threshold, command error, or timeout)
+#
+# Side effects:
+#   - Adds route to br0 interface if local_ip provided and route doesn't exist
+#   - Logs ping results at DEBUG/INFO/WARNING levels
 check_ping_connectivity() {
 	local target_ip="$1"
 	local local_ip="${2:-}"
@@ -1339,6 +1390,7 @@ detect_sa_rekey() {
 #   $3: Peer IP address (used for state management and logging)
 #   $4: Current SPI value (optional, used for rekey detection)
 #   $5: Internal peer IP address (optional, used for ping checks on idle detection)
+#   $6: Diagnostic variable name (optional, if provided, detailed failure reason is stored here)
 #
 # Returns:
 #   0: Byte counters are valid (traffic flowing, idle but healthy, first check, or after rekey)
@@ -1349,11 +1401,17 @@ detect_sa_rekey() {
 #   - Detects SA rekey if SPI provided and resets byte counter baseline
 #   - Marks idle tunnels and suggests keepalive if needed
 #   - Logs INFO messages for valid counters
-#   - Logs warning messages for invalid counters
+#   - Logs warning messages for invalid counters (unless diagnostic variable is provided)
+#   - If diagnostic variable name is provided, stores detailed failure reason in that variable instead of logging
 #
 # Examples:
 #   if check_byte_counters "NYC" "$current_bytes" "$peer_ip" "$current_spi"; then
 #       echo "VPN is passing traffic"
+#   fi
+#   # With diagnostic variable:
+#   local diagnostic=""
+#   if ! check_byte_counters "NYC" "$current_bytes" "$peer_ip" "$current_spi" "" "diagnostic"; then
+#       echo "Failure reason: $diagnostic"
 #   fi
 #
 # Note:
@@ -1368,6 +1426,7 @@ check_byte_counters() {
 	local peer_ip="$3"
 	local current_spi="${4:-}"
 	local internal_peer_ip="${5:-}"
+	local diagnostic_var="${6:-}"
 
 	# Check for SA rekey if SPI is provided
 	if [[ -n "$current_spi" ]]; then
@@ -1418,17 +1477,32 @@ check_byte_counters() {
 					return 0
 				else
 					# Ping fails - VPN is likely broken
-					handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but bytes=0 (first check, ping check failed)${location_name:+ for $location_name ($peer_ip)}"
+					local failure_reason="bytes=0 (first check, ping check failed)"
+					if [[ -n "$diagnostic_var" ]]; then
+						printf -v "$diagnostic_var" "%s" "$failure_reason"
+					else
+						handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but $failure_reason${location_name:+ for $location_name ($peer_ip)}"
+					fi
 					return 1
 				fi
 			else
 				# Ping check disabled or internal_peer_ip not provided - fail-safe behavior
-				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but bytes=0 (first check, may be idle, ping check disabled)${location_name:+ for $location_name ($peer_ip)}"
+				local failure_reason="bytes=0 (first check, may be idle, ping check disabled)"
+				if [[ -n "$diagnostic_var" ]]; then
+					printf -v "$diagnostic_var" "%s" "$failure_reason"
+				else
+					handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but $failure_reason${location_name:+ for $location_name ($peer_ip)}"
+				fi
 				return 1
 			fi
 		else
 			# Bytes dropped to zero after previously having traffic - likely broken
-			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but bytes dropped to 0 (was $last_bytes)${location_name:+ for $location_name ($peer_ip)}"
+			local failure_reason="bytes dropped to 0 (was $last_bytes)"
+			if [[ -n "$diagnostic_var" ]]; then
+				printf -v "$diagnostic_var" "%s" "$failure_reason"
+			else
+				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but $failure_reason${location_name:+ for $location_name ($peer_ip)}"
+			fi
 			return 1
 		fi
 	fi
@@ -1444,7 +1518,12 @@ check_byte_counters() {
 			# Errors are logged by check_ping_connectivity, so we don't suppress stderr
 			if ! check_ping_connectivity "$internal_peer_ip" "$local_ip"; then
 				# Ping fails even though bytes are increasing - routing issue
-				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists, bytes increasing ($current_bytes) but ping failed${location_name:+ for $location_name ($peer_ip)}"
+				local failure_reason="bytes increasing ($current_bytes, was $last_bytes) but ping check failed"
+				if [[ -n "$diagnostic_var" ]]; then
+					printf -v "$diagnostic_var" "%s" "$failure_reason"
+				else
+					handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists, $failure_reason${location_name:+ for $location_name ($peer_ip)}"
+				fi
 				return 1
 			fi
 		fi
@@ -1466,7 +1545,11 @@ check_byte_counters() {
 	# Special case: If bytes decreased significantly, log it explicitly
 	if [[ "$current_bytes" -lt "$last_bytes" ]]; then
 		# Bytes decreased - this is abnormal and should be logged
-		handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but bytes decreased (current=$current_bytes, last=$last_bytes) - bytes not increasing${location_name:+ for $location_name ($peer_ip)}"
+		# Note: This is logged separately from the final failure message below
+		# We still need to check ping to determine if it's actually broken
+		if [[ -z "$diagnostic_var" ]]; then
+			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but bytes decreased (current=$current_bytes, last=$last_bytes) - bytes not increasing${location_name:+ for $location_name ($peer_ip)}"
+		fi
 	fi
 
 	if [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
@@ -1501,7 +1584,15 @@ check_byte_counters() {
 	if [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
 		ping_status="failed"
 	fi
-	handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but bytes not increasing (current=$current_bytes, last=$last_bytes, ping check: $ping_status)${location_name:+ for $location_name ($peer_ip)}"
+	local failure_reason="bytes not increasing (current=$current_bytes, last=$last_bytes, ping check: $ping_status)"
+	if [[ "$current_bytes" -lt "$last_bytes" ]]; then
+		failure_reason="bytes decreased (current=$current_bytes, last=$last_bytes, ping check: $ping_status)"
+	fi
+	if [[ -n "$diagnostic_var" ]]; then
+		printf -v "$diagnostic_var" "%s" "$failure_reason"
+	else
+		handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but $failure_reason${location_name:+ for $location_name ($peer_ip)}"
+	fi
 	return 1
 }
 
@@ -1563,7 +1654,9 @@ check_xfrm_status() {
 	if current_bytes=$(extract_byte_counter "$xfrm_output"); then
 		# Successfully extracted byte counter - validate it using simple heuristics
 		# Pass location_name, SPI and internal IP to check_byte_counters for rekey detection and idle detection
-		if check_byte_counters "$location_name" "$current_bytes" "$peer_ip" "$current_spi" "$internal_peer_ip"; then
+		# Also pass diagnostic variable to capture detailed failure reason
+		local byte_counter_diagnostic=""
+		if check_byte_counters "$location_name" "$current_bytes" "$peer_ip" "$current_spi" "$internal_peer_ip" "byte_counter_diagnostic"; then
 			# Update stored SPI if we have it (even if rekey not detected)
 			if [[ -n "$current_spi" ]]; then
 				set_peer_state_non_critical "$location_name" "$peer_ip" "spi" "$current_spi"
@@ -1573,6 +1666,9 @@ check_xfrm_status() {
 			# SA exists but byte counters are suspect
 			if [[ -n "$diagnostic_var" ]]; then
 				local diagnostic_msg="Detection method: xfrm (ip xfrm state) - SA exists for $peer_ip but byte counter validation failed"
+				if [[ -n "$byte_counter_diagnostic" ]]; then
+					diagnostic_msg="Detection method: xfrm (ip xfrm state) - SA exists for $peer_ip but $byte_counter_diagnostic"
+				fi
 				printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
 			fi
 			return 1
@@ -2517,6 +2613,9 @@ check_vpn_status() {
 #
 # Verifies that a default route exists in the routing table.
 # A missing default route indicates network partition (no internet connectivity).
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Default route exists

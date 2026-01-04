@@ -1790,7 +1790,7 @@ surgical_cleanup() {
 					if [[ $reload_duration -lt 0 ]]; then
 						reload_duration=0
 					fi
-					log_message "INFO" "$location_name" "Surgical cleanup completed for $location_name ($peer_ip) (via ipsec fallback, verification: connections active, duration: ${reload_duration}s)"
+					log_message "INFO" "$location_name" "Recovery completed for $location_name ($peer_ip) (via ipsec fallback, verification: connections active, duration: ${reload_duration}s)"
 					recovery_succeeded=1
 				else
 					local current_time
@@ -1800,7 +1800,7 @@ surgical_cleanup() {
 					if [[ $reload_duration -lt 0 ]]; then
 						reload_duration=0
 					fi
-					handle_error "WARNING" "$location_name" "Surgical cleanup completed for $location_name ($peer_ip) (via ipsec fallback, verification: some connections not active, duration: ${reload_duration}s)"
+					handle_error "WARNING" "$location_name" "Recovery completed for $location_name ($peer_ip) (via ipsec fallback, verification: some connections not active, duration: ${reload_duration}s)"
 					recovery_succeeded=0
 				fi
 			else

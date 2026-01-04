@@ -44,10 +44,54 @@ source "${LIB_DIR}/common.sh"
 declare -gA CONFIG_SCHEMA=()
 
 # Define fallback functions (used if schema file can't be loaded)
-# These are defined as a function to avoid duplication
+#
+# Defines fallback implementations for schema-related functions when the schema
+# file cannot be loaded. These are defined as a function to avoid duplication.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   Defines global functions: get_config_schema, is_config_required, get_config_default
 define_schema_fallback_functions() {
+	# Get configuration schema
+	#
+	# Fallback implementation that always returns failure. Used when schema file
+	# cannot be loaded.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   1: Always fails (schema not available)
 	get_config_schema() { return 1; }
+	# Check if configuration key is required
+	#
+	# Fallback implementation that always returns failure. Used when schema file
+	# cannot be loaded.
+	#
+	# Arguments:
+	#   $1: Configuration key name (ignored in fallback)
+	#
+	# Returns:
+	#   1: Always fails (schema not available)
 	is_config_required() { return 1; }
+	# Get default value for configuration key
+	#
+	# Fallback implementation that always returns empty string. Used when schema
+	# file cannot be loaded.
+	#
+	# Arguments:
+	#   $1: Configuration key name (ignored in fallback)
+	#
+	# Returns:
+	#   0: Always succeeds
+	#
+	# Output:
+	#   Prints empty string to stdout
 	get_config_default() {
 		echo ""
 		return 0
@@ -539,6 +583,12 @@ safe_parse_config_file() {
 # to reference config variables safely. Defaults are read from config_schema.sh,
 # making it the single source of truth for default values.
 #
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Success
+#
 # Side effects:
 #   - Sets global configuration variables to their schema-defined defaults if not already set
 #   - Variables are set via indirect assignment (declare -g + printf -v)
@@ -721,6 +771,27 @@ handle_fatal_config_error() {
 	# This line is unreachable but included for clarity
 }
 
+# Load configuration from file
+#
+# Loads and validates configuration from the specified configuration file.
+# Applies schema defaults before parsing, validates critical variables after parsing,
+# and ensures required directories exist. Preserves LOG_FILE if set before calling
+# (for custom log files like keepalive).
+#
+# Arguments:
+#   $1: Path to configuration file
+#
+# Returns:
+#   0: Success (configuration loaded and validated)
+#   1: Error in fake mode (directory creation failed)
+#   Exits script with error code in normal mode on fatal errors
+#
+# Side effects:
+#   - Sets global configuration variables from config file
+#   - Applies schema defaults for unset variables
+#   - Creates LOGS_DIR and STATE_DIR directories if needed
+#   - Updates LOCKFILE, COOLDOWN_UNTIL_FILE, PIDFILE paths based on STATE_DIR
+#   - Logs configuration loading status
 load_config() {
 	local config_file="$1"
 
@@ -818,12 +889,9 @@ load_config() {
 
 	# Compute state paths after config loading (consolidated path computation)
 	# Update paths that depend on STATE_DIR (STATE_DIR is already set correctly from config)
-	if [[ -n "${LOCKFILE:-}" ]]; then
-		LOCKFILE="${STATE_DIR}/vpn-monitor.lock"
-	fi
-	if [[ -n "${COOLDOWN_UNTIL_FILE:-}" ]]; then
-		COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
-	fi
+	# Always update these paths to ensure they match STATE_DIR after config loading
+	LOCKFILE="${STATE_DIR}/vpn-monitor.lock"
+	COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
 	if [[ -n "${PIDFILE:-}" ]]; then
 		PIDFILE="${STATE_DIR}/vpn-keepalive.pid"
 	fi
@@ -1586,6 +1654,9 @@ validate_config_var() {
 # Validates all configuration variables against the schema definition.
 # Uses schema-based validation for type checking and rule validation.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Configuration is valid
 #   1: Configuration is invalid (exits script)
@@ -1682,6 +1753,9 @@ extract_location_name() {
 #
 # Scans all variables matching LOCATION_*_EXTERNAL pattern and extracts location data
 # into a structured associative array format.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Configuration parsed successfully
@@ -2053,6 +2127,9 @@ get_location_internal_ips() {
 # proactively, not just when ping checks run. Routes are added to the br0
 # interface to enable ping connectivity between UDM devices.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Routes setup completed (or not needed)
 #   1: Route setup failed (logged as ERROR if routes are needed, non-critical in test contexts)
@@ -2135,6 +2212,9 @@ setup_routes_if_needed() {
 # Validates that required configuration variables are set and have valid values.
 # Uses schema-based validation for type checking and rules, plus custom validation
 # for complex cases (IP addresses, location-based configuration).
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Configuration is valid

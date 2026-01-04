@@ -1,8 +1,10 @@
 # Code Review Lessons Learned
 
 **Date:** 2025-01-15
-**Last Updated:** 2026-01-03
+**Last Updated:** 2026-01-15
 **Context:** Comprehensive codebase review for errors, bugs, DRY violations, and bad practices
+
+**Note:** For a pragmatic assessment of this document's value and recommendations for improvement, see `CODE_REVIEW_LESSONS_LEARNED_ASSESSMENT.md`.
 
 ## Overview
 
@@ -1081,72 +1083,9 @@ fi
 
 ---
 
-## 16. Mock All Commands Used by Recovery Verification
+## 16. Don't Log Success When Operations Fail
 
-### Problem
-When testing Tier 3 recovery (`full_restart()`), tests were timing out because:
-- Tests mocked `ipsec restart` to succeed
-- After recovery, `verify_ipsec_connections_active()` calls `ipsec status` to verify connections
-- Tests didn't mock `ipsec status`, so it fell through to `exec /usr/bin/ipsec "$@"`
-- If `/usr/bin/ipsec` doesn't exist or hangs, the test times out after 120 seconds
-
-### Impact
-- Tests fail with timeout errors instead of actual test failures
-- Difficult to diagnose (timeout doesn't indicate what's missing)
-- Wastes CI time waiting for timeouts
-
-### Lesson
-**When testing recovery actions, mock all commands used by verification functions.** Recovery functions often call verification functions that use additional commands beyond the recovery command itself.
-
-### Pattern to Follow
-```bash
-# ✅ GOOD: Mock both restart and status
-local mock_ipsec="${TEST_DIR}/ipsec"
-cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    echo "ipsec restart succeeded"
-    exit 0
-elif [[ "$1" == "status" ]]; then
-    # Return status output that includes the peer IP for verification
-    echo "192.168.1.1"
-    exit 0
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-chmod +x "$mock_ipsec"
-
-# ❌ BAD: Only mock restart (verification will fail/hang)
-local mock_ipsec="${TEST_DIR}/ipsec"
-cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "restart" ]]; then
-    echo "ipsec restart succeeded"
-    exit 0
-fi
-exec /usr/bin/ipsec "$@"  # Falls through to real command - may hang!
-EOF
-```
-
-### Verification Functions That Need Mocks
-- `verify_ipsec_connections_active()` - calls `ipsec status`
-- `verify_byte_counters_resume()` - calls `ip xfrm state`
-- `check_ipsec_phase2()` - calls `ipsec status` or `ip xfrm state`
-
-### Systematic Application
-- When testing Tier 3 recovery, check what verification functions are called
-- Mock all commands used by verification functions, not just the recovery command
-- Review `lib/recovery.sh` to see what commands verification functions use
-- Test with timeout to catch missing mocks early
-
-### Related Patterns
-- See `tests/test_recovery_cascading_failures.sh` for examples of complete mocking
-- See `tests/test_recovery_cooldown_rate_limit_interaction.sh` for realistic ipsec status output format
-- See `lib/recovery.sh:verify_ipsec_connections_active()` for verification requirements
-
----
-
-## 17. Don't Log Success When Operations Fail
+**Note:** Testing-related patterns for this lesson may be found in `TEST_PATTERNS.md`. This section preserves the historical context of the bug discovery and fix.
 
 ### Problem
 Functions that check for operation success but log success messages regardless of the check result create misleading logs and hide failures.
@@ -1213,116 +1152,75 @@ set_cooldown() {
 
 ---
 
-## 18. Schema Validation Order Affects Test Expectations
+## 17. Override Functions, Not Just Commands, When Testing Recovery
 
 ### Problem
-Tests expected invalid variables to be skipped during `parse_location_config()`, but schema validation rejects unknown variables during `load_config()` before `parse_location_config()` runs.
-
-**Example:**
-```bash
-# Test expected this to work:
-LOCATION_NYC_EXTERNAL="203.0.113.1"
-INVALID_VAR="value"  # Expected to be skipped by parse_location_config
-# But schema validation rejects INVALID_VAR during load_config first
-```
+When testing recovery method tracking, tests need to mock `check_ipsec_phase2()` which is a function from `detection.sh`, not a command. Simply creating a mock command file won't work because the code calls the function directly, not via `command -v`.
 
 ### Impact
-- Tests fail with "Unknown configuration variable" errors
-- Tests need to be updated to reflect validation order
-- Confusion about where validation happens
+- Tests may fail silently or produce incorrect results
+- Recovery verification may not work as expected in tests
+- Difficult to diagnose why tests aren't working correctly
 
 ### Lesson
-**When adding validation layers, update tests to reflect the new validation order.** Schema validation is now the first gate, so tests should verify schema validation behavior, not downstream parsing behavior.
+**When testing recovery functions that call other functions (not just commands), override the function directly in the test.** Functions are invoked directly, not through PATH lookup.
 
 ### Pattern to Follow
 ```bash
-# ✅ GOOD: Test reflects schema validation happens first
-@test "invalid variables rejected by schema" {
-    # Schema validation rejects unknown variables during load_config
-    run load_config "$config_file"
-    assert_failure
-    assert_output --partial "Unknown configuration variable"
+# ✅ GOOD: Override function to use mock command
+local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
+cat >"$mock_check_ipsec_phase2" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+chmod +x "$mock_check_ipsec_phase2"
+add_mock_to_path
+
+source_recovery_module
+
+# Override the function to use mock
+check_ipsec_phase2() {
+    "$mock_check_ipsec_phase2" "$@"
 }
 
-# ❌ BAD: Test expects downstream parsing to skip invalid vars
-@test "invalid variables skipped by parse_location_config" {
-    load_config "$config_file"  # Fails here, never reaches parse_location_config
-    parse_location_config  # Never reached
-}
+# ❌ BAD: Only create mock command (function won't use it)
+local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
+cat >"$mock_check_ipsec_phase2" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+chmod +x "$mock_check_ipsec_phase2"
+add_mock_to_path
+# Missing: Function override - check_ipsec_phase2() will use original function, not mock
 ```
 
+### Functions That Need Overriding
+- `check_ipsec_phase2()` - Function from `detection.sh`, used by `attempt_xfrm_recovery()` for verification
+- `verify_byte_counters_resume()` - Function from `recovery.sh`, used for byte counter verification
+- `count_sas_for_peer()` - Function from `recovery.sh`, used for SA counting
+
+### Commands vs Functions
+- **Commands** (e.g., `ip`, `ipsec`): Mock by creating executable file in PATH
+- **Functions** (e.g., `check_ipsec_phase2`, `verify_byte_counters_resume`): Override function definition after sourcing module
+
 ### Systematic Application
-- When adding validation layers, identify all affected tests
-- Update test expectations to match validation order
-- Document validation order in test comments
-- Consider testing validation at each layer separately
+- When testing recovery functions, identify which functions they call
+- Check if those functions are commands (use PATH mock) or functions (override definition)
+- Review `lib/recovery.sh` and `lib/detection.sh` to see function dependencies
+- Override functions after sourcing modules, before calling recovery functions
 
 ### Related Patterns
-- See `lib/config.sh:safe_parse_config_file()` for schema validation
-- See `lib/config.sh:parse_location_config()` for location parsing
-- See `tests/test_config_location.sh` for updated test patterns
+- See `tests/test_recovery_method_tracking.sh` for examples of function overriding
+- See `tests/test_recovery.sh` lines 987-990 for another example
+- See `lib/recovery.sh:attempt_xfrm_recovery()` for function usage
+- Script exit codes should reflect execution success, not operational outcomes
+- Operational failures (VPN down, recovery failed) are logged but don't prevent successful script completion
 
 ---
 
-## 19. Test Helper Functions Can Create Duplicate Configurations
+## 18. Always Validate Timestamp Arithmetic to Prevent Overflow/Underflow
 
-### Problem
-Test helper functions that add default configurations can create duplicates when tests add the same configurations again.
-
-**Example:**
-```bash
-# setup_location_test_vpn_monitor() calls setup_location_config() which adds:
-# - LOCATION_NYC_EXTERNAL="203.0.113.1"
-# - LOCATION_LA_EXTERNAL="198.51.100.1"
-
-# Test then adds:
-setup_location_test_vpn_monitor "${TEST_DIR}" \
-    'LOCATION_NYC_EXTERNAL="203.0.113.1"'  # Duplicate!
-```
-
-### Impact
-- Tests fail with "Duplicate location name detected" errors
-- Confusion about why duplicates occur
-- Need to understand helper function internals
-
-### Lesson
-**When test helpers add defaults, either use the helper and accept the defaults, OR use lower-level helpers directly to avoid defaults.**
-
-### Pattern to Follow
-```bash
-# ✅ GOOD: Use lower-level helper to avoid defaults
-setup_test_environment "${TEST_DIR}"
-local config_file="${TEST_DIR}/vpn-monitor.conf"
-setup_test_location_config "$config_file" \
-    'LOCATION_CUSTOM_EXTERNAL="..."' \
-    'LOCATION_CUSTOM_INTERNAL="..."'
-TEST_CONFIG_FILE="$config_file"
-TEST_SCRIPT=$(create_test_vpn_monitor_script ...)
-export TEST_CONFIG_FILE TEST_SCRIPT
-
-# ✅ GOOD: Use helper and accept defaults
-setup_location_test_vpn_monitor "${TEST_DIR}"
-# Uses default NYC and LA locations
-
-# ❌ BAD: Use helper then add same locations again
-setup_location_test_vpn_monitor "${TEST_DIR}" \
-    'LOCATION_NYC_EXTERNAL="..."'  # Duplicate!
-```
-
-### Systematic Application
-- Document what defaults helper functions add
-- When tests need custom configs, use lower-level helpers
-- When tests can use defaults, use higher-level helpers
-- Consider helper functions that don't add defaults for custom scenarios
-
-### Related Patterns
-- See `tests/test_helper.bash:setup_location_test_vpn_monitor()` for helper with defaults
-- See `tests/test_helper.bash:setup_test_location_config()` for lower-level helper
-- See `tests/test_integration_location.sh` for examples of avoiding duplicates
-
----
-
-## 20. Always Validate Timestamp Arithmetic to Prevent Overflow/Underflow
+**Note:** Testing-related patterns for this lesson may be found in `TEST_PATTERNS.md`. This section preserves the historical context of the bug discovery and fix.
 
 ### Problem
 During bug review, we found multiple locations performing unsafe timestamp arithmetic:
@@ -1375,7 +1273,9 @@ elapsed_time=$(($(get_unix_timestamp) - verify_start_time))
 
 ---
 
-## 21. Always Validate Arithmetic Operations and Clamp Results to Expected Ranges
+## 19. Always Validate Arithmetic Operations and Clamp Results to Expected Ranges
+
+**Note:** Testing-related patterns for this lesson may be found in `TEST_PATTERNS.md`. This section preserves the historical context of the bug discovery and fix.
 
 ### Problem
 During bug review, we found CPU usage calculation that could produce invalid values:
@@ -1432,7 +1332,7 @@ fi
 
 ---
 
-## 22. Always Preserve Exit Codes in Cleanup Functions with EXIT Traps
+## 20. Always Preserve Exit Codes in Cleanup Functions with EXIT Traps
 
 ### Problem
 When using EXIT traps for cleanup, the cleanup function must preserve the exit code from the main function. If the cleanup function always exits with a fixed code (e.g., 0), the actual exit code from the main function is lost.
@@ -1544,7 +1444,7 @@ When using EXIT traps for cleanup, the cleanup function must preserve the exit c
 
 ---
 
-## 23. Trap Cleanup Functions Must Handle Unset Variables with `set -u`
+## 21. Trap Cleanup Functions Must Handle Unset Variables with `set -u`
 
 ### Problem
 When using EXIT traps with cleanup functions that access local variables, the cleanup function may execute after the function containing those variables has returned. With `set -u` (treat unset variables as errors), this causes "unbound variable" errors.
@@ -1678,51 +1578,7 @@ acquire_lockfile_flock() {
 
 ---
 
-## 23. Test Setup: Heredoc Variable Expansion
-
-### Problem
-During debugging, a test was failing because the config file contained literal `${TEST_DIR}` instead of the expanded path. The test used `<<'EOF'` (single quotes) which prevents variable expansion.
-
-### Impact
-- Test config file contained literal `${TEST_DIR}/readonly-parent/readonly-logs` instead of `/tmp/test-xyz/readonly-parent/readonly-logs`
-- Script tried to create directory with literal `${TEST_DIR}` in the path
-- Test failed because the expected behavior didn't match actual behavior
-
-### Lesson
-**When creating test config files with heredocs, use `<<EOF` (without quotes) if you need variable expansion, or `<<'EOF'` (with quotes) if you want literal strings.**
-
-### Pattern to Follow
-```bash
-# ✅ GOOD: Variable expansion needed
-cat >"$config_file" <<EOF
-LOGS_DIR="${TEST_DIR}/readonly-parent/readonly-logs"
-EOF
-
-# ✅ GOOD: Literal string needed
-cat >"$config_file" <<'EOF'
-LOGS_DIR="${TEST_DIR}/readonly-parent/readonly-logs"
-EOF
-
-# ❌ BAD: Wrong choice for the use case
-cat >"$config_file" <<'EOF'
-LOGS_DIR="${TEST_DIR}/readonly-parent/readonly-logs"  # Won't expand!
-EOF
-```
-
-### Systematic Application
-- Before writing test config files, determine if variables need expansion
-- Use `<<EOF` when variables should be expanded (most common case)
-- Use `<<'EOF'` only when you specifically need literal strings (rare)
-- When debugging test failures, check if heredoc expansion is the issue
-
-### Related Patterns
-- See `tests/test_main.sh:923` for correct usage
-- Always verify test config files contain expected values after creation
-- Use `cat "$config_file"` in test debugging to verify expansion
-
----
-
-## 24. Always Extract External IP from LOCATIONS Using Helper Function
+## 22. Always Extract External IP from LOCATIONS Using Helper Function
 
 ### Problem
 During code review, found bug in `full_restart()` where external IP was incorrectly extracted from `LOCATIONS` array:
@@ -1772,7 +1628,9 @@ local external_ip="${LOCATIONS[$location_name]}"
 
 ---
 
-## 25. Simplify Complex Conditionals When All Branches Converge
+## 23. Simplify Complex Conditionals When All Branches Converge
+
+**Note:** Testing-related patterns for this lesson may be found in `TEST_PATTERNS.md`. This section preserves the historical context of the bug discovery and fix. See also `CODE_PATTERNS.md` for the consolidated actionable pattern.
 
 ### Problem
 During code review, found overcomplicated conditional logic where all branches ended with the same operation:
@@ -1851,7 +1709,7 @@ fi
 
 ---
 
-## 26. Distinguish Between Script Execution Success and Recovery Success
+## 24. Distinguish Between Script Execution Success and Recovery Success
 
 ### Problem
 When recovery actions are attempted but fail, the script was returning failure (exit code 1), causing the script to appear as if it failed to execute properly. However, the script successfully completed its monitoring task - it detected the failure, attempted recovery, and logged the results. Recovery failures are operational issues, not script execution failures.
@@ -1893,73 +1751,7 @@ fi
 
 ---
 
-## 18. Override Functions, Not Just Commands, When Testing Recovery
-
-### Problem
-When testing recovery method tracking, tests need to mock `check_ipsec_phase2()` which is a function from `detection.sh`, not a command. Simply creating a mock command file won't work because the code calls the function directly, not via `command -v`.
-
-### Impact
-- Tests may fail silently or produce incorrect results
-- Recovery verification may not work as expected in tests
-- Difficult to diagnose why tests aren't working correctly
-
-### Lesson
-**When testing recovery functions that call other functions (not just commands), override the function directly in the test.** Functions are invoked directly, not through PATH lookup.
-
-### Pattern to Follow
-```bash
-# ✅ GOOD: Override function to use mock command
-local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
-cat >"$mock_check_ipsec_phase2" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-chmod +x "$mock_check_ipsec_phase2"
-add_mock_to_path
-
-source_recovery_module
-
-# Override the function to use mock
-check_ipsec_phase2() {
-    "$mock_check_ipsec_phase2" "$@"
-}
-
-# ❌ BAD: Only create mock command (function won't use it)
-local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
-cat >"$mock_check_ipsec_phase2" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-chmod +x "$mock_check_ipsec_phase2"
-add_mock_to_path
-# Missing: Function override - check_ipsec_phase2() will use original function, not mock
-```
-
-### Functions That Need Overriding
-- `check_ipsec_phase2()` - Function from `detection.sh`, used by `attempt_xfrm_recovery()` for verification
-- `verify_byte_counters_resume()` - Function from `recovery.sh`, used for byte counter verification
-- `count_sas_for_peer()` - Function from `recovery.sh`, used for SA counting
-
-### Commands vs Functions
-- **Commands** (e.g., `ip`, `ipsec`): Mock by creating executable file in PATH
-- **Functions** (e.g., `check_ipsec_phase2`, `verify_byte_counters_resume`): Override function definition after sourcing module
-
-### Systematic Application
-- When testing recovery functions, identify which functions they call
-- Check if those functions are commands (use PATH mock) or functions (override definition)
-- Review `lib/recovery.sh` and `lib/detection.sh` to see function dependencies
-- Override functions after sourcing modules, before calling recovery functions
-
-### Related Patterns
-- See `tests/test_recovery_method_tracking.sh` for examples of function overriding
-- See `tests/test_recovery.sh` lines 987-990 for another example
-- See `lib/recovery.sh:attempt_xfrm_recovery()` for function usage
-- Script exit codes should reflect execution success, not operational outcomes
-- Operational failures (VPN down, recovery failed) are logged but don't prevent successful script completion
-
----
-
-## 27. Always Re-Check Critical State Instead of Relying on Cached Values
+## 25. Always Re-Check Critical State Instead of Relying on Cached Values
 
 ### Problem
 Network partition check was relying on cached partition state (`get_network_partition_state()`) before re-checking. This caused issues:
@@ -2012,7 +1804,7 @@ fi
 
 ---
 
-## 28. Handle Hash Collisions in Anonymization Functions
+## 26. Handle Hash Collisions in Anonymization Functions
 
 ### Problem
 The `anonymize_location()` function in `scripts/anonymize-logs.sh` used hash-based mapping to anonymize location names:
@@ -2114,48 +1906,7 @@ anonymize_location() {
 
 ---
 
-## Summary: Key Takeaways
-
-These lessons should be applied systematically in future development and code reviews to prevent similar issues:
-
-**Note:** Many of these lessons have been consolidated into actionable patterns in `CODE_PATTERNS.md`. For current coding patterns and best practices, refer to `CODE_PATTERNS.md`. This document preserves the historical context of how patterns were discovered.
-
-1. **Always use abstraction layers consistently** - Don't construct paths directly, use abstraction functions
-2. **Always use validation functions instead of inline regex** - Validation functions provide consistent, secure validation
-3. **Verify function signatures match calls** - Check argument counts and types before calling functions
-4. **Remove debug code, don't just comment it** - Commented code adds confusion and maintenance burden
-5. **Verify findings before documenting** - Confirm issues exist before documenting them
-6. **Check for code duplication across files** - Look for similar patterns that could be extracted
-7. **Test coverage should match code paths** - Ensure all code paths are tested
-8. **Systematic code review process** - Follow structured approach to catch issues
-9. **Common patterns to watch for** - Be aware of common anti-patterns
-10. **Use character-by-character parsing for complex syntax** - Avoid regex for complex parsing
-11. **Always persist corrected values after validation** - Don't just validate, save corrected values
-12. **Always check file readability before file operations** - Prevent hangs from unreadable files
-13. **Always respect fake mode in all error paths** - Use `handle_error_or_exit_fake_mode()` for fatal errors
-14. **Track error state when functions log but don't exit** - Return error codes even when logging errors
-15. **Handle race conditions in process management operations** - Check process state after operations
-16. **Mock all commands used by recovery verification** - Ensure tests don't depend on real system commands
-17. **Don't log success when operations fail** - Only log success when operation actually succeeds
-18. **Schema validation order affects test expectations** - Update tests to reflect validation order when adding validation layers
-19. **Test helper functions can create duplicate configurations** - Use lower-level helpers or accept defaults to avoid duplicates
-20. **Always validate timestamp arithmetic** - Use safe timestamp functions to prevent overflow/underflow
-21. **Always validate arithmetic operations and clamp results** - Validate inputs and clamp results to expected ranges
-22. **Always preserve exit codes in cleanup functions** - Capture and preserve main function's exit code in EXIT trap handlers
-23. **Test setup: Heredoc variable expansion** - Use `<<EOF` for expansion, `<<'EOF'` for literal strings
-24. **Always extract external IP from LOCATIONS using helper function** - LOCATIONS array stores delimited strings, not just IPs
-25. **Simplify complex conditionals when all branches converge** - Extract common operations outside conditionals
-26. **Distinguish between script execution success and recovery success** - Script execution success ≠ Operational success
-27. **Always re-check critical state instead of relying on cached values** - Cached state can become stale, especially when state changes can occur between checks
-28. **Handle hash collisions in anonymization functions** - When using hash-based mapping to ensure uniqueness, always implement collision resolution. Hash collisions are inevitable when mapping many inputs to fewer outputs. Track used values and implement linear probing or suffix appending to handle collisions and exhaustion.
-29. **When adding similar functionality, consider code duplication vs. clarity trade-offs** - When adding retention options for logs and state directories similar to config file retention, the three handler functions (`handle_config_file`, `handle_logs_dir`, `handle_state_dir`) have similar structure. While this creates some duplication, keeping them separate improves readability and maintainability. Extracting common logic would reduce duplication but make the code harder to understand. **Decision:** Keep similar but separate functions when clarity benefits outweigh DRY benefits, especially for user-facing interactive prompts where explicit code paths are easier to debug and modify.
-30. **Parse all selectors when interacting with kernel interfaces** - When parsing structured output from kernel interfaces (netlink, xfrm, iproute2), parse ALL attributes that could be selectors, not just the required ones. Optional attributes become required selectors when present. Missing selectors cause operations to fail with "No such process" errors even when the object exists. Include all parsed selectors in operations (get, delete, modify) to ensure successful matching.
-
-31. **Add comprehensive diagnostics when debugging kernel interface failures** - When debugging failures with kernel interfaces (xfrm, netlink, etc.), add extensive diagnostic logging at INFO level (not just DEBUG) to capture: system/kernel versions, exact commands executed, timing information, full object blocks before operations, comparison of parsed vs kernel output, and all attributes found. This enables post-mortem debugging without requiring reproduction. See `lib/recovery.sh:attempt_xfrm_recovery()` for comprehensive diagnostic logging pattern.
-
----
-
-## 30. Parse All Selectors When Interacting with Kernel Interfaces
+## 27. Parse All Selectors When Interacting with Kernel Interfaces
 
 ### Problem
 During xfrm recovery implementation, we discovered that SA deletion was failing with "RTNETLINK answers: No such process" (exit code 2) even though the SAs existed. Root cause analysis revealed that SAs with `mark` attributes require the mark to be included as a selector in deletion commands. The code was only parsing and using `src`, `dst`, `proto`, and `spi` selectors, missing the `mark` selector.
@@ -2305,121 +2056,7 @@ fi
 
 ---
 
-## 50. Mock Counter Design: Account for All Phases When Testing Specific Behavior
-
-### Problem
-When testing exponential backoff in the verification loop, the mock's `verify_attempts` counter was incremented during:
-1. Initial SA fetch (before deletion)
-2. Deletion verification calls
-3. Post-deletion SA check
-4. Verification loop calls
-
-The mock threshold was set to 7, meaning it would return "SA re-established" when `verify_attempts > 7`. However, by the time the verification loop started, the counter was already at 7-8 due to calls in earlier phases, causing the loop to exit immediately without any sleep calls.
-
-### Impact
-- Test failed because only 1 sleep occurred instead of the expected 2+ sleeps
-- Exponential backoff behavior was not actually tested
-- Test appeared to pass but wasn't verifying the intended behavior
-
-### Root Cause
-Each `check_ipsec_phase2` call results in 2 mock calls (`ip -s xfrm state` + `ip xfrm state` fallback), so the counter increments twice per verification iteration. The mock threshold didn't account for:
-- Calls during deletion phase (~6 calls)
-- Multiple calls per verification iteration (2 calls per `check_ipsec_phase2`)
-- Need for multiple verification iterations to test exponential backoff
-
-### Fix
-Increased mock threshold from 7 to 12, accounting for:
-- ~6 calls during deletion phase
-- 2 calls per verification iteration
-- Need for at least 2 sleep calls (2 iterations × 2 calls = 4 calls)
-- Total: 6 + 4 = 10, so threshold > 10 (chose 12 for safety margin)
-
-### Lesson
-**When designing mocks with counters that span multiple phases, account for all calls that occur before the phase you're testing.** Consider:
-- How many calls happen in earlier phases?
-- How many calls occur per iteration of the phase being tested?
-- What's the minimum number of iterations needed to test the behavior?
-- Add a safety margin to account for implementation details (like fallback calls)
-
-### Pattern to Follow
-```bash
-# ✅ GOOD: Account for all phases when setting mock thresholds
-# Deletion phase: ~6 calls
-# Verification phase: 2 calls per iteration (ip -s xfrm state + ip xfrm state fallback)
-# Need 2+ iterations to test exponential backoff: 2 iterations × 2 calls = 4 calls
-# Total: 6 + 4 = 10, threshold > 10 (use 12 for safety)
-elif [[ \$verify_attempts -le 12 ]]; then
-    :  # Return empty (SA deleted)
-else
-    echo "SA re-established"  # Return SA
-fi
-
-# ❌ BAD: Threshold too low, doesn't account for earlier phases
-elif [[ \$verify_attempts -le 7 ]]; then
-    :  # Returns SA too early, before verification loop can test exponential backoff
-fi
-```
-
-### Systematic Application
-- When creating mocks with counters, trace through all code paths that call the mock
-- Document expected call counts for each phase
-- Set thresholds that account for all phases, not just the one being tested
-- Add comments explaining the threshold calculation
-- Consider resetting counters between phases if testing specific phase behavior
-
----
-
-## Mock Helper Function Refactoring (2025-01-XX)
-
-### Format Consistency in Mock Output
-
-**Issue:** When creating mock helper functions, ensure output format matches what the actual system commands produce. The detection code supports multiple formats, but consistency improves test reliability.
-
-**Example:**
-- `mock_ip_xfrm_state()` uses single-line format: `lifetime current: 1000 bytes, 10 packets`
-- `mock_ip_xfrm_with_incrementing_bytes()` uses UDM OS multi-line format:
-  ```
-  lifetime current:
-    1000(bytes), 10(packets)
-  ```
-
-**Lesson:** While both formats work (detection code has fallback), using the actual UDM OS format (multi-line with parentheses) is preferred for better test realism.
-
-**Reference:** See `lib/detection.sh:extract_byte_counter()` which handles both formats but prioritizes the UDM OS format.
-
-### Helper Function Overlap
-
-**Issue:** `mock_ip_xfrm_empty()` and `mock_ip_vpn_down()` have overlapping functionality. Both create mocks that return empty xfrm state.
-
-**Difference:**
-- `mock_ip_vpn_down()` supports additional handlers via second parameter
-- `mock_ip_xfrm_empty()` is simpler, returns path, and is documented as a "simpler wrapper"
-
-**Lesson:** Having both is acceptable when one is clearly a simpler wrapper for common cases. The documentation should clearly explain when to use each.
-
-### Replacing Inline Mocks with Helpers
-
-**Best Practice:** When refactoring tests to use helper functions:
-1. Verify the helper produces the same output format as the original inline mock
-2. Test that the refactored tests still pass
-3. Document any format differences in the helper function documentation
-
-**Example:** When replacing inline `cat >EOF` mock creation with `mock_ip_xfrm_with_incrementing_bytes()`, ensure:
-- The byte counter format matches (parentheses vs no parentheses)
-- The state file tracking works the same way
-- Both `ip -s xfrm state` and `ip xfrm state` are handled
-
-### Preserving Test Intent
-
-**Issue:** When refactoring, ensure the test's intent is preserved. Some inline mocks have complex stateful logic that may not fit simple helpers.
-
-**Lesson:** Don't force complex mocks into simple helpers. It's acceptable to leave complex stateful mocks inline if they test specific edge cases that don't warrant a general-purpose helper.
-
-**Example:** Tests that simulate SA deletion and re-establishment with specific call count tracking may need inline mocks rather than simple helpers.
-
----
-
-## 32. Avoid Over-Engineering Edge Case Protections
+## 28. Avoid Over-Engineering Edge Case Protections
 
 ### Problem
 Added a safeguard to prevent policy deletion when `peer_ip` matched `LOCAL_UDM_IP`, based on theoretical concern about misconfiguration.
@@ -2484,3 +2121,116 @@ fi
 - Safety analysis: `POLICY_DELETION_SAFETY.md` (updated to reflect removal)
 
 ---
+
+## 29. Log Messages Must Accurately Reflect the Operation Performed
+
+### Problem
+Log messages used terminology that didn't match the actual operation. Specifically, "Surgical cleanup completed" was logged even when using `ipsec reload` fallback, which affects all tunnels (not surgical/per-connection).
+
+**Example of the issue:**
+```bash
+# ❌ BAD: Message says "surgical" but operation affects all tunnels
+log_message "INFO" "$location_name" "Surgical cleanup completed for $location_name ($peer_ip) (via ipsec fallback, ...)"
+# ipsec reload affects ALL tunnels, not just the failing one
+```
+
+### Impact
+- Misleading log messages that don't accurately describe what happened
+- Operators may misunderstand the scope of recovery operations
+- Log analysis tools may incorrectly categorize recovery actions
+- Documentation and troubleshooting become more difficult
+
+### Lesson
+**Log messages must accurately reflect the operation performed, not just the function name or intended behavior.** When a function has multiple code paths with different characteristics:
+1. Use different terminology for different paths
+2. Include context in the message (e.g., "via ipsec fallback")
+3. Match terminology to actual behavior, not function name
+
+### Pattern to Follow
+```bash
+# ✅ GOOD: Accurate terminology based on actual operation
+if attempt_xfrm_recovery "$peer_ip" "$location_name"; then
+    # xfrm recovery is surgical (per-connection)
+    log_message "INFO" "$location_name" "Surgical cleanup completed for $location_name ($peer_ip) (via xfrm)"
+else
+    # ipsec reload affects all tunnels (not surgical)
+    log_message "INFO" "$location_name" "Recovery completed for $location_name ($peer_ip) (via ipsec fallback, ...)"
+fi
+
+# ❌ BAD: Same terminology for different operations
+log_message "INFO" "$location_name" "Surgical cleanup completed for $location_name ($peer_ip) (via ipsec fallback, ...)"
+```
+
+### Key Principles
+
+1. **Terminology Must Match Behavior**
+   - "Surgical" = affects only the specific connection/tunnel
+   - "Recovery" = general term that can affect multiple connections
+   - Use specific terms when the operation has specific characteristics
+
+2. **Include Context in Messages**
+   - Add qualifiers like "via ipsec fallback" to explain why the operation differs
+   - Help operators understand the recovery path taken
+
+3. **Function Names vs. Log Messages**
+   - Function names can be aspirational (e.g., `surgical_cleanup()`)
+   - Log messages must be factual (describe what actually happened)
+   - Don't let function names dictate log message terminology
+
+4. **Update Related Code**
+   - When changing log messages, check:
+     - Tests that assert on log messages
+     - Log analysis scripts that parse messages
+     - Documentation that references messages
+
+### Systematic Application
+- Review log messages for accuracy when adding fallback paths
+- Use different terminology for different code paths when behavior differs
+- Include context (method, scope) in log messages
+- Update tests and log analysis tools when changing message formats
+- Verify terminology matches actual operation, not just function intent
+
+### References
+- Implementation: `lib/recovery.sh:1793,1803` (changed "Surgical cleanup completed" to "Recovery completed" for ipsec fallback)
+- Test update: `tests/test_recovery_tier2.sh:602` (updated assertion for ipsec fallback path)
+- Log analysis: `analyze-logs.sh:363` (updated pattern matching for new message format)
+
+---
+
+## Summary: Key Takeaways
+
+These lessons should be applied systematically in future development and code reviews to prevent similar issues:
+
+**Note:** Many of these lessons have been consolidated into actionable patterns in `CODE_PATTERNS.md`. For current coding patterns and best practices, refer to `CODE_PATTERNS.md`. This document preserves the historical context of how patterns were discovered.
+
+**Assessment:** For a pragmatic evaluation of this document's value, recommendations for improvement, and categorization of lessons, see `CODE_REVIEW_LESSONS_LEARNED_ASSESSMENT.md`.
+
+1. **Always use abstraction layers consistently** - Don't construct paths directly, use abstraction functions
+2. **Always use validation functions instead of inline regex** - Validation functions provide consistent, secure validation
+3. **Verify function signatures match calls** - Check argument counts and types before calling functions
+4. **Remove debug code, don't just comment it** - Commented code adds confusion and maintenance burden
+5. **Verify findings before documenting** - Confirm issues exist before documenting them
+6. **Check for code duplication across files** - Look for similar patterns that could be extracted
+7. **Test coverage should match code paths** - Ensure all code paths are tested
+8. **Systematic code review process** - Follow structured approach to catch issues
+9. **Common patterns to watch for** - Be aware of common anti-patterns
+10. **Use character-by-character parsing for complex syntax** - Avoid regex for complex parsing
+11. **Always persist corrected values after validation** - Don't just validate, save corrected values
+12. **Always check file readability before file operations** - Prevent hangs from unreadable files
+13. **Always respect fake mode in all error paths** - Use `handle_error_or_exit_fake_mode()` for fatal errors
+14. **Track error state when functions log but don't exit** - Return error codes even when logging errors
+15. **Handle race conditions in process management operations** - Check process state after operations
+16. **Don't log success when operations fail** - Only log success when operation actually succeeds
+17. **Override functions, not just commands, when testing recovery** - Functions are invoked directly, not through PATH lookup
+18. **Always validate timestamp arithmetic** - Use safe timestamp functions to prevent overflow/underflow
+19. **Always validate arithmetic operations and clamp results** - Validate inputs and clamp results to expected ranges
+20. **Always preserve exit codes in cleanup functions** - Capture and preserve main function's exit code in EXIT trap handlers
+21. **Trap cleanup functions must handle unset variables with `set -u`** - Use default value expansion in cleanup functions
+22. **Always extract external IP from LOCATIONS using helper function** - LOCATIONS array stores delimited strings, not just IPs
+23. **Simplify complex conditionals when all branches converge** - Extract common operations outside conditionals
+24. **Distinguish between script execution success and recovery success** - Script execution success ≠ Operational success
+25. **Always re-check critical state instead of relying on cached values** - Cached state can become stale, especially when state changes can occur between checks
+26. **Handle hash collisions in anonymization functions** - When using hash-based mapping to ensure uniqueness, always implement collision resolution. Hash collisions are inevitable when mapping many inputs to fewer outputs. Track used values and implement linear probing or suffix appending to handle collisions and exhaustion.
+27. **Parse all selectors when interacting with kernel interfaces** - When parsing structured output from kernel interfaces (netlink, xfrm, iproute2), parse ALL attributes that could be selectors, not just the required ones. Optional attributes become required selectors when present. Missing selectors cause operations to fail with "No such process" errors even when the object exists. Include all parsed selectors in operations (get, delete, modify) to ensure successful matching.
+28. **Avoid over-engineering edge case protections** - Don't add safeguards for edge cases that are extremely unlikely, would be caught by testing, are protected by existing safeguards, or add complexity without significant benefit
+29. **Log messages must accurately reflect the operation performed** - Use different terminology for different code paths when behavior differs, include context in messages, match terminology to actual behavior not function name
