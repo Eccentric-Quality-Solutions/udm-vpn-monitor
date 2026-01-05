@@ -227,13 +227,13 @@ EOF
 	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "spi")
 	if [[ -f "$state_file" ]]; then
 		local original_perms
-		original_perms=$(stat -c "%a" "$state_file" 2>/dev/null || echo "644")
+		original_perms=$(save_permissions_for_restore "$state_file")
 		if chmod 000 "$state_file" 2>/dev/null; then
 			# State file is unreadable - should handle gracefully
 			run detect_sa_rekey "0x87654321" "$peer_ip" "$location_name"
 			# Should handle state read failure (may return failure or default behavior)
 			# Restore permissions
-			chmod "$original_perms" "$state_file" 2>/dev/null || true
+			restore_permissions_after_test "$state_file" "$original_perms"
 		fi
 	fi
 }
@@ -440,13 +440,7 @@ EOF
 	add_mock_to_path
 
 	# Mock nslookup/host command - DNS resolution fails
-	local mock_nslookup="${TEST_DIR}/nslookup"
-	cat >"$mock_nslookup" <<'EOF'
-#!/bin/bash
-# DNS resolution fails
-exit 1
-EOF
-	chmod +x "$mock_nslookup"
+	mock_nslookup_fail
 	add_mock_to_path
 
 	# Source required functions
@@ -480,18 +474,8 @@ EOF
 	echo "invalid_corrupted_data{{{}}" >"$state_file"
 
 	# Mock ip command - xfrm check succeeds
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 1000 bytes, 10 packets"
-    exit 0
-fi
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
 	# Source required functions
@@ -530,7 +514,7 @@ EOF
 	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "last_bytes")
 	if [[ -f "$state_file" ]]; then
 		local original_perms
-		original_perms=$(stat -c "%a" "$state_file" 2>/dev/null || echo "644")
+		original_perms=$(save_permissions_for_restore "$state_file")
 		if chmod 000 "$state_file" 2>/dev/null; then
 			# Source required functions
 			source_function "check_byte_counters"
@@ -542,7 +526,7 @@ EOF
 			[[ $status -eq 0 ]] || [[ $status -eq 1 ]]
 
 			# Restore permissions
-			chmod "$original_perms" "$state_file" 2>/dev/null || true
+			restore_permissions_after_test "$state_file" "$original_perms"
 		else
 			skip "Cannot make state file unwritable on this system"
 		fi
@@ -570,7 +554,7 @@ EOF
 
 	if [[ -f "$state_file" ]]; then
 		local original_perms
-		original_perms=$(stat -c "%a" "$state_file" 2>/dev/null || echo "644")
+		original_perms=$(save_permissions_for_restore "$state_file")
 		if chmod 000 "$state_file" 2>/dev/null; then
 			# Source required functions
 			source_function "get_failure_type"
@@ -582,7 +566,7 @@ EOF
 			assert_failure
 
 			# Restore permissions
-			chmod "$original_perms" "$state_file" 2>/dev/null || true
+			restore_permissions_after_test "$state_file" "$original_perms"
 		else
 			skip "Cannot make state file unreadable on this system"
 		fi
@@ -627,16 +611,7 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock ipsec command - ipsec check fails (no connection found)
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    # ipsec check fails - no connection found
-    exit 1
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 1
 	add_mock_to_path
 
 	# Initialize state
@@ -720,15 +695,7 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock ipsec command - ipsec check fails
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    exit 1
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 1
 	add_mock_to_path
 
 	# Initialize state
@@ -869,16 +836,7 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock ipsec command - ipsec check fails (no connection found)
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    # ipsec check fails - no connection found
-    exit 1
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 1
 	add_mock_to_path
 
 	# Initialize state with last_bytes set to same value (simulating bytes not increasing)

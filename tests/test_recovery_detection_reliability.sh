@@ -25,7 +25,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that recovery escalation is blocked when both detection tools are unavailable
 	# Expected: Script logs error about unreliable detection and skips Tier 2/3 recovery escalation
 	# Importance: Prevents false recovery actions when detection is unreliable
-	setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_NETWORK_PARTITION_CHECK=0'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	# Remove ip mock (make it unavailable)
 	# setup_vpn_at_tier_fixture creates a mock ip, but we need to remove it
@@ -72,7 +72,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that recovery escalation proceeds when at least one detection tool is available
 	# Expected: Script proceeds with recovery escalation when ip command is available (even if ipsec unavailable)
 	# Importance: Ensures recovery works when at least one detection method is available
-	setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Keep ip mock (available) - setup_vpn_at_tier_fixture creates it
 	# Don't create ipsec mock (unavailable)
@@ -104,7 +104,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that recovery escalation proceeds when at least one detection tool is available
 	# Expected: Script proceeds with recovery escalation when ipsec command is available (even if ip unavailable)
 	# Importance: Ensures recovery works when at least one detection method is available
-	setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Remove ip mock (unavailable)
 	rm -f "${TEST_DIR}/ip"
@@ -148,7 +148,7 @@ EOF
 	# Purpose: Test verifies that failures are still logged even when recovery escalation is blocked
 	# Expected: Script logs VPN failure and Tier 1 message even when recovery is blocked
 	# Importance: Ensures monitoring continues even when recovery is unavailable
-	setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_NETWORK_PARTITION_CHECK=0'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	# Remove ip mock (unavailable)
 	rm -f "${TEST_DIR}/ip"
@@ -190,7 +190,7 @@ EOF
 	# Purpose: Test verifies that safeguard only applies when failure type is "unknown"
 	# Expected: Recovery proceeds normally when failure type is known (e.g., "tunnel_down") even if detection tools limited
 	# Importance: Ensures safeguard doesn't block recovery when we can reliably determine failure type
-	setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Keep ip mock (available) - needed to detect tunnel_down failure type
 	# setup_vpn_at_tier_fixture creates mock ip that returns empty (VPN down)

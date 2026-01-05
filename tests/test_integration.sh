@@ -18,7 +18,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies the complete monitoring flow when VPN is healthy and functioning normally
 	# Expected: Script runs successfully, detects healthy VPN, and does not increment failure counter
 	# Importance: Validates the happy path where VPN is working correctly and no recovery actions are needed
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
 
 	# Run script - bytes should have increased from baseline
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
@@ -27,7 +27,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source_function "get_peer_state_file_path"
 	# Should not increment failure counter
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -42,7 +42,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies the complete monitoring flow when VPN fails for the first time, triggering Tier 1 action
 	# Expected: Script increments failure counter, logs Tier 1 message, and exits with failure status
 	# Importance: Validates tier escalation system activates correctly on first VPN failure detection
-	setup_vpn_at_tier_fixture 1 "192.168.1.1"
+	setup_vpn_at_tier_fixture 1 "${TEST_PEER_IP}"
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -52,7 +52,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should increment failure counter
 	# setup_vpn_at_tier_fixture creates location "TEST"
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	assert_file_exist "$failure_counter"
 	local count
 	count=$(cat "$failure_counter")
@@ -69,7 +69,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies the complete monitoring flow when VPN fails reach Tier 2 threshold, triggering surgical cleanup
 	# Expected: Script executes ipsec reload command and logs Tier 2 action when failure count reaches threshold
 	# Importance: Validates tier escalation system correctly triggers recovery actions at appropriate thresholds
-	setup_vpn_at_tier_fixture 2 "192.168.1.1"
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}"
 
 	# Mock ipsec for surgical cleanup
 	mock_ipsec_reload_restart 0 0
@@ -89,7 +89,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies the complete monitoring flow when VPN failures reach Tier 3 threshold, triggering full restart
 	# Expected: Script executes ipsec restart command and logs Tier 3 action when failure count reaches threshold
 	# Importance: Validates tier escalation system correctly triggers the most aggressive recovery action at highest threshold
-	setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
 
 	# Mock ipsec for full restart
 	local mock_ipsec
@@ -110,7 +110,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies the complete monitoring flow when VPN recovers after previous failures
 	# Expected: Script detects healthy VPN, resets failure counter to 0, and exits successfully
 	# Importance: Validates that failure counters are properly reset when VPN recovers, preventing false escalation
-	setup_vpn_failing_fixture "192.168.1.1" 3 1000 2000 "" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
+	setup_vpn_failing_fixture "${TEST_PEER_IP}" 3 1000 2000 "" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -119,7 +119,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Failure counter should be reset
 	# setup_vpn_failing_fixture creates location "TEST"
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	assert_file_exist "$failure_counter"
 	local count
 	count=$(cat "$failure_counter")
@@ -136,25 +136,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that multiple peer IPs are monitored independently with separate failure counters
 	# Expected: Each peer maintains its own failure counter; failures in one peer don't affect others
 	# Importance: Ensures multi-tunnel deployments can track failures per tunnel without cross-contamination
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
 	# Note: Multiple peer IPs need separate location configs - this test uses single location for simplicity
 
 	# Mock ip command - peer1 down, peer2 up
-	# Create separate mocks for each peer check
 	# The script calls: ip xfrm state | grep <peer_ip>
-	# So we need to return SA when grep would find 10.0.0.1
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    # Return SA for 10.0.0.1 (peer2 up), empty for 192.168.1.1 (peer1 down)
-    # The script pipes this to grep, so we return output that grep would match for peer2
-    echo "src 192.168.1.1 dst 10.0.0.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 1000 bytes, 10 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	# So we need to return SA when grep would find peer2 (TEST_PEER_IP2)
+	# Source IP is TEST_PEER_IP, destination IP is TEST_PEER_IP2
+	mock_ip_xfrm_state "${TEST_PEER_IP2}" 1000 "0x12345678" "${TEST_PEER_IP}" >/dev/null
 	add_mock_to_path
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
@@ -164,7 +153,7 @@ EOF
 	# Check that peer1 failure counter was incremented
 	# Peer1 should have failure counter incremented - use location-based path
 	local failure_counter1
-	failure_counter1=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	failure_counter1=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter1" ]]; then
 		local count1
 		count1=$(cat "$failure_counter1")
@@ -184,13 +173,13 @@ EOF
 	# Purpose: Test verifies that ping check correctly identifies VPN failures even when xfrm SA exists
 	# Expected: Script detects ping failure and logs warning, potentially marking VPN as failed
 	# Importance: Ping checks provide additional verification beyond SA existence, detecting connectivity issues
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=2'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=2'
 	# Set up state files using location-based state functions
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "" "192.168.1.1" "last_bytes" "1000" || true
-	set_peer_state "" "192.168.1.1" "spi" "0x12345678" || true
-	setup_mock_vpn_environment "192.168.1.1" 1000 "0x12345678" "192.168.1.1" 0
+	set_peer_state "" "${TEST_PEER_IP}" "last_bytes" "1000" || true
+	set_peer_state "" "${TEST_PEER_IP}" "spi" "0x12345678" || true
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000 "0x12345678" "192.168.1.1" 0
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -206,13 +195,13 @@ EOF
 	# Purpose: Test verifies that ping check correctly validates VPN health when both SA exists and ping succeeds
 	# Expected: Script detects healthy VPN via both xfrm SA and ping check, does not increment failure counter
 	# Importance: Validates ping check integration works correctly in the happy path scenario
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=2'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=2'
 	# Set up state files using location-based state functions
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "" "192.168.1.1" "last_bytes" "1000" || true
-	set_peer_state "" "192.168.1.1" "spi" "0x12345678" || true
-	setup_mock_vpn_environment "192.168.1.1" 2000 "0x12345678" "192.168.1.1" 1
+	set_peer_state "" "${TEST_PEER_IP}" "last_bytes" "1000" || true
+	set_peer_state "" "${TEST_PEER_IP}" "spi" "0x12345678" || true
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 2000 "0x12345678" "192.168.1.1" 1
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -220,7 +209,7 @@ EOF
 	source_function "get_peer_state_file_path"
 	# Should not increment failure counter
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -235,7 +224,7 @@ EOF
 	# Purpose: Test verifies that rate limiting mechanism prevents excessive IPsec restarts when limit is reached
 	# Expected: Script detects restart limit exceeded and skips restart action, preventing system overload
 	# Importance: Rate limiting protects against restart loops that could destabilize the system
-	setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_HOUR=3' 'COOLDOWN_MINUTES=1'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=3' 'COOLDOWN_MINUTES=1'
 
 	# Set up controllable time for testing
 	local base_time=1609459200 # Fixed timestamp for reproducible tests
@@ -269,7 +258,7 @@ EOF
 	# Purpose: Test verifies that cooldown mechanism prevents immediate restart attempts after recovery actions
 	# Expected: Script exits early when cooldown period is active, preventing excessive recovery actions
 	# Importance: Cooldown prevents restart loops and allows time for VPN to stabilize after recovery
-	setup_vpn_cooldown_fixture "192.168.1.1" 0 900 'COOLDOWN_MINUTES=15'
+	setup_vpn_cooldown_fixture "${TEST_PEER_IP}" 0 900 'COOLDOWN_MINUTES=15'
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -286,7 +275,7 @@ EOF
 	# Expected: Script executes ipsec reload command when Tier 2 threshold is reached
 	# Importance: Validates default recovery strategy uses surgical cleanup (reload) rather than full restart
 	# Disable xfrm recovery to force ipsec reload (xfrm is preferred when peer IP is provided)
-	setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0'
 
 	# Mock ipsec - track reload call
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -319,7 +308,7 @@ EOF
 	# Expected: Script detects bytes not increasing and logs warning, incrementing failure counter
 	# Importance: Byte counter tracking is critical for detecting VPN tunnels that exist but aren't passing traffic
 	# Disable ping check so that bytes not increasing is detected as suspect (not idle but healthy)
-	setup_vpn_failing_fixture "192.168.1.1" 0 1000 1000 "" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_PING_CHECK=0'
+	setup_vpn_failing_fixture "${TEST_PEER_IP}" 0 1000 1000 "" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_PING_CHECK=0'
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -335,7 +324,7 @@ EOF
 	# Purpose: Test verifies that the script correctly identifies healthy VPN when byte counters are increasing
 	# Expected: Script detects increasing bytes, updates last_bytes file, and does not increment failure counter
 	# Importance: Validates that increasing traffic correctly indicates VPN health and prevents false failure detection
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -344,7 +333,7 @@ EOF
 	source_function "get_peer_state_file_path"
 	# Should update byte counter
 	local last_bytes_file
-	last_bytes_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "last_bytes")
+	last_bytes_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
 	assert_file_exist "$last_bytes_file"
 	local bytes
 	bytes=$(cat "$last_bytes_file")
@@ -354,7 +343,7 @@ EOF
 	source_function "get_peer_state_file_path"
 	# Should not increment failure counter
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -369,18 +358,11 @@ EOF
 	# Purpose: Test verifies that the script falls back to ipsec status when xfrm command is unavailable
 	# Expected: Script detects xfrm unavailable, uses ipsec status as fallback, and continues monitoring
 	# Importance: Fallback mechanism ensures VPN monitoring works even when preferred detection method is unavailable
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	# Don't create ip mock (xfrm unavailable)
 	# Mock ipsec - return status
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    echo "test-conn: established, 192.168.1.1"
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 0 "test-conn: established, 192.168.1.1"
 	add_mock_to_path
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
@@ -403,7 +385,7 @@ EOF
 	# Purpose: Test verifies that monitor_location function resets failure counter when VPN health is restored
 	# Expected: Function detects healthy VPN, resets failure counter to 0, and logs recovery message
 	# Importance: Counter reset prevents false escalation after VPN recovers from transient failures
-	setup_vpn_failing_fixture "192.168.1.1" 2 1000 2000 "" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
+	setup_vpn_failing_fixture "${TEST_PEER_IP}" 2 1000 2000 "" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
 
 	# Run script - bytes increased, VPN should be healthy
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
@@ -412,7 +394,7 @@ EOF
 	source_function "get_peer_state_file_path"
 	# Failure counter should be reset to 0
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -429,7 +411,7 @@ EOF
 	# Purpose: Test verifies that monitor_location function increments failure counter when VPN check detects failure
 	# Expected: Function increments per-peer failure counter and logs failure message when VPN is down
 	# Importance: Failure counter tracking enables tier escalation system to trigger recovery actions
-	setup_vpn_at_tier_fixture 1 "192.168.1.1"
+	setup_vpn_at_tier_fixture 1 "${TEST_PEER_IP}"
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -437,7 +419,7 @@ EOF
 	source_function "get_peer_state_file_path"
 	# Failure counter should be incremented
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -482,7 +464,7 @@ EOF
 	# Increment to Tier 2 threshold using location-based state functions
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "" "192.168.1.1" "failure_count" "2" || true
+	set_peer_state "" "${TEST_PEER_IP}" "failure_count" "2" || true
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	assert_success
@@ -490,7 +472,7 @@ EOF
 	assert_file_contains "$LOG_FILE" "Tier 2"
 
 	# Increment to Tier 3 threshold using location-based state functions
-	set_peer_state "" "192.168.1.1" "failure_count" "3" || true
+	set_peer_state "" "${TEST_PEER_IP}" "failure_count" "3" || true
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	assert_success

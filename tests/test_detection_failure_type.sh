@@ -7,6 +7,7 @@ load test_helper
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
+load fixtures/vpn_rekey
 
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
@@ -20,22 +21,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that failure type "tunnel_down" is detected when no Phase 2 SA is found
 	# Expected: Failure type is detected as "tunnel_down" when no SA exists
 	# Importance: Enables targeted recovery strategies based on failure type
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
-
-	# Mock ip command - no SA (tunnel down)
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    # Return empty (no SA)
-    exit 0
-fi
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
-	add_mock_to_path
-
-	add_mock_to_path
+	setup_vpn_down_fixture "${TEST_PEER_IP}"
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
@@ -60,7 +46,7 @@ EOF
 	# Expected: Failure type is detected as "routing_issue" when SA exists but traffic not flowing
 	# Importance: Enables targeted recovery strategies for routing issues
 	# Disable ping check so that bytes not increasing is treated as a routing issue, not idle tunnel
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
 
 	# Set initial bytes (same as current - not increasing) using location-based state functions
 	# Ensure STATE_DIR is set (setup_location_vpn_monitor sets it, but ensure it's available)
@@ -74,33 +60,28 @@ EOF
 	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
 	# Use get_peer_state_file_path to get the correct path dynamically
 	local expected_state_file
-	expected_state_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "last_bytes" 2>/dev/null || echo "${STATE_DIR}/last_bytes_TEST_192_168_1_1")
+	expected_state_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes" 2>/dev/null || echo "${STATE_DIR}/last_bytes_TEST_192_168_1_1")
 
-	set_peer_state "TEST" "192.168.1.1" "last_bytes" "1000" || true
-	set_peer_state "TEST" "192.168.1.1" "spi" "0x12345678" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "last_bytes" "1000" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "0x12345678" || true
 
 	# Verify state file was created correctly
 	assert_file_exist "$expected_state_file"
 	local stored_bytes
-	stored_bytes=$(get_peer_state "TEST" "192.168.1.1" "last_bytes" "0" 2>/dev/null || echo "0")
+	stored_bytes=$(get_peer_state "TEST" "${TEST_PEER_IP}" "last_bytes" "0" 2>/dev/null || echo "0")
 	assert_equal "$stored_bytes" "1000"
 
 	# Mock ip command - SA exists but bytes not increasing
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 1000 bytes, 10 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state "${TEST_PEER_IP}" 1000 >/dev/null
 
 	# Mock ipsec to fail (prevent fallback from succeeding and masking failure)
 	local mock_ipsec="${TEST_DIR}/ipsec"
 	cat >"$mock_ipsec" <<'EOF'
 #!/bin/bash
+if [[ "$1" == "--help" ]] || [[ "$1" == "--version" ]]; then
+    # Handle command availability checks (used by check_command_available)
+    exit 0
+fi
 # Return failure to ensure xfrm failure is not masked by ipsec fallback
 exit 1
 EOF
@@ -109,7 +90,7 @@ EOF
 
 	# Debug: Verify state file exists before running script
 	local state_file_before
-	state_file_before=$(get_peer_state_file_path "TEST" "192.168.1.1" "last_bytes" 2>/dev/null || echo "${STATE_DIR}/last_bytes_TEST_192_168_1_1")
+	state_file_before=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes" 2>/dev/null || echo "${STATE_DIR}/last_bytes_TEST_192_168_1_1")
 	if [[ -f "$state_file_before" ]]; then
 		local bytes_before
 		bytes_before=$(cat "$state_file_before" 2>/dev/null || echo "0")
@@ -150,38 +131,30 @@ EOF
 	# Purpose: Test verifies that failure type "routing_issue" is detected when SA exists but ping fails
 	# Expected: Failure type is detected as "routing_issue" when SA exists but connectivity fails
 	# Importance: Enables targeted recovery strategies for routing issues
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="192.168.1.1"'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	# Set initial bytes (increasing) using location-based state functions
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "TEST" "192.168.1.1" "last_bytes" "1000" || true
-	set_peer_state "TEST" "192.168.1.1" "spi" "0x12345678" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "last_bytes" "1000" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "0x12345678" || true
 
 	# Mock ip command - SA exists
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 2000 bytes, 20 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "2000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 
 	# Mock ping - fails
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-exit 1
-EOF
-	chmod +x "$mock_ping"
+	mock_ping_failure >/dev/null
+	add_mock_to_path
 
 	# Mock ipsec to fail (prevent fallback from succeeding and masking failure)
 	local mock_ipsec="${TEST_DIR}/ipsec"
 	cat >"$mock_ipsec" <<'EOF'
 #!/bin/bash
+if [[ "$1" == "--help" ]] || [[ "$1" == "--version" ]]; then
+    # Handle command availability checks (used by check_command_available)
+    exit 0
+fi
 # Return failure to ensure xfrm failure is not masked by ipsec fallback
 exit 1
 EOF
@@ -202,28 +175,7 @@ EOF
 	# Purpose: Test verifies that failure type "rekey" is detected when SPI changes (not a failure)
 	# Expected: Failure type is detected as "rekey" when SPI changes, VPN marked as OK
 	# Importance: Rekey events are logged but not treated as failures
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
-
-	# Set initial SPI using location-based state functions
-	# shellcheck source=../lib/state.sh
-	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "TEST" "192.168.1.1" "last_bytes" "1000" || true
-	set_peer_state "TEST" "192.168.1.1" "spi" "0x12345678" || true
-
-	# Mock ip command - new SPI (rekey)
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
-    echo "    lifetime current: 2000 bytes, 20 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
-	add_mock_to_path
-
-	add_mock_to_path
+	setup_vpn_rekey_fixture "${TEST_PEER_IP}" "0x12345678" "0x87654321" 1000 2000
 	run bash "$TEST_SCRIPT" --fake
 
 	# Should detect rekey (not a failure)
@@ -249,20 +201,27 @@ EOF
 	# Expected: Failure type is detected as "unknown" when detection methods fail
 	# Importance: Ensures failure tracking continues even when specific type cannot be determined
 	# Disable ping check so that when byte counter extraction fails, VPN check fails and failure type detection is triggered
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
 
 	# Mock ip command - SA exists but no byte counter info
 	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
+	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag)
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    # No lifetime line (can't extract bytes)
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Handle "ip xfrm state" (without statistics flag)
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
     echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
     # No lifetime line (can't extract bytes)
     exit 0
 fi
 # Handle other ip commands
-exec /usr/bin/ip "$@"
+exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
@@ -289,21 +248,7 @@ EOF
 	# Purpose: Test verifies that failure type is stored in state file for use by recovery actions
 	# Expected: Failure type is stored in state file and can be retrieved for recovery strategies
 	# Importance: Enables recovery actions to use failure-specific strategies
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
-
-	# Mock ip command - no SA (tunnel down)
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 0
-fi
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
-	add_mock_to_path
-
-	add_mock_to_path
+	setup_vpn_down_fixture "${TEST_PEER_IP}"
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
@@ -323,12 +268,12 @@ EOF
 	# Expected: Failure type file is removed or cleared when VPN becomes healthy
 	# Importance: Ensures failure type tracking is reset after recovery
 	# Use same fixture as working test in test_detection.sh
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
 	source_function "get_peer_state_file_path"
 	# Create failure type file (from previous failure)
 	local failure_type_file
-	failure_type_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_type")
+	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
 	echo "tunnel_down" >"$failure_type_file"
 
 	# Note: Recovery message is logged when failure_count > 0 OR had_failure_type == 1
@@ -356,19 +301,11 @@ EOF
 	# Purpose: Test verifies that failure type detection works when xfrm is unavailable
 	# Expected: Failure type is detected using fallback methods when xfrm unavailable
 	# Importance: Ensures failure type detection works even when preferred method unavailable
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	# Don't create ip mock (xfrm unavailable)
 	# Mock ipsec - no connection
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    # No connection found
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 0
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake

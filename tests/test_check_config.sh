@@ -16,6 +16,9 @@ CHECK_CONFIG_SCRIPT="${BATS_TEST_DIRNAME}/../check-config.sh"
 # Arguments:
 #   $1: Config file path
 #   $2+: Variable assignments (e.g., "VAR1=value1" "VAR2=value2")
+#
+# Returns:
+#   0: Always succeeds
 create_test_config() {
 	local config_file="$1"
 	shift
@@ -37,10 +40,13 @@ EOF
 #
 # Arguments:
 #   $1: Config file path
+#
+# Returns:
+#   0: Always succeeds
 create_valid_config() {
 	local config_file="$1"
 	create_test_config "$config_file" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -55,6 +61,9 @@ create_valid_config() {
 #
 # Arguments:
 #   $1: Base directory (lib will be created here)
+#
+# Returns:
+#   0: Always succeeds
 create_test_lib() {
 	local base_dir="$1"
 	local lib_dir="${base_dir}/lib"
@@ -79,6 +88,14 @@ declare -A CONFIG_SCHEMA=(
 	["LOGS_DIR"]="optional|string||default:"
 )
 
+# Get configuration schema for a variable
+#
+# Arguments:
+#   $1: Variable name
+#
+# Returns:
+#   0: Schema found and printed to stdout
+#   1: Variable not found in schema
 get_config_schema() {
 	local var_name="$1"
 	# Check exact match first
@@ -99,6 +116,14 @@ get_config_schema() {
 	return 1
 }
 
+# Get default value for a configuration variable
+#
+# Arguments:
+#   $1: Variable name
+#
+# Returns:
+#   0: Default value found and printed to stdout
+#   1: Variable not found in schema
 get_config_default() {
 	local var_name="$1"
 	local schema
@@ -199,7 +224,7 @@ EOF
 	local config_file="${test_dir}/vpn-monitor.conf"
 	# Create config with only required settings (missing optional ones)
 	create_test_config "$config_file" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -226,7 +251,7 @@ EOF
 	local config_file="${test_dir}/vpn-monitor.conf"
 	# Create config with deprecated settings
 	create_test_config "$config_file" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'EXTERNAL_PEER_IPS="192.168.1.1"' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
@@ -257,7 +282,7 @@ EOF
 	local config_file="${test_dir}/vpn-monitor.conf"
 	# Create config with all schema settings
 	create_test_config "$config_file" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -372,7 +397,7 @@ EOF
 	local config_file="${test_dir}/vpn-monitor.conf"
 	# Create config with missing and deprecated settings
 	create_test_config "$config_file" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'EXTERNAL_PEER_IPS="192.168.1.1"' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
@@ -400,8 +425,8 @@ EOF
 
 	local config_file="${test_dir}/vpn-monitor.conf"
 	create_test_config "$config_file" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
-		'LOCATION_DC_EXTERNAL="10.0.0.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_DC_EXTERNAL=\"${TEST_PEER_IP2}\"" \
 		'VPN_NAME="Site-to-Site VPN"' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
@@ -426,7 +451,7 @@ EOF
 
 	local config_file="${test_dir}/vpn-monitor.conf"
 	create_test_config "$config_file" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -451,9 +476,9 @@ EOF
 	create_test_lib "$test_dir"
 
 	local config_file="${test_dir}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
+	cat >"$config_file" <<EOF
 # Config with inline comments
-LOCATION_NYC_EXTERNAL="192.168.1.1"  # External IP
+LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"  # External IP
 TIER1_THRESHOLD=1  # Tier 1 threshold
 TIER2_THRESHOLD=3  # Tier 2 threshold
 TIER3_THRESHOLD=5  # Tier 3 threshold

@@ -6,7 +6,7 @@
 # being monitored. The VPN may be down or the byte counter may not be increasing.
 #
 # Arguments:
-#   $1: Peer IP address (default: "192.168.1.1")
+#   $1: Peer IP address (default: "${TEST_PEER_IP}")
 #   $2: Failure count (default: 3)
 #   $3: Last bytes value (default: 1000)
 #   $4: Current bytes value for mock (default: 1000, same as last - not increasing)
@@ -20,13 +20,13 @@
 #   - Sets TEST_CONFIG_FILE, TEST_SCRIPT, STATE_DIR, LOGS_DIR variables
 #
 # Example:
-#   setup_vpn_failing_fixture "192.168.1.1" 3
+#   setup_vpn_failing_fixture "${TEST_PEER_IP}" 3
 #   # VPN has 3 failures, bytes stuck at 1000
 #
 #   setup_vpn_failing_fixture "192.168.1.1" 5 5000 5000
 #   # VPN has 5 failures, bytes stuck at 5000
 setup_vpn_failing_fixture() {
-	local peer_ip="${1:-192.168.1.1}"
+	local peer_ip="${1:-${TEST_PEER_IP}}"
 	local failure_count="${2:-3}"
 	local last_bytes="${3:-1000}"
 	local current_bytes="${4:-$last_bytes}"

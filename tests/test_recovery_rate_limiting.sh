@@ -23,7 +23,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that rate limiting handles corrupted restart count file gracefully
 	# Expected: Script recovers corrupted file and continues execution without crashing
 	# Importance: Prevents script failures from corrupted rate limit files, ensuring monitoring continues
-	setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_HOUR=3' 'COOLDOWN_MINUTES=1'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=3' 'COOLDOWN_MINUTES=1'
 
 	# Create corrupted restart file (non-numeric)
 	local restart_file="${STATE_DIR}/restart_count"
@@ -58,8 +58,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script treats empty file as no previous restarts and allows recovery actions
 	# Importance: Prevents script failures from empty rate limit files, ensuring recovery can proceed
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -82,7 +82,7 @@ EOF
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
 	# Use location name "NYC" to match the config file (LOCATION_NYC_EXTERNAL)
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "NYC" "192.168.1.1" "failure_count")
+	failure_counter=$(get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "failure_count")
 
 	# Create empty restart file
 	touch "$restart_file"
@@ -90,7 +90,7 @@ EOF
 	# Set failure count to Tier 3 threshold
 	echo "5" >"$failure_counter"
 
-	setup_mock_vpn_environment "192.168.1.1" 0 "" "" 0
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 0 "" "" 0
 
 	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
@@ -113,8 +113,8 @@ EOF
 	# Expected: Script detects directory instead of file and handles error without crashing
 	# Importance: Prevents script failures from misconfigured rate limit file paths
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -137,7 +137,7 @@ EOF
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
 	# Use location name "NYC" to match the config file (LOCATION_NYC_EXTERNAL)
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "NYC" "192.168.1.1" "failure_count")
+	failure_counter=$(get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "failure_count")
 
 	# Create restart file as a directory
 	rm -rf "$restart_file" 2>/dev/null || true
@@ -146,7 +146,7 @@ EOF
 	# Set failure count to Tier 3 threshold
 	echo "5" >"$failure_counter"
 
-	setup_mock_vpn_environment "192.168.1.1" 0 "" "" 0
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 0 "" "" 0
 
 	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
@@ -169,8 +169,8 @@ EOF
 	# Expected: Old restart timestamps (>24 hours) are removed from restart count file, recent entries remain
 	# Importance: Cleanup prevents restart count file from growing indefinitely and ensures accurate rate limiting
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -195,7 +195,7 @@ EOF
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
 	# Use location name "NYC" to match the config file (LOCATION_NYC_EXTERNAL)
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "NYC" "192.168.1.1" "failure_count")
+	failure_counter=$(get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "failure_count")
 
 	# Set up controllable time for testing
 	local base_time=1609459200 # Fixed timestamp for reproducible tests
@@ -266,7 +266,7 @@ EOF
 	# Set up rate limited fixture with exactly MAX_RESTARTS_PER_HOUR (3) recent restarts
 	local now=$base_time
 	local recent=$((now - 1800)) # 30 minutes ago (within 1 hour)
-	setup_vpn_rate_limited_fixture "192.168.1.1" 3 \
+	setup_vpn_rate_limited_fixture "${TEST_PEER_IP}" 3 \
 		"$recent" \
 		"$recent" \
 		"$recent" \
@@ -319,7 +319,7 @@ EOF
 	# Set up rate limited fixture with exactly MAX_RESTARTS_PER_HOUR - 1 (2) recent restarts
 	local now=$base_time
 	local recent=$((now - 1800)) # 30 minutes ago (within 1 hour)
-	setup_vpn_rate_limited_fixture "192.168.1.1" 2 \
+	setup_vpn_rate_limited_fixture "${TEST_PEER_IP}" 2 \
 		"$recent" \
 		"$recent" \
 		'COOLDOWN_MINUTES=1' \

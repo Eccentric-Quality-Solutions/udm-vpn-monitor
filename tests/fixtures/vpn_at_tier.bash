@@ -8,7 +8,7 @@
 #
 # Arguments:
 #   $1: Tier number (1, 2, or 3) (default: 1)
-#   $2: Peer IP address (default: "192.168.1.1")
+#   $2: Peer IP address (default: "${TEST_PEER_IP}")
 #   $3+: Additional config variables as KEY="VALUE" pairs
 #
 # Side effects:
@@ -19,14 +19,14 @@
 #   - Sets TEST_CONFIG_FILE, TEST_SCRIPT, STATE_DIR, LOGS_DIR variables
 #
 # Example:
-#   setup_vpn_at_tier_fixture 1 "192.168.1.1"
+#   setup_vpn_at_tier_fixture 1 "${TEST_PEER_IP}"
 #   # VPN at Tier 1 threshold (failure_count=1, TIER1_THRESHOLD=1)
 #
 #   setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_XFRM_RECOVERY=0'
 #   # VPN at Tier 2 threshold (failure_count=3, TIER2_THRESHOLD=3)
 setup_vpn_at_tier_fixture() {
 	local tier="${1:-1}"
-	local peer_ip="${2:-192.168.1.1}"
+	local peer_ip="${2:-${TEST_PEER_IP}}"
 	shift 2 || true
 	local extra_config=("$@")
 
@@ -64,18 +64,10 @@ setup_vpn_at_tier_fixture() {
 	set_peer_state "TEST" "$peer_ip" "failure_count" "$failure_count" || true
 
 	# Create mock ip command that returns empty output (VPN down, no SA)
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-	# Return empty output (no SA found - VPN is down)
-	exit 0
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_vpn_down >/dev/null
 
 	# Add mocks to PATH
 	add_mock_to_path
 
-	export MOCK_IP="$mock_ip"
+	export MOCK_IP="${TEST_DIR}/ip"
 }

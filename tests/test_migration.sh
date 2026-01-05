@@ -14,9 +14,18 @@ MIGRATION_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/migrate-config-to-locations.sh
 # ============================================================================
 
 # Helper function to create old format config
+#
+# Arguments:
+#   $1: Path to config file to create
+#   $2: External peer IPs (default: TEST_PEER_IP)
+#   $3: Internal peer IPs (optional)
+#   $@: Additional config variables to add
+#
+# Returns:
+#   0: Always succeeds
 create_old_config() {
 	local config_file="$1"
-	local external_ips="${2:-192.168.1.1}"
+	local external_ips="${2:-${TEST_PEER_IP}}"
 	local internal_ips="${3:-}"
 	shift 3 || true
 	local extra_config=("$@")

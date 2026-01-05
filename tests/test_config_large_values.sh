@@ -19,9 +19,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script processes very large value without crashing, either using default or failing gracefully
 	# Importance: Very large values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 COOLDOWN_MINUTES=999999999
 EOF
 
@@ -32,7 +32,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
@@ -50,9 +50,9 @@ EOF
 	# Expected: Script processes very large value without crashing, either using default or failing gracefully
 	# Importance: Very large values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 MAX_RESTARTS_PER_HOUR=999999999
 EOF
 
@@ -63,7 +63,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
@@ -80,9 +80,9 @@ EOF
 	# Expected: Script processes very large value without crashing, either using default or failing gracefully
 	# Importance: Very large values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 PING_COUNT=999999999
 EOF
 
@@ -93,7 +93,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 

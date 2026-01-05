@@ -16,6 +16,9 @@ COMPARE_CONFIG_SCRIPT="${BATS_TEST_DIRNAME}/../compare-config.sh"
 # Arguments:
 #   $1: Config file path
 #   $2+: Variable assignments (e.g., "VAR1=value1" "VAR2=value2")
+#
+# Returns:
+#   0: Always succeeds
 create_test_config() {
 	local config_file="$1"
 	shift
@@ -37,10 +40,13 @@ EOF
 #
 # Arguments:
 #   $1: Config file path
+#
+# Returns:
+#   0: Always succeeds
 create_valid_config() {
 	local config_file="$1"
 	create_test_config "$config_file" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -94,7 +100,7 @@ create_valid_config() {
 
 	# Create template with more fields
 	create_test_config "$template_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -105,7 +111,7 @@ create_valid_config() {
 
 	# Create existing config with fewer fields (missing VPN_NAME and NO_ESCALATE)
 	create_test_config "$existing_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -133,7 +139,7 @@ create_valid_config() {
 
 	# Create template with fewer fields
 	create_test_config "$template_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -142,7 +148,7 @@ create_valid_config() {
 
 	# Create existing config with deprecated fields
 	create_test_config "$existing_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'EXTERNAL_PEER_IPS="192.168.1.1"' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
@@ -174,7 +180,7 @@ create_valid_config() {
 
 	# Create identical configs
 	create_test_config "$template_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -183,7 +189,7 @@ create_valid_config() {
 		'VPN_NAME="Site-to-Site VPN"'
 
 	create_test_config "$existing_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -290,8 +296,8 @@ create_valid_config() {
 
 	# Create template with quoted values
 	create_test_config "$template_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
-		'LOCATION_DC_EXTERNAL="10.0.0.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_DC_EXTERNAL=\"${TEST_PEER_IP2}\"" \
 		'VPN_NAME="Site-to-Site VPN"' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
@@ -333,7 +339,7 @@ create_valid_config() {
 
 	# Create template with unquoted values
 	create_test_config "$template_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -344,7 +350,7 @@ create_valid_config() {
 
 	# Create existing config with unquoted values
 	create_test_config "$existing_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -375,8 +381,8 @@ create_valid_config() {
 
 	# Create template with values containing spaces
 	create_test_config "$template_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
-		'LOCATION_NYC_INTERNAL="192.168.1.1 192.168.1.2 192.168.1.3"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP} ${TEST_LOCAL_IP} 192.168.1.3\"" \
 		'VPN_NAME="Site-to-Site VPN"' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
@@ -386,7 +392,7 @@ create_valid_config() {
 
 	# Create existing config missing the internal IPs variable
 	create_test_config "$existing_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'VPN_NAME="Site-to-Site VPN"' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
@@ -400,7 +406,7 @@ create_valid_config() {
 	assert_output --partial "New Settings in Template"
 	assert_output --partial "LOCATION_NYC_INTERNAL"
 	# Should show quoted value in recommendations
-	assert_output --partial "LOCATION_NYC_INTERNAL=\"192.168.1.1 192.168.1.2 192.168.1.3\""
+	assert_output --partial "LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP} ${TEST_LOCAL_IP} 192.168.1.3\""
 }
 
 # bats test_tags=category:unit
@@ -416,7 +422,7 @@ create_valid_config() {
 
 	# Create template with duplicate variables
 	create_test_config "$template_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER1_THRESHOLD=2' \
 		'TIER2_THRESHOLD=3' \
@@ -449,7 +455,7 @@ create_valid_config() {
 
 	# Create existing config with duplicate variables
 	create_test_config "$existing_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER1_THRESHOLD=2' \
 		'TIER2_THRESHOLD=3' \
@@ -506,7 +512,7 @@ EOF
 
 	# Create template with a new setting
 	create_test_config "$template_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -538,7 +544,7 @@ EOF
 
 	# Create template with new setting
 	create_test_config "$template_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -548,7 +554,7 @@ EOF
 
 	# Create existing config with deprecated setting
 	create_test_config "$existing_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'EXTERNAL_PEER_IPS="192.168.1.1"' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
@@ -597,9 +603,9 @@ EOF
 	local existing_config="${test_dir}/existing.conf"
 
 	# Create template with inline comments
-	cat >"$template_config" <<'EOF'
+	cat >"$template_config" <<EOF
 # Config with inline comments
-LOCATION_NYC_EXTERNAL="192.168.1.1"  # External IP
+LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"  # External IP
 TIER1_THRESHOLD=1  # Tier 1 threshold
 TIER2_THRESHOLD=3  # Tier 2 threshold
 TIER3_THRESHOLD=5  # Tier 3 threshold
@@ -710,8 +716,8 @@ EOF
 
 	# Template has example location (NYC)
 	create_test_config "$template_config" \
-		'LOCATION_NYC_EXTERNAL="192.168.1.1"' \
-		'LOCATION_NYC_INTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -720,8 +726,8 @@ EOF
 
 	# Existing config has customer-specific locations
 	create_test_config "$existing_config" \
-		'LOCATION_CUSTOMER1_EXTERNAL="10.0.0.1"' \
-		'LOCATION_CUSTOMER1_INTERNAL="10.0.0.1"' \
+		"LOCATION_CUSTOMER1_EXTERNAL=\"${TEST_PEER_IP2}\"" \
+		"LOCATION_CUSTOMER1_INTERNAL=\"${TEST_PEER_IP2}\"" \
 		'LOCATION_OFFICE2_EXTERNAL="10.0.0.2"' \
 		'LOCATION_OFFICE2_INTERNAL="10.0.0.2"' \
 		'TIER1_THRESHOLD=1' \
@@ -770,8 +776,8 @@ EOF
 
 	# Existing config has customer-specific locations
 	create_test_config "$existing_config" \
-		'LOCATION_CUSTOMER1_EXTERNAL="10.0.0.1"' \
-		'LOCATION_CUSTOMER1_INTERNAL="10.0.0.1"' \
+		"LOCATION_CUSTOMER1_EXTERNAL=\"${TEST_PEER_IP2}\"" \
+		"LOCATION_CUSTOMER1_INTERNAL=\"${TEST_PEER_IP2}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \

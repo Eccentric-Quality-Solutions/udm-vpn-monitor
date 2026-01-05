@@ -23,6 +23,14 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 # ============================================================================
 
 # Setup test environment with state directory
+#
+# Initializes test directories and environment variables for ping summary tests.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
 setup_ping_summary_test() {
 	STATE_DIR="${TEST_DIR}/state"
 	LOGS_DIR="${TEST_DIR}/logs"
@@ -37,6 +45,12 @@ setup_ping_summary_test() {
 
 # Helper to set up mock timestamp using existing mock_date function
 # This uses the standard mock_date from test_helper.bash
+#
+# Arguments:
+#   $1: Timestamp value to mock
+#
+# Returns:
+#   0: Always succeeds
 setup_mock_timestamp() {
 	local timestamp="$1"
 	mock_date "$timestamp" 0
@@ -70,13 +84,13 @@ setup_mock_timestamp() {
 	# The function increments before logging, so we need count=2 in file
 	# to get a summary of 3 (2+1=3)
 	setup_mock_timestamp "$start_time"
-	log_ping_summary_if_due "192.168.1.1" ""
-	log_ping_summary_if_due "192.168.1.1" ""
+	log_ping_summary_if_due "${TEST_PEER_IP}" ""
+	log_ping_summary_if_due "${TEST_PEER_IP}" ""
 
 	# Now advance time past interval and call again - should log summary
 	# With count=2 in file, function increments to 3 and logs "3 successful checks"
 	setup_mock_timestamp "$later_time"
-	log_ping_summary_if_due "192.168.1.1" ""
+	log_ping_summary_if_due "${TEST_PEER_IP}" ""
 
 	# Verify summary was logged
 	# Note: Function increments count before logging. After 2 calls, count=2 in file.
@@ -98,11 +112,11 @@ setup_mock_timestamp() {
 	local later_time=1420 # 7 minutes later (420 seconds)
 
 	setup_mock_timestamp "$start_time"
-	log_ping_summary_if_due "192.168.1.1" ""
+	log_ping_summary_if_due "${TEST_PEER_IP}" ""
 
 	# Advance time by 7 minutes
 	setup_mock_timestamp "$later_time"
-	log_ping_summary_if_due "192.168.1.1" ""
+	log_ping_summary_if_due "${TEST_PEER_IP}" ""
 
 	# Verify summary uses 7 minutes
 	assert_file_contains "$LOG_FILE" "Ping check summary: 1 successful checks in the last 7 minutes"
@@ -122,11 +136,11 @@ setup_mock_timestamp() {
 	local later_time=1300 # 5 minutes later (300 seconds)
 
 	setup_mock_timestamp "$start_time"
-	log_ping_summary_if_due "192.168.1.1" ""
+	log_ping_summary_if_due "${TEST_PEER_IP}" ""
 
 	# Advance time by 5 minutes
 	setup_mock_timestamp "$later_time"
-	log_ping_summary_if_due "192.168.1.1" ""
+	log_ping_summary_if_due "${TEST_PEER_IP}" ""
 
 	# Verify summary uses configured interval
 	assert_file_contains "$LOG_FILE" "Ping check summary: 1 successful checks in the last 5 minutes"
@@ -163,13 +177,13 @@ setup_mock_timestamp() {
 	local later_time=1060
 
 	setup_mock_timestamp "$start_time"
-	log_ping_summary_if_due "192.168.1.1" "10.0.0.1"
+	log_ping_summary_if_due "${TEST_PEER_IP}" "10.0.0.1"
 
 	setup_mock_timestamp "$later_time"
-	log_ping_summary_if_due "192.168.1.1" "10.0.0.1"
+	log_ping_summary_if_due "${TEST_PEER_IP}" "10.0.0.1"
 
 	# Verify summary includes local IP
-	assert_file_contains "$LOG_FILE" "target: 192.168.1.1 from 10.0.0.1"
+	assert_file_contains "$LOG_FILE" "target: ${TEST_PEER_IP} from ${TEST_PEER_IP2}"
 }
 
 # bats test_tags=category:unit
@@ -185,12 +199,12 @@ setup_mock_timestamp() {
 	local even_later_time=1120
 
 	setup_mock_timestamp "$start_time"
-	log_ping_summary_if_due "192.168.1.1" ""
-	log_ping_summary_if_due "192.168.1.1" ""
+	log_ping_summary_if_due "${TEST_PEER_IP}" ""
+	log_ping_summary_if_due "${TEST_PEER_IP}" ""
 
 	# Advance time and log summary
 	setup_mock_timestamp "$later_time"
-	log_ping_summary_if_due "192.168.1.1" ""
+	log_ping_summary_if_due "${TEST_PEER_IP}" ""
 
 	# Verify count was reset
 	local count
@@ -199,11 +213,11 @@ setup_mock_timestamp() {
 
 	# Make another ping call
 	setup_mock_timestamp "$even_later_time"
-	log_ping_summary_if_due "192.168.1.1" ""
+	log_ping_summary_if_due "${TEST_PEER_IP}" ""
 
 	# Advance time again and verify new summary shows only 1 ping
 	setup_mock_timestamp $((even_later_time + 60))
-	log_ping_summary_if_due "192.168.1.1" ""
+	log_ping_summary_if_due "${TEST_PEER_IP}" ""
 
 	# Should show 1 check, not 3 (count was reset)
 	assert_file_contains "$LOG_FILE" "Ping check summary: 1 successful checks"
@@ -222,22 +236,23 @@ setup_mock_timestamp() {
 	export PING_TIMEOUT=1
 
 	# Mock ping to succeed
-	cat >"${TEST_DIR}/ping" <<'EOF'
-#!/bin/bash
-# Mock ping that succeeds
-echo "3 packets transmitted, 0 received, 0% packet loss"
-exit 0
-EOF
-	chmod +x "${TEST_DIR}/ping"
+	mock_ping_success >/dev/null
 	export PATH="${TEST_DIR}:${PATH}"
 
 	# Mock route check to succeed (no route management needed)
+	# Mock function to simulate route existence check
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds (route exists)
 	check_route_exists() {
 		return 0
 	}
 	export -f check_route_exists
 
-	run check_ping_connectivity "192.168.1.1" ""
+	run check_ping_connectivity "${TEST_PEER_IP}" ""
 
 	# Should succeed
 	assert_success
@@ -260,22 +275,23 @@ EOF
 	export PING_TIMEOUT=1
 
 	# Mock ping to succeed
-	cat >"${TEST_DIR}/ping" <<'EOF'
-#!/bin/bash
-# Mock ping that succeeds
-echo "3 packets transmitted, 0 received, 0% packet loss"
-exit 0
-EOF
-	chmod +x "${TEST_DIR}/ping"
+	mock_ping_success >/dev/null
 	export PATH="${TEST_DIR}:${PATH}"
 
 	# Mock route check
+	# Mock function to simulate route existence check
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds (route exists)
 	check_route_exists() {
 		return 0
 	}
 	export -f check_route_exists
 
-	run check_ping_connectivity "192.168.1.1" ""
+	run check_ping_connectivity "${TEST_PEER_IP}" ""
 
 	assert_success
 
@@ -297,16 +313,17 @@ EOF
 	export PING_SUMMARY_INTERVAL_MINUTES=1
 
 	# Mock ping to succeed
-	cat >"${TEST_DIR}/ping" <<'EOF'
-#!/bin/bash
-# Mock ping that succeeds
-echo "3 packets transmitted, 0 received, 0% packet loss"
-exit 0
-EOF
-	chmod +x "${TEST_DIR}/ping"
+	mock_ping_success >/dev/null
 	export PATH="${TEST_DIR}:${PATH}"
 
 	# Mock route check
+	# Mock function to simulate route existence check
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds (route exists)
 	check_route_exists() {
 		return 0
 	}
@@ -315,7 +332,7 @@ EOF
 	# Mock timestamp for consistent testing
 	setup_mock_timestamp 1000
 
-	run check_ping_connectivity "192.168.1.1" ""
+	run check_ping_connectivity "${TEST_PEER_IP}" ""
 
 	assert_success
 
@@ -336,7 +353,7 @@ EOF
 	setup_mock_timestamp 1000
 
 	# First call should log summary (last_time=0 triggers immediate summary)
-	log_ping_summary_if_due "192.168.1.1" ""
+	log_ping_summary_if_due "${TEST_PEER_IP}" ""
 
 	# Verify summary was logged
 	assert_file_contains "$LOG_FILE" "Ping check summary: 1 successful checks"
@@ -352,7 +369,7 @@ EOF
 	export PING_SUMMARY_INTERVAL_MINUTES=1
 
 	setup_mock_timestamp 1000
-	log_ping_summary_if_due "192.168.1.1" ""
+	log_ping_summary_if_due "${TEST_PEER_IP}" ""
 
 	# Verify state files exist (atomic write succeeded)
 	# Note: We can't easily verify atomic_write_file was called without complex mocking,

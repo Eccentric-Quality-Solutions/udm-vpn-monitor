@@ -78,7 +78,7 @@ EOF
 	# Importance: Ensures script can run successfully even on first execution without manual directory setup.
 	# State directory doesn't exist yet
 	local state_dir="${TEST_DIR}/state"
-	setup_test_vpn_monitor "192.168.1.1" "$state_dir"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "$state_dir"
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -92,7 +92,7 @@ EOF
 	# Expected: restart_count file is created in state directory.
 	# Importance: State files are required for tracking restart history and rate limiting.
 	# Note: Per-peer failure counters are created on-demand, not during initialization.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -107,7 +107,7 @@ EOF
 	# Purpose: Test verifies that the script creates the log file for recording execution events.
 	# Expected: Log file is created in the logs directory.
 	# Importance: Logging is essential for troubleshooting and monitoring script behavior.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -120,7 +120,7 @@ EOF
 	# Purpose: Test verifies that the script logs a start message when execution begins.
 	# Expected: Log file contains "VPN monitor script started" message.
 	# Importance: Start messages help identify script execution boundaries in log files.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -133,7 +133,7 @@ EOF
 	# Purpose: Test verifies that the script correctly handles the --fake flag for testing mode.
 	# Expected: Script logs fake mode message and disables tier escalation actions.
 	# Importance: Fake mode allows testing without triggering actual recovery actions.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -177,7 +177,7 @@ EOF
 	# Purpose: Test verifies that the script correctly processes multiple peer IP addresses from configuration.
 	# Expected: Script runs successfully and processes all configured peer IPs.
 	# Importance: Supports monitoring multiple VPN tunnels simultaneously.
-	setup_test_vpn_monitor "192.168.1.1 10.0.0.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP} ${TEST_PEER_IP2}" "${TEST_DIR}"
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -190,12 +190,12 @@ EOF
 	# Purpose: Test verifies that each peer IP maintains its own independent failure counter.
 	# Expected: Each peer has a separate counter file that increments independently based on that peer's status.
 	# Importance: Ensures failures in one VPN tunnel don't affect monitoring of other tunnels.
-	setup_test_vpn_monitor "192.168.1.1 10.0.0.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
+	setup_test_vpn_monitor "${TEST_PEER_IP} ${TEST_PEER_IP2}" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
 	# Set up state files using location-aware functions
 	# setup_test_vpn_monitor creates locations TEST1 and TEST2 for the two IPs
 	source_function "set_peer_state"
-	set_peer_state "TEST1" "192.168.1.1" "failure_count" "2"
-	set_peer_state "TEST2" "10.0.0.1" "failure_count" "4"
+	set_peer_state "TEST1" "${TEST_PEER_IP}" "failure_count" "2"
+	set_peer_state "TEST2" "${TEST_PEER_IP2}" "failure_count" "4"
 
 	# Create mock ip command that returns empty output (VPN down, no SA) for both peers
 	mock_ip_vpn_down
@@ -210,7 +210,7 @@ EOF
 	# Each peer should have its own independent counter
 	# Peer 1 should have incremented from 2
 	local failure_counter1
-	failure_counter1=$(get_peer_state_file_path "TEST1" "192.168.1.1" "failure_count")
+	failure_counter1=$(get_peer_state_file_path "TEST1" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter1" ]]; then
 		local count1
 		count1=$(cat "$failure_counter1")
@@ -219,7 +219,7 @@ EOF
 
 	# Peer 2 should have incremented from 4
 	local failure_counter2
-	failure_counter2=$(get_peer_state_file_path "TEST2" "10.0.0.1" "failure_count")
+	failure_counter2=$(get_peer_state_file_path "TEST2" "${TEST_PEER_IP2}" "failure_count")
 	if [[ -f "$failure_counter2" ]]; then
 		local count2
 		count2=$(cat "$failure_counter2")
@@ -244,8 +244,8 @@ EOF
 	# Purpose: Test verifies that the script increments the failure counter when VPN check detects a failure.
 	# Expected: Per-peer failure counter file is created and incremented when VPN is down.
 	# Importance: Failure counters track consecutive failures to trigger tiered recovery actions.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
-	setup_mock_vpn_environment "192.168.1.1" 0
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 0
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -255,7 +255,7 @@ EOF
 
 	# Per-peer failure counter should be incremented
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	failure_counter=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -270,13 +270,13 @@ EOF
 	# Purpose: Test verifies that the script resets the failure counter to 0 when VPN check succeeds.
 	# Expected: Failure counter is reset to 0 when VPN is healthy, clearing previous failure history.
 	# Importance: Ensures recovery actions are only triggered for consecutive failures, not transient issues.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
 	# Set initial failure count using location-based state functions
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "" "192.168.1.1" "failure_count" "5" || true
-	set_peer_state "" "192.168.1.1" "last_bytes" "1000" || true
+	set_peer_state "" "${TEST_PEER_IP}" "failure_count" "5" || true
+	set_peer_state "" "${TEST_PEER_IP}" "last_bytes" "1000" || true
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -286,7 +286,7 @@ EOF
 
 	# Per-peer failure counter should be reset (if script ran successfully)
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -303,7 +303,7 @@ EOF
 	# Purpose: Test verifies that the script exits early when a cooldown period is active after recovery actions.
 	# Expected: Script detects cooldown period and exits without performing checks or actions.
 	# Importance: Cooldown prevents excessive recovery actions and allows time for VPN to stabilize.
-	setup_vpn_cooldown_fixture "192.168.1.1" 0 900 'COOLDOWN_MINUTES=15'
+	setup_vpn_cooldown_fixture "${TEST_PEER_IP}" 0 900 'COOLDOWN_MINUTES=15'
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -316,7 +316,7 @@ EOF
 	# Purpose: Test verifies that the script handles stale lockfiles that exceed the timeout period.
 	# Expected: Script detects stale lockfile (older than LOCKFILE_TIMEOUT) and handles it appropriately.
 	# Importance: Prevents script from being blocked indefinitely by abandoned lockfiles from crashed processes.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'LOCKFILE_TIMEOUT=60'
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'LOCKFILE_TIMEOUT=60'
 
 	# Create stale lockfile (old timestamp)
 	local old_timestamp=$(($(date +%s) - 70)) # 70 seconds ago (older than 60s timeout)
@@ -336,7 +336,7 @@ EOF
 	# Purpose: Test verifies that the script uses lockfiles to prevent multiple instances from running simultaneously.
 	# Expected: Script detects existing lockfile and either waits or exits to prevent concurrent execution.
 	# Importance: Prevents race conditions and state file corruption from multiple script instances.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	# Create lockfile with current PID
 	echo "$(date +%s):$$" >"$LOCKFILE"
@@ -356,7 +356,7 @@ EOF
 	# Purpose: Test verifies that the script successfully loads configuration variables from the config file.
 	# Expected: Script reads config file and logs successful configuration load message.
 	# Importance: Configuration loading is essential for script customization and proper operation.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'VPN_NAME="Custom VPN Name"' 'DEBUG=1'
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'VPN_NAME="Custom VPN Name"' 'DEBUG=1'
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -393,11 +393,11 @@ EOF
 	# Importance: Ping checks provide an additional layer of VPN connectivity verification beyond xfrm state checks.
 	setup_location_test_vpn_monitor "${TEST_DIR}" \
 		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
-		'LOCATION_NYC_INTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'ENABLE_PING_CHECK=1' \
 		'PING_COUNT=3' \
 		'PING_TIMEOUT=2'
-	setup_mock_vpn_environment "203.0.113.1" 2000 "0x12345678" "192.168.1.1" 1
+	setup_mock_vpn_environment "203.0.113.1" 2000 "0x12345678" "${TEST_PEER_IP}" 1
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -412,7 +412,7 @@ EOF
 	# Purpose: Test verifies that the script enables debug logging when DEBUG=1 is set in configuration.
 	# Expected: Script enables verbose debug output for troubleshooting script behavior.
 	# Importance: Debug mode is essential for diagnosing issues in production environments.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'DEBUG=1'
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'DEBUG=1'
 
 	DEBUG=1 run bash "$TEST_SCRIPT" --fake
 
@@ -429,7 +429,7 @@ EOF
 	# Purpose: Test verifies that the script checks for cron job persistence to ensure scheduled execution.
 	# Expected: Script verifies cron entry exists and may warn if cron job is missing.
 	# Importance: Ensures script continues to run on schedule even after system reboots or cron changes.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	# Remove cron entry if it exists
 	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
@@ -450,7 +450,7 @@ EOF
 	# Purpose: Test verifies that initialize_monitor function logs script start message in normal execution mode.
 	# Expected: Log contains "VPN monitor script started" message but not fake mode message.
 	# Importance: Ensures proper logging distinguishes between normal and test modes.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -467,7 +467,7 @@ EOF
 	# Purpose: Test verifies that initialize_monitor function correctly identifies and logs fake mode operation.
 	# Expected: Log contains fake mode message and tier escalation disabled notification.
 	# Importance: Fake mode logging helps distinguish test runs from production execution in logs.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -484,7 +484,7 @@ EOF
 	# Purpose: Test verifies that initialize_monitor function creates necessary state files during initialization.
 	# Expected: restart_count file is created in state directory during script startup.
 	# Importance: State file initialization ensures proper tracking of restart history from first run.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -500,7 +500,7 @@ EOF
 	# Purpose: Test verifies that validate_monitor_state function detects active cooldown and exits early.
 	# Expected: Script exits early with success status and logs cooldown period message.
 	# Importance: Cooldown mechanism prevents excessive recovery actions and allows VPN stabilization time.
-	setup_vpn_cooldown_fixture "192.168.1.1" 0 900 'COOLDOWN_MINUTES=15'
+	setup_vpn_cooldown_fixture "${TEST_PEER_IP}" 0 900 'COOLDOWN_MINUTES=15'
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -515,12 +515,12 @@ EOF
 	# Purpose: Test verifies that validate_monitor_state function allows script execution when cooldown period has expired.
 	# Expected: Script continues normal execution without cooldown-related exit messages.
 	# Importance: Ensures script resumes normal monitoring after cooldown period expires.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'COOLDOWN_MINUTES=15'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'COOLDOWN_MINUTES=15'
 
 	# Set expired cooldown timestamp using location-based state functions
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "" "192.168.1.1" "last_bytes" "1000" || true
+	set_peer_state "" "${TEST_PEER_IP}" "last_bytes" "1000" || true
 	local cooldown_file="${STATE_DIR}/cooldown_until"
 	echo $(($(date +%s) - 900)) >"$cooldown_file"
 
@@ -539,7 +539,7 @@ EOF
 	# Purpose: Test verifies that validate_monitor_state function checks for cron job persistence on first execution.
 	# Expected: Script verifies cron entry exists and may warn if missing, only checking once per installation.
 	# Importance: Ensures script continues to run on schedule and alerts if cron job is removed.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
 	# Remove cron entry if it exists
 	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
@@ -566,7 +566,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
 		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
-		'LOCATION_NYC_INTERNAL="192.168.1.1"'
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\""
 
 	TEST_CONFIG_FILE="$config_file"
 	TEST_SCRIPT=$(create_test_vpn_monitor_script \
@@ -601,7 +601,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
 		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
-		'LOCATION_NYC_INTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'LOCATION_DC_EXTERNAL="198.51.100.1"' \
 		'LOCATION_DC_INTERNAL="192.168.2.1"'
 
@@ -654,7 +654,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
 		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
-		'LOCATION_NYC_INTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'LOCATION_DC_EXTERNAL=""' \
 		'LOCATION_DC_INTERNAL=""'
 

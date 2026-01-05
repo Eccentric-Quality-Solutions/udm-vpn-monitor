@@ -62,9 +62,9 @@ EOF
 	# Expected: parse_location_config succeeds and both IPs are stored correctly
 	# Importance: Common use case with internal IPs for ping checks
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
+	cat >"$config_file" <<EOF
 LOCATION_NYC_EXTERNAL="203.0.113.1"
-LOCATION_NYC_INTERNAL="192.168.1.1 192.168.1.88"
+LOCATION_NYC_INTERNAL="${TEST_PEER_IP} 192.168.1.88"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -81,7 +81,7 @@ EOF
 
 	local internal_ips
 	internal_ips=$(get_location_internal_ips "NYC")
-	assert_equal "$internal_ips" "192.168.1.1 192.168.1.88"
+	assert_equal "$internal_ips" "${TEST_PEER_IP} 192.168.1.88"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -90,9 +90,9 @@ EOF
 	# Expected: All locations are parsed and stored correctly
 	# Importance: Multi-location deployments are common
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
+	cat >"$config_file" <<EOF
 LOCATION_NYC_EXTERNAL="203.0.113.1"
-LOCATION_NYC_INTERNAL="192.168.1.1"
+LOCATION_NYC_INTERNAL="${TEST_PEER_IP}"
 LOCATION_LA_EXTERNAL="198.51.100.1"
 LOCATION_LA_INTERNAL="192.168.2.1 192.168.2.2"
 LOCATION_CHI_EXTERNAL="192.0.2.1"
@@ -113,7 +113,7 @@ EOF
 	assert_equal "$external_ip" "203.0.113.1"
 	local internal_ips
 	internal_ips=$(get_location_internal_ips "NYC")
-	assert_equal "$internal_ips" "192.168.1.1"
+	assert_equal "$internal_ips" "${TEST_PEER_IP}"
 
 	# Verify LA
 	external_ip=$(get_location_external_ip "LA")
@@ -220,9 +220,9 @@ EOF
 	# Expected: parse_location_config skips empty external IP with warning, fails if no valid locations remain
 	# Importance: Empty external IPs should be handled gracefully, but config must have at least one valid location
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
+	cat >"$config_file" <<EOF
 LOCATION_NYC_EXTERNAL=""
-LOCATION_NYC_INTERNAL="192.168.1.1"
+LOCATION_NYC_INTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -512,9 +512,9 @@ EOF
 	# Expected: Internal IPs are returned correctly
 	# Importance: Core function for accessing location data
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
+	cat >"$config_file" <<EOF
 LOCATION_NYC_EXTERNAL="203.0.113.1"
-LOCATION_NYC_INTERNAL="192.168.1.1 192.168.1.88"
+LOCATION_NYC_INTERNAL="${TEST_PEER_IP} 192.168.1.88"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -525,7 +525,7 @@ EOF
 
 	run get_location_internal_ips "NYC"
 	assert_success
-	assert_output "192.168.1.1 192.168.1.88"
+	assert_output "${TEST_PEER_IP} 192.168.1.88"
 }
 
 # bats test_tags=category:high-risk,priority:high

@@ -19,10 +19,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Lockfile is removed by EXIT trap handler when script completes normally
 	# Importance: Lockfile cleanup ensures lock is released after successful script execution
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -34,7 +33,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN healthy
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Run script - should complete successfully
@@ -87,10 +86,9 @@ EOF
 	# Expected: Script detects invalid lockfile format, cleans it up or handles it without crashing
 	# Importance: Invalid format handling prevents script failures from corrupted lockfiles
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -105,7 +103,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Script should handle invalid lockfile format gracefully
@@ -123,11 +121,10 @@ EOF
 	# Expected: Script correctly identifies lockfiles at exactly the timeout threshold as stale
 	# Importance: Boundary condition handling ensures consistent stale lockfile detection
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-LOCKFILE_TIMEOUT=60
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'LOCKFILE_TIMEOUT=60'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -145,7 +142,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Script should handle boundary condition
@@ -163,10 +160,9 @@ EOF
 	# Expected: Script detects existing lockfile with running PID and exits gracefully without executing
 	# Importance: Concurrent execution prevention ensures only one instance monitors VPN at a time
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -178,7 +174,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN healthy
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Create a lockfile with current PID (simulating another instance)
@@ -210,10 +206,9 @@ EOF
 	fi
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -225,7 +220,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN healthy
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Run script - should use flock mechanism
@@ -266,10 +261,9 @@ EOF
 	fi
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -281,7 +275,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN healthy
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Run script with PATH that doesn't include flock
@@ -302,10 +296,9 @@ EOF
 	# Both modes use the same lockfile format (timestamp:pid), so they should be compatible
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -317,7 +310,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN healthy
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Create a PATH without flock to test fallback mode
@@ -375,8 +368,8 @@ EOF
 	# Update config file to set LOCKFILE_TIMEOUT for stale lockfile detection
 	local lockfile_timeout=60
 	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 LOCKFILE_TIMEOUT=${lockfile_timeout}
 EOF
 	# Recreate test script to pick up updated config
@@ -414,10 +407,9 @@ EOF
 	# Expected: Lockfile is removed by trap handler when script is terminated with SIGTERM
 	# Importance: Signal-based cleanup ensures lockfile is released when script is stopped by system or user
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -429,7 +421,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN healthy
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Run script in background
@@ -464,10 +456,9 @@ EOF
 	fi
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -479,7 +470,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN healthy
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Spawn multiple processes simultaneously trying to acquire lock
@@ -538,10 +529,9 @@ EOF
 	path_without_flock="${path_without_flock#:}"
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -553,7 +543,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN healthy
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Spawn multiple processes simultaneously trying to acquire lock using fallback method
@@ -613,10 +603,9 @@ EOF
 	# Expected: Script handles race condition gracefully, either successfully acquiring lock or detecting conflict
 	# Importance: TOCTOU race handling ensures reliable lockfile acquisition even under concurrent access
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -628,7 +617,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN healthy
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Create a script that removes lockfile during acquisition attempt
@@ -669,10 +658,9 @@ EOF
 	# Expected: Script detects that PID in lockfile belongs to a different process and treats lockfile as stale
 	# Importance: PID reuse handling prevents false positives when system reuses PIDs from terminated processes
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -684,7 +672,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN healthy
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Create a short-lived process to get its PID
@@ -729,11 +717,10 @@ EOF
 	# Expected: Script detects stale lockfile (old timestamp, dead PID) and removes it before proceeding
 	# Importance: Crash recovery ensures script can recover from previous crashes without manual intervention
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-LOCKFILE_TIMEOUT=1
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'LOCKFILE_TIMEOUT=1'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -745,7 +732,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN healthy
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Run script in background
@@ -790,10 +777,9 @@ EOF
 	# Expected: Lockfile is removed by trap handlers regardless of how script exits (normal, SIGINT, SIGTERM)
 	# Importance: Comprehensive trap handling ensures lockfile cleanup in all termination scenarios
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -805,7 +791,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN healthy
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Test 1: Normal exit (EXIT trap)
@@ -857,10 +843,9 @@ EOF
 	# Expected: Script treats lockfile as stale when stat fails to read modification time (returns mtime=0)
 	# Importance: Permission error handling prevents script failures when lockfile permissions are restrictive
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -910,10 +895,9 @@ EOF
 	# Expected: Script treats lockfile as stale when kill -0 fails due to permission denied (different user)
 	# Importance: Permission error handling prevents false positives when checking processes owned by other users
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -963,10 +947,9 @@ EOF
 	# Expected: Script detects zombie process PID and treats lockfile as stale (zombie processes are not considered running)
 	# Importance: Zombie process handling prevents false positives from lockfiles containing zombie PIDs
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"

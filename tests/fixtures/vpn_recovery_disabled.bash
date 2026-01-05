@@ -6,7 +6,7 @@
 # This fixture combines common setup steps for tests that need recovery disabled.
 #
 # Arguments:
-#   $1: Peer IP address (default: "192.168.1.1")
+#   $1: Peer IP address (default: "${TEST_PEER_IP}")
 #   $2: Failure count (default: 0)
 #   $3: Bytes value (default: 1000)
 #   $4: SPI value (default: 0x12345678)
@@ -20,13 +20,13 @@
 #   - Sets ENABLE_XFRM_RECOVERY=0 and ENABLE_NETWORK_PARTITION_CHECK=0
 #
 # Example:
-#   setup_vpn_recovery_disabled_fixture "192.168.1.1"
+#   setup_vpn_recovery_disabled_fixture "${TEST_PEER_IP}"
 #   # VPN with recovery disabled
 #
-#   setup_vpn_recovery_disabled_fixture "192.168.1.1" 3 5000
+#   setup_vpn_recovery_disabled_fixture "${TEST_PEER_IP}" 3 5000
 #   # VPN with recovery disabled, 3 failures, 5000 bytes
 setup_vpn_recovery_disabled_fixture() {
-	local peer_ip="${1:-192.168.1.1}"
+	local peer_ip="${1:-${TEST_PEER_IP}}"
 	local failure_count="${2:-0}"
 	local bytes="${3:-1000}"
 	local spi="${4:-0x12345678}"

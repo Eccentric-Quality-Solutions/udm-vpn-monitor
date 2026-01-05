@@ -11,6 +11,14 @@ load fixtures/vpn_down
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # Create mock command that fails with specific exit code and error message
+#
+# Arguments:
+#   $1: Command name to mock
+#   $2: Exit code (default: 1)
+#   $3: Error message to print (optional)
+#
+# Returns:
+#   Prints path to created mock command
 mock_command_failure() {
 	local command_name="$1"
 	local exit_code="${2:-1}"
@@ -35,9 +43,9 @@ EOF
 	# Expected: Script logs error and continues execution without crashing when state file writes fail
 	# Importance: Prevents script failures from filesystem permission issues or disk space problems
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -55,7 +63,7 @@ EOF
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 
 	# Create failure counter file and make parent directory read-only (prevents write)
 	echo "2" >"$failure_counter"
@@ -64,7 +72,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 0
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 0
 	add_mock_to_path
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script"
@@ -84,9 +92,9 @@ EOF
 	# Expected: Script logs error about recovery failure and continues execution without crashing
 	# Importance: Prevents script failures when recovery commands fail, ensuring monitoring continues
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -106,7 +114,7 @@ EOF
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 
 	# Set failure count to Tier 2 threshold (triggers surgical cleanup)
 	echo "3" >"$failure_counter"
@@ -115,7 +123,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN is down (no SA)
-	mock_ip_xfrm_state "192.168.1.1" "0" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "0" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 
 	# Mock ipsec reload and restart to fail (simulates recovery action failure)
@@ -131,7 +139,7 @@ if [[ "$1" == "restart" ]]; then
     exit 1
 fi
 if [[ "$1" == "status" ]]; then
-    echo "192.168.1.1: ESTABLISHED"
+        echo "${TEST_PEER_IP}: ESTABLISHED"
 fi
 EOF
 	chmod +x "$mock_ipsec"
@@ -155,9 +163,9 @@ EOF
 	# Expected: Script logs error about VPN check failure and continues execution without crashing
 	# Importance: Prevents script failures when VPN detection commands fail, ensuring monitoring continues
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"

@@ -29,18 +29,30 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	# Mock VPN as active for NYC location (203.0.113.1)
+	# Note: get_xfrm_state_for_peer tries "ip -s xfrm state" first, then falls back to "ip xfrm state"
 	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
+	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     # Return SA for NYC external IP with increasing bytes
-    echo "src 192.168.1.1 dst 203.0.113.1"
-    echo "src 203.0.113.1 dst 192.168.1.1"
+    echo "src ${TEST_PEER_IP} dst 203.0.113.1"
+    echo "src 203.0.113.1 dst ${TEST_PEER_IP}"
     echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
     echo "    lifetime current: 2000 bytes, 10 packets"
     exit 0
 fi
-exit 1
+# Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Return SA for NYC external IP with increasing bytes
+    echo "src ${TEST_PEER_IP} dst 203.0.113.1"
+    echo "src 203.0.113.1 dst ${TEST_PEER_IP}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: 2000 bytes, 10 packets"
+    exit 0
+fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
@@ -146,7 +158,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
 		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
-		'LOCATION_NYC_INTERNAL="192.168.1.1 192.168.1.88 192.168.1.99"'
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP} 192.168.1.88 192.168.1.99\""
 
 	TEST_CONFIG_FILE="$config_file"
 	TEST_SCRIPT=$(create_test_vpn_monitor_script \
@@ -275,9 +287,9 @@ EOF
 	# Expected: Invalid characters in location names are replaced in filenames
 	# Importance: Ensures safe filenames even with special characters
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
+	cat >"$config_file" <<EOF
 LOCATION_NYC_Office_EXTERNAL="203.0.113.1"
-LOCATION_NYC_Office_INTERNAL="192.168.1.1"
+LOCATION_NYC_Office_INTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -313,7 +325,7 @@ EOF
 	# Expected: Ping check uses external IP when internal IPs are not configured
 	# Importance: Validates fallback to external IP
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
+	cat >"$config_file" <<EOF
 LOCATION_NYC_EXTERNAL="203.0.113.1"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3

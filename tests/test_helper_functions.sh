@@ -54,7 +54,7 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	# shellcheck source=/dev/null
 	source_function "sanitize_peer_ip"
 
-	run sanitize_peer_ip "192.168.1.1"
+	run sanitize_peer_ip "${TEST_PEER_IP}"
 	assert_success
 	assert_output "192_168_1_1"
 }
@@ -196,10 +196,10 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	# shellcheck source=/dev/null
 	source_function "validate_ip_address"
 
-	run validate_ip_address "192.168.1.1"
+	run validate_ip_address "${TEST_PEER_IP}"
 	assert_success
 
-	run validate_ip_address "10.0.0.1"
+	run validate_ip_address "${TEST_PEER_IP2}"
 	assert_success
 
 	run validate_ip_address "172.16.0.1"
@@ -329,7 +329,7 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	# Test with peer IP that has no counter file
 	# Use empty string for location to test backward compatibility
-	run get_failure_count "" "192.168.1.1"
+	run get_failure_count "" "${TEST_PEER_IP}"
 	assert_success
 	assert_output "0"
 }
@@ -343,13 +343,13 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	setup_test_environment "${TEST_DIR}"
 	# Use set_peer_state to create file with correct location-based path format
 	source_function "set_peer_state"
-	set_peer_state "" "192.168.1.1" "failure_count" "5" || true
+	set_peer_state "" "${TEST_PEER_IP}" "failure_count" "5" || true
 
 	# Source the actual function from the library
 	source_function "get_failure_count"
 
 	# Use empty string for location to test backward compatibility
-	run get_failure_count "" "192.168.1.1"
+	run get_failure_count "" "${TEST_PEER_IP}"
 	assert_success
 	assert_output "5"
 }
@@ -366,11 +366,11 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	# Manually create corrupted file using correct path format
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	echo "invalid-value" >"$counter_file"
 
 	# Use empty string for location to test backward compatibility
-	run get_failure_count "" "192.168.1.1"
+	run get_failure_count "" "${TEST_PEER_IP}"
 	assert_success
 	# Should return default (0) for corrupted file (function logs warning)
 	# Verify it ends with 0 (the actual return value)
@@ -394,20 +394,20 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state_file_path"
 
 	# First increment - use empty string for location to test backward compatibility
-	run increment_failure "" "192.168.1.1"
+	run increment_failure "" "${TEST_PEER_IP}"
 	assert_success
 	assert_output "1"
 
 	# Verify the file was created using get_peer_state_file_path to get correct path
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	assert_file_exist "$counter_file"
 	local count
 	count=$(cat "$counter_file")
 	assert_equal "$count" 1
 
 	# Second increment
-	run increment_failure "" "192.168.1.1"
+	run increment_failure "" "${TEST_PEER_IP}"
 	assert_success
 	assert_output "2"
 
@@ -425,19 +425,19 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	setup_test_environment "${TEST_DIR}"
 	# Use set_peer_state to create file with correct location-based path format
 	source_function "set_peer_state"
-	set_peer_state "" "192.168.1.1" "failure_count" "5" || true
+	set_peer_state "" "${TEST_PEER_IP}" "failure_count" "5" || true
 
 	# Source the actual function from the library
 	source_function "reset_failure_count"
 	source_function "get_peer_state_file_path"
 
 	# Use empty string for location to test backward compatibility
-	run reset_failure_count "" "192.168.1.1"
+	run reset_failure_count "" "${TEST_PEER_IP}"
 	assert_success
 
 	# Verify the counter was reset using get_peer_state_file_path to get correct path
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	assert_file_exist "$counter_file"
 	local count
 	count=$(cat "$counter_file")
@@ -458,7 +458,7 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state_file_path"
 
 	# Use empty string for location to test backward compatibility (empty location becomes "LOCATION")
-	run get_peer_state_file_path "" "192.168.1.1" "failure_count"
+	run get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	assert_output "${STATE_DIR}/failure_counter_LOCATION_192_168_1_1"
 }
@@ -473,7 +473,7 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state_file_path"
 
 	# Use empty string for location to test backward compatibility (empty location becomes "LOCATION")
-	run get_peer_state_file_path "" "192.168.1.1" "last_bytes"
+	run get_peer_state_file_path "" "${TEST_PEER_IP}" "last_bytes"
 	assert_success
 	assert_output "${STATE_DIR}/last_bytes_LOCATION_192_168_1_1"
 }
@@ -488,7 +488,7 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state_file_path"
 
 	# Use empty string for location to test backward compatibility (empty location becomes "LOCATION")
-	run get_peer_state_file_path "" "192.168.1.1" "unknown_key"
+	run get_peer_state_file_path "" "${TEST_PEER_IP}" "unknown_key"
 	assert_success
 	# Function logs a warning but still returns the path
 	assert_output --partial "${STATE_DIR}/unknown_key_LOCATION_192_168_1_1"
@@ -504,12 +504,12 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state"
 
 	# Use empty string for location to test backward compatibility
-	run get_peer_state "" "192.168.1.1" "failure_count"
+	run get_peer_state "" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	assert_output "0"
 
 	# Test with custom default
-	run get_peer_state "" "192.168.1.1" "failure_count" "99"
+	run get_peer_state "" "${TEST_PEER_IP}" "failure_count" "99"
 	assert_success
 	assert_output "99"
 }
@@ -525,11 +525,11 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "set_peer_state"
 
 	# Create file using set_peer_state to ensure correct path format
-	run set_peer_state "" "192.168.1.1" "failure_count" "42"
+	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "42"
 	assert_success
 
 	# Use empty string for location to test backward compatibility
-	run get_peer_state "" "192.168.1.1" "failure_count"
+	run get_peer_state "" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	assert_output "42"
 }
@@ -547,11 +547,11 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	# Manually create corrupted file using correct path format
 	# Use get_peer_state_file_path to get the correct path (empty location becomes "LOCATION")
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	echo "invalid-value" >"$counter_file"
 
 	# Use empty string for location to test backward compatibility
-	run get_peer_state "" "192.168.1.1" "failure_count"
+	run get_peer_state "" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	# Should return default (0) for corrupted file (function logs warning)
 	# Verify it ends with 0 (the actual return value)
@@ -572,7 +572,7 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state_file_path"
 
 	# Use helper function to set state and verify file creation with value
-	test_peer_state_with_empty_location "192.168.1.1" "failure_count" "7" "7"
+	test_peer_state_with_empty_location "${TEST_PEER_IP}" "failure_count" "7" "7"
 }
 
 # bats test_tags=category:unit
@@ -586,16 +586,16 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state_file_path"
 
 	# Create file using set_peer_state to ensure correct path format
-	run set_peer_state "" "192.168.1.1" "failure_count" "5"
+	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "5"
 	assert_success
 
 	# Use empty string for location to test backward compatibility
-	run set_peer_state "" "192.168.1.1" "failure_count" "10"
+	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "10"
 	assert_success
 
 	# Verify file was updated using get_peer_state_file_path
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	local count
 	count=$(cat "$counter_file")
 	assert_equal "$count" 10
@@ -613,12 +613,12 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	# Should fail with invalid value
 	# Use empty string for location to test backward compatibility
-	run set_peer_state "" "192.168.1.1" "failure_count" "not-a-number"
+	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "not-a-number"
 	assert_failure
 
 	# File should not be created - use get_peer_state_file_path to get correct path
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	assert_file_not_exist "$counter_file"
 }
 
@@ -633,7 +633,7 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state_file_path"
 
 	# Use helper function to set state and verify file creation with value
-	test_peer_state_with_empty_location "192.168.1.1" "last_bytes" "123456" "123456"
+	test_peer_state_with_empty_location "${TEST_PEER_IP}" "last_bytes" "123456" "123456"
 }
 
 # bats test_tags=category:unit
@@ -648,14 +648,14 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state_file_path"
 
 	# Create file and verify it exists using helper function
-	test_peer_state_with_empty_location "192.168.1.1" "failure_count" "5"
+	test_peer_state_with_empty_location "${TEST_PEER_IP}" "failure_count" "5"
 
 	# Get file path for deletion verification
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 
 	# Delete the file
-	run delete_peer_state "" "192.168.1.1" "failure_count"
+	run delete_peer_state "" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 
 	# File should be deleted
@@ -673,7 +673,7 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	# Should succeed even if file doesn't exist
 	# Use empty string for location to test backward compatibility
-	run delete_peer_state "" "192.168.1.1" "failure_count"
+	run delete_peer_state "" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 }
 
@@ -689,23 +689,23 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state_file_path"
 
 	# Create both failure_count and last_bytes files using set_peer_state to ensure correct path format
-	run set_peer_state "" "192.168.1.1" "failure_count" "5"
+	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "5"
 	assert_success
-	run set_peer_state "" "192.168.1.1" "last_bytes" "123456"
+	run set_peer_state "" "${TEST_PEER_IP}" "last_bytes" "123456"
 	assert_success
 
 	# Get file paths for verification
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	local bytes_file
-	bytes_file=$(get_peer_state_file_path "" "192.168.1.1" "last_bytes")
+	bytes_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "last_bytes")
 
 	# Verify files exist before cleanup
 	assert_file_exist "$counter_file"
 	assert_file_exist "$bytes_file"
 
 	# Use empty string for location to test backward compatibility
-	run cleanup_peer_state "" "192.168.1.1"
+	run cleanup_peer_state "" "${TEST_PEER_IP}"
 	assert_success
 
 	# Both files should be deleted
@@ -724,11 +724,11 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "set_peer_state"
 
 	# Set a value - use empty string for location to test backward compatibility
-	run set_peer_state "" "192.168.1.1" "failure_count" "15"
+	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "15"
 	assert_success
 
 	# Get it back
-	run get_peer_state "" "192.168.1.1" "failure_count"
+	run get_peer_state "" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	assert_output "15"
 }
@@ -745,13 +745,13 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	# Set a value - should use atomic write (temp file + mv)
 	# Use empty string for location to test backward compatibility
-	run set_peer_state "" "192.168.1.1" "failure_count" "20"
+	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "20"
 	assert_success
 
 	# Verify temp file doesn't exist (should have been renamed)
 	# Use get_peer_state_file_path to get correct path
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	local temp_file="${counter_file}.tmp"
 	assert_file_not_exist "$temp_file"
 	assert_file_exist "$counter_file"
@@ -768,11 +768,26 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 #!/bin/bash
 STATE_DIR="$1"
 
+# Get file modification time
+#
+# Arguments:
+#   $1: File path
+#
+# Returns:
+#   Prints Unix timestamp of file modification time, or "0" on error
 get_file_mtime() {
 	local file="$1"
 	stat -c %Y "$file" 2>/dev/null || echo "0"
 }
 
+# Check if system is in cooldown period
+#
+# Arguments:
+#   None (uses STATE_DIR environment variable)
+#
+# Returns:
+#   0: In cooldown period
+#   1: Not in cooldown period
 check_cooldown() {
 	local COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
 	if [[ ! -f "$COOLDOWN_UNTIL_FILE" ]]; then
@@ -815,6 +830,14 @@ SCRIPT
 #!/bin/bash
 STATE_DIR="$1"
 
+# Check if system is in cooldown period
+#
+# Arguments:
+#   None (uses STATE_DIR environment variable)
+#
+# Returns:
+#   0: In cooldown period
+#   1: Not in cooldown period
 check_cooldown() {
 	local COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
 	if [[ ! -f "$COOLDOWN_UNTIL_FILE" ]]; then
@@ -885,6 +908,14 @@ SCRIPT
 RESTART_COUNT_FILE="$1"
 MAX_RESTARTS_PER_HOUR=3
 
+# Check if restart is within rate limit
+#
+# Arguments:
+#   None (uses RESTART_COUNT_FILE and MAX_RESTARTS_PER_HOUR variables)
+#
+# Returns:
+#   0: Within rate limit (restart allowed)
+#   1: Over rate limit (restart blocked)
 check_rate_limit() {
 	local now
 	now=$(date +%s)
@@ -936,6 +967,14 @@ SCRIPT
 RESTART_COUNT_FILE="$1"
 MAX_RESTARTS_PER_HOUR=3
 
+# Check if restart is within rate limit
+#
+# Arguments:
+#   None (uses RESTART_COUNT_FILE and MAX_RESTARTS_PER_HOUR variables)
+#
+# Returns:
+#   0: Within rate limit (restart allowed)
+#   1: Over rate limit (restart blocked)
 check_rate_limit() {
 	local now
 	now=$(date +%s)
@@ -1014,6 +1053,13 @@ SCRIPT
 #!/bin/bash
 RESTART_COUNT_FILE="$1"
 
+# Record a restart timestamp
+#
+# Arguments:
+#   None (uses RESTART_COUNT_FILE variable)
+#
+# Returns:
+#   0: Always succeeds
 record_restart() {
 	local timestamp
 	timestamp=$(date +%s)
@@ -1050,7 +1096,11 @@ SCRIPT
 if [[ "$1" == "status" ]]; then
     echo "site-a: ESTABLISHED 1 hour ago, 192.168.1.1...192.168.1.2"
     echo "site-b: ESTABLISHED 2 hours ago, 10.0.0.1...10.0.0.2"
+elif [[ "$1" == "--help" ]] || [[ "$1" == "--version" ]]; then
+    # Handle command availability checks (used by check_command_available)
+    exit 0
 fi
+exec /usr/bin/ipsec "$@"
 EOF
 	chmod +x "${TEST_DIR}/ipsec"
 	add_mock_to_path
@@ -1076,7 +1126,11 @@ EOF
 if [[ "$1" == "status" ]]; then
     echo "site-a: IKEv1, ESTABLISHED, 192.168.1.1"
     echo "site-b: IKEv2, ESTABLISHED, 10.0.0.1"
+elif [[ "$1" == "--help" ]] || [[ "$1" == "--version" ]]; then
+    # Handle command availability checks (used by check_command_available)
+    exit 0
 fi
+exec /usr/bin/ipsec "$@"
 EOF
 	chmod +x "${TEST_DIR}/ipsec"
 	add_mock_to_path
@@ -1202,7 +1256,11 @@ EOF
 #!/bin/bash
 if [[ "$1" == "status" ]]; then
     exit 1
+elif [[ "$1" == "--help" ]] || [[ "$1" == "--version" ]]; then
+    # Handle command availability checks (used by check_command_available)
+    exit 0
 fi
+exec /usr/bin/ipsec "$@"
 EOF
 	chmod +x "${TEST_DIR}/ipsec"
 	add_mock_to_path
@@ -1604,6 +1662,13 @@ EOF
 	fi
 
 	# Mock handle_error to suppress log output
+	# Mock function to suppress error logging in tests
+	#
+	# Arguments:
+	#   $@: Error message and parameters (ignored)
+	#
+	# Returns:
+	#   0: Always succeeds
 	handle_error() {
 		return 0
 	}
@@ -1653,6 +1718,13 @@ EOF
 	fi
 
 	# Mock die function to not exit
+	# Mock function to prevent script exit in tests
+	#
+	# Arguments:
+	#   $@: Error message and parameters (ignored)
+	#
+	# Returns:
+	#   1: Always fails (simulates die behavior)
 	die() {
 		return 1
 	}
@@ -1719,6 +1791,16 @@ EOF
 	# Mock handle_error - when called with ERROR severity, it calls die() which exits
 	# For testing in subshell (via run), we make handle_error exit the subshell
 	# This simulates the real behavior where die() exits the script
+	# Mock function to simulate error handling in tests
+	#
+	# Arguments:
+	#   $1: Severity level
+	#   $2: Error message (ignored)
+	#   $3: Exit code (default: 1)
+	#
+	# Returns:
+	#   0: Success (non-ERROR severity)
+	#   Exits with code 1 if ERROR severity and exit_code != 0
 	handle_error() {
 		local severity="$1"
 		local exit_code="${3:-1}"
@@ -1732,6 +1814,13 @@ EOF
 	# Mock handle_error_or_exit_fake_mode to prevent it from exiting
 	# In fake mode, it returns 1; in normal mode it calls die() and exits
 	# For testing, we make it return 1 to simulate fake mode behavior
+	# Mock function to simulate fake mode error handling
+	#
+	# Arguments:
+	#   $@: Error parameters (ignored)
+	#
+	# Returns:
+	#   1: Always returns failure (simulates fake mode)
 	handle_error_or_exit_fake_mode() {
 		return 1
 	}
@@ -1756,6 +1845,13 @@ EOF
 	fi
 
 	# Mock handle_error to suppress log output
+	# Mock function to suppress error logging in tests
+	#
+	# Arguments:
+	#   $@: Error message and parameters (ignored)
+	#
+	# Returns:
+	#   0: Always succeeds
 	handle_error() {
 		return 0
 	}
@@ -1783,6 +1879,13 @@ EOF
 	fi
 
 	# Mock handle_error to suppress log output
+	# Mock function to suppress error logging in tests
+	#
+	# Arguments:
+	#   $@: Error message and parameters (ignored)
+	#
+	# Returns:
+	#   0: Always succeeds
 	handle_error() {
 		return 0
 	}
@@ -1850,6 +1953,13 @@ EOF
 	fi
 
 	# Mock die function
+	# Mock function to prevent script exit in tests
+	#
+	# Arguments:
+	#   $@: Error message and parameters (ignored)
+	#
+	# Returns:
+	#   1: Always fails (simulates die behavior)
 	die() {
 		return 1
 	}
@@ -1894,6 +2004,13 @@ EOF
 	fi
 
 	# Mock die function
+	# Mock function to prevent script exit in tests
+	#
+	# Arguments:
+	#   $@: Error message and parameters (ignored)
+	#
+	# Returns:
+	#   1: Always fails (simulates die behavior)
 	die() {
 		return 1
 	}
@@ -1938,6 +2055,13 @@ EOF
 	fi
 
 	# Mock die function
+	# Mock function to prevent script exit in tests
+	#
+	# Arguments:
+	#   $@: Error message and parameters (ignored)
+	#
+	# Returns:
+	#   1: Always fails (simulates die behavior)
 	die() {
 		return 1
 	}
@@ -1982,6 +2106,13 @@ EOF
 	fi
 
 	# Mock die function
+	# Mock function to prevent script exit in tests
+	#
+	# Arguments:
+	#   $@: Error message and parameters (ignored)
+	#
+	# Returns:
+	#   1: Always fails (simulates die behavior)
 	die() {
 		return 1
 	}
@@ -2069,6 +2200,13 @@ EOF
 	fi
 
 	# Mock die function
+	# Mock function to prevent script exit in tests
+	#
+	# Arguments:
+	#   $@: Error message and parameters (ignored)
+	#
+	# Returns:
+	#   1: Always fails (simulates die behavior)
 	die() {
 		return 1
 	}
@@ -2104,11 +2242,25 @@ EOF
 	fi
 
 	# Mock handle_error to suppress log output
+	# Mock function to suppress error logging in tests
+	#
+	# Arguments:
+	#   $@: Error message and parameters (ignored)
+	#
+	# Returns:
+	#   0: Always succeeds
 	handle_error() {
 		return 0
 	}
 
 	# Mock handle_error_or_exit_fake_mode to prevent it from exiting
+	# Mock function to simulate fake mode error handling
+	#
+	# Arguments:
+	#   $@: Error parameters (ignored)
+	#
+	# Returns:
+	#   1: Always returns failure (simulates fake mode)
 	handle_error_or_exit_fake_mode() {
 		return 1
 	}
@@ -2181,6 +2333,13 @@ EOF
 	fi
 
 	# Mock log_message to suppress output
+	# Mock function to suppress logging in tests
+	#
+	# Arguments:
+	#   $@: Log message and parameters (ignored)
+	#
+	# Returns:
+	#   0: Always succeeds
 	log_message() {
 		return 0
 	}
@@ -2209,6 +2368,13 @@ EOF
 	fi
 
 	# Mock log_message to suppress output
+	# Mock function to suppress logging in tests
+	#
+	# Arguments:
+	#   $@: Log message and parameters (ignored)
+	#
+	# Returns:
+	#   0: Always succeeds
 	log_message() {
 		return 0
 	}
@@ -2237,6 +2403,13 @@ EOF
 	fi
 
 	# Mock log_message to capture output
+	# Mock function to suppress logging in tests
+	#
+	# Arguments:
+	#   $@: Log message and parameters (ignored)
+	#
+	# Returns:
+	#   0: Always succeeds
 	log_message() {
 		return 0
 	}
@@ -2263,6 +2436,13 @@ EOF
 	fi
 
 	# Mock log_message to suppress output
+	# Mock function to suppress logging in tests
+	#
+	# Arguments:
+	#   $@: Log message and parameters (ignored)
+	#
+	# Returns:
+	#   0: Always succeeds
 	log_message() {
 		return 0
 	}
@@ -2289,6 +2469,13 @@ EOF
 	fi
 
 	# Mock log_message to suppress output
+	# Mock function to suppress logging in tests
+	#
+	# Arguments:
+	#   $@: Log message and parameters (ignored)
+	#
+	# Returns:
+	#   0: Always succeeds
 	log_message() {
 		return 0
 	}
@@ -2315,6 +2502,13 @@ EOF
 	fi
 
 	# Mock log_message to suppress output
+	# Mock function to suppress logging in tests
+	#
+	# Arguments:
+	#   $@: Log message and parameters (ignored)
+	#
+	# Returns:
+	#   0: Always succeeds
 	log_message() {
 		return 0
 	}
@@ -2342,6 +2536,13 @@ EOF
 	fi
 
 	# Mock log_message to suppress output
+	# Mock function to suppress logging in tests
+	#
+	# Arguments:
+	#   $@: Log message and parameters (ignored)
+	#
+	# Returns:
+	#   0: Always succeeds
 	log_message() {
 		return 0
 	}
@@ -2378,6 +2579,13 @@ EOF
 	fi
 
 	# Mock log_message to suppress output
+	# Mock function to suppress logging in tests
+	#
+	# Arguments:
+	#   $@: Log message and parameters (ignored)
+	#
+	# Returns:
+	#   0: Always succeeds
 	log_message() {
 		return 0
 	}
@@ -2413,11 +2621,25 @@ EOF
 	fi
 
 	# Mock handle_config_error to prevent it from exiting
+	# Mock function to prevent config error exit in tests
+	#
+	# Arguments:
+	#   $@: Error message and parameters (ignored)
+	#
+	# Returns:
+	#   1: Always fails (simulates error)
 	handle_config_error() {
 		return 1
 	}
 
 	# Mock is_fake_mode to return false (normal mode)
+	# Mock function to simulate normal mode (not fake mode)
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   1: Always returns false (not in fake mode)
 	is_fake_mode() {
 		return 1
 	}
@@ -2508,6 +2730,15 @@ EOF
 # ============================================================================
 
 # Helper function to source lockfile module and dependencies
+#
+# Sources lockfile module and its dependencies, sets up required environment
+# variables for lockfile tests.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
 source_lockfile_module() {
 	# Source dependencies in order
 	# shellcheck source=/dev/null
@@ -2541,6 +2772,12 @@ source_lockfile_module() {
 	source_lockfile_module
 
 	# Test function that will be executed after lock acquisition
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
 	test_main_func() {
 		echo "Lock acquired, executing main function"
 		return 0
@@ -2572,6 +2809,12 @@ source_lockfile_module() {
 	touch "$LOCKFILE"
 
 	# Test function (should not be executed)
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
 	test_main_func() {
 		echo "This should not execute"
 		return 0
@@ -2607,6 +2850,12 @@ source_lockfile_module() {
 	touch -d "@$old_timestamp" "$LOCKFILE" 2>/dev/null || touch "$LOCKFILE"
 
 	# Test function that will be executed after lock acquisition
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
 	test_main_func() {
 		echo "Lock acquired after stale removal"
 		return 0
@@ -2634,6 +2883,12 @@ source_lockfile_module() {
 	source_lockfile_module
 
 	# Test function that will be executed after lock acquisition
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
 	test_main_func() {
 		echo "Lock acquired"
 		return 0
@@ -2683,6 +2938,12 @@ source_lockfile_module() {
 	source_lockfile_module
 
 	# Test function that exits successfully
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
 	test_main_func() {
 		echo "Function executed"
 		return 0
@@ -2709,6 +2970,12 @@ source_lockfile_module() {
 	source_lockfile_module
 
 	# Test function that exits with error
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   1: Always fails (for testing error handling)
 	test_main_func() {
 		echo "Function executed with error"
 		return 1
@@ -2732,6 +2999,12 @@ source_lockfile_module() {
 	source_lockfile_module
 
 	# Test function that will be executed after lock acquisition
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
 	test_main_func() {
 		echo "Lock acquired, executing main function"
 		return 0
@@ -2758,6 +3031,12 @@ source_lockfile_module() {
 	touch "$LOCKFILE"
 
 	# Test function (should not be executed)
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
 	test_main_func() {
 		echo "This should not execute"
 		return 0
@@ -2788,6 +3067,12 @@ source_lockfile_module() {
 	touch -d "@$old_timestamp" "$LOCKFILE" 2>/dev/null || touch "$LOCKFILE"
 
 	# Test function that will be executed after lock acquisition
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
 	test_main_func() {
 		echo "Lock acquired after stale removal"
 		return 0
@@ -2810,6 +3095,12 @@ source_lockfile_module() {
 	source_lockfile_module
 
 	# Test function that will be executed after lock acquisition
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
 	test_main_func() {
 		echo "Lock acquired"
 		return 0
@@ -2871,6 +3162,12 @@ source_lockfile_module() {
 	source_lockfile_module
 
 	# Test function that will be executed after lock acquisition
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
 	test_main_func() {
 		echo "Lock acquired after retry"
 		return 0
@@ -2899,6 +3196,12 @@ source_lockfile_module() {
 	source_lockfile_module
 
 	# Test function that exits successfully
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
 	test_main_func() {
 		echo "Function executed"
 		return 0
@@ -2920,6 +3223,12 @@ source_lockfile_module() {
 	source_lockfile_module
 
 	# Test function that exits with error
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   1: Always fails (for testing error handling)
 	test_main_func() {
 		echo "Function executed with error"
 		return 1
@@ -2945,6 +3254,12 @@ source_lockfile_module() {
 	touch "$LOCKFILE"
 
 	# Test function that will be executed after lock acquisition
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
 	test_main_func() {
 		echo "Lock acquired after dead PID removal"
 		return 0
@@ -2967,6 +3282,12 @@ source_lockfile_module() {
 	source_lockfile_module
 
 	# Test function that will be executed after lock acquisition
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
 	test_main_func() {
 		echo "Lock acquired after retry"
 		return 0
@@ -3389,13 +3710,7 @@ source_lockfile_module() {
 	local location_name="TEST"
 
 	# Mock ping command that succeeds
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-# Simulate successful ping
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping_success >/dev/null
 	add_mock_to_path
 
 	# Source required functions
@@ -3446,13 +3761,7 @@ EOF
 	local location_name="TEST"
 
 	# Mock ping command that fails
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-# Simulate failed ping
-exit 1
-EOF
-	chmod +x "$mock_ping"
+	mock_ping_failure >/dev/null
 	add_mock_to_path
 
 	# Source required functions
@@ -3480,8 +3789,9 @@ EOF
 	export STATE_DIR
 
 	# Create mock ip command with specific SPI
+	# Use explicit path for this test since it needs to verify the mock itself
 	local mock_ip
-	mock_ip=$(mock_ip_xfrm_state "203.0.113.1" "2000" "0xABCDEF12")
+	mock_ip=$(mock_ip_xfrm_state "203.0.113.1" "2000" "0xABCDEF12" "" "${TEST_DIR}/mock_ip")
 	add_mock_to_path
 
 	# Source constants for XFRM_OUTPUT_CONTEXT_LINES if not already set
@@ -3546,8 +3856,9 @@ EOF
 	set_peer_state "" "203.0.113.1" "last_bytes" "5000" || true
 
 	# Create mock ip command FIRST
+	# Use explicit path for this test since it needs to verify the mock itself
 	local mock_ip
-	mock_ip=$(mock_ip_xfrm_state "203.0.113.1" "1000" "0x87654321")
+	mock_ip=$(mock_ip_xfrm_state "203.0.113.1" "1000" "0x87654321" "" "${TEST_DIR}/mock_ip")
 	add_mock_to_path
 
 	# Set PATH BEFORE sourcing so command -v finds mock
@@ -3804,6 +4115,13 @@ EOF
 	# Override check_command_available to return false for ip and ipsec
 	# This allows us to test the "unavailable" scenario even when commands exist on the system
 	# For other commands, we use a simple command -v check (sufficient for test purposes)
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
 	check_command_available() {
 		local cmd="$1"
 		# Return false (unavailable) for ip and ipsec to test unavailable scenario
@@ -3845,6 +4163,13 @@ EOF
 	fi
 
 	# Mock handle_error to not exit
+	# Mock function to suppress error handling in tests
+	#
+	# Arguments:
+	#   $@: Error message and parameters (ignored)
+	#
+	# Returns:
+	#   0: Always succeeds
 	handle_error() {
 		:
 	}
@@ -3853,4 +4178,119 @@ EOF
 	run select_recovery_strategy "203.0.113.1" 1
 
 	assert_failure
+}
+
+# ============================================================================
+# Test Helper Function Tests - with_mocks()
+# ============================================================================
+# These tests verify the with_mocks() wrapper function that ensures mock cleanup
+
+# bats test_tags=category:unit
+@test "with_mocks executes command successfully and cleans up PATH" {
+	# Purpose: Test verifies that with_mocks() executes commands successfully and always cleans up PATH
+	# Expected: Function executes command, returns success, and removes mocks from PATH
+	# Importance: Ensures mock cleanup happens even on successful execution
+	local original_path="$PATH"
+
+	# Use with_mocks to execute a command (mock setup is done inside with_mocks)
+	run with_mocks 'mock_ip_xfrm_state "${TEST_PEER_IP}" 1000' \
+		true
+
+	assert_success
+	# Verify PATH was restored (mocks removed)
+	assert_equal "$PATH" "$original_path"
+}
+
+# bats test_tags=category:unit
+@test "with_mocks handles mock setup failure without modifying PATH" {
+	# Purpose: Test verifies that with_mocks() handles mock setup failures gracefully
+	# Expected: Function returns error and does not modify PATH when mock setup fails
+	# Importance: Prevents PATH pollution when mock setup commands fail
+	local original_path="$PATH"
+
+	# Use with_mocks with a failing mock setup command
+	run with_mocks 'false' true
+
+	assert_failure
+	# Verify PATH was not modified (should still be original)
+	assert_equal "$PATH" "$original_path"
+}
+
+# bats test_tags=category:unit
+@test "with_mocks handles empty command and cleans up PATH" {
+	# Purpose: Test verifies that with_mocks() handles empty command gracefully
+	# Expected: Function returns error and cleans up PATH when no command is provided
+	# Importance: Prevents PATH pollution when function is called incorrectly
+	local original_path="$PATH"
+
+	# Use with_mocks without providing a command (empty after shift)
+	# Mock setup will succeed, but then function detects no command and cleans up
+	run with_mocks 'mock_ip_xfrm_state "${TEST_PEER_IP}" 1000'
+
+	assert_failure
+	# Verify PATH was restored (mocks removed)
+	assert_equal "$PATH" "$original_path"
+}
+
+# bats test_tags=category:unit
+@test "with_mocks cleans up PATH even when command fails" {
+	# Purpose: Test verifies that with_mocks() cleans up PATH even when wrapped command fails
+	# Expected: Function removes mocks from PATH and returns command's exit code
+	# Importance: Ensures cleanup happens regardless of command success/failure
+	local original_path="$PATH"
+
+	# Use with_mocks to execute a failing command
+	run with_mocks 'mock_ip_xfrm_state "${TEST_PEER_IP}" 1000' \
+		false
+
+	assert_failure
+	# Verify PATH was restored (mocks removed) even though command failed
+	assert_equal "$PATH" "$original_path"
+}
+
+# bats test_tags=category:unit
+@test "with_mocks executes multiple mock setup commands" {
+	# Purpose: Test verifies that with_mocks() handles multiple mock setup commands
+	# Expected: Function evaluates all setup commands and executes wrapped command
+	# Importance: Supports complex test scenarios requiring multiple mocks
+	local original_path="$PATH"
+
+	# Use with_mocks with multiple mock setup commands
+	run with_mocks 'mock_ip_xfrm_state "${TEST_PEER_IP}" 1000; mock_ping "${TEST_PEER_IP}" 1' \
+		true
+
+	assert_success
+	# Verify PATH was restored
+	assert_equal "$PATH" "$original_path"
+	# Verify mocks were created
+	assert_file_exist "${TEST_DIR}/ip"
+	assert_file_exist "${TEST_DIR}/mock_ping"
+}
+
+# bats test_tags=category:unit
+@test "with_mocks preserves command exit code" {
+	# Purpose: Test verifies that with_mocks() preserves the exit code of the wrapped command
+	# Expected: Function returns the same exit code as the wrapped command
+	# Importance: Allows tests to verify command success/failure through with_mocks()
+	local original_path="$PATH"
+
+	# Test with exit code 0
+	run with_mocks 'mock_ip_xfrm_state "${TEST_PEER_IP}" 1000' \
+		sh -c 'exit 0'
+	assert_success
+
+	# Test with exit code 1
+	run with_mocks 'mock_ip_xfrm_state "${TEST_PEER_IP}" 1000' \
+		sh -c 'exit 1'
+	assert_failure
+
+	# Test with exit code 2
+	run with_mocks 'mock_ip_xfrm_state "${TEST_PEER_IP}" 1000' \
+		sh -c 'exit 2'
+	assert_failure
+	# Note: BATS doesn't preserve exact exit codes, just success/failure
+	# But we can verify it's not 0
+
+	# Verify PATH was restored
+	assert_equal "$PATH" "$original_path"
 }

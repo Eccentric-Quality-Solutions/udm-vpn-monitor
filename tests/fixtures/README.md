@@ -11,13 +11,17 @@ Reusable test fixtures for common VPN monitoring scenarios. These fixtures combi
 - `vpn_failing.bash` - VPN has recorded failures (`setup_vpn_failing_fixture`)
 - `vpn_cooldown.bash` - VPN is in cooldown period (`setup_vpn_cooldown_fixture`)
 - `vpn_rekey.bash` - VPN has undergone a rekey (`setup_vpn_rekey_fixture`)
+- `vpn_flapping.bash` - VPN can transition between up/down states (`setup_vpn_flapping_fixture`)
 - `vpn_multiple_peers.bash` - Multiple VPN peers scenario (`setup_vpn_multiple_peers_fixture`)
+- `vpn_mixed_peers.bash` - Multiple peers with mixed states (`setup_vpn_mixed_peers_fixture`)
 - `vpn_recovery_disabled.bash` - Recovery actions disabled (`setup_vpn_recovery_disabled_fixture`)
 - `vpn_at_tier.bash` - VPN at specific tier threshold (`setup_vpn_at_tier_fixture`)
 - `vpn_idle.bash` - VPN idle tunnel scenario (`setup_vpn_idle_fixture`)
 - `vpn_network_partition.bash` - Network partition scenario (`setup_vpn_network_partition_fixture`)
 - `vpn_rate_limited.bash` - Rate limiting scenario (`setup_vpn_rate_limited_fixture`)
 - `vpn_xfrm_recovery.bash` - XFRM recovery scenario (`setup_vpn_xfrm_recovery_fixture`)
+- `vpn_bytes_zero.bash` - VPN SA exists but bytes=0 (suspect condition) (`setup_vpn_bytes_zero_fixture`)
+- `vpn_recovery_test.bash` - Recovery test setup with pass-through mocks (`setup_vpn_recovery_test_fixture`)
 
 ## Basic Usage
 

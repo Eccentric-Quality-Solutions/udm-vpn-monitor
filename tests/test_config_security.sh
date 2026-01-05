@@ -20,7 +20,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local custom_state_dir="${TEST_DIR}/custom-state"
 	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 STATE_DIR="${custom_state_dir}"
 EOF
 
@@ -34,7 +34,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$test_script" --fake
@@ -67,7 +67,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local readonly_log_dir="${TEST_DIR}/readonly-logs"
 	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 LOG_FILE="${readonly_log_dir}/vpn-monitor.log"
 EOF
 
@@ -82,7 +82,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$test_script" --fake
@@ -105,7 +105,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local readonly_state_dir="${TEST_DIR}/readonly-state"
 	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="192.168.1.1"
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 STATE_DIR="${readonly_state_dir}"
 EOF
 
@@ -120,7 +120,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$test_script" --fake
@@ -142,10 +142,8 @@ EOF
 	# Expected: Script detects dangerous content and rejects config file without executing code
 	# Importance: Prevents arbitrary code execution if config file is compromised
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-VPN_NAME=$(echo "malicious")
-EOF
+	# Expand TEST_PEER_IP but keep dangerous content literal
+	printf 'LOCATION_TEST_EXTERNAL="%s"\nVPN_NAME=$(echo "malicious")\n' "${TEST_PEER_IP}" >"$config_file"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -171,10 +169,8 @@ EOF
 	# Expected: Script detects dangerous content and rejects config file without executing code
 	# Importance: Prevents arbitrary code execution if config file is compromised
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-VPN_NAME=`echo "malicious"`
-EOF
+	# Expand TEST_PEER_IP but keep dangerous content literal
+	printf 'LOCATION_TEST_EXTERNAL="%s"\nVPN_NAME=`echo "malicious"`\n' "${TEST_PEER_IP}" >"$config_file"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -200,10 +196,8 @@ EOF
 	# Expected: Script detects dangerous content and rejects config file without executing code
 	# Importance: Prevents arbitrary code execution if config file is compromised
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-eval "malicious code"
-EOF
+	# Expand TEST_PEER_IP but keep dangerous content literal
+	printf 'LOCATION_TEST_EXTERNAL="%s"\neval "malicious code"\n' "${TEST_PEER_IP}" >"$config_file"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -229,8 +223,8 @@ EOF
 	# Expected: Script detects unknown variable and rejects config file
 	# Importance: Prevents setting arbitrary variables that could be used for code injection
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 MALICIOUS_VAR="value"
 EOF
 
@@ -258,16 +252,15 @@ EOF
 	# Expected: Script parses valid config file and sets variables safely
 	# Importance: Ensures legitimate config files continue to work after security fix
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST1_EXTERNAL="192.168.1.1"
-LOCATION_TEST2_EXTERNAL="192.168.1.2"
-VPN_NAME="Test VPN"
-TIER1_THRESHOLD=2
-TIER2_THRESHOLD=4
-TIER3_THRESHOLD=6
-ENABLE_PING_CHECK=1
-DEBUG=0
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST1_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		'LOCATION_TEST2_EXTERNAL="192.168.1.2"' \
+		'VPN_NAME="Test VPN"' \
+		'TIER1_THRESHOLD=2' \
+		'TIER2_THRESHOLD=4' \
+		'TIER3_THRESHOLD=6' \
+		'ENABLE_PING_CHECK=1' \
+		'DEBUG=0'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -278,7 +271,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Script should parse valid config file successfully
@@ -299,10 +292,8 @@ EOF
 	# Expected: Script detects dangerous content and rejects config file without executing code
 	# Importance: Prevents arbitrary code execution if config file is compromised
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-source /etc/passwd
-EOF
+	# Expand TEST_PEER_IP but keep dangerous content literal
+	printf 'LOCATION_TEST_EXTERNAL="%s"\nsource /etc/passwd\n' "${TEST_PEER_IP}" >"$config_file"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -328,10 +319,8 @@ EOF
 	# Expected: Script detects dangerous content and rejects config file
 	# Importance: Ensures all dangerous patterns are detected even when combined
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-VPN_NAME=$(echo "test") `echo "test"` eval "test"
-EOF
+	# Expand TEST_PEER_IP but keep dangerous content literal
+	printf 'LOCATION_TEST_EXTERNAL="%s"\nVPN_NAME=$(echo "test") `echo "test"` eval "test"\n' "${TEST_PEER_IP}" >"$config_file"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -357,11 +346,8 @@ EOF
 	# Expected: Script ignores comments and allows dangerous patterns in comment lines
 	# Importance: Comments should not trigger security checks
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-# This is a comment with $(echo "test") `echo "test"` eval "test"
-VPN_NAME="Test VPN"
-EOF
+	# Expand TEST_PEER_IP but keep dangerous content literal in comments
+	printf 'LOCATION_TEST_EXTERNAL="%s"\n# This is a comment with $(echo "test") `echo "test"` eval "test"\nVPN_NAME="Test VPN"\n' "${TEST_PEER_IP}" >"$config_file"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -372,7 +358,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Script should parse config file successfully (comments are ignored)
@@ -394,8 +380,8 @@ EOF
 	# Expected: Script parses valid assignments without quotes safely
 	# Importance: Ensures legitimate config files without quotes continue to work
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -412,7 +398,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Script should parse valid config file successfully

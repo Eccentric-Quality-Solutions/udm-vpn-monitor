@@ -17,7 +17,7 @@ load test_helper
 	# Expected: All updates should be preserved, no updates should be lost.
 	# Importance: Rapid updates could cause state inconsistencies if atomic writes fail.
 	setup_test_environment "${TEST_DIR}"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 
 	source_function "set_peer_state"
 	source_function "get_peer_state"
@@ -39,7 +39,7 @@ load test_helper
 	# Expected: All state keys should be updated correctly without interference.
 	# Importance: Multiple state keys updated rapidly could cause file conflicts.
 	setup_test_environment "${TEST_DIR}"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 
 	source_function "set_peer_state"
 	source_function "get_peer_state"
@@ -71,7 +71,7 @@ load test_helper
 	# Expected: Function should handle locked files without crashing, may log warning.
 	# Importance: State file locked by another process could cause write failures.
 	setup_test_environment "${TEST_DIR}"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 
 	source_function "set_peer_state"
 	source_function "get_peer_state_file_path"
@@ -118,7 +118,7 @@ load test_helper
 	# Expected: Function should handle write failures gracefully, state should remain consistent.
 	# Importance: Atomic write failures could leave state in inconsistent state if not handled properly.
 	setup_test_environment "${TEST_DIR}"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 
 	source_function "set_peer_state"
 	source_function "get_peer_state"
@@ -159,7 +159,7 @@ load test_helper
 	# Expected: Reads should return consistent values (either old or new, not corrupted).
 	# Importance: Concurrent reads during updates could return corrupted values if not atomic.
 	setup_test_environment "${TEST_DIR}"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 
 	source_function "set_peer_state"
 	source_function "get_peer_state"
@@ -213,7 +213,7 @@ load test_helper
 	# Expected: State should always be in a valid state, never corrupted.
 	# Importance: Rapid updates could cause state corruption if atomic writes fail.
 	setup_test_environment "${TEST_DIR}"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 
 	source_function "set_peer_state"
 	source_function "get_peer_state"
@@ -240,7 +240,7 @@ load test_helper
 	# Expected: Each peer's state should be updated independently and correctly.
 	# Importance: Multiple peer updates could cause file conflicts if not handled properly.
 	setup_test_environment "${TEST_DIR}"
-	local peer1="192.168.1.1"
+	local peer1="${TEST_PEER_IP}"
 	local peer2="192.168.1.2"
 	local peer3="192.168.1.3"
 
@@ -318,7 +318,7 @@ load test_helper
 	# Expected: Function should detect corruption and return default value, triggering recovery.
 	# Importance: Corrupted state files during concurrent updates could cause false readings.
 	setup_test_environment "${TEST_DIR}"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 
 	source_function "get_peer_state"
 	source_function "get_peer_state_file_path"

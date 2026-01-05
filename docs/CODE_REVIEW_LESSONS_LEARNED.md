@@ -2197,6 +2197,58 @@ log_message "INFO" "$location_name" "Surgical cleanup completed for $location_na
 
 ---
 
+## 30. Mock Command Handling: Always Handle All Command Variants
+
+### Problem
+When mocking system commands in tests, we must handle all variants that the code might call. The `get_xfrm_state_for_peer()` function tries `ip -s xfrm state` first (with statistics flag), then falls back to `ip xfrm state` (without flag). A test mock that only handled `ip xfrm state` would fail when the code calls `ip -s xfrm state` first.
+
+### Impact
+- Test failures that are hard to diagnose (mock appears correct but doesn't match actual call)
+- Inconsistent test behavior (works if first call fails, breaks if it succeeds)
+- False test passes when fallback path is used
+
+### Lesson
+**When mocking commands, check what variants the code actually calls.** Don't assume the code only calls one variant. Check the implementation to see all possible call patterns.
+
+### Pattern to Follow
+```bash
+# ✅ GOOD: Handle all variants
+cat >"$mock_ip" <<EOF
+#!/bin/bash
+# Handle "ip xfrm state" (args: xfrm, state)
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    echo "output"
+    exit 0
+fi
+# Handle "ip -s xfrm state" (args: -s, xfrm, state)
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    echo "output"
+    exit 0
+fi
+exit 1
+EOF
+
+# ❌ BAD: Only handle one variant
+cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    echo "output"
+fi
+EOF
+```
+
+### Systematic Application
+- Before creating mocks, check the actual function implementation to see all command variants
+- Use `grep` or code search to find all call sites
+- Test mocks with both variants to ensure they work
+- Document which variants are handled in mock comments
+
+### References
+- Bug fix: `tests/test_detection_idle.sh:59-80` (updated mock to handle both `ip xfrm state` and `ip -s xfrm state`)
+- Implementation: `lib/detection.sh:578-601` (`get_xfrm_state_for_peer()` tries `-s` variant first, then falls back)
+
+---
+
 ## Summary: Key Takeaways
 
 These lessons should be applied systematically in future development and code reviews to prevent similar issues:
@@ -2234,3 +2286,132 @@ These lessons should be applied systematically in future development and code re
 27. **Parse all selectors when interacting with kernel interfaces** - When parsing structured output from kernel interfaces (netlink, xfrm, iproute2), parse ALL attributes that could be selectors, not just the required ones. Optional attributes become required selectors when present. Missing selectors cause operations to fail with "No such process" errors even when the object exists. Include all parsed selectors in operations (get, delete, modify) to ensure successful matching.
 28. **Avoid over-engineering edge case protections** - Don't add safeguards for edge cases that are extremely unlikely, would be caught by testing, are protected by existing safeguards, or add complexity without significant benefit
 29. **Log messages must accurately reflect the operation performed** - Use different terminology for different code paths when behavior differs, include context in messages, match terminology to actual behavior not function name
+30. **Mock command handling: Always handle all command variants** - When mocking system commands in tests, check what variants the code actually calls. Don't assume the code only calls one variant. Handle all variants that the implementation might use, including fallback paths.
+31. **When refactoring helper functions, maintain backward compatibility or update all callers** - When changing default behavior of helper functions (e.g., default file paths), either maintain backward compatibility or update all callers. Tests with special requirements may need explicit parameters. Default paths should match the most common usage pattern to minimize required changes.
+32. **Fixtures can export helper functions for dynamic test behavior** - When fixtures need to provide dynamic behavior during test execution (e.g., switching VPN states), define helper functions inside the fixture and export them using `export -f`. This pattern allows fixtures to provide both initial setup and runtime helpers. Helper functions should use exported variables (e.g., `VPN_FLAPPING_PEER_IP`) to access fixture state. This pattern is useful for testing state transitions and flapping scenarios where the test needs to modify the environment during execution.
+
+## 33. Escape Variables in Heredocs When Creating Mock Scripts
+
+### Problem
+When using `<<EOF` (without quotes) to create mock scripts in tests, variables like `$1`, `$2`, `$@` are expanded during test execution (when the heredoc is created), not when the mock script runs. This causes the mock script to receive incorrect values or fail to match arguments correctly.
+
+### Impact
+- Mock scripts fail to match command arguments correctly
+- Tests fail with cryptic errors like "No SA found" even when the mock should provide output
+- Hard to diagnose because the mock script appears correct but doesn't work as expected
+
+### Lesson
+**When using `<<EOF` (without quotes) to create mock scripts, always escape script arguments like `\$1`, `\$2`, `\$@` so they're evaluated when the mock script runs, not when the test creates the script.**
+
+### Pattern to Follow
+```bash
+# ✅ GOOD: Escape variables in heredoc
+cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
+EOF
+
+# ❌ BAD: Unescaped variables (expanded during test execution)
+cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+
+# ✅ ALTERNATIVE: Use quoted heredoc to prevent all expansion
+cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "src 192.168.1.1 dst 192.168.1.1"
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+```
+
+### Systematic Application
+- When creating mock scripts with `<<EOF` (without quotes), escape all script arguments: `\$1`, `\$2`, `\$3`, `\$@`
+- Variables from the test environment (like `${TEST_PEER_IP}`) should NOT be escaped - they should expand during test execution
+- Alternatively, use `<<'EOF'` (with quotes) to prevent all expansion, but then you can't use test variables
+- Check existing mocks in `test_helper.bash` for correct patterns (e.g., `mock_ip_xfrm_state()`)
+
+### References
+- Bug fix: `tests/test_detection_xfrm_edge_cases.sh:361-386` (fixed unescaped `$1`, `$2`, `$3`, `$@` in mock script)
+- Correct pattern: `tests/test_helper.bash:816-836` (`mock_ip_xfrm_state()` uses escaped variables)
+- Test that failed: "check_xfrm_status falls back to ping check when byte counters unavailable"
+
+---
+
+## 33. Mock Commands Must Handle Command Availability Checks
+
+### Problem
+When mocking system commands in tests, the mock must handle `--help` and `--version` arguments that `check_command_available()` uses to verify command existence. The `check_command_available()` function (see ADR-0027) uses multiple fallback mechanisms:
+1. First tries `command -v` (checks PATH)
+2. Falls back to checking system directories
+3. Falls back to executing command with `--help` or `--version` flags
+
+Mocks that only handle specific subcommands (e.g., `status`, `reload`) will fail when `check_command_available()` tries to verify the command exists via the `--help`/`--version` fallback.
+
+### Impact
+- Test failures when `check_command_available()` is called before the actual command execution
+- Inconsistent test behavior (works if command is found via PATH, fails if fallback is used)
+- Test failures that are hard to diagnose (mock appears correct but doesn't match availability check)
+
+### Lesson
+**When mocking commands, handle command availability check arguments (`--help` and `--version`) in addition to the actual command subcommands.** This ensures the mock works correctly with `check_command_available()` regardless of which fallback mechanism is used.
+
+### Pattern to Follow
+```bash
+# ✅ GOOD: Explicitly handle command availability checks
+cat >"$mock_ipsec" <<EOF
+#!/bin/bash
+if [[ "\$1" == "status" ]]; then
+    echo "test-conn: ESTABLISHED 1 hour ago, 192.168.1.1...192.168.1.2"
+    exit 0
+elif [[ "\$1" == "--help" ]] || [[ "\$1" == "--version" ]]; then
+    # Handle command availability checks
+    exit 0
+fi
+exit 1
+EOF
+
+# ✅ GOOD: Use exec fallback (works if real command exists)
+cat >"$mock_ipsec" <<EOF
+#!/bin/bash
+if [[ "\$1" == "status" ]]; then
+    echo "test-conn: ESTABLISHED 1 hour ago, 192.168.1.1...192.168.1.2"
+    exit 0
+fi
+exec /usr/bin/ipsec "\$@"
+EOF
+
+# ❌ BAD: Only handle specific subcommand (fails availability check)
+cat >"$mock_ipsec" <<EOF
+#!/bin/bash
+if [[ "\$1" == "status" ]]; then
+    echo "test-conn: ESTABLISHED 1 hour ago, 192.168.1.1...192.168.1.2"
+    exit 0
+fi
+exit 1
+EOF
+```
+
+### Systematic Application
+- Before creating mocks, check if the code calls `check_command_available()` or `check_command_or_warn()` for the command
+- If so, ensure the mock handles `--help` and `--version` arguments
+- Prefer explicit handling over `exec` fallback for test reliability (real command may not exist in test environment)
+- Update helper functions (e.g., `mock_ipsec_status()`) to handle availability checks for consistency
+
+### References
+- Bug fix: `tests/test_detection_xfrm_edge_cases.sh:255-265` (updated mock to handle `--help`/`--version`)
+- Implementation: `lib/common.sh:807-858` (`check_command_available()` uses `--help`/`--version` fallback)
+- ADR: `docs/adr/0027-enhanced-command-availability-checking.md` (command availability checking mechanism)
+
+---

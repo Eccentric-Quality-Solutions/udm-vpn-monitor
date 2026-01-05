@@ -21,44 +21,22 @@ load fixtures/vpn_at_tier
 	# Purpose: Test verifies that recovery method is stored when xfrm recovery is attempted
 	# Expected: store_recovery_method is called with "xfrm" when xfrm recovery is attempted
 	# Importance: Ensures recovery method tracking works for xfrm-based recovery
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'TIER2_THRESHOLD=3'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'TIER2_THRESHOLD=3'
 
 	# Track phase2 calls for SA deletion/re-establishment simulation
 	local phase2_call_file="${TEST_DIR}/phase2_calls"
-	echo "0" >"$phase2_call_file"
 
 	# Mock ip command for xfrm recovery with incrementing byte counters
 	# Note: get_xfrm_state_for_peer may call "ip -s xfrm state" first, then fall back to "ip xfrm state"
 	# Byte counters must increase over time for verify_byte_counters_increment to succeed
 	local verify_attempt_file="${TEST_DIR}/verify_attempts"
-	mock_ip_xfrm_with_incrementing_bytes "192.168.1.1" "1000" "1000" "0x12345678" "$verify_attempt_file" "10.0.0.1" >/dev/null
+	mock_ip_xfrm_with_incrementing_bytes "${TEST_PEER_IP}" "1000" "1000" "0x12345678" "$verify_attempt_file" "${TEST_PEER_IP2}" >/dev/null
 	add_mock_to_path
 
 	# Mock check_ipsec_phase2 function to simulate SA deletion and re-establishment
-	# Tracks its own call count to coordinate with recovery phases
-	local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
-	cat >"$mock_check_ipsec_phase2" <<EOF
-#!/bin/bash
-# Track call count for this function
-phase2_calls=\$(cat "$phase2_call_file" 2>/dev/null || echo "0")
-phase2_calls=\$((phase2_calls + 1))
-echo "\$phase2_calls" > "$phase2_call_file"
-
-# Initially: SAs exist (first call) - return success
-# After deletion check: SAs deleted (2nd call) - return failure  
-# During verification: SAs re-established (3rd+ call) - return success
-if [[ \$phase2_calls -eq 1 ]]; then
-	# Initial check: SAs exist
-	exit 0
-elif [[ \$phase2_calls -eq 2 ]]; then
-	# After deletion: SAs don't exist yet
-	exit 1
-else
-	# After re-establishment: SAs exist again
-	exit 0
-fi
-EOF
-	chmod +x "$mock_check_ipsec_phase2"
+	# Pattern: success (call 1) -> failure (call 2) -> success (call 3+)
+	local mock_check_ipsec_phase2
+	mock_check_ipsec_phase2=$(mock_check_ipsec_phase2_state_transition "0,1,0" "$phase2_call_file")
 	add_mock_to_path
 
 	source_recovery_module
@@ -79,7 +57,7 @@ EOF
 	# Set up failure count at Tier 2 threshold
 	# setup_location_vpn_monitor creates location "TEST" from LOCATION_TEST_EXTERNAL
 	local location_name="TEST"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 	set_peer_state "$location_name" "$peer_ip" "failure_count" "3"
 
 	# Call surgical_cleanup which should store recovery method
@@ -98,7 +76,7 @@ EOF
 	# Purpose: Test verifies that recovery method is stored when ipsec_reload recovery is attempted
 	# Expected: store_recovery_method is called with "ipsec_reload" when ipsec reload is attempted
 	# Importance: Ensures recovery method tracking works for ipsec reload recovery
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=0' 'TIER2_THRESHOLD=3'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=0' 'TIER2_THRESHOLD=3'
 
 	# Mock ipsec command for reload
 	mock_ipsec_reload_restart 0 0 >/dev/null
@@ -109,7 +87,7 @@ EOF
 	# Set up failure count at Tier 2 threshold
 	# setup_location_vpn_monitor creates location "TEST" from LOCATION_TEST_EXTERNAL
 	local location_name="TEST"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 	set_peer_state "$location_name" "$peer_ip" "failure_count" "3"
 
 	# Call surgical_cleanup which should store recovery method
@@ -128,7 +106,7 @@ EOF
 	# Purpose: Test verifies that recovery method is updated when xfrm fails and falls back to ipsec_reload
 	# Expected: Recovery method is updated from "xfrm" to "ipsec_reload" when fallback occurs
 	# Importance: Ensures fallback recovery methods are correctly tracked
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'TIER2_THRESHOLD=3'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'TIER2_THRESHOLD=3'
 
 	# Mock ip command - xfrm recovery will fail (no SAs found)
 	# Note: get_xfrm_state_for_peer may call "ip -s xfrm state" first, then fall back to "ip xfrm state"
@@ -144,7 +122,7 @@ EOF
 	# Set up failure count at Tier 2 threshold
 	# setup_location_vpn_monitor creates location "TEST" from LOCATION_TEST_EXTERNAL
 	local location_name="TEST"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 	set_peer_state "$location_name" "$peer_ip" "failure_count" "3"
 
 	# Call surgical_cleanup - xfrm will fail, fallback to ipsec_reload
@@ -163,44 +141,22 @@ EOF
 	# Purpose: Test verifies that "VPN restored" message includes the recovery method that was used
 	# Expected: Log message contains "VPN restored" with recovery method information
 	# Importance: Provides visibility into which recovery method successfully restored the VPN
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'TIER2_THRESHOLD=3'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'TIER2_THRESHOLD=3'
 
 	# Track phase2 calls for SA deletion/re-establishment simulation
 	local phase2_call_file="${TEST_DIR}/phase2_calls"
-	echo "0" >"$phase2_call_file"
 
 	# Mock ip command for xfrm recovery with incrementing byte counters
 	# Note: get_xfrm_state_for_peer may call "ip -s xfrm state" first, then fall back to "ip xfrm state"
 	# Byte counters must increase over time for verify_byte_counters_increment to succeed
 	local verify_attempt_file="${TEST_DIR}/verify_attempts"
-	mock_ip_xfrm_with_incrementing_bytes "192.168.1.1" "12345" "1000" "0x12345678" "$verify_attempt_file" "10.0.0.1" >/dev/null
+	mock_ip_xfrm_with_incrementing_bytes "${TEST_PEER_IP}" "12345" "1000" "0x12345678" "$verify_attempt_file" "${TEST_PEER_IP2}" >/dev/null
 	add_mock_to_path
 
 	# Mock check_ipsec_phase2 function to simulate SA deletion and re-establishment
-	# Tracks its own call count to coordinate with recovery phases
-	local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
-	cat >"$mock_check_ipsec_phase2" <<EOF
-#!/bin/bash
-# Track call count for this function
-phase2_calls=\$(cat "$phase2_call_file" 2>/dev/null || echo "0")
-phase2_calls=\$((phase2_calls + 1))
-echo "\$phase2_calls" > "$phase2_call_file"
-
-# Initially: SAs exist (first call) - return success
-# After deletion check: SAs deleted (2nd call) - return failure  
-# During verification: SAs re-established (3rd+ call) - return success
-if [[ \$phase2_calls -eq 1 ]]; then
-	# Initial check: SAs exist
-	exit 0
-elif [[ \$phase2_calls -eq 2 ]]; then
-	# After deletion: SAs don't exist yet
-	exit 1
-else
-	# After re-establishment: SAs exist again
-	exit 0
-fi
-EOF
-	chmod +x "$mock_check_ipsec_phase2"
+	# Pattern: success (call 1) -> failure (call 2) -> success (call 3+)
+	local mock_check_ipsec_phase2
+	mock_check_ipsec_phase2=$(mock_check_ipsec_phase2_state_transition "0,1,0" "$phase2_call_file")
 	add_mock_to_path
 
 	source_recovery_module
@@ -221,7 +177,7 @@ EOF
 	# Set up failure count at Tier 2 threshold
 	# setup_location_vpn_monitor creates location "TEST" from LOCATION_TEST_EXTERNAL
 	local location_name="TEST"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 	set_peer_state "$location_name" "$peer_ip" "failure_count" "3"
 
 	# Perform recovery (stores recovery method)
@@ -234,7 +190,7 @@ EOF
 	# Update mock ip to return active VPN (SA exists, bytes increasing)
 	# Format matches UDM OS format for proper parsing
 	# Note: get_xfrm_state_for_peer may call "ip -s xfrm state" first, then fall back to "ip xfrm state"
-	mock_ip_xfrm_state "192.168.1.1" "20000" "0x12345678" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "20000" "0x12345678" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 
 	# Call monitor_location - VPN should be detected as healthy
@@ -252,44 +208,22 @@ EOF
 	# Purpose: Test verifies that recovery method is cleared after being logged in restoration message
 	# Expected: Recovery method state file is deleted after VPN restoration is logged
 	# Importance: Prevents stale recovery method information from being displayed
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'TIER2_THRESHOLD=3'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'TIER2_THRESHOLD=3'
 
 	# Track phase2 calls for SA deletion/re-establishment simulation
 	local phase2_call_file="${TEST_DIR}/phase2_calls"
-	echo "0" >"$phase2_call_file"
 
 	# Mock ip command for xfrm recovery with incrementing byte counters
 	# Note: get_xfrm_state_for_peer may call "ip -s xfrm state" first, then fall back to "ip xfrm state"
 	# Byte counters must increase over time for verify_byte_counters_increment to succeed
 	local verify_attempt_file="${TEST_DIR}/verify_attempts"
-	mock_ip_xfrm_with_incrementing_bytes "192.168.1.1" "12345" "1000" "0x12345678" "$verify_attempt_file" "10.0.0.1" >/dev/null
+	mock_ip_xfrm_with_incrementing_bytes "${TEST_PEER_IP}" "12345" "1000" "0x12345678" "$verify_attempt_file" "${TEST_PEER_IP2}" >/dev/null
 	add_mock_to_path
 
 	# Mock check_ipsec_phase2 function to simulate SA deletion and re-establishment
-	# Tracks its own call count to coordinate with recovery phases
-	local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
-	cat >"$mock_check_ipsec_phase2" <<EOF
-#!/bin/bash
-# Track call count for this function
-phase2_calls=\$(cat "$phase2_call_file" 2>/dev/null || echo "0")
-phase2_calls=\$((phase2_calls + 1))
-echo "\$phase2_calls" > "$phase2_call_file"
-
-# Initially: SAs exist (first call) - return success
-# After deletion check: SAs deleted (2nd call) - return failure  
-# During verification: SAs re-established (3rd+ call) - return success
-if [[ \$phase2_calls -eq 1 ]]; then
-	# Initial check: SAs exist
-	exit 0
-elif [[ \$phase2_calls -eq 2 ]]; then
-	# After deletion: SAs don't exist yet
-	exit 1
-else
-	# After re-establishment: SAs exist again
-	exit 0
-fi
-EOF
-	chmod +x "$mock_check_ipsec_phase2"
+	# Pattern: success (call 1) -> failure (call 2) -> success (call 3+)
+	local mock_check_ipsec_phase2
+	mock_check_ipsec_phase2=$(mock_check_ipsec_phase2_state_transition "0,1,0" "$phase2_call_file")
 	add_mock_to_path
 
 	source_recovery_module
@@ -310,7 +244,7 @@ EOF
 	# Set up failure count at Tier 2 threshold
 	# setup_location_vpn_monitor creates location "TEST" from LOCATION_TEST_EXTERNAL
 	local location_name="TEST"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 	set_peer_state "$location_name" "$peer_ip" "failure_count" "3"
 
 	# Perform recovery (stores recovery method)
@@ -328,7 +262,7 @@ EOF
 	# Update mock ip to return active VPN (SA exists, bytes increasing)
 	# Format matches UDM OS format for proper parsing
 	# Note: get_xfrm_state_for_peer may call "ip -s xfrm state" first, then fall back to "ip xfrm state"
-	mock_ip_xfrm_state "192.168.1.1" "20000" "0x12345678" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "20000" "0x12345678" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 
 	# Call monitor_location - VPN should be detected as healthy and recovery method cleared

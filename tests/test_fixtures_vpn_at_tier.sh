@@ -24,7 +24,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Verify state file has correct failure count
 	ensure_state_functions_loaded
 	local failure_count
-	failure_count=$(get_peer_state "TEST" "192.168.1.1" "failure_count" "0" 2>/dev/null || echo "0")
+	failure_count=$(get_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "0" 2>/dev/null || echo "0")
 	assert_equal "$failure_count" "1"
 
 	# Verify config has tier thresholds
@@ -47,12 +47,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that vpn_at_tier fixture correctly sets up Tier 2 scenario
 	# Expected: Failure count is 3, tier thresholds are set correctly
 	# Importance: Ensures fixture works correctly for Tier 2 tests
-	setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0'
 
 	# Verify state file has correct failure count
 	ensure_state_functions_loaded
 	local failure_count
-	failure_count=$(get_peer_state "TEST" "192.168.1.1" "failure_count" "0" 2>/dev/null || echo "0")
+	failure_count=$(get_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "0" 2>/dev/null || echo "0")
 	assert_equal "$failure_count" "3"
 
 	# Verify config has tier thresholds
@@ -71,12 +71,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that vpn_at_tier fixture correctly sets up Tier 3 scenario
 	# Expected: Failure count is 5, tier thresholds are set correctly
 	# Importance: Ensures fixture works correctly for Tier 3 tests
-	setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_HOUR=10'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10'
 
 	# Verify state file has correct failure count
 	ensure_state_functions_loaded
 	local failure_count
-	failure_count=$(get_peer_state "TEST" "192.168.1.1" "failure_count" "0" 2>/dev/null || echo "0")
+	failure_count=$(get_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "0" 2>/dev/null || echo "0")
 	assert_equal "$failure_count" "5"
 
 	# Verify config has tier thresholds
@@ -95,7 +95,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that vpn_at_tier fixture handles invalid tier numbers
 	# Expected: Fixture returns error for invalid tier number
 	# Importance: Ensures fixture validates input correctly
-	run setup_vpn_at_tier_fixture 4 "192.168.1.1"
+	run setup_vpn_at_tier_fixture 4 "${TEST_PEER_IP}"
 	assert_failure
 	assert_output --partial "Invalid tier number"
 }

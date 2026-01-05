@@ -6,9 +6,9 @@
 # but ping succeeds. This simulates a healthy tunnel that is not passing traffic.
 #
 # Arguments:
-#   $1: Peer IP address (default: "192.168.1.1")
+#   $1: Peer IP address (default: "${TEST_PEER_IP}")
 #   $2: Static bytes value (default: 1000) - bytes that don't increase
-#   $3: Internal IP for ping check (default: "10.0.0.1")
+#   $3: Internal IP for ping check (default: "${TEST_PEER_IP2}")
 #   $4: SPI value (default: 0x12345678)
 #   $5+: Additional config variables as KEY="VALUE" pairs
 #
@@ -20,15 +20,15 @@
 #   - Sets TEST_CONFIG_FILE, TEST_SCRIPT, STATE_DIR, LOGS_DIR variables
 #
 # Example:
-#   setup_vpn_idle_fixture "192.168.1.1"
+#   setup_vpn_idle_fixture "${TEST_PEER_IP}"
 #   # Idle tunnel: bytes static at 1000, ping succeeds
 #
-#   setup_vpn_idle_fixture "192.168.1.1" 5000 "10.0.0.1"
+#   setup_vpn_idle_fixture "${TEST_PEER_IP}" 5000 "10.0.0.1"
 #   # Idle tunnel: bytes static at 5000, ping to 10.0.0.1 succeeds
 setup_vpn_idle_fixture() {
-	local peer_ip="${1:-192.168.1.1}"
+	local peer_ip="${1:-${TEST_PEER_IP}}"
 	local static_bytes="${2:-1000}"
-	local internal_ip="${3:-10.0.0.1}"
+	local internal_ip="${3:-${TEST_PEER_IP2}}"
 	local spi="${4:-0x12345678}"
 	shift 4 || true
 	local extra_config=("$@")
@@ -46,16 +46,7 @@ setup_vpn_idle_fixture() {
 	fi
 
 	# Mock ip command - SA exists, bytes static (not increasing)
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<EOF
-#!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    echo "src $peer_ip dst $peer_ip"
-    echo "    proto esp spi $spi reqid 1 mode tunnel"
-    echo "    lifetime current: $static_bytes bytes, 10 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state "$peer_ip" "$static_bytes" "$spi" "$peer_ip" >/dev/null
 
 	# Mock ping - succeeds (tunnel is healthy, just idle)
 	mock_ping_success >/dev/null

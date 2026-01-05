@@ -29,7 +29,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Source the script to access functions directly
@@ -58,8 +58,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Config file values take precedence over defaults
 	# Importance: Ensures config file customization works correctly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 VPN_NAME="Custom VPN Name"
 TIER1_THRESHOLD=5
 ENABLE_PING_CHECK=0
@@ -72,7 +72,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$test_script" --fake
@@ -106,7 +106,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$test_script" --fake
@@ -130,8 +130,8 @@ EOF
 	# Importance: Ensures optional variables work correctly when not set
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Create config file without LOCATION_TEST_INTERNAL (optional, no default in schema)
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 # LOCATION_TEST_INTERNAL not set (optional variable without default)
 EOF
 
@@ -142,7 +142,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$test_script" --fake
@@ -161,8 +161,8 @@ EOF
 	# Expected: Defaults are set, then config file values override them
 	# Importance: Ensures correct order of operations in load_config
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 VPN_NAME="Override Default"
 EOF
 
@@ -173,7 +173,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Source config functions to test order

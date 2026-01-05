@@ -6,7 +6,7 @@
 # This fixture combines multiple setup steps for testing xfrm recovery scenarios.
 #
 # Arguments:
-#   $1: Peer IP address (default: "192.168.1.1")
+#   $1: Peer IP address (default: "${TEST_PEER_IP}")
 #   $2: SA count - number of Security Associations to simulate (default: 2)
 #   $3: Recovery type (default: "success")
 #       - "success": All SA deletions succeed
@@ -23,7 +23,7 @@
 #
 # Example:
 #   # Test with successful xfrm recovery (2 SAs, all deletions succeed)
-#   setup_vpn_xfrm_recovery_fixture "192.168.1.1" 2 "success"
+#   setup_vpn_xfrm_recovery_fixture "${TEST_PEER_IP}" 2 "success"
 #
 #   # Test with partial failure (3 SAs, some deletions fail)
 #   setup_vpn_xfrm_recovery_fixture "192.168.1.1" 3 "partial_failure"
@@ -32,9 +32,9 @@
 #   setup_vpn_xfrm_recovery_fixture "192.168.1.1" 2 "complete_failure"
 #
 #   # Test with custom config
-#   setup_vpn_xfrm_recovery_fixture "192.168.1.1" 2 "success" 'TIER2_THRESHOLD=5' 'RECOVERY_VERIFY_TIMEOUT=10'
+#   setup_vpn_xfrm_recovery_fixture "${TEST_PEER_IP}" 2 "success" 'TIER2_THRESHOLD=5' 'RECOVERY_VERIFY_TIMEOUT=10'
 setup_vpn_xfrm_recovery_fixture() {
-	local peer_ip="${1:-192.168.1.1}"
+	local peer_ip="${1:-${TEST_PEER_IP}}"
 	local sa_count="${2:-2}"
 	local recovery_type="${3:-success}"
 	shift 3 || true
@@ -116,8 +116,35 @@ EOF
 	esac
 
 	# Add xfrm state show handler to return multiple SAs
+	# Note: get_xfrm_state_for_peer tries "ip -s xfrm state" first, then falls back to "ip xfrm state"
+	cat >>"$mock_ip" <<EOF
+elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
+    # Return multiple SAs for the peer
+    # This simulates the initial state before deletion
+EOF
+
+	# Generate SA output for each SPI (for -s variant)
+	for ((i = 0; i < sa_count; i++)); do
+		local spi_value="${spi_array[$i]}"
+		cat >>"$mock_ip" <<EOF
+    echo "src ${peer_ip} dst ${peer_ip}"
+    echo "    proto esp spi ${spi_value} reqid $((i + 1)) mode tunnel"
+    echo "    replay-window 0"
+    echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
+    echo "    enc cbc(aes) 0x1234567890abcdef"
+    echo "    lifetime current: $((1000 + i * 100)) bytes, $((10 + i)) packets"
+    echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
+    echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
+    echo "    current use: 1"
+    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+EOF
+	done
+
+	# Add fallback handler for "ip xfrm state" (without -s)
 	cat >>"$mock_ip" <<EOF
 elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
     # Return multiple SAs for the peer
     # This simulates the initial state before deletion
 EOF

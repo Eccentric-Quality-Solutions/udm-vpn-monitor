@@ -19,11 +19,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script processes negative value without crashing, either using default or failing gracefully
 	# Importance: Negative values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-COOLDOWN_MINUTES=-1
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'COOLDOWN_MINUTES=-1'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -32,7 +31,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
@@ -50,11 +49,10 @@ EOF
 	# Expected: Script processes zero value without crashing, either using default or failing gracefully
 	# Importance: Zero values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-COOLDOWN_MINUTES=0
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'COOLDOWN_MINUTES=0'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -63,7 +61,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
@@ -80,11 +78,10 @@ EOF
 	# Expected: Script processes negative value without crashing, either using default or failing gracefully
 	# Importance: Negative values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-MAX_RESTARTS_PER_HOUR=-1
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'MAX_RESTARTS_PER_HOUR=-1'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -93,7 +90,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
@@ -110,11 +107,10 @@ EOF
 	# Expected: Script processes zero value without crashing, either using default or failing gracefully
 	# Importance: Zero values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-MAX_RESTARTS_PER_HOUR=0
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'MAX_RESTARTS_PER_HOUR=0'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -123,7 +119,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
@@ -140,11 +136,10 @@ EOF
 	# Expected: Script processes negative value without crashing, either using default or failing gracefully
 	# Importance: Negative values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-LOCKFILE_TIMEOUT=-1
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'LOCKFILE_TIMEOUT=-1'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -153,7 +148,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
@@ -170,11 +165,10 @@ EOF
 	# Expected: Script processes zero value without crashing, either using default or failing gracefully
 	# Importance: Zero values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-LOCKFILE_TIMEOUT=0
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'LOCKFILE_TIMEOUT=0'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -183,7 +177,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
@@ -200,11 +194,10 @@ EOF
 	# Expected: Script processes negative value without crashing, either using default or failing gracefully
 	# Importance: Negative values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-PING_COUNT=-1
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'PING_COUNT=-1'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -213,7 +206,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
@@ -230,11 +223,10 @@ EOF
 	# Expected: Script processes zero value without crashing, either using default or failing gracefully
 	# Importance: Zero values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-PING_COUNT=0
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'PING_COUNT=0'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -243,7 +235,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
@@ -260,11 +252,10 @@ EOF
 	# Expected: Script processes negative value without crashing, either using default or failing gracefully
 	# Importance: Negative values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-PING_TIMEOUT=-1
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'PING_TIMEOUT=-1'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -273,7 +264,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
@@ -290,11 +281,10 @@ EOF
 	# Expected: Script processes zero value without crashing, either using default or failing gracefully
 	# Importance: Zero values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-PING_TIMEOUT=0
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'PING_TIMEOUT=0'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -303,7 +293,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
@@ -324,12 +314,11 @@ EOF
 	# Expected: Route setup functions are called during validation when ENABLE_PING_CHECK=1 and internal IPs are configured
 	# Importance: Ensures routes are set up proactively during config validation, not just during ping checks
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-ENABLE_PING_CHECK=1
-LOCAL_UDM_IP="10.0.0.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'ENABLE_PING_CHECK=1' \
+		'LOCAL_UDM_IP="10.0.0.1"'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -391,12 +380,11 @@ EOF
 	# Expected: Validation fails with error message when route setup fails in main execution path (log_message available)
 	# Importance: Ensures routes are available before ping checks run, preventing silent failures
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-ENABLE_PING_CHECK=1
-LOCAL_UDM_IP="10.0.0.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'ENABLE_PING_CHECK=1' \
+		'LOCAL_UDM_IP="10.0.0.1"'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -459,12 +447,11 @@ EOF
 	# Verify that tests can run with routes needed but route setup mocked to succeed
 	# (This is what most existing tests do)
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-ENABLE_PING_CHECK=1
-LOCAL_UDM_IP="10.0.0.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'ENABLE_PING_CHECK=1' \
+		'LOCAL_UDM_IP="10.0.0.1"'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -512,12 +499,11 @@ EOF
 	# Expected: Route setup is called during validation when ENABLE_PING_CHECK=1 and internal IPs are configured
 	# Importance: Ensures routes are set up proactively during config validation, not just during ping checks
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-ENABLE_PING_CHECK=1
-LOCAL_UDM_IP="10.0.0.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'ENABLE_PING_CHECK=1' \
+		'LOCAL_UDM_IP="10.0.0.1"'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -579,12 +565,11 @@ EOF
 	# Expected: Function returns error code but doesn't crash when detection.sh functions are unavailable
 	# Importance: Ensures route setup doesn't break when config.sh is sourced independently (e.g., in check-config.sh or tests)
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-ENABLE_PING_CHECK=1
-LOCAL_UDM_IP="10.0.0.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'ENABLE_PING_CHECK=1' \
+		'LOCAL_UDM_IP="10.0.0.1"'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -640,12 +625,11 @@ EOF
 	# Expected: Validation fails with error message when route setup fails and routes are required
 	# Importance: Ensures routes are available before ping checks run, preventing silent failures
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-ENABLE_PING_CHECK=1
-LOCAL_UDM_IP="10.0.0.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'ENABLE_PING_CHECK=1' \
+		'LOCAL_UDM_IP="10.0.0.1"'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -696,12 +680,11 @@ EOF
 	# Expected: Validation succeeds even when route setup fails if log_message is not available (test context detection)
 	# Importance: Ensures tests can run without requiring route setup to succeed, maintaining test compatibility
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-ENABLE_PING_CHECK=1
-LOCAL_UDM_IP="10.0.0.1"
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'ENABLE_PING_CHECK=1' \
+		'LOCAL_UDM_IP="10.0.0.1"'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"

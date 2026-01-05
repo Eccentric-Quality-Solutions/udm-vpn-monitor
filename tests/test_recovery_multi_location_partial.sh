@@ -24,9 +24,9 @@ load fixtures/vpn_down
 	setup_test_environment "${TEST_DIR}"
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_LOC1_EXTERNAL="192.168.1.1"
-LOCATION_LOC1_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_LOC1_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_LOC1_INTERNAL="${TEST_PEER_IP}"
 LOCATION_LOC2_EXTERNAL="192.168.1.2"
 LOCATION_LOC2_INTERNAL="192.168.1.2"
 TIER1_THRESHOLD=1
@@ -48,7 +48,7 @@ EOF
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
 	local loc1_failure_file
-	loc1_failure_file=$(get_peer_state_file_path "LOC1" "192.168.1.1" "failure_count")
+	loc1_failure_file=$(get_peer_state_file_path "LOC1" "${TEST_PEER_IP}" "failure_count")
 	local loc2_failure_file
 	loc2_failure_file=$(get_peer_state_file_path "LOC2" "192.168.1.2" "failure_count")
 	mkdir -p "$(dirname "$loc1_failure_file")" "$(dirname "$loc2_failure_file")"
@@ -110,9 +110,9 @@ EOF
 	setup_test_environment "${TEST_DIR}"
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_LOC1_EXTERNAL="192.168.1.1"
-LOCATION_LOC1_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_LOC1_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_LOC1_INTERNAL="${TEST_PEER_IP}"
 LOCATION_LOC2_EXTERNAL="192.168.1.2"
 LOCATION_LOC2_INTERNAL="192.168.1.2"
 TIER1_THRESHOLD=1
@@ -135,7 +135,7 @@ EOF
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
 	local loc1_failure_file
-	loc1_failure_file=$(get_peer_state_file_path "LOC1" "192.168.1.1" "failure_count")
+	loc1_failure_file=$(get_peer_state_file_path "LOC1" "${TEST_PEER_IP}" "failure_count")
 	local loc2_failure_file
 	loc2_failure_file=$(get_peer_state_file_path "LOC2" "192.168.1.2" "failure_count")
 	mkdir -p "$(dirname "$loc1_failure_file")" "$(dirname "$loc2_failure_file")"
@@ -162,7 +162,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     # Second check: LOC2 (still down - return empty)
     if [[ \$check_count -eq 1 ]]; then
         # LOC1 recovers
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    lifetime current: 1000 bytes"
         exit 0
     else
@@ -196,9 +196,9 @@ EOF
 	setup_test_environment "${TEST_DIR}"
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_LOC1_EXTERNAL="192.168.1.1"
-LOCATION_LOC1_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_LOC1_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_LOC1_INTERNAL="${TEST_PEER_IP}"
 LOCATION_LOC2_EXTERNAL="192.168.1.2"
 LOCATION_LOC2_INTERNAL="192.168.1.2"
 TIER1_THRESHOLD=1
@@ -222,7 +222,7 @@ EOF
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
 	local loc1_failure_file
-	loc1_failure_file=$(get_peer_state_file_path "LOC1" "192.168.1.1" "failure_count")
+	loc1_failure_file=$(get_peer_state_file_path "LOC1" "${TEST_PEER_IP}" "failure_count")
 	local loc2_failure_file
 	loc2_failure_file=$(get_peer_state_file_path "LOC2" "192.168.1.2" "failure_count")
 	mkdir -p "$(dirname "$loc1_failure_file")" "$(dirname "$loc2_failure_file")"

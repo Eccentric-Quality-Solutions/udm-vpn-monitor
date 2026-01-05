@@ -63,8 +63,8 @@ setup_keepalive_test() {
 
 	# Create config file with location-based format
 	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="10.0.0.1"
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP2}"
 ENABLE_KEEPALIVE=1
 KEEPALIVE_INTERVAL=30
 KEEPALIVE_PING_COUNT=1
@@ -203,7 +203,7 @@ cleanup_keepalive_daemon() {
 	setup_keepalive_test
 
 	# Mock ping command to avoid actual network calls
-	mock_ping "192.168.1.1" "1" >/dev/null
+	mock_ping "${TEST_PEER_IP}" "1" >/dev/null
 	mv "${TEST_DIR}/mock_ping" "${TEST_DIR}/ping" 2>/dev/null || true
 	add_mock_to_path
 
@@ -233,12 +233,7 @@ cleanup_keepalive_daemon() {
 	setup_keepalive_test
 
 	# Mock ping command
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping_success >/dev/null
 	add_mock_to_path
 
 	cd "$MOCK_INSTALL_DIR"
@@ -286,12 +281,7 @@ EOF
 	setup_keepalive_test
 
 	# Mock ping command
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping_success >/dev/null
 	add_mock_to_path
 
 	cd "$MOCK_INSTALL_DIR"
@@ -359,12 +349,7 @@ EOF
 	setup_keepalive_test
 
 	# Mock ping command
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping_success >/dev/null
 	add_mock_to_path
 
 	cd "$MOCK_INSTALL_DIR"
@@ -394,12 +379,7 @@ EOF
 	setup_keepalive_test
 
 	# Mock ping command
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping_success >/dev/null
 	add_mock_to_path
 
 	cd "$MOCK_INSTALL_DIR"
@@ -485,7 +465,7 @@ EOF
 	# Purpose: Test verifies that keepalive uses internal IPs for ping when configured.
 	# Expected: Script uses LOCATION_*_INTERNAL instead of LOCATION_*_EXTERNAL for ping targets.
 	# Importance: Internal IPs are better for keepalive as they go through VPN tunnel.
-	setup_keepalive_test 'LOCATION_TEST_EXTERNAL="192.168.1.1" LOCATION_TEST_INTERNAL="10.0.0.1"'
+	setup_keepalive_test "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\" LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP2}\""
 
 	# Mock ping command that logs target
 	local mock_ping="${TEST_DIR}/ping"
@@ -515,15 +495,10 @@ EOF
 	# Purpose: Test verifies that keepalive daemon handles multiple peer IPs correctly.
 	# Expected: Script pings all configured peer IPs in sequence.
 	# Importance: Ensures keepalive works with multi-tunnel configurations.
-	setup_keepalive_test 'LOCATION_TEST1_EXTERNAL="192.168.1.1" LOCATION_TEST1_INTERNAL="" LOCATION_TEST2_EXTERNAL="10.0.0.1" LOCATION_TEST2_INTERNAL=""'
+	setup_keepalive_test "LOCATION_TEST1_EXTERNAL=\"${TEST_PEER_IP}\" LOCATION_TEST1_INTERNAL=\"\" LOCATION_TEST2_EXTERNAL=\"${TEST_PEER_IP2}\" LOCATION_TEST2_INTERNAL=\"\""
 
 	# Mock ping command
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping_success >/dev/null
 	add_mock_to_path
 
 	cd "$MOCK_INSTALL_DIR"
@@ -559,12 +534,7 @@ EOF
 	setup_keepalive_test
 
 	# Mock ping command
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping_success >/dev/null
 	add_mock_to_path
 
 	cd "$MOCK_INSTALL_DIR"
@@ -593,12 +563,7 @@ EOF
 	setup_keepalive_test 'LOG_FILE="'"${MOCK_INSTALL_DIR}/logs/vpn-monitor.log"'"'
 
 	# Mock ping command to succeed
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping_success >/dev/null
 	add_mock_to_path
 
 	local keepalive_log="${MOCK_INSTALL_DIR}/logs/vpn-keepalive.log"

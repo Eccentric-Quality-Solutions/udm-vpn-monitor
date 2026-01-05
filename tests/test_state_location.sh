@@ -25,7 +25,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	# Importance: State files must be unique per location
 	setup_test_environment
 
-	run get_peer_state_file_path "NYC" "192.168.1.1" "failure_count"
+	run get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	assert_output "${STATE_DIR}/failure_counter_NYC_192_168_1_1"
 }
@@ -37,7 +37,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	# Importance: State files must be unique per location
 	setup_test_environment
 
-	run get_peer_state_file_path "NYC" "192.168.1.1" "last_bytes"
+	run get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "last_bytes"
 	assert_success
 	assert_output "${STATE_DIR}/last_bytes_NYC_192_168_1_1"
 }
@@ -49,7 +49,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	# Importance: Ensures safe filenames
 	setup_test_environment
 
-	run get_peer_state_file_path "NYC-Office" "192.168.1.1" "failure_count"
+	run get_peer_state_file_path "NYC-Office" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	assert_output "${STATE_DIR}/failure_counter_NYC_Office_192_168_1_1"
 }
@@ -61,7 +61,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	# Importance: Ensures safe filenames
 	setup_test_environment
 
-	run get_peer_state_file_path "NYC" "192.168.1.1" "failure_count"
+	run get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	assert_output "${STATE_DIR}/failure_counter_NYC_192_168_1_1"
 }
@@ -74,9 +74,9 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	setup_test_environment
 
 	local file1
-	file1=$(get_peer_state_file_path "NYC" "192.168.1.1" "failure_count")
+	file1=$(get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "failure_count")
 	local file2
-	file2=$(get_peer_state_file_path "LA" "192.168.1.1" "failure_count")
+	file2=$(get_peer_state_file_path "LA" "${TEST_PEER_IP}" "failure_count")
 
 	assert [ "$file1" != "$file2" ]
 	assert_equal "$file1" "${STATE_DIR}/failure_counter_NYC_192_168_1_1"
@@ -90,7 +90,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	# Importance: SPI state must be tracked per location
 	setup_test_environment
 
-	run get_peer_state_file_path "NYC" "192.168.1.1" "spi"
+	run get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "spi"
 	assert_success
 	assert_output "${STATE_DIR}/spi_NYC_192_168_1_1"
 }
@@ -102,7 +102,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	# Importance: Idle detection state must be tracked per location
 	setup_test_environment
 
-	run get_peer_state_file_path "NYC" "192.168.1.1" "idle_detected"
+	run get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "idle_detected"
 	assert_success
 	assert_output "${STATE_DIR}/idle_detected_NYC_192_168_1_1"
 }
@@ -114,7 +114,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	# Importance: Status log state must be tracked per location
 	setup_test_environment
 
-	run get_peer_state_file_path "NYC" "192.168.1.1" "last_status_log"
+	run get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "last_status_log"
 	assert_success
 	assert_output "${STATE_DIR}/last_status_log_NYC_192_168_1_1"
 }
@@ -126,11 +126,11 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	# Importance: State files must be created correctly
 	setup_test_environment
 
-	run set_peer_state "NYC" "192.168.1.1" "failure_count" "5"
+	run set_peer_state "NYC" "${TEST_PEER_IP}" "failure_count" "5"
 	assert_success
 
 	local state_file
-	state_file=$(get_peer_state_file_path "NYC" "192.168.1.1" "failure_count")
+	state_file=$(get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "failure_count")
 	assert_file_exist "$state_file"
 	assert_file_contains "$state_file" "5"
 }
@@ -142,15 +142,15 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	# Importance: Prevents state conflicts between locations
 	setup_test_environment
 
-	run set_peer_state "NYC" "192.168.1.1" "failure_count" "5"
+	run set_peer_state "NYC" "${TEST_PEER_IP}" "failure_count" "5"
 	assert_success
-	run set_peer_state "LA" "192.168.1.1" "failure_count" "10"
+	run set_peer_state "LA" "${TEST_PEER_IP}" "failure_count" "10"
 	assert_success
 
 	local file1
-	file1=$(get_peer_state_file_path "NYC" "192.168.1.1" "failure_count")
+	file1=$(get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "failure_count")
 	local file2
-	file2=$(get_peer_state_file_path "LA" "192.168.1.1" "failure_count")
+	file2=$(get_peer_state_file_path "LA" "${TEST_PEER_IP}" "failure_count")
 
 	assert_file_exist "$file1"
 	assert_file_exist "$file2"
@@ -166,10 +166,10 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	setup_test_environment
 
 	# Set state
-	set_peer_state "NYC" "192.168.1.1" "failure_count" "7"
+	set_peer_state "NYC" "${TEST_PEER_IP}" "failure_count" "7"
 
 	# Get state
-	run get_peer_state "NYC" "192.168.1.1" "failure_count"
+	run get_peer_state "NYC" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	assert_output "7"
 }
@@ -181,7 +181,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	# Importance: Handles missing state files gracefully
 	setup_test_environment
 
-	run get_peer_state "NYC" "192.168.1.1" "failure_count"
+	run get_peer_state "NYC" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	assert_output "0"
 }
@@ -193,13 +193,13 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	# Importance: State isolation between locations
 	setup_test_environment
 
-	set_peer_state "NYC" "192.168.1.1" "failure_count" "5"
-	set_peer_state "LA" "192.168.1.1" "failure_count" "10"
+	set_peer_state "NYC" "${TEST_PEER_IP}" "failure_count" "5"
+	set_peer_state "LA" "${TEST_PEER_IP}" "failure_count" "10"
 
 	local nyc_count
-	nyc_count=$(get_peer_state "NYC" "192.168.1.1" "failure_count")
+	nyc_count=$(get_peer_state "NYC" "${TEST_PEER_IP}" "failure_count")
 	local la_count
-	la_count=$(get_peer_state "LA" "192.168.1.1" "failure_count")
+	la_count=$(get_peer_state "LA" "${TEST_PEER_IP}" "failure_count")
 
 	assert_equal "$nyc_count" "5"
 	assert_equal "$la_count" "10"
@@ -213,7 +213,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	setup_test_environment
 
 	# Test with location name that needs sanitization
-	run get_peer_state_file_path "NYC-Office" "192.168.1.1" "failure_count"
+	run get_peer_state_file_path "NYC-Office" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	# Should use sanitized name (hyphen replaced with underscore)
 	assert_output "${STATE_DIR}/failure_counter_NYC_Office_192_168_1_1"
@@ -226,7 +226,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	# Importance: Prevents corrupted state files
 	setup_test_environment
 
-	run set_peer_state "NYC" "192.168.1.1" "failure_count" "invalid"
+	run set_peer_state "NYC" "${TEST_PEER_IP}" "failure_count" "invalid"
 	assert_failure
 }
 
@@ -238,11 +238,11 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	setup_test_environment
 
 	local state_file
-	state_file=$(get_peer_state_file_path "NYC" "192.168.1.1" "failure_count")
+	state_file=$(get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "failure_count")
 	mkdir -p "$(dirname "$state_file")"
 	echo "corrupted" >"$state_file"
 
-	run get_peer_state "NYC" "192.168.1.1" "failure_count"
+	run get_peer_state "NYC" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	# Should return default (0) after detecting corruption
 	# Note: Warning message appears on stderr, so we check for the value using assert_line
@@ -260,11 +260,11 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	LOGS_DIR="$custom_logs_dir"
 	export STATE_DIR LOGS_DIR
 
-	run set_peer_state "NYC" "192.168.1.1" "failure_count" "5"
+	run set_peer_state "NYC" "${TEST_PEER_IP}" "failure_count" "5"
 	assert_success
 
 	local state_file
-	state_file=$(get_peer_state_file_path "NYC" "192.168.1.1" "failure_count")
+	state_file=$(get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "failure_count")
 	assert_file_exist "$state_file"
 	assert [ -d "$(dirname "$state_file")" ]
 }
@@ -278,12 +278,12 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 
 	# Set state multiple times rapidly
 	for i in {1..10}; do
-		set_peer_state "NYC" "192.168.1.1" "failure_count" "$i"
+		set_peer_state "NYC" "${TEST_PEER_IP}" "failure_count" "$i"
 	done
 
 	# Final value should be correct (not corrupted)
 	local final_value
-	final_value=$(get_peer_state "NYC" "192.168.1.1" "failure_count")
+	final_value=$(get_peer_state "NYC" "${TEST_PEER_IP}" "failure_count")
 	assert_equal "$final_value" "10"
 }
 
@@ -311,7 +311,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 		long_location="${long_location}A"
 	done
 
-	run get_peer_state_file_path "$long_location" "192.168.1.1" "failure_count"
+	run get_peer_state_file_path "$long_location" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 
 	# Extract location part from filename
@@ -332,7 +332,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	setup_test_environment
 
 	# Try to set invalid value (should fail internally but not exit)
-	run set_peer_state_non_critical "NYC" "192.168.1.1" "failure_count" "invalid"
+	run set_peer_state_non_critical "NYC" "${TEST_PEER_IP}" "failure_count" "invalid"
 	# Should succeed (continues execution even if state update fails)
 	assert_success
 }
@@ -344,7 +344,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	# Importance: Extensibility for new state keys
 	setup_test_environment
 
-	run get_peer_state_file_path "NYC" "192.168.1.1" "unknown_key"
+	run get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "unknown_key"
 	assert_success
 	# Note: Warning message appears on stderr, so we check for the file path using assert_line
 	assert_line "${STATE_DIR}/unknown_key_NYC_192_168_1_1"

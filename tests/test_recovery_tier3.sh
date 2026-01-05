@@ -22,7 +22,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that Tier 3 recovery action triggers full IPsec restart when failure count reaches threshold
 	# Expected: Script executes "ipsec restart" command when failure count reaches Tier 3 threshold
 	# Importance: Full restart is the most aggressive recovery action and should only trigger after multiple failures
-	setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
 
 	# Mock ipsec - restart succeeds, track restart call
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -54,7 +54,7 @@ EOF
 	# Purpose: Test verifies that Tier 3 recovery handles errors gracefully when ipsec restart command fails
 	# Expected: Script logs error message and continues execution when restart command fails
 	# Importance: Error handling prevents script crashes and ensures monitoring continues after recovery failures
-	setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
 
 	# Mock ipsec - restart fails
 	mock_ipsec_reload_restart 1 0
@@ -78,7 +78,7 @@ EOF
 	# Purpose: Test verifies that Tier 3 recovery handles gracefully when ipsec command is unavailable
 	# Expected: Script logs error message indicating ipsec is not available and continues execution
 	# Importance: Graceful handling prevents script failures when required recovery tools are missing
-	setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
 
 	# Don't create ipsec mock (unavailable)
 
@@ -103,8 +103,8 @@ EOF
 	# Importance: Cooldown prevents restart loops when VPN takes time to recover after restart command succeeds
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
-		'LOCATION_TEST_EXTERNAL="192.168.1.1"' \
-		'LOCATION_TEST_INTERNAL="192.168.1.1"' \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -118,10 +118,8 @@ EOF
 	local state_dir="${TEST_DIR}"
 	export STATE_DIR="$state_dir"
 	export LOGS_DIR="${TEST_DIR}/logs"
-	source_function "get_peer_state_file_path"
 	local failure_counter
-	# Location name is "TEST" (extracted from LOCATION_TEST_EXTERNAL)
-	failure_counter=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_counter=$(get_failure_counter_path_for_location_var "LOCATION_TEST_EXTERNAL" "${TEST_PEER_IP}")
 	local cooldown_file="${TEST_DIR}/cooldown_until"
 
 	# Set failure count to Tier 3 threshold
@@ -162,9 +160,9 @@ EOF
 	# Expected: Cooldown may or may not be set depending on implementation when restart fails
 	# Importance: Tests edge case behavior to understand cooldown handling during failed recovery attempts
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -177,10 +175,8 @@ EOF
 	local state_dir="${TEST_DIR}"
 	export STATE_DIR="$state_dir"
 	export LOGS_DIR="${TEST_DIR}/logs"
-	source_function "get_peer_state_file_path"
 	local failure_counter
-	# Location name is "TEST" (extracted from LOCATION_TEST_EXTERNAL)
-	failure_counter=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_counter=$(get_failure_counter_path_for_location_var "LOCATION_TEST_EXTERNAL" "${TEST_PEER_IP}")
 	local cooldown_file="${TEST_DIR}/cooldown_until"
 
 	# Set failure count to Tier 3 threshold
@@ -215,8 +211,8 @@ EOF
 	# Importance: PIPESTATUS handling ensures restart failures are correctly detected when commands are piped
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
-		'LOCATION_TEST_EXTERNAL="192.168.1.1"' \
-		'LOCATION_TEST_INTERNAL="192.168.1.1"' \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -230,10 +226,8 @@ EOF
 	local state_dir="${TEST_DIR}"
 	export STATE_DIR="$state_dir"
 	export LOGS_DIR="${TEST_DIR}/logs"
-	source_function "get_peer_state_file_path"
 	local failure_counter
-	# Location name is "TEST" (extracted from LOCATION_TEST_EXTERNAL)
-	failure_counter=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_counter=$(get_failure_counter_path_for_location_var "LOCATION_TEST_EXTERNAL" "${TEST_PEER_IP}")
 
 	# Set failure count to Tier 3 threshold
 	echo "5" >"$failure_counter"
@@ -270,9 +264,9 @@ EOF
 	# Expected: Script exits early when cooldown is active, preventing restart command from being executed
 	# Importance: Cooldown prevention avoids restart loops and allows VPN time to stabilize after recovery attempts
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -284,10 +278,8 @@ EOF
 	local state_dir="${TEST_DIR}"
 	export STATE_DIR="$state_dir"
 	export LOGS_DIR="${TEST_DIR}/logs"
-	source_function "get_peer_state_file_path"
 	local failure_counter
-	# Location name is "TEST" (extracted from LOCATION_TEST_EXTERNAL)
-	failure_counter=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_counter=$(get_failure_counter_path_for_location_var "LOCATION_TEST_EXTERNAL" "${TEST_PEER_IP}")
 	# Use STATE_DIR for cooldown file path (matches script's COOLDOWN_UNTIL_FILE)
 	local cooldown_file="${state_dir}/cooldown_until"
 
@@ -337,9 +329,9 @@ EOF
 	# Note: This test documents that timeout handling is not currently implemented
 	# The script will hang if restart command hangs - this is a known limitation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -352,10 +344,8 @@ EOF
 	local state_dir="${TEST_DIR}"
 	export STATE_DIR="$state_dir"
 	export LOGS_DIR="${TEST_DIR}/logs"
-	source_function "get_peer_state_file_path"
 	local failure_counter
-	# Location name is "TEST" (extracted from LOCATION_TEST_EXTERNAL)
-	failure_counter=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_counter=$(get_failure_counter_path_for_location_var "LOCATION_TEST_EXTERNAL" "${TEST_PEER_IP}")
 
 	# Set failure count to Tier 3 threshold
 	echo "5" >"$failure_counter"
@@ -410,9 +400,9 @@ EOF
 	# Expected: Failure counter is reset to 0 when VPN recovers naturally, even after restart command failed
 	# Importance: Natural recovery detection prevents false escalation after VPN recovers without recovery action success
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -427,10 +417,8 @@ EOF
 	local state_dir="${TEST_DIR}"
 	export STATE_DIR="$state_dir"
 	export LOGS_DIR="${TEST_DIR}/logs"
-	source_function "get_peer_state_file_path"
 	local failure_counter
-	# Location name is "TEST" (extracted from LOCATION_TEST_EXTERNAL)
-	failure_counter=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_counter=$(get_failure_counter_path_for_location_var "LOCATION_TEST_EXTERNAL" "${TEST_PEER_IP}")
 	local restart_file="${TEST_DIR}/state/restart_count"
 
 	# Set failure count to Tier 3 threshold (simulating previous failures)
@@ -444,7 +432,7 @@ EOF
 	mock_ip_vpn_down
 
 	# Mock ipsec - restart fails, status succeeds
-	mock_ipsec_reload_restart 1 0 0 "default" "192.168.1.1"
+	mock_ipsec_reload_restart 1 0 0 "default" "${TEST_PEER_IP}"
 	add_mock_to_path
 
 	# First run: VPN fails, reaches Tier 3, restart fails
@@ -458,7 +446,7 @@ EOF
 	assert_file_exist "$log_file"
 
 	# Now simulate natural recovery: VPN comes back up (SA exists)
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 
 	# Second run: VPN recovers naturally (should reset failure count)
 	run bash "$test_script"
@@ -486,9 +474,9 @@ EOF
 	# Expected: Script handles case where VPN SA exists but traffic hasn't resumed yet after recovery
 	# Importance: Tests edge case where VPN appears recovered but traffic hasn't resumed, preventing false failure detection
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -499,12 +487,12 @@ EOF
 	local state_dir="${TEST_DIR}"
 	export STATE_DIR="$state_dir"
 	export LOGS_DIR="${TEST_DIR}/logs"
+	# Ensure get_peer_state_file_path is available for last_bytes_file
 	source_function "get_peer_state_file_path"
 	local last_bytes_file
-	# Location name is "TEST" (extracted from LOCATION_TEST_EXTERNAL)
-	last_bytes_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "last_bytes")
+	last_bytes_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_counter=$(get_failure_counter_path_for_location_var "LOCATION_TEST_EXTERNAL" "${TEST_PEER_IP}")
 
 	# Set failure count to trigger recovery check
 	echo "3" >"$failure_counter"
@@ -517,7 +505,7 @@ EOF
 
 	# Mock ip command - VPN is up (SA exists) but byte counters haven't increased yet
 	# Return same byte count as last_bytes (simulates no new traffic after recovery)
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 
 	run bash "$test_script"
 	assert_success

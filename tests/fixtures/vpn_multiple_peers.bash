@@ -6,7 +6,7 @@
 # This fixture combines common setup steps for tests that need multiple peers.
 #
 # Arguments:
-#   $1: Peer IPs as space-separated string (default: "192.168.1.1 10.0.0.1 172.16.0.1")
+#   $1: Peer IPs as space-separated string (default: "${TEST_PEER_IP} ${TEST_PEER_IP2} 172.16.0.1")
 #   $2: Failure count for all peers (default: 0)
 #   $3: Bytes value for all peers (default: 1000)
 #   $4: SPI value for all peers (default: 0x12345678)
@@ -19,13 +19,13 @@
 #   - Sets TEST_CONFIG_FILE, TEST_SCRIPT, STATE_DIR, LOGS_DIR variables
 #
 # Example:
-#   setup_vpn_multiple_peers_fixture "192.168.1.1 10.0.0.1"
+#   setup_vpn_multiple_peers_fixture "${TEST_PEER_IP} ${TEST_PEER_IP2}"
 #   # Two peers, both healthy
 #
 #   setup_vpn_multiple_peers_fixture "192.168.1.1 10.0.0.1 172.16.0.1" 2 5000
 #   # Three peers, all with 2 failures and 5000 bytes
 setup_vpn_multiple_peers_fixture() {
-	local peer_ips="${1:-192.168.1.1 10.0.0.1 172.16.0.1}"
+	local peer_ips="${1:-${TEST_PEER_IP} ${TEST_PEER_IP2} 172.16.0.1}"
 	local failure_count="${2:-0}"
 	local bytes="${3:-1000}"
 	local spi="${4:-0x12345678}"

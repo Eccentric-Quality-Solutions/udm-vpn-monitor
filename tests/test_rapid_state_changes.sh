@@ -6,6 +6,12 @@
 # These tests address the gap identified in CRITICAL_PATH_TEST_GAPS_REVIEW.md Section 6.1
 
 load test_helper
+load fixtures/vpn_active
+load fixtures/vpn_down
+load fixtures/vpn_cooldown
+load fixtures/vpn_rate_limited
+load fixtures/vpn_flapping
+load fixtures/vpn_multiple_peers
 
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
@@ -19,41 +25,19 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that VPN flapping within cooldown period is handled correctly.
 	# Expected: Cooldown should prevent excessive recovery actions, but failures should still be tracked.
 	# Importance: VPN flapping could cause excessive recovery actions if cooldown doesn't work properly.
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-COOLDOWN_MINUTES=0.01
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-ENABLE_NETWORK_PARTITION_CHECK=0
-ENABLE_XFRM_RECOVERY=0
-EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}/state"
+	# Setup initial state - VPN is up, can switch states during test
+	setup_vpn_flapping_fixture "${TEST_PEER_IP}" "up" 1000 2000 \
+		'COOLDOWN_MINUTES=0.01' \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3' \
+		'TIER3_THRESHOLD=5' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0' \
+		'ENABLE_XFRM_RECOVERY=0'
 
-	# Setup environment variables needed by state.sh
-	setup_test_environment "$state_dir"
-
-	# Setup initial state - VPN is up
-	ensure_state_functions_loaded
-	set_peer_state "TEST" "192.168.1.1" "failure_count" 0 || true
-	set_peer_state "TEST" "192.168.1.1" "last_bytes" 1000 || true
-
-	# Mock ip command - VPN is up initially
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 2000 bytes, 10 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	local log_file="$LOG_FILE"
+	local state_dir="$STATE_DIR"
+	local test_script="$TEST_SCRIPT"
 
 	# Mock ipsec command for recovery strategy selection
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -64,26 +48,17 @@ EOF
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
 	# First run - VPN is up, should succeed
 	run bash "$test_script" --fake
 	assert_success
 
-	# Now VPN fails
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ip"
+	# Now VPN fails - switch to down state
+	switch_vpn_to_down
 
 	# Set failure count to Tier 3 threshold (5) so Tier 3 recovery triggers on next failure
 	# This simulates the scenario where VPN has failed 5 times consecutively
-	set_peer_state "TEST" "192.168.1.1" "failure_count" 5 || true
+	ensure_state_functions_loaded
+	set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" 5 || true
 
 	# Run script - VPN fails, failure count increments to 6, triggering Tier 3 recovery
 	run bash "$test_script" --fake
@@ -104,16 +79,8 @@ EOF
 	echo "$cooldown_until" >"$cooldown_file"
 	assert_file_exist "$cooldown_file"
 
-	# VPN recovers
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 3000 bytes, 10 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	# VPN recovers - switch back to active state
+	switch_vpn_to_up 3000
 
 	# Third run - VPN recovered but still in cooldown
 	# Verify cooldown file exists (should have been set in previous step)
@@ -125,13 +92,7 @@ EOF
 	assert_success
 
 	# VPN fails again (still in cooldown)
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ip"
+	switch_vpn_to_down
 
 	# Fourth run - VPN fails but cooldown is active
 	# Script should exit successfully when in cooldown (cooldown check happens early)
@@ -147,46 +108,24 @@ EOF
 	# Purpose: Test verifies that VPN flapping after Tier 2 recovery is handled correctly.
 	# Expected: Failure count should reset on recovery, then increment again on next failure.
 	# Importance: Rapid failures after recovery could cause incorrect tier escalation.
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}/state"
+	# Setup initial state - VPN is up, can switch states during test
+	setup_vpn_flapping_fixture "${TEST_PEER_IP}" "up" 1000 2000 \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3' \
+		'TIER3_THRESHOLD=5' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
-	# Setup environment variables needed by state.sh
-	setup_test_environment "$state_dir"
-
-	# Setup initial state - VPN is up
-	ensure_state_functions_loaded
-	set_peer_state "TEST" "192.168.1.1" "failure_count" 0 || true
-	set_peer_state "TEST" "192.168.1.1" "last_bytes" 1000 || true
-
-	# Mock ip command - VPN fails
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ip"
-	add_mock_to_path
+	local log_file="$LOG_FILE"
+	local state_dir="$STATE_DIR"
+	local test_script="$TEST_SCRIPT"
 
 	# Mock ipsec for Tier 2 recovery
 	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	# VPN fails - switch to down state
+	switch_vpn_to_down
 
 	# Run 3 times to trigger Tier 2 recovery
 	for _ in {1..3}; do
@@ -197,22 +136,16 @@ EOF
 	assert_file_contains "$log_file" "Tier 2"
 
 	# Verify failure count is 3 (Tier 2 threshold)
-	local failure_count_file="${TEST_DIR}/state/failure_counter_TEST_192_168_1_1"
+	ensure_state_functions_loaded
+	local failure_count_file
+	failure_count_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	assert_file_exist "$failure_count_file"
 	local failure_count
 	failure_count=$(cat "$failure_count_file")
 	assert_equal "$failure_count" 3
 
-	# VPN recovers
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 2000 bytes, 10 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	# VPN recovers - switch back to active state
+	switch_vpn_to_up 2000
 
 	# Run - VPN recovered, failure count should reset
 	run bash "$test_script" --fake
@@ -222,14 +155,8 @@ EOF
 	failure_count=$(cat "$failure_count_file" 2>/dev/null || echo "0")
 	assert_equal "$failure_count" 0
 
-	# VPN fails again immediately
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ip"
+	# VPN fails again immediately - switch back to down state
+	switch_vpn_to_down
 
 	# Run - VPN fails again, failure count should increment from 0
 	run bash "$test_script" --fake
@@ -246,61 +173,45 @@ EOF
 	# Purpose: Test verifies that multiple peers flapping simultaneously are handled independently.
 	# Expected: Each peer's failure count should be tracked independently, recovery actions should be per-peer.
 	# Importance: Multiple peer failures could cause incorrect recovery if not handled independently.
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-LOCATION_TEST2_EXTERNAL="192.168.1.2"
-LOCATION_TEST2_INTERNAL="192.168.1.2"
-LOCATION_TEST3_EXTERNAL="192.168.1.3"
-LOCATION_TEST3_INTERNAL="192.168.1.3"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}/state"
+	# Setup multiple peers with initial state
+	setup_vpn_multiple_peers_fixture "${TEST_PEER_IP} 192.168.1.2 192.168.1.3" 0 1000 \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3' \
+		'TIER3_THRESHOLD=5' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
-	# Setup environment variables needed by state.sh
-	setup_test_environment "$state_dir"
-
-	# Setup initial state for all peers
+	# Update bytes for each peer individually (fixture sets all to same value)
 	ensure_state_functions_loaded
-	set_peer_state "TEST" "192.168.1.1" "failure_count" 0 || true
-	set_peer_state "TEST" "192.168.1.1" "last_bytes" 1000 || true
-	set_peer_state "TEST2" "192.168.1.2" "failure_count" 0 || true
+	set_peer_state "TEST1" "${TEST_PEER_IP}" "last_bytes" 1000 || true
 	set_peer_state "TEST2" "192.168.1.2" "last_bytes" 2000 || true
-	set_peer_state "TEST3" "192.168.1.3" "failure_count" 0 || true
 	set_peer_state "TEST3" "192.168.1.3" "last_bytes" 3000 || true
 
-	# Mock ip command - all peers fail
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ip"
-	add_mock_to_path
+	local log_file="$LOG_FILE"
+	local state_dir="$STATE_DIR"
+	local test_script="$TEST_SCRIPT"
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	# Mock ip command - all peers fail
+	mock_ip_vpn_down >/dev/null
+	add_mock_to_path
 
 	# Run - all peers fail
 	run bash "$test_script" --fake
 
 	# Verify each peer's failure count is tracked independently
+	ensure_state_functions_loaded
+	local failure_count_file_1
+	failure_count_file_1=$(get_peer_state_file_path "TEST1" "${TEST_PEER_IP}" "failure_count")
+	local failure_count_file_2
+	failure_count_file_2=$(get_peer_state_file_path "TEST2" "192.168.1.2" "failure_count")
+	local failure_count_file_3
+	failure_count_file_3=$(get_peer_state_file_path "TEST3" "192.168.1.3" "failure_count")
 	local failure_count_1
-	failure_count_1=$(cat "${TEST_DIR}/state/failure_counter_TEST_192_168_1_1" 2>/dev/null || echo "0")
+	failure_count_1=$(cat "$failure_count_file_1" 2>/dev/null || echo "0")
 	local failure_count_2
-	failure_count_2=$(cat "${TEST_DIR}/state/failure_counter_TEST2_192_168_1_2" 2>/dev/null || echo "0")
+	failure_count_2=$(cat "$failure_count_file_2" 2>/dev/null || echo "0")
 	local failure_count_3
-	failure_count_3=$(cat "${TEST_DIR}/state/failure_counter_TEST3_192_168_1_3" 2>/dev/null || echo "0")
+	failure_count_3=$(cat "$failure_count_file_3" 2>/dev/null || echo "0")
 
 	# All should be 1 (first failure)
 	assert_equal "$failure_count_1" 1
@@ -310,28 +221,20 @@ EOF
 	# Peer 1 recovers, peers 2 and 3 still fail
 	# The script calls 'ip xfrm state' once and then greps for each peer IP
 	# So we output only peer 1's SA - peers 2 and 3 won't be found when grepped
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    # Output only peer 1's SA - peers 2 and 3 won't be found when script greps for them
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 1500 bytes, 10 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1500" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 
 	# Run again - peer 1 should recover, peers 2 and 3 should fail again
 	run bash "$test_script" --fake
 
 	# Verify peer 1's failure count was reset (recovered)
-	failure_count_1=$(cat "${TEST_DIR}/state/failure_counter_TEST_192_168_1_1" 2>/dev/null || echo "0")
+	failure_count_1=$(cat "$failure_count_file_1" 2>/dev/null || echo "0")
 	# Should be 0 (recovered) or file doesn't exist
-	assert [ "$failure_count_1" -eq 0 ] || [ ! -f "${TEST_DIR}/state/failure_counter_TEST_192_168_1_1" ]
+	assert [ "$failure_count_1" -eq 0 ] || [ ! -f "$failure_count_file_1" ]
 
 	# Verify peers 2 and 3's failure counts increased
-	failure_count_2=$(cat "${TEST_DIR}/state/failure_counter_TEST2_192_168_1_2" 2>/dev/null || echo "0")
-	failure_count_3=$(cat "${TEST_DIR}/state/failure_counter_TEST3_192_168_1_3" 2>/dev/null || echo "0")
+	failure_count_2=$(cat "$failure_count_file_2" 2>/dev/null || echo "0")
+	failure_count_3=$(cat "$failure_count_file_3" 2>/dev/null || echo "0")
 	# Should be 2 (second failure each)
 	assert_equal "$failure_count_2" 2
 	assert_equal "$failure_count_3" 2
@@ -344,65 +247,34 @@ EOF
 	# Purpose: Test verifies that rate limiting prevents excessive recovery actions during VPN flapping.
 	# Expected: Rate limiting should block recovery actions after max restarts per hour.
 	# Importance: VPN flapping could cause excessive recovery actions if rate limiting doesn't work.
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_HOUR=3
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}/state"
-	# RESTART_COUNT_FILE is set to ${STATE_DIR}/restart_count in vpn-monitor.sh
-	local restart_count_file="${TEST_DIR}/state/restart_count"
-
-	# Setup environment variables needed by state.sh
-	setup_test_environment "$state_dir"
-
-	# Setup initial state
-	ensure_state_functions_loaded
-	set_peer_state "TEST" "192.168.1.1" "failure_count" 0 || true
-	set_peer_state "TEST" "192.168.1.1" "last_bytes" 1000 || true
 
 	# Set up controllable time for testing
 	local base_time=1609459200 # Fixed timestamp for reproducible tests
 	mock_date "$base_time" 0
-	add_mock_to_path
 
-	# Create restart count file with recent timestamps (simulating recent restarts)
-	# File must be in ${STATE_DIR}/restart_count to match RESTART_COUNT_FILE
+	# Setup rate limited fixture with 3 recent restarts
 	local now=$base_time
-	echo "$now" >"$restart_count_file"
-	echo "$((now - 100))" >>"$restart_count_file"
-	echo "$((now - 200))" >>"$restart_count_file"
-	# 3 restarts in last hour - should hit rate limit
+	setup_vpn_rate_limited_fixture "${TEST_PEER_IP}" 3 \
+		$now \
+		$((now - 100)) \
+		$((now - 200)) \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3' \
+		'TIER3_THRESHOLD=5' \
+		'MAX_RESTARTS_PER_HOUR=3' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0'
+
+	local log_file="$LOG_FILE"
+	local state_dir="$STATE_DIR"
+	local restart_count_file="${state_dir}/restart_count"
+	local test_script="$TEST_SCRIPT"
 
 	# Mock ip command - VPN fails
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ip"
-	add_mock_to_path
+	mock_ip_vpn_down >/dev/null
 
 	# Mock ipsec for Tier 3 recovery
 	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
-
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	# Set failure count to Tier 3 threshold
-	echo "5" >"${TEST_DIR}/state/failure_counter_TEST_192_168_1_1"
 
 	# Run - should hit rate limit
 	run bash "$test_script" --fake
@@ -423,42 +295,20 @@ EOF
 	# Purpose: Test verifies that failure count resets correctly when VPN recovers after flapping.
 	# Expected: Failure count should reset to 0 when VPN recovers, regardless of previous failure count.
 	# Importance: Failure count not resetting could cause incorrect tier escalation on next failure.
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}/state"
+	# Setup initial state - VPN is up, can switch states during test
+	setup_vpn_flapping_fixture "${TEST_PEER_IP}" "up" 1000 2000 \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3' \
+		'TIER3_THRESHOLD=5' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
-	# Setup environment variables needed by state.sh
-	setup_test_environment "$state_dir"
+	local log_file="$LOG_FILE"
+	local state_dir="$STATE_DIR"
+	local test_script="$TEST_SCRIPT"
 
-	# Setup initial state - VPN is up
-	ensure_state_functions_loaded
-	set_peer_state "TEST" "192.168.1.1" "failure_count" 0 || true
-	set_peer_state "TEST" "192.168.1.1" "last_bytes" 1000 || true
-
-	# Mock ip command - VPN fails multiple times
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ip"
-	add_mock_to_path
-
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	# VPN fails - switch to down state
+	switch_vpn_to_down
 
 	# Run multiple times to build up failure count
 	for _ in {1..4}; do
@@ -466,22 +316,16 @@ EOF
 	done
 
 	# Verify failure count is 4
-	local failure_count_file="${TEST_DIR}/state/failure_counter_TEST_192_168_1_1"
+	ensure_state_functions_loaded
+	local failure_count_file
+	failure_count_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	assert_file_exist "$failure_count_file"
 	local failure_count
 	failure_count=$(cat "$failure_count_file")
 	assert_equal "$failure_count" 4
 
-	# VPN recovers
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 2000 bytes, 10 packets"
-fi
-EOF
-	chmod +x "$mock_ip"
+	# VPN recovers - switch back to active state
+	switch_vpn_to_up 2000
 
 	# Run - VPN recovered, failure count should reset
 	run bash "$test_script" --fake
@@ -499,69 +343,39 @@ EOF
 	# Purpose: Test verifies that rate limiting takes precedence over cooldown expiration.
 	# Expected: If cooldown expires but rate limit is still active, rate limit should prevent recovery.
 	# Importance: Rate limiting should prevent excessive recovery actions even after cooldown expires.
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-COOLDOWN_MINUTES=0.01
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_HOUR=3
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}/state"
-	# RESTART_COUNT_FILE is set to ${STATE_DIR}/restart_count in vpn-monitor.sh
-	local restart_count_file="${TEST_DIR}/state/restart_count"
-
-	# Setup environment variables needed by state.sh
-	setup_test_environment "$state_dir"
-
-	# Setup initial state
-	ensure_state_functions_loaded
-	set_peer_state "TEST" "192.168.1.1" "failure_count" 0 || true
-	set_peer_state "TEST" "192.168.1.1" "last_bytes" 1000 || true
 
 	# Set up controllable time for testing
 	local base_time=1609459200 # Fixed timestamp for reproducible tests
 	mock_date "$base_time" 0
-	add_mock_to_path
 
-	# Create restart count file with recent timestamps (3 restarts in last hour)
-	# File must be in ${STATE_DIR}/restart_count to match RESTART_COUNT_FILE
+	# Setup rate limited fixture with 3 recent restarts
 	local now=$base_time
-	echo "$now" >"$restart_count_file"
-	echo "$((now - 100))" >>"$restart_count_file"
-	echo "$((now - 200))" >>"$restart_count_file"
+	setup_vpn_rate_limited_fixture "${TEST_PEER_IP}" 3 \
+		$now \
+		$((now - 100)) \
+		$((now - 200)) \
+		'COOLDOWN_MINUTES=0.01' \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3' \
+		'TIER3_THRESHOLD=5' \
+		'MAX_RESTARTS_PER_HOUR=3' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0'
+
+	local log_file="$LOG_FILE"
+	local state_dir="$STATE_DIR"
+	local restart_count_file="${state_dir}/restart_count"
+	local test_script="$TEST_SCRIPT"
 
 	# Set cooldown to expired (2 seconds ago, which is longer than 0.01 minutes = 0.6 seconds)
 	local cooldown_file="${state_dir}/cooldown_until"
 	echo "$((now - 2))" >"$cooldown_file"
 
 	# Mock ip command - VPN fails
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ip"
-	add_mock_to_path
+	mock_ip_vpn_down >/dev/null
 
 	# Mock ipsec for Tier 3 recovery
 	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
-
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	# Set failure count to Tier 3 threshold
-	echo "5" >"${TEST_DIR}/state/failure_counter_TEST_192_168_1_1"
 
 	# Run - cooldown expired but rate limit active
 	run bash "$test_script" --fake

@@ -440,7 +440,11 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	local logrotate_config="/etc/logrotate.d/vpn-monitor-cron"
 	mkdir -p "$(dirname "$logrotate_config")"
 	echo "# Test logrotate config" >"$logrotate_config"
+	local original_perms
+	original_perms=$(stat -c %a "$logrotate_config")
 	chmod 444 "$logrotate_config"
+	# Use trap to ensure cleanup even on errors
+	trap "chmod $original_perms \"\$logrotate_config\" 2>/dev/null || true" EXIT
 
 	run bash "$UNINSTALL_SCRIPT" --yes
 	# Script should still succeed but verification should detect the issue
@@ -451,6 +455,8 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 	# Restore permissions and clean up
 	chmod 644 "$logrotate_config"
+	# Clear trap after successful restore
+	trap - EXIT
 	rm -rf "$install_dir" 2>/dev/null || true
 	rm -f "$logrotate_config" 2>/dev/null || true
 }
@@ -979,8 +985,8 @@ EOF
 	local install_dir="/data/vpn-monitor"
 	mkdir -p "$install_dir"
 	echo "test" >"${install_dir}/vpn-monitor.sh"
-	echo "LOCATION_TEST_EXTERNAL=\"192.168.1.1\"" >"${install_dir}/vpn-monitor.conf"
-	echo "LOCATION_TEST_INTERNAL=\"192.168.1.1\"" >>"${install_dir}/vpn-monitor.conf"
+	echo "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" >"${install_dir}/vpn-monitor.conf"
+	echo "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" >>"${install_dir}/vpn-monitor.conf"
 
 	run bash "$UNINSTALL_SCRIPT" --yes --remove-config
 	assert_success
@@ -1006,8 +1012,8 @@ EOF
 	echo "test" >"${install_dir}/vpn-monitor.sh"
 	mkdir -p "${install_dir}/logs"
 	echo "log content" >"${install_dir}/logs/vpn-monitor.log"
-	local config_content="LOCATION_TEST_EXTERNAL=\"192.168.1.1\"
-LOCATION_TEST_INTERNAL=\"192.168.1.1\"
+	local config_content="LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"
+LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"
 VPN_NAME=\"Test VPN\""
 	echo "$config_content" >"${install_dir}/vpn-monitor.conf"
 
@@ -1069,8 +1075,8 @@ VPN_NAME=\"Test VPN\""
 	local install_dir="/data/vpn-monitor"
 	mkdir -p "$install_dir"
 	echo "test" >"${install_dir}/vpn-monitor.sh"
-	echo "LOCATION_TEST_EXTERNAL=\"192.168.1.1\"" >"${install_dir}/vpn-monitor.conf"
-	echo "LOCATION_TEST_INTERNAL=\"192.168.1.1\"" >>"${install_dir}/vpn-monitor.conf"
+	echo "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" >"${install_dir}/vpn-monitor.conf"
+	echo "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" >>"${install_dir}/vpn-monitor.conf"
 
 	run bash "$UNINSTALL_SCRIPT" --yes --keep-config
 	assert_success
@@ -1119,8 +1125,8 @@ VPN_NAME=\"Test VPN\""
 	local install_dir="/data/vpn-monitor"
 	mkdir -p "$install_dir"
 	echo "test" >"${install_dir}/vpn-monitor.sh"
-	echo "LOCATION_TEST_EXTERNAL=\"192.168.1.1\"" >"${install_dir}/vpn-monitor.conf"
-	echo "LOCATION_TEST_INTERNAL=\"192.168.1.1\"" >>"${install_dir}/vpn-monitor.conf"
+	echo "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" >"${install_dir}/vpn-monitor.conf"
+	echo "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" >>"${install_dir}/vpn-monitor.conf"
 
 	# First uninstall with keep-config
 	run bash "$UNINSTALL_SCRIPT" --yes --keep-config

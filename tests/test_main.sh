@@ -19,9 +19,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script receives SIGTERM, executes trap handlers to clean up lockfile, and exits gracefully
 	# Importance: Graceful shutdown handling ensures resources are released and lockfiles are cleaned up during system shutdown
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -32,7 +32,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Run script in background and send SIGTERM
@@ -58,9 +58,9 @@ EOF
 	# Expected: Script fails gracefully without crashing when system resources (memory, file descriptors) are exhausted
 	# Importance: Resource exhaustion handling prevents script crashes and ensures error logging when resources are unavailable
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -70,7 +70,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Mock ulimit to simulate resource exhaustion (if possible)
@@ -95,7 +95,7 @@ EOF
 	# Purpose: Test verifies that when network partition is detected, VPN checks are skipped for all peers
 	# Expected: Script skips VPN checks when network partition is detected
 	# Importance: Prevents false VPN failure detection when local network is down
-	setup_location_vpn_monitor "10.0.0.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP2}" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - default route missing (network partitioned)
 	local mock_ip="${TEST_DIR}/ip"
@@ -110,12 +110,7 @@ EOF
 	chmod +x "$mock_ip"
 
 	# Mock dig command - DNS resolution fails
-	local mock_dig="${TEST_DIR}/dig"
-	cat >"$mock_dig" <<'EOF'
-#!/bin/bash
-exit 1
-EOF
-	chmod +x "$mock_dig"
+	mock_dig 0
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -133,14 +128,14 @@ EOF
 	# Purpose: Test verifies that network partition state transitions are handled correctly
 	# Expected: Script transitions between healthy and partitioned states correctly
 	# Importance: State transitions ensure VPN checks resume when network recovers
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# First run: Network healthy
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'EOF'
 #!/bin/bash
 if [[ "$1" == "route" ]] && [[ "$2" == "show" ]] && [[ "$3" == "default" ]]; then
-    echo "default via 192.168.1.1 dev eth0"
+    echo "default via ${TEST_PEER_IP} dev eth0"
     exit 0
 elif [[ "$1" == "link" ]] && [[ "$2" == "show" ]]; then
     if [[ "$3" == "br0" ]] || [[ "$3" == "eth0" ]]; then
@@ -152,13 +147,7 @@ exec /usr/bin/ip "$@"
 EOF
 	chmod +x "$mock_ip"
 
-	local mock_dig="${TEST_DIR}/dig"
-	cat >"$mock_dig" <<'EOF'
-#!/bin/bash
-echo "8.8.8.8"
-exit 0
-EOF
-	chmod +x "$mock_dig"
+	mock_dig 1 "8.8.8.8"
 	add_mock_to_path
 
 	# First run - network healthy
@@ -173,11 +162,7 @@ if [[ "$1" == "route" ]] && [[ "$2" == "show" ]] && [[ "$3" == "default" ]]; the
 fi
 exec /usr/bin/ip "$@"
 EOF
-	cat >"$mock_dig" <<'EOF'
-#!/bin/bash
-exit 1
-EOF
-
+	mock_dig 0
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
@@ -187,7 +172,7 @@ EOF
 	cat >"$mock_ip" <<'EOF'
 #!/bin/bash
 if [[ "$1" == "route" ]] && [[ "$2" == "show" ]] && [[ "$3" == "default" ]]; then
-    echo "default via 192.168.1.1 dev eth0"
+    echo "default via ${TEST_PEER_IP} dev eth0"
     exit 0
 elif [[ "$1" == "link" ]] && [[ "$2" == "show" ]]; then
     if [[ "$3" == "br0" ]] || [[ "$3" == "eth0" ]]; then
@@ -197,12 +182,7 @@ elif [[ "$1" == "link" ]] && [[ "$2" == "show" ]]; then
 fi
 exec /usr/bin/ip "$@"
 EOF
-	cat >"$mock_dig" <<'EOF'
-#!/bin/bash
-echo "8.8.8.8"
-exit 0
-EOF
-
+	mock_dig 1 "8.8.8.8"
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
@@ -216,9 +196,9 @@ EOF
 	# Purpose: Test verifies that when network partition check is disabled, VPN checks proceed normally
 	# Expected: VPN checks are performed when ENABLE_NETWORK_PARTITION_CHECK=0
 	# Importance: Allows disabling partition check if not needed
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=0'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=0'
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -237,14 +217,14 @@ EOF
 	# Purpose: Test verifies that when network partition check fails due to DNS/timeout, script defaults to healthy
 	# Expected: Script treats check failure as healthy state (allows VPN checks to proceed)
 	# Importance: Prevents false partition detection from blocking VPN checks
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - default route exists
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'EOF'
 #!/bin/bash
 if [[ "$1" == "route" ]] && [[ "$2" == "show" ]] && [[ "$3" == "default" ]]; then
-    echo "default via 192.168.1.1 dev eth0"
+    echo "default via ${TEST_PEER_IP} dev eth0"
     exit 0
 	elif [[ "$1" == "link" ]] && [[ "$2" == "show" ]]; then
     if [[ "$3" == "br0" ]] || [[ "$3" == "eth0" ]]; then
@@ -267,15 +247,10 @@ EOF
 	chmod +x "$mock_dig"
 
 	# Mock nslookup command - also fails (to prevent fallback)
-	local mock_nslookup="${TEST_DIR}/nslookup"
-	cat >"$mock_nslookup" <<'EOF'
-#!/bin/bash
-exit 1
-EOF
-	chmod +x "$mock_nslookup"
+	mock_nslookup_fail
 	add_mock_to_path
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 
 	# Run with timeout to prevent test from hanging
 	# Increase timeout to allow for DNS timeout (2s) + dig sleep (3s) + other operations
@@ -296,13 +271,13 @@ EOF
 	# Purpose: Test verifies that corrupted network partition state file is recovered gracefully
 	# Expected: Script recovers corrupted state file and continues execution
 	# Importance: Prevents script failures from corrupted state files
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Create corrupted network partition state file
 	local partition_state_file="${STATE_DIR}/network_partition_state"
 	echo "invalid-value" >"$partition_state_file"
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -319,7 +294,7 @@ EOF
 	# Purpose: Test verifies that network partition check runs even during cooldown period
 	# Expected: Partition check runs before skipping VPN checks, even if in cooldown
 	# Importance: Ensures partition detection works correctly during cooldown
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1' 'COOLDOWN_MINUTES=15'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1' 'COOLDOWN_MINUTES=15'
 
 	# Set cooldown state using controllable time
 	local base_time=1609459200 # Fixed timestamp for reproducible tests
@@ -341,12 +316,7 @@ exec /usr/bin/ip "$@"
 EOF
 	chmod +x "$mock_ip"
 
-	local mock_dig="${TEST_DIR}/dig"
-	cat >"$mock_dig" <<'EOF'
-#!/bin/bash
-exit 1
-EOF
-	chmod +x "$mock_dig"
+	mock_dig 0
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -368,9 +338,9 @@ EOF
 	# Purpose: Test verifies that multiple --fake flags are handled gracefully
 	# Expected: Script accepts multiple --fake flags without error
 	# Importance: Prevents errors from duplicate flags
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake --fake
@@ -411,8 +381,8 @@ EOF
 
 	# Create config file
 	mkdir -p "${TEST_DIR}"
-	echo 'LOCATION_TEST_EXTERNAL="192.168.1.1"' >"${TEST_DIR}/vpn-monitor.conf"
-	echo 'LOCATION_TEST_INTERNAL="192.168.1.1"' >>"${TEST_DIR}/vpn-monitor.conf"
+	echo "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" >"${TEST_DIR}/vpn-monitor.conf"
+	echo "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" >>"${TEST_DIR}/vpn-monitor.conf"
 
 	run bash "$test_script" --fake /nonexistent/file/path
 
@@ -432,8 +402,8 @@ EOF
 
 	# Create config file
 	mkdir -p "${TEST_DIR}"
-	echo 'LOCATION_TEST_EXTERNAL="192.168.1.1"' >"${TEST_DIR}/vpn-monitor.conf"
-	echo 'LOCATION_TEST_INTERNAL="192.168.1.1"' >>"${TEST_DIR}/vpn-monitor.conf"
+	echo "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" >"${TEST_DIR}/vpn-monitor.conf"
+	echo "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" >>"${TEST_DIR}/vpn-monitor.conf"
 
 	# Create a valid file path
 	local valid_file="${TEST_DIR}/valid_file.txt"
@@ -458,8 +428,8 @@ EOF
 
 	# Create config file
 	mkdir -p "${TEST_DIR}"
-	echo 'LOCATION_TEST_EXTERNAL="192.168.1.1"' >"${TEST_DIR}/vpn-monitor.conf"
-	echo 'LOCATION_TEST_INTERNAL="192.168.1.1"' >>"${TEST_DIR}/vpn-monitor.conf"
+	echo "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" >"${TEST_DIR}/vpn-monitor.conf"
+	echo "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" >>"${TEST_DIR}/vpn-monitor.conf"
 
 	# Use invalid file path argument
 	run bash "$test_script" --fake /invalid/path/that/does/not/exist
@@ -569,9 +539,9 @@ EOF
 	# Expected: Script exits with clear error message when log file is unwritable
 	# Importance: Logging failures should fail fast with clear error messages
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -607,9 +577,9 @@ EOF
 	# Expected: Script uses new log file path when LOG_FILE is overridden in config
 	# Importance: Config overrides should be respected
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 LOG_FILE="/tmp/test-vpn-monitor.log"
 EOF
 
@@ -619,7 +589,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "${TEST_DIR}/logs/vpn-monitor.log")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$test_script" --fake
@@ -643,8 +613,8 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local custom_logs_dir="${TEST_DIR}/custom_logs"
 	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 LOGS_DIR="${custom_logs_dir}"
 EOF
 
@@ -654,7 +624,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "${TEST_DIR}/logs/vpn-monitor.log")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$test_script" --fake
@@ -673,9 +643,9 @@ EOF
 	# Expected: Script continues execution even if some log writes fail
 	# Importance: Logging failures shouldn't crash the script
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -685,7 +655,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Create log file and make it unwritable after initialization
@@ -714,9 +684,9 @@ EOF
 	# Expected: Script detects unreadable config file and exits with clear error
 	# Importance: Prevents script from running with invalid configuration
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 EOF
 
 	# Make config file unreadable
@@ -750,9 +720,9 @@ EOF
 	# Expected: Script detects unwritable state directory and exits with clear error
 	# Importance: Prevents script failures from permission issues
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 STATE_DIR="/tmp/readonly-state-dir"
 EOF
 
@@ -768,7 +738,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 	run bash "$test_script" --fake
 	assert_failure
@@ -789,9 +759,9 @@ EOF
 	# Expected: Script detects lockfile conflict and exits with clear message
 	# Importance: Prevents multiple instances from running simultaneously
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -802,7 +772,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Create a lockfile with a fake running PID (simulate another instance)
@@ -837,9 +807,9 @@ EOF
 	# Expected: Recovery failures are logged but script continues monitoring
 	# Importance: Ensures script resilience when recovery actions fail
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=2
 TIER3_THRESHOLD=3
@@ -873,7 +843,7 @@ EOF
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
 	local failure_count_file
-	failure_count_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_count_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	# Set failure count to trigger Tier 2 recovery
 	echo "2" >"$failure_count_file"
 
@@ -905,7 +875,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_dir" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$test_script" --fake
@@ -926,8 +896,8 @@ EOF
 	# Importance: Ensures script resilience when state files cannot be created
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 	# Override LOGS_DIR to point to a location that will fail directory creation
 	# Use TEST_DIR to ensure test isolation, but make parent read-only
 	LOGS_DIR="${TEST_DIR}/readonly-parent/readonly-logs"
@@ -946,7 +916,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$test_script" --fake
@@ -972,9 +942,9 @@ EOF
 	# Expected: Script detects resource constraints, logs message, and exits with code 0
 	# Importance: Prevents script from consuming resources when system is constrained
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 ENABLE_RESOURCE_MONITORING=1
 RESOURCE_DISK_CRITICAL_THRESHOLD=10
 EOF
@@ -986,7 +956,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Mock df command to return critical disk space (< 10% free)

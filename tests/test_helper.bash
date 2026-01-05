@@ -28,6 +28,26 @@ load "${BATS_TEST_DIRNAME}/bats-file/load.bash"
 #   echo "Running test: ${BATS_TEST_NAME} from ${BATS_TEST_FILENAME}"
 #   local debug_file="${BATS_TEST_TMPDIR}/debug.log"
 
+# Standard Test IP Addresses
+#
+# Standard IP addresses for use in tests. These constants make tests easier to
+# modify and understand by centralizing IP address definitions.
+#
+# Available constants:
+#   - TEST_PEER_IP: Primary peer IP address (default: "192.168.1.1")
+#   - TEST_PEER_IP2: Secondary peer IP address (default: "10.0.0.1")
+#   - TEST_LOCAL_IP: Local IP address (default: "192.168.1.2")
+#
+# Example usage:
+#   setup_location_vpn_monitor "$TEST_PEER_IP"
+#   mock_ping "$TEST_PEER_IP" "1"
+TEST_PEER_IP="192.168.1.1"
+TEST_PEER_IP2="10.0.0.1"
+TEST_LOCAL_IP="192.168.1.2"
+
+# Export test IP constants so they're available in all tests
+export TEST_PEER_IP TEST_PEER_IP2 TEST_LOCAL_IP
+
 # Load common functions from lib
 # shellcheck source=../lib/common.sh
 source "${BATS_TEST_DIRNAME}/../lib/common.sh"
@@ -228,12 +248,12 @@ teardown() {
 #   Prints the path to the created config file
 create_mock_config() {
 	local config_file="${1:-${MOCK_INSTALL_DIR}/vpn-monitor.conf}"
-	cat >"$config_file" <<'EOF'
+	cat >"$config_file" <<EOF
 # Test configuration
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-LOCATION_TEST2_EXTERNAL="10.0.0.1"
-LOCATION_TEST2_INTERNAL="10.0.0.1"
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST2_EXTERNAL="${TEST_PEER_IP2}"
+LOCATION_TEST2_INTERNAL="${TEST_PEER_IP2}"
 VPN_NAME="Test VPN"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
@@ -499,6 +519,8 @@ create_test_vpn_monitor_script() {
 	if [[ -n "$escaped_state" ]]; then
 		sed_script="${sed_script}s|^STATE_DIR=.*|STATE_DIR=\"${escaped_state}\"|;"
 		sed_script="${sed_script}s|^LOCKFILE=.*|LOCKFILE=\"${escaped_state}/vpn-monitor.lock\"|;"
+		sed_script="${sed_script}s|^COOLDOWN_UNTIL_FILE=.*|COOLDOWN_UNTIL_FILE=\"${escaped_state}/cooldown_until\"|;"
+		sed_script="${sed_script}s|^RESTART_COUNT_FILE=.*|RESTART_COUNT_FILE=\"${escaped_state}/restart_count\"|;"
 	fi
 	if [[ -n "$escaped_log" ]]; then
 		sed_script="${sed_script}s|^LOG_FILE=.*|LOG_FILE=\"${escaped_log}\"|;"
@@ -754,11 +776,14 @@ assert_log_contains_any() {
 #
 # Creates a mock 'ip' command that returns fake xfrm state output.
 # Used to simulate VPN tunnel states in tests without requiring actual IPsec.
+# Handles both "ip xfrm state" and "ip -s xfrm state" (with statistics flag) formats.
 #
 # Arguments:
-#   $1: Peer IP address to include in mock output
+#   $1: Peer IP address to include in mock output (destination IP)
 #   $2: Byte counter value (default: 1000)
 #   $3: SPI value (default: 0x12345678)
+#   $4: Source IP address (default: same as peer_ip, or TEST_PEER_IP2 if peer_ip matches TEST_PEER_IP)
+#   $5: Optional path to mock ip file (default: ${TEST_DIR}/ip)
 #
 # Returns:
 #   0: Always succeeds
@@ -767,28 +792,45 @@ assert_log_contains_any() {
 #   Prints the path to the created mock script
 #
 # Side effects:
-#   Creates mock script in TEST_DIR
+#   Creates mock script at specified path (default: ${TEST_DIR}/ip)
+#
+# Example:
+#   # Basic usage - static bytes
+#   mock_ip_xfrm_state "192.168.1.1" 1000
+#   add_mock_to_path
+#
+#   # Custom SPI and source IP
+#   mock_ip_xfrm_state "192.168.1.1" 5000 "0xabcdef12" "10.0.0.1"
 mock_ip_xfrm_state() {
 	local peer_ip="$1"
 	local bytes="${2:-1000}"
 	local spi="${3:-0x12345678}"
+	local src_ip="${4:-}"
+	local mock_ip="${5:-${TEST_DIR}/ip}"
 
-	# Create a mock ip command
-	local mock_ip="${TEST_DIR}/mock_ip"
+	# Default source IP: use peer_ip (common pattern in tests)
+	if [[ -z "$src_ip" ]]; then
+		src_ip="$peer_ip"
+	fi
+
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst ${peer_ip}"
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    echo "src ${src_ip} dst ${peer_ip}"
     echo "    proto esp spi ${spi} reqid 1 mode tunnel"
-    echo "    replay-window 0"
-    echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
-    echo "    enc cbc(aes) 0x1234567890abcdef"
     echo "    lifetime current: ${bytes} bytes, 10 packets"
-    echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
-    echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
-    echo "    current use: 1"
-    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    exit 0
 fi
+# Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    echo "src ${src_ip} dst ${peer_ip}"
+    echo "    proto esp spi ${spi} reqid 1 mode tunnel"
+    echo "    lifetime current: ${bytes} bytes, 10 packets"
+    exit 0
+fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
 	echo "$mock_ip"
@@ -833,7 +875,11 @@ mock_ip_vpn_down() {
 
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
-# Handle xfrm state - return empty (VPN down, no SA)
+# Handle "ip -s xfrm state" (args: -s, xfrm, state) - return empty (VPN down, no SA)
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    exit 0  # Return empty output (no SA found - VPN down)
+fi
+# Handle "ip xfrm state" (args: xfrm, state) - return empty (VPN down, no SA)
 if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     exit 0  # Return empty output (no SA found - VPN down)
 fi
@@ -883,12 +929,12 @@ EOF
 #   # Custom state file for tracking
 #   mock_ip_xfrm_with_incrementing_bytes "192.168.1.1" "1000" "1000" "0x12345678" "${TEST_DIR}/custom_state"
 mock_ip_xfrm_with_incrementing_bytes() {
-	local peer_ip="${1:-192.168.1.1}"
+	local peer_ip="${1:-${TEST_PEER_IP}}"
 	local initial_bytes="${2:-1000}"
 	local increment="${3:-1000}"
 	local spi="${4:-0x12345678}"
 	local state_file="${5:-${TEST_DIR}/xfrm_call_count}"
-	local src_ip="${6:-10.0.0.1}"
+	local src_ip="${6:-${TEST_PEER_IP2}}"
 
 	local mock_ip="${TEST_DIR}/ip"
 
@@ -961,7 +1007,11 @@ mock_ip_xfrm_empty() {
 
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
-# Handle xfrm state - return empty (VPN down, no SA)
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    exit 0  # Return empty output (no SA found - VPN down)
+fi
+# Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
 if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     exit 0  # Return empty output (no SA found - VPN down)
 fi
@@ -1073,7 +1123,7 @@ EOF
 #   mock_ping_packet_loss "192.168.1.1"
 #   add_mock_to_path
 mock_ping_packet_loss() {
-	local target_ip="${1:-192.168.1.1}"
+	local target_ip="${1:-${TEST_PEER_IP}}"
 
 	local mock_ping="${TEST_DIR}/ping"
 	cat >"$mock_ping" <<EOF
@@ -1254,6 +1304,9 @@ mock_ipsec_status() {
 if [[ "\$1" == "status" ]]; then
     echo "$status_output"
     exit ${status_exit}
+elif [[ "\$1" == "--help" ]] || [[ "\$1" == "--version" ]]; then
+    # Handle command availability checks (used by check_command_available)
+    exit 0
 fi
 exec /usr/bin/ipsec "\$@"
 EOF
@@ -1262,6 +1315,9 @@ EOF
 #!/bin/bash
 if [[ "\$1" == "status" ]]; then
     exit ${status_exit}
+elif [[ "\$1" == "--help" ]] || [[ "\$1" == "--version" ]]; then
+    # Handle command availability checks (used by check_command_available)
+    exit 0
 fi
 exec /usr/bin/ipsec "\$@"
 EOF
@@ -1290,7 +1346,7 @@ EOF
 #   Creates mock script in TEST_DIR as "ipsec"
 mock_ipsec() {
 	local format="${1:-default}"
-	local peer_ip="${2:-192.168.1.1}"
+	local peer_ip="${2:-${TEST_PEER_IP}}"
 	local conn_name="${3:-test-conn}"
 	local mock_ipsec="${TEST_DIR}/ipsec"
 
@@ -1309,8 +1365,12 @@ if [[ "\$1" == "reload" ]]; then
     exit 0
 fi
 if [[ "\$1" == "status" ]]; then
-    echo "${conn_name}: ESTABLISHED 1 hour ago, ${peer_ip}...192.168.1.2"
+    echo "${conn_name}: ESTABLISHED 1 hour ago, ${peer_ip}...${TEST_LOCAL_IP}"
+elif [[ "\$1" == "--help" ]] || [[ "\$1" == "--version" ]]; then
+    # Handle command availability checks (used by check_command_available)
+    exit 0
 fi
+exec /usr/bin/ipsec "\$@"
 EOF
 		;;
 	strongswan)
@@ -1328,7 +1388,11 @@ if [[ "\$1" == "reload" ]]; then
 fi
 if [[ "\$1" == "status" ]]; then
     echo "${conn_name}: IKEv2, ESTABLISHED, ${peer_ip}"
+elif [[ "\$1" == "--help" ]] || [[ "\$1" == "--version" ]]; then
+    # Handle command availability checks (used by check_command_available)
+    exit 0
 fi
+exec /usr/bin/ipsec "\$@"
 EOF
 		;;
 	default)
@@ -1347,7 +1411,11 @@ fi
 if [[ "$1" == "status" ]]; then
     echo "IPsec connections:"
     echo "  test-conn: ESTABLISHED"
+elif [[ "$1" == "--help" ]] || [[ "$1" == "--version" ]]; then
+    # Handle command availability checks (used by check_command_available)
+    exit 0
 fi
+exec /usr/bin/ipsec "$@"
 EOF
 		;;
 	esac
@@ -1382,7 +1450,7 @@ mock_ipsec_reload_restart() {
 	local restart_exit="${2:-0}"
 	local status_exit="${3:-0}"
 	local format="${4:-default}"
-	local peer_ip="${5:-192.168.1.1}"
+	local peer_ip="${5:-${TEST_PEER_IP}}"
 	local conn_name="${6:-test-conn}"
 	local mock_ipsec="${TEST_DIR}/ipsec"
 
@@ -1405,7 +1473,11 @@ if [[ "\$1" == "status" ]]; then
         echo "${conn_name}: ESTABLISHED 1 hour ago, ${peer_ip}...192.168.1.2"
     fi
     exit ${status_exit}
+elif [[ "\$1" == "--help" ]] || [[ "\$1" == "--version" ]]; then
+    # Handle command availability checks (used by check_command_available)
+    exit 0
 fi
+exec /usr/bin/ipsec "\$@"
 EOF
 		;;
 	strongswan)
@@ -1426,7 +1498,11 @@ if [[ "\$1" == "status" ]]; then
         echo "${conn_name}: IKEv2, ESTABLISHED, ${peer_ip}"
     fi
     exit ${status_exit}
+elif [[ "\$1" == "--help" ]] || [[ "\$1" == "--version" ]]; then
+    # Handle command availability checks (used by check_command_available)
+    exit 0
 fi
+exec /usr/bin/ipsec "\$@"
 EOF
 		;;
 	default)
@@ -1448,7 +1524,11 @@ if [[ "\$1" == "status" ]]; then
         echo "  ${conn_name}: ESTABLISHED"
     fi
     exit ${status_exit}
+elif [[ "\$1" == "--help" ]] || [[ "\$1" == "--version" ]]; then
+    # Handle command availability checks (used by check_command_available)
+    exit 0
 fi
+exec /usr/bin/ipsec "\$@"
 EOF
 		;;
 	esac
@@ -1484,6 +1564,74 @@ remove_mock_from_path() {
 	# Use bash parameter expansion instead of sed for better performance and reliability
 	local new_path="${PATH//${TEST_DIR}:/}"
 	export PATH="$new_path"
+}
+
+# Run code with mocks, ensuring cleanup even on failure
+#
+# Wrapper function that ensures mock cleanup happens even if the wrapped code fails.
+# This prevents test pollution by guaranteeing mocks are removed from PATH.
+#
+# Arguments:
+#   $1: Mock setup commands (string to be evaluated, e.g., "mock_ip_xfrm_state \"192.168.1.1\" 1000")
+#   $2+: Command and arguments to execute with mocks in PATH
+#
+# Returns:
+#   Exit code of the executed command
+#
+# Side effects:
+#   - Evaluates mock setup commands
+#   - Adds TEST_DIR to PATH
+#   - Executes provided command
+#   - Removes TEST_DIR from PATH (always, even on failure)
+#
+# Example:
+#   # Basic usage with mock setup and command execution
+#   with_mocks 'mock_ip_xfrm_state "${TEST_PEER_IP}" 1000' \
+#       run bash "$TEST_SCRIPT"
+#
+#   # Multiple mock setup commands
+#   with_mocks 'mock_ip_xfrm_state "${TEST_PEER_IP}" 1000; mock_ping "${TEST_PEER_IP}" 1' \
+#       run bash "$TEST_SCRIPT"
+#
+#   # With function call
+#   with_mocks 'mock_ip_xfrm_state "${TEST_PEER_IP}" 1000' \
+#       check_vpn_status "${TEST_PEER_IP}"
+#
+# Note:
+#   - Mock setup commands are evaluated in the current shell context
+#   - Cleanup is guaranteed via trap-like behavior (always removes mocks)
+#   - This is optional - explicit add_mock_to_path/remove_mock_from_path is still valid
+#   - teardown() also restores PATH, but this ensures cleanup happens immediately
+with_mocks() {
+	local mock_setup="$1"
+	shift
+	local exit_code=0
+
+	# Evaluate mock setup commands
+	# If eval fails, we should not proceed with adding mocks to PATH
+	if ! eval "$mock_setup"; then
+		# Mock setup failed - return error without modifying PATH
+		return 1
+	fi
+
+	# Add mocks to PATH
+	add_mock_to_path
+
+	# Execute the command(s)
+	# Check if any command was provided
+	if [[ $# -eq 0 ]]; then
+		# No command provided - this is a usage error
+		remove_mock_from_path
+		return 1
+	fi
+
+	"$@"
+	exit_code=$?
+
+	# Always remove mocks from PATH, even if command failed
+	remove_mock_from_path
+
+	return $exit_code
 }
 
 # Assert state file exists and contains value
@@ -1591,7 +1739,7 @@ wait_for_file() {
 setup_test_config() {
 	local config_file="${1:-${TEST_DIR}/vpn-monitor.conf}"
 	# Use ${2-} instead of ${2:-} to allow empty strings to pass through
-	local peer_ips="${2-192.168.1.1}"
+	local peer_ips="${2-${TEST_PEER_IP}}"
 	shift 2 || true
 	local extra_config=("$@")
 
@@ -1654,7 +1802,7 @@ EOF
 # Example:
 #   setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1'
 setup_location_vpn_monitor() {
-	local external_ip="${1:-192.168.1.1}"
+	local external_ip="${1:-${TEST_PEER_IP}}"
 	local state_dir="${2:-${TEST_DIR}}"
 	shift 2 || true
 	local extra_config=("$@")
@@ -1757,6 +1905,66 @@ setup_test_environment() {
 	export COOLDOWN_UNTIL_FILE="${state_dir}/cooldown_until"
 }
 
+# Common detection test setup
+#
+# Convenience function that combines setup_vpn_active_fixture() and add_mock_to_path()
+# for common detection test scenarios. This reduces duplication when tests need
+# a simple active VPN setup with mocks in PATH.
+#
+# Note: This function requires that fixtures/vpn_active is loaded in the test file.
+# Use this helper when you don't need to add additional mocks between fixture setup
+# and adding mocks to PATH. For more complex scenarios, use setup_vpn_active_fixture()
+# directly and add mocks before calling add_mock_to_path().
+#
+# Arguments:
+#   $1: Peer IP address (default: "${TEST_PEER_IP}")
+#   $2: Initial byte counter value (default: 1000)
+#   $3: Current byte counter value (default: 2000, should be > initial)
+#   $4: SPI value (default: 0x12345678)
+#   $5+: Additional config variables as KEY="VALUE" pairs
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Sets up test VPN monitor environment via setup_vpn_active_fixture()
+#   - Adds mock commands to PATH via add_mock_to_path()
+#   - Sets TEST_CONFIG_FILE, TEST_SCRIPT, STATE_DIR, LOGS_DIR variables
+#
+# Example:
+#   # Load required fixture
+#   load fixtures/vpn_active
+#
+#   @test "detection test" {
+#       setup_detection_test "${TEST_PEER_IP}"
+#       run bash "$TEST_SCRIPT" --fake
+#       assert_success
+#       remove_mock_from_path
+#   }
+#
+#   # With custom byte counters
+#   setup_detection_test "${TEST_PEER_IP}" 5000 6000
+#
+#   # With additional config
+#   setup_detection_test "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1'
+setup_detection_test() {
+	local peer_ip="${1:-${TEST_PEER_IP}}"
+	local initial_bytes="${2:-1000}"
+	local current_bytes="${3:-2000}"
+	local spi="${4:-0x12345678}"
+	shift 4 || true
+	local extra_config=("$@")
+
+	# Set up VPN active fixture (requires fixtures/vpn_active to be loaded)
+	setup_vpn_active_fixture "$peer_ip" "$initial_bytes" "$current_bytes" "$spi" "${extra_config[@]}"
+
+	# Add mocks to PATH
+	# Note: setup_vpn_active_fixture() → setup_mock_vpn_environment() already calls add_mock_to_path(),
+	# but we call it again here for defensive programming and to match the original test pattern.
+	# This is harmless since add_mock_to_path() is idempotent.
+	add_mock_to_path
+}
+
 # Set up complete VPN monitor test environment
 #
 # Creates config file, test script, and sets up environment variables.
@@ -1781,7 +1989,7 @@ setup_test_vpn_monitor() {
 	# Use ${1-} instead of ${1:-} to allow empty strings to pass through
 	# ${1:-default} uses default if $1 is unset OR empty
 	# ${1-default} uses default only if $1 is unset (allows empty string)
-	local peer_ips="${1-192.168.1.1}"
+	local peer_ips="${1-${TEST_PEER_IP}}"
 	local state_dir="${2:-${TEST_DIR}}"
 	shift 2 || true
 	local extra_config=("$@")
@@ -2013,7 +2221,7 @@ setup_location_config() {
 	# Use shared helper function with default location configs
 	setup_test_location_config "$config_file" \
 		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
-		'LOCATION_NYC_INTERNAL="192.168.1.1"' \
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'LOCATION_LA_EXTERNAL="198.51.100.1"' \
 		'LOCATION_LA_INTERNAL="192.168.2.1"' \
 		"${extra_config[@]}"
@@ -2083,6 +2291,103 @@ ensure_state_functions_loaded() {
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
 }
 
+# Get location name from location config variable
+#
+# Extracts the location name from a LOCATION_*_EXTERNAL or LOCATION_*_INTERNAL
+# config variable name. This reduces duplication in tests that need to extract
+# location names from config variables.
+#
+# Arguments:
+#   $1: Config variable name (e.g., "LOCATION_TEST_EXTERNAL")
+#
+# Returns:
+#   0: Location name extracted successfully
+#   1: Invalid variable name format
+#
+# Output:
+#   Prints location name to stdout (e.g., "TEST")
+#
+# Example:
+#   location=$(get_location_name_from_config_var "LOCATION_TEST_EXTERNAL")
+#   # Returns: "TEST"
+#
+# Note:
+#   Uses extract_location_name() from lib/config.sh if available.
+#   Falls back to regex extraction if config.sh is not sourced.
+get_location_name_from_config_var() {
+	local var_name="$1"
+	local location_name=""
+
+	# Try using extract_location_name from lib/config.sh if available
+	if command -v extract_location_name >/dev/null 2>&1; then
+		if location_name=$(extract_location_name "$var_name" 2>/dev/null); then
+			echo "$location_name"
+			return 0
+		fi
+	fi
+
+	# Fallback: Extract location name using regex
+	# Pattern: LOCATION_<NAME>_EXTERNAL or LOCATION_<NAME>_INTERNAL
+	if [[ "$var_name" =~ ^LOCATION_(.+)_(EXTERNAL|INTERNAL)$ ]]; then
+		location_name="${BASH_REMATCH[1]}"
+		echo "$location_name"
+		return 0
+	fi
+
+	return 1
+}
+
+# Get failure counter path for a location config variable
+#
+# Helper function that extracts the location name from a config variable and
+# returns the path to the failure counter file. This reduces duplication in
+# tests that need to set up failure counters with location names.
+#
+# Arguments:
+#   $1: Location config variable name (e.g., "LOCATION_TEST_EXTERNAL")
+#   $2: Peer IP address (default: ${TEST_PEER_IP})
+#
+# Returns:
+#   0: Path retrieved successfully
+#   1: Invalid variable name or function unavailable
+#
+# Output:
+#   Prints failure counter file path to stdout
+#
+# Side effects:
+#   - Sources get_peer_state_file_path if not available
+#
+# Example:
+#   failure_counter=$(get_failure_counter_path_for_location_var "LOCATION_TEST_EXTERNAL" "${TEST_PEER_IP}")
+#   echo "5" >"$failure_counter"
+#
+# Note:
+#   This replaces the common pattern:
+#     source_function "get_peer_state_file_path"
+#     # Location name is "TEST" (extracted from LOCATION_TEST_EXTERNAL)
+#     failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
+get_failure_counter_path_for_location_var() {
+	local var_name="$1"
+	local peer_ip="${2:-${TEST_PEER_IP}}"
+	local location_name
+	local failure_counter_path
+
+	# Extract location name from config variable
+	if ! location_name=$(get_location_name_from_config_var "$var_name"); then
+		return 1
+	fi
+
+	# Ensure get_peer_state_file_path is available
+	if ! command -v get_peer_state_file_path >/dev/null 2>&1; then
+		source_function "get_peer_state_file_path" || return 1
+	fi
+
+	# Get failure counter path
+	failure_counter_path=$(get_peer_state_file_path "$location_name" "$peer_ip" "failure_count")
+	echo "$failure_counter_path"
+	return 0
+}
+
 # Set up complete mock VPN environment
 #
 # Creates mock ip, ipsec, and ping commands and adds them to PATH.
@@ -2104,7 +2409,7 @@ ensure_state_functions_loaded() {
 #   - Adds TEST_DIR to PATH
 #   - Sets MOCK_IP, MOCK_PING, MOCK_IPSEC variables
 setup_mock_vpn_environment() {
-	local peer_ip="${1:-192.168.1.1}"
+	local peer_ip="${1:-${TEST_PEER_IP}}"
 	local bytes="${2:-1000}"
 	local spi="${3:-0x12345678}"
 	local ping_target="${4:-}"
@@ -2153,7 +2458,7 @@ setup_mock_vpn_environment() {
 #   Creates mock script in TEST_DIR as "ip"
 mock_ip_route() {
 	local route_exists="${1:-1}"
-	local route_output="${2:-default via 192.168.1.1 dev eth0}"
+	local route_output="${2:-default via ${TEST_PEER_IP} dev eth0}"
 
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<EOF
@@ -2290,6 +2595,73 @@ EOF
 	echo "$mock_ping"
 }
 
+# Create mock ping command that fails
+#
+# Creates a mock 'ping' command that always fails.
+# Used to test ping connectivity checks that should fail.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "ping"
+mock_ping_failure() {
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<'EOF'
+#!/bin/bash
+# Mock ping that always fails
+exit 1
+EOF
+	chmod +x "$mock_ping"
+	echo "$mock_ping"
+}
+
+# Create mock ping command that succeeds for specific IPs
+#
+# Creates a mock 'ping' command that succeeds only for specified IP addresses.
+# Used to test ping connectivity checks with selective success/failure.
+#
+# Arguments:
+#   $1: Space-separated list of IPs that should succeed
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "ping"
+#
+# Note:
+#   Ping is called with IP as last argument: ping [args] -c count -W timeout -q target_ip
+#   The mock checks all arguments for target IP and exits 0 if found in success list, 1 otherwise
+mock_ping_selective() {
+	local success_ips="$1"
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<EOF
+#!/bin/bash
+# Mock ping that succeeds for specific IPs
+# Check all arguments for target IP (ping is called with IP as last argument)
+for arg in "\$@"; do
+	for ip in $success_ips; do
+		if [[ "\$arg" == "\$ip" ]]; then
+			exit 0
+		fi
+	done
+done
+exit 1
+EOF
+	chmod +x "$mock_ping"
+	echo "$mock_ping"
+}
+
 # Create mock nslookup command that fails
 #
 # Creates a mock 'nslookup' command that always fails.
@@ -2314,6 +2686,154 @@ exit 1
 EOF
 	chmod +x "$mock_nslookup"
 	echo "$mock_nslookup"
+}
+
+# Create mock check_ipsec_phase2 command
+#
+# Creates a mock 'check_ipsec_phase2' command for testing SA re-establishment checks.
+# Used in recovery tests to simulate Phase 2 SA verification.
+#
+# Arguments:
+#   $1: Success flag ("0" for success, "1" for failure, default: "0")
+#   $2: Optional flag file path - if provided, checks for file existence and exits 0 if found, 1 otherwise
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "check_ipsec_phase2"
+#
+# Example:
+#   # Always succeeds
+#   mock_check_ipsec_phase2 0
+#   add_mock_to_path
+#
+#   # Always fails
+#   mock_check_ipsec_phase2 1
+#   add_mock_to_path
+#
+#   # File-based: succeeds if flag file exists
+#   mock_check_ipsec_phase2 0 "${TEST_DIR}/MOCK_SAS_DELETED_FILE"
+#   add_mock_to_path
+mock_check_ipsec_phase2() {
+	local success="${1:-0}"
+	local flag_file="${2:-}"
+
+	local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
+
+	if [[ -n "$flag_file" ]]; then
+		# File-based check: exit 0 if file exists, 1 otherwise
+		cat >"$mock_check_ipsec_phase2" <<EOF
+#!/bin/bash
+# Return success if flag file exists (simulates SA re-establishment)
+if [[ -f "$flag_file" ]]; then
+    exit 0
+fi
+exit 1
+EOF
+	else
+		# Simple success/failure
+		cat >"$mock_check_ipsec_phase2" <<EOF
+#!/bin/bash
+# SA re-establishment check
+exit $success
+EOF
+	fi
+
+	chmod +x "$mock_check_ipsec_phase2"
+	echo "$mock_check_ipsec_phase2"
+}
+
+# Create mock check_ipsec_phase2 command with state transitions
+#
+# Creates a mock 'check_ipsec_phase2' command that returns different exit codes
+# based on call count, simulating state transitions (e.g., SA deletion and
+# re-establishment).
+#
+# Arguments:
+#   $1: Comma-separated sequence of exit codes (e.g., "0,1,0" or "1,0")
+#       - First value: exit code for call 1
+#       - Second value: exit code for call 2
+#       - Third value: exit code for call 3+
+#       - If only 2 values provided, second value is used for call 2+
+#   $2: Optional call count file path (default: ${TEST_DIR}/phase2_call_count)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "check_ipsec_phase2"
+#   Creates/initializes call count file
+#
+# Example:
+#   # Pattern: success -> failure -> success (for SA deletion/re-establishment)
+#   local phase2_call_file="${TEST_DIR}/phase2_calls"
+#   mock_check_ipsec_phase2_state_transition "0,1,0" "$phase2_call_file"
+#   add_mock_to_path
+#
+#   # Pattern: failure -> success (for timeout then recovery)
+#   local check_state_file="${TEST_DIR}/check_state"
+#   mock_check_ipsec_phase2_state_transition "1,0" "$check_state_file"
+#   add_mock_to_path
+mock_check_ipsec_phase2_state_transition() {
+	local states="$1"
+	local call_count_file="${2:-${TEST_DIR}/phase2_call_count}"
+
+	if [[ -z "$states" ]]; then
+		echo "Error: mock_check_ipsec_phase2_state_transition requires state sequence" >&2
+		return 1
+	fi
+
+	# Initialize call count file
+	echo "0" >"$call_count_file"
+
+	local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
+
+	# Parse state sequence into array
+	IFS=',' read -r -a state_array <<<"$states"
+	local state_count=${#state_array[@]}
+
+	# Validate we have at least one state
+	if [[ $state_count -eq 0 ]]; then
+		echo "Error: mock_check_ipsec_phase2_state_transition requires at least one state" >&2
+		return 1
+	fi
+
+	cat >"$mock_check_ipsec_phase2" <<EOF
+#!/bin/bash
+# Track call count for this function
+phase2_calls=\$(cat "$call_count_file" 2>/dev/null || echo "0")
+phase2_calls=\$((phase2_calls + 1))
+echo "\$phase2_calls" > "$call_count_file"
+
+# Return exit code based on call number
+# States: $states
+if [[ \$phase2_calls -eq 1 ]]; then
+	# First call: use first state
+	exit ${state_array[0]}
+elif [[ \$phase2_calls -eq 2 ]] && [[ $state_count -ge 2 ]]; then
+	# Second call: use second state
+	exit ${state_array[1]}
+elif [[ $state_count -ge 3 ]]; then
+	# Third+ call: use third state (if provided)
+	exit ${state_array[2]}
+elif [[ $state_count -ge 2 ]]; then
+	# Third+ call: use second state (if only 2 states provided)
+	exit ${state_array[1]}
+else
+	# Third+ call: use first state (if only 1 state provided)
+	exit ${state_array[0]}
+fi
+EOF
+
+	chmod +x "$mock_check_ipsec_phase2"
+	echo "$mock_check_ipsec_phase2"
 }
 
 # Create mock date command with controllable time
@@ -2466,7 +2986,7 @@ mock_ip_interfaces_up() {
 #!/bin/bash
 if [[ "\$1" == "route" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "default" ]]; then
     if [[ "$show_default_route" == "1" ]]; then
-        echo "default via 192.168.1.1 dev eth0"
+        echo "default via ${TEST_PEER_IP} dev eth0"
         exit 0
     else
         exit 1
@@ -2847,4 +3367,241 @@ test_peer_state_with_empty_location() {
 		file_content=$(cat "$state_file")
 		assert_equal "$file_content" "$expected_value"
 	fi
+}
+
+# Save permissions for a file or directory
+#
+# Helper function that saves the original permissions of a file or directory
+# for later restoration. Automatically detects whether the path is a file or
+# directory and uses appropriate default permissions if stat fails.
+#
+# This function is part of the permission restoration pattern used in tests
+# that need to make files/directories unwritable temporarily.
+#
+# Arguments:
+#   $1: Path to file or directory
+#   $2: Optional default permissions to use if stat fails (defaults to 644 for files, 755 for directories)
+#
+# Returns:
+#   Outputs the original permissions (octal format, e.g., "644", "755")
+#   Returns 0 on success, 1 if path doesn't exist
+#
+# Side effects:
+#   None
+#
+# Example:
+#   local original_perms
+#   original_perms=$(save_permissions_for_restore "$state_file")
+#   # or with explicit default:
+#   original_perms=$(save_permissions_for_restore "$state_dir" "755")
+#
+# Note:
+#   This function is designed to work with restore_permissions_after_test()
+#   to implement the common test pattern of temporarily making files/directories
+#   unwritable for testing error handling.
+save_permissions_for_restore() {
+	local path="$1"
+	local default_perms="${2:-}"
+
+	# Auto-detect default if not provided
+	if [[ -z "$default_perms" ]]; then
+		if [[ -d "$path" ]]; then
+			default_perms="755"
+		else
+			default_perms="644"
+		fi
+	fi
+
+	# Save original permissions with fallback to default
+	stat -c "%a" "$path" 2>/dev/null || echo "$default_perms"
+}
+
+# Restore permissions for a file or directory
+#
+# Helper function that restores the original permissions of a file or directory
+# that was previously saved using save_permissions_for_restore().
+#
+# This function is part of the permission restoration pattern used in tests
+# that need to make files/directories unwritable temporarily.
+#
+# Arguments:
+#   $1: Path to file or directory
+#   $2: Original permissions (octal format, e.g., "644", "755")
+#
+# Returns:
+#   0 on success, 1 on failure (but errors are suppressed with || true pattern)
+#
+# Side effects:
+#   Restores permissions on the specified path
+#
+# Example:
+#   local original_perms
+#   original_perms=$(save_permissions_for_restore "$state_file")
+#   chmod 000 "$state_file" 2>/dev/null || true
+#   # ... run test ...
+#   restore_permissions_after_test "$state_file" "$original_perms"
+#
+# Note:
+#   This function suppresses errors (using || true) to match the existing
+#   test pattern where permission restoration should not fail tests even if
+#   the restore operation fails.
+restore_permissions_after_test() {
+	local path="$1"
+	local original_perms="$2"
+
+	chmod "$original_perms" "$path" 2>/dev/null || true
+}
+
+# Get state file path with common defaults
+#
+# Helper function that wraps get_peer_state_file_path with sensible defaults
+# to reduce repetition in tests. Uses TEST_PEER_IP as default peer IP and
+# empty string for location (backward compatibility).
+#
+# Arguments:
+#   $1: Optional location name (defaults to "" for backward compatibility)
+#   $2: Optional peer IP address (defaults to TEST_PEER_IP)
+#   $3: Optional state key (defaults to "failure_count")
+#
+# Returns:
+#   Outputs the state file path
+#   Returns 0 on success, 1 on failure
+#
+# Side effects:
+#   Sources get_peer_state_file_path function if not available
+#
+# Example:
+#   source_function "get_peer_state_file_path"
+#   local failure_counter
+#   failure_counter=$(get_state_file_path)
+#   # or with custom values:
+#   failure_counter=$(get_state_file_path "NYC" "${TEST_PEER_IP}" "last_bytes")
+#
+# Note:
+#   Requires get_peer_state_file_path function to be available.
+#   Automatically sources it if not already loaded.
+get_state_file_path() {
+	local location="${1:-}"
+	local peer_ip="${2:-${TEST_PEER_IP}}"
+	local key="${3:-failure_count}"
+
+	# Ensure get_peer_state_file_path is available
+	if ! command -v get_peer_state_file_path >/dev/null 2>&1; then
+		source_function "get_peer_state_file_path" || return 1
+	fi
+
+	get_peer_state_file_path "$location" "$peer_ip" "$key"
+}
+
+# Create a corrupted state file
+#
+# Helper function that creates a state file with an invalid value to test
+# corruption handling. Reduces repetition of the common pattern of creating
+# corrupted state files in tests.
+#
+# Arguments:
+#   $1: Optional location name (defaults to "" for backward compatibility)
+#   $2: Optional peer IP address (defaults to TEST_PEER_IP)
+#   $3: Optional state key (defaults to "failure_count")
+#   $4: Optional invalid value to write (defaults to "invalid-value")
+#
+# Returns:
+#   Outputs the state file path
+#   Returns 0 on success, 1 on failure
+#
+# Side effects:
+#   Creates or overwrites the state file with invalid content
+#   Sources get_peer_state_file_path function if not available
+#
+# Example:
+#   source_function "get_peer_state_file_path"
+#   local failure_counter
+#   failure_counter=$(create_corrupted_state_file)
+#   # or with custom values:
+#   local bytes_file
+#   bytes_file=$(create_corrupted_state_file "NYC" "${TEST_PEER_IP}" "last_bytes" "not-a-number")
+#
+# Note:
+#   Requires get_peer_state_file_path function to be available.
+#   Automatically sources it if not already loaded.
+create_corrupted_state_file() {
+	local location="${1:-}"
+	local peer_ip="${2:-${TEST_PEER_IP}}"
+	local key="${3:-failure_count}"
+	local invalid_value="${4:-invalid-value}"
+
+	# Get the state file path
+	local state_file
+	state_file=$(get_state_file_path "$location" "$peer_ip" "$key") || return 1
+
+	# Create corrupted file
+	echo "$invalid_value" >"$state_file"
+
+	# Return the path for use in tests
+	echo "$state_file"
+}
+
+# Setup a read-only state file with automatic cleanup
+#
+# Helper function that creates a state file, sets it to read-only, and sets up
+# a trap to restore permissions on EXIT. Reduces repetition of the common pattern
+# of testing read-only state file handling.
+#
+# Arguments:
+#   $1: Optional location name (defaults to "" for backward compatibility)
+#   $2: Optional peer IP address (defaults to TEST_PEER_IP)
+#   $3: Optional state key (defaults to "failure_count")
+#   $4: Optional initial value to write (defaults to "3")
+#   $5: Optional permissions to set (defaults to "444" for read-only)
+#
+# Returns:
+#   Outputs the state file path
+#   Returns 0 on success, 1 on failure
+#
+# Side effects:
+#   Creates the state file with initial value
+#   Sets file permissions to read-only (or specified permissions)
+#   Sets up EXIT trap to restore original permissions
+#   Sources get_peer_state_file_path function if not available
+#
+# Example:
+#   source_function "get_peer_state_file_path"
+#   local failure_counter
+#   failure_counter=$(setup_readonly_state_file)
+#   # File is now read-only and will be restored on test exit
+#   # or with custom values:
+#   local bytes_file
+#   bytes_file=$(setup_readonly_state_file "NYC" "${TEST_PEER_IP}" "last_bytes" "1000" "000")
+#
+# Note:
+#   Requires get_peer_state_file_path function to be available.
+#   Automatically sources it if not already loaded.
+#   The trap is set up automatically and will restore permissions even if test fails.
+setup_readonly_state_file() {
+	local location="${1:-}"
+	local peer_ip="${2:-${TEST_PEER_IP}}"
+	local key="${3:-failure_count}"
+	local initial_value="${4:-3}"
+	local readonly_perms="${5:-444}"
+
+	# Get the state file path
+	local state_file
+	state_file=$(get_state_file_path "$location" "$peer_ip" "$key") || return 1
+
+	# Create file with initial value
+	echo "$initial_value" >"$state_file"
+
+	# Save original permissions
+	local original_perms
+	original_perms=$(save_permissions_for_restore "$state_file")
+
+	# Set read-only permissions
+	chmod "$readonly_perms" "$state_file"
+
+	# Set up trap to restore permissions on EXIT
+	# Use actual path value, not variable, since trap executes after function returns
+	trap "chmod $original_perms \"$state_file\" 2>/dev/null || true" EXIT
+
+	# Return the path for use in tests
+	echo "$state_file"
 }

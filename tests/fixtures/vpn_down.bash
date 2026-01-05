@@ -6,7 +6,7 @@
 # This fixture combines common setup steps for tests that need a VPN failure scenario.
 #
 # Arguments:
-#   $1: Peer IP address (default: "192.168.1.1")
+#   $1: Peer IP address (default: "${TEST_PEER_IP}")
 #   $2: Failure count (default: 0, will be incremented when script runs)
 #   $3+: Additional config variables as KEY="VALUE" pairs
 #
@@ -18,13 +18,13 @@
 #   - Adds mock commands to PATH
 #
 # Example:
-#   setup_vpn_down_fixture "192.168.1.1"
+#   setup_vpn_down_fixture "${TEST_PEER_IP}"
 #   # VPN is down, no SA found
 #
-#   setup_vpn_down_fixture "192.168.1.1" 2
+#   setup_vpn_down_fixture "${TEST_PEER_IP}" 2
 #   # VPN is down, already has 2 failures recorded
 setup_vpn_down_fixture() {
-	local peer_ip="${1:-192.168.1.1}"
+	local peer_ip="${1:-${TEST_PEER_IP}}"
 	local failure_count="${2:-0}"
 	shift 2 || true
 	local extra_config=("$@")
@@ -40,18 +40,10 @@ setup_vpn_down_fixture() {
 	fi
 
 	# Create mock ip command that returns empty output (VPN down, no SA)
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-	# Return empty output (no SA found - VPN is down)
-	exit 0
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_vpn_down >/dev/null
 
 	# Add mocks to PATH
 	add_mock_to_path
 
-	export MOCK_IP="$mock_ip"
+	export MOCK_IP="${TEST_DIR}/ip"
 }

@@ -26,8 +26,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script exits early due to cooldown, no restart attempted
 	# Importance: Ensures cooldown period is respected even when rate limit would allow restart
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -35,6 +35,7 @@ MAX_RESTARTS_PER_HOUR=3
 COOLDOWN_MINUTES=0.01
 ENABLE_XFRM_RECOVERY=0
 ENABLE_NETWORK_PARTITION_CHECK=0
+ENABLE_RESOURCE_MONITORING=0
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -52,7 +53,7 @@ EOF
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	failure_counter=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 
 	# Set up controllable time for testing
 	local base_time=1609459200 # Fixed timestamp for reproducible tests
@@ -72,7 +73,7 @@ EOF
 	echo "5" >"$failure_counter"
 
 	# Setup mock VPN environment with bytes > 0 for byte counter verification
-	setup_mock_vpn_environment "192.168.1.1" 1000 "" "" 0
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000 "" "" 0
 
 	# Create mock ipsec (should NOT be called due to cooldown)
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -125,7 +126,7 @@ EOF
 	# Set up rate limit: exactly 3 restarts in last hour (at limit)
 	local now=$base_time
 	local recent=$((now - 1800)) # 30 minutes ago (within 1 hour)
-	setup_vpn_rate_limited_fixture "192.168.1.1" 3 \
+	setup_vpn_rate_limited_fixture "${TEST_PEER_IP}" 3 \
 		"$recent" \
 		"$recent" \
 		"$recent" \
@@ -139,8 +140,8 @@ EOF
 	# Set last_bytes > 0 so that bytes=0 is detected as a failure (bytes dropped to 0)
 	# This ensures VPN is detected as down rather than idle
 	ensure_state_functions_loaded
-	set_peer_state "TEST1" "192.168.1.1" "last_bytes" "1000" || true
-	setup_mock_vpn_environment "192.168.1.1" 0
+	set_peer_state "TEST1" "${TEST_PEER_IP}" "last_bytes" "1000" || true
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 0
 
 	# Create mock ipsec (should NOT be called due to rate limit)
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -191,7 +192,7 @@ EOF
 	# Use old timestamps that are outside the 1 hour window
 	local now=$base_time
 	local old_restart=$((now - 3700)) # 61 minutes ago (outside 1 hour window)
-	setup_vpn_rate_limited_fixture "192.168.1.1" 2 \
+	setup_vpn_rate_limited_fixture "${TEST_PEER_IP}" 2 \
 		"$old_restart" \
 		"$old_restart" \
 		'COOLDOWN_MINUTES=15' \
@@ -207,8 +208,8 @@ EOF
 	# Setup VPN as DOWN so recovery is triggered
 	# Set last_bytes > 0 so that bytes=0 is detected as a failure (bytes dropped to 0)
 	ensure_state_functions_loaded
-	set_peer_state "TEST1" "192.168.1.1" "last_bytes" "1000" || true
-	setup_mock_vpn_environment "192.168.1.1" 0
+	set_peer_state "TEST1" "${TEST_PEER_IP}" "last_bytes" "1000" || true
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 0
 
 	# Create mock ipsec (should be called since both protections allow restart)
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -224,7 +225,7 @@ elif [[ "\$1" == "status" ]]; then
     if [[ -f "$ipsec_called_file" ]]; then
         # After restart - return connection found for verification
         echo "Security Associations (1 up, 0 connecting):"
-        echo "  192.168.1.1[192.168.1.1]...192.168.1.1[192.168.1.1] IKEv2"
+        echo "  ${TEST_PEER_IP}[${TEST_PEER_IP}]...${TEST_PEER_IP}[${TEST_PEER_IP}] IKEv2"
     else
         # Before restart - return empty to indicate VPN is down
         exit 0

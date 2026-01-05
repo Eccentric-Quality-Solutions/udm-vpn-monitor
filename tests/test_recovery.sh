@@ -15,6 +15,7 @@ load fixtures/vpn_down
 load fixtures/vpn_failing
 load fixtures/vpn_cooldown
 load fixtures/vpn_at_tier
+load fixtures/vpn_recovery_test
 
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
@@ -28,11 +29,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that select_recovery_strategy selects xfrm recovery when peer IP is provided and xfrm recovery is enabled
 	# Expected: Function selects "xfrm" strategy with "attempt_xfrm_recovery" command
 	# Importance: xfrm recovery is preferred for per-connection recovery
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
-
-	# Mock ip command (required for xfrm recovery)
-	mock_ip_pass_through >/dev/null
-	add_mock_to_path
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
 
 	# Source dependencies first (recovery.sh needs logging.sh)
 	# shellcheck source=../lib/logging.sh
@@ -41,7 +38,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test select_recovery_strategy function (call directly, not with run, to preserve global variables)
-	select_recovery_strategy "192.168.1.1" 2
+	select_recovery_strategy "${TEST_PEER_IP}" 2
 	local exit_code=$?
 	assert_equal "$exit_code" 0
 	assert_equal "$RECOVERY_STRATEGY" "xfrm"
@@ -57,12 +54,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that select_recovery_strategy selects ipsec_reload for Tier 2 when xfrm is unavailable
 	# Expected: Function selects "ipsec_reload" strategy when xfrm recovery is not available
 	# Importance: Ensures fallback to ipsec reload when xfrm recovery is unavailable
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
 
-	# Mock ipsec command (required for ipsec reload)
-	mock_ipsec_pass_through >/dev/null
-	# Don't create ip mock (xfrm unavailable)
-	add_mock_to_path
+	# Remove ip mock to simulate xfrm unavailable (keep ipsec for reload)
+	rm -f "${TEST_DIR}/ip"
 
 	# Source dependencies first (recovery.sh needs logging.sh)
 	# shellcheck source=../lib/logging.sh
@@ -88,12 +83,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that select_recovery_strategy selects ipsec_restart for Tier 3 when xfrm is unavailable
 	# Expected: Function selects "ipsec_restart" strategy for Tier 3
 	# Importance: Ensures correct strategy selection for Tier 3 recovery
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
 
-	# Mock ipsec command (required for ipsec restart)
-	mock_ipsec_pass_through >/dev/null
-	# Don't create ip mock (xfrm unavailable)
-	add_mock_to_path
+	# Remove ip mock to simulate xfrm unavailable (keep ipsec for restart)
+	rm -f "${TEST_DIR}/ip"
 
 	# Source dependencies first (recovery.sh needs logging.sh)
 	# shellcheck source=../lib/logging.sh
@@ -119,7 +112,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that select_recovery_strategy returns error when no recovery commands are available
 	# Expected: Function returns error and sets RECOVERY_AVAILABLE=0
 	# Importance: Ensures graceful handling when recovery tools are unavailable
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
 
 	# Save original PATH (after setup which may have modified it)
 	local original_path="$PATH"
@@ -144,7 +137,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Test select_recovery_strategy function (call directly, not with run, to preserve global variables)
 	# Use set +e to allow function to return error code without failing test
 	set +e
-	select_recovery_strategy "192.168.1.1" 2
+	select_recovery_strategy "${TEST_PEER_IP}" 2
 	local exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
@@ -163,7 +156,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that select_recovery_strategy rejects invalid tier values
 	# Expected: Function returns error when tier is not 2 or 3
 	# Importance: Prevents invalid tier values from causing unexpected behavior
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1'
 
 	# Source dependencies first (recovery.sh needs logging.sh)
 	# shellcheck source=../lib/logging.sh
@@ -174,19 +167,19 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Test select_recovery_strategy with invalid tier (call directly, not with run, to preserve global variables)
 	# Use set +e to allow function to return error code without failing test
 	set +e
-	select_recovery_strategy "192.168.1.1" 1
+	select_recovery_strategy "${TEST_PEER_IP}" 1
 	local exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
 
 	set +e
-	select_recovery_strategy "192.168.1.1" 4
+	select_recovery_strategy "${TEST_PEER_IP}" 4
 	exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
 
 	set +e
-	select_recovery_strategy "192.168.1.1" "invalid"
+	select_recovery_strategy "${TEST_PEER_IP}" "invalid"
 	exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
@@ -197,19 +190,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that select_recovery_strategy uses ipsec when xfrm recovery is disabled
 	# Expected: Function selects ipsec_reload/ipsec_restart when xfrm recovery is disabled
 	# Importance: Allows disabling xfrm recovery via configuration
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=0'
-
-	# Mock ip command (available but xfrm recovery disabled)
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
-
-	# Mock ipsec command (required for ipsec reload)
-	mock_ipsec_pass_through >/dev/null
-	add_mock_to_path
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0'
 
 	# Export ENABLE_XFRM_RECOVERY=0 before sourcing (config not loaded when sourcing directly)
 	export ENABLE_XFRM_RECOVERY=0
@@ -222,7 +203,7 @@ EOF
 
 	# Test select_recovery_strategy function (peer IP provided but xfrm disabled)
 	# Call directly, not with run, to preserve global variables
-	select_recovery_strategy "192.168.1.1" 2
+	select_recovery_strategy "${TEST_PEER_IP}" 2
 	local exit_code=$?
 	assert_equal "$exit_code" 0
 	# Should use ipsec_reload, not xfrm
@@ -243,7 +224,7 @@ EOF
 	# Purpose: Test verifies that xfrm recovery successfully verifies SA re-establishment after deletion
 	# Expected: attempt_xfrm_recovery deletes SAs, waits for re-establishment, and verifies success
 	# Importance: Verification ensures recovery actually worked before considering it successful
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/verify_attempts"
@@ -260,7 +241,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
 
     # First few calls: SA exists (before deletion)
     if [[ \$verify_attempts -le 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    lifetime current: 1000 bytes, 10 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -270,7 +251,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
         :
     # After that: SA re-established
     else
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
         echo "    lifetime current: 2000 bytes, 20 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -284,7 +265,7 @@ EOF
 	source_recovery_module
 
 	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "192.168.1.1"
+	run attempt_xfrm_recovery "${TEST_PEER_IP}"
 	assert_success
 
 	# Verify that verification occurred (check that verify_attempts increased)
@@ -300,7 +281,7 @@ EOF
 	# Purpose: Test verifies that xfrm recovery handles timeout when SA doesn't re-establish
 	# Expected: attempt_xfrm_recovery logs warning about timeout and returns failure to trigger fallback
 	# Importance: Timeout handling prevents recovery from hanging indefinitely and enables fallback recovery
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/timeout_attempts"
@@ -317,7 +298,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
 
     # First call: SA exists (before deletion)
     if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    lifetime current: 1000 bytes, 10 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -332,7 +313,7 @@ EOF
 	source_recovery_module
 
 	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "192.168.1.1"
+	run attempt_xfrm_recovery "${TEST_PEER_IP}"
 	# Should return failure when re-establishment times out to enable fallback recovery
 	assert_failure
 
@@ -349,7 +330,7 @@ EOF
 	# Purpose: Test verifies that xfrm recovery verifies byte counters resume after SA re-establishment
 	# Expected: attempt_xfrm_recovery verifies byte counters are non-zero after re-establishment
 	# Importance: Byte counter verification ensures tunnel is passing traffic, not just established
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/verify_attempts"
@@ -366,7 +347,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
 
     # First call: SA exists (before deletion)
     if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    lifetime current: 1000 bytes, 10 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -375,7 +356,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
         :
     # After that: SA re-established with non-zero byte counters
     else
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
         echo "    lifetime current: 2000 bytes, 20 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -389,7 +370,7 @@ EOF
 	source_recovery_module
 
 	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "192.168.1.1"
+	run attempt_xfrm_recovery "${TEST_PEER_IP}"
 	assert_success
 
 	# Verify byte counters were checked (verify_attempts should have increased past re-establishment)
@@ -405,7 +386,7 @@ EOF
 	# Purpose: Test verifies that xfrm recovery handles multiple SAs for a peer
 	# Expected: attempt_xfrm_recovery deletes all SAs and verifies all re-establish
 	# Importance: Multiple SAs per peer are common in IPsec configurations
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/verify_attempts"
@@ -422,11 +403,11 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
 
     # First call: Multiple SAs exist (before deletion)
     if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    lifetime current: 1000 bytes, 10 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x23456789 reqid 2 mode tunnel"
         echo "    lifetime current: 2000 bytes, 20 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -435,11 +416,11 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
         :
     # After that: Both SAs re-established
     else
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
         echo "    lifetime current: 3000 bytes, 30 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x98765432 reqid 2 mode tunnel"
         echo "    lifetime current: 4000 bytes, 40 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -453,7 +434,7 @@ EOF
 	source_recovery_module
 
 	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "192.168.1.1"
+	run attempt_xfrm_recovery "${TEST_PEER_IP}"
 	assert_success
 
 	# Verify that verification occurred
@@ -469,7 +450,7 @@ EOF
 	# Purpose: Test verifies that xfrm recovery deletes policies with DIR parameter
 	# Expected: attempt_xfrm_recovery queries policies, parses directions, and deletes with DIR parameter
 	# Importance: Policy deletion requires DIR parameter (in, out, fwd) - without it, deletion fails
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
 	# Track verification attempts and policy deletion calls
 	local verify_attempt_file="${TEST_DIR}/verify_attempts"
@@ -488,7 +469,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
 
     # First call: SA exists (before deletion)
     if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    lifetime current: 1000 bytes, 10 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -497,7 +478,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
         :
     # After that: SA re-established
     else
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
         echo "    lifetime current: 2000 bytes, 20 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -526,7 +507,7 @@ EOF
 	source_recovery_module
 
 	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "192.168.1.1" "TEST_LOCATION"
+	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST_LOCATION"
 	assert_success
 
 	# Verify policy deletion was attempted with DIR parameter
@@ -547,7 +528,7 @@ EOF
 	# Purpose: Test verifies that xfrm recovery counts SAs after re-establishment
 	# Expected: attempt_xfrm_recovery counts and logs SA count after re-establishment
 	# Importance: SA count verification helps confirm all SAs were re-established
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/verify_attempts"
@@ -564,7 +545,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
 
     # First call: SA exists (before deletion)
     if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    lifetime current: 1000 bytes, 10 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -573,7 +554,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
         :
     # After that: SA re-established
     else
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
         echo "    lifetime current: 2000 bytes, 20 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -587,7 +568,7 @@ EOF
 	source_recovery_module
 
 	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "192.168.1.1"
+	run attempt_xfrm_recovery "${TEST_PEER_IP}"
 	assert_success
 
 	# Verify that verification occurred
@@ -603,7 +584,7 @@ EOF
 	# Purpose: Test verifies that xfrm recovery logs warning when verification timeout is exceeded
 	# Expected: attempt_xfrm_recovery logs warning about timeout and returns failure to trigger fallback
 	# Importance: Timeout warnings help diagnose slow SA re-establishment and enable fallback recovery
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "${TEST_DIR}/logs"
@@ -623,7 +604,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
 
     # First call: SA exists (before deletion)
     if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    lifetime current: 1000 bytes, 10 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -642,7 +623,7 @@ EOF
 	LOGS_DIR="${TEST_DIR}/logs"
 
 	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "192.168.1.1"
+	run attempt_xfrm_recovery "${TEST_PEER_IP}"
 	# Should return failure when re-establishment times out to enable fallback recovery
 	assert_failure
 
@@ -664,7 +645,7 @@ EOF
 	# Use longer timeout to allow multiple sleep calls for exponential backoff testing
 	# With interval=1s, backoff will be: 1s, 2s, 4s, 8s...
 	# Need timeout >= 1+2 = 3s to see at least 2 sleep calls
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=5' 'XFRM_RECOVERY_VERIFY_INTERVAL=1' 'XFRM_RECOVERY_MAX_INTERVAL=8'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=5' 'XFRM_RECOVERY_VERIFY_INTERVAL=1' 'XFRM_RECOVERY_MAX_INTERVAL=8'
 
 	# Track sleep calls to verify exponential backoff
 	local sleep_log="${TEST_DIR}/sleep_log"
@@ -696,7 +677,7 @@ if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
 
     # First call: SA exists (before deletion)
     if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    lifetime current: 1000 bytes, 10 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -708,7 +689,7 @@ if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
         :
     # After that: SA re-established
     else
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
         echo "    lifetime current: 2000 bytes, 20 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -721,7 +702,7 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
 
     # First call: SA exists (before deletion)
     if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    lifetime current: 1000 bytes, 10 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -733,7 +714,7 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
         :
     # After that: SA re-established
     else
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
         echo "    lifetime current: 2000 bytes, 20 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -763,7 +744,7 @@ EOF
 	echo "0" >"$verify_attempt_file"
 
 	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "192.168.1.1"
+	run attempt_xfrm_recovery "${TEST_PEER_IP}"
 	assert_success
 
 	# Verify exponential backoff was used (check sleep intervals)
@@ -807,7 +788,7 @@ EOF
 	# Purpose: Test verifies that mark selector is correctly parsed from xfrm output and included in deletion commands
 	# Expected: attempt_xfrm_recovery parses mark attribute and includes it in deletion command when present
 	# Importance: Mark is a required selector when present - deletion fails without it (RTNETLINK answers: No such process)
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
 	# Track deletion commands to verify mark is included
 	local delete_cmd_file="${TEST_DIR}/delete_commands"
@@ -837,7 +818,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; t
 elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; then
     # Return SA with mark for get command
     if [[ "\$*" == *"mark"* ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
         echo "    lifetime current: 1000 bytes, 10 packets"
@@ -854,7 +835,7 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
 
     # First call: SA exists with mark (before deletion)
     if [[ \$verify_attempts -le 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
         echo "    lifetime current: 1000 bytes, 10 packets"
@@ -864,7 +845,7 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
         :
     # After that: SA re-established
     else
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
         echo "    lifetime current: 2000 bytes, 20 packets"
@@ -880,7 +861,7 @@ EOF
 	source_recovery_module
 
 	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "192.168.1.1" "TEST"
+	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST"
 	assert_success
 
 	# Verify that mark was included in deletion command
@@ -904,7 +885,7 @@ EOF
 	# Purpose: Test verifies that xfrm recovery works correctly for SAs without mark selector
 	# Expected: attempt_xfrm_recovery successfully deletes SAs without mark (backward compatibility)
 	# Importance: Ensures existing deployments without mark continue to work after mark support is added
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
 	# Track deletion commands to verify mark is NOT included when not present
 	local delete_cmd_file="${TEST_DIR}/delete_commands"
@@ -942,7 +923,7 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
 
     # First call: SA exists without mark (before deletion)
     if [[ \$verify_attempts -le 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    lifetime current: 1000 bytes, 10 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -951,7 +932,7 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
         :
     # After that: SA re-established
     else
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
         echo "    lifetime current: 2000 bytes, 20 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -966,7 +947,7 @@ EOF
 	source_recovery_module
 
 	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "192.168.1.1" "TEST"
+	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST"
 	assert_success
 
 	# Verify that mark was NOT included in deletion command (SA doesn't have mark)
@@ -993,7 +974,7 @@ EOF
 	# Purpose: Test verifies that xfrm recovery handles mixed SAs (some with mark, some without)
 	# Expected: attempt_xfrm_recovery correctly parses and deletes both types of SAs
 	# Importance: Real-world deployments may have mixed SA configurations
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
 	# Track deletion commands
 	local delete_cmd_file="${TEST_DIR}/delete_commands"
@@ -1050,7 +1031,7 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; th
     # Check for SA with mark (spi 0x12345678) - must have both mark and mask
     if [[ "\$*" == *"mark"* ]] && [[ "\$*" == *"mask"* ]] && [[ "\$*" == *"0x12345678"* ]]; then
         # SA with mark: return SA with mark attribute
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
         echo "    lifetime current: 1000 bytes, 10 packets"
@@ -1058,7 +1039,7 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; th
     # Check for SA without mark (spi 0x87654321) - must NOT have mark
     elif [[ "\$*" == *"0x87654321"* ]] && [[ "\$*" != *"mark"* ]]; then
         # SA without mark: return SA without mark attribute
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
         echo "    lifetime current: 2000 bytes, 20 packets"
         exit 0
@@ -1075,12 +1056,12 @@ elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; the
 
     # First call: Mixed SAs exist (one with mark, one without)
     if [[ \$verify_attempts -le 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
         echo "    lifetime current: 1000 bytes, 10 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
         echo "    lifetime current: 2000 bytes, 20 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -1089,12 +1070,12 @@ elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; the
         :
     # After that: SAs re-established
     else
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0xabcdef12 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
         echo "    lifetime current: 3000 bytes, 30 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0xfedcba98 reqid 2 mode tunnel"
         echo "    lifetime current: 4000 bytes, 40 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -1107,12 +1088,12 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
 
     # First call: Mixed SAs exist (one with mark, one without)
     if [[ \$verify_attempts -le 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
         echo "    lifetime current: 1000 bytes, 10 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
         echo "    lifetime current: 2000 bytes, 20 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -1121,12 +1102,12 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
         :
     # After that: SAs re-established
     else
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0xabcdef12 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
         echo "    lifetime current: 3000 bytes, 30 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0xfedcba98 reqid 2 mode tunnel"
         echo "    lifetime current: 4000 bytes, 40 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -1141,7 +1122,7 @@ EOF
 	source_recovery_module
 
 	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "192.168.1.1" "TEST"
+	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST"
 	assert_success
 
 	# Verify both SAs were deleted correctly
@@ -1316,7 +1297,7 @@ EOF
 	# Purpose: Test verifies that deletion commands use exact format "mark <value> mask <mask>" (not "mark <value>/<mask>")
 	# Expected: Deletion command for SA with mark uses format: mark 0x12000000 mask 0xfe000000
 	# Importance: Ensures correct syntax is used for ip xfrm state delete commands
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
 	# Track deletion commands to verify exact format
 	local delete_cmd_file="${TEST_DIR}/delete_commands"
@@ -1337,7 +1318,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; t
 elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; then
     # Return SA with mark for get command (new format: mark <value> mask <mask>)
     if [[ "\$*" == *"mark"* ]] && [[ "\$*" == *"mask"* ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
         echo "    lifetime current: 1000 bytes, 10 packets"
@@ -1351,7 +1332,7 @@ elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; the
     verify_attempts=\$((verify_attempts + 1))
     echo "\$verify_attempts" > "$verify_attempt_file"
     if [[ \$verify_attempts -le 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
         echo "    lifetime current: 1000 bytes, 10 packets"
@@ -1359,7 +1340,7 @@ elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; the
     elif [[ \$verify_attempts -le 3 ]]; then
         :
     else
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
         echo "    lifetime current: 2000 bytes, 20 packets"
@@ -1370,7 +1351,7 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     verify_attempts=\$((verify_attempts + 1))
     echo "\$verify_attempts" > "$verify_attempt_file"
     if [[ \$verify_attempts -le 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
         echo "    lifetime current: 1000 bytes, 10 packets"
@@ -1378,7 +1359,7 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     elif [[ \$verify_attempts -le 3 ]]; then
         :
     else
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
         echo "    lifetime current: 2000 bytes, 20 packets"
@@ -1394,7 +1375,7 @@ EOF
 	source_recovery_module
 
 	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "192.168.1.1" "TEST"
+	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST"
 	assert_success
 
 	# Verify deletion command uses correct format
@@ -1430,7 +1411,7 @@ EOF
 	# Purpose: Test verifies that xfrm recovery failure falls back to ipsec reload
 	# Expected: When xfrm recovery fails, script falls back to ipsec reload
 	# Importance: Fallback ensures recovery has multiple options when preferred method fails
-	setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_XFRM_RECOVERY=1'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1'
 
 	# Mock ip command - xfrm recovery fails (delete fails)
 	# Use mock_ip_xfrm_delete with failure flag (0 = fail)
@@ -1474,7 +1455,7 @@ EOF
 	# Purpose: Test verifies that ipsec reload failure falls back to ipsec restart for Tier 2
 	# Expected: When ipsec reload fails, script falls back to ipsec restart
 	# Importance: Multiple fallback options ensure recovery succeeds even when methods fail
-	setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0'
 
 	# Mock ipsec - reload fails, restart succeeds
 	mock_ipsec_reload_restart 1 0
@@ -1499,7 +1480,7 @@ EOF
 	# Purpose: Test verifies that appropriate log messages are generated for each fallback step
 	# Expected: Each fallback logs appropriate warning/info messages
 	# Importance: Logging helps diagnose recovery issues and understand fallback behavior
-	setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_XFRM_RECOVERY=1'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1'
 
 	# Mock ip command - xfrm recovery fails
 	mock_ip_vpn_down
@@ -1527,7 +1508,7 @@ EOF
 	# Purpose: Test verifies that verification runs after fallback recovery actions
 	# Expected: Verification is performed after ipsec reload/restart fallback
 	# Importance: Verification ensures fallback recovery actually worked
-	setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_XFRM_RECOVERY=1'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1'
 
 	# Mock ip command - xfrm recovery fails (no SAs), but verification succeeds after fallback
 	# Use a counter file to track calls
@@ -1580,7 +1561,7 @@ EOF
 	# Purpose: Test verifies that select_recovery_strategy fails when no commands available and xfrm is disabled
 	# Expected: Function returns error and sets RECOVERY_AVAILABLE=0 when xfrm disabled and no ipsec available
 	# Importance: Ensures graceful handling when all recovery tools are unavailable
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=0'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=0'
 
 	# Save original PATH and create a minimal PATH that excludes ip/ipsec
 	# Use a simple approach: /bin typically has essential commands but not ip/ipsec
@@ -1607,7 +1588,7 @@ EOF
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test select_recovery_strategy function (xfrm disabled, no ipsec)
-	run select_recovery_strategy "192.168.1.1" 2
+	run select_recovery_strategy "${TEST_PEER_IP}" 2
 	assert_failure
 	assert_equal "$RECOVERY_STRATEGY" "unavailable"
 	assert_equal "$RECOVERY_COMMAND" ""
@@ -1623,7 +1604,7 @@ EOF
 	# Purpose: Test verifies that select_recovery_strategy fails for Tier 3 when no commands available
 	# Expected: Function returns error and sets RECOVERY_AVAILABLE=0 for Tier 3 when no commands available
 	# Importance: Ensures graceful handling when all recovery tools are unavailable for Tier 3
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
 
 	# Save original PATH and create a minimal PATH that excludes ip/ipsec
 	# Use a simple approach: /bin typically has essential commands but not ip/ipsec
@@ -1650,7 +1631,7 @@ EOF
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test select_recovery_strategy function for Tier 3
-	run select_recovery_strategy "192.168.1.1" 3
+	run select_recovery_strategy "${TEST_PEER_IP}" 3
 	assert_failure
 	assert_equal "$RECOVERY_STRATEGY" "unavailable"
 	assert_equal "$RECOVERY_COMMAND" ""
@@ -1666,7 +1647,7 @@ EOF
 	# Purpose: Test verifies that attempt_xfrm_recovery handles timeout when byte counter verification fails during verification
 	# Expected: Function times out and returns failure when byte counter verification fails during verification loop
 	# Importance: Edge case where SA re-establishes but byte counter verification fails, then timeout occurs
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "${TEST_DIR}/logs"
@@ -1686,13 +1667,13 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
 
     # First call: SA exists (before deletion)
     if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    lifetime current: 1000 bytes, 10 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     # After deletion: SA re-establishes but byte counters are zero (verification fails)
     else
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
         echo "    lifetime current: 0 bytes, 0 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -1703,13 +1684,8 @@ EOF
 	add_mock_to_path
 
 	# Mock check_ipsec_phase2 to return success (SA re-established)
-	local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
-	cat >"$mock_check_ipsec_phase2" <<'EOF'
-#!/bin/bash
-# SA is re-established
-exit 0
-EOF
-	chmod +x "$mock_check_ipsec_phase2"
+	local mock_check_ipsec_phase2
+	mock_check_ipsec_phase2=$(mock_check_ipsec_phase2 0)
 
 	# Source recovery functions to test directly
 	source_recovery_module
@@ -1736,7 +1712,7 @@ EOF
 	LOGS_DIR="${TEST_DIR}/logs"
 
 	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "192.168.1.1"
+	run attempt_xfrm_recovery "${TEST_PEER_IP}"
 	# Should return failure when timeout occurs (byte counter verification fails)
 	assert_failure
 
@@ -1753,7 +1729,7 @@ EOF
 	# Purpose: Test verifies that attempt_xfrm_recovery handles timeout when only partial SAs re-establish
 	# Expected: Function times out and returns failure when only some SAs re-establish within timeout
 	# Importance: Edge case where multiple SAs exist but only some re-establish within timeout
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "${TEST_DIR}/logs"
@@ -1773,17 +1749,17 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
 
     # First call: Multiple SAs exist (before deletion)
     if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    lifetime current: 1000 bytes, 10 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
         echo "    lifetime current: 2000 bytes, 20 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     # After deletion: Only one SA re-establishes (partial re-establishment)
     else
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
         echo "    lifetime current: 2000 bytes, 20 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -1794,13 +1770,8 @@ EOF
 	add_mock_to_path
 
 	# Mock check_ipsec_phase2 to return success (at least one SA re-established)
-	local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
-	cat >"$mock_check_ipsec_phase2" <<'EOF'
-#!/bin/bash
-# At least one SA is re-established (partial success)
-exit 0
-EOF
-	chmod +x "$mock_check_ipsec_phase2"
+	local mock_check_ipsec_phase2
+	mock_check_ipsec_phase2=$(mock_check_ipsec_phase2 0)
 
 	# Source recovery functions to test directly
 	source_recovery_module
@@ -1827,7 +1798,7 @@ EOF
 	LOGS_DIR="${TEST_DIR}/logs"
 
 	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "192.168.1.1"
+	run attempt_xfrm_recovery "${TEST_PEER_IP}"
 	# Should return success if at least one SA re-establishes (partial success is acceptable)
 	# Note: The function may succeed if check_ipsec_phase2 returns success, even with partial SAs
 	# This is acceptable behavior - partial recovery is better than no recovery
@@ -1840,7 +1811,7 @@ EOF
 	# Purpose: Test verifies that verify_ipsec_connections_active handles ipsec status command failures during recovery
 	# Expected: Function returns failure when ipsec status command fails
 	# Importance: Ensures graceful handling when ipsec status command fails during recovery verification
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "${TEST_DIR}/logs"
@@ -1857,7 +1828,7 @@ EOF
 	LOGS_DIR="${TEST_DIR}/logs"
 
 	# Test verify_ipsec_connections_active function
-	run verify_ipsec_connections_active "192.168.1.1"
+	run verify_ipsec_connections_active "${TEST_PEER_IP}"
 	assert_failure
 
 	remove_mock_from_path
@@ -1868,7 +1839,7 @@ EOF
 	# Purpose: Test verifies that verify_ipsec_connections_active handles ipsec status timeout during recovery
 	# Expected: Function returns failure when ipsec status times out
 	# Importance: Ensures graceful handling when ipsec status command hangs during recovery verification
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'IPSEC_STATUS_TIMEOUT=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'IPSEC_STATUS_TIMEOUT=1'
 
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "${TEST_DIR}/logs"
@@ -1919,7 +1890,7 @@ EOF
 	LOGS_DIR="${TEST_DIR}/logs"
 
 	# Test verify_ipsec_connections_active function
-	run verify_ipsec_connections_active "192.168.1.1"
+	run verify_ipsec_connections_active "${TEST_PEER_IP}"
 	# Should return failure when timeout occurs
 	assert_failure
 
@@ -1931,23 +1902,14 @@ EOF
 	# Purpose: Test verifies that verify_ipsec_connections_active handles partial connection failures during recovery
 	# Expected: Function returns failure when some connections are not found in ipsec status
 	# Importance: Ensures graceful handling when only some connections are active after recovery
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "${TEST_DIR}/logs"
 
 	# Mock ipsec command that returns only one connection
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    echo "Connections:"
-    echo "  192.168.1.1: ESTABLISHED"
-    # Note: 198.51.100.1 is not in output (connection not found)
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 0 "Connections:
+  192.168.1.1: ESTABLISHED"
 	add_mock_to_path
 
 	# Source recovery functions to test directly
@@ -1958,7 +1920,7 @@ EOF
 	LOGS_DIR="${TEST_DIR}/logs"
 
 	# Test verify_ipsec_connections_active function with multiple peer IPs
-	run verify_ipsec_connections_active "192.168.1.1 198.51.100.1"
+	run verify_ipsec_connections_active "${TEST_PEER_IP} 198.51.100.1"
 	# Should return failure when not all connections are found
 	assert_failure
 
@@ -1970,7 +1932,7 @@ EOF
 	# Purpose: Test verifies that verify_ipsec_connections_active works in PATH-restricted environments
 	# Expected: Function resolves ipsec command path via get_command_path() and successfully verifies connections
 	# Importance: Ensures verification works in cron/systemd environments where PATH may not include /usr/sbin
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "${TEST_DIR}/logs"
@@ -1979,17 +1941,8 @@ EOF
 	local original_path="$PATH"
 
 	# Create mock ipsec in test directory
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    echo "Connections:"
-    echo "  192.168.1.1: ESTABLISHED"
-    exit 0
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 0 "Connections:
+  192.168.1.1: ESTABLISHED"
 
 	# Restrict PATH to exclude system directories (simulating cron/systemd environment)
 	# PATH only includes /bin and /usr/bin (common minimal PATH, excludes /usr/sbin)
@@ -2078,7 +2031,7 @@ EOF
 
 	# Test verify_ipsec_connections_active function
 	# Should succeed because get_command_path() returns path to mock ipsec
-	run verify_ipsec_connections_active "192.168.1.1"
+	run verify_ipsec_connections_active "${TEST_PEER_IP}"
 	assert_success
 
 	# Verify that ipsec status was called (check log for connection active message)
@@ -2093,7 +2046,7 @@ EOF
 	# Purpose: Test verifies that verify_byte_counters_resume handles xfrm state query failures
 	# Expected: Function returns failure when ip xfrm state command fails
 	# Importance: Ensures graceful handling when xfrm state query fails during byte counter verification
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "${TEST_DIR}/logs"
@@ -2119,7 +2072,7 @@ EOF
 	LOGS_DIR="${TEST_DIR}/logs"
 
 	# Test verify_byte_counters_resume function
-	run verify_byte_counters_resume "192.168.1.1"
+	run verify_byte_counters_resume "${TEST_PEER_IP}"
 	assert_failure
 
 	remove_mock_from_path
@@ -2130,7 +2083,7 @@ EOF
 	# Purpose: Test verifies that verify_byte_counters_resume handles byte counter extraction failures gracefully
 	# Expected: Function returns success when byte counter extraction fails but SA exists (graceful degradation)
 	# Importance: Ensures graceful handling when byte counter extraction fails but SA is present
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "${TEST_DIR}/logs"
@@ -2159,7 +2112,7 @@ EOF
 	LOGS_DIR="${TEST_DIR}/logs"
 
 	# Test verify_byte_counters_resume function
-	run verify_byte_counters_resume "192.168.1.1"
+	run verify_byte_counters_resume "${TEST_PEER_IP}"
 	# Should return success when extraction fails but SA exists (graceful degradation)
 	assert_success
 
@@ -2171,7 +2124,7 @@ EOF
 	# Purpose: Test verifies that verify_byte_counters_resume detects zero byte counters
 	# Expected: Function returns failure when byte counters are zero (tunnel may not be passing traffic)
 	# Importance: Ensures detection of tunnels that are established but not passing traffic
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "${TEST_DIR}/logs"
@@ -2199,7 +2152,7 @@ EOF
 	LOGS_DIR="${TEST_DIR}/logs"
 
 	# Test verify_byte_counters_resume function
-	run verify_byte_counters_resume "192.168.1.1"
+	run verify_byte_counters_resume "${TEST_PEER_IP}"
 	# Should return failure when byte counters are zero
 	assert_failure
 
@@ -2211,7 +2164,7 @@ EOF
 	# Purpose: Test verifies that verify_byte_counters_resume handles empty xfrm output
 	# Expected: Function returns failure when no xfrm state found for peer IP
 	# Importance: Ensures graceful handling when peer IP has no SAs in xfrm state
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "${TEST_DIR}/logs"
@@ -2237,7 +2190,7 @@ EOF
 	LOGS_DIR="${TEST_DIR}/logs"
 
 	# Test verify_byte_counters_resume function
-	run verify_byte_counters_resume "192.168.1.1"
+	run verify_byte_counters_resume "${TEST_PEER_IP}"
 	# Should return failure when no xfrm output for peer IP
 	assert_failure
 
@@ -2253,7 +2206,7 @@ EOF
 	# Purpose: Test verifies that select_recovery_strategy properly handles no commands available when called from surgical_cleanup
 	# Expected: Function returns error and sets RECOVERY_STRATEGY="unavailable", surgical_cleanup handles gracefully
 	# Importance: Ensures recovery functions handle unavailable strategies gracefully
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
 
 	# Save original PATH and create a minimal PATH that excludes ip/ipsec
 	local original_path="${PATH}"
@@ -2277,7 +2230,7 @@ EOF
 	mkdir -p "${LOGS_DIR}"
 
 	# Test select_recovery_strategy directly (simulating call from surgical_cleanup)
-	run select_recovery_strategy "192.168.1.1" 2
+	run select_recovery_strategy "${TEST_PEER_IP}" 2
 	assert_failure
 	assert_equal "$RECOVERY_STRATEGY" "unavailable"
 	assert_equal "$RECOVERY_AVAILABLE" 0
@@ -2291,7 +2244,7 @@ EOF
 	# Purpose: Test verifies that attempt_xfrm_recovery handles timeout when check_ipsec_phase2 fails during verification loop
 	# Expected: Function times out and returns failure when check_ipsec_phase2 consistently fails during verification
 	# Importance: Edge case where check_ipsec_phase2 fails during verification, causing timeout
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "${TEST_DIR}/logs"
@@ -2311,7 +2264,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
 
     # First call: SA exists (before deletion)
     if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    lifetime current: 1000 bytes, 10 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
@@ -2323,13 +2276,8 @@ EOF
 	add_mock_to_path
 
 	# Mock check_ipsec_phase2 to always fail (SA never re-establishes)
-	local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
-	cat >"$mock_check_ipsec_phase2" <<'EOF'
-#!/bin/bash
-# SA never re-establishes - always return failure
-exit 1
-EOF
-	chmod +x "$mock_check_ipsec_phase2"
+	local mock_check_ipsec_phase2
+	mock_check_ipsec_phase2=$(mock_check_ipsec_phase2 1)
 
 	# Source recovery functions to test directly
 	source_recovery_module
@@ -2356,7 +2304,7 @@ EOF
 	LOGS_DIR="${TEST_DIR}/logs"
 
 	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "192.168.1.1"
+	run attempt_xfrm_recovery "${TEST_PEER_IP}"
 	# Should return failure when timeout occurs (check_ipsec_phase2 fails)
 	assert_failure
 
@@ -2373,7 +2321,7 @@ EOF
 	# Purpose: Test verifies that verify_ipsec_connections_active handles failures when called from full_restart
 	# Expected: Function returns failure when connections are not active, full_restart continues but logs warning
 	# Importance: Ensures graceful handling when verification fails during Tier 3 recovery
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "${TEST_DIR}/logs"
@@ -2406,7 +2354,7 @@ EOF
 	LOGS_DIR="${TEST_DIR}/logs"
 
 	# Test verify_ipsec_connections_active function (simulating call from full_restart)
-	run verify_ipsec_connections_active "192.168.1.1"
+	run verify_ipsec_connections_active "${TEST_PEER_IP}"
 	# Should return failure when connection not found
 	assert_failure
 
@@ -2418,7 +2366,7 @@ EOF
 	# Purpose: Test verifies that verify_byte_counters_resume handles failures when called from full_restart
 	# Expected: Function returns failure when byte counters are zero, full_restart continues but logs warning
 	# Importance: Ensures graceful handling when byte counter verification fails during Tier 3 recovery
-	setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "${TEST_DIR}/logs"
@@ -2447,7 +2395,7 @@ EOF
 	LOGS_DIR="${TEST_DIR}/logs"
 
 	# Test verify_byte_counters_resume function (simulating call from full_restart)
-	run verify_byte_counters_resume "192.168.1.1"
+	run verify_byte_counters_resume "${TEST_PEER_IP}"
 	# Should return failure when byte counters are zero
 	assert_failure
 

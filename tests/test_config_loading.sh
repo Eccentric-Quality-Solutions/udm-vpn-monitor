@@ -20,8 +20,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Syntax errors can occur from manual editing or file corruption; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Create config with syntax error (unclosed quote)
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="192.168.1.1
+	cat >"$config_file" <<EOF
+LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}
 VPN_NAME="Test VPN"
 EOF
 
@@ -49,9 +49,9 @@ EOF
 	# Expected: Script detects permission issue and logs error message without crashing
 	# Importance: Permission issues can occur from incorrect file ownership or chmod operations; script must handle gracefully
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 EOF
 
 	# Make config file unreadable
@@ -111,8 +111,8 @@ EOF
 	# Expected: Script recalculates LOGS_DIR based on LOG_FILE path and creates the custom log directory
 	# Importance: Ensures log file paths work correctly when custom LOG_FILE paths are specified
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
 LOG_FILE="/tmp/custom-logs/vpn-monitor.log"
 EOF
 
@@ -126,7 +126,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Run script
@@ -149,8 +149,8 @@ EOF
 	# Expected: Script processes negative thresholds without crashing, though behavior may be unexpected
 	# Importance: Negative thresholds can occur from manual editing errors; script must handle them without crashing
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=-1
 TIER2_THRESHOLD=-3
 TIER3_THRESHOLD=-5
@@ -165,14 +165,8 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN down
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_empty >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
 	# Script should handle negative thresholds (may cause unexpected behavior)
@@ -190,8 +184,8 @@ EOF
 	# Expected: Script processes out-of-order thresholds without crashing, though behavior may skip tiers or be unexpected
 	# Importance: Out-of-order thresholds can occur from manual editing errors; script must handle them without crashing
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=5
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=1
@@ -206,14 +200,8 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command - VPN down
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_empty >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
 	# Script should handle out-of-order thresholds

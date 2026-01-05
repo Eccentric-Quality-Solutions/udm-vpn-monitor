@@ -7,7 +7,7 @@
 # and configures the environment to trigger Tier 3 recovery (which is rate limited).
 #
 # Arguments:
-#   $1: Peer IP address (default: "192.168.1.1")
+#   $1: Peer IP address (default: "${TEST_PEER_IP}")
 #   $2: Number of restart timestamps to create if none provided (default: 3)
 #   $3+: Restart timestamps (epoch seconds, one per line in restart_count file)
 #        If not provided, creates timestamps relative to current time
@@ -21,23 +21,23 @@
 #
 # Example:
 #   # Use default: 3 restarts within last hour
-#   setup_vpn_rate_limited_fixture "192.168.1.1"
+#   setup_vpn_rate_limited_fixture "${TEST_PEER_IP}"
 #
 #   # Provide specific timestamps
 #   local now=$(date +%s)
-#   setup_vpn_rate_limited_fixture "192.168.1.1" 3 \
+#   setup_vpn_rate_limited_fixture "${TEST_PEER_IP}" 3 \
 #       $((now - 100)) \
 #       $((now - 200)) \
 #       $((now - 300))
 #
 #   # Custom config
-#   setup_vpn_rate_limited_fixture "192.168.1.1" 3 \
+#   setup_vpn_rate_limited_fixture "${TEST_PEER_IP}" 3 \
 #       $((now - 100)) \
 #       $((now - 200)) \
 #       $((now - 300)) \
 #       'MAX_RESTARTS_PER_HOUR=5'
 setup_vpn_rate_limited_fixture() {
-	local peer_ip="${1:-192.168.1.1}"
+	local peer_ip="${1:-${TEST_PEER_IP}}"
 	local restart_count="${2:-3}"
 	shift 2 || true
 

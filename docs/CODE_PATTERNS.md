@@ -974,6 +974,82 @@ validate_config_var() {
 - Explicitly update globals at the end of the validation chain
 - Ensures consistency between local and global variables
 
+### Pattern: Handling State Information Across Function Boundaries
+
+**When to Use:** When functions need state information that was already checked by a caller or another function
+
+**Pattern:**
+```bash
+# ✅ GOOD: Pass state explicitly when needed for accurate behavior
+check_ping_optional() {
+    local vpn_ok="$1"
+    local external_peer_ip="$2"
+    local internal_peer_ip="${3:-}"
+    local location_name="${4:-}"
+
+    # Check SA existence directly to ensure accurate messages
+    # DESIGN NOTE: We check SA existence here rather than reusing vpn_ok because:
+    # 1. vpn_ok=0 can mean "no SA" OR "SA exists but validation failed"
+    # 2. We need accurate SA status for logging messages to avoid contradictions
+    # 3. This ensures messages reflect actual SA state, not inferred state
+    # Performance: This adds one additional SA check per cycle (~5-10ms on UDM),
+    # which is acceptable for monitoring use case (runs every 30-60 seconds).
+    local sa_exists=0
+    if check_ipsec_phase2 "$external_peer_ip" 2>/dev/null; then
+        sa_exists=1
+    fi
+
+    # Pass explicit state to downstream function
+    check_ping_if_enabled "$sa_exists" "$ping_ip" "" "$location_name"
+    return 0
+}
+
+# ✅ GOOD: Accept explicit state parameter when available
+check_ping_if_enabled() {
+    local sa_exists="$1"  # Explicit state passed from caller
+    local ping_target="$2"
+    # ... use sa_exists for accurate logging ...
+}
+
+# ❌ BAD: Infer state from ambiguous return value
+check_ping_if_enabled() {
+    local vpn_ok="$1"  # Ambiguous: could mean "no SA" or "SA exists but failed validation"
+    # ... incorrect assumption leads to contradictory log messages ...
+}
+```
+
+**When to Pass State Explicitly:**
+- **When state is needed for accurate behavior:** If the function's behavior (especially logging) depends on accurate state information
+- **When return values are ambiguous:** If a return value can mean multiple things (e.g., `vpn_ok=0` could mean "no SA" or "SA exists but validation failed")
+- **When state is expensive to check:** If checking state is expensive and you already have the information
+- **When state changes are unlikely:** If state is unlikely to change between function calls in the same execution cycle
+
+**When Duplicate Checks Are Acceptable:**
+- **When performance impact is minimal:** If the check is fast (~5-10ms) and the script runs infrequently (every 30-60 seconds)
+- **When clarity is more important:** If passing state explicitly would require significant refactoring or make code less clear
+- **When state can change:** If state can legitimately change between checks and you need the current state
+- **When checks are idempotent:** If the check operation is safe to repeat and doesn't have side effects
+
+**Performance vs. Clarity Trade-offs:**
+- **Prefer clarity when:** Performance impact is minimal (< 10ms), script runs infrequently, or refactoring would be complex
+- **Prefer performance when:** Checks are expensive (> 50ms), script runs frequently, or state is unlikely to change
+- **Document the decision:** Always add comments explaining why duplicate checks are acceptable, including:
+  - Why state isn't passed explicitly
+  - Performance characteristics of the duplicate check
+  - Future optimization path if applicable
+
+**Key Points:**
+- Explicit state passing is preferred when it improves accuracy and clarity
+- Duplicate checks are acceptable when performance impact is minimal and clarity is improved
+- Always document the design decision when choosing duplicate checks over explicit state passing
+- Consider future refactoring opportunities to eliminate duplicate checks if they become a performance issue
+- Balance between DRY principle and code clarity - sometimes a small duplicate check is better than complex state passing
+
+**Related Patterns:**
+- See `Pattern: Always Re-Check Critical State Instead of Relying on Cached Values` for when to re-check vs. use cached state
+- See `analyze/CODE_REVIEW_SA_CHECK_FIX.md` for a detailed example of this pattern in practice
+- See `analyze/ARCHITECTURE_REVIEW_SA_CHECK.md` for architectural analysis of state passing vs. re-checking
+
 ---
 
 ## Validation Patterns

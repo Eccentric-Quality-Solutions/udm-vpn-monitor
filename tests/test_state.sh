@@ -21,14 +21,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles corrupted failure counter files containing non-numeric values.
 	# Expected: Script treats corrupted file as 0 or resets it, continuing normal operation without crashing.
 	# Importance: File corruption can occur due to disk errors or manual editing; script must handle it robustly.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
 	source_function "get_peer_state_file_path"
 
 	# Create corrupted failure counter file (location-based path)
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
-	echo "invalid-non-numeric-value" >"$failure_counter"
+	failure_counter=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "failure_count" "invalid-non-numeric-value")
 
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
@@ -45,13 +44,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles failure counter files containing negative numbers.
 	# Expected: Script handles negative numbers gracefully, treating them as invalid and recovering to 0.
 	# Importance: Negative failure counts are invalid; script must handle corrupted data robustly.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
 	source_function "get_peer_state_file_path"
 
 	# Create failure counter file with negative number
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	echo "-5" >"$failure_counter"
 
 	add_mock_to_path
@@ -69,13 +68,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles empty failure counter files.
 	# Expected: Script treats empty file as corrupted and recovers it to "0".
 	# Importance: Empty files can occur from truncation or corruption; script must handle them robustly.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
 	source_function "get_peer_state_file_path"
 
 	# Create empty failure counter file (clear any existing file from fixture)
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	rm -f "$failure_counter"
 	touch "$failure_counter"
 	# Verify file is empty before script runs
@@ -107,7 +106,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles corrupted cooldown files with invalid timestamps.
 	# Expected: Script handles invalid timestamp gracefully, preventing arithmetic errors and continuing execution.
 	# Importance: Corrupted timestamps can cause arithmetic errors; script must handle them robustly.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
 	# Create corrupted cooldown file with invalid timestamp
 	local cooldown_file="${STATE_DIR}/cooldown_until"
@@ -132,15 +131,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles read-only state files gracefully when attempting to update counters.
 	# Expected: Script logs error about write failure but continues execution without crashing.
 	# Importance: Permission issues can occur due to incorrect file ownership or chmod operations; script must handle gracefully.
-	setup_vpn_down_fixture "192.168.1.1" 3
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 3
 
 	source_function "get_peer_state_file_path"
 
 	# Create failure counter file and make it read-only (prevents write)
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
-	echo "3" >"$failure_counter"
-	chmod 444 "$failure_counter"
+	failure_counter=$(setup_readonly_state_file "" "${TEST_PEER_IP}" "failure_count" "3" "444")
 	# Verify permissions were set correctly
 	assert_file_permission 444 "$failure_counter"
 
@@ -151,8 +148,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should handle read-only state file gracefully (should log error but continue)
 	assert_file_exist "$LOG_FILE"
 
-	# Restore permissions for cleanup
-	chmod 644 "$failure_counter" 2>/dev/null || true
+	# Trap will restore permissions automatically on EXIT
 	remove_mock_from_path
 }
 
@@ -161,15 +157,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles unreadable state files gracefully.
 	# Expected: Script defaults to 0 or handles error gracefully when state file cannot be read.
 	# Importance: Permission issues can prevent reading state files; script must handle gracefully.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
 	source_function "get_peer_state_file_path"
 
 	# Create failure counter file and make it unreadable (prevents read)
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
-	echo "3" >"$failure_counter"
-	chmod 000 "$failure_counter"
+	failure_counter=$(setup_readonly_state_file "" "${TEST_PEER_IP}" "failure_count" "3" "000")
 	# Verify permissions were set correctly
 	assert_file_permission 000 "$failure_counter"
 
@@ -180,8 +174,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should handle unreadable state file gracefully (should default to 0 or handle error)
 	assert_file_exist "$LOG_FILE"
 
-	# Restore permissions for cleanup
-	chmod 644 "$failure_counter" 2>/dev/null || true
+	# Trap will restore permissions automatically on EXIT
 	remove_mock_from_path
 }
 
@@ -190,14 +183,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles state files that are deleted during execution.
 	# Expected: Script recreates deleted files or defaults to 0, continuing execution without crashing.
 	# Importance: Files can be deleted by other processes or manual intervention; script must handle gracefully.
-	setup_vpn_down_fixture "192.168.1.1" 2
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 2
 
 	source_function "get_peer_state_file_path"
 
 	# Delete failure counter file during execution (simulate file deletion)
 	# This is a simplified test - in real scenario, file might be deleted between checks
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
 	rm -f "$failure_counter"
 
 	add_mock_to_path
@@ -219,7 +212,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that lockfile mechanism prevents concurrent state file modification.
 	# Expected: Lockfile prevents concurrent execution, ensuring state file is not modified during script execution.
 	# Importance: Concurrent modification can cause data corruption; lockfile mechanism must prevent it.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
 	# Run script - lockfile should prevent concurrent execution
 	add_mock_to_path
@@ -242,14 +235,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that corrupted state files are backed up before recovery.
 	# Expected: Backup file is created with .corrupted.<timestamp> suffix before recovery.
 	# Importance: Backup files allow forensic analysis and manual recovery.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	source_function "get_peer_state_file_path"
 
 	# Create corrupted failure counter file
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
-	echo "invalid-value" >"$failure_counter"
+	failure_counter=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "failure_count")
 
 	# Source state functions to test directly
 	# shellcheck source=../lib/state.sh
@@ -257,7 +249,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Trigger recovery by reading the corrupted file
 	local value
-	value=$(get_peer_state "" "192.168.1.1" "failure_count" "0")
+	value=$(get_peer_state "" "${TEST_PEER_IP}" "failure_count" "0")
 
 	# Verify backup file was created
 	local backup_files
@@ -273,25 +265,22 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that multiple corrupted state files are recovered correctly.
 	# Expected: All corrupted files are backed up and recovered.
 	# Importance: Ensures recovery works when multiple files are corrupted.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	source_function "get_peer_state_file_path"
 
 	# Create multiple corrupted files
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	failure_counter=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "failure_count")
 	local bytes_file
-	bytes_file=$(get_peer_state_file_path "" "192.168.1.1" "last_bytes")
+	bytes_file=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "last_bytes")
 	local spi_file
-	spi_file=$(get_peer_state_file_path "" "192.168.1.1" "spi")
+	spi_file=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "spi")
 	local cooldown_file="${STATE_DIR}/cooldown_until"
 
-	echo "invalid-value" >"$failure_counter"
-	echo "invalid-value" >"$bytes_file"
-	echo "invalid-value" >"$spi_file"
 	echo "invalid-value" >"$cooldown_file"
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Run script - should recover all corrupted files
@@ -310,14 +299,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that recovery fails and preserves corrupted file if backup fails for a readable file.
 	# Expected: Recovery fails, corrupted file is preserved (not reset).
 	# Importance: Prevents data loss when backup fails due to disk space or permissions.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	source_function "get_peer_state_file_path"
 
 	# Create corrupted failure counter file
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
-	echo "invalid-value" >"$failure_counter"
+	failure_counter=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "failure_count")
 
 	# Store original corrupted content
 	local original_content
@@ -325,7 +313,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Make STATE_DIR read-only to prevent backup creation
 	# Note: Backup files are created in the same directory as state files
+	local original_dir_perms
+	original_dir_perms=$(stat -c %a "${STATE_DIR}")
 	chmod 555 "${STATE_DIR}"
+	# Use trap to ensure cleanup even on errors
+	trap "chmod $original_dir_perms \"\${STATE_DIR}\" 2>/dev/null || true" EXIT
 
 	# Source state functions to test directly
 	# shellcheck source=../lib/state.sh
@@ -341,8 +333,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	preserved_content=$(cat "$failure_counter")
 	assert_equal "$preserved_content" "$original_content"
 
-	# Restore permissions
-	chmod 755 "${STATE_DIR}" 2>/dev/null || true
+	# Trap will restore permissions automatically on EXIT
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -350,17 +341,20 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that unreadable files can be recovered even though they cannot be backed up.
 	# Expected: File is recovered (removed/reset) even though backup is skipped.
 	# Importance: Unreadable files cannot be backed up, but should still be recoverable.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	source_function "get_peer_state_file_path"
 
 	# Create corrupted failure counter file
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
-	echo "invalid-value" >"$failure_counter"
+	failure_counter=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "failure_count")
 
 	# Make file unreadable (but still exists)
+	local original_perms
+	original_perms=$(stat -c %a "$failure_counter")
 	chmod 000 "$failure_counter"
+	# Use trap to ensure cleanup even on errors
+	trap "chmod $original_perms \"\$failure_counter\" 2>/dev/null || true" EXIT
 
 	# Source state functions to test directly
 	# shellcheck source=../lib/state.sh
@@ -375,6 +369,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local value
 	value=$(cat "$failure_counter")
 	assert_equal "$value" "0"
+	# Clear trap after successful test
+	trap - EXIT
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -382,15 +378,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that callers of recover_corrupted_state_file handle recovery failures gracefully.
 	# Expected: Caller returns default value even if recovery fails, corrupted file is preserved.
 	# Importance: Ensures system continues to work even when recovery fails (e.g., backup fails).
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	source_function "get_peer_state"
 	source_function "get_peer_state_file_path"
 
 	# Create corrupted failure counter file
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
-	echo "invalid-value" >"$failure_counter"
+	failure_counter=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "failure_count")
 
 	# Store original corrupted content
 	local original_content
@@ -398,7 +393,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Make STATE_DIR read-only to prevent backup creation
 	# Note: Backup files are created in the same directory as state files
+	local original_dir_perms
+	original_dir_perms=$(stat -c %a "${STATE_DIR}")
 	chmod 555 "${STATE_DIR}"
+	# Use trap to ensure cleanup even on errors
+	trap "chmod $original_dir_perms \"\${STATE_DIR}\" 2>/dev/null || true" EXIT
 
 	# Source state functions to test directly
 	# shellcheck source=../lib/state.sh
@@ -407,7 +406,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Call get_peer_state which internally calls recover_corrupted_state_file
 	# Even though recovery fails, get_peer_state should return default value
 	local value
-	value=$(get_peer_state "" "192.168.1.1" "failure_count" "0")
+	value=$(get_peer_state "" "${TEST_PEER_IP}" "failure_count" "0")
 
 	# Verify caller returns default value even though recovery failed
 	assert_equal "$value" "0"
@@ -420,6 +419,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Restore permissions
 	chmod 755 "${STATE_DIR}" 2>/dev/null || true
+	# Clear trap after successful restore
+	trap - EXIT
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -427,7 +428,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that corrupted files are removed when default value is empty.
 	# Expected: File is removed when default value is empty string.
 	# Importance: Some state files should be removed rather than reset to a value.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	# Create corrupted cooldown file
 	local cooldown_file="${STATE_DIR}/cooldown_until"
@@ -450,14 +451,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that corrupted files are reset to default value when provided.
 	# Expected: File is reset to default value.
 	# Importance: Ensures corrupted files are reset to safe defaults.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	source_function "get_peer_state_file_path"
 
 	# Create corrupted failure counter file
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
-	echo "invalid-value" >"$failure_counter"
+	failure_counter=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "failure_count")
 
 	# Source state functions to test directly
 	# shellcheck source=../lib/state.sh
@@ -479,23 +479,19 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that corrupted per-peer state files are recovered correctly.
 	# Expected: All per-peer files are backed up and recovered.
 	# Importance: Per-peer files are critical for monitoring individual peers.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	source_function "get_peer_state_file_path"
 
 	# Create corrupted per-peer files
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "192.168.1.1" "failure_count")
+	failure_counter=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "failure_count")
 	local bytes_file
-	bytes_file=$(get_peer_state_file_path "" "192.168.1.1" "last_bytes")
+	bytes_file=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "last_bytes")
 	local spi_file
-	spi_file=$(get_peer_state_file_path "" "192.168.1.1" "spi")
+	spi_file=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "spi")
 
-	echo "invalid-value" >"$failure_counter"
-	echo "invalid-value" >"$bytes_file"
-	echo "invalid-value" >"$spi_file"
-
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Run script - should recover all corrupted per-peer files
@@ -525,7 +521,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that get_network_partition_state returns 0 when state file doesn't exist.
 	# Expected: Function returns "0" (healthy) when file doesn't exist.
 	# Importance: Defaults to healthy state when no state is stored.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	# Source state functions to test directly
 	# shellcheck source=../lib/state.sh
@@ -546,7 +542,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that set_network_partition_state correctly sets state to 0 (healthy).
 	# Expected: Function sets state to 0 and file contains "0".
 	# Importance: Allows marking network as healthy.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	# Source state functions to test directly
 	# shellcheck source=../lib/state.sh
@@ -569,7 +565,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that set_network_partition_state correctly sets state to 1 (partitioned).
 	# Expected: Function sets state to 1 and file contains "1".
 	# Importance: Allows marking network as partitioned.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	# Source state functions to test directly
 	# shellcheck source=../lib/state.sh
@@ -592,7 +588,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that set_network_partition_state rejects invalid values.
 	# Expected: Function returns error when value is not 0 or 1.
 	# Importance: Prevents invalid state values from being stored.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	# Source state functions to test directly
 	# shellcheck source=../lib/state.sh
@@ -612,7 +608,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that corrupted network partition state file is recovered to 0.
 	# Expected: Function recovers corrupted file and returns "0".
 	# Importance: Prevents script failures from corrupted state files.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	# Create corrupted state file
 	local partition_state_file="${STATE_DIR}/network_partition_state"
@@ -639,7 +635,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that network partition state uses atomic writes for consistency.
 	# Expected: State file updates are atomic (no partial writes).
 	# Importance: Atomic writes prevent corruption from concurrent access.
-	setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	# Source state functions to test directly
 	# shellcheck source=../lib/state.sh
@@ -668,7 +664,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that unknown key types use default path.
 	# Expected: Unknown keys use STATE_DIR/<key>_<sanitized_ip> path.
 	# Importance: Ensures abstraction layer handles unknown keys gracefully.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
 	# Source state.sh to access functions
 	# shellcheck source=../lib/state.sh
@@ -699,7 +695,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that atomic write failures are handled gracefully.
 	# Expected: Script handles write failures without crashing.
 	# Importance: Write failures can occur due to disk full or permissions.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
 	# Source state.sh to access functions
 	# shellcheck source=../lib/state.sh
@@ -712,7 +708,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Create read-only directory to simulate write failure
 	local readonly_dir="${TEST_DIR}/readonly"
 	mkdir -p "$readonly_dir"
+	local original_dir_perms
+	original_dir_perms=$(stat -c %a "$readonly_dir")
 	chmod 555 "$readonly_dir"
+	# Use trap to ensure cleanup even on errors
+	trap "chmod $original_dir_perms \"\$readonly_dir\" 2>/dev/null || true" EXIT
 
 	# Try to write to read-only directory (should fail gracefully)
 	local original_state_dir="$STATE_DIR"
@@ -727,6 +727,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Restore permissions for cleanup
 	chmod 755 "$readonly_dir" 2>/dev/null || true
+	# Clear trap after successful restore
+	trap - EXIT
 	export STATE_DIR="$original_state_dir"
 }
 
@@ -735,7 +737,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that file path resolution works for all key types.
 	# Expected: Each key type resolves to correct file path.
 	# Importance: Ensures abstraction layer works for all state types.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
 	# Source state.sh to access functions
 	# shellcheck source=../lib/state.sh

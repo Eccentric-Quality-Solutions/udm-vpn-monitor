@@ -20,19 +20,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles ipsec commands that return error exit codes but still produce valid output.
 	# Expected: Script processes output even when ipsec returns error code, detecting VPN status correctly.
 	# Importance: Some ipsec implementations may return non-zero exit codes even with valid output; script must handle this edge case.
-	setup_vpn_down_fixture "192.168.1.1" 0
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 0
 
 	# Mock ipsec - returns error code but has output containing peer IP
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    # Return error code but output contains peer IP (simulates partial failure)
-    echo "192.168.1.1: ESTABLISHED 1 hour ago"
-    exit 1
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 1 "${TEST_PEER_IP}: ESTABLISHED 1 hour ago"
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -56,8 +47,8 @@ EOF
 	# Expected: Script falls back to alternative detection methods or fails gracefully when command -v fails.
 	# Importance: Tool availability detection can fail due to system issues; script must handle this without crashing.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
 ENABLE_NETWORK_PARTITION_CHECK=0
 EOF
 
@@ -106,7 +97,7 @@ EOF
 	# Purpose: Test verifies that the script handles missing ping commands gracefully when ping check is enabled.
 	# Expected: Script logs warning but continues execution without ping check when ping command is unavailable.
 	# Importance: Ping commands may not be available on all systems; script must handle this gracefully.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_NYC_INTERNAL="2001:db8::1"'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_NYC_INTERNAL="2001:db8::1"'
 
 	# Mock command to fail for ping (simulates ping not available)
 	local mock_command="${TEST_DIR}/command"
@@ -140,17 +131,10 @@ EOF
 	# Purpose: Test verifies that the script handles ping commands that hang indefinitely without blocking execution.
 	# Expected: Script uses timeout mechanism to prevent ping from blocking script execution indefinitely.
 	# Importance: Network issues can cause ping to hang; script must handle this to remain responsive.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_NYC_INTERNAL="192.168.1.1"' 'PING_COUNT=3' 'PING_TIMEOUT=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' "LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\"" 'PING_COUNT=3' 'PING_TIMEOUT=1'
 
 	# Mock ping to hang (simulates timeout)
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-# Simulate ping hanging (sleep longer than timeout)
-sleep 2
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping_hang 2 >/dev/null
 	add_mock_to_path
 
 	# Use timeout of 10 seconds to allow script initialization, ping timeout handling, and completion
@@ -170,20 +154,10 @@ EOF
 	# Purpose: Test verifies that the script handles ping commands that succeed but report 100% packet loss.
 	# Expected: Script detects packet loss and logs warning but continues execution.
 	# Importance: Network anomalies can cause ping to succeed but report no packets received; script must handle this edge case.
-	setup_vpn_active_fixture "192.168.1.1" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_NYC_INTERNAL="192.168.1.1"'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' "LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\""
 
 	# Mock ping to return success but 100% packet loss (weird network state)
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-# Simulate ping command succeeds but 100% packet loss
-echo "PING 192.168.1.1 (192.168.1.1) 56(84) bytes of data."
-echo ""
-echo "--- 192.168.1.1 ping statistics ---"
-echo "3 packets transmitted, 0 received, 100% packet loss"
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping_packet_loss "192.168.1.1" >/dev/null
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -205,7 +179,7 @@ EOF
 	# Purpose: Test verifies that the script handles ipsec commands that hang indefinitely during status checks.
 	# Expected: Script uses timeout mechanism or error handling to prevent ipsec from blocking script execution.
 	# Importance: Network or system issues can cause ipsec to hang; script must handle this to remain responsive.
-	setup_vpn_down_fixture "192.168.1.1" 0
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 0
 
 	# Mock ipsec status to hang (simulates timeout)
 	# Sleep longer than IPSEC_STATUS_TIMEOUT (5 seconds) to trigger timeout

@@ -158,7 +158,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	local test_install
 	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "LOCATION_TEST_EXTERNAL=\"192.168.1.1\"" >"${TEST_DIR}/source/vpn-monitor.conf"
+	echo "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" >"${TEST_DIR}/source/vpn-monitor.conf"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
 	# First installation
@@ -187,7 +187,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	local test_install
 	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "LOCATION_TEST_EXTERNAL=\"192.168.1.1\"" >"${TEST_DIR}/source/vpn-monitor.conf"
+	echo "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" >"${TEST_DIR}/source/vpn-monitor.conf"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
 	# First installation

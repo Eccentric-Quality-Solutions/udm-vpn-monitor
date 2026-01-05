@@ -20,8 +20,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local custom_state_dir="${TEST_DIR}/custom-state-dir"
 	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="192.168.1.1"
-LOCATION_NYC_INTERNAL="192.168.1.1"
+LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_NYC_INTERNAL="${TEST_PEER_IP}"
 STATE_DIR="${custom_state_dir}"
 EOF
 
@@ -35,7 +35,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
@@ -59,9 +59,9 @@ EOF
 	# Expected: Script uses environment variable value instead of config file value when both are set
 	# Importance: Enables runtime configuration overrides without modifying config files
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="10.0.0.1"
-LOCATION_NYC_INTERNAL="10.0.0.1"
+	cat >"$config_file" <<EOF
+LOCATION_NYC_EXTERNAL="${TEST_PEER_IP2}"
+LOCATION_NYC_INTERNAL="${TEST_PEER_IP2}"
 COOLDOWN_MINUTES=30
 EOF
 
@@ -72,13 +72,13 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
 	# Override LOCATION_NYC_EXTERNAL via environment variable
 	add_mock_to_path
-	LOCATION_NYC_EXTERNAL="192.168.1.1" LOCATION_NYC_INTERNAL="192.168.1.1" run bash "$test_script" --fake
+	LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}" LOCATION_NYC_INTERNAL="${TEST_PEER_IP}" run bash "$test_script" --fake
 
 	# Script should use environment variable value (192.168.1.1) instead of config (10.0.0.1)
 	assert_file_exist "$log_file"
@@ -94,9 +94,9 @@ EOF
 	# Expected: Script processes invalid environment variable value without crashing
 	# Importance: Environment variables can be set incorrectly; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="192.168.1.1"
-LOCATION_NYC_INTERNAL="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_NYC_INTERNAL="${TEST_PEER_IP}"
 COOLDOWN_MINUTES=15
 EOF
 
@@ -107,7 +107,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
@@ -140,14 +140,14 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
 	# Override multiple variables via environment
 	add_mock_to_path
-	LOCATION_NYC_EXTERNAL="192.168.1.1" \
-		LOCATION_NYC_INTERNAL="192.168.1.1" \
+	LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}" \
+		LOCATION_NYC_INTERNAL="${TEST_PEER_IP}" \
 		COOLDOWN_MINUTES=15 \
 		MAX_RESTARTS_PER_HOUR=3 \
 		run bash "$test_script" --fake

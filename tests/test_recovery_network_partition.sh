@@ -25,7 +25,7 @@ load fixtures/vpn_at_tier
 	# Expected: Network partition check runs first, recovery is skipped with appropriate log message
 	# Importance: Recovery actions during network partition are wasteful and could cause issues
 	# Use partition fixture to set up network partition scenario
-	setup_vpn_network_partition_fixture "192.168.1.1" "all" \
+	setup_vpn_network_partition_fixture "${TEST_PEER_IP}" "all" \
 		'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Set up VPN down scenario: update mock_ip to also return empty for xfrm state (no SA)
@@ -56,7 +56,7 @@ ADDITIONAL_EOF
 	# Set up state files for VPN failure (3 failures to trigger recovery) using location-based state functions
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "" "192.168.1.1" "failure_count" "3" || true
+	set_peer_state "" "${TEST_PEER_IP}" "failure_count" "3" || true
 
 	# Set network partition state
 	local partition_state_file="${STATE_DIR}/network_partition_state"
@@ -66,10 +66,10 @@ ADDITIONAL_EOF
 
 	# Script should handle network partition gracefully
 	assert_success
-	# Should skip recovery due to network partition
+	# Should skip VPN checks due to network partition (optimization: checks skipped before recovery)
 	assert_file_exist "$LOG_FILE"
-	# Should log that recovery is skipped
-	assert_file_contains "$LOG_FILE" "Skipping VPN recovery" || assert_file_contains "$LOG_FILE" "network is partitioned" || assert_file_contains "$LOG_FILE" "network partitioned"
+	# Should log that VPN checks are skipped (new optimization) or recovery is skipped (fallback)
+	assert_file_contains "$LOG_FILE" "Skipping VPN checks" || assert_file_contains "$LOG_FILE" "Skipping VPN recovery" || assert_file_contains "$LOG_FILE" "network is partitioned" || assert_file_contains "$LOG_FILE" "network partitioned"
 	# Should NOT attempt recovery actions
 	refute_file_contains "$LOG_FILE" "Tier 2" || refute_file_contains "$LOG_FILE" "surgical cleanup" || refute_file_contains "$LOG_FILE" "reload"
 
@@ -82,7 +82,7 @@ ADDITIONAL_EOF
 	# Expected: Recovery action detects partition mid-execution and aborts with appropriate logging
 	# Importance: Continuing recovery during partition is wasteful and could cause issues
 	# Use fixture to set up VPN down scenario first (creates state files and basic setup)
-	setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_NETWORK_PARTITION_CHECK=1' 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_NETWORK_PARTITION_CHECK=1' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Mock network partition check - starts healthy, becomes partitioned during recovery
 	# Use a file to track state across calls
@@ -97,7 +97,7 @@ if [[ "\$1" == "route" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "default" ]]; 
     partition_check_count=\$((partition_check_count + 1))
     echo "\$partition_check_count" >"$partition_check_state_file"
     if [[ \$partition_check_count -eq 1 ]]; then
-        echo "default via 192.168.1.1 dev eth0"
+        echo "default via ${TEST_PEER_IP} dev eth0"
         exit 0
     else
         exit 1  # Partition detected
@@ -130,26 +130,17 @@ EOF
 	chmod +x "$mock_dig"
 
 	# Mock ipsec - reload should not be called if partition detected
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    echo "ipsec reload should not be called during partition"
-    exit 1
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 1 0
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
 
 	# Script should handle partition detection gracefully
 	assert_success
-	# Should detect partition and skip recovery
+	# Should detect partition and skip VPN checks (optimization) or recovery
 	assert_file_exist "$LOG_FILE"
-	# Should log that recovery is skipped due to partition
-	assert_file_contains "$LOG_FILE" "Skipping VPN recovery" || assert_file_contains "$LOG_FILE" "network is partitioned" || assert_file_contains "$LOG_FILE" "network partitioned"
+	# Should log that VPN checks are skipped (new optimization) or recovery is skipped (fallback)
+	assert_file_contains "$LOG_FILE" "Skipping VPN checks" || assert_file_contains "$LOG_FILE" "Skipping VPN recovery" || assert_file_contains "$LOG_FILE" "network is partitioned" || assert_file_contains "$LOG_FILE" "network partitioned"
 	# Should NOT attempt recovery actions
 	refute_file_contains "$LOG_FILE" "ipsec reload should not be called"
 
@@ -162,7 +153,7 @@ EOF
 	# Expected: Recovery detects partition cleared and continues with recovery actions
 	# Importance: Network recovery shouldn't prevent VPN recovery once network is healthy
 	# Use fixture to set up VPN down scenario first (creates state files and basic setup)
-	setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_NETWORK_PARTITION_CHECK=1' 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_NETWORK_PARTITION_CHECK=1' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Set network partition state initially (after fixture sets up STATE_DIR)
 	local partition_state_file="${STATE_DIR}/network_partition_state"
@@ -213,7 +204,7 @@ if [[ "\$1" == "route" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "default" ]]; 
         exit 1  # Partitioned
     else
         echo "mock_ip route: returning success (count=\$route_call_count)" >> "${TEST_DIR}/mock_calls.log" 2>/dev/null || true
-        echo "default via 192.168.1.1 dev eth0"
+        echo "default via ${TEST_PEER_IP} dev eth0"
         exit 0  # Cleared
     fi
 fi
@@ -276,16 +267,7 @@ EOF
 	fi
 
 	# Mock ipsec - reload should be called once partition clears
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    echo "ipsec reload called after partition cleared"
-    exit 0
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"

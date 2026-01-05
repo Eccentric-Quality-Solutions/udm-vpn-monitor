@@ -24,7 +24,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: ipsec reload affects all VPN tunnels, which is the default surgical cleanup behavior
 	# Note: This may impact other VPN tunnels, not just the failing one.
 	# Disable xfrm recovery to force ipsec reload (xfrm recovery is tried first if enabled)
-	setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0'
 
 	# Mock ipsec - reload succeeds, track reload call
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -56,7 +56,7 @@ EOF
 	# Purpose: Test verifies that the script handles failures of surgical cleanup (ipsec reload) gracefully
 	# Expected: Script logs error about reload failure but continues execution without crashing
 	# Importance: Recovery actions can fail due to system issues; script must handle failures robustly
-	setup_vpn_at_tier_fixture 2 "192.168.1.1"
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}"
 
 	# Mock ipsec - reload fails
 	mock_ipsec_reload_restart 0 1
@@ -77,15 +77,11 @@ EOF
 	# Expected: Script handles partial success scenarios and may fall back to alternative recovery methods
 	# Importance: Partial failures can occur in real systems; script must handle them gracefully
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-ENABLE_XFRM_RECOVERY=0
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'ENABLE_XFRM_RECOVERY=0' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -96,7 +92,7 @@ EOF
 	export LOGS_DIR="${TEST_DIR}/logs"
 	source_function "get_peer_state_file_path"
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 
 	# Set failure count to Tier 2 threshold
 	echo "3" >"$failure_counter"
@@ -116,7 +112,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
         exit 0  # Return empty output (no SA found - VPN down)
     else
         # VPN healthy after recovery
-        echo "src 192.168.1.1 dst 192.168.1.1"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    lifetime current: 1000 bytes"
         exit 0
     fi
@@ -150,8 +146,8 @@ if [[ "\$1" == "status" ]]; then
     else
         # VPN healthy after recovery - return status with peer IP for verification
         # Use format that includes the peer IP clearly
-        echo "test-conn: ESTABLISHED 1 hour ago, 192.168.1.1...192.168.1.2"
-        echo "192.168.1.1"  # Also include peer IP on separate line for grep matching
+        echo "test-conn: ESTABLISHED 1 hour ago, ${TEST_PEER_IP}...${TEST_LOCAL_IP}"
+        echo "${TEST_PEER_IP}"  # Also include peer IP on separate line for grep matching
         exit 0
     fi
 fi
@@ -187,8 +183,8 @@ EOF
 	# Importance: Ensures tier escalation continues when recovery actions don't resolve the underlying issue
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
-		'LOCATION_TEST_EXTERNAL="192.168.1.1"' \
-		'LOCATION_TEST_INTERNAL="192.168.1.1"' \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -204,7 +200,7 @@ EOF
 	export LOGS_DIR="${TEST_DIR}/logs"
 	source_function "get_peer_state_file_path"
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 
 	# Set failure count to Tier 2 threshold
 	echo "3" >"$failure_counter"
@@ -244,8 +240,8 @@ EOF
 	# Importance: Ensures tier escalation continues when recovery actions fail, preventing stuck states
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
-		'LOCATION_TEST_EXTERNAL="192.168.1.1"' \
-		'LOCATION_TEST_INTERNAL="192.168.1.1"' \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -261,7 +257,7 @@ EOF
 	export LOGS_DIR="${TEST_DIR}/logs"
 	source_function "get_peer_state_file_path"
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 
 	# Set failure count to Tier 2 threshold
 	echo "3" >"$failure_counter"
@@ -306,10 +302,10 @@ EOF
 	local config_file
 	config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
-		'LOCATION_TEST_EXTERNAL="192.168.1.1"' \
-		'LOCATION_TEST_INTERNAL="192.168.1.1"' \
-		'LOCATION_TEST2_EXTERNAL="10.0.0.1"' \
-		'LOCATION_TEST2_INTERNAL="10.0.0.1"' \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST2_EXTERNAL=\"${TEST_PEER_IP2}\"" \
+		"LOCATION_TEST2_INTERNAL=\"${TEST_PEER_IP2}\"" \
 		'ENABLE_XFRM_RECOVERY=0' \
 		'ENABLE_NETWORK_PARTITION_CHECK=0' \
 		'TIER1_THRESHOLD=1' \
@@ -325,9 +321,9 @@ EOF
 	export LOGS_DIR="${TEST_DIR}/logs"
 	source_function "get_peer_state_file_path"
 	local failure_counter1
-	failure_counter1=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_counter1=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	local failure_counter2
-	failure_counter2=$(get_peer_state_file_path "TEST2" "10.0.0.1" "failure_count")
+	failure_counter2=$(get_peer_state_file_path "TEST2" "${TEST_PEER_IP2}" "failure_count")
 
 	# Set both peers to Tier 2 threshold
 	echo "3" >"$failure_counter1"
@@ -377,15 +373,11 @@ EOF
 	# Expected: Each peer's failure counter is tracked independently and recovery actions are executed per peer
 	# Importance: Independent tracking ensures each peer's recovery state is managed correctly without cross-contamination
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="192.168.1.1"
-LOCATION_TEST_INTERNAL="192.168.1.1"
-LOCATION_TEST2_EXTERNAL="10.0.0.1"
-LOCATION_TEST2_INTERNAL="10.0.0.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST2_EXTERNAL=\"${TEST_PEER_IP2}\"" \
+		"LOCATION_TEST2_INTERNAL=\"${TEST_PEER_IP2}\""
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -396,9 +388,9 @@ EOF
 	export LOGS_DIR="${TEST_DIR}/logs"
 	source_function "get_peer_state_file_path"
 	local failure_counter1
-	failure_counter1=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	failure_counter1=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	local failure_counter2
-	failure_counter2=$(get_peer_state_file_path "TEST2" "10.0.0.1" "failure_count")
+	failure_counter2=$(get_peer_state_file_path "TEST2" "${TEST_PEER_IP2}" "failure_count")
 
 	# Set both peers to Tier 2 threshold
 	echo "3" >"$failure_counter1"
@@ -444,7 +436,7 @@ EOF
 	# Purpose: Test verifies that surgical cleanup works correctly when PATH is restricted (simulating cron/systemd environment)
 	# Expected: get_command_path() finds ipsec via system directory fallback, and ipsec commands execute successfully using full path
 	# Importance: Ensures recovery works in PATH-restricted environments common in cron/systemd contexts on UDM OS
-	setup_vpn_at_tier_fixture 2 "192.168.1.1" 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0'
 
 	# Save original PATH
 	local original_path="${PATH}"
@@ -461,7 +453,7 @@ if [[ "$1" == "reload" ]]; then
 fi
 if [[ "$1" == "status" ]]; then
     echo "Connections:"
-    echo "  test-conn: ESTABLISHED 1 hour ago, 192.168.1.1...10.0.0.1"
+    echo "  test-conn: ESTABLISHED 1 hour ago, ${TEST_PEER_IP}...${TEST_PEER_IP2}"
     exit 0
 fi
 exit 1
@@ -599,9 +591,10 @@ EOF
 	# Verify that the completion message uses CHICAGO, not LOS_ANGELES
 	assert_file_exist "$log_file"
 	# The completion message should contain CHICAGO and the correct IP (172.31.23.27)
-	assert_file_contains "$log_file" "Surgical cleanup completed for CHICAGO (172.31.23.27)"
+	# Note: With ENABLE_XFRM_RECOVERY=0, this uses ipsec fallback, so message is "Recovery completed" not "Surgical cleanup completed"
+	assert_file_contains "$log_file" "Recovery completed for CHICAGO (172.31.23.27)"
 	# Verify it does NOT contain LOS_ANGELES with CHICAGO's IP (the bug we're fixing)
-	if grep -q "Surgical cleanup completed for LOS_ANGELES (172.31.23.27)" "$log_file" 2>/dev/null; then
+	if grep -q "Recovery completed for LOS_ANGELES (172.31.23.27)" "$log_file" 2>/dev/null; then
 		echo "ERROR: Found incorrect location name LOS_ANGELES with CHICAGO's IP in log"
 		return 1
 	fi

@@ -23,7 +23,7 @@ load test_helper
 	# Expected: Function detects write failure, logs error, returns current count (not incremented)
 	# Importance: Write failures can corrupt state; must be handled gracefully
 	setup_test_environment "${TEST_DIR}"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 
 	source_function "increment_failure"
 	source_function "get_peer_state"
@@ -43,7 +43,7 @@ load test_helper
 	local state_dir
 	state_dir=$(dirname "$state_file")
 	local original_perms
-	original_perms=$(stat -c "%a" "$state_dir" 2>/dev/null || echo "755")
+	original_perms=$(save_permissions_for_restore "$state_dir")
 
 	# Try to make unwritable (may fail on some systems)
 	if chmod 555 "$state_dir" 2>/dev/null; then
@@ -59,7 +59,7 @@ load test_helper
 		assert_equal "$preserved_count" 5
 
 		# Restore permissions
-		chmod "$original_perms" "$state_dir" 2>/dev/null || true
+		restore_permissions_after_test "$state_dir" "$original_perms"
 	else
 		# Can't test unwritable directory on this system - skip
 		skip "Cannot make directory unwritable on this system"
@@ -72,7 +72,7 @@ load test_helper
 	# Expected: Function detects write failure, logs error, preserves current state
 	# Importance: Reset failures can cause false failure detection; must be handled gracefully
 	setup_test_environment "${TEST_DIR}"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 
 	source_function "reset_failure_count"
 	source_function "get_peer_state"
@@ -92,7 +92,7 @@ load test_helper
 	local state_dir
 	state_dir=$(dirname "$state_file")
 	local original_perms
-	original_perms=$(stat -c "%a" "$state_dir" 2>/dev/null || echo "755")
+	original_perms=$(save_permissions_for_restore "$state_dir")
 
 	# Try to make unwritable (may fail on some systems)
 	if chmod 555 "$state_dir" 2>/dev/null; then
@@ -107,7 +107,7 @@ load test_helper
 		assert_equal "$preserved_count" 3
 
 		# Restore permissions
-		chmod "$original_perms" "$state_dir" 2>/dev/null || true
+		restore_permissions_after_test "$state_dir" "$original_perms"
 	else
 		# Can't test unwritable directory on this system - skip
 		skip "Cannot make directory unwritable on this system"
@@ -137,7 +137,7 @@ load test_helper
 	# Make directory unwritable to simulate atomic write failure
 	local state_dir="${STATE_DIR}"
 	local original_perms
-	original_perms=$(stat -c "%a" "$state_dir" 2>/dev/null || echo "755")
+	original_perms=$(save_permissions_for_restore "$state_dir")
 
 	# Try to make unwritable (may fail on some systems)
 	if chmod 555 "$state_dir" 2>/dev/null; then
@@ -147,7 +147,7 @@ load test_helper
 		# May return error or succeed with logging
 
 		# Restore permissions
-		chmod "$original_perms" "$state_dir" 2>/dev/null || true
+		restore_permissions_after_test "$state_dir" "$original_perms"
 	else
 		# Can't test unwritable directory on this system - skip
 		skip "Cannot make directory unwritable on this system"
@@ -177,7 +177,7 @@ load test_helper
 	# This prevents record_restart from writing to RESTART_COUNT_FILE (which is in STATE_DIR)
 	local state_dir="${STATE_DIR}"
 	local original_perms
-	original_perms=$(stat -c "%a" "$state_dir" 2>/dev/null || echo "755")
+	original_perms=$(save_permissions_for_restore "$state_dir")
 
 	# Try to make unwritable (may fail on some systems)
 	if chmod 555 "$state_dir" 2>/dev/null; then
@@ -192,7 +192,7 @@ load test_helper
 		assert_equal "$preserved_count" 2
 
 		# Restore permissions
-		chmod "$original_perms" "$state_dir" 2>/dev/null || true
+		restore_permissions_after_test "$state_dir" "$original_perms"
 	else
 		# Can't test unwritable directory on this system - skip
 		skip "Cannot make directory unwritable on this system"
@@ -205,7 +205,7 @@ load test_helper
 	# Expected: Function detects write failure, logs error, preserves current state
 	# Importance: State update failures can cause inconsistent state; must be handled gracefully
 	setup_test_environment "${TEST_DIR}"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 
 	source_function "set_peer_state"
 	source_function "get_peer_state"
@@ -225,7 +225,7 @@ load test_helper
 	local state_dir
 	state_dir=$(dirname "$state_file")
 	local original_perms
-	original_perms=$(stat -c "%a" "$state_dir" 2>/dev/null || echo "755")
+	original_perms=$(save_permissions_for_restore "$state_dir")
 
 	# Try to make unwritable (may fail on some systems)
 	if chmod 555 "$state_dir" 2>/dev/null; then
@@ -239,7 +239,7 @@ load test_helper
 		assert_equal "$preserved_value" 1000
 
 		# Restore permissions
-		chmod "$original_perms" "$state_dir" 2>/dev/null || true
+		restore_permissions_after_test "$state_dir" "$original_perms"
 	else
 		# Can't test unwritable directory on this system - skip
 		skip "Cannot make directory unwritable on this system"
@@ -252,7 +252,7 @@ load test_helper
 	# Expected: Functions detect disk full condition, log error, preserve current state
 	# Importance: Disk full scenarios can occur in production; must be handled gracefully
 	setup_test_environment "${TEST_DIR}"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 
 	source_function "increment_failure"
 	source_function "get_peer_state"
@@ -273,7 +273,7 @@ load test_helper
 	local state_dir
 	state_dir=$(dirname "$state_file")
 	local original_perms
-	original_perms=$(stat -c "%a" "$state_dir" 2>/dev/null || echo "755")
+	original_perms=$(save_permissions_for_restore "$state_dir")
 
 	# Try to make unwritable (simulates disk full)
 	if chmod 555 "$state_dir" 2>/dev/null; then
@@ -288,7 +288,7 @@ load test_helper
 		assert_equal "$preserved_count" 5
 
 		# Restore permissions
-		chmod "$original_perms" "$state_dir" 2>/dev/null || true
+		restore_permissions_after_test "$state_dir" "$original_perms"
 	else
 		# Can't test unwritable directory on this system - skip
 		skip "Cannot make directory unwritable on this system"
@@ -301,7 +301,7 @@ load test_helper
 	# Expected: Function detects deletion failure, logs error, returns error code
 	# Importance: Deletion failures can occur due to permissions; must be handled gracefully
 	setup_test_environment "${TEST_DIR}"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 
 	source_function "delete_peer_state"
 	source_function "set_peer_state"
@@ -321,7 +321,7 @@ load test_helper
 	local state_dir
 	state_dir=$(dirname "$state_file")
 	local original_perms
-	original_perms=$(stat -c "%a" "$state_dir" 2>/dev/null || echo "755")
+	original_perms=$(save_permissions_for_restore "$state_dir")
 
 	# Try to make directory read-only (may fail on some systems)
 	if chmod 555 "$state_dir" 2>/dev/null; then
@@ -334,7 +334,7 @@ load test_helper
 		assert_file_exist "$state_file"
 
 		# Restore permissions for cleanup
-		chmod "$original_perms" "$state_dir" 2>/dev/null || true
+		restore_permissions_after_test "$state_dir" "$original_perms"
 		# Now delete should succeed
 		run delete_peer_state "" "$peer_ip" "failure_count"
 		assert_success
@@ -350,7 +350,7 @@ load test_helper
 	# Expected: Function continues cleanup even if some deletions fail, logs warnings
 	# Importance: Cleanup failures can occur; must be handled gracefully without crashing
 	setup_test_environment "${TEST_DIR}"
-	local peer_ip="192.168.1.1"
+	local peer_ip="${TEST_PEER_IP}"
 
 	source_function "cleanup_peer_state"
 	source_function "set_peer_state"
@@ -377,7 +377,7 @@ load test_helper
 	local state_dir
 	state_dir=$(dirname "$counter_file")
 	local original_perms
-	original_perms=$(stat -c "%a" "$state_dir" 2>/dev/null || echo "755")
+	original_perms=$(save_permissions_for_restore "$state_dir")
 
 	# Try to make directory read-only (may fail on some systems)
 	if chmod 555 "$state_dir" 2>/dev/null; then
@@ -392,7 +392,7 @@ load test_helper
 		assert_file_exist "$bytes_file"
 
 		# Restore permissions for cleanup
-		chmod "$original_perms" "$state_dir" 2>/dev/null || true
+		restore_permissions_after_test "$state_dir" "$original_perms"
 		# Now cleanup should succeed completely
 		run cleanup_peer_state "" "$peer_ip"
 		assert_success
@@ -430,7 +430,7 @@ load test_helper
 	local state_dir
 	state_dir=$(dirname "$partition_state_file")
 	local original_perms
-	original_perms=$(stat -c "%a" "$state_dir" 2>/dev/null || echo "755")
+	original_perms=$(save_permissions_for_restore "$state_dir")
 
 	# Try to make unwritable (may fail on some systems)
 	if chmod 555 "$state_dir" 2>/dev/null; then
@@ -445,7 +445,7 @@ load test_helper
 		assert_equal "$preserved_state" "0"
 
 		# Restore permissions
-		chmod "$original_perms" "$state_dir" 2>/dev/null || true
+		restore_permissions_after_test "$state_dir" "$original_perms"
 	else
 		# Can't test unwritable directory on this system - skip
 		skip "Cannot make directory unwritable on this system"
@@ -479,7 +479,7 @@ load test_helper
 
 	# Make file unreadable to simulate read failure
 	local original_perms
-	original_perms=$(stat -c "%a" "$partition_state_file" 2>/dev/null || echo "644")
+	original_perms=$(save_permissions_for_restore "$partition_state_file")
 
 	# Try to make file unreadable (may fail on some systems)
 	if chmod 000 "$partition_state_file" 2>/dev/null; then
@@ -491,7 +491,7 @@ load test_helper
 		assert_equal "$state" "0"
 
 		# Restore permissions
-		chmod "$original_perms" "$partition_state_file" 2>/dev/null || true
+		restore_permissions_after_test "$partition_state_file" "$original_perms"
 		# Now read should succeed
 		state=$(get_network_partition_state)
 		assert_equal "$state" "1"

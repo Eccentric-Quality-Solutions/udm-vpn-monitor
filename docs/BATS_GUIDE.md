@@ -13,15 +13,15 @@
 
 ## Introduction
 
-BATS (Bash Automated Testing System) is a testing framework for Bash scripts that enables developers to write and run unit tests in a simple, structured manner. It provides a TAP (Test Anything Protocol) compliant testing framework specifically designed for shell scripts.
+BATS (Bash Automated Testing System) is a testing framework for Bash scripts that enables developers to write and run unit tests in a simple, structured manner. It provides a TAP (Test Anything Protocol) compliant testing framework specifically designed for shell scripts. ([Official BATS Documentation](https://bats-core.readthedocs.io/en/stable/))
 
-BATS was originally created by Sam Stephenson and has been maintained by the bats-core community. It allows testing Bash scripts in a way similar to how other languages test their code, making it easier to ensure reliability and correctness of shell scripts.
+BATS was originally created by Sam Stephenson and has been maintained by the bats-core community. It allows testing Bash scripts in a way similar to how other languages test their code, making it easier to ensure reliability and correctness of shell scripts. ([BATS Core GitHub](https://github.com/bats-core/bats-core))
 
 ## How BATS Works
 
 ### Core Concepts
 
-BATS operates on a few fundamental concepts:
+BATS operates on a few fundamental concepts. ([Writing Tests Guide](https://bats-core.readthedocs.io/en/stable/writing-tests.html))
 
 1. **Test Files**: Test files are Bash scripts with a `.bats` extension (though we use `.sh` with `#!/usr/bin/env bats` shebang)
 2. **Test Cases**: Individual tests are defined using the `@test` annotation
@@ -36,7 +36,7 @@ A typical BATS test file follows this structure:
 ```bash
 #!/usr/bin/env bats
 
-load test_helper
+load test_helper  # Load helper libraries using BATS load command
 
 setup() {
     # Setup code runs before each test
@@ -56,29 +56,31 @@ teardown() {
 
 ### How Tests Execute
 
+([Writing Tests Guide](https://bats-core.readthedocs.io/en/stable/writing-tests.html))
+
 1. **Test Discovery**: BATS scans for test files (files with `@test` annotations or `.bats` extension)
 2. **Isolation**: Each test runs in a subshell, ensuring isolation between tests
 3. **Setup**: The `setup()` function runs before each test, creating a clean environment
 4. **Execution**: The test code runs, capturing output via `run`
 5. **Teardown**: The `teardown()` function runs after each test, cleaning up resources
-6. **Reporting**: BATS reports results in TAP format, suitable for CI/CD integration
+6. **Reporting**: BATS reports results in TAP format, suitable for CI/CD integration ([TAP Format](https://testanything.org/))
 
 ### Key BATS Variables
 
-BATS provides several built-in variables:
+BATS provides several built-in variables. ([BATS Variables](https://bats-core.readthedocs.io/en/stable/writing-tests.html#special-variables))
 
 - `$BATS_TEST_DIRNAME`: Directory containing the test file
 - `$BATS_TEST_FILENAME`: Full path to the test file
 - `$BATS_TEST_NAME`: Name of the test (from `@test` annotation)
 - `$BATS_TEST_NUMBER`: Sequential number of the test in the file
 - `$BATS_TEST_TMPDIR`: Temporary directory for the test (automatically cleaned)
-- `$status`: Exit status of the last `run` command
+- `$status`: Exit status of the last `run` command ([The `run` Helper](https://bats-core.readthedocs.io/en/stable/writing-tests.html#the-run-helper))
 - `$output`: Output (stdout + stderr) of the last `run` command
 - `$lines`: Array of output lines from the last `run` command
 
 ### The `run` Command
 
-The `run` command is central to BATS testing:
+The `run` command is central to BATS testing. ([The `run` Helper](https://bats-core.readthedocs.io/en/stable/writing-tests.html#the-run-helper))
 
 ```bash
 run bash script.sh --flag
@@ -96,9 +98,9 @@ The `run` command:
 
 ### bats-support
 
-**Purpose**: Provides foundational utilities for other BATS libraries.
+**Purpose**: Provides foundational utilities for other BATS libraries. ([bats-support GitHub](https://github.com/bats-core/bats-support))
 
-**Key Features**:
+**Key Features** ([bats-support Documentation](https://github.com/bats-core/bats-support)):
 - Error reporting (`fail` function)
 - Output formatting (two-column and multi-line formats)
 - Caller detection (`batslib_is_caller`) for restricting function usage
@@ -114,9 +116,9 @@ load bats-support/load.bash
 
 ### bats-assert
 
-**Purpose**: Provides common assertion functions for testing.
+**Purpose**: Provides common assertion functions for testing. ([bats-assert GitHub](https://github.com/bats-core/bats-assert))
 
-**Key Functions**:
+**Key Functions** ([bats-assert Documentation](https://github.com/bats-core/bats-assert)):
 - `assert_success` / `assert_failure`: Check exit status
 - `assert_output` / `refute_output`: Check command output (literal, partial, regex)
 - `assert_line` / `refute_line`: Check specific output lines
@@ -136,7 +138,7 @@ load bats-assert/load.bash
 }
 ```
 
-**Advanced Features**:
+**Advanced Features** ([bats-assert Documentation](https://github.com/bats-core/bats-assert)):
 - `--partial` flag for substring matching
 - `--regexp` flag for regular expression matching
 - `--index N` for `assert_line` to check specific line numbers
@@ -150,9 +152,9 @@ load bats-assert/load.bash
 
 ### bats-file
 
-**Purpose**: Provides filesystem-related assertions and utilities.
+**Purpose**: Provides filesystem-related assertions and utilities. ([bats-file GitHub](https://github.com/bats-core/bats-file))
 
-**Key Functions**:
+**Key Functions** ([bats-file Documentation](https://github.com/bats-core/bats-file)):
 
 **File/Directory Existence**:
 - `assert_file_exist` / `assert_file_not_exist`
@@ -209,7 +211,7 @@ We have a comprehensive `test_helper.bash` file that provides:
 
 1. **Standard Helper Libraries**: Explicitly loads bats-support, bats-assert, and bats-file for consistent test patterns. This standardization ensures all tests use well-maintained, community-supported assertion functions.
 
-2. **Temporary Directory Management**: Uses `temp_make` and `temp_del` from bats-file for consistent temporary directory handling. The `setup()` function creates test directories using `temp_make --prefix 'vpn-monitor-'`, and `teardown()` cleans them up with `temp_del`. This approach respects `BATSLIB_TEMP_PRESERVE_ON_FAILURE` for debugging failed tests.
+2. **Temporary Directory Management**: Uses `temp_make` and `temp_del` from bats-file for consistent temporary directory handling. The `setup()` function creates test directories using `temp_make --prefix 'vpn-monitor-'`, and `teardown()` cleans them up with `temp_del`. This approach respects `BATSLIB_TEMP_PRESERVE_ON_FAILURE` for debugging failed tests. ([bats-file temp_make/temp_del](https://github.com/bats-core/bats-file#temp_make))
 
 3. **Mock Functions**: Utilities to create mock commands (`mock_ip_xfrm_state`, `mock_ping`, `mock_ipsec`) that simulate system behavior for isolated testing.
 
@@ -244,7 +246,7 @@ For detailed CI/CD integration information, see [CI/CD Integration](#cicd-integr
 **1. Test Structure**:
 ```bash
 #!/usr/bin/env bats
-load test_helper  # Loads bats-support, bats-assert, and bats-file
+load test_helper  # Loads bats-support, bats-assert, and bats-file (see [BATS load command](https://bats-core.readthedocs.io/en/stable/writing-tests.html#load-share-common-code))
 
 @test "test description" {
     setup_test_vpn_monitor "192.168.1.1"
@@ -300,7 +302,7 @@ We use advanced bats-assert features for precise validation:
 ```
 
 **4. Conditional Skipping with BATS Extended Syntax**:
-We use concise conditional skipping patterns in our tests:
+We use concise conditional skipping patterns in our tests: ([BATS Skipping Tests](https://bats-core.readthedocs.io/en/stable/writing-tests.html#skipping-tests))
 ```bash
 @test "test requiring specific condition" {
     [[ ! -f /path/to/required/file ]] && skip "Required file not found"
@@ -310,7 +312,7 @@ We use concise conditional skipping patterns in our tests:
 This pattern is used in `test_install.sh` and `test_uninstall.sh` for tests that require specific conditions to be met.
 
 **5. Test Tagging for High-Risk Tests**:
-Our high-risk test suite uses BATS test tags to mark critical tests. For comprehensive tagging documentation including tag categories, usage patterns, and slow test tagging, see:
+Our high-risk test suite uses BATS test tags to mark critical tests. BATS supports test tagging for filtering and categorization. ([BATS Test Tags](https://bats-core.readthedocs.io/en/stable/writing-tests.html#test-tags)) For comprehensive tagging documentation including tag categories, usage patterns, and slow test tagging, see:
 
 - **[Test Categories](#test-categories)** - Test categorization and tagging
 - **[BATS Guide - Test Tagging](#test-tagging)** - Tag format and common tags (see Quick Reference section below)
@@ -383,12 +385,15 @@ load fixtures/vpn_failing
 - `fixtures/vpn_cooldown.bash` - VPN is in cooldown period (`setup_vpn_cooldown_fixture`)
 - `fixtures/vpn_rekey.bash` - VPN has undergone a rekey (`setup_vpn_rekey_fixture`)
 - `fixtures/vpn_multiple_peers.bash` - Multiple VPN peers scenario (`setup_vpn_multiple_peers_fixture`)
+- `fixtures/vpn_mixed_peers.bash` - Multiple peers with mixed states (`setup_vpn_mixed_peers_fixture`)
 - `fixtures/vpn_recovery_disabled.bash` - Recovery actions disabled (`setup_vpn_recovery_disabled_fixture`)
 - `fixtures/vpn_at_tier.bash` - VPN at specific tier threshold (`setup_vpn_at_tier_fixture`)
 - `fixtures/vpn_idle.bash` - VPN idle tunnel scenario (`setup_vpn_idle_fixture`)
 - `fixtures/vpn_network_partition.bash` - Network partition scenario (`setup_vpn_network_partition_fixture`)
 - `fixtures/vpn_rate_limited.bash` - Rate limiting scenario (`setup_vpn_rate_limited_fixture`)
 - `fixtures/vpn_xfrm_recovery.bash` - XFRM recovery scenario (`setup_vpn_xfrm_recovery_fixture`)
+- `fixtures/vpn_bytes_zero.bash` - VPN SA exists but bytes=0 (suspect condition) (`setup_vpn_bytes_zero_fixture`)
+- `fixtures/vpn_recovery_test.bash` - Recovery test setup with pass-through mocks (`setup_vpn_recovery_test_fixture`)
 
 **Example Usage**:
 ```bash
@@ -591,39 +596,41 @@ This comprehensive approach to filesystem testing ensures better validation of f
 
 ### Official Documentation
 
-- **BATS Core**: https://bats-core.readthedocs.io/
-- **BATS GitHub**: https://github.com/bats-core/bats-core
-- **Writing Tests Guide**: https://bats-core.readthedocs.io/en/latest/writing-tests.html
+- **BATS Core Documentation**: [https://bats-core.readthedocs.io/](https://bats-core.readthedocs.io/) - Complete official documentation
+- **BATS GitHub Repository**: [https://github.com/bats-core/bats-core](https://github.com/bats-core/bats-core) - Source code and issue tracking
+- **Writing Tests Guide**: [https://bats-core.readthedocs.io/en/stable/writing-tests.html](https://bats-core.readthedocs.io/en/stable/writing-tests.html) - Comprehensive guide on writing BATS tests
+- **BATS Tutorial**: [https://bats-core.readthedocs.io/en/stable/tutorial.html](https://bats-core.readthedocs.io/en/stable/tutorial.html) - Beginner-friendly tutorial
+- **BATS Command Line Options**: [https://bats-core.readthedocs.io/en/stable/command-line.html](https://bats-core.readthedocs.io/en/stable/command-line.html) - Command-line interface documentation
 
 ### Helper Libraries
 
-- **bats-assert**: https://github.com/bats-core/bats-assert
-- **bats-file**: https://github.com/bats-core/bats-file
-- **bats-support**: https://github.com/bats-core/bats-support
+- **bats-assert**: [https://github.com/bats-core/bats-assert](https://github.com/bats-core/bats-assert) - Common assertion functions for BATS
+- **bats-file**: [https://github.com/bats-core/bats-file](https://github.com/bats-core/bats-file) - Filesystem-related assertions and utilities
+- **bats-support**: [https://github.com/bats-core/bats-support](https://github.com/bats-core/bats-support) - Foundational utilities for other BATS libraries
 
 ### CI/CD Integration
 
-- **BATS GitHub Action**: https://github.com/bats-core/bats-action
-- **TAP Format**: BATS outputs TAP format, compatible with most CI systems
+- **BATS GitHub Action**: [https://github.com/bats-core/bats-action](https://github.com/bats-core/bats-action) - Official GitHub Action for running BATS tests
+- **TAP Format**: [https://testanything.org/](https://testanything.org/) - Test Anything Protocol specification (BATS outputs TAP format, compatible with most CI systems)
 
 ### Community Resources
 
-- **BATS Core Discussions**: https://github.com/bats-core/bats-core/discussions
+- **BATS Core Discussions**: [https://github.com/bats-core/bats-core/discussions](https://github.com/bats-core/bats-core/discussions) - Community discussions and Q&A
 - **BATS Examples**: Various projects using BATS (search GitHub for "bats" test files)
 - **Best Practices**: Community wiki and discussions
 
 ### Learning Resources
 
-1. **Official Documentation**: Comprehensive guides on bats-core.readthedocs.io
+1. **Official Documentation**: [Comprehensive guides on bats-core.readthedocs.io](https://bats-core.readthedocs.io/)
 2. **Example Projects**: Search GitHub for projects using BATS
-3. **Community Forums**: GitHub discussions and issues
+3. **Community Forums**: [GitHub discussions and issues](https://github.com/bats-core/bats-core/discussions)
 4. **Blog Posts**: Various blog posts about BATS best practices
 
 ## Advanced Features
 
 ### 1. Test Filtering
 
-BATS provides several ways to filter which tests run:
+BATS provides several ways to filter which tests run. ([BATS Command Line Options](https://bats-core.readthedocs.io/en/stable/command-line.html))
 
 **Filter by Test Name Pattern** (most common):
 ```bash
@@ -676,9 +683,11 @@ bats tests/ --negative-filter "integration|slow"
 bats tests/test_analyze_logs.sh -f "calculates"
 ```
 
-**Note**: The `-f` flag uses regex pattern matching, so you can use regex patterns for flexible filtering. When running specific test cases, use `-f` with a pattern that matches the test name from the `@test` annotation.
+**Note**: The `-f` flag uses regex pattern matching, so you can use regex patterns for flexible filtering. When running specific test cases, use `-f` with a pattern that matches the test name from the `@test` annotation. ([BATS Filter by Name](https://bats-core.readthedocs.io/en/stable/command-line.html#filter-by-name))
 
 ### 2. Output Formats
+
+BATS supports multiple output formats: ([BATS Formatters](https://bats-core.readthedocs.io/en/stable/command-line.html#formatters))
 
 ```bash
 # TAP format (default)
@@ -705,13 +714,15 @@ TEST_TIMEOUT=120 ./tests/run_tests.sh  # 120 seconds (default)
 }
 ```
 
-**BATS Built-in**:
+**BATS Built-in**: ([BATS Timing](https://bats-core.readthedocs.io/en/stable/command-line.html#timing))
 ```bash
 # Show timing info
 bats --timing tests/
 ```
 
 ### 4. Debugging Tests
+
+BATS provides several debugging options: ([BATS Debugging](https://bats-core.readthedocs.io/en/stable/command-line.html))
 
 ```bash
 # Verbose output
@@ -723,6 +734,8 @@ bats --list-tests tests/
 # Preserve temp directories on failure
 BATSLIB_TEMP_PRESERVE_ON_FAILURE=1 bats tests/
 ```
+
+The `BATSLIB_TEMP_PRESERVE_ON_FAILURE` environment variable is documented in [bats-file](https://github.com/bats-core/bats-file#batslib-temp-preserve-on-failure).
 
 ### 5. Slow Test Tagging
 
@@ -853,16 +866,16 @@ Our test suite leverages BATS best practices and includes:
 - **Standardized helper libraries** (bats-support, bats-assert, bats-file) for consistent test patterns
 - **Advanced bats-assert features** - 112 instances using `assert_output --regexp`, `assert_line`, `assert_equal`, and `assert_regex` for precise assertions and better error messages
 - **Comprehensive bats-file assertions** - Extensive use of `assert_file_permission`, `assert_file_empty`, `assert_file_not_empty`, and `assert_symlink_to` for thorough filesystem testing
-- **Temporary directory management** using `temp_make` and `temp_del` from bats-file
+- **Temporary directory management** using `temp_make` and `temp_del` from bats-file ([bats-file temp_make/temp_del](https://github.com/bats-core/bats-file#temp_make))
 - **Parallel execution support** via GNU parallel or rush (disabled by default for output streaming)
 - **Per-test timeout handling** (2 minutes default) to prevent hanging tests
 - **Output streaming** with unbuffered output for real-time test results
 - **Failed test rerun** capability for quick iteration
 - **CI/CD integration** via GitHub Actions for automatic test execution
 - **Test fixtures** for reusable VPN scenario setup with support for loading multiple fixtures
-- **BATS Extended Syntax** for concise conditional skipping
+- **BATS Extended Syntax** for concise conditional skipping ([BATS Skipping Tests](https://bats-core.readthedocs.io/en/stable/writing-tests.html#skipping-tests))
 - **Modular test organization** with high-risk tests split into focused files for better maintainability
-- **Test tagging** using multi-tag patterns (`bats test_tags=category:high-risk,priority:high,slow`) for test categorization and filtering
+- **Test tagging** using multi-tag patterns (`bats test_tags=category:high-risk,priority:high,slow`) for test categorization and filtering ([BATS Test Tags](https://bats-core.readthedocs.io/en/stable/writing-tests.html#test-tags))
 - **Slow test auto-tagging** via `tag_slow_tests.sh` script that automatically identifies and tags slow tests
 - **Direct library function testing** by sourcing library files to test individual functions in isolation
 - **Advanced mock patterns** for network partition detection, DNS resolution, and interface state testing
@@ -1096,9 +1109,13 @@ bats tests/ -f "VPN status"
 
 **Mock Functions**:
 - `mock_ip_xfrm_state` - Mock ip xfrm state
+- `mock_ip_xfrm_with_incrementing_bytes` - Mock ip xfrm state with incrementing byte counters
+- `mock_ip_xfrm_empty` - Mock ip xfrm state returning empty (VPN down)
 - `mock_ping` - Mock ping command
 - `mock_ipsec` - Mock ipsec command (basic)
 - `mock_ipsec_reload_restart` - Mock ipsec with configurable reload/restart exit codes (preferred for simple scenarios)
+- `mock_check_ipsec_phase2` - Mock check_ipsec_phase2 command (simple success/failure or file-based)
+- `mock_check_ipsec_phase2_state_transition` - Mock check_ipsec_phase2 with state transitions (e.g., "0,1,0" or "1,0")
 - `mock_ip_route` - Mock ip route
 - `mock_dig` - Mock DNS resolution
 - `add_mock_to_path` - Add mocks to PATH
@@ -1150,7 +1167,7 @@ assert_file_contains "$LOG_FILE" "Tier"
 
 ### Troubleshooting
 
-**Preserve Temp Directories on Failure**:
+**Preserve Temp Directories on Failure**: ([bats-file BATSLIB_TEMP_PRESERVE_ON_FAILURE](https://github.com/bats-core/bats-file#batslib-temp-preserve-on-failure))
 ```bash
 BATSLIB_TEMP_PRESERVE_ON_FAILURE=1 bats tests/
 ```
@@ -1215,11 +1232,15 @@ If tests hang indefinitely, check for unreadable file issues:
 
 **Common Pitfalls**:
 
-1. **XFRM Mock Format Requirements**: When mocking `ip xfrm state` output, you must include the complete xfrm format including the `lifetime current:` line with byte counters. The `extract_byte_counter()` function requires this format to extract bytes. Use the `mock_ip_xfrm_state` helper function instead of manually creating mocks to ensure proper format:
+1. **XFRM Mock Format Requirements**: When mocking `ip xfrm state` output, you must include the complete xfrm format including the `lifetime current:` line with byte counters. The `extract_byte_counter()` function requires this format to extract bytes. Use the `mock_ip_xfrm_state` helper function instead of manually creating mocks to ensure proper format. The helper handles both `ip xfrm state` and `ip -s xfrm state` formats:
    ```bash
-   # ✅ Correct: Use helper function
+   # ✅ Correct: Use helper function (creates mock at ${TEST_DIR}/ip by default)
    mock_ip_xfrm_state "203.0.113.1" "3000" "0x12345678" >/dev/null
-   mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+   add_mock_to_path
+   
+   # ✅ Also correct: Custom path for special cases
+   mock_ip_xfrm_state "203.0.113.1" "3000" "0x12345678" "" "${TEST_DIR}/mock_ip" >/dev/null
+   add_mock_to_path
    
    # ❌ Incorrect: Missing lifetime line - byte extraction will fail
    cat >"$mock_ip" <<'EOF'
@@ -1235,7 +1256,7 @@ If tests hang indefinitely, check for unreadable file issues:
    ```bash
    # Mock xfrm shows 3000 bytes
    mock_ip_xfrm_state "203.0.113.1" "3000" >/dev/null
-   mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+   add_mock_to_path
    
    # Mock last_bytes file shows 2000 (lower value = increasing traffic)
    local mock_cat="${TEST_DIR}/cat"
@@ -1403,7 +1424,7 @@ This section documents the complete requirements for running the test suite. The
 
 #### bats-core
 
-**Version**: 1.x or higher
+**Version**: 1.x or higher ([BATS Installation](https://bats-core.readthedocs.io/en/stable/installation.html))
 
 **Installation:**
 
@@ -1423,7 +1444,7 @@ sudo apt-get install -y bats
 sudo dnf install -y bats
 ```
 
-**From Source:**
+**From Source**: ([BATS Installation from Source](https://github.com/bats-core/bats-core#installation))
 ```bash
 git clone https://github.com/bats-core/bats-core.git
 cd bats-core
@@ -1435,7 +1456,7 @@ sudo ./install.sh /usr/local
 bats --version
 ```
 
-**Note**: The test suite requires bats-core 1.x. Older versions (0.x) are not supported.
+**Note**: The test suite requires bats-core 1.x. Older versions (0.x) are not supported. ([BATS Version Requirements](https://bats-core.readthedocs.io/en/stable/installation.html))
 
 ### Optional Tools (Recommended)
 
@@ -1879,7 +1900,7 @@ bats tests/test_install.sh -t "install.sh creates installation directory"
 
 ### Run Tests Starting from a Specific Test Number
 
-**Note**: BATS does not natively support starting from a specific test number. After reviewing the [official BATS documentation](https://bats-core.readthedocs.io/en/stable/) and community discussions, there is no built-in feature for this. However, there are several practical workarounds:
+**Note**: BATS does not natively support starting from a specific test number. After reviewing the [official BATS documentation](https://bats-core.readthedocs.io/en/stable/command-line.html) and community discussions, there is no built-in feature for this. However, there are several practical workarounds:
 
 #### Method 1: Run Specific Test Files (Recommended)
 
@@ -1917,7 +1938,7 @@ bats tests/test_*.sh -f "test.*(14[7-9]|1[5-9][0-9]|[2-9][0-9][0-9])"
 
 #### Method 3: Use Test Tags (Requires Pre-tagging)
 
-BATS supports tagging tests (version 1.8.0+). You can tag tests and filter by tags:
+BATS supports tagging tests (version 1.8.0+). You can tag tests and filter by tags: ([BATS Test Tags](https://bats-core.readthedocs.io/en/stable/writing-tests.html#test-tags))
 
 ```bash
 # In your test file, add tags:
@@ -1965,6 +1986,8 @@ bats --verbose tests/test_*.sh
 ```
 
 ### Tap Format (for CI)
+
+BATS outputs TAP (Test Anything Protocol) format by default, which is compatible with most CI systems: ([TAP Format](https://testanything.org/))
 
 ```bash
 bats --tap tests/test_*.sh
