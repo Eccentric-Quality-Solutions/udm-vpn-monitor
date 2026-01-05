@@ -483,11 +483,19 @@ parse_assignment() {
 #
 # Returns:
 #   0: Configuration parsed successfully
-#   1: Configuration file contains invalid or dangerous content (exits script)
+#   1: Configuration file contains invalid or dangerous content
+#
+# Behavior:
+#   - Normal mode: Fails fast - exits script immediately on first error via handle_config_error()
+#     This ensures invalid configuration is caught early and prevents partial configuration state.
+#   - Fake mode (testing): Partial loading - continues processing all lines, collects errors,
+#     and returns 1 at the end if any errors occurred. This allows tests to validate multiple
+#     error conditions in a single config file.
+#   - Valid lines are processed and variables are set even if other lines have errors (in fake mode)
 #
 # Side effects:
 #   - Sets global configuration variables via safe indirect assignment (declare -g + printf -v)
-#   - Calls die() if invalid content is detected (exits script)
+#   - Calls die() if invalid content is detected in normal mode (exits script)
 #   - Uses local associative array for parsing (no global variable pollution)
 #
 # Security:
@@ -1402,6 +1410,68 @@ validate_config_rule() {
 	return 0
 }
 
+# Split rules string into array
+#
+# Splits a rules string into an array of individual rules, handling multiple formats:
+# - New format: Rules separated by ||| (e.g., "min:1|||max:10")
+# - Old format: Rules separated by comma (e.g., "min:1,max:10")
+# - Special case: Single values: rule (e.g., "values:0,1") - comma is part of value, don't split
+#
+# Arguments:
+#   $1: Rules string to split (may be empty)
+#   $2: Name of array variable to store results (passed by reference)
+#
+# Returns:
+#   0: Always succeeds (empty rules string results in empty array)
+#
+# Side effects:
+#   - Sets array elements via nameref
+#
+# Examples:
+#   local -a rules_array
+#   split_rules_string "min:1|||max:10" "rules_array"
+#   # rules_array contains: ("min:1" "max:10")
+#
+#   split_rules_string "values:0,1" "rules_array"
+#   # rules_array contains: ("values:0,1") - not split because comma is part of value
+#
+#   split_rules_string "min:1,max:10" "rules_array"
+#   # rules_array contains: ("min:1" "max:10") - backward compatibility
+#
+# Note:
+#   This function centralizes rule splitting logic to avoid duplication.
+#   The ||| separator is used to avoid conflicts with commas in values: rules.
+split_rules_string() {
+	local rules="$1"
+	local -n rule_array_ref="$2"
+
+	# Clear the array
+	rule_array_ref=()
+
+	# Handle empty rules string
+	if [[ -z "$rules" ]]; then
+		return 0
+	fi
+
+	# Split rules by ||| separator (used to avoid conflicts with commas in values: rules)
+	# Fallback to comma for backward compatibility with old format
+	# Special case: if rules is a single values: rule (e.g., "values:0,1"), don't split it
+	if [[ "$rules" == *"|||"* ]]; then
+		# Use awk to split by ||| since IFS doesn't support multi-character separators
+		while IFS= read -r rule; do
+			[[ -n "$rule" ]] && rule_array_ref+=("$rule")
+		done < <(echo "$rules" | awk -F'\\|\\|\\|' '{for(i=1;i<=NF;i++) print $i}')
+	elif [[ "$rules" =~ ^values: ]]; then
+		# Single values: rule - don't split (comma is part of the rule value)
+		rule_array_ref=("$rules")
+	else
+		# Old format: comma-separated (for backward compatibility)
+		IFS=',' read -ra rule_array_ref <<<"$rules"
+	fi
+
+	return 0
+}
+
 # Validate all configuration rules
 #
 # Validates a configuration variable against all rules in the schema.
@@ -1433,7 +1503,7 @@ validate_config_rule() {
 #
 # Note:
 #   Empty rules string is valid (no rules to validate)
-#   Uses IFS=',' to split rules string into array
+#   Uses split_rules_string() helper function to split rules string into array
 validate_config_rules() {
 	local var_name="$1"
 	local var_value="$2"
@@ -1447,22 +1517,9 @@ validate_config_rules() {
 		return 0
 	fi
 
-	# Split rules by ||| separator (used to avoid conflicts with commas in values: rules)
-	# Fallback to comma for backward compatibility with old format
-	# Special case: if rules is a single values: rule (e.g., "values:0,1"), don't split it
-	local rule_array=()
-	if [[ "$rules" == *"|||"* ]]; then
-		# Use awk to split by ||| since IFS doesn't support multi-character separators
-		while IFS= read -r rule; do
-			[[ -n "$rule" ]] && rule_array+=("$rule")
-		done < <(echo "$rules" | awk -F'\\|\\|\\|' '{for(i=1;i<=NF;i++) print $i}')
-	elif [[ "$rules" =~ ^values: ]]; then
-		# Single values: rule - don't split (comma is part of the rule value)
-		rule_array=("$rules")
-	else
-		# Old format: comma-separated (for backward compatibility)
-		IFS=',' read -ra rule_array <<<"$rules"
-	fi
+	# Split rules string into array using helper function
+	local -a rule_array
+	split_rules_string "$rules" "rule_array"
 
 	for rule in "${rule_array[@]}"; do
 		if ! var_value=$(validate_config_rule "$var_name" "$var_value" "$var_type" "$required" "$default_val" "$rule"); then
@@ -1611,22 +1668,9 @@ validate_config_var() {
 	# SECTION 5: Validate rules
 	# ============================================================
 	if [[ -n "$rules" ]]; then
-		# Split rules by ||| separator (used to avoid conflicts with commas in values: rules)
-		# Fallback to comma for backward compatibility with old format
-		# Special case: if rules is a single values: rule (e.g., "values:0,1"), don't split it
-		local rule_array=()
-		if [[ "$rules" == *"|||"* ]]; then
-			# Use awk to split by ||| since IFS doesn't support multi-character separators
-			while IFS= read -r rule; do
-				[[ -n "$rule" ]] && rule_array+=("$rule")
-			done < <(echo "$rules" | awk -F'\\|\\|\\|' '{for(i=1;i<=NF;i++) print $i}')
-		elif [[ "$rules" =~ ^values: ]]; then
-			# Single values: rule - don't split (comma is part of the rule value)
-			rule_array=("$rules")
-		else
-			# Old format: comma-separated (for backward compatibility)
-			IFS=',' read -ra rule_array <<<"$rules"
-		fi
+		# Split rules string into array using helper function
+		local -a rule_array
+		split_rules_string "$rules" "rule_array"
 
 		for rule in "${rule_array[@]}"; do
 			if ! var_value=$(validate_config_rule "$var_name" "$var_value" "$var_type" "$required" "$default_val" "$rule"); then

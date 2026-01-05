@@ -83,6 +83,7 @@ source "${LIB_DIR}/detection.sh" 2>/dev/null || {
 #
 # Arguments:
 #   $1: Peer IP address to count SAs for
+#   $2: Location name (optional, for diagnostic logging)
 #
 # Returns:
 #   0: Successfully counted SAs (count printed to stdout)
@@ -100,8 +101,10 @@ source "${LIB_DIR}/detection.sh" 2>/dev/null || {
 # Note:
 #   Requires 'ip' command to be available
 #   Uses fixed-string matching to prevent regex pattern injection
+#   When location_name is provided, logs detailed diagnostic information about SAs found
 count_sas_for_peer() {
 	local peer_ip="$1"
+	local location_name="${2:-}"
 
 	if ! check_command_or_warn "ip" "Counting SAs for peer"; then
 		return 1
@@ -115,11 +118,63 @@ count_sas_for_peer() {
 		return 1
 	fi
 
-	# Count SA blocks by matching lines that start with "src" and contain "dst $peer_ip"
+	# Extract all SA header lines (src ... dst ...) for this peer
+	# This helps diagnose bidirectional SA state
+	# Find both forward SAs (dst=$peer_ip) and reverse SAs (src=$peer_ip)
+	# Forward SAs: "src <local_ip> dst $peer_ip"
+	# Reverse SAs: "src $peer_ip dst <local_ip>"
+	local forward_headers
+	local reverse_headers
+	forward_headers=$(echo "$xfrm_output" | grep -F "dst $peer_ip" | grep -E "^[[:space:]]*src" || true)
+	reverse_headers=$(echo "$xfrm_output" | grep -E "^[[:space:]]*src ${peer_ip}[[:space:]]" || true)
+
+	# Combine headers, deduplicating by SA header line (src ... dst ...)
+	# Use awk to deduplicate since the same SA might appear in both if grep -A includes context
+	local sa_headers
+	if [[ -n "$forward_headers" ]] && [[ -n "$reverse_headers" ]]; then
+		sa_headers=$(printf "%s\n%s" "$forward_headers" "$reverse_headers" | awk '!seen[$0]++')
+	elif [[ -n "$forward_headers" ]]; then
+		sa_headers="$forward_headers"
+	elif [[ -n "$reverse_headers" ]]; then
+		sa_headers="$reverse_headers"
+	fi
+
+	# Count SA blocks - sa_headers already contains only lines starting with "src"
 	# Each SA block starts with "src <ip> dst <ip>" on a line
-	# Use fixed-string matching (-F) for safety, then filter for lines starting with "src"
+	# Count lines directly since we've already filtered for lines starting with "src"
 	local sa_count
-	sa_count=$(echo "$xfrm_output" | grep -F "dst $peer_ip" | grep -cE "^[[:space:]]*src" || echo "0")
+	if [[ -z "$sa_headers" ]]; then
+		sa_count=0
+	else
+		# Count non-empty lines (sa_headers already filtered for "src" lines)
+		sa_count=$(echo "$sa_headers" | grep -c . || echo "0")
+	fi
+
+	# Enhanced diagnostic logging: Log detailed SA information when location_name provided
+	# This helps diagnose SA count mismatches and asymmetric SA state
+	if [[ -n "$location_name" ]] && [[ -n "$sa_headers" ]]; then
+		local sa_details=""
+		local sa_idx=0
+		while IFS= read -r header_line || [[ -n "$header_line" ]]; do
+			# Extract src and dst from header line (format: "src <ip> dst <ip>")
+			if [[ "$header_line" =~ ^[[:space:]]*src[[:space:]]+([0-9.]+|[0-9a-fA-F:]+)[[:space:]]+dst[[:space:]]+([0-9.]+|[0-9a-fA-F:]+) ]]; then
+				local sa_src="${BASH_REMATCH[1]}"
+				local sa_dst="${BASH_REMATCH[2]}"
+				sa_idx=$((sa_idx + 1))
+				# Determine direction for diagnostic clarity
+				local direction="unknown"
+				if [[ "$sa_src" == "$peer_ip" ]]; then
+					direction="reverse (peer→local)"
+				elif [[ "$sa_dst" == "$peer_ip" ]]; then
+					direction="forward (local→peer)"
+				fi
+				sa_details="${sa_details}SA${sa_idx}: src=$sa_src dst=$sa_dst [$direction]; "
+			fi
+		done <<<"$sa_headers"
+		if [[ -n "$sa_details" ]]; then
+			log_message "INFO" "$location_name" "xfrm recovery: SA count diagnostic for $location_name ($peer_ip): count=$sa_count, details: ${sa_details% }"
+		fi
+	fi
 
 	# Validate count is numeric
 	if [[ ! "$sa_count" =~ ^[0-9]+$ ]]; then
@@ -628,7 +683,9 @@ attempt_xfrm_recovery() {
 	#      - Extract spi if present (may be on same line as proto or separate line)
 	#      - Extract mark if present (format: "mark 0x<value>/0x<mask>")
 	#      - Note: Later spi match overwrites earlier one (handles both formats)
+	local line_count=0
 	while IFS= read -r line || [[ -n "$line" ]]; do
+		line_count=$((line_count + 1))
 		# Skip empty lines (don't affect parsing state)
 		[[ -z "$line" ]] && continue
 
@@ -656,9 +713,10 @@ attempt_xfrm_recovery() {
 			# Complete SA requires: src, dst, proto, and spi all present
 			# This handles the case where we've finished parsing one SA and found the next
 			if [[ $in_sa_block -eq 1 ]] && [[ -n "$current_src" ]] && [[ -n "$current_dst" ]] && [[ -n "$current_proto" ]] && [[ -n "$current_spi" ]]; then
-				# CRITICAL: Verify that the SA's destination matches the target peer IP
+				# CRITICAL: Verify that the SA matches the target peer IP (forward SA: dst=$peer_ip, reverse SA: src=$peer_ip)
 				# This prevents deleting SAs for wrong locations when grep -A includes subsequent SA blocks
-				if [[ "$current_dst" == "$peer_ip" ]]; then
+				# Accept both forward SAs (dst=$peer_ip) and reverse SAs (src=$peer_ip) to handle asymmetric SA state
+				if [[ "$current_dst" == "$peer_ip" ]] || [[ "$current_src" == "$peer_ip" ]]; then
 					# Validate selectors before adding to list
 					# Proto must be "esp" or "ah" (case-insensitive, already normalized)
 					# SPI must be hex (0x...) or decimal format
@@ -674,15 +732,16 @@ attempt_xfrm_recovery() {
 						((parse_errors++))
 					fi
 				else
-					# SA destination doesn't match target peer IP - skip this SA
+					# SA doesn't match target peer IP (neither dst nor src matches) - skip this SA
 					# This can happen when grep -A includes subsequent SA blocks from other locations
-					[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Skipping SA with dst=$current_dst (does not match target peer_ip=$peer_ip)"
+					[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Skipping SA with src=$current_src dst=$current_dst (does not match target peer_ip=$peer_ip)"
 				fi
 			fi
 
-			# CRITICAL: Only start parsing this SA block if destination matches target peer IP
+			# CRITICAL: Only start parsing this SA block if it matches target peer IP (forward SA: dst=$peer_ip, reverse SA: src=$peer_ip)
 			# This prevents parsing SAs for wrong locations when grep -A includes subsequent SA blocks
-			if [[ "$extracted_dst" == "$peer_ip" ]]; then
+			# Accept both forward SAs (dst=$peer_ip) and reverse SAs (src=$peer_ip) to handle asymmetric SA state
+			if [[ "$extracted_dst" == "$peer_ip" ]] || [[ "$extracted_src" == "$peer_ip" ]]; then
 				# Start new SA block: extract src and dst from regex match
 				current_src="$extracted_src"
 				current_dst="$extracted_dst"
@@ -691,7 +750,7 @@ attempt_xfrm_recovery() {
 				current_mark=""  # Will be extracted from continuation lines (optional)
 				in_sa_block=1    # Mark that we're now parsing an SA block
 			else
-				# Destination doesn't match target peer IP - skip this SA block entirely
+				# SA doesn't match target peer IP (neither dst nor src matches) - skip this SA block entirely
 				# Reset parsing state to skip all continuation lines for this SA
 				in_sa_block=0
 				current_src=""
@@ -699,7 +758,7 @@ attempt_xfrm_recovery() {
 				current_proto=""
 				current_spi=""
 				current_mark=""
-				[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Skipping SA block with dst=$extracted_dst (does not match target peer_ip=$peer_ip)"
+				[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Skipping SA block with src=$extracted_src dst=$extracted_dst (does not match target peer_ip=$peer_ip)"
 			fi
 
 		# State: Continuation line (within an SA block)
@@ -739,9 +798,10 @@ attempt_xfrm_recovery() {
 	# This handles the case where the last SA in the output doesn't have a following "src ... dst ..." line
 	# to trigger the save logic in the main loop
 	if [[ $in_sa_block -eq 1 ]] && [[ -n "$current_src" ]] && [[ -n "$current_dst" ]] && [[ -n "$current_proto" ]] && [[ -n "$current_spi" ]]; then
-		# CRITICAL: Verify that the SA's destination matches the target peer IP
+		# CRITICAL: Verify that the SA matches the target peer IP (forward SA: dst=$peer_ip, reverse SA: src=$peer_ip)
 		# This prevents deleting SAs for wrong locations when grep -A includes subsequent SA blocks
-		if [[ "$current_dst" == "$peer_ip" ]]; then
+		# Accept both forward SAs (dst=$peer_ip) and reverse SAs (src=$peer_ip) to handle asymmetric SA state
+		if [[ "$current_dst" == "$peer_ip" ]] || [[ "$current_src" == "$peer_ip" ]]; then
 			# Validate selectors before adding to list (same validation as in main loop)
 			if [[ "$current_proto" =~ ^(esp|ah)$ ]] && [[ "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
 				sa_list+=("$current_src|$current_dst|$current_proto|$current_spi|${current_mark:-}")
@@ -751,9 +811,9 @@ attempt_xfrm_recovery() {
 				((parse_errors++))
 			fi
 		else
-			# SA destination doesn't match target peer IP - skip this SA
+			# SA doesn't match target peer IP (neither dst nor src matches) - skip this SA
 			# This can happen when grep -A includes subsequent SA blocks from other locations
-			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Skipping final SA with dst=$current_dst (does not match target peer_ip=$peer_ip)"
+			[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Skipping final SA with src=$current_src dst=$current_dst (does not match target peer_ip=$peer_ip)"
 		fi
 	fi
 
@@ -767,20 +827,36 @@ attempt_xfrm_recovery() {
 
 	# Enhanced diagnostics: Log summary of all SAs found before attempting deletion
 	# This provides visibility into what we're about to delete and helps identify parsing issues
+	# Includes direction information to diagnose asymmetric SA state (only one direction present)
 	log_message "INFO" "$location_name" "xfrm recovery: Found ${#sa_list[@]} SA(s) to delete for $location_name ($peer_ip)"
 	if [[ ${#sa_list[@]} -gt 0 ]]; then
 		local sa_summary=""
 		local sa_idx=0
+		local forward_count=0
+		local reverse_count=0
 		for sa_entry in "${sa_list[@]}"; do
 			IFS='|' read -r sa_src sa_dst sa_proto sa_spi sa_mark <<<"$sa_entry"
 			sa_idx=$((sa_idx + 1))
+			# Determine direction for diagnostic clarity (helps identify asymmetric SA state)
+			local direction="unknown"
+			if [[ "$sa_src" == "$peer_ip" ]]; then
+				direction="reverse (peer→local)"
+				reverse_count=$((reverse_count + 1))
+			elif [[ "$sa_dst" == "$peer_ip" ]]; then
+				direction="forward (local→peer)"
+				forward_count=$((forward_count + 1))
+			fi
 			if [[ -n "$sa_mark" ]]; then
-				sa_summary="${sa_summary}SA${sa_idx}: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=$sa_mark; "
+				sa_summary="${sa_summary}SA${sa_idx}: src=$sa_src dst=$sa_dst [$direction] proto=$sa_proto spi=$sa_spi mark=$sa_mark; "
 			else
-				sa_summary="${sa_summary}SA${sa_idx}: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi (no mark); "
+				sa_summary="${sa_summary}SA${sa_idx}: src=$sa_src dst=$sa_dst [$direction] proto=$sa_proto spi=$sa_spi (no mark); "
 			fi
 		done
 		log_message "INFO" "$location_name" "xfrm recovery: SA summary: ${sa_summary% }"
+		# Log bidirectional state diagnostic (helps identify asymmetric SA state)
+		if [[ $forward_count -eq 0 ]] || [[ $reverse_count -eq 0 ]]; then
+			log_message "INFO" "$location_name" "xfrm recovery: SA bidirectional state diagnostic for $location_name ($peer_ip): forward=$forward_count, reverse=$reverse_count (expected: 1 each for bidirectional tunnel)"
+		fi
 	fi
 
 	# Delete each parsed SA
@@ -1217,6 +1293,10 @@ attempt_xfrm_recovery() {
 		local verify_attempt=0
 		local elapsed_time
 		local sa_count=0
+		local initial_sa_count=0
+		local initial_sa_count_set=0
+		local sa_count_checks_after_reestablish=0
+		local max_sa_count_checks=3
 		local byte_counter_status="unknown"
 		local initial_byte_counter=""
 		local initial_byte_counter_set=0
@@ -1250,10 +1330,32 @@ attempt_xfrm_recovery() {
 
 					# Count SAs for logging (may have multiple SAs for one peer)
 					# This provides visibility into how many SAs were re-established
-					if sa_count=$(count_sas_for_peer "$peer_ip" 2>/dev/null); then
-						log_message "INFO" "$location_name" "xfrm recovery: SA re-established for $location_name ($peer_ip) after ${elapsed_time}s (attempt $verify_attempt, SA count: $sa_count)"
+					# Pass location_name for enhanced diagnostic logging
+					if sa_count=$(count_sas_for_peer "$peer_ip" "$location_name" 2>/dev/null); then
+						# Track initial SA count when first re-established (helps detect timing issues)
+						if [[ $initial_sa_count_set -eq 0 ]]; then
+							initial_sa_count=$sa_count
+							initial_sa_count_set=1
+							log_message "INFO" "$location_name" "xfrm recovery: SA re-established for $location_name ($peer_ip) after ${elapsed_time}s (attempt $verify_attempt, SA count: $sa_count, deleted: $deleted_count)"
+							# Check if SA count mismatch (deleted more than re-established)
+							if [[ $deleted_count -gt 0 ]] && [[ $sa_count -lt $deleted_count ]]; then
+								log_message "INFO" "$location_name" "xfrm recovery: SA count mismatch detected for $location_name ($peer_ip): deleted=$deleted_count, re-established=$sa_count (will continue checking for additional SAs)"
+							fi
+						else
+							# SA already re-established - check if count has increased (second SA appeared)
+							if [[ $sa_count -gt $initial_sa_count ]]; then
+								log_message "INFO" "$location_name" "xfrm recovery: SA count increased for $location_name ($peer_ip): initial=$initial_sa_count, current=$sa_count (second SA appeared after ${elapsed_time}s)"
+								initial_sa_count=$sa_count
+							elif [[ $sa_count_checks_after_reestablish -lt $max_sa_count_checks ]]; then
+								# Continue checking SA count for a few more iterations to catch second SA
+								sa_count_checks_after_reestablish=$((sa_count_checks_after_reestablish + 1))
+								[[ "${DEBUG:-0}" -eq 1 ]] && log_message "DEBUG" "$location_name" "xfrm recovery: Checking SA count again for $location_name ($peer_ip) (check $sa_count_checks_after_reestablish/$max_sa_count_checks, current=$sa_count, deleted=$deleted_count)"
+							fi
+						fi
 					else
-						log_message "INFO" "$location_name" "xfrm recovery: SA re-established for $location_name ($peer_ip) after ${elapsed_time}s (attempt $verify_attempt)"
+						if [[ $initial_sa_count_set -eq 0 ]]; then
+							log_message "INFO" "$location_name" "xfrm recovery: SA re-established for $location_name ($peer_ip) after ${elapsed_time}s (attempt $verify_attempt, SA count unavailable)"
+						fi
 					fi
 
 					# Capture initial byte counter value when SA is first re-established
@@ -1358,6 +1460,18 @@ attempt_xfrm_recovery() {
 				current_interval=$max_interval # Cap at maximum to prevent excessive delays
 			fi
 		done
+
+		# Final SA count check: Log warning if we deleted multiple SAs but only one re-established
+		# This helps diagnose asymmetric SA state or timing issues where second SA takes longer
+		if [[ $sa_reestablished -eq 1 ]] && [[ $deleted_count -gt 1 ]] && [[ $initial_sa_count_set -eq 1 ]]; then
+			# Get final SA count for comparison
+			local final_sa_count
+			if final_sa_count=$(count_sas_for_peer "$peer_ip" "$location_name" 2>/dev/null); then
+				if [[ $final_sa_count -lt $deleted_count ]]; then
+					log_message "INFO" "$location_name" "xfrm recovery: SA count mismatch persists for $location_name ($peer_ip): deleted=$deleted_count, final_count=$final_sa_count (may indicate asymmetric SA state or incomplete re-establishment)"
+				fi
+			fi
+		fi
 
 		if [[ $sa_reestablished -eq 0 ]]; then
 			current_time=$(get_unix_timestamp)
@@ -2246,7 +2360,8 @@ format_peer_display() {
 #   $3: Internal peer IP addresses (space-separated string, can be empty)
 #
 # Returns:
-#   0: VPN is healthy, or recovery was attempted (Tier 2 or Tier 3) even if recovery failed
+#   0: VPN is healthy, or recovery was attempted (Tier 2 or Tier 3) even if recovery failed,
+#      or network partition detected (VPN checks skipped)
 #      Script completes successfully when recovery is attempted, as recovery failures are logged
 #      but don't prevent successful completion of the monitoring task
 #   1: VPN check failed and no recovery was attempted (Tier 1 or below threshold)
@@ -2255,6 +2370,7 @@ format_peer_display() {
 #   - Updates per-location failure counters
 #   - Logs recovery actions and status updates
 #   - Triggers tiered recovery actions based on failure count
+#   - Skips VPN checks when network partition is detected (performance optimization)
 #
 # Examples:
 #   monitor_location "NYC" "203.0.113.1" "192.168.1.1 192.168.1.88"
@@ -2262,11 +2378,40 @@ format_peer_display() {
 # Note:
 #   Requires check_vpn_status, get_failure_count, increment_failure, reset_failure_count,
 #   TIER1_THRESHOLD, TIER2_THRESHOLD, TIER3_THRESHOLD, NO_ESCALATE to be set
+#   Network partition check uses cached state from validate_monitor_state() for efficiency
 monitor_location() {
 	local location_name="$1"
 	local external_peer_ip="$2"
 	local internal_peer_ips="${3:-}"
 	local failure_count
+
+	# Optimize: Skip VPN checks if network partition is detected
+	# This avoids unnecessary work when network connectivity is down
+	# Re-check partition state if it was previously partitioned (to detect when partition clears)
+	if [[ "${ENABLE_NETWORK_PARTITION_CHECK:-1}" -eq 1 ]]; then
+		local partition_state
+		partition_state=$(get_network_partition_state)
+		if [[ "$partition_state" -eq 1 ]]; then
+			# Network was previously partitioned - re-check to detect if partition cleared
+			# Use same parameters as validate_monitor_state for consistency
+			local dns_server="${NETWORK_PARTITION_DNS_SERVER:-8.8.8.8}"
+			local dns_hostname="${NETWORK_PARTITION_DNS_HOSTNAME:-google.com}"
+			local dns_timeout="${NETWORK_PARTITION_DNS_TIMEOUT:-2}"
+			local interfaces="${NETWORK_PARTITION_INTERFACES:-br0,eth0}"
+			if ! check_network_partition "$dns_server" "$dns_hostname" "$dns_timeout" "$interfaces"; then
+				# Network is still partitioned - skip VPN checks entirely
+				# This is a performance optimization: VPN checks would fail anyway without network connectivity
+				log_message "INFO" "$location_name" "Skipping VPN checks for $location_name ($external_peer_ip) - network partition detected"
+				return 0
+			else
+				# Network partition cleared - update state and continue with VPN checks
+				# We know partition_state was 1 (from line 2372), so we can use that directly
+				log_message "INFO" "$location_name" "Network connectivity restored - resuming VPN monitoring for $location_name ($external_peer_ip)"
+				set_network_partition_state 0
+				# Continue with VPN checks below
+			fi
+		fi
+	fi
 
 	# Check VPN status (uses external IP for xfrm, internal IPs for ping)
 	# Pass location name for state file naming

@@ -2040,6 +2040,71 @@ fi
 
 ## String Parsing and Manipulation Patterns
 
+### Pattern: Extract Duplicate Awk Scripts to Helper Functions
+
+**When to Use:** When the same awk script appears multiple times in a function or across functions
+
+**Pattern:**
+```bash
+# ✅ GOOD: Extract duplicate awk script to helper function
+deduplicate_sa_blocks() {
+    awk '
+        BEGIN { in_block = 0 }
+        /^src[[:space:]]+/ {
+            header = $0
+            if (header in seen_headers) {
+                in_block = 0
+                next
+            }
+            seen_headers[header] = 1
+            in_block = 1
+            print
+            next
+        }
+        in_block == 1 {
+            print
+        }
+    '
+}
+
+# Use helper function in multiple places
+if [[ -n "$forward_output" ]] && [[ -n "$reverse_output" ]]; then
+    local combined="${forward_output}"$'\n'"${reverse_output}"
+    xfrm_output=$(echo "$combined" | deduplicate_sa_blocks)
+fi
+
+# ❌ BAD: Duplicate awk script in multiple places
+if [[ -n "$forward_output" ]] && [[ -n "$reverse_output" ]]; then
+    local combined="${forward_output}"$'\n'"${reverse_output}"
+    xfrm_output=$(echo "$combined" | awk '
+        BEGIN { in_block = 0 }
+        /^src[[:space:]]+/ {
+            # ... duplicate logic ...
+        }
+    ')
+fi
+# Later in same function:
+if [[ -n "$forward_output" ]] && [[ -n "$reverse_output" ]]; then
+    echo "$combined" | awk '
+        BEGIN { in_block = 0 }
+        /^src[[:space:]]+/ {
+            # ... same logic duplicated ...
+        }
+    '
+fi
+```
+
+**Key Points:**
+- When awk scripts are duplicated, extract to a helper function
+- Helper functions can be defined in the same file or in a shared module
+- Use descriptive function names that explain what the awk script does
+- If the awk script is only used in one function, consider using a here-document variable
+- **Note:** Not critical for production - code works correctly even with duplication, but refactoring improves maintainability
+
+**Related Patterns:**
+- See `CODE_REVIEW_LESSONS_LEARNED.md` section 6 for code duplication detection patterns
+- See TODO.md item 3 for current duplication in `get_xfrm_state_for_peer()`
+
 ### Pattern: Character-by-Character Parsing for Complex Syntax
 
 **When to Use:** Parsing complex syntax with quotes, escapes, nested structures, state-dependent rules

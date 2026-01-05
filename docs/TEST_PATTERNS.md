@@ -28,10 +28,10 @@ For additional test documentation, see:
     cat >"$config_file" <<'EOF'
     LOCATION_NYC_EXTERNAL=""
     EOF
-    
+
     setup_location_config_and_load "$config_file"
     enable_fake_mode
-    
+
     run parse_location_config
     assert_failure
     assert_output --partial "EXTERNAL IP is required"
@@ -42,7 +42,7 @@ For additional test documentation, see:
 ```bash
 @test "test main script execution" {
     setup_test_vpn_monitor "192.168.1.1" "${TEST_DIR}"
-    
+
     run bash "$TEST_SCRIPT" --fake
     assert_success
 }
@@ -77,7 +77,7 @@ run bash "$TEST_SCRIPT" --fake
 
 **Pattern**: Always export CONFIG_FILE explicitly when setting it manually
 
-**When to use**: 
+**When to use**:
 - When setting CONFIG_FILE manually (not using helper functions)
 - Helper functions (`setup_location_config_and_load()`) already export CONFIG_FILE
 
@@ -99,7 +99,7 @@ setup_location_config_and_load "$config_file"
 
 **Pattern**: Explicitly export variables that need to be inherited by subprocesses
 
-**Standard**: 
+**Standard**:
 - Helper functions export variables they set
 - Tests should rely on helper functions for consistency
 - Manual variable setting should always include `export` for clarity
@@ -338,25 +338,25 @@ load fixtures/vpn_flapping
 @test "VPN flapping - state transitions" {
     setup_vpn_flapping_fixture "192.168.1.1" "up"
     # VPN starts up
-    
+
     # Run - VPN is up, should succeed
     run bash "$TEST_SCRIPT" --fake
     assert_success
-    
+
     # Switch VPN to down
     switch_vpn_to_down
-    
+
     # Run - VPN is down, should detect failure
     run bash "$TEST_SCRIPT" --fake
     assert_failure
-    
+
     # Switch VPN back to up
     switch_vpn_to_up
-    
+
     # Run - VPN recovered, should succeed
     run bash "$TEST_SCRIPT" --fake
     assert_success
-    
+
     remove_mock_from_path
 }
 ```
@@ -616,29 +616,6 @@ load fixtures/vpn_recovery_test
 ```
 
 **Note**: This fixture creates pass-through mocks that allow real commands to be called. For tests that need xfrm unavailable, you can remove the ip mock: `rm -f "${TEST_DIR}/ip"` after calling the fixture.
-    run bash "$TEST_SCRIPT" --fake
-    # Should handle partial failures gracefully
-    remove_mock_from_path
-}
-
-@test "xfrm recovery - complete failure" {
-    setup_vpn_xfrm_recovery_fixture "192.168.1.1" 2 "complete_failure"
-    # 2 SAs, all deletions fail
-    run bash "$TEST_SCRIPT" --fake
-    # Should fall back to ipsec reload/restart
-    remove_mock_from_path
-}
-
-@test "xfrm recovery - custom config" {
-    setup_vpn_xfrm_recovery_fixture "192.168.1.1" 2 "success" \
-        'TIER2_THRESHOLD=5' \
-        'RECOVERY_VERIFY_TIMEOUT=10'
-    # Custom thresholds and timeout
-    run bash "$TEST_SCRIPT" --fake
-    # Should use custom config values
-    remove_mock_from_path
-}
-```
 
 ##### `vpn_at_tier.bash` - VPN at Specific Tier Threshold
 
@@ -809,7 +786,7 @@ EOF
 
 **Helper Functions**: The helper functions in `test_helper.bash` already handle both formats correctly:
 - `mock_ip_xfrm_state()` - handles both formats
-- `mock_ip_vpn_down()` - handles both formats  
+- `mock_ip_vpn_down()` - handles both formats
 - `mock_ip_xfrm_empty()` - handles both formats
 - `mock_ip_xfrm_with_incrementing_bytes()` - handles both formats
 
@@ -820,7 +797,7 @@ EOF
 
 **Related Patterns**:
 - See pattern 21 (Byte Counter Increment Pattern) for examples with both formats
-- See pattern 17 (Mock All Commands Used by Recovery Verification) for complete mocking examples
+- See pattern 18 (Mock All Commands Used by Recovery Verification) for complete mocking examples
 
 **Pattern**: Always pair `add_mock_to_path()` with `remove_mock_from_path()`
 
@@ -838,14 +815,14 @@ if [[ "$1" == "xfrm" ]]; then
 fi
 EOF
     chmod +x "$mock_ip"
-    
+
     # Add to PATH
     add_mock_to_path
-    
+
     # Run test
     run bash "$test_script" --fake
     assert_success
-    
+
     # Always cleanup
     remove_mock_from_path
 }
@@ -879,14 +856,13 @@ EOF
 ```
 
 **Important Notes**:
-- **Fixtures already add mocks to PATH** - When using fixtures (`setup_vpn_active_fixture`, `setup_vpn_down_fixture`, etc.), you don't need to call `add_mock_to_path()` because fixtures call `setup_mock_vpn_environment()` which adds mocks to PATH
+- **Fixtures and mocks**: See Pattern 4 (Test Fixtures) for details on how fixtures automatically add mocks to PATH
 - If you add additional mocks after a fixture, you may need to call `add_mock_to_path()` again (though it's idempotent, so calling it multiple times is harmless)
-- Always call `remove_mock_from_path()` for cleanup, even when using fixtures
 
-**Standard**: 
+**Standard**:
 - Create mocks in `TEST_DIR`
-- Use `add_mock_to_path()` before running tests (unless using fixtures, which handle this automatically)
-- Always call `remove_mock_from_path()` in teardown or at end of test
+- Use `add_mock_to_path()` before running tests (unless using fixtures, which handle this automatically - see Pattern 4)
+- Always call `remove_mock_from_path()` in teardown or at end of test (even when using fixtures - see Pattern 4)
 - Use helper functions like `setup_mock_vpn_environment()` when possible
 - Prefer fixtures over manual mock setup when they match your test scenario
 
@@ -897,6 +873,8 @@ EOF
 **When to use**: When creating mock scripts using heredoc syntax without quotes (`<<EOF`).
 
 **Key Insight**: Variables like `$1`, `$2`, `$@` are expanded during test execution (when the heredoc is created), not when the mock script runs. This causes the mock script to receive incorrect values or fail to match arguments correctly.
+
+**Related**: See Pattern 21 for similar heredoc variable expansion patterns when creating config files (with additional security considerations).
 
 **Example**:
 ```bash
@@ -937,7 +915,7 @@ EOF
 - Alternatively, use `<<'EOF'` (with quotes) to prevent all expansion, but then you can't use test variables
 - Check existing mocks in `test_helper.bash` for correct patterns (e.g., `mock_ip_xfrm_state()`)
 
-**Standard**: 
+**Standard**:
 - Always escape script arguments (`\$1`, `\$2`, `\$@`) in unquoted heredocs
 - Don't escape test environment variables (they should expand during test execution)
 - Use quoted heredocs (`<<'EOF'`) only when you don't need variable expansion
@@ -997,7 +975,7 @@ EOF
 - Prefer explicit handling over `exec` fallback for test reliability (real command may not exist in test environment)
 - Update helper functions (e.g., `mock_ipsec_status()`) to handle availability checks for consistency
 
-**Standard**: 
+**Standard**:
 - Check if commands are validated by `check_command_available()` before creating mocks
 - Always handle `--help` and `--version` arguments in mocks
 - Prefer explicit handling over `exec` fallback for test reliability
@@ -1029,7 +1007,7 @@ setup_test_environment() {
 }
 ```
 
-**Standard**: 
+**Standard**:
 - When changing defaults, either maintain backward compatibility or update all callers
 - Default paths should match the most common usage pattern
 - Document changes in helper function behavior
@@ -1049,7 +1027,7 @@ setup_vpn_flapping_fixture() {
     local peer_ip="${1:-192.168.1.1}"
     export VPN_FLAPPING_PEER_IP="$peer_ip"
     # ... setup code ...
-    
+
     # Export helper function for runtime state changes
     switch_vpn_to_up() {
         # Use exported variable to access fixture state
@@ -1065,12 +1043,12 @@ load fixtures/vpn_flapping
 @test "VPN flapping test" {
     setup_vpn_flapping_fixture "192.168.1.1"
     # Initial state is up
-    
+
     # Use exported helper to change state during test
     switch_vpn_to_up
     run bash "$TEST_SCRIPT" --fake
     assert_success
-    
+
     switch_vpn_to_down
     run bash "$TEST_SCRIPT" --fake
     assert_failure
@@ -1082,7 +1060,7 @@ load fixtures/vpn_flapping
 - Use `export -f` to make helper functions available to tests
 - This pattern is useful for testing state transitions and flapping scenarios
 
-**Standard**: 
+**Standard**:
 - Define helper functions inside fixtures when dynamic behavior is needed
 - Export helper functions using `export -f`
 - Use exported variables to share fixture state with helper functions
@@ -1144,7 +1122,7 @@ add_mock_to_path
 - See `tests/test_recovery.sh` lines 987-990 for another example
 - See `lib/recovery.sh:attempt_xfrm_recovery()` for function usage
 
-**Standard**: 
+**Standard**:
 - When testing recovery functions, identify which functions they call
 - Check if those functions are commands (use PATH mock) or functions (override definition)
 - Override functions after sourcing modules, before calling recovery functions
@@ -1162,19 +1140,19 @@ add_mock_to_path
     # Purpose: Test parsing a single location with only external IP configured
     # Expected: parse_location_config succeeds and LOCATIONS array contains the location
     # Importance: Basic functionality - most common use case
-    
+
     local config_file="${TEST_DIR}/vpn-monitor.conf"
     cat >"$config_file" <<'EOF'
     LOCATION_NYC_EXTERNAL="203.0.113.1"
     EOF
-    
+
     setup_location_config_and_load "$config_file"
     run parse_location_config
     assert_success
 }
 ```
 
-**Standard**: 
+**Standard**:
 - Include Purpose (what is being tested)
 - Include Expected (what should happen)
 - Include Importance (why this test matters)
@@ -1205,7 +1183,7 @@ add_mock_to_path
 }
 ```
 
-**Standard**: 
+**Standard**:
 - Use `category:` prefix for test categories
 - Use `priority:` prefix for priority levels
 - Use `slow` tag for tests that take significant time
@@ -1230,14 +1208,14 @@ add_mock_to_path
     run some_command
     assert_success
     assert_output --partial "expected text"
-    
+
     assert_file_exist "$log_file"
     assert_file_contains "$log_file" "log message"
     assert_equal "$variable" "expected_value"
 }
 ```
 
-**Standard**: 
+**Standard**:
 - Use `assert_output --partial` for substring matching (more flexible)
 - Use `assert_file_contains` for log file checks (uses regex matching - escape special characters like `\[` and `\]`)
 - Use `assert_log_contains_any` when log messages may vary slightly (e.g., "ipsec reload failed" vs "reload failed")
@@ -1263,18 +1241,18 @@ add_mock_to_path
 ```bash
 @test "VPN recovery detection" {
     setup_vpn_xfrm_recovery_fixture "${TEST_PEER_IP}" 1 "success"
-    
+
     # ... test setup that triggers recovery ...
-    
+
     run bash "$TEST_SCRIPT"
     assert_success
-    
+
     # ✅ GOOD: Check for both message formats
     # Note: Message may say "recovered" (no recovery method) or "restored" (with recovery method)
     assert_file_contains "$LOG_FILE" "recovered" || \
         assert_file_contains "$LOG_FILE" "restored" || \
         assert_file_contains "$LOG_FILE" "healthy"
-    
+
     remove_mock_from_path
 }
 ```
@@ -1283,23 +1261,23 @@ add_mock_to_path
 ```bash
 @test "VPN recovery without recovery method" {
     setup_location_test_vpn_monitor
-    
+
     # Set failure count
     ensure_state_functions_loaded
     set_peer_state "NYC" "203.0.113.1" "failure_count" "3" || true
-    
+
     # Explicitly ensure no recovery method is stored
     delete_peer_state "NYC" "203.0.113.1" "recovery_method" || true
-    
+
     # Mock VPN as recovered
     setup_mock_vpn_environment "203.0.113.1" 2000
-    
+
     run bash "$TEST_SCRIPT" --fake
     assert_success
-    
+
     # Should log "recovered" (not "restored") since no recovery method was used
     assert_file_contains "$LOG_FILE" "recovered"
-    
+
     remove_mock_from_path
 }
 ```
@@ -1308,22 +1286,22 @@ add_mock_to_path
 ```bash
 @test "VPN recovery with recovery method" {
     setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
-    
+
     # Perform recovery (stores recovery method)
     ensure_state_functions_loaded
     set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "3"
     surgical_cleanup "${TEST_PEER_IP}" "TEST"
-    
+
     # Mock VPN as recovered
     setup_mock_vpn_environment "${TEST_PEER_IP}" 2000
-    
+
     run bash "$TEST_SCRIPT" --fake
     assert_success
-    
+
     # Should log "restored" with recovery method
     assert_file_contains "$LOG_FILE" "VPN restored"
     assert_file_contains "$LOG_FILE" "recovery method: xfrm-based recovery"
-    
+
     remove_mock_from_path
 }
 ```
@@ -1340,7 +1318,7 @@ add_mock_to_path
 - If a test performs recovery actions that store a recovery method, the message will say "restored"
 - Tests that don't perform recovery actions may see either format depending on test setup
 
-**Standard**: 
+**Standard**:
 - Always check for both "recovered" OR "restored" when testing recovery detection
 - Optionally check for "healthy" as a fallback (used in some status messages)
 - Use `delete_peer_state()` to clear recovery method if you want to test "recovered" format specifically
@@ -1372,7 +1350,7 @@ setup_location_config_and_load "$config_file"
 setup_test_config_with_recovery_disabled "${TEST_DIR}/vpn-monitor.conf" "192.168.1.1"
 ```
 
-**Standard**: 
+**Standard**:
 - Prefer location-based format for new tests
 - Use helper functions instead of manual config file creation
 - Always use `setup_location_config_and_load()` after creating location configs
@@ -1387,7 +1365,7 @@ setup_test_config_with_recovery_disabled "${TEST_DIR}/vpn-monitor.conf" "192.168
 ```bash
 @test "test individual function" {
     source_function "get_formatted_timestamp"
-    
+
     run get_formatted_timestamp
     assert_success
     assert_output --regexp "^[0-9]{4}-[0-9]{2}-[0-9]{2}"
@@ -1396,7 +1374,7 @@ setup_test_config_with_recovery_disabled "${TEST_DIR}/vpn-monitor.conf" "192.168
 
 **Alternative**: Use `source_recovery_module()` or direct `source` for module-level tests
 
-**Standard**: 
+**Standard**:
 - Use `source_function()` for unit tests of individual functions
 - Use direct `source` for integration tests that need full modules
 - Use `source_recovery_module()` for recovery-related tests
@@ -1427,12 +1405,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
     # Purpose: What is being tested
     # Expected: What should happen
     # Importance: Why this test matters
-    
+
     # Test implementation
 }
 ```
 
-**Standard**: 
+**Standard**:
 - Include file header with description
 - Load test_helper first
 - Load relevant fixtures
@@ -1462,7 +1440,7 @@ assert_success
 PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
 ```
 
-**Standard**: 
+**Standard**:
 - Always use `run` to capture output and status
 - Use `--fake` flag for main script execution
 - Ensure mocks are in PATH before running scripts
@@ -1483,7 +1461,7 @@ PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
     # when LOCATION_*_EXTERNAL is missing or empty.
     # Expected: Script exits with failure status and outputs error message about missing configuration.
     # Importance: Prevents script from running with invalid configuration that would cause runtime errors.
-    
+
     # Create temporary config without LOCATION_*_EXTERNAL
     local config_file="${TEST_DIR}/vpn-monitor.conf"
     cat >"$config_file" <<'EOF'
@@ -1499,7 +1477,7 @@ EOF
         "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
 
     run bash "$test_script"
-    
+
     # Should fail with configuration error, not exit early due to other checks
     assert_failure
     assert_output --partial "No location-based configuration found"
@@ -1512,7 +1490,7 @@ EOF
 - When testing configuration validation failures, the script should exit with the validation error, not exit early due to other checks
 - If a test expects a configuration validation error but gets a different early-exit (like network partition), it may indicate the validation is happening too late in the execution flow
 
-**Standard**: 
+**Standard**:
 - Configuration validation should happen early in script execution (right after config loading)
 - Tests for configuration validation should verify the script exits with the expected validation error message
 - Be aware that other early-exit conditions (network partition, cooldown, etc.) happen after configuration validation
@@ -1555,7 +1533,7 @@ process_locations() {
 - Keep defensive checks if they serve a purpose (e.g., verifying state that should already be set)
 - Update function documentation to reflect changes in execution flow
 
-**Standard**: 
+**Standard**:
 - When fixing bugs that involve code movement, check for redundant calls
 - Remove redundant code to improve DRY
 - Update documentation to reflect new execution flow
@@ -1569,20 +1547,20 @@ process_locations() {
 
 **Key Insight**: Some checks happen at different points in execution:
 - `validate_monitor_state()` runs once at script start
-- `monitor_location()` can re-check partition status during recovery
+- `monitor_location()` can re-check partition status during recovery if state file indicates partitioned
 - Tests need to account for this timing difference when mocking state transitions
 
-**Example - Call Counter Pattern**:
+**Example - Partition Clearing During Recovery (Call Counter Pattern)**:
 ```bash
 @test "partition clears during recovery" {
     # Set up initial state (partitioned)
     local partition_state_file="${STATE_DIR}/network_partition_state"
     echo "1" >"$partition_state_file"
-    
+
     # Create counter file for tracking calls
     local route_call_count_file="${TEST_DIR}/route_call_count"
     echo "0" >"$route_call_count_file"
-    
+
     # Mock ip command - returns different results based on call count
     local mock_ip="${TEST_DIR}/ip"
     cat >"$mock_ip" <<'EOF'
@@ -1593,7 +1571,7 @@ if [[ "$1" == "route" ]] && [[ "$2" == "show" ]] && [[ "$3" == "default" ]]; the
     route_call_count=$(cat "$route_call_count_file" 2>/dev/null || echo "0")
     route_call_count=$((route_call_count + 1))
     echo "$route_call_count" >"$route_call_count_file"
-    
+
     # First call fails (partitioned), subsequent succeed (cleared)
     if [[ $route_call_count -eq 1 ]]; then
         exit 1  # Partitioned
@@ -1606,12 +1584,12 @@ exec /usr/bin/ip "$@"
 EOF
     chmod +x "$mock_ip"
     add_mock_to_path
-    
+
     # Test expects partition to clear during recovery
     run bash "$TEST_SCRIPT"
     assert_success
     assert_file_contains "$LOG_FILE" "Network connectivity restored"
-    
+
     remove_mock_from_path
 }
 ```
@@ -1646,83 +1624,23 @@ EOF
 - When overwriting fixture mocks, explicitly remove the fixture's mock first: `rm -f "${TEST_DIR}/ip"`
 - Counter files should be initialized before creating the mock: `echo "0" >"$counter_file"`
 
-**Standard**: 
+**Important Notes for Partition Clearing Tests**:
+- Partition state file (`network_partition_state`) tracks persistent partition state
+- `validate_monitor_state()` updates state file based on current partition check
+- `monitor_location()` reads state file and can re-check if state indicates partitioned
+- Mock should return different results for first call (validate_monitor_state) vs second call (monitor_location)
+- Test should verify both: partition clearing detection AND recovery continuation
+- Set partition state file to "1" before test execution
+- Verify partition clearing message is logged
+- Verify recovery actions continue after partition clears
+
+**Standard**:
 - Use file-based counters for simple call-count-based state transitions
 - Use log file checks for execution-phase-based state transitions
 - Always initialize counter files before creating mocks
 - Export TEST_DIR if mock needs to access test directory
 - Remove fixture mocks before creating custom mocks if needed
 - Never use `local` keyword at top level of mock scripts
-
-### 17. Testing Partition Clearing During Recovery
-
-**Pattern**: Test scenarios where network partition clears during recovery execution
-
-**When to use**: When testing recovery behavior that depends on partition state changing during execution
-
-**Key Insight**: Partition checks happen at different points:
-- `validate_monitor_state()` checks partition once at script start
-- `monitor_location()` can re-check partition status during recovery if state file indicates partitioned
-- Tests need to mock partition clearing between these checks
-
-**Example**:
-```bash
-@test "partition clears during recovery - should continue recovery" {
-    # Set initial partition state
-    local partition_state_file="${STATE_DIR}/network_partition_state"
-    echo "1" >"$partition_state_file"
-    
-    # Mock partition check - first call fails (partitioned), second succeeds (cleared)
-    # First call: validate_monitor_state() at script start
-    # Second call: monitor_location() during recovery
-    local route_call_count_file="${TEST_DIR}/route_call_count"
-    echo "0" >"$route_call_count_file"
-    
-    local mock_ip="${TEST_DIR}/ip"
-    cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "route" ]] && [[ "$2" == "show" ]] && [[ "$3" == "default" ]]; then
-    route_call_count_file="${TEST_DIR}/route_call_count"
-    route_call_count=$(cat "$route_call_count_file" 2>/dev/null || echo "0")
-    route_call_count=$((route_call_count + 1))
-    echo "$route_call_count" >"$route_call_count_file"
-    
-    if [[ $route_call_count -eq 1 ]]; then
-        exit 1  # First call: partitioned
-    else
-        echo "default via 192.168.1.1 dev eth0"
-        exit 0  # Second call: cleared
-    fi
-fi
-exec /usr/bin/ip "$@"
-EOF
-    chmod +x "$mock_ip"
-    add_mock_to_path
-    
-    run bash "$TEST_SCRIPT"
-    
-    # Should detect partition cleared and continue recovery
-    assert_success
-    assert_file_contains "$LOG_FILE" "Network connectivity restored"
-    assert_file_contains "$LOG_FILE" "Tier 2" || assert_file_contains "$LOG_FILE" "reload"
-    
-    remove_mock_from_path
-}
-```
-
-**Important Notes**:
-- Partition state file (`network_partition_state`) tracks persistent partition state
-- `validate_monitor_state()` updates state file based on current partition check
-- `monitor_location()` reads state file and can re-check if state indicates partitioned
-- Mock should return different results for first call (validate_monitor_state) vs second call (monitor_location)
-- Test should verify both: partition clearing detection AND recovery continuation
-
-**Standard**: 
-- Set partition state file to "1" before test execution
-- Mock partition check to fail on first call, succeed on second call
-- Verify partition clearing message is logged
-- Verify recovery actions continue after partition clears
-- Use call counters to track which check is being performed
 
 ### 18. Mock All Commands Used by Recovery Verification
 
@@ -1751,11 +1669,11 @@ exec /usr/bin/ipsec "$@"
 EOF
     chmod +x "$mock_ipsec"
     add_mock_to_path
-    
+
     # Test recovery
     run bash "$TEST_SCRIPT" --fake
     assert_success
-    
+
     remove_mock_from_path
 }
 
@@ -1798,7 +1716,7 @@ EOF
 LOCATION_NYC_EXTERNAL="203.0.113.1"
 INVALID_VAR="value"
 EOF
-    
+
     run load_config "$config_file"
     assert_failure
     assert_output --partial "Unknown configuration variable"
@@ -1873,6 +1791,8 @@ setup_location_test_vpn_monitor "${TEST_DIR}" \
 
 **Important Security Note**: The config parser rejects variable references like `${VAR}` or `$(command)` as dangerous content (security feature to prevent code injection). When writing test config files, you **must** expand variables before writing them to the config file. Use `<<EOF` (without quotes) to allow variable expansion.
 
+**Related**: See Pattern 5 for similar heredoc variable expansion patterns when creating mock scripts (where script arguments like `\$1` must be escaped).
+
 **Example**:
 ```bash
 # ✅ GOOD: Variable expansion needed (config parser rejects ${TEST_PEER_IP} as literal)
@@ -1922,7 +1842,7 @@ EOF
 
 **When to use**: When testing xfrm-based recovery that includes byte counter verification. The `verify_byte_counters_increment()` function requires byte counters to increase from an initial baseline value to verify that traffic is flowing through the tunnel after SA re-establishment.
 
-**Key Insight**: 
+**Key Insight**:
 - `verify_byte_counters_increment()` captures an initial byte counter value when SA re-establishment is detected
 - It then checks that byte counters have increased from this initial value
 - Static byte counter values will cause verification to fail
@@ -1933,11 +1853,11 @@ EOF
 @test "xfrm recovery - byte counter verification succeeds" {
     setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" \
         'ENABLE_XFRM_RECOVERY=1' 'TIER2_THRESHOLD=3'
-    
+
     # Track verification attempts for byte counter increment
     local verify_attempt_file="${TEST_DIR}/verify_attempts"
     echo "0" >"$verify_attempt_file"
-    
+
     # Mock ip command - returns increasing byte counter values
     local mock_ip="${TEST_DIR}/ip"
     cat >"$mock_ip" <<EOF
@@ -1947,7 +1867,7 @@ if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
     verify_attempts=\$((verify_attempts + 1))
     echo "\$verify_attempts" > "$verify_attempt_file"
-    
+
     # Return increasing byte counter values to simulate traffic flow
     # Initial value: 1000, then increase by 1000 each call
     byte_count=\$((1000 + (\$verify_attempts - 1) * 1000))
@@ -1961,7 +1881,7 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
     verify_attempts=\$((verify_attempts + 1))
     echo "\$verify_attempts" > "$verify_attempt_file"
-    
+
     # Return increasing byte counter values
     byte_count=\$((1000 + (\$verify_attempts - 1) * 1000))
     echo "src 10.0.0.1 dst 192.168.1.1"
@@ -1974,11 +1894,11 @@ exec /usr/bin/ip "\$@"
 EOF
     chmod +x "$mock_ip"
     add_mock_to_path
-    
+
     # Mock check_ipsec_phase2 to simulate SA lifecycle
     local phase2_call_file="${TEST_DIR}/phase2_calls"
     echo "0" >"$phase2_call_file"
-    
+
     local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
     cat >"$mock_check_ipsec_phase2" <<EOF
 #!/bin/bash
@@ -1987,7 +1907,7 @@ phase2_calls=\$((phase2_calls + 1))
 echo "\$phase2_calls" > "$phase2_call_file"
 
 # Initially: SAs exist (first call) - return success
-# After deletion check: SAs deleted (2nd call) - return failure  
+# After deletion check: SAs deleted (2nd call) - return failure
 # During verification: SAs re-established (3rd+ call) - return success
 if [[ \$phase2_calls -eq 1 ]]; then
     exit 0  # Initial check: SAs exist
@@ -1999,32 +1919,32 @@ fi
 EOF
     chmod +x "$mock_check_ipsec_phase2"
     add_mock_to_path
-    
+
     source_recovery_module
     check_ipsec_phase2() {
         "$mock_check_ipsec_phase2" "$@"
     }
-    
+
     # Set up failure count at Tier 2 threshold
     local location_name="TEST"
     local peer_ip="192.168.1.1"
     set_peer_state "$location_name" "$peer_ip" "failure_count" "3"
-    
+
     # Call surgical_cleanup - should succeed with byte counter verification
     run surgical_cleanup "$peer_ip" "$location_name"
     assert_success
-    
+
     remove_mock_from_path
 }
 ```
 
 **Important Notes**:
 - **Byte counters must increase**: The mock must return different byte counter values on each call, not static values
-- **Handle both `ip -s xfrm state` and `ip xfrm state`**: `get_xfrm_state_for_peer()` tries `-s` flag first, then falls back to regular command
+- **Handle both `ip -s xfrm state` and `ip xfrm state`**: See Pattern 5 for details on handling both command formats (required for all `ip xfrm state` mocks)
 - **Coordinate with `check_ipsec_phase2` mock**: Use separate counter files for `ip` calls vs `check_ipsec_phase2` calls to properly simulate SA lifecycle
 - **Initial value matters**: The first byte counter value becomes the baseline; subsequent values must be higher
 - **Increment amount**: Use reasonable increments (e.g., 1000 bytes per call) to simulate realistic traffic flow
-- **Never use `local` keyword**: At top level of mock scripts (see pattern 5)
+- **Never use `local` keyword**: At top level of mock scripts (see Pattern 5)
 
 **Common Mistakes**:
 ```bash
@@ -2045,10 +1965,10 @@ echo "    lifetime current: \${byte_count}(bytes), 10(packets)"
 EOF
 ```
 
-**Standard**: 
+**Standard**:
 - Use file-based counters to track `ip` command calls
 - Return increasing byte counter values (initial + (attempt - 1) * increment)
-- Handle both `ip -s xfrm state` and `ip xfrm state` command formats
+- Handle both `ip -s xfrm state` and `ip xfrm state` command formats (see Pattern 5 for details)
 - Coordinate `check_ipsec_phase2` mock separately using its own counter file
 - Initialize counter files before creating mocks: `echo "0" >"$counter_file"`
 - Use reasonable increment values (1000-10000 bytes per call) to simulate realistic traffic
@@ -2069,7 +1989,7 @@ EOF
     # 2. Deletion verification calls - ~2 calls
     # 3. Post-deletion SA check - ~2 calls
     # 4. Verification loop calls - 2 calls per iteration (ip -s xfrm state + ip xfrm state fallback)
-    
+
     # ✅ GOOD: Account for all phases when setting mock thresholds
     # Deletion phase: ~6 calls total
     # Verification phase: 2 calls per iteration
@@ -2077,7 +1997,7 @@ EOF
     # Total: 6 + 4 = 10, threshold > 10 (use 12 for safety margin)
     local verify_attempt_file="${TEST_DIR}/verify_attempts"
     echo "0" >"$verify_attempt_file"
-    
+
     local mock_ip="${TEST_DIR}/ip"
     cat >"$mock_ip" <<EOF
 #!/bin/bash
@@ -2085,7 +2005,7 @@ if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
     verify_attempts=\$((verify_attempts + 1))
     echo "\$verify_attempts" > "$verify_attempt_file"
-    
+
     # Return SA re-established after threshold accounts for all phases
     if [[ \$verify_attempts -le 12 ]]; then
         :  # Return empty (SA deleted, verification loop continues)
@@ -2099,11 +2019,11 @@ exec /usr/bin/ip "\$@"
 EOF
     chmod +x "$mock_ip"
     add_mock_to_path
-    
+
     # Test should show multiple sleep calls (exponential backoff)
     run bash "$TEST_SCRIPT" --fake
     assert_success
-    
+
     remove_mock_from_path
 }
 
@@ -2129,8 +2049,8 @@ fi
 - Consider resetting counters between phases if testing specific phase behavior
 
 **Related Patterns**:
-- See pattern 15 (Stateful Mocks for Testing State Transitions) for call counter patterns
-- See pattern 21 (Byte Counter Increment Pattern) for incrementing counter patterns
+- See Pattern 16 (Stateful Mocks for Testing State Transitions) for call counter patterns
+- See Pattern 22 (Byte Counter Increment Pattern) for incrementing counter patterns
 - Each `check_ipsec_phase2` call results in 2 mock calls (`ip -s xfrm state` + `ip xfrm state` fallback)
 
 ## Helper Functions
@@ -2215,10 +2135,10 @@ original_perms=$(save_permissions_for_restore "$file_or_dir")
 if chmod 000 "$file_or_dir" 2>/dev/null; then
     # Use trap to ensure cleanup even on errors
     trap "restore_permissions_after_test \"\$file_or_dir\" \"\$original_perms\"" EXIT
-    
+
     # Run test that should handle permission failure gracefully
     run some_function_that_writes_to_file
-    
+
     # Restore permissions
     restore_permissions_after_test "$file_or_dir" "$original_perms"
     # Clear trap after successful restore
@@ -2531,7 +2451,7 @@ When adding new features or making changes:
 13. **Account for timing differences** when testing partition clearing - checks happen at different execution points
 14. **Use location name helpers** when setting up failure counters - use `get_failure_counter_path_for_location_var()` instead of manually extracting location names from config variables
 
-### 25. Location Name Extraction from Config Variables
+### 24. Location Name Extraction from Config Variables
 
 **Pattern**: Use helper functions to extract location names from config variables instead of hardcoding them.
 

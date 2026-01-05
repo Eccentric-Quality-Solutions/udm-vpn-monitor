@@ -563,18 +563,25 @@ extract_spi() {
 # Get xfrm state output for a peer IP
 #
 # Retrieves xfrm state output filtered for a specific peer IP address.
-# Uses fixed-string matching to prevent regex injection and ensure safe IP matching.
+# Finds both forward SAs (dst=$peer_ip) and reverse SAs (src=$peer_ip) to handle asymmetric SA state.
+# Uses fixed-string matching for forward SAs and anchored regex for reverse SAs (safe due to IP validation).
+# IP address is validated before use to prevent regex injection attacks.
 #
 # Arguments:
-#   $1: Peer IP address to filter for
+#   $1: Peer IP address to filter for (must be valid IPv4 or IPv6)
 #   $2: Optional number of context lines to include after match (default: XFRM_OUTPUT_CONTEXT_LINES)
 #
 # Returns:
 #   0: Success (output printed to stdout)
-#   1: Failed to query xfrm state
+#   1: Failed to query xfrm state or invalid peer IP
 #
 # Output:
 #   Prints filtered xfrm state output to stdout
+#
+# Security:
+#   - Validates peer IP format before use to prevent regex injection
+#   - Forward SA search uses fixed-string matching (grep -F)
+#   - Reverse SA search uses anchored regex (grep -E) but is safe due to IP validation
 get_xfrm_state_for_peer() {
 	local peer_ip="$1"
 	local context_lines="${2:-${XFRM_OUTPUT_CONTEXT_LINES:-10}}"
@@ -583,12 +590,71 @@ get_xfrm_state_for_peer() {
 		return 1
 	fi
 
+	# Validate peer IP format to prevent regex injection and ensure safe matching
+	# This is a defense-in-depth measure - IPs should be validated at configuration load time,
+	# but we validate here to prevent regex injection if invalid IPs reach this function
+	if [[ -z "$peer_ip" ]] || ! validate_ip_address "$peer_ip"; then
+		return 1
+	fi
+
 	# Try with statistics first (ip -s xfrm state) which may show more detail
 	# Increase context lines to ensure we capture lifetime current section which may appear after lifetime config
 	# lifetime config section can be long, so we need more lines to get to lifetime current
 	local extended_context=$((context_lines + 10))
-	local xfrm_output
-	if xfrm_output=$(ip -s xfrm state 2>/dev/null | grep -F "dst $peer_ip" -A "$extended_context" 2>/dev/null); then
+	local xfrm_output=""
+	local forward_output=""
+	local reverse_output=""
+
+	# Get full xfrm state output once
+	local full_xfrm_output
+	full_xfrm_output=$(ip -s xfrm state 2>/dev/null)
+	local ip_exit_code=$?
+	if [[ $ip_exit_code -eq 0 ]] && [[ -n "$full_xfrm_output" ]]; then
+		# Find forward SAs (dst=$peer_ip) - matches forward SA header lines "src <local_ip> dst $peer_ip"
+		forward_output=$(echo "$full_xfrm_output" | grep -F "dst ${peer_ip}" -A "${extended_context}" 2>/dev/null || true)
+		# Find reverse SAs (src=$peer_ip) - matches reverse SA header lines "src $peer_ip dst <local_ip>"
+		# Use grep -E with anchored pattern to match lines starting with "src $peer_ip"
+		# Safe because peer_ip is validated above to prevent regex injection
+		# The pattern "^[[:space:]]*src $peer_ip[[:space:]]" matches SA header lines for reverse SAs
+		reverse_output=$(echo "$full_xfrm_output" | grep -E "^[[:space:]]*src ${peer_ip}[[:space:]]" -A "${extended_context}" 2>/dev/null || true)
+
+		# Combine outputs if both exist (they represent different SAs in a bidirectional tunnel)
+		# If only one exists, use it (asymmetric SA state)
+		# Note: Deduplicate by SA header lines (src ... dst ...) to avoid duplicates when
+		# reverse SA appears in forward_output context lines (grep -A includes context)
+		if [[ -n "$forward_output" ]] && [[ -n "$reverse_output" ]]; then
+			# Both exist - combine them, but deduplicate SA header lines
+			# Extract unique SA header lines (lines starting with "src") to identify duplicates
+			local combined="${forward_output}"$'\n'"${reverse_output}"
+			# Use awk to deduplicate: keep first occurrence of each unique SA header line
+			# SA blocks are identified by their header line (src ... dst ...)
+			xfrm_output=$(echo "$combined" | awk '
+				BEGIN { in_block = 0 }
+				/^src[[:space:]]+/ {
+					# New SA block detected - check if we have seen this header before
+					header = $0
+					if (header in seen_headers) {
+						# Duplicate SA header - skip this block
+						in_block = 0
+						next
+					}
+					# New unique SA header - mark as seen and start new block
+					seen_headers[header] = 1
+					in_block = 1
+					print
+					next
+				}
+				in_block == 1 {
+					# Continuation line of current SA block
+					print
+				}
+			')
+		elif [[ -n "$forward_output" ]]; then
+			xfrm_output="$forward_output"
+		elif [[ -n "$reverse_output" ]]; then
+			xfrm_output="$reverse_output"
+		fi
+
 		if [[ -n "$xfrm_output" ]]; then
 			echo "$xfrm_output"
 			return 0
@@ -596,8 +662,38 @@ get_xfrm_state_for_peer() {
 	fi
 
 	# Fall back to regular ip xfrm state (without -s)
-	# Also use extended context for consistency
-	ip xfrm state 2>/dev/null | grep -F "dst $peer_ip" -A "$extended_context" || true
+	# Also search for both forward and reverse SAs
+	full_xfrm_output=$(ip xfrm state 2>/dev/null)
+	if [[ $? -eq 0 ]] && [[ -n "$full_xfrm_output" ]]; then
+		forward_output=$(echo "$full_xfrm_output" | grep -F "dst ${peer_ip}" -A "${extended_context}" 2>/dev/null || true)
+		reverse_output=$(echo "$full_xfrm_output" | grep -E "^[[:space:]]*src ${peer_ip}[[:space:]]" -A "${extended_context}" 2>/dev/null || true)
+
+		# Deduplicate when combining outputs (same logic as above)
+		if [[ -n "$forward_output" ]] && [[ -n "$reverse_output" ]]; then
+			local combined="${forward_output}"$'\n'"${reverse_output}"
+			echo "$combined" | awk '
+				BEGIN { in_block = 0 }
+				/^src[[:space:]]+/ {
+					header = $0
+					if (header in seen_headers) {
+						in_block = 0
+						next
+					}
+					seen_headers[header] = 1
+					in_block = 1
+					print
+					next
+				}
+				in_block == 1 {
+					print
+				}
+			'
+		elif [[ -n "$forward_output" ]]; then
+			echo "$forward_output"
+		elif [[ -n "$reverse_output" ]]; then
+			echo "$reverse_output"
+		fi
+	fi
 }
 
 # Get ipsec status output for a peer IP
@@ -1606,6 +1702,7 @@ check_byte_counters() {
 #   $2: Internal peer IP address (optional, used for ping checks in idle detection)
 #   $3: Location name (optional, used for state file naming)
 #   $4: Diagnostic variable name (optional, if provided, diagnostic message is stored here instead of logging)
+#   $5: SA existence output variable name (optional, if provided, SA existence state (0 or 1) is stored here)
 #
 # Returns:
 #   0: SA found and valid (byte counters validated successfully, or byte counters unavailable but ping check succeeds)
@@ -1617,15 +1714,21 @@ check_byte_counters() {
 #   - Returns failure (1) when byte counters cannot be extracted and ping check unavailable/fails, allowing
 #     determine_vpn_status to detect failure type as "unknown"
 #   - If diagnostic variable name is provided, stores diagnostic message in that variable instead of logging
+#   - If SA existence output variable name is provided, stores SA existence state (0 or 1) in that variable
 check_xfrm_status() {
 	local peer_ip="$1"
 	local internal_peer_ip="${2:-}"
 	local location_name="${3:-}"
 	local diagnostic_var="${4:-}"
+	local sa_exists_var="${5:-}"
 
 	# Try ip xfrm state first (most reliable)
 	# xfrm = Linux IPsec framework - shows Security Associations (SAs) and byte counters
 	if ! check_command_or_warn "ip" "Checking xfrm status"; then
+		# Set SA existence to 0 if output variable provided
+		if [[ -n "$sa_exists_var" ]]; then
+			printf -v "$sa_exists_var" "%s" "0"
+		fi
 		return 1
 	fi
 
@@ -1636,6 +1739,10 @@ check_xfrm_status() {
 	xfrm_output=$(get_xfrm_state_for_peer "$peer_ip")
 
 	if [[ -z "$xfrm_output" ]]; then
+		# Set SA existence to 0 if output variable provided
+		if [[ -n "$sa_exists_var" ]]; then
+			printf -v "$sa_exists_var" "%s" "0"
+		fi
 		local diagnostic_msg="Detection method: xfrm (ip xfrm state) - No SA found for $peer_ip in xfrm state"
 		if [[ -n "$diagnostic_var" ]]; then
 			printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
@@ -1643,6 +1750,11 @@ check_xfrm_status() {
 			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: No SA found${location_name:+ for $location_name ($peer_ip)} in xfrm state"
 		fi
 		return 1
+	fi
+
+	# SA exists - set output variable if provided
+	if [[ -n "$sa_exists_var" ]]; then
+		printf -v "$sa_exists_var" "%s" "1"
 	fi
 
 	# Extract SPI for rekey detection
@@ -1961,7 +2073,7 @@ check_ping_multiple_ips() {
 # Supports both single IP (legacy) and multiple IPs (array).
 #
 # Arguments:
-#   $1: VPN status (1 = OK, 0 = failed)
+#   $1: SA existence status (1 = SA exists, 0 = SA does not exist)
 #   $2: Ping target IP address or array (internal IP(s) if provided, otherwise external IP)
 #   $3: Local IP address (for source IP, optional)
 #   $4: Location name (optional, used for logging)
@@ -1975,8 +2087,9 @@ check_ping_multiple_ips() {
 # Note:
 #   The provided IP should be the internal IP if available, falling back to external IP
 #   If $2 contains spaces (multiple IPs), calls check_ping_multiple_ips()
+#   SA existence status should be determined by the caller to ensure accurate messages
 check_ping_if_enabled() {
-	local vpn_ok="$1"
+	local sa_exists="$1"
 	local ping_target="$2"
 	local local_ip_param="${3:-}"
 	local location_name="${4:-}"
@@ -1996,7 +2109,7 @@ check_ping_if_enabled() {
 	# Check if ping_target contains multiple IPs (has spaces)
 	if [[ "$ping_target" =~ [[:space:]] ]]; then
 		# Multiple IPs - use check_ping_multiple_ips
-		if [[ $vpn_ok -eq 1 ]]; then
+		if [[ $sa_exists -eq 1 ]]; then
 			# SA exists, verify connectivity with ping check
 			if ! check_ping_multiple_ips "$ping_target" "$local_ip" "$location_name"; then
 				# SA exists but ping failed - tunnel may be broken
@@ -2018,7 +2131,7 @@ check_ping_if_enabled() {
 		fi
 	else
 		# Single IP - use existing logic
-		if [[ $vpn_ok -eq 1 ]]; then
+		if [[ $sa_exists -eq 1 ]]; then
 			# SA exists, verify connectivity with ping check
 			if ! check_ping_connectivity "$ping_target" "$local_ip" "$location_name"; then
 				# SA exists but ping failed - tunnel may be broken
@@ -2098,6 +2211,7 @@ check_ipsec_phase2() {
 #   $1: External peer IP address (used for SA checks)
 #   $2: Internal peer IP address (optional, used for ping checks)
 #   $3: Location name (optional, used for state file naming)
+#   $4: SA existence state (optional, 0 = no SA, 1 = SA exists, if not provided will check SA existence)
 #
 # Returns:
 #   0: Failure type detected and printed to stdout
@@ -2110,7 +2224,7 @@ check_ipsec_phase2() {
 #   - Logs debug messages about failure type detection
 #
 # Examples:
-#   failure_type=$(detect_failure_type "203.0.113.1" "192.168.1.1" "NYC")
+#   failure_type=$(detect_failure_type "203.0.113.1" "192.168.1.1" "NYC" "1")
 #   case "$failure_type" in
 #       "tunnel_down") echo "VPN tunnel is down" ;;
 #       "routing_issue") echo "Routing issue detected" ;;
@@ -2124,6 +2238,7 @@ detect_failure_type() {
 	local external_peer_ip="$1"
 	local internal_peer_ip="${2:-}"
 	local location_name="${3:-}"
+	local sa_exists="${4:-}"
 
 	# Check if ip command is available (required for Phase 2 SA detection)
 	# If ip command is unavailable, we cannot determine failure type
@@ -2134,11 +2249,17 @@ detect_failure_type() {
 		return 1
 	fi
 
-	# Check IPsec Phase 2 (ESP/AH SA)
-	# Phase 2 SA existence indicates tunnel is established (Phase 1 must be up for Phase 2 to exist)
+	# Use provided SA existence state if available, otherwise check SA existence
+	# This optimization eliminates duplicate SA checks by reusing state from check_xfrm_status()
 	local ipsec_phase2_up=0
-	if check_ipsec_phase2 "$external_peer_ip"; then
-		ipsec_phase2_up=1
+	if [[ -n "$sa_exists" ]]; then
+		# Use provided SA existence state
+		ipsec_phase2_up=$sa_exists
+	else
+		# Fallback: check SA existence if not provided (for backward compatibility)
+		if check_ipsec_phase2 "$external_peer_ip"; then
+			ipsec_phase2_up=1
+		fi
 	fi
 
 	# Determine failure type based on SA state
@@ -2341,10 +2462,12 @@ check_xfrm_primary() {
 	local internal_peer_ip="${2:-}"
 	local location_name="${3:-}"
 	local diagnostic_var="${4:-}"
+	local sa_exists_var="${5:-}"
 
 	# Try detection using xfrm (most reliable method)
 	# Pass internal IP and location_name to check_xfrm_status for idle detection via ping checks
-	check_xfrm_status "$external_peer_ip" "$internal_peer_ip" "$location_name" "$diagnostic_var"
+	# Also pass SA existence output variable to expose SA state separately
+	check_xfrm_status "$external_peer_ip" "$internal_peer_ip" "$location_name" "$diagnostic_var" "$sa_exists_var"
 }
 
 # Check VPN status using ipsec (fallback method)
@@ -2374,28 +2497,47 @@ check_ipsec_fallback() {
 #
 # Performs ping check if enabled. This is informational and doesn't affect
 # the VPN status determination, but provides additional connectivity verification.
+# Uses provided SA existence state to ensure accurate log messages.
 #
 # Arguments:
 #   $1: Current VPN status (0 = failed, 1 = OK)
 #   $2: External peer IP address (external/public IP of remote VPN gateway)
 #   $3: Internal peer IP address (optional, used for ping checks, falls back to external if not provided)
 #   $4: Location name (optional, used for logging)
+#   $5: SA existence state (optional, 0 = no SA, 1 = SA exists, if not provided will check SA existence)
 #
 # Returns:
 #   0: Always returns 0 (doesn't affect VPN status)
 #
 # Side effects:
 #   - Logs ping check results
+#   - Uses provided SA existence state to ensure accurate messages (or checks SA existence if not provided)
 check_ping_optional() {
 	local vpn_ok="$1"
 	local external_peer_ip="$2"
 	local internal_peer_ip="${3:-}"
 	local location_name="${4:-}"
+	local sa_exists="${5:-}"
+
+	if [[ "${ENABLE_PING_CHECK:-0}" -ne 1 ]]; then
+		return 0
+	fi
+
+	# Use provided SA existence state if available, otherwise check SA existence
+	# This optimization eliminates duplicate SA checks by reusing state from check_xfrm_status()
+	if [[ -z "$sa_exists" ]]; then
+		# Fallback: check SA existence if not provided (for backward compatibility)
+		sa_exists=0
+		if check_ipsec_phase2 "$external_peer_ip" 2>/dev/null; then
+			sa_exists=1
+		fi
+	fi
 
 	# Perform ping check if enabled (informational, doesn't affect vpn_ok)
 	# Use internal IP if provided, otherwise fall back to external IP
 	local ping_ip="${internal_peer_ip:-$external_peer_ip}"
-	check_ping_if_enabled "$vpn_ok" "$ping_ip" "" "$location_name"
+	# Pass SA existence status to check_ping_if_enabled for accurate messaging
+	check_ping_if_enabled "$sa_exists" "$ping_ip" "" "$location_name"
 
 	return 0
 }
@@ -2412,6 +2554,7 @@ check_ping_optional() {
 #   $3: Internal peer IP address (optional, used for failure type detection)
 #   $4: Sanitized peer IP (for state file operations)
 #   $5: Location name (optional, used for state file naming)
+#   $6: SA existence state (optional, 0 = no SA, 1 = SA exists, if not provided will check SA existence)
 #
 # Returns:
 #   Outputs final VPN status (0 or 1) to stdout
@@ -2426,14 +2569,47 @@ determine_vpn_status() {
 	local internal_peer_ip="${3:-}"
 	local peer_sanitized="$4"
 	local location_name="${5:-}"
+	local sa_exists="${6:-}"
 
 	# If VPN check failed, detect and log the failure type
 	# Also check for rekey events (which are not failures but should be logged)
+	# Additionally, if VPN appears OK, check for rekey events and routing issues via ping (if enabled)
+	local check_failure_type=0
 	if [[ $vpn_ok -eq 0 ]]; then
+		check_failure_type=1
+	elif [[ $vpn_ok -eq 1 ]]; then
+		# VPN appears OK, but we should still check for:
+		# 1. Rekey events (SPI changes) - always check
+		# 2. Routing issues via ping - only if ping check is enabled and internal IP provided
+		# Use provided SA existence state if available, otherwise check SA existence
+		if [[ -z "$sa_exists" ]]; then
+			# Fallback: check SA existence if not provided (for backward compatibility)
+			sa_exists=0
+			if check_ipsec_phase2 "$external_peer_ip" 2>/dev/null; then
+				sa_exists=1
+			fi
+		fi
+		if [[ $sa_exists -eq 1 ]]; then
+			# Always check for rekey events when VPN is OK
+			# Also check for routing issues via ping if ping check is enabled
+			if [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
+				# Check for routing issues via ping when ping check is enabled
+				check_failure_type=1
+			else
+				# Even if ping check is disabled, we should check for rekey events
+				# We'll call detect_failure_type which will check for rekey first
+				# If no rekey and no routing issue to check, it will return "unknown" which we'll ignore
+				check_failure_type=1
+			fi
+		fi
+	fi
+
+	if [[ $check_failure_type -eq 1 ]]; then
 		local failure_type
 		# Capture output and return code separately to avoid duplicate "unknown"
 		# Note: stderr is not redirected so diagnostic log messages from detect_failure_type are visible
-		failure_type=$(detect_failure_type "$external_peer_ip" "$internal_peer_ip" "$location_name")
+		# Pass SA existence state to detect_failure_type to avoid duplicate check
+		failure_type=$(detect_failure_type "$external_peer_ip" "$internal_peer_ip" "$location_name" "$sa_exists")
 		# If detect_failure_type failed or returned empty, use "unknown"
 		if [[ -z "$failure_type" ]]; then
 			failure_type="unknown"
@@ -2465,11 +2641,20 @@ determine_vpn_status() {
 		"routing_issue")
 			# location_name should always be provided in production code
 			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN failure type: Routing issue (tunnel established but traffic not flowing)${location_name:+ for $location_name ($external_peer_ip)}"
+			# Note: If vpn_ok was 1 (VPN appeared OK), we keep it as 1 since ping is supplementary
+			# The routing_issue is logged for diagnostic purposes but doesn't change VPN status
 			;;
 		*)
-			# Detailed diagnostic information was already logged by detect_failure_type()
-			# location_name should always be provided in production code
-			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN failure type: Unknown (unable to determine specific failure type)${location_name:+ for $location_name ($external_peer_ip)} - see previous diagnostic messages for detection method details"
+			# "unknown" failure type
+			# If vpn_ok was 1, this means VPN check passed but we couldn't determine a specific failure type
+			# This is normal when VPN is healthy (e.g., bytes increasing, no rekey, ping check disabled)
+			# Only log "unknown" if VPN check actually failed (vpn_ok was 0)
+			if [[ $vpn_ok -eq 0 ]]; then
+				# Detailed diagnostic information was already logged by detect_failure_type()
+				# location_name should always be provided in production code
+				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN failure type: Unknown (unable to determine specific failure type)${location_name:+ for $location_name ($external_peer_ip)} - see previous diagnostic messages for detection method details"
+			fi
+			# If vpn_ok was 1, silently ignore "unknown" since VPN is healthy
 			;;
 		esac
 	fi
@@ -2559,13 +2744,21 @@ check_vpn_status() {
 	# Collect diagnostic information from both methods to combine warnings when both fail
 	local xfrm_diagnostic=""
 	local ipsec_diagnostic=""
+	# Capture SA existence state from xfrm check to eliminate duplicate checks
+	local sa_exists=""
 
-	if check_xfrm_primary "$external_peer_ip" "$first_internal_ip" "$location_name" "xfrm_diagnostic"; then
+	if check_xfrm_primary "$external_peer_ip" "$first_internal_ip" "$location_name" "xfrm_diagnostic" "sa_exists"; then
 		vpn_ok=1
 	else
 		# xfrm check failed - try ipsec fallback
+		# Note: If xfrm check failed, sa_exists may still be set (SA exists but validation failed)
+		# If sa_exists is empty, we'll fall back to checking SA existence in downstream functions
 		if check_ipsec_fallback "$external_peer_ip" "ipsec_diagnostic"; then
 			vpn_ok=1
+			# If ipsec fallback succeeded, SA exists (set sa_exists if not already set)
+			if [[ -z "$sa_exists" ]]; then
+				sa_exists=1
+			fi
 		else
 			# Both methods failed - log combined diagnostic message
 			local combined_diagnostics=()
@@ -2595,15 +2788,20 @@ check_vpn_status() {
 				# location_name should always be provided in production code
 				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: Both xfrm and ipsec status checks failed${location_name:+ for $location_name ($external_peer_ip)}"
 			fi
+			# If both methods failed and sa_exists is not set, assume no SA exists
+			if [[ -z "$sa_exists" ]]; then
+				sa_exists=0
+			fi
 		fi
 	fi
 
 	# Perform optional ping check if enabled (pass all internal IPs for multiple IP support)
-	check_ping_optional "$vpn_ok" "$external_peer_ip" "$internal_peer_ips" "$location_name"
+	# Pass SA existence state to eliminate duplicate check
+	check_ping_optional "$vpn_ok" "$external_peer_ip" "$internal_peer_ips" "$location_name" "$sa_exists"
 
 	# Determine final VPN status based on failure type detection
-	# Pass location_name, first internal IP, and peer_sanitized for failure type detection
-	vpn_ok=$(determine_vpn_status "$vpn_ok" "$external_peer_ip" "$first_internal_ip" "$peer_sanitized" "$location_name")
+	# Pass location_name, first internal IP, peer_sanitized, and SA existence state for failure type detection
+	vpn_ok=$(determine_vpn_status "$vpn_ok" "$external_peer_ip" "$first_internal_ip" "$peer_sanitized" "$location_name" "$sa_exists")
 
 	# Return 0 if OK, 1 if failed (invert vpn_ok: 1 becomes 0, 0 becomes 1)
 	return $((1 - vpn_ok))

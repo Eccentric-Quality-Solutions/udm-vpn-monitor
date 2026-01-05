@@ -1152,72 +1152,6 @@ set_cooldown() {
 
 ---
 
-## 17. Override Functions, Not Just Commands, When Testing Recovery
-
-### Problem
-When testing recovery method tracking, tests need to mock `check_ipsec_phase2()` which is a function from `detection.sh`, not a command. Simply creating a mock command file won't work because the code calls the function directly, not via `command -v`.
-
-### Impact
-- Tests may fail silently or produce incorrect results
-- Recovery verification may not work as expected in tests
-- Difficult to diagnose why tests aren't working correctly
-
-### Lesson
-**When testing recovery functions that call other functions (not just commands), override the function directly in the test.** Functions are invoked directly, not through PATH lookup.
-
-### Pattern to Follow
-```bash
-# ✅ GOOD: Override function to use mock command
-local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
-cat >"$mock_check_ipsec_phase2" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-chmod +x "$mock_check_ipsec_phase2"
-add_mock_to_path
-
-source_recovery_module
-
-# Override the function to use mock
-check_ipsec_phase2() {
-    "$mock_check_ipsec_phase2" "$@"
-}
-
-# ❌ BAD: Only create mock command (function won't use it)
-local mock_check_ipsec_phase2="${TEST_DIR}/check_ipsec_phase2"
-cat >"$mock_check_ipsec_phase2" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-chmod +x "$mock_check_ipsec_phase2"
-add_mock_to_path
-# Missing: Function override - check_ipsec_phase2() will use original function, not mock
-```
-
-### Functions That Need Overriding
-- `check_ipsec_phase2()` - Function from `detection.sh`, used by `attempt_xfrm_recovery()` for verification
-- `verify_byte_counters_resume()` - Function from `recovery.sh`, used for byte counter verification
-- `count_sas_for_peer()` - Function from `recovery.sh`, used for SA counting
-
-### Commands vs Functions
-- **Commands** (e.g., `ip`, `ipsec`): Mock by creating executable file in PATH
-- **Functions** (e.g., `check_ipsec_phase2`, `verify_byte_counters_resume`): Override function definition after sourcing module
-
-### Systematic Application
-- When testing recovery functions, identify which functions they call
-- Check if those functions are commands (use PATH mock) or functions (override definition)
-- Review `lib/recovery.sh` and `lib/detection.sh` to see function dependencies
-- Override functions after sourcing modules, before calling recovery functions
-
-### Related Patterns
-- See `tests/test_recovery_method_tracking.sh` for examples of function overriding
-- See `tests/test_recovery.sh` lines 987-990 for another example
-- See `lib/recovery.sh:attempt_xfrm_recovery()` for function usage
-- Script exit codes should reflect execution success, not operational outcomes
-- Operational failures (VPN down, recovery failed) are logged but don't prevent successful script completion
-
----
-
 ## 18. Always Validate Timestamp Arithmetic to Prevent Overflow/Underflow
 
 **Note:** Testing-related patterns for this lesson may be found in `TEST_PATTERNS.md`. This section preserves the historical context of the bug discovery and fix.
@@ -2197,55 +2131,12 @@ log_message "INFO" "$location_name" "Surgical cleanup completed for $location_na
 
 ---
 
-## 30. Mock Command Handling: Always Handle All Command Variants
-
-### Problem
-When mocking system commands in tests, we must handle all variants that the code might call. The `get_xfrm_state_for_peer()` function tries `ip -s xfrm state` first (with statistics flag), then falls back to `ip xfrm state` (without flag). A test mock that only handled `ip xfrm state` would fail when the code calls `ip -s xfrm state` first.
-
-### Impact
-- Test failures that are hard to diagnose (mock appears correct but doesn't match actual call)
-- Inconsistent test behavior (works if first call fails, breaks if it succeeds)
-- False test passes when fallback path is used
-
-### Lesson
-**When mocking commands, check what variants the code actually calls.** Don't assume the code only calls one variant. Check the implementation to see all possible call patterns.
-
-### Pattern to Follow
-```bash
-# ✅ GOOD: Handle all variants
-cat >"$mock_ip" <<EOF
-#!/bin/bash
-# Handle "ip xfrm state" (args: xfrm, state)
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    echo "output"
-    exit 0
-fi
-# Handle "ip -s xfrm state" (args: -s, xfrm, state)
-if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
-    echo "output"
-    exit 0
-fi
-exit 1
-EOF
-
-# ❌ BAD: Only handle one variant
-cat >"$mock_ip" <<EOF
-#!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    echo "output"
-fi
-EOF
-```
-
-### Systematic Application
-- Before creating mocks, check the actual function implementation to see all command variants
-- Use `grep` or code search to find all call sites
-- Test mocks with both variants to ensure they work
-- Document which variants are handled in mock comments
-
-### References
-- Bug fix: `tests/test_detection_idle.sh:59-80` (updated mock to handle both `ip xfrm state` and `ip -s xfrm state`)
-- Implementation: `lib/detection.sh:578-601` (`get_xfrm_state_for_peer()` tries `-s` variant first, then falls back)
+**Note:** Lessons 30-33 (testing-specific mock and fixture patterns) have been moved to `TEST_PATTERNS.md` where they belong with other testing patterns. See `TEST_PATTERNS.md` section 5 (Mock Setup and Cleanup) for:
+- Lesson 30: Mock Command Handling: Always Handle All Command Variants
+- Lesson 31: When Refactoring Helper Functions, Maintain Backward Compatibility or Update All Callers
+- Lesson 32: Fixtures Can Export Helper Functions for Dynamic Test Behavior
+- Lesson 33: Escape Variables in Heredocs When Creating Mock Scripts
+- Lesson 34: Mock Commands Must Handle Command Availability Checks
 
 ---
 
@@ -2273,8 +2164,7 @@ These lessons should be applied systematically in future development and code re
 14. **Track error state when functions log but don't exit** - Return error codes even when logging errors
 15. **Handle race conditions in process management operations** - Check process state after operations
 16. **Don't log success when operations fail** - Only log success when operation actually succeeds
-17. **Override functions, not just commands, when testing recovery** - Functions are invoked directly, not through PATH lookup
-18. **Always validate timestamp arithmetic** - Use safe timestamp functions to prevent overflow/underflow
+17. **Always validate timestamp arithmetic** - Use safe timestamp functions to prevent overflow/underflow
 19. **Always validate arithmetic operations and clamp results** - Validate inputs and clamp results to expected ranges
 20. **Always preserve exit codes in cleanup functions** - Capture and preserve main function's exit code in EXIT trap handlers
 21. **Trap cleanup functions must handle unset variables with `set -u`** - Use default value expansion in cleanup functions
@@ -2286,132 +2176,3 @@ These lessons should be applied systematically in future development and code re
 27. **Parse all selectors when interacting with kernel interfaces** - When parsing structured output from kernel interfaces (netlink, xfrm, iproute2), parse ALL attributes that could be selectors, not just the required ones. Optional attributes become required selectors when present. Missing selectors cause operations to fail with "No such process" errors even when the object exists. Include all parsed selectors in operations (get, delete, modify) to ensure successful matching.
 28. **Avoid over-engineering edge case protections** - Don't add safeguards for edge cases that are extremely unlikely, would be caught by testing, are protected by existing safeguards, or add complexity without significant benefit
 29. **Log messages must accurately reflect the operation performed** - Use different terminology for different code paths when behavior differs, include context in messages, match terminology to actual behavior not function name
-30. **Mock command handling: Always handle all command variants** - When mocking system commands in tests, check what variants the code actually calls. Don't assume the code only calls one variant. Handle all variants that the implementation might use, including fallback paths.
-31. **When refactoring helper functions, maintain backward compatibility or update all callers** - When changing default behavior of helper functions (e.g., default file paths), either maintain backward compatibility or update all callers. Tests with special requirements may need explicit parameters. Default paths should match the most common usage pattern to minimize required changes.
-32. **Fixtures can export helper functions for dynamic test behavior** - When fixtures need to provide dynamic behavior during test execution (e.g., switching VPN states), define helper functions inside the fixture and export them using `export -f`. This pattern allows fixtures to provide both initial setup and runtime helpers. Helper functions should use exported variables (e.g., `VPN_FLAPPING_PEER_IP`) to access fixture state. This pattern is useful for testing state transitions and flapping scenarios where the test needs to modify the environment during execution.
-
-## 33. Escape Variables in Heredocs When Creating Mock Scripts
-
-### Problem
-When using `<<EOF` (without quotes) to create mock scripts in tests, variables like `$1`, `$2`, `$@` are expanded during test execution (when the heredoc is created), not when the mock script runs. This causes the mock script to receive incorrect values or fail to match arguments correctly.
-
-### Impact
-- Mock scripts fail to match command arguments correctly
-- Tests fail with cryptic errors like "No SA found" even when the mock should provide output
-- Hard to diagnose because the mock script appears correct but doesn't work as expected
-
-### Lesson
-**When using `<<EOF` (without quotes) to create mock scripts, always escape script arguments like `\$1`, `\$2`, `\$@` so they're evaluated when the mock script runs, not when the test creates the script.**
-
-### Pattern to Follow
-```bash
-# ✅ GOOD: Escape variables in heredoc
-cat >"$mock_ip" <<EOF
-#!/bin/bash
-if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
-    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-    exit 0
-fi
-exec /usr/bin/ip "\$@"
-EOF
-
-# ❌ BAD: Unescaped variables (expanded during test execution)
-cat >"$mock_ip" <<EOF
-#!/bin/bash
-if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
-    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-    exit 0
-fi
-exec /usr/bin/ip "$@"
-EOF
-
-# ✅ ALTERNATIVE: Use quoted heredoc to prevent all expansion
-cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    exit 0
-fi
-exec /usr/bin/ip "$@"
-EOF
-```
-
-### Systematic Application
-- When creating mock scripts with `<<EOF` (without quotes), escape all script arguments: `\$1`, `\$2`, `\$3`, `\$@`
-- Variables from the test environment (like `${TEST_PEER_IP}`) should NOT be escaped - they should expand during test execution
-- Alternatively, use `<<'EOF'` (with quotes) to prevent all expansion, but then you can't use test variables
-- Check existing mocks in `test_helper.bash` for correct patterns (e.g., `mock_ip_xfrm_state()`)
-
-### References
-- Bug fix: `tests/test_detection_xfrm_edge_cases.sh:361-386` (fixed unescaped `$1`, `$2`, `$3`, `$@` in mock script)
-- Correct pattern: `tests/test_helper.bash:816-836` (`mock_ip_xfrm_state()` uses escaped variables)
-- Test that failed: "check_xfrm_status falls back to ping check when byte counters unavailable"
-
----
-
-## 33. Mock Commands Must Handle Command Availability Checks
-
-### Problem
-When mocking system commands in tests, the mock must handle `--help` and `--version` arguments that `check_command_available()` uses to verify command existence. The `check_command_available()` function (see ADR-0027) uses multiple fallback mechanisms:
-1. First tries `command -v` (checks PATH)
-2. Falls back to checking system directories
-3. Falls back to executing command with `--help` or `--version` flags
-
-Mocks that only handle specific subcommands (e.g., `status`, `reload`) will fail when `check_command_available()` tries to verify the command exists via the `--help`/`--version` fallback.
-
-### Impact
-- Test failures when `check_command_available()` is called before the actual command execution
-- Inconsistent test behavior (works if command is found via PATH, fails if fallback is used)
-- Test failures that are hard to diagnose (mock appears correct but doesn't match availability check)
-
-### Lesson
-**When mocking commands, handle command availability check arguments (`--help` and `--version`) in addition to the actual command subcommands.** This ensures the mock works correctly with `check_command_available()` regardless of which fallback mechanism is used.
-
-### Pattern to Follow
-```bash
-# ✅ GOOD: Explicitly handle command availability checks
-cat >"$mock_ipsec" <<EOF
-#!/bin/bash
-if [[ "\$1" == "status" ]]; then
-    echo "test-conn: ESTABLISHED 1 hour ago, 192.168.1.1...192.168.1.2"
-    exit 0
-elif [[ "\$1" == "--help" ]] || [[ "\$1" == "--version" ]]; then
-    # Handle command availability checks
-    exit 0
-fi
-exit 1
-EOF
-
-# ✅ GOOD: Use exec fallback (works if real command exists)
-cat >"$mock_ipsec" <<EOF
-#!/bin/bash
-if [[ "\$1" == "status" ]]; then
-    echo "test-conn: ESTABLISHED 1 hour ago, 192.168.1.1...192.168.1.2"
-    exit 0
-fi
-exec /usr/bin/ipsec "\$@"
-EOF
-
-# ❌ BAD: Only handle specific subcommand (fails availability check)
-cat >"$mock_ipsec" <<EOF
-#!/bin/bash
-if [[ "\$1" == "status" ]]; then
-    echo "test-conn: ESTABLISHED 1 hour ago, 192.168.1.1...192.168.1.2"
-    exit 0
-fi
-exit 1
-EOF
-```
-
-### Systematic Application
-- Before creating mocks, check if the code calls `check_command_available()` or `check_command_or_warn()` for the command
-- If so, ensure the mock handles `--help` and `--version` arguments
-- Prefer explicit handling over `exec` fallback for test reliability (real command may not exist in test environment)
-- Update helper functions (e.g., `mock_ipsec_status()`) to handle availability checks for consistency
-
-### References
-- Bug fix: `tests/test_detection_xfrm_edge_cases.sh:255-265` (updated mock to handle `--help`/`--version`)
-- Implementation: `lib/common.sh:807-858` (`check_command_available()` uses `--help`/`--version` fallback)
-- ADR: `docs/adr/0027-enhanced-command-availability-checking.md` (command availability checking mechanism)
-
----

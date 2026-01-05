@@ -63,17 +63,25 @@ This document describes the architecture and design of the UDM VPN Monitor syste
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  State Files (${SCRIPT_DIR}/state/)                       │  │
-│  │  • last_bytes_<location>_<peer_ip>                      │  │
-│  │  • cooldown_until                                        │  │
-│  │  • vpn-monitor.lock                                      │  │
+│  │  • failure_counter_<location>_<peer_ip>  # Per-location │  │
+│  │  • last_bytes_<location>_<peer_ip>  # Per-location     │  │
+│  │  • failure_type_<location>_<peer_ip>  # Per-location   │  │
+│  │  • spi_<location>_<peer_ip>  # Per-location            │  │
+│  │  • idle_detected_<location>_<peer_ip>  # Per-location   │  │
+│  │  • last_status_log_<location>_<peer_ip>  # Per-location │  │
+│  │  • recovery_method_<location>_<peer_ip>  # Per-location│  │
+│  │  • connection_name_<peer_ip>  # Per-peer (no location)│  │
+│  │  • cooldown_until  # System-wide                        │  │
+│  │  • restart_count  # System-wide                          │  │
+│  │  • network_partition_state  # System-wide               │  │
+│  │  • vpn-monitor.lock  # System-wide                      │  │
+│  │  • .cron_checked  # System-wide                        │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  Log Files (${SCRIPT_DIR}/logs/)                        │  │
 │  │  • vpn-monitor.log                                       │  │
 │  │  • vpn-keepalive.log (if keepalive daemon enabled)      │  │
-│  │  • failure_counter_<location>_<peer_ip>  # Per-location (in state/) │  │
-│  │  • restart_count (in state/)                            │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -90,7 +98,7 @@ graph TB
         LogDir[Log Files]
         Keepalive[vpn-keepalive.sh<br/>Optional Daemon]
     end
-    
+
     subgraph "Library Modules"
         LockfileLib[lib/lockfile.sh<br/>Lockfile Management]
         ConfigLib[lib/config.sh<br/>Config Loading]
@@ -103,19 +111,19 @@ graph TB
         CommonLib[lib/common.sh<br/>Shared Utilities]
         ConstantsLib[lib/constants.sh<br/>Named Constants]
     end
-    
+
     subgraph "Detection Layer"
         XfrmCheck[ip xfrm state<br/>SA & Byte Counters]
         IpsecCheck[ipsec status<br/>Fallback Check]
         PingCheck[ping check<br/>Connectivity Test]
     end
-    
+
     subgraph "Recovery Layer"
         Tier1[Tier 1: Logging]
         Tier2["Tier 2: Surgical Cleanup<br/>xfrm recovery (default)<br/>ipsec reload (fallback)<br/>Per-Connection"]
         Tier3["Tier 3: Full Restart<br/>xfrm recovery (default)<br/>ipsec restart (fallback)<br/>Per-Connection"]
     end
-    
+
     subgraph "Safety Mechanisms"
         Lockfile[Lockfile Protection]
         Cooldown[Cooldown Period]
@@ -123,37 +131,37 @@ graph TB
         Validation[Input Validation]
         ResourceThrottle[Resource Throttling]
     end
-    
+
     Cron --> MainScript
-    MainScript --> LockfileLib
-    LockfileLib --> ConfigLib
+    MainScript --> ConfigLib
     ConfigLib --> SchemaLib
-    ConfigLib --> StateLib
+    MainScript --> LockfileLib
+    MainScript --> StateLib
     MainScript --> LoggingLib
     MainScript --> ResourcesLib
     MainScript --> DetectionLib
     MainScript --> RecoveryLib
     MainScript --> CommonLib
     MainScript --> ConstantsLib
-    
+
     DetectionLib --> XfrmCheck
     XfrmCheck -->|No SA| IpsecCheck
     XfrmCheck -->|SA Found| PingCheck
     PingCheck -->|Pass| Tier1
     XfrmCheck -->|Fail| Tier1
-    
+
     RecoveryLib --> Tier1
     Tier1 -->|Threshold| Tier2
     Tier2 -->|Threshold| Tier3
     Tier3 --> Cooldown
     Tier2 --> RateLimit
     Tier3 --> RateLimit
-    
+
     StateLib --> Cooldown
     StateLib --> RateLimit
     CommonLib --> Validation
     ResourcesLib --> ResourceThrottle
-    
+
     MainScript --> ResourcesLib
     MainScript --> StateDir
     MainScript --> LogDir
@@ -164,12 +172,15 @@ graph TB
 
 ```mermaid
 flowchart TD
-    Start([Cron Trigger]) --> LockCheck{Lockfile<br/>Available?}
+    Start([Cron Trigger]) --> CreateDirs[Create Directories<br/>state/, logs/]
+    CreateDirs --> InitLogFile[Initialize Log File<br/>Test Write Capability]
+    InitLogFile --> LoadConfig[Load Configuration]
+    LoadConfig --> ValidateConfig[Validate Configuration<br/>Schema & Location Config]
+    ValidateConfig --> LockCheck{Lockfile<br/>Available?}
     LockCheck -->|No| Exit1([Exit: Another<br/>instance running])
     LockCheck -->|Yes| AcquireLock[Acquire Lockfile]
-    AcquireLock --> LoadConfig[Load Configuration]
-    LoadConfig --> InitState[Initialize State Files]
-    InitState --> ValidateState[Validate State Files<br/>Format Validation]
+    AcquireLock --> InitMonitor[Initialize Monitor<br/>Parse Args, Log Start, Init State]
+    InitMonitor --> ValidateState[Validate State Files<br/>Format Validation]
     ValidateState --> ResourceCheck[Check System Resources<br/>CPU, RAM, Disk]
     ResourceCheck -->|Constrained| Exit6([Exit: Resources<br/>Constrained])
     ResourceCheck -->|OK| NetworkPartitionCheck{Network<br/>Partition<br/>Check<br/>Enabled?}
@@ -181,59 +192,59 @@ flowchart TD
     CooldownCheck -->|Yes| Exit2([Exit: In<br/>cooldown period])
     CooldownCheck -->|No| CronCheck[Check Cron<br/>Persistence<br/>Once Per Run]
     CronCheck --> ForEachLocation[For Each Location]
-    
+
     ForEachLocation --> CheckVPN[check_vpn_status]
-    
+
     CheckVPN --> XfrmCheck{ip xfrm state<br/>SA Found?}
     XfrmCheck -->|Yes| ByteCheck{Bytes<br/>Increasing?}
     XfrmCheck -->|No| IpsecCheck{ipsec status<br/>Found?}
-    
+
     ByteCheck -->|Yes| PingCheck{Enable<br/>Ping Check?}
     ByteCheck -->|No| VPNFail[VPN Failed]
-    
+
     PingCheck -->|Yes| PingTest{ping<br/>Success?}
     PingCheck -->|No| VPNOK[VPN OK]
     PingTest -->|Yes| VPNOK
     PingTest -->|No| VPNFail
-    
+
     IpsecCheck -->|Yes| VPNOK
     IpsecCheck -->|No| VPNFail
-    
+
     VPNOK --> ResetCounter[Reset Failure Counter]
     VPNFail --> NetworkPartitionCheck2{Network<br/>Partitioned?}
     NetworkPartitionCheck2 -->|Yes| SkipRecovery[Skip Recovery<br/>Actions]
     NetworkPartitionCheck2 -->|No| IncrementCounter[Increment Failure Counter]
-    
+
     SkipRecovery --> NextLocation
     IncrementCounter --> TierCheck{Failure<br/>Count?}
     TierCheck -->|>= TIER1| Tier1[Log Failure]
     TierCheck -->|>= TIER2| Tier2[Surgical Cleanup]
     TierCheck -->|>= TIER3| RateLimitCheck{Rate Limit<br/>OK?}
-    
+
     Tier1 --> NextLocation
     Tier2 --> NextLocation
-    
+
     RateLimitCheck -->|No| Exit4([Exit: Rate<br/>Limited])
     RateLimitCheck -->|Yes| Tier3[Full Restart]
     Tier3 --> RecordRestart[Record Restart]
     RecordRestart --> SetCooldown[Set Cooldown Period]
-    
+
     ResetCounter --> NextLocation
     SetCooldown --> NextLocation
     Exit4 --> NextLocation
-    
+
     NextLocation --> MoreLocations{More<br/>Locations?}
     MoreLocations -->|Yes| ForEachLocation
     MoreLocations -->|No| ReleaseLock[Release Lockfile]
     ReleaseLock --> End([End])
-    
+
     Exit1 --> End
     Exit2 --> End
     Exit6 --> End
 ```
 
-**Note**: 
-- **Execution Order**: The actual execution flow includes more steps than shown in simplified form above. Full order: Directory creation → Config loading → Config validation → Lockfile acquisition → Initialize monitor (parse args, init state) → State validation → Resource check → Network partition check → Cooldown check → Cron persistence check → Location processing.
+**Note**:
+- **Execution Order**: The actual execution flow includes more steps than shown in simplified form above. Full order: Directory creation (state, logs) → Log file initialization → Config loading → Config validation → Lockfile acquisition → Initialize monitor (parse args, log start, init state) → State validation → Resource check → Network partition check → Cooldown check → Cron persistence check → Location processing.
 
 - **State Validation**: State files are validated for format correctness (integer, timestamp, timestamp_list) early in execution (after state initialization). Corrupted files are automatically detected, backed up, and recovered with safe defaults. This validation step ensures state file integrity before proceeding.
 
@@ -252,15 +263,15 @@ sequenceDiagram
     participant Ipsec as ipsec
     participant Ping as ping
     participant State as State Files
-    
+
     Script->>Xfrm: Check SA for location external IP
     Xfrm-->>Script: SA exists + byte counters
-    
+
     alt SA Found with Byte Counters
         Script->>State: Read last_bytes_<location>_<peer_ip>
         State-->>Script: Previous byte count
         Script->>Script: Compare bytes (increasing?)
-        
+
         alt Bytes Increasing
             Script->>State: Update last_bytes_<location>_<peer_ip>
             Script->>Ping: Check connectivity (if enabled)
@@ -315,18 +326,18 @@ stateDiagram-v2
     [*] --> Monitoring: Start
     Monitoring --> Tier1: Failure Count >= TIER1_THRESHOLD
     Monitoring --> [*]: VPN OK
-    
+
     Tier1 --> Tier2: Failure Count >= TIER2_THRESHOLD
     Tier1 --> Monitoring: Continue Monitoring
-    
+
     Tier2 --> Tier3: Failure Count >= TIER3_THRESHOLD
     Tier2 --> Monitoring: After Cleanup
-    
+
     state Tier1 {
         [*] --> LogFailure
         LogFailure --> [*]
     }
-    
+
     state Tier2 {
         [*] --> CheckXfrm
         CheckXfrm --> AttemptXfrm: Xfrm Enabled
@@ -337,7 +348,7 @@ stateDiagram-v2
         AttemptXfrm --> ReloadIpsec: Failure
         ReloadIpsec --> [*]
     }
-    
+
     state Tier3 {
         [*] --> CheckRateLimit
         CheckRateLimit --> RateLimited: Limit Exceeded
@@ -352,10 +363,10 @@ stateDiagram-v2
         SetCooldown --> [*]
         RateLimited --> [*]
     }
-    
+
     Tier3 --> Cooldown: After Restart
     Cooldown --> Monitoring: Cooldown Expired
-    
+
     Monitoring --> SkipRecovery: Network Partitioned
     SkipRecovery --> Monitoring: Continue Monitoring
 ```
@@ -370,39 +381,57 @@ graph LR
         ConfigFile[Config File<br/>LOCATION_*_EXTERNAL, LOCATION_*_INTERNAL, thresholds]
         XfrmState[System State<br/>ip xfrm state]
     end
-    
+
     subgraph "Processing"
         Validation[Input Validation]
         Detection[VPN Detection]
         Decision[Recovery Decision]
     end
-    
+
     subgraph "State Storage"
         FailureCounter[failure_counter_<location>_<peer_ip>]
-        ByteFiles[last_bytes_*]
+        ByteFiles[last_bytes_<location>_<peer_ip>]
+        FailureType[failure_type_<location>_<peer_ip>]
+        SPI[spi_<location>_<peer_ip>]
+        IdleDetected[idle_detected_<location>_<peer_ip>]
+        LastStatusLog[last_status_log_<location>_<peer_ip>]
+        RecoveryMethod[recovery_method_<location>_<peer_ip>]
+        ConnectionName[connection_name_<peer_ip>]
         RestartLog[restart_count]
         CooldownFile[cooldown_until]
+        NetworkPartition[network_partition_state]
     end
-    
+
     subgraph "Output"
         LogFile[vpn-monitor.log]
         Actions[Recovery Actions]
     end
-    
+
     ConfigFile --> Validation
     XfrmState --> Detection
     Validation --> Detection
     Detection --> Decision
     Decision --> FailureCounter
     Decision --> ByteFiles
+    Decision --> FailureType
+    Decision --> SPI
+    Decision --> IdleDetected
+    Decision --> LastStatusLog
+    Decision --> RecoveryMethod
+    Decision --> ConnectionName
     Decision --> RestartLog
     Decision --> CooldownFile
+    Decision --> NetworkPartition
     Decision --> LogFile
     Decision --> Actions
     FailureCounter --> Decision
     ByteFiles --> Detection
+    SPI --> Detection
+    IdleDetected --> Detection
+    ConnectionName --> Detection
     RestartLog --> Decision
     CooldownFile --> Decision
+    NetworkPartition --> Decision
 ```
 
 ## State Management
@@ -423,6 +452,9 @@ State files are organized into two categories:
 - `${STATE_DIR}/idle_detected_<location>_<peer_ip>`: Tracks idle detection state for the location
 - `${STATE_DIR}/last_status_log_<location>_<peer_ip>`: Timestamp of last status log entry for the location
 - `${STATE_DIR}/recovery_method_<location>_<peer_ip>`: Tracks recovery method used when recovery was attempted (cleared after restoration is logged)
+
+**Per-Peer State Files** (tracked per peer IP, not per location):
+- `${STATE_DIR}/connection_name_<peer_ip>`: Caches IPsec connection name discovered from `ipsec status` output (per-peer only, no location). Used for enhanced logging to show connection names in log messages. Format: `connection_name_<sanitized_peer_ip>` (e.g., `connection_name_203_0_113_1`)
 
 **System-Wide State Files** (shared across all peers):
 - `${STATE_DIR}/cooldown_until`: Cooldown expiration timestamp (prevents immediate re-restarts)
@@ -514,7 +546,7 @@ All per-location state files use sanitized location names and peer IP addresses 
      - Stored before recovery action is executed
      - Updated if fallback recovery method is used (e.g., xfrm fails, falls back to ipsec_reload)
      - Cleared after VPN restoration is logged to prevent stale information
-   - **Values**: 
+   - **Values**:
      - `"xfrm"`: xfrm-based per-connection recovery was used
      - `"ipsec_reload"`: ipsec reload recovery was used
      - `"ipsec_restart"`: ipsec restart recovery was used
@@ -537,7 +569,7 @@ All per-location state files use sanitized location names and peer IP addresses 
 **Example Scenario**:
 If monitoring three VPN locations (NYC, DC, Chicago), the monitor creates separate state files for each location:
 - `state/failure_counter_NYC_203_0_113_1` - tracks failures for NYC location
-- `state/failure_counter_DC_198_51_100_1` - tracks failures for DC location  
+- `state/failure_counter_DC_198_51_100_1` - tracks failures for DC location
 - `state/failure_counter_CHICAGO_192_0_2_1` - tracks failures for Chicago location
 - `state/last_bytes_NYC_203_0_113_1` - tracks byte counters for NYC location
 - `state/last_bytes_DC_198_51_100_1` - tracks byte counters for DC location
@@ -640,7 +672,9 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
     ├── failure_type_NYC_203_0_113_1 # Per-location failure type tracking
     ├── spi_NYC_203_0_113_1         # Per-location SPI (Security Parameter Index)
     ├── idle_detected_NYC_203_0_113_1 # Per-location idle detection state
-    └── last_status_log_NYC_203_0_113_1 # Per-location last status log timestamp
+    ├── last_status_log_NYC_203_0_113_1 # Per-location last status log timestamp
+    ├── recovery_method_NYC_203_0_113_1 # Per-location recovery method tracking
+    └── connection_name_203_0_113_1 # Per-peer connection name cache (no location)
 ```
 
 **Path Resolution**: The script uses `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` to determine its location. State files are created at `${SCRIPT_DIR}/state/` and logs at `${SCRIPT_DIR}/logs/`. When installed to `/data/vpn-monitor`, these resolve to `/data/vpn-monitor/state/` and `/data/vpn-monitor/logs/` respectively.
@@ -662,7 +696,7 @@ The system uses a modular library architecture where functionality is organized 
 **Key Functions**:
 - `get_formatted_timestamp()` - Consistent date/time formatting
 - `ensure_directory_exists()` - Centralized directory creation
-- `check_command_available()` - Check if command is available (returns error code)
+- `check_command_available()` - Enhanced command availability checking with three-tier fallback (handles restricted PATH environments in cron/systemd contexts). See Design Decision #11 for details.
 - `file_exists_and_readable()` - Check file existence and readability
 - `directory_exists()` / `directory_writable()` - Directory checks
 - `atomic_write_file()` - Atomic file write operations
@@ -826,7 +860,7 @@ The system includes an optional VPN keepalive daemon (`vpn-keepalive.sh`) that r
 
 **Purpose**: Sends periodic ping traffic through VPN tunnels to prevent idle timeout and maintain tunnel activity.
 
-**Architecture**: 
+**Architecture**:
 - Service file: `vpn-keepalive.service` (systemd unit)
 - Script: `vpn-keepalive.sh` (daemon implementation)
 - Configuration: Uses same `vpn-monitor.conf` configuration
@@ -848,11 +882,11 @@ graph TB
         Ipsec[ipsec]
         PingCmd[ping/ping6]
     end
-    
+
     subgraph "Main Script"
         MainScript[vpn-monitor.sh]
     end
-    
+
     subgraph "Library Modules"
         DetectionLib[lib/detection.sh<br/>check_vpn_status]
         RecoveryLib[lib/recovery.sh<br/>surgical_cleanup<br/>full_restart<br/>monitor_location]
@@ -863,28 +897,28 @@ graph TB
         ResourcesLib[lib/resources.sh<br/>check_system_resources]
         CommonLib[lib/common.sh<br/>validate_ip_address<br/>get_formatted_timestamp]
     end
-    
+
     MainScript --> LockfileLib
     MainScript --> ConfigLib
     MainScript --> StateLib
     MainScript --> LoggingLib
     MainScript --> ResourcesLib
     MainScript --> RecoveryLib
-    
+
     RecoveryLib -->|monitor_location| DetectionLib
     RecoveryLib -->|monitor_location| StateLib
-    
+
     DetectionLib --> IP
     DetectionLib --> Ipsec
     DetectionLib --> PingCmd
     DetectionLib --> CommonLib
-    
+
     RecoveryLib -->|Tier 2| IP
     RecoveryLib -->|Tier 2| Ipsec
     RecoveryLib -->|Tier 3| Ipsec
     RecoveryLib --> StateLib
     RecoveryLib --> LoggingLib
-    
+
     StateLib --> LoggingLib
     CommonLib --> LoggingLib
 ```
@@ -904,16 +938,23 @@ graph TB
 ### 3. Tiered Recovery
 - **Why**: Gradual escalation prevents unnecessary disruption
 - **Tiers**: Log → Cleanup → Restart
-- **Safety Safeguard**: Recovery escalation is blocked when detection is unreliable. If failure type is "unknown" and both `ip` and `ipsec` commands are unavailable, the system cannot reliably determine if VPN is actually down, so recovery escalation is skipped to prevent false recovery actions. Failures are still logged for monitoring, but Tier 2/3 recovery actions are not executed.
-- **Tier 2 Details**: 
+- **Safety Safeguard - Detection Reliability**: Recovery escalation is blocked when detection is unreliable to prevent false recovery actions. The safeguard triggers when:
+  - Failure type is "unknown" (indicating detection could not determine the specific failure reason)
+  - AND both `ip` and `ipsec` commands are unavailable (checked via `check_command_available()` which handles PATH restrictions in cron/systemd environments)
+  - When triggered: Tier 1 logging continues for monitoring purposes, but Tier 2/3 recovery escalation is skipped
+  - Error message logged: "Detection unreliable: Both 'ip' and 'ipsec' commands unavailable - skipping recovery escalation for <location> (<peer_ip>) to prevent false recovery actions"
+  - **Rationale**: When detection tools are unavailable, the system cannot reliably determine if a VPN tunnel is actually down or if the detection failure is due to missing tools. Escalating recovery in this scenario could disrupt working VPN connections unnecessarily.
+  - **Implementation**: Implemented in `lib/recovery.sh` in the `handle_vpn_failure()` function. Uses enhanced command availability checking that handles restricted PATH environments (see Design Decision #11).
+  - **Related**: See ADR-0026 for detailed design rationale and ADR-0027 for command availability checking mechanism.
+- **Tier 2 Details**:
   - Default: xfrm-based per-connection recovery (uses `ip xfrm state delete`) if `ENABLE_XFRM_RECOVERY=1` (enabled by default for UDM OS 4.3+) - affects only the failing tunnel
   - Fallback: Falls back to `ipsec reload` (affects all connections) if xfrm recovery fails or is disabled
   - **Recovery Verification**: After xfrm-based recovery, the system waits for SA re-establishment with exponential backoff (default: 2s → 4s → 8s → 16s intervals, capped at 16s). Verification timeout is configurable via `RECOVERY_VERIFY_TIMEOUT` (default: 30 seconds, range: 10-300 seconds). The system verifies both SA re-establishment and byte counter resumption to ensure the tunnel is passing traffic.
-- **Tier 3 Details**: 
+- **Tier 3 Details**:
   - Default: xfrm-based per-connection recovery attempted first if `ENABLE_XFRM_RECOVERY=1` (enabled by default for UDM OS 4.3+) - affects only the failing tunnel
   - Fallback: Falls back to `ipsec restart` (affects all tunnels) if xfrm recovery fails or is disabled
   - **Recovery Verification**: Same verification process as Tier 2 (see Tier 2 Details above)
-- **Benefit**: Most issues resolved without full restart. Per-connection recovery is enabled by default, providing surgical recovery that affects only the failing tunnel. Recovery verification ensures tunnels are actually functional after recovery actions. Safety safeguard prevents false recovery actions when detection tools are unavailable.
+- **Benefit**: Most issues resolved without full restart. Per-connection recovery is enabled by default, providing surgical recovery that affects only the failing tunnel. Recovery verification ensures tunnels are actually functional after recovery actions. Safety safeguard prevents false recovery actions when detection tools are unavailable, prioritizing system stability over automated recovery when detection is unreliable.
 
 ### 4. Per-Location State Tracking
 - **Why**: Multiple locations need independent monitoring and recovery
@@ -925,7 +966,7 @@ graph TB
 
 ### 5. Multi-Method Detection with Fallback
 - **Why**: Robust detection across different UDM configurations
-- **Implementation**: 
+- **Implementation**:
   - Primary: `ip xfrm state` (SA state and byte counters)
   - Fallback: `ipsec status` (if xfrm unavailable)
   - Optional: Ping checks verify end-to-end connectivity
@@ -934,7 +975,7 @@ graph TB
 ### 6. Modular Library Architecture
 - **Why**: Reduce code duplication, improve maintainability, enable code reuse
 - **Implementation**: Complete modularization with dedicated library modules in `lib/` directory
-- **Benefits**: 
+- **Benefits**:
   - Single responsibility per module
   - Code reuse across scripts (install, uninstall, monitor)
   - Easier testing and maintenance
@@ -966,29 +1007,46 @@ graph TB
 ### 10. VPN Keepalive Daemon (Optional)
 - **Why**: Prevent idle VPN tunnels from triggering false positives
 - **Implementation**: Optional systemd service (`vpn-keepalive.service`) that sends periodic ping traffic through VPN tunnels
-- **Benefits**: 
+- **Benefits**:
   - Maintains tunnel activity to prevent idle timeouts
   - Ensures byte counters continue incrementing
   - Reduces false positive detections for idle VPNs
 - **Note**: See "VPN Keepalive Daemon" section above for architecture and integration details
 
+### 11. Enhanced Command Availability Checking
+- **Why**: Scripts executed by cron or systemd on UDM OS often have restricted PATH environments that don't include `/usr/sbin` or other system directories, causing `command -v` to fail even when binaries exist
+- **Implementation**: Enhanced `check_command_available()` function in `lib/common.sh` with three-tier fallback:
+  1. **Primary**: Uses `command -v` (POSIX compliant, checks PATH)
+  2. **Fallback 1**: Checks common system directories directly (`/usr/sbin`, `/usr/bin`, `/sbin`, `/bin`)
+  3. **Fallback 2**: Attempts to execute command with `--help` or `--version` flags (uses `timeout` if available, redirects output to avoid side effects)
+- **Usage Pattern**: All binary command checks in code that runs via cron/systemd should use this function
+- **Exception**: Direct `command -v` is acceptable for checking function availability (functions are in same shell context)
+- **Benefits**:
+  - Commands are found even in restricted PATH environments
+  - Works correctly in cron and systemd execution contexts
+  - Handles UDM OS PATH restrictions properly
+  - Three-tier fallback ensures maximum compatibility
+- **Related**: See ADR-0027 for detailed design rationale and implementation details. Used by Detection Reliability Safeguard (Design Decision #3) to check command availability.
+
 ## Error Handling Strategy
 
 1. **Fail-Safe Defaults**: Script exits gracefully on errors
 2. **Logging**: All errors logged with context via centralized logging module
-3. **Fallbacks**: 
+3. **Fallbacks**:
    - Detection: Multiple methods with automatic fallback (see Design Decision #5)
    - Recovery: Tiered recovery with fallback strategies (see Design Decision #3)
+   - Command Availability: Enhanced command checking with three-tier fallback (see Design Decision #11)
 4. **Validation**: Input validation prevents injection attacks (see Security Considerations)
 5. **State Recovery**: Stale lockfiles automatically cleaned up (see Design Decision #2)
 6. **Graceful Degradation**: If preferred tool unavailable, falls back to alternative without failing
+7. **Detection Reliability Safeguard**: When detection tools are unavailable, recovery escalation is blocked to prevent false recovery actions (see Design Decision #3). Failures are still logged for monitoring, but Tier 2/3 recovery actions are skipped when detection is unreliable.
 7. **Network Command Timeout Handling**: Network commands that may hang are wrapped with `timeout` command to prevent indefinite blocking:
    - **Pattern**: Wrap potentially hanging network commands with `timeout` wrapper
    - **Implementation**: Check for `timeout` command availability, wrap command with calculated timeout value
    - **Timeout Calculation**: Use reasonable timeout based on expected command duration (e.g., `ping_count * ping_timeout + 1` seconds, capped at reasonable maximum)
    - **Exit Code Handling**: Detect timeout exit code (124) and provide specific error messages
    - **Fallback**: If `timeout` command unavailable, run command without wrapper (shouldn't happen on UDM)
-   - **Examples**: 
+   - **Examples**:
      - `ipsec status` wrapped with `IPSEC_STATUS_TIMEOUT` (5 seconds) in `lib/detection.sh` and `lib/recovery.sh`
      - `ping` commands wrapped with calculated timeout in `check_ping_connectivity()` (lib/detection.sh)
      - `dig` and `nslookup` wrapped with DNS timeout in `check_dns_resolution()` (lib/detection.sh)
