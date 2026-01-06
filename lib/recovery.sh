@@ -3,7 +3,7 @@
 # Recovery actions for UDM VPN Monitor
 # Implements tiered recovery: logging → surgical cleanup → full restart
 #
-# Version: 0.4.3
+# Version: 0.5.0
 #
 
 # Source constants for magic numbers

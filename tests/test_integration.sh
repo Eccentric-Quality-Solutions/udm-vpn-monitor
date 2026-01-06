@@ -393,8 +393,9 @@ EOF
 	assert_success
 	source_function "get_peer_state_file_path"
 	# Failure counter should be reset to 0
+	# setup_vpn_failing_fixture creates location "TEST"
 	local failure_counter
-	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")

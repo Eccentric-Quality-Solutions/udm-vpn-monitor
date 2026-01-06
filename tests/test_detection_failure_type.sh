@@ -88,28 +88,8 @@ EOF
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	# Debug: Verify state file exists before running script
-	local state_file_before
-	state_file_before=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes" 2>/dev/null || echo "${STATE_DIR}/last_bytes_TEST_192_168_1_1")
-	if [[ -f "$state_file_before" ]]; then
-		local bytes_before
-		bytes_before=$(cat "$state_file_before" 2>/dev/null || echo "0")
-		echo "DEBUG: State file before script run: $bytes_before (path: $state_file_before)" >&2
-	else
-		echo "ERROR: State file not found before script run: $state_file_before" >&2
-		echo "ERROR: STATE_DIR: ${STATE_DIR}" >&2
-		echo "ERROR: Files in STATE_DIR:" >&2
-		ls -la "${STATE_DIR}"/* 2>/dev/null | head -5 >&2 || echo "No files found" >&2
-	fi
-
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
-
-	# Debug: Check log file contents
-	if [[ -f "$LOG_FILE" ]]; then
-		echo "DEBUG: Log file contents:" >&2
-		cat "$LOG_FILE" >&2 || true
-	fi
 
 	# Should detect routing_issue failure type
 	assert_file_exist "$LOG_FILE"
@@ -164,6 +144,73 @@ EOF
 	assert_success
 
 	# Should detect routing_issue failure type
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "Routing issue" || assert_file_contains "$LOG_FILE" "routing_issue"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "Failure type routing_issue - Multiple IPs threshold logic (2/3 IPs respond = pass, 0/3 = fail)" {
+	# Purpose: Test verifies that multiple IP threshold logic works correctly in failure type detection
+	# Expected: With 3 IPs, threshold is ceil(3 * 0.3) = 1, so 2/3 responding (>=threshold) = no routing_issue, 0/3 responding (<threshold) = routing_issue
+	# Importance: Ensures threshold logic correctly handles multiple IP scenarios in failure classification
+	local ip1="192.168.1.1"
+	local ip2="192.168.1.2"
+	local ip3="192.168.1.3"
+	local multiple_ips="${ip1} ${ip2} ${ip3}"
+
+	# Test case 1: 2/3 IPs respond (meets 30% threshold) - should NOT detect routing_issue
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' "LOCATION_TEST_INTERNAL=\"${multiple_ips}\""
+
+	# Set initial bytes (increasing) using location-based state functions
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "last_bytes" "1000" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "0x12345678" || true
+
+	# Mock ip command - SA exists
+	mock_ip_xfrm_state "${TEST_PEER_IP}" "2000" >/dev/null
+	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+
+	# Mock ping - succeeds for 2 out of 3 IPs (meets threshold: ceil(3 * 0.3) = 1, need >= 1, have 2)
+	mock_ping_selective "${ip1} ${ip2}" >/dev/null
+	add_mock_to_path
+
+	# Mock ipsec to fail (prevent fallback from succeeding and masking failure)
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	cat >"$mock_ipsec" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "--help" ]] || [[ "$1" == "--version" ]]; then
+    exit 0
+fi
+exit 1
+EOF
+	chmod +x "$mock_ipsec"
+	add_mock_to_path
+
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Should NOT detect routing_issue (threshold met: 2/3 >= 30%)
+	assert_file_exist "$LOG_FILE"
+	refute_file_contains "$LOG_FILE" "routing_issue"
+
+	# Clean up for next test case
+	remove_mock_from_path
+
+	# Test case 2: 0/3 IPs respond (below 30% threshold) - should detect routing_issue
+	# Reset state
+	set_peer_state "TEST" "${TEST_PEER_IP}" "last_bytes" "1000" || true
+
+	# Mock ping - all fail (0/3 < threshold: ceil(3 * 0.3) = 1, need >= 1, have 0)
+	mock_ping_failure >/dev/null
+	add_mock_to_path
+
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Should detect routing_issue (threshold not met: 0/3 < 30%)
 	assert_file_exist "$LOG_FILE"
 	assert_file_contains "$LOG_FILE" "Routing issue" || assert_file_contains "$LOG_FILE" "routing_issue"
 

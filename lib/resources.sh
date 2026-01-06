@@ -3,7 +3,7 @@
 # Resource monitoring functions for UDM VPN Monitor
 # Monitors CPU, RAM, and disk space usage and implements throttling
 #
-# Version: 0.4.3
+# Version: 0.5.0
 #
 
 # Source common utility functions
@@ -12,6 +12,18 @@
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${LIB_DIR}/common.sh" 2>/dev/null || {
 	# Fallback if common.sh not found - define minimal atomic_write_file
+	# Write file atomically
+	#
+	# Writes content to a file using atomic operation (write to temp, then rename).
+	# This is a fallback implementation when common.sh is not available.
+	#
+	# Arguments:
+	#   $1: Path to file to write
+	#   $2: Content to write to file
+	#
+	# Returns:
+	#   0: File written successfully
+	#   1: Failed to write file
 	atomic_write_file() {
 		local file="$1"
 		local content="$2"
@@ -20,6 +32,17 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 		fi
 		return 0
 	}
+	# Safely source a library file
+	#
+	# Attempts to source a library file, silently failing if it doesn't exist.
+	# This is a fallback implementation when common.sh is not available.
+	#
+	# Arguments:
+	#   $1: Path to library file to source
+	#
+	# Returns:
+	#   0: File sourced successfully
+	#   1: File not found or error sourcing
 	safe_source_lib() {
 		local lib_file="$1"
 		source "$lib_file" 2>/dev/null
@@ -31,6 +54,9 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 # Calculates current CPU usage percentage by sampling /proc/stat over a short interval.
 # Uses a simple method: compares CPU idle time before and after a 1-second sleep.
 # This provides a reasonable approximation of current CPU load.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Success, prints CPU usage percentage (0-100) to stdout
@@ -117,6 +143,9 @@ get_cpu_usage() {
 # Calculates current memory usage percentage using the 'free' command.
 # Uses MemTotal and MemAvailable (or MemFree if MemAvailable not available) to calculate usage.
 # This provides an accurate view of actual memory pressure.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Success, prints memory usage percentage (0-100) to stdout

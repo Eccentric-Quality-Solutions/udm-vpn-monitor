@@ -4,14 +4,13 @@
 # Analyzes VPN monitor logs and generates reports on failure frequency and recovery success rate
 # Exports data to CSV for spreadsheet analysis
 #
-# Version: 0.4.3
+# Version: 0.5.0
 #
 
 set -euo pipefail
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${SCRIPT_DIR}/vpn-monitor.conf"
 LOGS_DIR="${SCRIPT_DIR}/logs"
 LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
 
@@ -43,13 +42,6 @@ CSV_FILE="${OUTPUT_DIR}/vpn-monitor-analysis.csv"
 REPORT_FILE="${OUTPUT_DIR}/vpn-monitor-report.txt"
 DATE_RANGE=""
 VERBOSE=0
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
 
 # Print usage information
 #
@@ -270,6 +262,39 @@ parse_date_range() {
 	fi
 }
 
+# Determine recovery type for a recovery entry
+#
+# Checks if a recovery entry is app-managed (has recovery method) or self-healed.
+# This helper function DRYs up duplicate logic used in multiple places.
+#
+# Arguments:
+#   $1: Recovery entry string (format: "timestamp|peer_ip|recovery_count|level")
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints "APP_MANAGED" if recovery is app-managed, "SELF_HEALED" if self-healed
+#
+# Side effects:
+#   Uses global arrays APP_MANAGED_RECOVERIES and SELF_HEALED_RECOVERIES
+determine_recovery_type() {
+	local recovery_entry="$1"
+	local j
+
+	# Check if this recovery is in the app-managed array
+	for j in "${!APP_MANAGED_RECOVERIES[@]}"; do
+		if [[ "${APP_MANAGED_RECOVERIES[$j]}" == "$recovery_entry" ]]; then
+			echo "APP_MANAGED"
+			return 0
+		fi
+	done
+
+	# If not app-managed, it must be self-healed (all recoveries are in one of the two arrays)
+	echo "SELF_HEALED"
+	return 0
+}
+
 # Analyze log file
 #
 # Parses log file line by line and extracts failure/recovery statistics.
@@ -311,6 +336,8 @@ analyze_logs() {
 	# Initialize arrays
 	FAILURES=()
 	RECOVERIES=()
+	APP_MANAGED_RECOVERIES=()
+	SELF_HEALED_RECOVERIES=()
 	TIER1_ACTIONS=()
 	TIER2_ACTIONS=()
 	TIER2_COMPLETED=()
@@ -366,12 +393,34 @@ analyze_logs() {
 			fi
 			FAILURES+=("${timestamp}|${peer_ip}|${failure_count}|${level}")
 			;;
-		*"VPN recovered"* | *"recovered"*)
+		*"VPN recovered"*"after"*"failures"* | *"VPN restored"*"after"*"failures"* | *"VPN restored"*"recovery method"* | *"VPN recovered"* | *"VPN restored"*)
 			local recovery_count=0
 			if recovery_count=$(extract_failure_count "$message"); then
 				:
 			fi
-			RECOVERIES+=("${timestamp}|${peer_ip}|${recovery_count}|${level}")
+			# Distinguish between app-managed recoveries (with recovery method) and self-healed recoveries
+			# "VPN restored" always indicates app-managed recovery (intervention was taken)
+			# "VPN recovered" indicates self-healed recovery (no intervention)
+			if [[ "$message" == *"recovery method"* ]]; then
+				# App-managed recovery: has recovery method (Tier 2/3 action was taken)
+				APP_MANAGED_RECOVERIES+=("${timestamp}|${peer_ip}|${recovery_count}|${level}")
+				RECOVERIES+=("${timestamp}|${peer_ip}|${recovery_count}|${level}")
+			elif [[ "$message" == *"VPN restored"* ]]; then
+				# App-managed recovery: "restored" indicates intervention was taken
+				# This includes cases with or without "after X failures" or explicit "recovery method"
+				APP_MANAGED_RECOVERIES+=("${timestamp}|${peer_ip}|${recovery_count}|${level}")
+				RECOVERIES+=("${timestamp}|${peer_ip}|${recovery_count}|${level}")
+			elif [[ "$message" == *"after"*"failures"* ]]; then
+				# Self-healed recovery: "recovered" after failures but no recovery method (no action taken)
+				# Only "VPN recovered" messages reach here (not "VPN restored")
+				SELF_HEALED_RECOVERIES+=("${timestamp}|${peer_ip}|${recovery_count}|${level}")
+				RECOVERIES+=("${timestamp}|${peer_ip}|${recovery_count}|${level}")
+			else
+				# Self-healed recovery: "recovered" without "after X failures" or "recovery method" (edge case)
+				# This happens when failure_count=0 and no recovery_method
+				SELF_HEALED_RECOVERIES+=("${timestamp}|${peer_ip}|${recovery_count}|${level}")
+				RECOVERIES+=("${timestamp}|${peer_ip}|${recovery_count}|${level}")
+			fi
 			;;
 		*"Tier 1:"*)
 			TIER1_ACTIONS+=("${timestamp}|${peer_ip}|${level}")
@@ -382,7 +431,7 @@ analyze_logs() {
 		*"Surgical cleanup completed"* | *"Recovery completed"*"via ipsec fallback"*)
 			TIER2_COMPLETED+=("${timestamp}|${peer_ip}|${level}")
 			;;
-		*"Full IPsec restart completed"* | *"Tier 3:"*"Full IPsec restart completed"*)
+		*"Tier 3:"*"Full IPsec restart completed"* | *"Full IPsec restart completed"*)
 			TIER3_COMPLETED+=("${timestamp}|${peer_ip}|${level}")
 			;;
 		*"Tier 3:"*"successful"* | *"xfrm-based recovery completed successfully"* | *"xfrm-based per-connection recovery successful"*)
@@ -394,7 +443,7 @@ analyze_logs() {
 		esac
 	done <"$log_file"
 
-	[[ $VERBOSE -eq 1 ]] && echo "Found ${#FAILURES[@]} failures, ${#RECOVERIES[@]} recoveries" >&2
+	[[ $VERBOSE -eq 1 ]] && echo "Found ${#FAILURES[@]} failures, ${#RECOVERIES[@]} recoveries (${#APP_MANAGED_RECOVERIES[@]} app-managed, ${#SELF_HEALED_RECOVERIES[@]} self-healed)" >&2
 
 	return 0
 }
@@ -467,6 +516,7 @@ calculate_float_division() {
 # Calculate statistics
 #
 # Calculates failure frequency and recovery success rate from parsed data.
+# Distinguishes between app-managed recoveries (with recovery actions) and self-healed recoveries.
 #
 # Arguments:
 #   None
@@ -479,6 +529,8 @@ calculate_float_division() {
 calculate_statistics() {
 	local total_failures=${#FAILURES[@]}
 	local total_recoveries=${#RECOVERIES[@]}
+	local total_app_managed_recoveries=${#APP_MANAGED_RECOVERIES[@]}
+	local total_self_healed_recoveries=${#SELF_HEALED_RECOVERIES[@]}
 	local total_tier1=${#TIER1_ACTIONS[@]}
 	local total_tier2=${#TIER2_ACTIONS[@]}
 	local total_tier2_completed=${#TIER2_COMPLETED[@]}
@@ -505,8 +557,8 @@ calculate_statistics() {
 	# Find earliest and latest timestamps
 	if [[ ${#all_timestamps[@]} -gt 0 ]]; then
 		# Sort timestamps to find actual first and last
-		IFS=$'\n' sorted_timestamps=($(printf '%s\n' "${all_timestamps[@]}" | sort))
-		unset IFS
+		local sorted_timestamps
+		mapfile -t sorted_timestamps < <(printf '%s\n' "${all_timestamps[@]}" | sort)
 		first_date="${sorted_timestamps[0]}"
 		last_date="${sorted_timestamps[-1]}"
 	fi
@@ -519,8 +571,10 @@ calculate_statistics() {
 		local end_date="${last_date%% *}"
 
 		# Convert dates to seconds since epoch and calculate difference
-		local start_sec=$(date -d "$start_date" +%s 2>/dev/null || echo "0")
-		local end_sec=$(date -d "$end_date" +%s 2>/dev/null || echo "0")
+		local start_sec
+		start_sec=$(date -d "$start_date" +%s 2>/dev/null || echo "0")
+		local end_sec
+		end_sec=$(date -d "$end_date" +%s 2>/dev/null || echo "0")
 
 		if [[ $start_sec -gt 0 ]] && [[ $end_sec -gt 0 ]]; then
 			local diff_sec=$((end_sec - start_sec))
@@ -553,9 +607,22 @@ calculate_statistics() {
 	fi
 
 	# Calculate recovery success rate
+	# Total recoveries should ideally equal total failures (all failures eventually recover)
 	RECOVERY_SUCCESS_RATE=0
 	if [[ $total_failures -gt 0 ]] && [[ $total_recoveries -gt 0 ]]; then
 		RECOVERY_SUCCESS_RATE=$(calculate_float_division $((total_recoveries * 100)) "$total_failures" 2)
+	fi
+
+	# Calculate app-managed recovery rate (recoveries that required intervention)
+	APP_MANAGED_RECOVERY_RATE=0
+	if [[ $total_failures -gt 0 ]] && [[ $total_app_managed_recoveries -gt 0 ]]; then
+		APP_MANAGED_RECOVERY_RATE=$(calculate_float_division $((total_app_managed_recoveries * 100)) "$total_failures" 2)
+	fi
+
+	# Calculate self-healed recovery rate (recoveries without intervention)
+	SELF_HEALED_RECOVERY_RATE=0
+	if [[ $total_failures -gt 0 ]] && [[ $total_self_healed_recoveries -gt 0 ]]; then
+		SELF_HEALED_RECOVERY_RATE=$(calculate_float_division $((total_self_healed_recoveries * 100)) "$total_failures" 2)
 	fi
 
 	# Calculate tier 2 success rate
@@ -575,6 +642,8 @@ calculate_statistics() {
 	STATS_DAYS="$days"
 	STATS_TOTAL_FAILURES="$total_failures"
 	STATS_TOTAL_RECOVERIES="$total_recoveries"
+	STATS_TOTAL_APP_MANAGED_RECOVERIES="$total_app_managed_recoveries"
+	STATS_TOTAL_SELF_HEALED_RECOVERIES="$total_self_healed_recoveries"
 	STATS_TOTAL_TIER1="$total_tier1"
 	STATS_TOTAL_TIER2="$total_tier2"
 	STATS_TOTAL_TIER2_COMPLETED="$total_tier2_completed"
@@ -619,7 +688,11 @@ generate_text_report() {
 		echo ""
 		echo "Recoveries:"
 		echo "  Total Recoveries: ${STATS_TOTAL_RECOVERIES:-0}"
+		echo "    App-Managed Recoveries (with intervention): ${STATS_TOTAL_APP_MANAGED_RECOVERIES:-0}"
+		echo "    Self-Healed Recoveries (no intervention): ${STATS_TOTAL_SELF_HEALED_RECOVERIES:-0}"
 		echo "  Recovery Success Rate: ${RECOVERY_SUCCESS_RATE:-0}%"
+		echo "    App-Managed Recovery Rate: ${APP_MANAGED_RECOVERY_RATE:-0}%"
+		echo "    Self-Healed Recovery Rate: ${SELF_HEALED_RECOVERY_RATE:-0}%"
 		echo ""
 		echo "Tier Actions:"
 		echo "  Tier 1 (Logging): ${STATS_TOTAL_TIER1:-0}"
@@ -644,7 +717,15 @@ generate_text_report() {
 			all_events+=("FAILURE|${FAILURES[$i]}")
 		done
 		for i in "${!RECOVERIES[@]}"; do
-			all_events+=("RECOVERY|${RECOVERIES[$i]}")
+			# Determine if this is an app-managed or self-healed recovery
+			local recovery_data="${RECOVERIES[$i]}"
+			local recovery_type
+			recovery_type=$(determine_recovery_type "$recovery_data")
+			if [[ "$recovery_type" == "APP_MANAGED" ]]; then
+				all_events+=("RECOVERY_APP_MANAGED|${RECOVERIES[$i]}")
+			else
+				all_events+=("RECOVERY_SELF_HEALED|${RECOVERIES[$i]}")
+			fi
 		done
 		for i in "${!TIER1_ACTIONS[@]}"; do
 			all_events+=("TIER1|${TIER1_ACTIONS[$i]}")
@@ -663,8 +744,8 @@ generate_text_report() {
 		done
 
 		# Sort events by timestamp (first field after event type)
-		IFS=$'\n' sorted_events=($(printf '%s\n' "${all_events[@]}" | sort -t'|' -k2))
-		unset IFS
+		local sorted_events
+		mapfile -t sorted_events < <(printf '%s\n' "${all_events[@]}" | sort -t'|' -k2)
 
 		# Display events (limit to last 50 for readability)
 		local display_count=${#sorted_events[@]}
@@ -674,24 +755,30 @@ generate_text_report() {
 		[[ ${#sorted_events[@]} -gt 50 ]] && start_idx=$((${#sorted_events[@]} - 50))
 
 		local idx
-		for ((idx = $start_idx; idx < ${#sorted_events[@]}; idx++)); do
+		for ((idx = start_idx; idx < ${#sorted_events[@]}; idx++)); do
 			local event="${sorted_events[$idx]}"
 			local event_type="${event%%|*}"
 			local event_data="${event#*|}"
 			local timestamp="${event_data%%|*}"
-			local peer_ip="${event_data#*|}"
-			peer_ip="${peer_ip%%|*}"
+			local remaining="${event_data#*|}"
+			local peer_ip="${remaining%%|*}"
+			remaining="${remaining#*|}"
 
 			case "$event_type" in
 			FAILURE)
-				local failure_count="${event_data##*|}"
-				failure_count="${failure_count%%|*}"
+				# Format: timestamp|peer_ip|failure_count|level
+				local failure_count="${remaining%%|*}"
 				echo "[$timestamp] FAILURE: Peer $peer_ip (failure count: $failure_count)"
 				;;
-			RECOVERY)
-				local recovery_count="${event_data##*|}"
-				recovery_count="${recovery_count%%|*}"
-				echo "[$timestamp] RECOVERY: Peer $peer_ip (recovered after $recovery_count failures)"
+			RECOVERY_APP_MANAGED)
+				# Format: timestamp|peer_ip|recovery_count|level
+				local recovery_count="${remaining%%|*}"
+				echo "[$timestamp] RECOVERY (APP-MANAGED): Peer $peer_ip (recovered after $recovery_count failures with intervention)"
+				;;
+			RECOVERY_SELF_HEALED)
+				# Format: timestamp|peer_ip|recovery_count|level
+				local recovery_count="${remaining%%|*}"
+				echo "[$timestamp] RECOVERY (SELF-HEALED): Peer $peer_ip (recovered after $recovery_count failures without intervention)"
 				;;
 			TIER1)
 				echo "[$timestamp] TIER 1: Logging action for peer $peer_ip"
@@ -751,7 +838,11 @@ generate_csv() {
 		for i in "${!RECOVERIES[@]}"; do
 			local recovery="${RECOVERIES[$i]}"
 			IFS='|' read -r timestamp peer_ip recovery_count level <<<"$recovery"
-			echo "$timestamp,RECOVERY,$peer_ip,,$recovery_count,$level"
+			# Determine if this is an app-managed or self-healed recovery
+			local recovery_type_raw
+			recovery_type_raw=$(determine_recovery_type "$recovery")
+			local recovery_type="RECOVERY_${recovery_type_raw}"
+			echo "$timestamp,$recovery_type,$peer_ip,,$recovery_count,$level"
 		done
 
 		# Export Tier 1 actions
@@ -854,6 +945,8 @@ main() {
 	echo "Summary:"
 	echo "  Total Failures: ${STATS_TOTAL_FAILURES:-0}"
 	echo "  Total Recoveries: ${STATS_TOTAL_RECOVERIES:-0}"
+	echo "    App-Managed (with intervention): ${STATS_TOTAL_APP_MANAGED_RECOVERIES:-0}"
+	echo "    Self-Healed (no intervention): ${STATS_TOTAL_SELF_HEALED_RECOVERIES:-0}"
 	echo "  Recovery Success Rate: ${RECOVERY_SUCCESS_RATE:-0}%"
 	echo "  Failures per Day: ${FAILURES_PER_DAY:-0}"
 	echo ""

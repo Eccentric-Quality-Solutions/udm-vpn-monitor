@@ -15,6 +15,10 @@ ANALYZE_LOGS_SCRIPT="${BATS_TEST_DIRNAME}/../analyze-logs.sh"
 # Arguments:
 #   $1: Log file path
 #   $2: Optional date prefix (default: "2025-01-15")
+#
+# Returns:
+#   None
+#
 create_sample_log_file() {
 	local log_file="$1"
 	local date_prefix="${2:-2025-01-15}"
@@ -40,6 +44,51 @@ create_sample_log_file() {
 [${date_prefix} 10:10:00] [INFO] VPN recovered for 192.168.1.1 after 5 failures
 [${date_prefix} 10:11:00] [WARNING] VPN check failed for 198.51.100.1 (failure count: 1)
 [${date_prefix} 10:12:00] [INFO] VPN recovered for 198.51.100.1 after 1 failures
+EOF
+}
+
+# Create sample log file with app-managed and self-healed recoveries
+#
+# Creates a log file with both app-managed recoveries (with recovery method) and
+# self-healed recoveries (without recovery method) for testing recovery type distinction.
+#
+# Arguments:
+#   $1: Log file path
+#   $2: Optional date prefix (default: "2025-01-15")
+#
+# Returns:
+#   None
+#
+create_recovery_type_test_log_file() {
+	local log_file="$1"
+	local date_prefix="${2:-2025-01-15}"
+
+	mkdir -p "$(dirname "$log_file")"
+
+	cat >"$log_file" <<EOF
+[${date_prefix} 10:00:00] [INFO] Log file initialized
+# Self-healed recovery (no recovery method, just "after N failures")
+[${date_prefix} 10:01:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 1)
+[${date_prefix} 10:02:00] [INFO] VPN recovered for 192.168.1.1 after 1 failures
+# App-managed recovery (with recovery method)
+[${date_prefix} 10:03:00] [WARNING] VPN check failed for 192.168.1.2 (failure count: 1)
+[${date_prefix} 10:04:00] [WARNING] VPN check failed for 192.168.1.2 (failure count: 2)
+[${date_prefix} 10:05:00] [WARNING] VPN check failed for 192.168.1.2 (failure count: 3)
+[${date_prefix} 10:05:00] [WARNING] Tier 2: Attempting surgical SA cleanup for 192.168.1.2
+[${date_prefix} 10:05:05] [INFO] Surgical cleanup completed for 192.168.1.2
+[${date_prefix} 10:06:00] [INFO] VPN restored for 192.168.1.2 after 3 failures (recovery method: xfrm-based recovery)
+# Another self-healed recovery
+[${date_prefix} 10:07:00] [WARNING] VPN check failed for 192.168.1.3 (failure count: 1)
+[${date_prefix} 10:08:00] [INFO] VPN recovered for 192.168.1.3 after 1 failures
+# App-managed recovery with ipsec restart
+[${date_prefix} 10:09:00] [WARNING] VPN check failed for 192.168.1.4 (failure count: 1)
+[${date_prefix} 10:10:00] [WARNING] VPN check failed for 192.168.1.4 (failure count: 2)
+[${date_prefix} 10:11:00] [WARNING] VPN check failed for 192.168.1.4 (failure count: 3)
+[${date_prefix} 10:12:00] [WARNING] VPN check failed for 192.168.1.4 (failure count: 4)
+[${date_prefix} 10:13:00] [WARNING] VPN check failed for 192.168.1.4 (failure count: 5)
+[${date_prefix} 10:13:00] [ERROR] Tier 3: Attempting full IPsec restart
+[${date_prefix} 10:13:10] [INFO] Full IPsec restart completed
+[${date_prefix} 10:14:00] [INFO] VPN restored for 192.168.1.4 after 5 failures (recovery method: ipsec restart)
 EOF
 }
 
@@ -470,7 +519,7 @@ EOF
 	assert_success
 	assert_file_contains "$report_file" "Detailed Event Timeline"
 	assert_file_contains "$report_file" "FAILURE:"
-	assert_file_contains "$report_file" "RECOVERY:"
+	assert_file_contains "$report_file" "RECOVERY"
 }
 
 # bats test_tags=category:unit
@@ -532,4 +581,122 @@ EOF
 	# Verify Days Analyzed contains a number
 	run grep -E 'Days Analyzed:.*[0-9]+' "$report_file"
 	assert_success
+}
+
+# bats test_tags=category:unit
+@test "analyze-logs.sh distinguishes app-managed recoveries" {
+	# Purpose: Test verifies that the analyze-logs script correctly identifies app-managed recoveries (with recovery method)
+	# Expected: Script identifies recoveries with "recovery method" in the message as app-managed recoveries
+	# Importance: App-managed recovery tracking helps evaluate effectiveness of recovery actions and intervention needs
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	create_recovery_type_test_log_file "$log_file"
+
+	run bash "$ANALYZE_LOGS_SCRIPT" -l "$log_file" -o "$TEST_DIR"
+
+	assert_success
+	assert_output --partial "App-Managed (with intervention):"
+	# Should find at least 2 app-managed recoveries (one with xfrm, one with ipsec restart)
+	assert_output --regexp 'App-Managed \(with intervention\): [2-9]|[1-9][0-9]+'
+}
+
+# bats test_tags=category:unit
+@test "analyze-logs.sh distinguishes self-healed recoveries" {
+	# Purpose: Test verifies that the analyze-logs script correctly identifies self-healed recoveries (without recovery method)
+	# Expected: Script identifies recoveries with "after N failures" but no "recovery method" as self-healed recoveries
+	# Importance: Self-healed recovery tracking helps evaluate VPN stability and natural recovery capabilities
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	create_recovery_type_test_log_file "$log_file"
+
+	run bash "$ANALYZE_LOGS_SCRIPT" -l "$log_file" -o "$TEST_DIR"
+
+	assert_success
+	assert_output --partial "Self-Healed (no intervention):"
+	# Should find at least 2 self-healed recoveries
+	assert_output --regexp 'Self-Healed \(no intervention\): [2-9]|[1-9][0-9]+'
+}
+
+# bats test_tags=category:unit
+@test "analyze-logs.sh statistics show both recovery types" {
+	# Purpose: Test verifies that the analyze-logs script reports statistics for both app-managed and self-healed recoveries
+	# Expected: Script output includes counts for both recovery types, and report file includes rates
+	# Importance: Comprehensive recovery statistics provide complete picture of VPN recovery patterns
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local report_file="${TEST_DIR}/vpn-monitor-report.txt"
+	create_recovery_type_test_log_file "$log_file"
+
+	run bash "$ANALYZE_LOGS_SCRIPT" -l "$log_file" -o "$TEST_DIR"
+
+	assert_success
+	# Should show both types in stdout summary
+	assert_output --partial "App-Managed (with intervention):"
+	assert_output --partial "Self-Healed (no intervention):"
+	# Recovery rates are in the report file, not stdout
+	assert_file_exist "$report_file"
+	assert_file_contains "$report_file" "App-Managed Recovery Rate:"
+	assert_file_contains "$report_file" "Self-Healed Recovery Rate:"
+}
+
+# bats test_tags=category:unit
+@test "analyze-logs.sh CSV export includes recovery type" {
+	# Purpose: Test verifies that the CSV export includes recovery type (APP_MANAGED vs SELF_HEALED) for recovery events
+	# Expected: CSV file contains RECOVERY_APP_MANAGED and RECOVERY_SELF_HEALED event types
+	# Importance: CSV export with recovery types enables detailed analysis of recovery patterns in spreadsheet applications
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local csv_file="${TEST_DIR}/vpn-monitor-analysis.csv"
+	create_recovery_type_test_log_file "$log_file"
+
+	run bash "$ANALYZE_LOGS_SCRIPT" -l "$log_file" -c "$csv_file"
+
+	assert_success
+	assert_file_exist "$csv_file"
+	# CSV should contain both recovery types
+	assert_file_contains "$csv_file" "RECOVERY_APP_MANAGED"
+	assert_file_contains "$csv_file" "RECOVERY_SELF_HEALED"
+	# Verify recovery type counts
+	local app_managed_count
+	app_managed_count=$(grep -c "RECOVERY_APP_MANAGED" "$csv_file" || echo "0")
+	local self_healed_count
+	self_healed_count=$(grep -c "RECOVERY_SELF_HEALED" "$csv_file" || echo "0")
+	# Should have at least 2 app-managed recoveries
+	assert [ "$app_managed_count" -ge 2 ]
+	# Should have at least 2 self-healed recoveries
+	assert [ "$self_healed_count" -ge 2 ]
+}
+
+# bats test_tags=category:unit
+@test "analyze-logs.sh report includes recovery type breakdown" {
+	# Purpose: Test verifies that the text report includes breakdown of app-managed vs self-healed recoveries
+	# Expected: Report file contains statistics showing both recovery types with counts and rates
+	# Importance: Recovery type breakdown in reports provides visibility into intervention needs and system stability
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local report_file="${TEST_DIR}/vpn-monitor-report.txt"
+	create_recovery_type_test_log_file "$log_file"
+
+	run bash "$ANALYZE_LOGS_SCRIPT" -l "$log_file" -r "$report_file"
+
+	assert_success
+	assert_file_exist "$report_file"
+	# Report should contain recovery type breakdown
+	assert_file_contains "$report_file" "App-Managed Recoveries (with intervention):"
+	assert_file_contains "$report_file" "Self-Healed Recoveries (no intervention):"
+	assert_file_contains "$report_file" "App-Managed Recovery Rate:"
+	assert_file_contains "$report_file" "Self-Healed Recovery Rate:"
+}
+
+# bats test_tags=category:unit
+@test "analyze-logs.sh event timeline shows recovery types" {
+	# Purpose: Test verifies that the event timeline in the report distinguishes between app-managed and self-healed recoveries
+	# Expected: Event timeline includes recovery type labels (APP-MANAGED vs SELF-HEALED) for recovery events
+	# Importance: Recovery type labels in timeline provide chronological context for understanding recovery patterns
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local report_file="${TEST_DIR}/vpn-monitor-report.txt"
+	create_recovery_type_test_log_file "$log_file"
+
+	run bash "$ANALYZE_LOGS_SCRIPT" -l "$log_file" -r "$report_file"
+
+	assert_success
+	assert_file_exist "$report_file"
+	# Timeline should show recovery types
+	assert_file_contains "$report_file" "RECOVERY (APP-MANAGED):"
+	assert_file_contains "$report_file" "RECOVERY (SELF-HEALED):"
 }

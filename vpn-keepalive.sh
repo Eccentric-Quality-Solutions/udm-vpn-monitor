@@ -6,7 +6,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.4.3
+# Version: 0.5.0
 #
 
 # Strict error handling: exit on error, undefined vars, pipe failures
@@ -22,7 +22,7 @@ PIDFILE="${STATE_DIR}/vpn-keepalive.pid"
 LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"
 
 # Script version
-SCRIPT_VERSION="0.4.3"
+SCRIPT_VERSION="0.5.0"
 
 # Source library modules
 # shellcheck source=lib/logging.sh
@@ -108,6 +108,16 @@ if [[ "${ENABLE_KEEPALIVE:-0}" -ne 1 ]]; then
 fi
 
 # Check if PID file exists and process is running
+#
+# Checks if the VPN keepalive daemon is currently running by verifying PID file and process.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Daemon is running
+#   1: Daemon is not running
+#
 is_running() {
 	if [[ ! -f "$PIDFILE" ]]; then
 		return 1
@@ -130,6 +140,17 @@ is_running() {
 }
 
 # Start the keepalive daemon
+#
+# Starts the VPN keepalive daemon in the background.
+# Validates configuration and ensures at least one location is configured before starting.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Daemon started successfully
+#   1: Failed to start daemon (exits script)
+#
 start_daemon() {
 	if is_running; then
 		local pid
@@ -189,6 +210,16 @@ start_daemon() {
 		declare -A locations=()
 
 		# Function to load/parse location configuration from current config variables
+		#
+		# Parses location-based configuration and populates local locations array.
+		# Clears and repopulates locations array from global LOCATIONS array.
+		#
+		# Arguments:
+		#   None
+		#
+		# Returns:
+		#   None (populates local locations array)
+		#
 		parse_peer_config() {
 			# Clear locations array
 			locations=()
@@ -208,10 +239,19 @@ start_daemon() {
 		}
 
 		# Function to reload configuration and update peer arrays
-		# This allows the daemon to pick up config changes automatically
+		#
+		# Reloads configuration from config file and updates peer arrays.
+		# This allows the daemon to pick up config changes automatically.
 		# Note: We call load_config directly (not in subshell) so variables persist.
 		# With set +e, most errors won't kill the daemon. If config is so broken that
 		# load_config calls exit/die, the daemon will restart via systemd (Restart=on-failure).
+		#
+		# Arguments:
+		#   None
+		#
+		# Returns:
+		#   None
+		#
 		reload_peer_config() {
 			# Log that we're reloading config
 			log_message "INFO" "SYSTEM" "Reloading configuration from $CONFIG_FILE" || true
@@ -393,6 +433,17 @@ start_daemon() {
 }
 
 # Stop the keepalive daemon
+#
+# Stops the VPN keepalive daemon gracefully by sending TERM signal.
+# Force kills if daemon doesn't exit within 10 seconds.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Daemon stopped successfully
+#   1: Failed to stop daemon (exits script)
+#
 stop_daemon() {
 	if ! is_running; then
 		log_message "INFO" "SYSTEM" "VPN keepalive daemon is not running"
@@ -442,6 +493,16 @@ stop_daemon() {
 }
 
 # Check daemon status
+#
+# Checks and displays the current status of the VPN keepalive daemon.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Daemon is running
+#   1: Daemon is not running
+#
 check_status() {
 	if is_running; then
 		local pid

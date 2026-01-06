@@ -4,7 +4,24 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 
 ## [Unreleased]
 
+## 0.5.0 - 2026-01-06
+
 ### Added
+- **Recovery Type Distinction in Log Analysis**: Enhanced `analyze-logs.sh` to distinguish between app-managed recoveries (with intervention) and self-healed recoveries (no intervention):
+  - App-managed recoveries: Identified by "recovery method" in log messages or "VPN restored" terminology (indicates Tier 2/3 recovery actions were taken)
+  - Self-healed recoveries: Identified by "VPN recovered" messages without "recovery method" (indicates natural recovery without intervention)
+  - Statistics now include separate counts and rates for both recovery types
+  - CSV export includes recovery type labels (`RECOVERY_APP_MANAGED` vs `RECOVERY_SELF_HEALED`)
+  - Text reports include recovery type breakdown in summary and event timeline
+  - Enables evaluation of intervention effectiveness and VPN stability patterns
+- **Recovery Type Test Suite**: Comprehensive test coverage for recovery type distinction in `tests/test_analyze_logs.sh`:
+  - Tests for app-managed recovery identification
+  - Tests for self-healed recovery identification
+  - Tests for statistics reporting
+  - Tests for CSV export with recovery types
+  - Tests for report generation with recovery type breakdown
+  - Tests for event timeline with recovery type labels
+- **Multiple IP Threshold Logic Test**: Added test in `tests/test_detection_failure_type.sh` to verify threshold logic for multiple internal IPs (2/3 IPs respond = pass, 0/3 = fail)
 - **Detection Reliability Safeguard**: Added safety check that prevents recovery escalation when detection is unreliable. If failure type is "unknown" and both `ip` and `ipsec` commands are unavailable, the system cannot reliably determine if VPN is actually down, so recovery escalation (Tier 2/3) is skipped to prevent false recovery actions. Failures are still logged for monitoring, but recovery actions are not executed when detection tools are unavailable.
 - **Enhanced Command Availability Checking**: Improved `check_command_available()` function in `lib/common.sh` to handle restricted PATH environments (common in cron/systemd on UDM OS):
   - Falls back to checking common system directories (`/usr/sbin`, `/usr/bin`, `/sbin`, `/bin`) when `command -v` fails
@@ -19,6 +36,10 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 - Installation test for comprehensive route testing with multiple locations and IPs
 
 ### Changed
+- **Log Analysis Pattern Matching**: Improved recovery type classification logic in `analyze-logs.sh` to check more specific patterns before general ones:
+  - Checks for "recovery method" first (most specific)
+  - Checks for "VPN restored" before "after X failures" (prevents misclassification)
+  - Ensures correct classification of app-managed vs self-healed recoveries
 - **Migration Script Default Behavior (BREAKING CHANGE)**: The `migrate-config-to-locations.sh` script now defaults to interactive mode (prompts for location names) instead of automatic generation. Use the `--auto` flag to restore the previous automatic behavior. This change improves the user experience by allowing meaningful location names by default.
   - Default mode: Interactive (prompts for each location name)
   - Use `--auto` flag for automatic generation (LOCATION_1, LOCATION_2, etc.)
@@ -26,16 +47,22 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
   - Previous versions defaulted to automatic generation
 - **Installation Route Testing**: Enhanced installation script to test ping connectivity to all internal IPs from all configured locations during route setup, instead of only testing the first internal IP. This ensures all configured VPN endpoints are properly reachable and routes are correctly configured.
 - **Documentation Updates**:
-  - Updated `docs/ARCHITECTURE.md` with information about detection reliability safeguard in tiered recovery system
+  - Updated `docs/ARCHITECTURE.md` with recovery type distinction documentation, including identification patterns, analysis metrics, and benefits, and information about detection reliability safeguard in tiered recovery system
+  - Updated `docs/CODE_REVIEW_LESSONS_LEARNED.md` with Lesson 30: "Check more specific patterns before general ones in conditional logic" (pattern matching order matters for correct classification)
   - Updated `docs/CODE_PATTERNS.md` with notes about PATH restrictions in cron/systemd environments and `BASH_REMATCH` safety patterns when using `set -u`
   - Updated `docs/MIGRATION.md` to reflect new default interactive behavior of migration script
+  - Updated `FUTURE.md` with note about enhanced recovery type analysis (basic implementation completed)
 
 ### Fixed
+- **Test Reliability**: Fixed test in `tests/test_detection.sh` to disable ping check when testing byte counter decrease detection (prevents false positives from ping-based idle detection)
+- **Test Assertions**: Improved test assertions in `tests/test_detection_failure_type.sh` to remove debug code and focus on core functionality
 - Fixed migration script default mode parameter mismatch in `migrate_config()` function
 - Added fallback `sanitize_location_name()` function when library files fail to load
 - Restored `CONFIG_FILE` environment variable override capability (needed for testing)
 - **BASH_REMATCH Safety**: Fixed potential "unbound variable" errors when using `set -u` (nounset) by using `${BASH_REMATCH[n]:-}` default values in `lib/recovery.sh` when accessing regex capture groups. This prevents errors if regex doesn't match or capture group is empty.
 - **External IP Extraction Safety**: Fixed potential unbound variable error in `verify_ipsec_connections_active()` function by using safe default value `${BASH_REMATCH[1]:-}` when extracting external IP from location data
+- **Error Handling Prefix**: Fixed missing prefix parameter in `handle_error_or_exit_fake_mode()` call in `vpn-monitor.sh` when no locations are configured. Error now follows standard prefix pattern with "SYSTEM" prefix.
+- **Migration Script Cleanup**: Added cleanup trap for temporary file in migration script to ensure proper cleanup on early exit or errors, preventing orphaned temp files
 
 ## 0.4.3 - 2026-01-02
 

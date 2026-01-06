@@ -3,7 +3,7 @@
 # Logging functions for UDM VPN Monitor
 # Provides centralized logging functionality with timestamp and level support
 #
-# Version: 0.4.3
+# Version: 0.5.0
 #
 
 # Source common utility functions
@@ -12,6 +12,17 @@
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${LIB_DIR}/common.sh" 2>/dev/null || {
 	# Fallback if common.sh not found - define minimal try_ensure_directory_exists
+	# Try to ensure directory exists
+	#
+	# Attempts to create a directory if it doesn't exist.
+	# This is a fallback implementation when common.sh is not available.
+	#
+	# Arguments:
+	#   $1: Directory path to ensure exists
+	#
+	# Returns:
+	#   0: Directory exists or was created successfully
+	#   1: Failed to create directory
 	try_ensure_directory_exists() {
 		local dir="$1"
 		if [[ ! -d "$dir" ]]; then
@@ -26,6 +37,9 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 # Returns a formatted timestamp string suitable for log entries.
 # Format: YYYY-MM-DD HH:MM:SS (e.g., "2025-01-15 14:30:45")
 # Handles date command failures gracefully with fallback.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Always succeeds
@@ -161,6 +175,9 @@ log_message() {
 # Returns whether the script is running in fake mode (NO_ESCALATE=1).
 # Fake mode allows the script to run checks and log errors but exit gracefully
 # instead of crashing on configuration or initialization errors.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Script is in fake mode (NO_ESCALATE=1)

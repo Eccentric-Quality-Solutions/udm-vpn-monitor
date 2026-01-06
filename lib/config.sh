@@ -3,7 +3,7 @@
 # Configuration loading and validation for UDM VPN Monitor
 # Handles loading configuration files and validating settings
 #
-# Version: 0.4.3
+# Version: 0.5.0
 #
 # Default Value Handling:
 #   Default values are defined in lib/config_schema.sh as the single source of truth.

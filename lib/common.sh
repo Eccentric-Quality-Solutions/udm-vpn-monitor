@@ -3,7 +3,7 @@
 # Common functions for UDM VPN Monitor
 # Shared logging and utility functions for installation/uninstallation scripts and main monitor
 #
-# Version: 0.4.3
+# Version: 0.5.0
 #
 # This module provides shared utility functions used throughout the codebase to reduce duplication:
 # - File operations: file_exists_and_readable(), ensure_file_exists(), atomic_write_file()
@@ -131,6 +131,9 @@ debug_log() {
 # Required for installing to /data/ and modifying crontab.
 # Exits script with error code 1 if not running as root.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Running as root (continues execution)
 #   1: Not running as root (exits script with error)
@@ -216,6 +219,9 @@ ensure_file_exists() {
 # Returns the current Unix timestamp (seconds since epoch).
 # This provides a consistent way to get timestamps throughout the codebase,
 # replacing direct calls to 'date +%s'.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Always succeeds

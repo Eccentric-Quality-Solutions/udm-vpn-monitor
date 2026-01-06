@@ -51,6 +51,24 @@ atomic_write_file "$state_file" "$value"
 - If not, add the key to the abstraction layer
 - Never construct state file paths directly
 
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **DRY Principle (Don't Repeat Yourself):** Abstraction layers are a fundamental application of DRY, ensuring path construction logic exists in one place
+- **Single Source of Truth:** Using abstraction functions ensures all code uses the same path construction logic
+- **Encapsulation:** Abstraction layers encapsulate implementation details, making refactoring easier
+
+**References:**
+- [Martin Fowler - Abstraction](https://martinfowler.com/bliki/Abstraction.html) - Discusses the value of abstraction layers in software design
+- [Clean Code by Robert C. Martin](https://www.amazon.com/Clean-Code-Handbook-Software-Craftsmanship/dp/0132350882) - Emphasizes the importance of abstraction and avoiding duplication
+- [The Pragmatic Programmer](https://pragprog.com/titles/tpp20/the-pragmatic-programmer-20th-anniversary-edition/) - Advocates for DRY principle and abstraction layers
+
+**Divergence:** None - This lesson aligns perfectly with established software engineering principles.
+
+**Recommendation:** ✅ **Keep** - This is a fundamental best practice that should be maintained.
+
 ---
 
 ## 2. Always Use Validation Functions Instead of Inline Regex
@@ -92,6 +110,25 @@ fi
 - Before using regex for IP validation, check if `validate_ipv4()` or `validate_ip_address()` exists
 - Always use validation functions instead of inline regex
 - Validation functions provide stricter checks (octet ranges) than simple regex patterns
+
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Single Responsibility Principle:** Validation functions have one clear purpose
+- **DRY Principle:** Centralized validation logic prevents duplication
+- **Security Best Practices:** Proper validation functions include range checks that simple regex cannot provide
+- **Maintainability:** Changes to validation logic only need to be made in one place
+
+**References:**
+- [OWASP Input Validation Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html) - Recommends centralized validation functions
+- [CWE-20: Improper Input Validation](https://cwe.mitre.org/data/definitions/20.html) - Highlights the importance of proper validation
+- [Secure Coding Practices](https://www.securecoding.cert.org/confluence/display/seccode/Top+10+Secure+Coding+Practices) - Emphasizes centralized validation
+
+**Divergence:** None - This lesson aligns with security and maintainability best practices.
+
+**Recommendation:** ✅ **Keep** - Critical for security and maintainability.
 
 ---
 
@@ -155,6 +192,24 @@ grep -rn "function_name.*\"[^"]*\"[^,)]*$" lib/ scripts/ --include="*.sh"
 - When `var` is set, the pattern `${var:+word1}${var:-word2}` expands to `word1` + `var` (not `word1` + `word2`)
 - **Fix:** Use only `${var:+word}` if `var` should always be provided, or use conditional logic
 
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Type Safety:** Verifying function signatures prevents runtime errors
+- **Static Analysis:** Modern tools (like shellcheck) can catch signature mismatches
+- **Refactoring Safety:** When changing signatures, all call sites must be updated
+
+**References:**
+- [Refactoring by Martin Fowler](https://refactoring.com/) - Emphasizes the importance of updating all call sites when refactoring
+- [ShellCheck Documentation](https://github.com/koalaman/shellcheck) - Static analysis tool that can detect signature mismatches
+- [Code Complete by Steve McConnell](https://www.amazon.com/Code-Complete-Practical-Handbook-Construction/dp/0735619670) - Discusses function design and call verification
+
+**Divergence:** None - This is a fundamental programming best practice.
+
+**Recommendation:** ✅ **Keep** - Essential for preventing bugs during refactoring.
+
 ---
 
 ## 4. Remove Debug Code, Don't Just Comment It
@@ -194,6 +249,24 @@ fi
 - Use `DEBUG=1` environment variable for debug output
 - Use `debug_log()` function for consistent debug logging
 
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Version Control Best Practice:** Version control systems preserve history, so commented code is unnecessary
+- **Code Clarity:** Commented code adds confusion about what's active
+- **Maintenance Burden:** Commented code still needs to be maintained or removed later
+
+**References:**
+- [Clean Code by Robert C. Martin](https://www.amazon.com/Clean-Code-Handbook-Software-Craftsmanship/dp/0132350882) - Chapter on comments advises removing dead code
+- [The Art of Readable Code](https://www.amazon.com/Art-Readable-Code-Practical-Techniques/dp/0596802293) - Emphasizes removing unnecessary code
+- [Git Best Practices](https://www.atlassian.com/git/tutorials/comparing-workflows) - Version control makes code history accessible without comments
+
+**Divergence:** None - This aligns with modern version control practices.
+
+**Recommendation:** ✅ **Keep** - Modern best practice with version control.
+
 ---
 
 ## 5. Verify Findings Before Documenting
@@ -226,6 +299,24 @@ Initially flagged "potential division by zero" in `check_ping_multiple_ips()`, b
 - Use grep to find all usages of a pattern
 - Check if edge cases are already handled
 - Verify with code execution trace if needed
+
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Scientific Method:** Verify before documenting is fundamental to accurate documentation
+- **Code Review Best Practices:** False positives waste time and reduce credibility
+- **Thoroughness:** Understanding context before flagging issues is essential
+
+**References:**
+- [Code Review Best Practices](https://smartbear.com/learn/code-review/best-practices-for-peer-code-review/) - Emphasizes verifying findings before reporting
+- [Effective Code Reviews](https://www.atlassian.com/blog/add-ons/code-review-best-practices) - Recommends thorough verification
+- [The Pragmatic Programmer](https://pragprog.com/titles/tpp20/the-pragmatic-programmer-20th-anniversary-edition/) - "Don't Assume It - Prove It"
+
+**Divergence:** None - This is standard practice in code reviews.
+
+**Recommendation:** ✅ **Keep** - Essential for maintaining review credibility.
 
 ---
 
@@ -272,6 +363,24 @@ When consolidating `sanitize_location_name()`:
 5. ✅ Verified all tests pass
 6. ✅ Verified both files source `common.sh` (ensuring function availability)
 
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **DRY Principle:** Code duplication violates the fundamental DRY principle
+- **Maintainability:** Duplicated code must be updated in multiple places
+- **Consistency Risk:** Duplicated implementations can diverge over time
+
+**References:**
+- [The Pragmatic Programmer](https://pragprog.com/titles/tpp20/the-pragmatic-programmer-20th-anniversary-edition/) - "DRY - Don't Repeat Yourself"
+- [Refactoring by Martin Fowler](https://refactoring.com/) - "Extract Function" pattern addresses duplication
+- [Code Complete by Steve McConnell](https://www.amazon.com/Code-Complete-Practical-Handbook-Construction/dp/0735619670) - Discusses the costs of code duplication
+
+**Divergence:** None - This is a fundamental software engineering principle.
+
+**Recommendation:** ✅ **Keep** - Core principle of software engineering.
+
 ---
 
 ## 7. Test Coverage Should Match Code Paths
@@ -313,6 +422,24 @@ Tests for failure type detection use empty location name (`""`), but production 
 - Use grep to find all call sites and ensure tests cover them
 - Add integration tests that exercise full code paths
 
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Test-Driven Development:** Tests should reflect actual usage patterns
+- **Integration Testing:** Tests should exercise the same code paths as production
+- **False Confidence:** Tests that don't match production usage provide false confidence
+
+**References:**
+- [Test-Driven Development by Kent Beck](https://www.amazon.com/Test-Driven-Development-Kent-Beck/dp/0321146530) - Emphasizes testing real usage patterns
+- [Growing Object-Oriented Software, Guided by Tests](https://www.amazon.com/Growing-Object-Oriented-Software-Guided-Tests/dp/0321503627) - Discusses testing production code paths
+- [The Art of Unit Testing](https://www.manning.com/books/the-art-of-unit-testing) - Emphasizes realistic test scenarios
+
+**Divergence:** None - This aligns with testing best practices.
+
+**Recommendation:** ✅ **Keep** - Essential for effective testing.
+
 ---
 
 ## 8. Systematic Code Review Process
@@ -336,6 +463,24 @@ Tests for failure type detection use empty location name (`""`), but production 
 - Use consistent review checklist
 - Document findings in structured format
 - Follow up on high-priority items immediately
+
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Structured Approach:** Systematic reviews are more effective than ad-hoc reviews
+- **Code Review Best Practices:** Industry standards recommend structured review processes
+- **Coverage:** Systematic approaches ensure comprehensive coverage
+
+**References:**
+- [SmartBear Code Review Best Practices](https://smartbear.com/learn/code-review/best-practices-for-peer-code-review/) - Recommends systematic review processes
+- [Atlassian Code Review Guide](https://www.atlassian.com/blog/add-ons/code-review-best-practices) - Emphasizes structured approaches
+- [Microsoft Code Review Guidelines](https://docs.microsoft.com/en-us/azure/devops/repos/git/pull-requests) - Recommends systematic review processes
+
+**Divergence:** None - This aligns with industry best practices.
+
+**Recommendation:** ✅ **Keep** - Standard industry practice.
 
 ---
 
@@ -365,6 +510,24 @@ Tests for failure type detection use empty location name (`""`), but production 
 - Use grep to find patterns systematically
 - Create linting rules where possible
 - Document patterns in coding guidelines
+
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Pattern Recognition:** Identifying common patterns helps prevent recurring issues
+- **Code Review Checklists:** Industry best practices recommend pattern-based checklists
+- **Anti-patterns:** Recognizing anti-patterns is a key review skill
+
+**References:**
+- [Code Review Best Practices](https://www.atlassian.com/blog/add-ons/code-review-best-practices) - Recommends pattern-based checklists
+- [AntiPatterns: Refactoring Software, Architectures, and Projects in Crisis](https://www.amazon.com/AntiPatterns-Refactoring-Software-Architectures-Projects/dp/0471197130) - Discusses recognizing anti-patterns
+- [Design Patterns: Elements of Reusable Object-Oriented Software](https://www.amazon.com/Design-Patterns-Elements-Reusable-Object-Oriented/dp/0201633612) - Pattern recognition in software
+
+**Divergence:** None - This is standard practice.
+
+**Recommendation:** ✅ **Keep** - Valuable for systematic reviews.
 
 ---
 
@@ -485,6 +648,24 @@ parse_quoted_value() {
 - ✅ Trailing backslash before closing quote
 - ✅ Empty quoted strings (both `""` and `''`)
 - ✅ Single quotes with no escaping
+
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Parser Design:** State machines are the standard approach for complex parsing
+- **Regex Limitations:** Regex cannot handle context-dependent parsing (like nested quotes)
+- **Formal Language Theory:** Context-free grammars require more than regex
+
+**References:**
+- [Compilers: Principles, Techniques, and Tools (Dragon Book)](https://www.amazon.com/Compilers-Principles-Techniques-Tools-2nd/dp/0321486811) - Standard reference on parsing
+- [Regular Expressions vs. Parsers](https://stackoverflow.com/questions/1732348/regex-match-open-tags-except-xhtml-self-contained-tags) - Discusses regex limitations
+- [Parser Combinators](https://en.wikipedia.org/wiki/Parser_combinator) - Alternative parsing approaches
+
+**Divergence:** None - This aligns with formal parsing theory.
+
+**Recommendation:** ✅ **Keep** - Correct approach for complex parsing.
 
 ---
 
@@ -623,6 +804,24 @@ validate_config_var() {
 - ✅ Out-of-range value above maximum gets corrected
 - ✅ Valid value is preserved (not overwritten)
 - ✅ Global variable is updated after all corrections
+
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Side Effects:** Functions that transform values should persist those transformations
+- **State Management:** Corrected values must be saved to maintain consistency
+- **Defensive Programming:** Explicit persistence prevents lost corrections
+
+**References:**
+- [Clean Code by Robert C. Martin](https://www.amazon.com/Clean-Code-Handbook-Software-Craftsmanship/dp/0132350882) - Discusses function side effects and state management
+- [Effective Java by Joshua Bloch](https://www.amazon.com/Effective-Java-Joshua-Bloch/dp/0134685997) - Emphasizes explicit state management
+- [The Pragmatic Programmer](https://pragprog.com/titles/tpp20/the-pragmatic-programmer-20th-anniversary-edition/) - "Design by Contract" discusses state consistency
+
+**Divergence:** None - This is a fundamental principle of state management.
+
+**Recommendation:** ✅ **Keep** - Essential for correct state management.
 
 ---
 
@@ -870,6 +1069,24 @@ When adding new file operations, ensure:
 - Not outputting empty strings from functions that return values
 - Assuming commands will fail fast on unreadable files (they hang instead)
 
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices (with context)**
+
+**Best Practice Support:**
+- **Defensive Programming:** Checking permissions before operations prevents failures
+- **Error Handling:** Proactive checks are better than reactive error handling
+- **Bash-Specific:** The lesson's focus on preventing hangs is bash-specific but valid
+
+**References:**
+- [Bash Guide for Beginners](https://tldp.org/LDP/Bash-Beginners-Guide/html/) - Discusses file permission checks
+- [Advanced Bash Scripting Guide](https://tldp.org/LDP/abs/html/) - File operation best practices
+- [Defensive Programming](https://en.wikipedia.org/wiki/Defensive_programming) - Proactive error checking
+
+**Divergence:** Minor - The specific issue (commands hanging on unreadable files) is bash-specific, but the principle of checking permissions is universal.
+
+**Recommendation:** ✅ **Keep** - Important for bash scripting, aligns with defensive programming.
+
 ---
 
 ## 13. Always Respect Fake Mode in All Error Paths
@@ -972,6 +1189,23 @@ fi
 - See `lib/config.sh:handle_fatal_config_error()` for reference implementation
 - See `lib/lockfile.sh:check_directory_writable_for_lockfile()` for fatal permission error handling example
 
+### Best Practices Comparison
+
+**Alignment:** ⚠️ **Domain-Specific (Justified Divergence)**
+
+**Best Practice Support:**
+- **Testability:** Test modes are a common pattern for testing error handling
+- **Graceful Degradation:** Fake mode allows testing without actual failures
+
+**References:**
+- [Testing Best Practices](https://testing.googleblog.com/) - Discusses test modes and mocking
+- [xUnit Test Patterns](https://www.amazon.com/xUnit-Test-Patterns-Refactoring-Code/dp/0131495054) - Test doubles and fake objects
+- [Working Effectively with Legacy Code](https://www.amazon.com/Working-Effectively-Legacy-Michael-Feathers/dp/0131177052) - Discusses test modes
+
+**Divergence:** This is a domain-specific pattern (test mode/fake mode) rather than a universal best practice. However, it's a valid pattern for testability.
+
+**Recommendation:** ✅ **Keep** - Domain-specific but justified for testability.
+
 ---
 
 ## 14. Track Error State When Functions Log But Don't Exit
@@ -1024,6 +1258,24 @@ fi
 ### Related Patterns
 - See `lib/config.sh:safe_parse_config_file()` for reference implementation
 - See `lib/logging.sh:handle_error_or_exit_fake_mode()` for return value behavior
+
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Error Propagation:** Errors must be tracked and propagated to callers
+- **Return Value Checking:** Functions that can fail must communicate failure status
+- **Error Handling:** Proper error handling requires tracking error state
+
+**References:**
+- [Clean Code by Robert C. Martin](https://www.amazon.com/Clean-Code-Handbook-Software-Craftsmanship/dp/0132350882) - Error handling chapter
+- [Code Complete by Steve McConnell](https://www.amazon.com/Code-Complete-Practical-Handbook-Construction/dp/0735619670) - Error handling best practices
+- [The Pragmatic Programmer](https://pragprog.com/titles/tpp20/the-pragmatic-programmer-20th-anniversary-edition/) - "Crash Early" principle
+
+**Divergence:** None - This is standard error handling practice.
+
+**Recommendation:** ✅ **Keep** - Essential for proper error handling.
 
 ---
 
@@ -1080,6 +1332,24 @@ fi
 - See `vpn-keepalive.sh:stop_daemon()` for reference implementation
 - See `lib/lockfile.sh` for similar race condition handling in lockfile operations
 - See `ACCEPTABLE_RISKS.md` for documented race conditions that are acceptable
+
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **TOCTOU (Time-Of-Check-Time-Of-Use):** Classic race condition pattern
+- **Concurrent Programming:** Race conditions are a fundamental concern in concurrent systems
+- **Defensive Programming:** Verifying state after operations prevents race condition bugs
+
+**References:**
+- [The Art of Multiprocessor Programming](https://www.amazon.com/Art-Multiprocessor-Programming-Revised-Reprint/dp/0123973376) - Race conditions and concurrency
+- [Operating System Concepts](https://www.amazon.com/Operating-System-Concepts-Abraham-Silberschatz/dp/1118063333) - TOCTOU and race conditions
+- [Concurrent Programming in Java](https://www.amazon.com/Concurrent-Programming-Java-Second-Edition/dp/0201310090) - Race condition handling
+
+**Divergence:** None - This is a fundamental concurrency principle.
+
+**Recommendation:** ✅ **Keep** - Critical for concurrent systems.
 
 ---
 
@@ -1150,6 +1420,24 @@ set_cooldown() {
 - See `lib/state.sh:set_peer_state()` for comparison (returns error code, doesn't log success)
 - See `tests/test_recovery_cascading_failures.sh` for test that verifies error handling
 
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Logging Accuracy:** Logs must accurately reflect system state
+- **Observability:** Misleading logs make debugging and monitoring difficult
+- **Error Handling:** Success should only be logged when operations actually succeed
+
+**References:**
+- [Observability Engineering](https://www.oreilly.com/library/view/observability-engineering/9781492076438/) - Accurate logging is essential for observability
+- [The Art of Monitoring](https://www.artofmonitoring.com/) - Logging best practices
+- [Site Reliability Engineering](https://sre.google/books/) - Accurate logging for operations
+
+**Divergence:** None - This is a fundamental logging best practice.
+
+**Recommendation:** ✅ **Keep** - Essential for accurate observability.
+
 ---
 
 ## 18. Always Validate Timestamp Arithmetic to Prevent Overflow/Underflow
@@ -1204,6 +1492,24 @@ elapsed_time=$(($(get_unix_timestamp) - verify_start_time))
 - See `lib/common.sh:safe_timestamp_subtract()` for safe subtraction
 - See `lib/common.sh:safe_timestamp_add()` for safe addition
 - See `lib/common.sh:safe_timestamp_diff()` for safe difference calculation
+
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Integer Overflow:** Arithmetic operations can overflow, causing undefined behavior
+- **Defensive Programming:** Validating inputs and clamping results prevents errors
+- **Year 2038 Problem:** Timestamp arithmetic is a known concern (though less relevant with 64-bit)
+
+**References:**
+- [Secure Coding in C and C++](https://www.amazon.com/Secure-Coding-C-Second-Edition/dp/0321822137) - Integer overflow prevention
+- [CERT C Coding Standard](https://www.amazon.com/CERT-C-Coding-Standard-Second/dp/013179158X) - Safe arithmetic operations
+- [Year 2038 Problem](https://en.wikipedia.org/wiki/Year_2038_problem) - Timestamp arithmetic concerns
+
+**Divergence:** None - This aligns with safe arithmetic practices.
+
+**Recommendation:** ✅ **Keep** - Important for robust timestamp handling.
 
 ---
 
@@ -1263,6 +1569,24 @@ fi
 ### Related Patterns
 - See `lib/resources.sh:get_cpu_usage()` for example of input validation and result clamping
 - See `lib/common.sh:safe_timestamp_*()` functions for safe arithmetic patterns
+
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Input Validation:** Validating inputs before calculations prevents errors
+- **Defensive Programming:** Clamping results to expected ranges prevents invalid states
+- **Range Checking:** Percentage calculations should always be in 0-100 range
+
+**References:**
+- [Secure Coding Practices](https://www.securecoding.cert.org/confluence/display/seccode/Top+10+Secure+Coding+Practices) - Input validation
+- [Code Complete by Steve McConnell](https://www.amazon.com/Code-Complete-Practical-Handbook-Construction/dp/0735619670) - Defensive programming
+- [The Pragmatic Programmer](https://pragprog.com/titles/tpp20/the-pragmatic-programmer-20th-anniversary-edition/) - "Design by Contract"
+
+**Divergence:** None - This is standard defensive programming.
+
+**Recommendation:** ✅ **Keep** - Essential for robust calculations.
 
 ---
 
@@ -1375,6 +1699,24 @@ When using EXIT traps for cleanup, the cleanup function must preserve the exit c
 
 ### Systematic Application
 - When using EXIT traps, always capture main function's exit code
+
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Exit Code Semantics:** Exit codes communicate success/failure to calling processes
+- **Error Propagation:** Cleanup must not mask original error conditions
+- **Bash Best Practices:** EXIT traps must preserve the original exit code
+
+**References:**
+- [Advanced Bash Scripting Guide](https://tldp.org/LDP/abs/html/) - Exit codes and traps
+- [Bash Guide for Beginners](https://tldp.org/LDP/Bash-Beginners-Guide/html/) - Error handling
+- [Shell Scripting Best Practices](https://google.github.io/styleguide/shellguide.html) - Exit code handling
+
+**Divergence:** None - This is bash scripting best practice.
+
+**Recommendation:** ✅ **Keep** - Critical for proper error handling in bash.
 
 ---
 
@@ -1510,6 +1852,24 @@ acquire_lockfile_flock() {
 - See `lib/lockfile.sh:acquire_lockfile_fallback()` for fallback pattern
 - Always test exit code preservation in test suite
 
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Strict Mode:** `set -u` is a best practice for catching uninitialized variables
+- **Defensive Programming:** Default value expansion prevents errors
+- **Bash Best Practices:** Handling unset variables in cleanup is essential
+
+**References:**
+- [Google Shell Style Guide](https://google.github.io/styleguide/shellguide.html) - Recommends `set -u`
+- [Advanced Bash Scripting Guide](https://tldp.org/LDP/abs/html/) - Parameter expansion
+- [Bash Best Practices](https://mywiki.wooledge.org/BashGuide) - Strict mode and parameter expansion
+
+**Divergence:** None - This is bash scripting best practice.
+
+**Recommendation:** ✅ **Keep** - Essential for robust bash scripts.
+
 ---
 
 ## 22. Always Extract External IP from LOCATIONS Using Helper Function
@@ -1559,6 +1919,21 @@ local external_ip="${LOCATIONS[$location_name]}"
 - See `lib/recovery.sh:full_restart()` for fixed pattern
 - `LOCATIONS` format: `"external:IP|internal:IPs"` (pipe separator)
 - Always validate extracted IP is non-empty before use
+
+### Best Practices Comparison
+
+**Alignment:** ⚠️ **Domain-Specific (Justified)**
+
+**Best Practice Support:**
+- **Abstraction Layers:** Using helper functions is consistent with Lesson 1
+- **Data Structure Encapsulation:** Helper functions hide implementation details
+
+**References:**
+- See Lesson 1 references for abstraction layer principles
+
+**Divergence:** This is domain-specific to this codebase's data structures, but the principle (use helper functions) is universal.
+
+**Recommendation:** ✅ **Keep** - Domain-specific but follows universal abstraction principles.
 
 ---
 
@@ -1641,6 +2016,24 @@ fi
 - See `lib/state.sh:74-80` for simplified logging directory creation failure handling
 - Always verify behavior is equivalent after simplification
 
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Code Simplification:** Extracting common operations reduces complexity
+- **Refactoring:** This is a standard refactoring pattern
+- **Readability:** Simpler code is easier to understand and maintain
+
+**References:**
+- [Refactoring by Martin Fowler](https://refactoring.com/) - "Extract Method" and simplification patterns
+- [Clean Code by Robert C. Martin](https://www.amazon.com/Clean-Code-Handbook-Software-Craftsmanship/dp/0132350882) - Code simplification
+- [The Art of Readable Code](https://www.amazon.com/Art-Readable-Code-Practical-Techniques/dp/0596802293) - Simplifying conditionals
+
+**Divergence:** None - This is a standard refactoring pattern.
+
+**Recommendation:** ✅ **Keep** - Standard refactoring best practice.
+
 ---
 
 ## 24. Distinguish Between Script Execution Success and Recovery Success
@@ -1682,6 +2075,22 @@ fi
 - See `CODE_PATTERNS.md` section "Error Handling Patterns" → "Distinguish Between Script Execution Success and Recovery Success" for the consolidated pattern
 - See `lib/recovery.sh:monitor_location()` lines 1514-1523 for implementation
 - Recovery failures are logged via `handle_error()` and `log_message()`
+
+### Best Practices Comparison
+
+**Alignment:** ⚠️ **Domain-Specific (Justified)**
+
+**Best Practice Support:**
+- **Exit Code Semantics:** Exit codes should reflect script execution, not operational outcomes
+- **Monitoring:** Distinguishing execution vs. operational success helps monitoring systems
+
+**References:**
+- [Exit Codes](https://tldp.org/LDP/abs/html/exitcodes.html) - Exit code semantics
+- [Monitoring Best Practices](https://sre.google/books/) - Distinguishing execution from operational success
+
+**Divergence:** This is domain-specific to monitoring/automation scripts, but the principle (clear exit code semantics) is universal.
+
+**Recommendation:** ✅ **Keep** - Domain-specific but justified for monitoring scripts.
 
 ---
 
@@ -1735,6 +2144,24 @@ fi
 - Network partition state is checked in `vpn-monitor.sh` at script start, but recovery code always re-checks
 - Failure count increments before partition check to ensure accurate tracking even when recovery is skipped
 - Cached state (`get_network_partition_state()`) is used only for logging state transitions, not for decision-making
+
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Cache Invalidation:** Cached values can become stale
+- **TOCTOU:** Similar to Lesson 15, state can change between check and use
+- **Defensive Programming:** Re-checking critical state prevents stale data bugs
+
+**References:**
+- [Designing Data-Intensive Applications](https://www.amazon.com/Designing-Data-Intensive-Applications-Reliable-Maintainable/dp/1449373321) - Cache invalidation and consistency
+- [Operating System Concepts](https://www.amazon.com/Operating-System-Concepts-Abraham-Silberschatz/dp/1118063333) - TOCTOU patterns
+- See Lesson 15 references for TOCTOU
+
+**Divergence:** None - This aligns with cache consistency and TOCTOU principles.
+
+**Recommendation:** ✅ **Keep** - Important for state consistency.
 
 ---
 
@@ -1837,6 +2264,24 @@ anonymize_location() {
 - **Edge case:** When more locations than city names exist, numeric suffixes are appended (e.g., "CHICAGO_1", "CHICAGO_2")
 - **Performance:** Linear probing is O(n) worst case, but acceptable for typical use (fewer than 50 locations)
 - **Alternative approaches:** Could use perfect hashing or larger city name array, but current approach is pragmatic and sufficient
+
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Hash Table Design:** Collision resolution is fundamental to hash table implementation
+- **Data Structures:** Hash collisions are inevitable when mapping many inputs to fewer outputs
+- **Algorithm Design:** Linear probing and chaining are standard collision resolution techniques
+
+**References:**
+- [Introduction to Algorithms (CLRS)](https://www.amazon.com/Introduction-Algorithms-3rd-MIT-Press/dp/0262033844) - Hash tables and collision resolution
+- [Data Structures and Algorithms in Java](https://www.amazon.com/Data-Structures-Algorithms-Java-6th/dp/1118771338) - Hash collision handling
+- [Hash Table](https://en.wikipedia.org/wiki/Hash_table) - Collision resolution techniques
+
+**Divergence:** None - This is fundamental computer science.
+
+**Recommendation:** ✅ **Keep** - Essential for correct hash-based algorithms.
 
 ---
 
@@ -1988,6 +2433,24 @@ fi
 - ✅ Test backward compatibility (SAs without marks)
 - ✅ Test mixed scenarios (some SAs with mark, some without)
 
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **API Completeness:** When optional attributes are present, they become part of the object identity
+- **System Programming:** Kernel interfaces require complete selectors for operations
+- **Error Handling:** Missing selectors cause misleading errors
+
+**References:**
+- [Linux Network Programming](https://www.amazon.com/Linux-Network-Programming-Development-Interfaces/dp/0130091151) - Kernel interface programming
+- [Understanding the Linux Kernel](https://www.amazon.com/Understanding-Linux-Kernel-Third-Edition/dp/0596005652) - Kernel interface design
+- [iproute2 Documentation](https://man7.org/linux/man-pages/man8/ip.8.html) - Selector requirements
+
+**Divergence:** None - This is system programming best practice.
+
+**Recommendation:** ✅ **Keep** - Critical for kernel interface programming.
+
 ---
 
 ## 28. Avoid Over-Engineering Edge Case Protections
@@ -2053,6 +2516,24 @@ fi
 ### References
 - Implementation: `lib/recovery.sh:1055-1171` (policy deletion without LOCAL_UDM_IP safeguard)
 - Safety analysis: `POLICY_DELETION_SAFETY.md` (updated to reflect removal)
+
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **YAGNI (You Aren't Gonna Need It):** Don't add features until needed
+- **Pragmatic Programming:** Balance between protection and complexity
+- **KISS (Keep It Simple, Stupid):** Simpler code is better
+
+**References:**
+- [The Pragmatic Programmer](https://pragprog.com/titles/tpp20/the-pragmatic-programmer-20th-anniversary-edition/) - YAGNI principle
+- [Extreme Programming Explained](https://www.amazon.com/Extreme-Programming-Explained-Embrace-Change/dp/0321278658) - YAGNI and simplicity
+- [Clean Code by Robert C. Martin](https://www.amazon.com/Clean-Code-Handbook-Software-Craftsmanship/dp/0132350882) - Simplicity over complexity
+
+**Divergence:** None - This aligns with YAGNI and pragmatic programming.
+
+**Recommendation:** ✅ **Keep** - Important for maintaining code simplicity.
 
 ---
 
@@ -2128,6 +2609,24 @@ log_message "INFO" "$location_name" "Surgical cleanup completed for $location_na
 - Implementation: `lib/recovery.sh:1793,1803` (changed "Surgical cleanup completed" to "Recovery completed" for ipsec fallback)
 - Test update: `tests/test_recovery_tier2.sh:602` (updated assertion for ipsec fallback path)
 - Log analysis: `analyze-logs.sh:363` (updated pattern matching for new message format)
+
+### Best Practices Comparison
+
+**Alignment:** ✅ **Aligns with best practices**
+
+**Best Practice Support:**
+- **Observability:** Accurate logs are essential for debugging and monitoring
+- **Logging Best Practices:** Logs must truthfully represent what happened
+- **Operational Excellence:** Misleading logs make operations difficult
+
+**References:**
+- [Observability Engineering](https://www.oreilly.com/library/view/observability-engineering/9781492076438/) - Accurate logging
+- [The Art of Monitoring](https://www.artofmonitoring.com/) - Logging best practices
+- [Site Reliability Engineering](https://sre.google/books/) - Operational logging
+
+**Divergence:** None - This is fundamental logging best practice.
+
+**Recommendation:** ✅ **Keep** - Essential for effective observability.
 
 ---
 

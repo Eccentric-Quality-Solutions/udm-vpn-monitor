@@ -555,9 +555,38 @@ All per-location state files use sanitized location names and peer IP addresses 
      - `"ipsec_reload"` → `"ipsec reload"`
      - `"ipsec_restart"` → `"ipsec restart"`
    - **Location**: Stored in `${STATE_DIR}` directory
-   - **Example Log Messages**:
-     - `"VPN restored for location NYC (203.0.113.1) after 3 failures (recovery method: xfrm-based recovery)"`
-     - `"VPN restored for location NYC (203.0.113.1) (recovery method: ipsec reload)"`
+  - **Example Log Messages**:
+    - `"VPN restored for location NYC (203.0.113.1) after 3 failures (recovery method: xfrm-based recovery)"`
+    - `"VPN restored for location NYC (203.0.113.1) (recovery method: ipsec reload)"`
+
+**Recovery Type Distinction**:
+The log analysis script (`analyze-logs.sh`) distinguishes between two types of recoveries based on log message patterns:
+
+1. **App-Managed Recoveries** (with intervention):
+   - **Identification**: Log messages containing "recovery method" indicate that a recovery action (Tier 2 or Tier 3) was attempted
+   - **Pattern**: `"VPN restored for LOCATION (IP) after N failures (recovery method: METHOD)"` or `"VPN restored for LOCATION (IP) (recovery method: METHOD)"`
+   - **Meaning**: The system took action to restore the VPN tunnel (xfrm recovery, ipsec reload, or ipsec restart)
+   - **Statistics**: Tracked separately to evaluate effectiveness of recovery actions and intervention needs
+   - **Example**: `"VPN restored for NYC (203.0.113.1) after 3 failures (recovery method: xfrm-based recovery)"`
+
+2. **Self-Healed Recoveries** (no intervention):
+   - **Identification**: Log messages containing "after N failures" but no "recovery method" indicate natural recovery
+   - **Pattern**: `"VPN recovered for LOCATION (IP) after N failures"`
+   - **Meaning**: The VPN tunnel recovered on its own without requiring intervention (e.g., SA rekey, network recovery, transient issues)
+   - **Statistics**: Tracked separately to evaluate VPN stability and natural recovery capabilities
+   - **Example**: `"VPN recovered for NYC (203.0.113.1) after 1 failures"`
+
+**Recovery Type Analysis**:
+- **Total Recoveries** = App-Managed Recoveries + Self-Healed Recoveries
+- **Recovery Success Rate** = (Total Recoveries / Total Failures) × 100%
+- **App-Managed Recovery Rate** = (App-Managed Recoveries / Total Failures) × 100%
+- **Self-Healed Recovery Rate** = (Self-Healed Recoveries / Total Failures) × 100%
+
+**Benefits**:
+- **Intervention Evaluation**: High app-managed recovery rate indicates frequent intervention needs
+- **System Stability**: High self-healed recovery rate indicates good VPN stability and natural recovery
+- **Recovery Tracking**: Helps identify if failures are transient (self-heal) or persistent (require intervention)
+- **Pattern Analysis**: Enables analysis of recovery patterns over time to identify trends
 
 **Benefits of Per-Location Tracking**:
 - **Independent Recovery**: Each tunnel can be recovered independently based on its own failure count

@@ -6,7 +6,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.4.3
+# Version: 0.5.0
 #
 
 # Strict error handling: exit on error, undefined vars, pipe failures
@@ -22,7 +22,7 @@ LOCKFILE="${STATE_DIR}/vpn-monitor.lock"
 LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
 
 # Script version
-SCRIPT_VERSION="0.4.3"
+SCRIPT_VERSION="0.5.0"
 
 # Source library modules
 # shellcheck source=lib/logging.sh
@@ -175,6 +175,13 @@ RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 #   to avoid log spam on every execution.
 #   Uses crontab -l and grep to check for vpn-monitor.sh entry
 #   Requires log_message function to be available
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds (warnings logged but don't fail script)
+#
 check_cron_persistence() {
 	if ! crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
 		log_message "WARNING" "SYSTEM" "Cron job not found! Persistence may have been lost."
@@ -400,6 +407,14 @@ initialize_monitor() {
 #   get_network_partition_state, set_network_partition_state, log_message, STATE_DIR, DEBUG to be set
 #   Cron check is performed once per run to avoid log spam
 #   Network partition check runs before cooldown check to ensure partition detection works during cooldown
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: State is valid, network is healthy (or partition check disabled), and not in cooldown (continues execution)
+#   Exits script with code 0 if network is partitioned or in cooldown
+#
 validate_monitor_state() {
 	# Validate state files (check for corruption)
 	if ! validate_state; then
@@ -493,6 +508,14 @@ validate_monitor_state() {
 #   Requires LOCATIONS array to be populated (via validate_config() called earlier)
 #   Requires monitor_location, log_message, DEBUG to be set
 #   Network partition check is performed in validate_monitor_state() before this function is called
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: All locations are healthy (all monitor_location calls succeeded)
+#   1: One or more locations have issues (at least one monitor_location call failed)
+#
 process_locations() {
 	local all_ok=0
 
@@ -500,7 +523,7 @@ process_locations() {
 	# parse_location_config() was called by validate_config(), so LOCATIONS array should be populated
 	# Defensive check: verify LOCATIONS is populated (should never be empty if validation succeeded)
 	if [[ ${#LOCATIONS[@]} -eq 0 ]]; then
-		handle_error_or_exit_fake_mode "No locations configured" "${EXIT_VALIDATION_ERROR:-3}"
+		handle_error_or_exit_fake_mode "SYSTEM" "No locations configured" "${EXIT_VALIDATION_ERROR:-3}"
 		return 1
 	fi
 

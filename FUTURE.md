@@ -1,5 +1,11 @@
 Considerations for the future, but want to avoid overarchitecting and premature optimization, as YAGNI.
 
+- Enhanced recovery type analysis in log reports
+    - Add recovery type breakdown to report summary statistics (app-managed vs self-healed percentages)
+    - Add recovery type trends over time analysis (track how recovery types change over time)
+    - Add location-specific recovery type statistics (which locations require more intervention)
+    - Note: Basic recovery type distinction implemented in analyze-logs.sh (2026-01-06)
+
 - Add timeout wrapping to ping commands in vpn-keepalive.sh
     - Currently, `vpn-keepalive.sh` uses ping commands without timeout wrapping (unlike `check_ping_connectivity()` in `lib/detection.sh`)
     - While less critical than the main monitoring script (it's a daemon), adding timeout wrapping would provide consistency and prevent potential hangs

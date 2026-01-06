@@ -19,6 +19,16 @@ NC='\033[0m' # No Color
 INTERRUPTED=0
 
 # Cleanup function for signal handlers
+#
+# Handles SIGINT (Ctrl+C) and SIGTERM signals to gracefully terminate test execution.
+# Kills all child processes in the process group and exits with code 130 (standard for SIGINT).
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   Exits with code 130 (standard for SIGINT)
+#
 cleanup_on_signal() {
 	if [[ $INTERRUPTED -eq 1 ]]; then
 		# Already handling interruption, force exit
@@ -95,6 +105,16 @@ INDIVIDUAL_MODE="${INDIVIDUAL_MODE:-0}"
 RESUME_MODE="${RESUME_MODE:-0}"
 
 # Show bats installation instructions
+#
+# Displays installation instructions for bats (Bash Automated Testing System).
+# Shows platform-specific installation commands for macOS, Linux, Ubuntu/Debian, and Fedora/RHEL.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None (outputs to stderr)
+#
 show_bats_instructions() {
 	echo "Install bats using one of the following methods:" >&2
 	echo "" >&2
@@ -115,6 +135,17 @@ show_bats_instructions() {
 }
 
 # Check if bats is installed
+#
+# Verifies that bats (Bash Automated Testing System) is installed and available.
+# Checks bats version and warns if outdated. Shows installation instructions if not found.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: bats is installed and available
+#   1: bats is not installed (exits script)
+#
 check_bats() {
 	if ! command -v bats >/dev/null 2>&1; then
 		echo -e "${RED}Error: bats is not installed${NC}" >&2
@@ -153,6 +184,17 @@ check_bats() {
 }
 
 # Check for kcov (optional, for coverage reporting)
+#
+# Checks if kcov is installed and available for test coverage reporting.
+# Sets COVERAGE_TOOL global variable if kcov is found.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: kcov is installed
+#   1: kcov is not installed
+#
 check_kcov() {
 	if command -v kcov >/dev/null 2>&1; then
 		COVERAGE_TOOL="kcov"
@@ -163,6 +205,16 @@ check_kcov() {
 }
 
 # Detect number of CPU cores
+#
+# Detects the number of CPU cores available on the system.
+# Uses nproc on Linux, falls back to default of 4 if nproc is unavailable.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   Outputs number of CPU cores to stdout (default: 4)
+#
 detect_cpu_cores() {
 	# Use nproc (Linux)
 	if command -v nproc >/dev/null 2>&1; then
@@ -174,6 +226,17 @@ detect_cpu_cores() {
 }
 
 # Check for parallel execution tools (GNU parallel or rush)
+#
+# Checks if GNU parallel or rush is available for parallel test execution.
+# Sets PARALLEL_TOOL global variable if a tool is found.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Parallel tool is available
+#   1: No parallel tool is available
+#
 check_parallel_tool() {
 	if command -v parallel >/dev/null 2>&1; then
 		# Check if it's GNU parallel (not the moreutils version)
@@ -192,6 +255,16 @@ check_parallel_tool() {
 }
 
 # Show parallel tool installation instructions
+#
+# Displays installation instructions for GNU parallel.
+# Shows platform-specific installation commands for macOS, Ubuntu/Debian, Fedora/RHEL, and from source.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None (outputs to stderr)
+#
 show_parallel_instructions() {
 	echo "Parallel test execution requires GNU parallel or rush to be installed." >&2
 	echo "" >&2
@@ -217,6 +290,16 @@ show_parallel_instructions() {
 }
 
 # Determine number of parallel jobs
+#
+# Determines the number of parallel jobs to use based on PARALLEL_JOBS setting.
+# Supports "auto" (auto-detect CPU cores), "0" (disabled), or a specific number.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   Outputs number of parallel jobs to stdout (0, auto-detected number, or specified number)
+#
 get_parallel_jobs() {
 	local jobs="$PARALLEL_JOBS"
 
@@ -244,6 +327,16 @@ get_parallel_jobs() {
 }
 
 # Show kcov installation instructions
+#
+# Displays installation instructions for kcov (code coverage tool).
+# Shows platform-specific installation commands for macOS, Ubuntu/Debian, Fedora/RHEL, and from source.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None (outputs to stderr)
+#
 show_kcov_instructions() {
 	echo "Install kcov using one of the following methods:" >&2
 	echo "" >&2
@@ -267,6 +360,17 @@ show_kcov_instructions() {
 }
 
 # Check coverage tools and enable if available
+#
+# Checks if coverage tools (kcov) are available when coverage is enabled.
+# Shows installation instructions if kcov is not found and coverage is requested.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Coverage tool is available or coverage is disabled
+#   1: Coverage is enabled but tool is not available
+#
 check_coverage_tools() {
 	if [[ "$COVERAGE_ENABLED" -eq 1 ]]; then
 		if check_kcov; then
@@ -300,6 +404,16 @@ check_coverage_tools() {
 }
 
 # Check for bats-support and bats-assert (optional but recommended)
+#
+# Checks if optional bats helper libraries (bats-support, bats-assert, bats-file) are installed.
+# Prompts user to install if missing and in interactive mode.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None (warnings logged but function always succeeds)
+#
 check_bats_helpers() {
 	local helpers_missing=0
 	local missing_helpers=()
@@ -372,7 +486,17 @@ check_bats_helpers() {
 }
 
 # Filter test files based on slow test setting
-# Outputs filtered file list to stdout (one per line)
+#
+# Filters test files based on RUN_SLOW_TESTS setting.
+# Slow tests (integration and high-risk tests) are excluded unless RUN_SLOW_TESTS=1.
+# Outputs filtered file list to stdout (one per line).
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   Outputs filtered test file paths to stdout (one per line)
+#
 filter_test_files() {
 	local test_files=("${SCRIPT_DIR}"/test_*.sh)
 
@@ -408,7 +532,17 @@ filter_test_files() {
 }
 
 # Extract test names from a test file
-# Outputs test names (one per line) matching @test declarations
+#
+# Extracts test names from a bats test file by parsing @test declarations.
+# Handles both single and double quotes in test names.
+# Outputs test names (one per line) matching @test declarations.
+#
+# Arguments:
+#   $1: Path to test file
+#
+# Returns:
+#   Outputs test names to stdout (one per line)
+#
 extract_test_names() {
 	local test_file="$1"
 	# Extract test names from @test declarations
@@ -418,6 +552,16 @@ extract_test_names() {
 }
 
 # Escape special regex characters in test name for bats filter
+#
+# Escapes special regex characters in test names for use with bats --filter flag.
+# Escapes: . [ ] { } ( ) + * ? ^ $ | \
+#
+# Arguments:
+#   $1: Test name to escape
+#
+# Returns:
+#   Outputs escaped test name to stdout
+#
 escape_test_name_for_filter() {
 	local test_name="$1"
 	# Escape special regex characters: . [ ] { } ( ) + * ? ^ $ | \
@@ -427,6 +571,16 @@ escape_test_name_for_filter() {
 }
 
 # Get checkpoint file path
+#
+# Returns the path to the checkpoint file used for resuming test execution.
+# Creates logs directory if it doesn't exist.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   Outputs checkpoint file path to stdout
+#
 get_checkpoint_file() {
 	local logs_dir="${PROJECT_ROOT}/logs"
 	mkdir -p "$logs_dir"
@@ -434,7 +588,17 @@ get_checkpoint_file() {
 }
 
 # Save test result to checkpoint file
+#
+# Saves test result to checkpoint file for resume functionality.
 # Format: test_id|status|timestamp
+#
+# Arguments:
+#   $1: Test ID (format: filename::test_name)
+#   $2: Test status (PASSED, FAILED, or TIMEOUT)
+#
+# Returns:
+#   None
+#
 save_checkpoint() {
 	local test_id="$1"
 	local status="$2" # PASSED, FAILED, or TIMEOUT
@@ -445,7 +609,16 @@ save_checkpoint() {
 }
 
 # Load checkpoint and return passed test IDs
-# Returns: associative array of passed test IDs (via global variable CHECKPOINT_PASSED)
+#
+# Loads checkpoint file and populates CHECKPOINT_PASSED associative array with passed test IDs.
+# Returns associative array of passed test IDs (via global variable CHECKPOINT_PASSED).
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None (populates global CHECKPOINT_PASSED array)
+#
 load_checkpoint() {
 	local checkpoint_file
 	checkpoint_file=$(get_checkpoint_file)
@@ -464,12 +637,31 @@ load_checkpoint() {
 }
 
 # Check if test should be skipped (already passed in checkpoint)
+#
+# Checks if a test should be skipped because it already passed in the checkpoint.
+#
+# Arguments:
+#   $1: Test ID (format: filename::test_name)
+#
+# Returns:
+#   0: Test should be skipped (already passed)
+#   1: Test should not be skipped
+#
 should_skip_test() {
 	local test_id="$1"
 	[[ -n "${CHECKPOINT_PASSED[$test_id]:-}" ]]
 }
 
 # Clear checkpoint file
+#
+# Removes the checkpoint file to start a fresh test run.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None
+#
 clear_checkpoint() {
 	local checkpoint_file
 	checkpoint_file=$(get_checkpoint_file)
@@ -477,7 +669,16 @@ clear_checkpoint() {
 }
 
 # Get kcov arguments for coverage reporting
-# Returns array of kcov arguments via global variable KCOV_ARGS
+#
+# Builds and returns array of kcov arguments for coverage reporting.
+# Returns array of kcov arguments via global variable KCOV_ARGS.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None (populates global KCOV_ARGS array)
+#
 get_kcov_args() {
 	KCOV_ARGS=(
 		"--include-path=${PROJECT_ROOT}"
@@ -490,8 +691,23 @@ get_kcov_args() {
 }
 
 # Run a single test case with timeout
-# Runs an individual test by name with timeout, skipping if it exceeds the limit
-# Returns: 0 on success, 1 on test failure, 2 on timeout (caller should handle)
+#
+# Runs an individual test by name with timeout, skipping if it exceeds the limit.
+# Supports coverage reporting when enabled.
+#
+# Arguments:
+#   $1: Test file path
+#   $2: Test name
+#   $3: Timeout in seconds
+#   $4: Use coverage flag (0 or 1, optional, default: 0)
+#   $5: Coverage directory (optional, required if coverage enabled)
+#   ${@:6}: kcov arguments (optional, required if coverage enabled)
+#
+# Returns:
+#   0: Test passed
+#   1: Test failed
+#   2: Test timed out
+#
 run_single_test_with_timeout() {
 	local test_file="$1"
 	local test_name="$2"
@@ -554,13 +770,16 @@ run_single_test_with_timeout() {
 	local exit_code=0
 	if [[ $use_coverage -eq 1 ]] && [[ -n "$coverage_dir" ]]; then
 		# Run with coverage and timeout
+		# Note: Use timeout without --preserve-status for kcov to ensure it exits cleanly
+		# kcov can hang if the test process exits unexpectedly, so we need timeout to kill it
 		if command -v stdbuf >/dev/null 2>&1; then
-			timeout --preserve-status "$timeout_seconds" stdbuf -oL -eL -i0 kcov "${kcov_args[@]}" "$coverage_dir" bats "${bats_args[@]}" 2>&1 || exit_code=$?
+			timeout "$timeout_seconds" stdbuf -oL -eL -i0 kcov "${kcov_args[@]}" "$coverage_dir" bats "${bats_args[@]}" 2>&1 || exit_code=$?
 		else
-			timeout --preserve-status "$timeout_seconds" kcov "${kcov_args[@]}" "$coverage_dir" bats "${bats_args[@]}" 2>&1 || exit_code=$?
+			timeout "$timeout_seconds" kcov "${kcov_args[@]}" "$coverage_dir" bats "${bats_args[@]}" 2>&1 || exit_code=$?
 		fi
 	else
 		# Run without coverage, with timeout
+		# Use --preserve-status for bats-only runs to preserve test exit codes
 		if command -v stdbuf >/dev/null 2>&1; then
 			# Use stdbuf for unbuffered output streaming
 			timeout --preserve-status "$timeout_seconds" stdbuf -oL -eL -i0 bats "${bats_args[@]}" 2>&1 || exit_code=$?
@@ -576,15 +795,42 @@ run_single_test_with_timeout() {
 		# Test timed out - bats will show it as skipped
 		echo -e "${YELLOW}# skip Test '${test_name}' timed out after ${timeout_seconds}s${NC}" >&2
 		return 2
+	elif [[ $exit_code -eq 143 ]]; then
+		# SIGTERM (timeout killed the process) - treat as timeout
+		# This can happen with kcov when timeout kills it
+		echo -e "${YELLOW}# skip Test '${test_name}' timed out after ${timeout_seconds}s${NC}" >&2
+		return 2
 	else
 		# Other exit codes are test failures
-		return 1
+		# For kcov runs, exit code 1 from bats is preserved, but kcov may exit with different codes
+		# If exit code is 1, it's a test failure; otherwise it might be kcov cleanup
+		if [[ $exit_code -eq 1 ]]; then
+			return 1
+		else
+			# Non-zero exit that's not timeout or test failure - likely kcov issue
+			# Still treat as test failure to be safe
+			return 1
+		fi
 	fi
 }
 
 # Run a single test file with per-test timeout
-# Extracts individual tests and runs each with timeout
-# Returns: 0 if all tests passed, 1 if any failed, 2 if any timed out
+#
+# Extracts individual tests from a test file and runs each with timeout.
+# Supports coverage reporting when enabled.
+#
+# Arguments:
+#   $1: Test file path
+#   $2: Timeout in seconds
+#   $3: Use coverage flag (0 or 1, optional, default: 0)
+#   $4: Coverage directory (optional, required if coverage enabled)
+#   ${@:5}: kcov arguments (optional, required if coverage enabled)
+#
+# Returns:
+#   0: All tests passed
+#   1: One or more tests failed
+#   2: One or more tests timed out
+#
 run_test_file_with_timeout() {
 	local test_file="$1"
 	local timeout_seconds="$2"
@@ -655,6 +901,16 @@ run_test_file_with_timeout() {
 }
 
 # Run tests sequentially (without coverage)
+#
+# Runs test files sequentially (one at a time) without coverage reporting.
+# Results are stored in global variables SEQUENTIAL_FAILED and SEQUENTIAL_TIMED_OUT.
+#
+# Arguments:
+#   $@: Test file paths
+#
+# Returns:
+#   0: Always succeeds (results in global variables SEQUENTIAL_FAILED and SEQUENTIAL_TIMED_OUT)
+#
 run_tests_sequential() {
 	local test_files=("$@")
 	local failed_tests=0
@@ -702,6 +958,17 @@ run_tests_sequential() {
 }
 
 # Run tests in parallel (without coverage)
+#
+# Runs test files in parallel using GNU parallel or rush.
+# Results are stored in global variables PARALLEL_FAILED and PARALLEL_TIMED_OUT.
+#
+# Arguments:
+#   $1: Number of parallel jobs
+#   ${@:2}: Test file paths
+#
+# Returns:
+#   0: Always succeeds (results in global variables PARALLEL_FAILED and PARALLEL_TIMED_OUT)
+#
 run_tests_parallel() {
 	local num_jobs="$1"
 	shift
@@ -733,6 +1000,18 @@ run_tests_parallel() {
 	export PROJECT_ROOT
 
 	# Create a function that parallel can call
+	#
+	# Runs a single test file with timeout and writes results to files.
+	# This function is called by GNU parallel or rush for parallel execution.
+	#
+	# Arguments:
+	#   $1: Test file path
+	#
+	# Returns:
+	#   0: Test passed
+	#   1: Test failed
+	#   2: Test timed out
+	#
 	parallel_test_runner() {
 		local test_file="$1"
 		local test_name
@@ -760,6 +1039,18 @@ run_tests_parallel() {
 	export results_file
 	export timeout_file
 	export failed_file
+
+	# Function that parallel can call
+	# Note: This function is defined inside run_tests_parallel but exported for parallel execution
+	# It's documented here for completeness but the actual definition is above
+	# parallel_test_runner() {
+	#   Arguments:
+	#     $1: Test file path
+	#   Returns:
+	#     0: Test passed
+	#     1: Test failed
+	#     2: Test timed out
+	# }
 
 	# Run tests in parallel using GNU parallel or rush
 	if [[ "$PARALLEL_TOOL" == "parallel" ]]; then
@@ -803,6 +1094,18 @@ run_tests_parallel() {
 }
 
 # Run tests in individual mode - each test case runs separately with detailed output
+#
+# Runs each test case individually with detailed per-test output.
+# Supports checkpoint/resume functionality and coverage reporting.
+# Results are saved to logs/test_results_TIMESTAMP.txt.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: All tests passed
+#   1: One or more tests failed or timed out (exits script)
+#
 run_tests_individual() {
 	# Filter test files based on slow test setting
 	local test_files
@@ -1155,6 +1458,17 @@ run_tests_individual() {
 }
 
 # Run tests with coverage if enabled
+#
+# Main test runner function. Routes to individual mode, sequential mode, or parallel mode.
+# Handles coverage reporting when enabled.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: All tests passed
+#   1: One or more tests failed (exits script)
+#
 run_tests() {
 	# Check if individual mode is enabled
 	if [[ "$INDIVIDUAL_MODE" -eq 1 ]]; then
@@ -1244,6 +1558,18 @@ run_tests() {
 # This ensures consistent per-test timeout behavior for both coverage and non-coverage runs.
 
 # Run tests sequentially (with coverage)
+#
+# Runs test files sequentially (one at a time) with coverage reporting.
+# Results are stored in global variables SEQUENTIAL_COV_FAILED and SEQUENTIAL_COV_TIMED_OUT.
+#
+# Arguments:
+#   $1: Coverage directory
+#   $2-$7: kcov arguments (6 arguments: --include-path and 5 --exclude-path)
+#   ${@:8}: Test file paths
+#
+# Returns:
+#   0: Always succeeds (results in global variables SEQUENTIAL_COV_FAILED and SEQUENTIAL_COV_TIMED_OUT)
+#
 run_tests_sequential_with_coverage() {
 	local coverage_dir="$1"
 	shift
@@ -1293,6 +1619,19 @@ run_tests_sequential_with_coverage() {
 }
 
 # Run tests in parallel (with coverage)
+#
+# Runs test files in parallel with coverage reporting using GNU parallel or rush.
+# Results are stored in global variables PARALLEL_COV_FAILED and PARALLEL_COV_TIMED_OUT.
+#
+# Arguments:
+#   $1: Number of parallel jobs
+#   $2: Coverage directory
+#   $3-$8: kcov arguments (6 arguments: --include-path and 5 --exclude-path)
+#   ${@:9}: Test file paths
+#
+# Returns:
+#   0: Always succeeds (results in global variables PARALLEL_COV_FAILED and PARALLEL_COV_TIMED_OUT)
+#
 run_tests_parallel_with_coverage() {
 	local num_jobs="$1"
 	local coverage_dir="$2"
@@ -1331,6 +1670,18 @@ run_tests_parallel_with_coverage() {
 	export COVERAGE_DIR="$coverage_dir"
 
 	# Create a function that parallel can call
+	#
+	# Runs a single test file with timeout and coverage, writing results to files.
+	# This function is called by GNU parallel or rush for parallel execution with coverage.
+	#
+	# Arguments:
+	#   $1: Test file path
+	#
+	# Returns:
+	#   0: Test passed
+	#   1: Test failed
+	#   2: Test timed out
+	#
 	parallel_test_runner_with_coverage() {
 		local test_file="$1"
 		local test_name
@@ -1364,6 +1715,18 @@ run_tests_parallel_with_coverage() {
 	export results_file
 	export timeout_file
 	export failed_file
+
+	# Function that parallel can call (with coverage)
+	# Note: This function is defined inside run_tests_parallel_with_coverage but exported for parallel execution
+	# It's documented here for completeness but the actual definition is above
+	# parallel_test_runner_with_coverage() {
+	#   Arguments:
+	#     $1: Test file path
+	#   Returns:
+	#     0: Test passed
+	#     1: Test failed
+	#     2: Test timed out
+	# }
 
 	# Run tests in parallel using GNU parallel or rush
 	if [[ "$PARALLEL_TOOL" == "parallel" ]]; then
@@ -1401,6 +1764,17 @@ run_tests_parallel_with_coverage() {
 }
 
 # Run tests with kcov coverage
+#
+# Main test runner function for coverage mode. Routes to sequential or parallel execution with coverage.
+# Generates coverage reports in HTML format.
+#
+# Arguments:
+#   $@: Test file paths
+#
+# Returns:
+#   0: All tests passed
+#   1: One or more tests failed (exits script)
+#
 run_tests_with_coverage() {
 	local test_files=("$@")
 
@@ -1485,6 +1859,16 @@ run_tests_with_coverage() {
 }
 
 # Print coverage summary from kcov report
+#
+# Extracts and prints coverage summary from kcov-generated reports.
+# Supports both JavaScript format (kcov v43+) and JSON format (older versions).
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None (outputs coverage summary to stdout)
+#
 print_coverage_summary() {
 	# kcov v43+ uses JavaScript file with embedded JSON data
 	# Older versions may use index.json
@@ -1556,6 +1940,17 @@ print_coverage_summary() {
 }
 
 # Parse command line arguments
+#
+# Parses command-line arguments and sets corresponding global flags.
+# Handles --coverage, --slow, --all, --failed, --jobs, --filter-tags, --individual, --resume, --sequential, --help.
+#
+# Arguments:
+#   $@: Command-line arguments
+#
+# Returns:
+#   0: Arguments parsed successfully
+#   1: Invalid arguments (exits script)
+#
 parse_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -1626,6 +2021,15 @@ parse_args() {
 }
 
 # Show help message
+#
+# Displays comprehensive help message with usage information, options, and examples.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None (outputs help message to stdout)
+#
 show_help() {
 	cat <<EOF
 UDM VPN Monitor Test Runner
@@ -1746,6 +2150,17 @@ EOF
 }
 
 # Main execution
+#
+# Main entry point for the test runner script.
+# Initializes environment, checks dependencies, and runs tests.
+#
+# Arguments:
+#   $@: Command-line arguments (passed to parse_args)
+#
+# Returns:
+#   0: All tests passed
+#   1: One or more tests failed or errors occurred (exits script)
+#
 main() {
 	parse_args "$@"
 

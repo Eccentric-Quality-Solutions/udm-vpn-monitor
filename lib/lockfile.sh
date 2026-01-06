@@ -3,7 +3,7 @@
 # Lockfile management for UDM VPN Monitor
 # Handles flock-based and fallback lockfile mechanisms to prevent concurrent execution
 #
-# Version: 0.4.3
+# Version: 0.5.0
 #
 
 # Source common utility functions
@@ -12,13 +12,48 @@
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${LIB_DIR}/common.sh" 2>/dev/null || {
 	# Fallback if common.sh not found - define minimal functions
+	# Get current Unix timestamp
+	#
+	# Returns the current Unix timestamp (seconds since epoch).
+	# This is a fallback implementation when common.sh is not available.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#
+	# Output:
+	#   Prints Unix timestamp (integer) to stdout
 	get_unix_timestamp() {
 		date +%s
 	}
+	# Check if a command is available
+	#
+	# Checks if a command exists in the system PATH.
+	# This is a fallback implementation when common.sh is not available.
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
 	check_command_available() {
 		local cmd="$1"
 		command -v "$cmd" >/dev/null 2>&1
 	}
+	# Safely source a library file
+	#
+	# Attempts to source a library file, silently failing if it doesn't exist.
+	# This is a fallback implementation when common.sh is not available.
+	#
+	# Arguments:
+	#   $1: Path to library file to source
+	#
+	# Returns:
+	#   0: File sourced successfully
+	#   1: File not found or error sourcing
 	safe_source_lib() {
 		local lib_file="$1"
 		source "$lib_file" 2>/dev/null
@@ -29,6 +64,19 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 # shellcheck source=lib/logging.sh
 source "${LIB_DIR}/logging.sh" 2>/dev/null || {
 	# Fallback if logging.sh not found - define minimal get_formatted_timestamp
+	# Get formatted timestamp
+	#
+	# Returns a formatted timestamp string in the format "YYYY-MM-DD HH:MM:SS".
+	# This is a fallback implementation when logging.sh is not available.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#
+	# Output:
+	#   Prints formatted timestamp string to stdout
 	get_formatted_timestamp() {
 		date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S'
 	}
@@ -154,6 +202,9 @@ create_lockfile_atomically() {
 # Stale lockfiles indicate a hung or crashed previous instance that didn't clean up.
 # Compares file modification time to current time.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Lockfile is stale (exceeded timeout) or unreadable
 #   1: Lockfile is not stale (within timeout) or doesn't exist
@@ -200,6 +251,9 @@ check_lockfile_stale() {
 # Checks if lockfile is stale and removes it if so, logging a warning.
 # This is a helper function to reduce code duplication across lockfile functions.
 # Extracts PID from lockfile before removal for warning message.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Lockfile was stale and removed (or didn't exist)
@@ -352,6 +406,17 @@ acquire_lockfile_flock() {
 
 		# Cleanup function for signal handlers
 		# Ensures file descriptor is closed and lockfile is removed even if one operation fails
+		#
+		# Arguments:
+		#   None (uses $? to capture exit code from trap context)
+		#
+		# Returns:
+		#   Never returns (exits script with appropriate exit code)
+		#
+		# Side effects:
+		#   - Closes file descriptor 9
+		#   - Removes lockfile if it was acquired by this process
+		#   - Exits script with appropriate exit code
 		cleanup_and_exit() {
 			# Capture the actual exit code from the script
 			# When called from EXIT trap, $? contains the exit code that triggered the trap
@@ -538,6 +603,17 @@ acquire_lockfile_fallback() {
 		local signal_exit_code=0
 
 		# Cleanup function for signal handlers
+		# Ensures lockfile is removed on exit.
+		#
+		# Arguments:
+		#   None (uses $? to capture exit code from trap context)
+		#
+		# Returns:
+		#   Never returns (exits script with appropriate exit code)
+		#
+		# Side effects:
+		#   - Removes lockfile
+		#   - Exits script with appropriate exit code
 		cleanup_and_exit() {
 			# Capture the actual exit code from the script
 			# When called from EXIT trap, $? contains the exit code that triggered the trap

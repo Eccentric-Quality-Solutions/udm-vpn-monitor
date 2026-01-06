@@ -45,7 +45,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Scenario: Counter wrap-around or VPN re-establishment
 	# Setup: Set initial byte count to 10000, mock returns 5000
 	# Edge case: Handles counter wrap-around scenarios
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 10000 2000 "0x12345678" 'ENABLE_NETWORK_PARTITION_CHECK=0'
+	# Disable ping check so that bytes decreasing is detected as suspect (not idle but healthy)
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 10000 2000 "0x12345678" 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_PING_CHECK=0'
 
 	# Override mock to return decreased bytes (5000 instead of 2000)
 	# mock_ip_xfrm_state creates the file at ${TEST_DIR}/ip by default, overwriting the fixture's mock
@@ -55,7 +56,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Should detect bytes not increasing (may fail VPN check)
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "bytes not increasing" || assert_file_contains "$LOG_FILE" "suspect"
+	assert_file_contains "$LOG_FILE" "bytes not increasing" || assert_file_contains "$LOG_FILE" "suspect" || assert_file_contains "$LOG_FILE" "bytes decreased"
 
 	remove_mock_from_path
 }

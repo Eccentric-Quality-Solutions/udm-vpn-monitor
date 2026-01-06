@@ -3,7 +3,7 @@
 # UDM Utility Availability Checker
 # Checks whether required Linux utilities are available on the system
 #
-# Version: 0.4.3
+# Version: 0.5.0
 #
 
 # Colors for output
@@ -66,6 +66,9 @@ check_utility() {
 # Iterates through the list of utilities and checks their availability.
 # Prints results with color coding: green for available, red for missing.
 # Provides a summary at the end.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: All utilities are available

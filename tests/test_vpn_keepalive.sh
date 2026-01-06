@@ -145,7 +145,7 @@ cleanup_keepalive_daemon() {
 
 	assert_success
 	assert_output --partial "UDM VPN Keepalive"
-	assert_output --partial "0.4.3"
+	assert_output --partial "0.5.0"
 }
 
 # bats test_tags=category:unit

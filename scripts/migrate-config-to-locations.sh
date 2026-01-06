@@ -31,6 +31,20 @@ source "${PROJECT_ROOT}/lib/detection.sh" 2>/dev/null || true
 
 # Fallback sanitize_location_name if library failed to load
 if ! command -v sanitize_location_name >/dev/null 2>&1; then
+	# Sanitize location name for use in config variable names
+	#
+	# Sanitizes a location name to be safe for use in config variable names.
+	# Replaces invalid characters, enforces max length, and ensures it starts with alphanumeric.
+	# This is a fallback implementation when common.sh is not available.
+	#
+	# Arguments:
+	#   $1: Location name to sanitize
+	#
+	# Returns:
+	#   0: Always succeeds
+	#
+	# Output:
+	#   Prints sanitized location name to stdout
 	sanitize_location_name() {
 		local location_name="$1"
 		local sanitized
@@ -52,8 +66,23 @@ if ! command -v sanitize_location_name >/dev/null 2>&1; then
 	}
 fi
 
-# Function to read old config values
-# Note: sanitize_location_name() is available from common.sh (sourced via config.sh)
+# Read old config values
+#
+# Reads EXTERNAL_PEER_IPS and INTERNAL_PEER_IPS from the old config format.
+# Returns them as a pipe-separated string for processing.
+#
+# Arguments:
+#   $1: Path to config file to read
+#
+# Returns:
+#   0: Success, prints "external_ips|internal_ips" to stdout
+#   1: Failed to read config file
+#
+# Output:
+#   Prints "external_ips|internal_ips" to stdout (pipe-separated)
+#
+# Note:
+#   sanitize_location_name() is available from common.sh (sourced via config.sh)
 read_old_config() {
 	local config_file="$1"
 	local external_ips=""
@@ -84,7 +113,23 @@ read_old_config() {
 	echo "$external_ips|$internal_ips"
 }
 
-# Function to generate location names
+# Generate location names
+#
+# Generates location names based on count and mode (interactive, auto, or csv).
+# Interactive mode prompts user for each name, auto generates numeric names,
+# and csv mode reads from a CSV file.
+#
+# Arguments:
+#   $1: Number of location names to generate
+#   $2: Mode - "interactive" (default), "auto", or "csv"
+#   $3: CSV file path (required if mode is "csv")
+#
+# Returns:
+#   0: Success, prints location names (one per line) to stdout
+#   1: Failed (e.g., CSV file not found)
+#
+# Output:
+#   Prints location names (one per line) to stdout
 generate_location_names() {
 	local count="$1"
 	local mode="${2:-interactive}" # interactive (default), auto, csv
@@ -138,7 +183,25 @@ generate_location_names() {
 	done
 }
 
-# Function to migrate config
+# Migrate config from old format to location-based format
+#
+# Migrates configuration from EXTERNAL_PEER_IPS/INTERNAL_PEER_IPS format
+# to location-based format (LOCATION_*_EXTERNAL/LOCATION_*_INTERNAL).
+# Creates a backup of the original config file before migration.
+#
+# Arguments:
+#   $1: Path to config file to migrate
+#   $2: Mode for generating location names - "interactive" (default), "auto", or "csv"
+#   $3: CSV file path (required if mode is "csv")
+#
+# Returns:
+#   0: Migration completed successfully
+#   1: Migration failed (config file error, validation error, etc.)
+#
+# Side effects:
+#   - Creates backup file: ${config_file}.backup.${timestamp}
+#   - Modifies config file in place
+#   - Creates temporary file during migration (cleaned up on exit)
 migrate_config() {
 	local config_file="$1"
 	local mode="${2:-interactive}"
@@ -187,6 +250,24 @@ migrate_config() {
 	# Read entire config file
 	local temp_file
 	temp_file=$(mktemp)
+	# Cleanup temp file on exit (if script exits early before mv)
+	# Cleanup temporary file
+	#
+	# Removes temporary file used during config migration.
+	# Called automatically via EXIT trap if migration fails.
+	#
+	# Arguments:
+	#   None (uses temp_file variable from parent scope)
+	#
+	# Returns:
+	#   0: Always succeeds
+	#
+	# Side effects:
+	#   - Removes temporary file if it exists
+	cleanup_temp_file() {
+		rm -f "${temp_file:-}"
+	}
+	trap cleanup_temp_file EXIT
 
 	# Write new config (preserve other settings, replace old format)
 	while IFS= read -r line || [[ -n "$line" ]]; do
@@ -262,6 +343,8 @@ migrate_config() {
 
 	# Replace config file
 	mv "$temp_file" "$config_file"
+	# Clear trap since file was successfully moved (no cleanup needed)
+	trap - EXIT
 
 	echo "Migration completed successfully!"
 	echo ""
@@ -271,6 +354,16 @@ migrate_config() {
 }
 
 # Main function
+#
+# Orchestrates the config migration process. Parses command-line arguments,
+# validates inputs, and calls migrate_config to perform the migration.
+#
+# Arguments:
+#   $@: Command-line arguments (--interactive, --auto, --csv FILE, --help, config file path)
+#
+# Returns:
+#   0: Migration completed successfully or help displayed
+#   1: Migration failed or invalid arguments
 main() {
 	local mode="interactive" # Default: prompt for names
 	local csv_file=""

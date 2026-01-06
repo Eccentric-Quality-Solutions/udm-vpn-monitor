@@ -3,7 +3,7 @@
 # State file management for UDM VPN Monitor
 # Handles failure counters, cooldown periods, rate limiting, and restart tracking
 #
-# Version: 0.4.3
+# Version: 0.5.0
 #
 
 # Source constants for magic numbers
@@ -23,6 +23,18 @@ fi
 # shellcheck source=lib/common.sh
 source "${LIB_DIR}/common.sh" 2>/dev/null || {
 	# Fallback if common.sh not found - define minimal versions
+	# Ensure file exists with optional default content
+	#
+	# Creates a file if it doesn't exist, optionally with default content.
+	# This is a fallback implementation when common.sh is not available.
+	#
+	# Arguments:
+	#   $1: Path to file to ensure exists
+	#   $2: Optional default content to write if file doesn't exist
+	#
+	# Returns:
+	#   0: File exists or was created successfully
+	#   1: Failed to create file
 	ensure_file_exists() {
 		local file="$1"
 		local default_content="${2:-}"
@@ -31,6 +43,17 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 		fi
 		return 0
 	}
+	# Try to ensure directory exists
+	#
+	# Attempts to create a directory if it doesn't exist.
+	# This is a fallback implementation when common.sh is not available.
+	#
+	# Arguments:
+	#   $1: Directory path to ensure exists
+	#
+	# Returns:
+	#   0: Directory exists or was created successfully
+	#   1: Failed to create directory
 	try_ensure_directory_exists() {
 		local dir="$1"
 		if [[ ! -d "$dir" ]]; then
@@ -38,6 +61,17 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 		fi
 		return 0
 	}
+	# Safely source a library file
+	#
+	# Attempts to source a library file, silently failing if it doesn't exist.
+	# This is a fallback implementation when common.sh is not available.
+	#
+	# Arguments:
+	#   $1: Path to library file to source
+	#
+	# Returns:
+	#   0: File sourced successfully
+	#   1: File not found or error sourcing
 	safe_source_lib() {
 		local lib_file="$1"
 		source "$lib_file" 2>/dev/null
@@ -55,6 +89,9 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 #   - NETWORK_PARTITION_STATE_FILE: Tracks network partition status (created here)
 #   - Per-peer failure counters: Created on-demand as failure_counter_<peer_ip>
 #   - Per-peer byte counters: Created on-demand as last_bytes_<peer_ip>
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Always succeeds (warnings logged but don't fail script)
@@ -562,6 +599,9 @@ reset_failure_count() {
 # Returns the full file path for the network partition state file.
 # Uses NETWORK_PARTITION_STATE_FILE if set, otherwise defaults to ${STATE_DIR}/network_partition_state.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Always succeeds
 #
@@ -584,6 +624,9 @@ get_network_partition_state_file() {
 # Retrieves the current network partition state (0 = healthy, 1 = partitioned).
 # Network partition state is global (not per-peer) since network issues affect all peers.
 # Validates file format, recovering corrupted files automatically.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Always succeeds
@@ -734,6 +777,9 @@ get_file_mtime() {
 # Cooldown periods prevent immediate re-restarts and allow VPN to stabilize.
 # Compares current time to cooldown expiration timestamp.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Currently in cooldown period (should exit script)
 #   1: Not in cooldown (cooldown expired or doesn't exist)
@@ -828,6 +874,9 @@ set_cooldown() {
 # Verifies if the maximum number of restarts per hour has been exceeded.
 # Prevents restart loops by limiting how frequently full restarts can occur.
 # Counts restart timestamps in RESTART_COUNT_FILE within the last hour.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Within rate limit (restart allowed)
@@ -973,6 +1022,9 @@ check_rate_limit() {
 # Examples:
 #   record_restart
 #   # Adds current timestamp to restart count file atomically
+#
+# Arguments:
+#   None
 #
 # Note:
 #   Requires RESTART_COUNT_FILE, SECONDS_PER_DAY, file_exists_and_readable, atomic_write_file,
@@ -1304,6 +1356,9 @@ validate_state_files_by_pattern() {
 #   - Logs warnings for corrupted state files
 #   - Backs up corrupted files before recovery
 #   - Resets corrupted files to safe defaults
+#
+# Arguments:
+#   None
 #
 # Note:
 #   Requires RESTART_COUNT_FILE, COOLDOWN_UNTIL_FILE, LOGS_DIR, STATE_DIR, and log_message

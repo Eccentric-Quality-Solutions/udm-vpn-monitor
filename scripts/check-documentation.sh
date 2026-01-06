@@ -198,7 +198,8 @@ check_file() {
 		esac
 
 		# Check documentation for this function
-		check_function_documentation "$file" "$func_line" "$func_name"
+		# Use || true to prevent set -e from exiting early - we want to check all functions
+		check_function_documentation "$file" "$func_line" "$func_name" || true
 	done <<<"$func_defs"
 }
 
@@ -266,7 +267,8 @@ main() {
 			continue
 		fi
 
-		check_file "$file"
+		# Use || true to prevent set -e from exiting early - we want to check all files
+		check_file "$file" || true
 		checked_count=$((checked_count + 1))
 	done
 
