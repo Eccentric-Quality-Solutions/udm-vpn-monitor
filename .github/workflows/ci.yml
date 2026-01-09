@@ -91,7 +91,7 @@ jobs:
     name: Test Coverage
     runs-on: ubuntu-latest
     needs: lint
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -113,16 +113,34 @@ jobs:
             zlib1g-dev \
             git
           
+      - name: Cache kcov build
+        id: cache-kcov
+        uses: actions/cache@v4
+        with:
+          path: /tmp/kcov/build
+          key: kcov-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: |
+            kcov-${{ runner.os }}-
+
       - name: Build and install kcov
         run: |
-          # Clone and build kcov from source
-          git clone https://github.com/SimonKagstrom/kcov.git /tmp/kcov
+          # Clone kcov repository if not cached
+          if [ ! -d /tmp/kcov ]; then
+            git clone https://github.com/SimonKagstrom/kcov.git /tmp/kcov
+          fi
+          
           cd /tmp/kcov
           
-          # Build kcov
+          # Build kcov (use cached build directory if available)
           mkdir -p build
           cd build
-          cmake ..
+          
+          # Only run cmake if CMakeCache.txt doesn't exist (build not cached)
+          if [ ! -f CMakeCache.txt ]; then
+            cmake ..
+          fi
+          
+          # Build kcov (will be faster if build artifacts are cached)
           make -j$(nproc)
           sudo make install
           
@@ -139,7 +157,7 @@ jobs:
       - name: Run tests with coverage
         env:
           RUN_SLOW_TESTS: 1
-          PARALLEL_JOBS: 4  # Enable parallel execution for faster test runs
+          PARALLEL_JOBS: 8  # Increased from 4 - kcov is I/O bound, so more parallel jobs help
         run: |
           ./tests/run_tests.sh --coverage
 

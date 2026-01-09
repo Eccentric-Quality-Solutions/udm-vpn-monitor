@@ -685,8 +685,14 @@ get_kcov_args() {
 		"--exclude-path=${PROJECT_ROOT}/tests"
 		"--exclude-path=${PROJECT_ROOT}/coverage"
 		"--exclude-path=${PROJECT_ROOT}/.git"
+		"--exclude-path=${PROJECT_ROOT}/logs"
+		"--exclude-path=${PROJECT_ROOT}/state"
+		"--exclude-path=${PROJECT_ROOT}/reports"
+		"--exclude-path=${PROJECT_ROOT}/analyze"
 		"--exclude-path=/usr"
 		"--exclude-path=/tmp"
+		"--exclude-path=/var"
+		"--exclude-path=/home/runner"
 	)
 }
 
@@ -1564,8 +1570,8 @@ run_tests() {
 #
 # Arguments:
 #   $1: Coverage directory
-#   $2-$7: kcov arguments (6 arguments: --include-path and 5 --exclude-path)
-#   ${@:8}: Test file paths
+#   $2-$N: kcov arguments (variable number: --include-path and --exclude-path args)
+#   ${@:N+1}: Test file paths
 #
 # Returns:
 #   0: Always succeeds (results in global variables SEQUENTIAL_COV_FAILED and SEQUENTIAL_COV_TIMED_OUT)
@@ -1573,9 +1579,12 @@ run_tests() {
 run_tests_sequential_with_coverage() {
 	local coverage_dir="$1"
 	shift
-	# kcov_args are always exactly 6 arguments: --include-path and 5 --exclude-path args
-	local kcov_args=("$1" "$2" "$3" "$4" "$5" "$6")
-	shift 6
+	# Collect kcov arguments until we hit a test file (arguments that don't start with --)
+	local kcov_args=()
+	while [[ $# -gt 0 ]] && [[ "$1" == --* ]]; do
+		kcov_args+=("$1")
+		shift
+	done
 	# Remaining arguments are test files
 	local test_files=("$@")
 
@@ -1626,8 +1635,8 @@ run_tests_sequential_with_coverage() {
 # Arguments:
 #   $1: Number of parallel jobs
 #   $2: Coverage directory
-#   $3-$8: kcov arguments (6 arguments: --include-path and 5 --exclude-path)
-#   ${@:9}: Test file paths
+#   $3-$N: kcov arguments (variable number: --include-path and --exclude-path args)
+#   ${@:N+1}: Test file paths
 #
 # Returns:
 #   0: Always succeeds (results in global variables PARALLEL_COV_FAILED and PARALLEL_COV_TIMED_OUT)
@@ -1636,9 +1645,12 @@ run_tests_parallel_with_coverage() {
 	local num_jobs="$1"
 	local coverage_dir="$2"
 	shift 2
-	# kcov_args are always exactly 6 arguments: --include-path and 5 --exclude-path args
-	local kcov_args=("$1" "$2" "$3" "$4" "$5" "$6")
-	shift 6
+	# Collect kcov arguments until we hit a test file (arguments that don't start with --)
+	local kcov_args=()
+	while [[ $# -gt 0 ]] && [[ "$1" == --* ]]; do
+		kcov_args+=("$1")
+		shift
+	done
 	# Remaining arguments are test files
 	local test_files=("$@")
 	local failed_tests=0

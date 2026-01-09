@@ -2212,6 +2212,7 @@ check_ipsec_phase2() {
 #   $2: Internal peer IP address (optional, used for ping checks)
 #   $3: Location name (optional, used for state file naming)
 #   $4: SA existence state (optional, 0 = no SA, 1 = SA exists, if not provided will check SA existence)
+#   $5: VPN status (optional, 0 = VPN check failed, 1 = VPN check passed, defaults to 0 for backward compatibility)
 #
 # Returns:
 #   0: Failure type detected and printed to stdout
@@ -2222,9 +2223,10 @@ check_ipsec_phase2() {
 #
 # Side effects:
 #   - Logs debug messages about failure type detection
+#   - Only logs warnings when VPN check failed (vpn_ok=0) to avoid false positives for healthy VPNs
 #
 # Examples:
-#   failure_type=$(detect_failure_type "203.0.113.1" "192.168.1.1" "NYC" "1")
+#   failure_type=$(detect_failure_type "203.0.113.1" "192.168.1.1" "NYC" "1" "0")
 #   case "$failure_type" in
 #       "tunnel_down") echo "VPN tunnel is down" ;;
 #       "routing_issue") echo "Routing issue detected" ;;
@@ -2234,11 +2236,13 @@ check_ipsec_phase2() {
 # Note:
 #   Requires check_ipsec_phase2, check_byte_counters, check_ping_connectivity, detect_sa_rekey
 #   External IP is used for SA checks, internal IP is used for ping checks
+#   When vpn_ok=1 (VPN is healthy), warnings are suppressed to avoid false positives
 detect_failure_type() {
 	local external_peer_ip="$1"
 	local internal_peer_ip="${2:-}"
 	local location_name="${3:-}"
 	local sa_exists="${4:-}"
+	local vpn_ok="${5:-0}"
 
 	# Check if ip command is available (required for Phase 2 SA detection)
 	# If ip command is unavailable, we cannot determine failure type
@@ -2380,8 +2384,13 @@ detect_failure_type() {
 				diagnostic_msg="$diagnostic_msg, $part"
 			fi
 		done
-		# location_name should always be provided in production code
-		log_message "WARNING" "${location_name:-SYSTEM}" "Failure type detection: Unable to determine specific failure type${location_name:+ for $location_name ($external_peer_ip)} - Detection method: Phase 2 SA check (SA exists), Reasons: $diagnostic_msg"
+		# Only log warning if VPN check failed (vpn_ok=0)
+		# When VPN is healthy (vpn_ok=1), returning "unknown" is expected behavior
+		# and should not generate warnings to avoid false positives
+		if [[ $vpn_ok -eq 0 ]]; then
+			# location_name should always be provided in production code
+			log_message "WARNING" "${location_name:-SYSTEM}" "Failure type detection: Unable to determine specific failure type${location_name:+ for $location_name ($external_peer_ip)} - Detection method: Phase 2 SA check (SA exists), Reasons: $diagnostic_msg"
+		fi
 	fi
 
 	# Unable to determine failure type (fallback)
@@ -2609,7 +2618,8 @@ determine_vpn_status() {
 		# Capture output and return code separately to avoid duplicate "unknown"
 		# Note: stderr is not redirected so diagnostic log messages from detect_failure_type are visible
 		# Pass SA existence state to detect_failure_type to avoid duplicate check
-		failure_type=$(detect_failure_type "$external_peer_ip" "$internal_peer_ip" "$location_name" "$sa_exists")
+		# Pass vpn_ok status so detect_failure_type can suppress warnings for healthy VPNs
+		failure_type=$(detect_failure_type "$external_peer_ip" "$internal_peer_ip" "$location_name" "$sa_exists" "$vpn_ok")
 		# If detect_failure_type failed or returned empty, use "unknown"
 		if [[ -z "$failure_type" ]]; then
 			failure_type="unknown"
