@@ -1,7 +1,7 @@
 # Code Review Lessons Learned
 
 **Date:** 2025-01-15
-**Last Updated:** 2026-01-15
+**Last Updated:** 2026-01-10
 **Context:** Comprehensive codebase review for errors, bugs, DRY violations, and bad practices
 
 **Note:** For a pragmatic assessment of this document's value and recommendations for improvement, see `CODE_REVIEW_LESSONS_LEARNED_ASSESSMENT.md`.
@@ -15,6 +15,10 @@ This document captures lessons learned from conducting systematic code reviews. 
 ---
 
 ## 1. Always Use Abstraction Layers Consistently
+
+**Impact Level:** Critical  
+**Applicability:** Universal  
+**Actionability:** High
 
 ### Problem
 During review, we found inconsistent state file path construction:
@@ -51,6 +55,10 @@ atomic_write_file "$state_file" "$value"
 - If not, add the key to the abstraction layer
 - Never construct state file paths directly
 
+### Related Patterns
+- See `CODE_PATTERNS.md` section "State Management Patterns" → "Use Abstraction Layers for State File Paths" for the consolidated pattern
+- See `lib/state.sh:get_peer_state_file_path()` for reference implementation
+
 ### Best Practices Comparison
 
 **Alignment:** ✅ **Aligns with best practices**
@@ -72,6 +80,10 @@ atomic_write_file "$state_file" "$value"
 ---
 
 ## 2. Always Use Validation Functions Instead of Inline Regex
+
+**Impact Level:** Critical  
+**Applicability:** Universal  
+**Actionability:** High
 
 ### Problem
 During review, we found duplicate IP validation logic:
@@ -111,6 +123,10 @@ fi
 - Always use validation functions instead of inline regex
 - Validation functions provide stricter checks (octet ranges) than simple regex patterns
 
+### Related Patterns
+- See `CODE_PATTERNS.md` section "Validation Patterns" → "Use Validation Functions Instead of Inline Regex" for the consolidated pattern
+- See `lib/common.sh:validate_ipv4()` and `lib/common.sh:validate_ip_address()` for reference implementations
+
 ### Best Practices Comparison
 
 **Alignment:** ✅ **Aligns with best practices**
@@ -133,6 +149,10 @@ fi
 ---
 
 ## 3. Verify Function Signatures Match Calls
+
+**Impact Level:** Critical  
+**Applicability:** Universal  
+**Actionability:** High
 
 ### Problem
 Found bug where `get_failure_type()` expects 2 arguments (`location_name`, `peer_ip`) but was called with only 1 (`peer_ip`):
@@ -214,6 +234,10 @@ grep -rn "function_name.*\"[^"]*\"[^,)]*$" lib/ scripts/ --include="*.sh"
 
 ## 4. Remove Debug Code, Don't Just Comment It
 
+**Impact Level:** High  
+**Applicability:** Universal  
+**Actionability:** High
+
 ### Problem
 Found debug logging code in production:
 - JSON-formatted debug logs writing to hardcoded paths
@@ -271,6 +295,10 @@ fi
 
 ## 5. Verify Findings Before Documenting
 
+**Impact Level:** Medium  
+**Applicability:** Universal  
+**Actionability:** Medium
+
 ### Problem
 Initially flagged "potential division by zero" in `check_ping_multiple_ips()`, but verification showed:
 - Code already handles empty input (returns early)
@@ -321,6 +349,10 @@ Initially flagged "potential division by zero" in `check_ping_multiple_ips()`, b
 ---
 
 ## 6. Check for Code Duplication Across Files
+
+**Impact Level:** High  
+**Applicability:** Universal  
+**Actionability:** Medium
 
 ### Problem
 Found `sanitize_location_name()` defined in both:
@@ -385,6 +417,10 @@ When consolidating `sanitize_location_name()`:
 
 ## 7. Test Coverage Should Match Code Paths
 
+**Impact Level:** High  
+**Applicability:** Testing-Only  
+**Actionability:** High
+
 ### Problem
 Tests for failure type detection use empty location name (`""`), but production code uses location names. This means:
 - Bug where `get_failure_type()` is called without `location_name` wasn't caught
@@ -444,6 +480,10 @@ Tests for failure type detection use empty location name (`""`), but production 
 
 ## 8. Systematic Code Review Process
 
+**Impact Level:** High  
+**Applicability:** Universal  
+**Actionability:** Medium
+
 ### What Worked Well
 1. **Systematic file-by-file review** - Ensured comprehensive coverage
 2. **Categorizing issues** - Made prioritization easier
@@ -452,7 +492,7 @@ Tests for failure type detection use empty location name (`""`), but production 
 
 ### Process to Follow
 1. **Start with main scripts** - Understand entry points
-2. **Review library modules** - Check for duplication and consistency
+2. **Review library modules** - Check for duplication and consistency (see [Lesson 6: Check for Code Duplication Across Files](#6-check-for-code-duplication-across-files) for detailed guidance)
 3. **Look for patterns** - Similar issues often appear multiple times
 4. **Verify before documenting** - Don't document assumptions
 5. **Prioritize findings** - Focus on critical bugs first
@@ -486,7 +526,14 @@ Tests for failure type detection use empty location name (`""`), but production 
 
 ## 9. Common Patterns to Watch For
 
+**Impact Level:** High  
+**Applicability:** Universal  
+**Actionability:** Medium
+
 ### Code Duplication Patterns
+**Note:** For detailed guidance on detecting and consolidating code duplication, see [Lesson 6: Check for Code Duplication Across Files](#6-check-for-code-duplication-across-files).
+
+Common duplication patterns to watch for:
 - Functions with identical names in multiple files
 - Similar logic repeated with slight variations
 - Magic numbers used in multiple places
@@ -532,6 +579,10 @@ Tests for failure type detection use empty location name (`""`), but production 
 ---
 
 ## 10. Use Character-by-Character Parsing for Complex Syntax
+
+**Impact Level:** Critical  
+**Applicability:** Universal  
+**Actionability:** High
 
 ### Problem
 Found bug in `parse_quoted_value()` function where regex-based parsing failed on edge cases:
@@ -629,6 +680,10 @@ parse_quoted_value() {
 - Test edge cases thoroughly (trailing backslashes, unclosed quotes, empty strings)
 - Document parsing rules clearly (single vs double quote behavior)
 
+### Related Patterns
+- See `CODE_PATTERNS.md` section "String Parsing and Manipulation Patterns" → "Character-by-Character Parsing for Complex Syntax" for the consolidated pattern
+- See `lib/config.sh:safe_parse_config_file()` for reference implementation
+
 ### Example: Quote Parsing Edge Cases
 
 **Edge Cases to Handle:**
@@ -670,6 +725,10 @@ parse_quoted_value() {
 ---
 
 ## 11. Always Persist Corrected Values After Validation
+
+**Impact Level:** Critical  
+**Applicability:** Universal  
+**Actionability:** High
 
 ### Problem
 Found bug in `validate_config_var()` where validation corrections were not persisted to global variables:
@@ -781,6 +840,10 @@ validate_config_var() {
 - Test that corrections are persisted to global variables
 - Use safe assignment functions (`safe_set_variable`) for consistency
 
+### Related Patterns
+- See `CODE_PATTERNS.md` section "State Management Patterns" → "Persist Corrected Values After Validation" for the consolidated pattern
+- See `lib/config.sh:validate_config_var()` for reference implementation
+
 ### Example: Validation Correction Persistence
 
 **Scenario:** Invalid optional integer value gets corrected
@@ -826,6 +889,10 @@ validate_config_var() {
 ---
 
 ## 12. Always Check File Readability Before File Operations
+
+**Impact Level:** Critical  
+**Applicability:** Domain-Specific  
+**Actionability:** High
 
 ### Problem
 Found 10 potential hang points where file operations could hang indefinitely on unreadable files (chmod 000):
@@ -1091,6 +1158,10 @@ When adding new file operations, ensure:
 
 ## 13. Always Respect Fake Mode in All Error Paths
 
+**Impact Level:** Important  
+**Applicability:** Domain-Specific  
+**Actionability:** High
+
 ### Problem
 During exit code standardization, we discovered that `lib/lockfile.sh` was using `die()` directly for permission errors, which ignored fake mode (`--fake` flag). This caused tests to fail because the script would exit with error code 4 instead of gracefully exiting with code 0 in fake mode.
 
@@ -1185,6 +1256,7 @@ fi
 ```
 
 ### Related Patterns
+- See `CODE_PATTERNS.md` section "Error Handling Patterns" → "Fake Mode Support" for the consolidated pattern
 - See `DEVELOPER.md` section "Error Handling Patterns" for more examples
 - See `lib/config.sh:handle_fatal_config_error()` for reference implementation
 - See `lib/lockfile.sh:check_directory_writable_for_lockfile()` for fatal permission error handling example
@@ -1209,6 +1281,10 @@ fi
 ---
 
 ## 14. Track Error State When Functions Log But Don't Exit
+
+**Impact Level:** Important  
+**Applicability:** Universal  
+**Actionability:** High
 
 ### Problem
 `safe_parse_config_file()` was calling `handle_config_error()` when parsing errors occurred, but wasn't tracking whether errors happened. The function would log errors but then return 0 (success), causing `load_config()` to think parsing succeeded even when it failed.
@@ -1256,6 +1332,7 @@ fi
 - In fake mode, error handlers return 1; in normal mode they exit
 
 ### Related Patterns
+- See `CODE_PATTERNS.md` section "Error Handling Patterns" → "Track Error State When Functions Log But Don't Exit" for the consolidated pattern
 - See `lib/config.sh:safe_parse_config_file()` for reference implementation
 - See `lib/logging.sh:handle_error_or_exit_fake_mode()` for return value behavior
 
@@ -1280,6 +1357,10 @@ fi
 ---
 
 ## 15. Handle Race Conditions in Process Management Operations
+
+**Impact Level:** Important  
+**Applicability:** Universal  
+**Actionability:** High
 
 ### Problem
 `stop_daemon()` in `vpn-keepalive.sh` was failing when `kill -TERM` returned an error, even if the process had already exited naturally. This caused test failures due to a race condition between checking if the process is running (`is_running()`) and actually sending the termination signal.
@@ -1329,6 +1410,7 @@ fi
 - Use `kill -0` to verify process existence without side effects
 
 ### Related Patterns
+- See `CODE_PATTERNS.md` section "Process Management Patterns" → "Handle Race Conditions in Process Management" for the consolidated pattern
 - See `vpn-keepalive.sh:stop_daemon()` for reference implementation
 - See `lib/lockfile.sh` for similar race condition handling in lockfile operations
 - See `ACCEPTABLE_RISKS.md` for documented race conditions that are acceptable
@@ -1354,6 +1436,10 @@ fi
 ---
 
 ## 16. Don't Log Success When Operations Fail
+
+**Impact Level:** Important  
+**Applicability:** Testing-Only  
+**Actionability:** High
 
 **Note:** Testing-related patterns for this lesson may be found in `TEST_PATTERNS.md`. This section preserves the historical context of the bug discovery and fix.
 
@@ -1416,6 +1502,7 @@ set_cooldown() {
 - Add tests that verify success messages only appear when operations succeed
 
 ### Related Patterns
+- See `CODE_PATTERNS.md` section "Logging Patterns" → "Don't Log Success When Operations Fail" for the consolidated pattern
 - See `lib/state.sh:set_cooldown()` for correct pattern
 - See `lib/state.sh:set_peer_state()` for comparison (returns error code, doesn't log success)
 - See `tests/test_recovery_cascading_failures.sh` for test that verifies error handling
@@ -1441,6 +1528,10 @@ set_cooldown() {
 ---
 
 ## 18. Always Validate Timestamp Arithmetic to Prevent Overflow/Underflow
+
+**Impact Level:** Important  
+**Applicability:** Domain-Specific  
+**Actionability:** High
 
 **Note:** Testing-related patterns for this lesson may be found in `TEST_PATTERNS.md`. This section preserves the historical context of the bug discovery and fix.
 
@@ -1488,6 +1579,7 @@ elapsed_time=$(($(get_unix_timestamp) - verify_start_time))
 - Handle negative results gracefully (e.g., clamp to 0)
 
 ### Related Patterns
+- See `CODE_PATTERNS.md` section "Arithmetic and Calculation Patterns" → "Validate Timestamp Arithmetic to Prevent Overflow/Underflow" for the consolidated pattern
 - See `lib/common.sh:validate_timestamp()` for timestamp validation
 - See `lib/common.sh:safe_timestamp_subtract()` for safe subtraction
 - See `lib/common.sh:safe_timestamp_add()` for safe addition
@@ -1514,6 +1606,10 @@ elapsed_time=$(($(get_unix_timestamp) - verify_start_time))
 ---
 
 ## 19. Always Validate Arithmetic Operations and Clamp Results to Expected Ranges
+
+**Impact Level:** Important  
+**Applicability:** Domain-Specific  
+**Actionability:** High
 
 **Note:** Testing-related patterns for this lesson may be found in `TEST_PATTERNS.md`. This section preserves the historical context of the bug discovery and fix.
 
@@ -1567,6 +1663,7 @@ fi
 - Use defensive programming: clamp even if calculation "should" be correct
 
 ### Related Patterns
+- See `CODE_PATTERNS.md` section "Arithmetic and Calculation Patterns" → "Validate Arithmetic Operations and Clamp Results" for the consolidated pattern
 - See `lib/resources.sh:get_cpu_usage()` for example of input validation and result clamping
 - See `lib/common.sh:safe_timestamp_*()` functions for safe arithmetic patterns
 
@@ -1591,6 +1688,10 @@ fi
 ---
 
 ## 20. Always Preserve Exit Codes in Cleanup Functions with EXIT Traps
+
+**Impact Level:** Critical  
+**Applicability:** Universal  
+**Actionability:** High
 
 ### Problem
 When using EXIT traps for cleanup, the cleanup function must preserve the exit code from the main function. If the cleanup function always exits with a fixed code (e.g., 0), the actual exit code from the main function is lost.
@@ -1700,6 +1801,11 @@ When using EXIT traps for cleanup, the cleanup function must preserve the exit c
 ### Systematic Application
 - When using EXIT traps, always capture main function's exit code
 
+### Related Patterns
+- See `CODE_PATTERNS.md` section "Process Management Patterns" → "Preserve Exit Codes in Cleanup Functions with EXIT Traps" for the consolidated pattern
+- See `lib/lockfile.sh:acquire_lockfile_flock()` for complete example
+- See `lib/lockfile.sh:acquire_lockfile_fallback()` for fallback pattern
+
 ### Best Practices Comparison
 
 **Alignment:** ✅ **Aligns with best practices**
@@ -1721,6 +1827,10 @@ When using EXIT traps for cleanup, the cleanup function must preserve the exit c
 ---
 
 ## 21. Trap Cleanup Functions Must Handle Unset Variables with `set -u`
+
+**Impact Level:** Critical  
+**Applicability:** Universal  
+**Actionability:** High
 
 ### Problem
 When using EXIT traps with cleanup functions that access local variables, the cleanup function may execute after the function containing those variables has returned. With `set -u` (treat unset variables as errors), this causes "unbound variable" errors.
@@ -1873,6 +1983,10 @@ acquire_lockfile_flock() {
 ---
 
 ## 22. Always Extract External IP from LOCATIONS Using Helper Function
+
+**Impact Level:** Critical  
+**Applicability:** Domain-Specific  
+**Actionability:** High
 
 ### Problem
 During code review, found bug in `full_restart()` where external IP was incorrectly extracted from `LOCATIONS` array:
@@ -2038,6 +2152,10 @@ fi
 
 ## 24. Distinguish Between Script Execution Success and Recovery Success
 
+**Impact Level:** Critical  
+**Applicability:** Domain-Specific  
+**Actionability:** High
+
 ### Problem
 When recovery actions are attempted but fail, the script was returning failure (exit code 1), causing the script to appear as if it failed to execute properly. However, the script successfully completed its monitoring task - it detected the failure, attempted recovery, and logged the results. Recovery failures are operational issues, not script execution failures.
 
@@ -2095,6 +2213,10 @@ fi
 ---
 
 ## 25. Always Re-Check Critical State Instead of Relying on Cached Values
+
+**Impact Level:** Critical  
+**Applicability:** Domain-Specific  
+**Actionability:** High
 
 ### Problem
 Network partition check was relying on cached partition state (`get_network_partition_state()`) before re-checking. This caused issues:
@@ -2166,6 +2288,10 @@ fi
 ---
 
 ## 26. Handle Hash Collisions in Anonymization Functions
+
+**Impact Level:** Critical  
+**Applicability:** Domain-Specific  
+**Actionability:** High
 
 ### Problem
 The `anonymize_location()` function in `scripts/anonymize-logs.sh` used hash-based mapping to anonymize location names:
@@ -2286,6 +2412,10 @@ anonymize_location() {
 ---
 
 ## 27. Parse All Selectors When Interacting with Kernel Interfaces
+
+**Impact Level:** Important  
+**Applicability:** Domain-Specific  
+**Actionability:** High
 
 ### Problem
 During xfrm recovery implementation, we discovered that SA deletion was failing with "RTNETLINK answers: No such process" (exit code 2) even though the SAs existed. Root cause analysis revealed that SAs with `mark` attributes require the mark to be included as a selector in deletion commands. The code was only parsing and using `src`, `dst`, `proto`, and `spi` selectors, missing the `mark` selector.
@@ -2455,6 +2585,10 @@ fi
 
 ## 28. Avoid Over-Engineering Edge Case Protections
 
+**Impact Level:** Important  
+**Applicability:** Universal  
+**Actionability:** Medium
+
 ### Problem
 Added a safeguard to prevent policy deletion when `peer_ip` matched `LOCAL_UDM_IP`, based on theoretical concern about misconfiguration.
 
@@ -2538,6 +2672,10 @@ fi
 ---
 
 ## 29. Log Messages Must Accurately Reflect the Operation Performed
+
+**Impact Level:** Important  
+**Applicability:** Universal  
+**Actionability:** High
 
 ### Problem
 Log messages used terminology that didn't match the actual operation. Specifically, "Surgical cleanup completed" was logged even when using `ipsec reload` fallback, which affects all tunnels (not surgical/per-connection).
@@ -2663,7 +2801,7 @@ These lessons should be applied systematically in future development and code re
 14. **Track error state when functions log but don't exit** - Return error codes even when logging errors
 15. **Handle race conditions in process management operations** - Check process state after operations
 16. **Don't log success when operations fail** - Only log success when operation actually succeeds
-17. **Always validate timestamp arithmetic** - Use safe timestamp functions to prevent overflow/underflow
+18. **Always validate timestamp arithmetic to prevent overflow/underflow** - Use safe timestamp functions for all timestamp calculations
 19. **Always validate arithmetic operations and clamp results** - Validate inputs and clamp results to expected ranges
 20. **Always preserve exit codes in cleanup functions** - Capture and preserve main function's exit code in EXIT trap handlers
 21. **Trap cleanup functions must handle unset variables with `set -u`** - Use default value expansion in cleanup functions

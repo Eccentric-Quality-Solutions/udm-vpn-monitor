@@ -48,9 +48,9 @@ The migration script automatically converts your old configuration to the new fo
    ```
 
 3. **Choose location name generation method**:
-   - **Default**: Automatically generates `LOCATION_1`, `LOCATION_2`, etc.
-   - **Interactive**: Prompts you to enter a name for each location
-   - **CSV**: Reads location names from a CSV file
+   - **Default (Interactive)**: Prompts you to enter a name for each location (e.g., NYC, DC, SF)
+   - **Automatic**: Use `--auto` flag to generate generic names: `LOCATION_1`, `LOCATION_2`, etc.
+   - **CSV**: Use `--csv` flag to read location names from a CSV file
 
 4. **Review the generated configuration**:
    ```bash
@@ -102,19 +102,21 @@ If you prefer to migrate manually:
 
 ## Migration Script Options
 
-The migration script supports several options:
+The migration script (version 1.1.0+) supports several options:
+
+**Note**: As of version 1.1.0, the default behavior changed from automatic generation to interactive mode. This is a breaking change from earlier versions. Use the `--auto` flag if you need the old automatic behavior.
 
 ### Default Mode (Interactive - Prompts for Location Names)
 ```bash
 /data/vpn-monitor/scripts/migrate-config-to-locations.sh
 ```
-**Default behavior**: Prompts you to enter a name for each location (e.g., NYC, DC, SF). This allows you to use meaningful location names by default.
+**Default behavior** (v1.1.0+): Prompts you to enter a name for each location (e.g., NYC, DC, SF). This allows you to use meaningful location names by default. If you press Enter without entering a name, it will use a numeric default (1, 2, etc.).
 
 ### Automatic Mode (Generic Location Names)
 ```bash
 /data/vpn-monitor/scripts/migrate-config-to-locations.sh --auto
 ```
-Generates location names automatically: `LOCATION_1`, `LOCATION_2`, etc. Use this flag for non-interactive migrations or when you don't need custom names.
+Generates location names automatically: `LOCATION_1`, `LOCATION_2`, etc. Use this flag for non-interactive migrations, automated scripts, or when you don't need custom names. This restores the pre-v1.1.0 default behavior.
 
 ### Interactive Mode (Explicit)
 ```bash
@@ -132,7 +134,7 @@ Reads location names from a CSV file. CSV format (index,name):
 3,CHICAGO
 ```
 
-**Note**: The CSV file only provides location names. External and internal IPs are read from the existing `EXTERNAL_PEER_IPS` and `INTERNAL_PEER_IPS` variables in your config file. The index in the CSV corresponds to the position of the external IP in `EXTERNAL_PEER_IPS` (1 = first IP, 2 = second IP, etc.).
+**Note**: The CSV file only provides location names. External and internal IPs are read from the existing `EXTERNAL_PEER_IPS` and `INTERNAL_PEER_IPS` variables in your config file. The index in the CSV corresponds to the position of the external IP in `EXTERNAL_PEER_IPS` (1 = first IP, 2 = second IP, etc.). If an index is missing from the CSV, the script will use the index number as the location name.
 
 ## Location Name Rules
 
@@ -171,10 +173,22 @@ After migration, state files will use location-based naming:
 **Old Format**:
 - `state/failure_counter_203_0_113_1`
 - `state/last_bytes_203_0_113_1`
+- `state/spi_203_0_113_1`
+- `state/failure_type_203_0_113_1`
+- `state/idle_detected_203_0_113_1`
+- `state/last_status_log_203_0_113_1`
+- `state/recovery_method_203_0_113_1`
 
 **New Format**:
 - `state/failure_counter_NYC_203_0_113_1`
 - `state/last_bytes_NYC_203_0_113_1`
+- `state/spi_NYC_203_0_113_1`
+- `state/failure_type_NYC_203_0_113_1`
+- `state/idle_detected_NYC_203_0_113_1`
+- `state/last_status_log_NYC_203_0_113_1`
+- `state/recovery_method_NYC_203_0_113_1`
+
+**Note**: The location name (e.g., `NYC`) is inserted between the state file type and the sanitized IP address. This allows multiple locations with the same external IP to be tracked independently (though this is uncommon).
 
 **Important**: Old state files are **not automatically migrated**. The system will create new state files for the new configuration format. Old state files can be safely removed after verifying the new configuration works correctly.
 

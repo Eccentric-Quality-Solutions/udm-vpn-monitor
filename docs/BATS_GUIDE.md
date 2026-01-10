@@ -1702,17 +1702,17 @@ RUN_SLOW_TESTS=1 ./tests/run_tests.sh
 
 Slow tests include:
 - `test_integration.sh` - Integration tests for full monitoring flow (18 tests)
-- `test_config.sh` - Main configuration tests (53 tests)
-- `test_detection.sh` - Main detection tests (47 tests)
-- `test_recovery.sh` - Recovery strategy selection, XFRM recovery, and fallback logic tests (17 tests)
+- `test_config.sh` - Main configuration tests (55 tests)
+- `test_detection.sh` - Main detection tests (51 tests)
+- `test_recovery.sh` - Recovery strategy selection, XFRM recovery, and fallback logic tests (39 tests)
 - `test_lockfile.sh` - Lockfile management tests (18 tests)
-- `test_state.sh` - State file management tests (25 tests)
+- `test_state.sh` - State file management tests (27 tests)
 - `test_logging.sh` - Logging failure scenario tests (8 tests)
 - `test_connection.sh` - Connection name discovery and caching tests (8 tests)
 - `test_errors.sh` - Error handling during critical operations tests (3 tests)
-- `test_main.sh` - Main execution edge cases tests (25 tests)
+- `test_main.sh` - Main execution edge cases tests (28 tests)
 
-**Total**: ~222 slow tests
+**Total**: ~235 slow tests
 
 ### Run with Coverage
 
@@ -2011,17 +2011,17 @@ Fast tests include all test files except the slow test files listed below. This 
 
 Slow tests are high-risk tests and integration tests that take longer to run:
 - `test_integration.sh` - Integration tests for full monitoring flow (18 tests)
-- `test_config.sh` - Main configuration tests (53 tests)
-- `test_detection.sh` - Main detection tests (47 tests)
-- `test_recovery.sh` - Recovery strategy selection, XFRM recovery, and fallback logic tests (17 tests)
+- `test_config.sh` - Main configuration tests (55 tests)
+- `test_detection.sh` - Main detection tests (51 tests)
+- `test_recovery.sh` - Recovery strategy selection, XFRM recovery, and fallback logic tests (39 tests)
 - `test_lockfile.sh` - Lockfile management tests (18 tests)
-- `test_state.sh` - State file management tests (25 tests)
+- `test_state.sh` - State file management tests (27 tests)
 - `test_logging.sh` - Logging failure scenario tests (8 tests)
 - `test_connection.sh` - Connection name discovery and caching tests (8 tests)
 - `test_errors.sh` - Error handling during critical operations tests (3 tests)
-- `test_main.sh` - Main execution edge cases tests (25 tests)
+- `test_main.sh` - Main execution edge cases tests (28 tests)
 
-**Total Test Count**: 827 tests across all test files (~605 fast, ~222 slow)
+**Total Test Count**: ~1058 tests across 65 test files (~605 fast, ~235 slow)
 
 **Note**: Slow tests are automatically included in CI/CD via the `RUN_SLOW_TESTS=1` environment variable (see `.github/workflows/tests.yml`).
 

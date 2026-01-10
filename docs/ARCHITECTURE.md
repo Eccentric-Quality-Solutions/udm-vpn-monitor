@@ -264,8 +264,9 @@ sequenceDiagram
     participant Ping as ping
     participant State as State Files
 
-    Script->>Xfrm: Check SA for location external IP
+    Script->>Xfrm: Check SA for location external IP (ONCE)
     Xfrm-->>Script: SA exists + byte counters
+    Note over Script: State Passing: SA existence<br/>captured and passed to<br/>downstream functions
 
     alt SA Found with Byte Counters
         Script->>State: Read last_bytes_<location>_<peer_ip>
@@ -274,7 +275,7 @@ sequenceDiagram
 
         alt Bytes Increasing
             Script->>State: Update last_bytes_<location>_<peer_ip>
-            Script->>Ping: Check connectivity (if enabled)
+            Script->>Ping: Check connectivity (if enabled)<br/>Uses passed SA state (no duplicate check)
             Ping-->>Script: Success/Failure
             alt Ping Success
                 Script->>Script: VPN OK
@@ -282,7 +283,7 @@ sequenceDiagram
                 Script->>Script: VPN Suspect (log warning)
             end
         else Bytes Not Increasing
-            Script->>Script: VPN Failed
+            Script->>Script: VPN Failed<br/>Uses passed SA state for failure type
         end
     else SA Found but No Byte Counters
         Script->>Script: VPN OK (assume working)
@@ -296,6 +297,8 @@ sequenceDiagram
         end
     end
 ```
+
+**Note**: The detection flow uses a state passing pattern (see Design Decision #12) where SA existence is checked once via `ip xfrm state` and the result is passed to downstream functions (`check_ping_optional()`, `detect_failure_type()`). This optimization reduces system calls by 66-75% and ensures consistent state across all detection functions.
 
 ### Ping Check Behavior
 
@@ -805,6 +808,8 @@ The system uses a modular library architecture where functionality is organized 
 - `check_ipsec_status()` - Fallback detection via `ipsec status`
 - `check_ping_connectivity()` - Optional ping-based connectivity verification
 
+**State Passing Pattern**: The detection system uses a state passing pattern to optimize performance and ensure consistency. Expensive system state checks (like SA existence) are performed once at the source (`check_xfrm_status()`) and passed explicitly to downstream functions (`check_ping_optional()`, `detect_failure_type()`) via function parameters. This eliminates duplicate system calls, reducing `ip xfrm state` calls by 66-75% (from 3 calls to 1 per VPN check cycle) and ensures all functions use the same state snapshot, eliminating temporal inconsistencies. See Design Decision #12 and ADR-0028 for details.
+
 **Dependencies**: `lib/logging.sh`, `lib/common.sh`, `lib/state.sh`
 
 **Dependency Handling**: `detection.sh` sources `logging.sh` conditionally with fallback functions (`log_message`, `handle_error`) to ensure it works when sourced independently (e.g., during installation by `install.sh`). The fallback functions output to stderr only and provide basic error handling.
@@ -1057,6 +1062,21 @@ graph TB
   - Three-tier fallback ensures maximum compatibility
 - **Related**: See ADR-0027 for detailed design rationale and implementation details. Used by Detection Reliability Safeguard (Design Decision #3) to check command availability.
 
+### 12. State Passing Pattern for Detection Functions
+- **Why**: Multiple detection functions were independently checking SA existence, leading to duplicate system calls (3 `ip xfrm state` calls per VPN check cycle), performance overhead, temporal inconsistencies, and contradictory log messages
+- **Implementation**: State passing pattern where expensive system state checks (like SA existence) are performed once at the source (`check_xfrm_status()`) and passed explicitly to downstream functions via optional function parameters:
+  - Source function (`check_xfrm_status()`) performs the system check and exposes state via optional output variable parameter
+  - Downstream functions (`check_ping_optional()`, `detect_failure_type()`) receive state as explicit optional parameters
+  - Functions maintain backward compatibility by accepting optional parameters with fallback to checking if not provided
+- **Performance Impact**: Reduces system calls by 66-75% (from 3 SA checks to 1 per VPN check cycle)
+- **Benefits**:
+  - Consistent state across all functions (same state snapshot)
+  - Explicit data flow makes dependencies clear and traceable
+  - Accurate logging using actual SA state rather than inferring from return codes
+  - Better separation of concerns (functions focus on primary responsibility)
+  - Scalable performance improvement (impact increases with number of VPNs monitored)
+- **Related**: See ADR-0028 for detailed design rationale, implementation details, and performance analysis.
+
 ## Error Handling Strategy
 
 1. **Fail-Safe Defaults**: Script exits gracefully on errors
@@ -1069,7 +1089,7 @@ graph TB
 5. **State Recovery**: Stale lockfiles automatically cleaned up (see Design Decision #2)
 6. **Graceful Degradation**: If preferred tool unavailable, falls back to alternative without failing
 7. **Detection Reliability Safeguard**: When detection tools are unavailable, recovery escalation is blocked to prevent false recovery actions (see Design Decision #3). Failures are still logged for monitoring, but Tier 2/3 recovery actions are skipped when detection is unreliable.
-7. **Network Command Timeout Handling**: Network commands that may hang are wrapped with `timeout` command to prevent indefinite blocking:
+8. **Network Command Timeout Handling**: Network commands that may hang are wrapped with `timeout` command to prevent indefinite blocking:
    - **Pattern**: Wrap potentially hanging network commands with `timeout` wrapper
    - **Implementation**: Check for `timeout` command availability, wrap command with calculated timeout value
    - **Timeout Calculation**: Use reasonable timeout based on expected command duration (e.g., `ping_count * ping_timeout + 1` seconds, capped at reasonable maximum)
@@ -1089,6 +1109,7 @@ graph TB
 - **Log Rotation**: Automatic via logrotate configuration (installed during setup)
 - **Modular Architecture**: Reduced main script complexity improves performance and maintainability (see Design Decision #6)
 - **Library Loading**: Library modules are sourced once at startup, minimal overhead
+- **State Passing Optimization**: Detection system uses state passing pattern to reduce system calls by 66-75% (from 3 `ip xfrm state` calls to 1 per VPN check cycle). This optimization scales with the number of VPNs monitored, providing significant performance improvements in multi-VPN deployments (see Design Decision #12)
 
 ## Security Considerations
 
