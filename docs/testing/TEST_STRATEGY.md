@@ -264,9 +264,10 @@ Each test case should include:
 
 For detailed test patterns and standards, see:
 
-- **[Test Patterns](../tests/TEST_PATTERNS.md)**: Standardized test patterns and best practices
-- **[BATS Guide](../docs/BATS_GUIDE.md)**: BATS framework usage and patterns
 - **[tests/README.md](../tests/README.md)**: Test suite overview and usage
+- **[tests/fixtures/README.md](../tests/fixtures/README.md)**: Reusable test fixtures for common VPN monitoring scenarios
+- **[Test Patterns](TEST_PATTERNS.md)**: Standardized test patterns and best practices
+- **[BATS Guide](BATS_GUIDE.md)**: BATS framework usage and patterns
 
 ## Test Quality Metrics
 

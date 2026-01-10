@@ -79,7 +79,7 @@ For comprehensive architecture information including:
 - Code flow diagrams
 - Library module documentation
 
-See [ARCHITECTURE.md](ARCHITECTURE.md).
+See [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 For design decisions and rationale behind architectural choices, see [Architecture Decision Records](docs/adr/README.md).
 

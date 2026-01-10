@@ -123,7 +123,7 @@ When reviewing code changes, ensure:
     # ... test code
 }
 
-# After: Use fixture
+# After: Use fixture (see [tests/fixtures/README.md](../tests/fixtures/README.md) for available fixtures)
 load fixtures/vpn_active
 
 @test "test 1" {
@@ -205,9 +205,9 @@ EOF
 8. Update test documentation if needed
 
 **Checklist**:
-- [ ] Test follows patterns from `tests/TEST_PATTERNS.md`
+- [ ] Test follows patterns from [Test Patterns](TEST_PATTERNS.md)
 - [ ] Test is properly isolated
-- [ ] Test uses appropriate mocks/fixtures
+- [ ] Test uses appropriate mocks/fixtures (see [tests/fixtures/README.md](../tests/fixtures/README.md) for available fixtures)
 - [ ] Test has clear name and comments
 - [ ] Test is properly tagged
 - [ ] Test cleans up after itself
@@ -313,10 +313,11 @@ bats --timing tests/
 
 **Documents to Update**:
 - **[tests/README.md](../tests/README.md)**: Test suite overview and usage
-- **[tests/TEST_PATTERNS.md](../tests/TEST_PATTERNS.md)**: Test patterns and standards
-- **[docs/BATS_GUIDE.md](BATS_GUIDE.md)**: BATS framework usage
-- **[docs/TEST_STRATEGY.md](TEST_STRATEGY.md)**: Test strategy and approach
-- **[docs/TEST_MAINTENANCE.md](TEST_MAINTENANCE.md)**: This document
+- **[tests/fixtures/README.md](../tests/fixtures/README.md)**: Test fixtures reference and usage guide
+- **[Test Patterns](TEST_PATTERNS.md)**: Test patterns and standards
+- **[BATS Guide](BATS_GUIDE.md)**: BATS framework usage
+- **[Test Strategy](TEST_STRATEGY.md)**: Test strategy and approach
+- **[Test Maintenance](TEST_MAINTENANCE.md)**: This document
 
 ### Documentation Review Process
 

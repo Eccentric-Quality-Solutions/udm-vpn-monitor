@@ -122,6 +122,11 @@ The install package (recommended) includes all required files with proper direct
      ./install.sh --dev
      ```
    
+   - **Keepalive-only mode** (only install and enable keepalive daemon, requires existing installation):
+     ```bash
+     ./install.sh --keepalive-only
+     ```
+   
    - **Combine options**:
      ```bash
      ./install.sh --silent --no-cron --overwrite-conf
@@ -134,6 +139,7 @@ The install package (recommended) includes all required files with proper direct
    - `--silent`: Perform installation silently without prompts (by default preserves existing config)
    - `--overwrite-conf`: Overwrite existing config file (only effective with `--silent`)
    - `--dev`: Install to current working directory instead of `/data/vpn-monitor` (useful for development/testing)
+   - `--keepalive-only`: Only install and enable keepalive daemon (requires existing installation, ignores other flags)
    
    **Note:** `--interactive` and `--silent` flags cannot be used together.
 
@@ -680,9 +686,7 @@ For development setup, including installation of development tools (ShellCheck, 
 
 This project uses GitHub Actions for continuous integration. The CI pipeline automatically runs on every push and pull request.
 
-Check the [Actions](https://github.com/YOUR_USERNAME/udm-vpn-monitor/actions) tab to view the status of CI runs.
-
-**Note:** Update the badge URL in the README header with your actual GitHub username/repository name to display the CI status badge correctly.
+Check the [Actions](https://github.com/eccentric-quality-solutions/udm-vpn-monitor/actions) tab to view the status of CI runs.
 
 For detailed CI/CD pipeline information, local development checks, and workflow instructions, see [DEVELOPER.md](DEVELOPER.md).
 

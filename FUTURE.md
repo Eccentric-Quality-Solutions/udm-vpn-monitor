@@ -25,7 +25,8 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Test that sentinel value `__UNSET__` is handled correctly
     - Test that multiple tests in sequence don't interfere with each other
     - This would provide additional verification beyond the `verify_test_isolation.sh` script
-    - Note: Current verification script provides good coverage, but unit tests would be more comprehensive
+    - Note: Basic test isolation tests added in `tests/test_test_isolation.sh` (covers environment variables, TEST_DIR isolation, PATH cleanup, mock commands, state/log isolation, and multiple test independence)
+    - Still needed: Edge case tests for empty strings, unset variables, and sentinel value `__UNSET__` handling
 
 - Automate mock cleanup verification in CI/CD
     - Run `scripts/audit_mock_cleanup.sh` as part of CI/CD pipeline to catch missing cleanup calls early

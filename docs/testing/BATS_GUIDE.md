@@ -2212,14 +2212,16 @@ To maintain test isolation:
 
 This document covers BATS framework usage and patterns for our test suite. For related documentation, see:
 
-- **[Test Patterns](../tests/TEST_PATTERNS.md)** - Standardized test patterns, best practices, test coverage, and high-risk tests
-- **[tests/README.md](../tests/README.md)** - Quick start guide for running tests
+- **[tests/README.md](../tests/README.md)** - Quick start guide for running tests and test suite overview
+- **[tests/fixtures/README.md](../tests/fixtures/README.md)** - Reusable test fixtures for common VPN monitoring scenarios
+- **[Test Patterns](TEST_PATTERNS.md)** - Standardized test patterns, best practices, test coverage, and high-risk tests
 - **[Test Strategy](TEST_STRATEGY.md)** - Test strategy and approach
 - **[Test Maintenance](TEST_MAINTENANCE.md)** - Test maintenance procedures
 
 **Document Organization:**
-- **tests/README.md** - Minimal quick-start guide with basic commands and test structure overview
-- **docs/BATS_GUIDE.md** (this document) - Complete BATS framework guide, test environment setup, running tests, and advanced features
-- **docs/TEST_PATTERNS.md** - Standardized patterns for writing tests, test coverage goals, and high-risk test details
+- **tests/README.md** - Quick-start guide with basic commands, test structure overview, and fixture introduction
+- **tests/fixtures/README.md** - Complete fixture reference and usage guide
+- **docs/testing/BATS_GUIDE.md** (this document) - Complete BATS framework guide, test environment setup, running tests, and advanced features
+- **docs/testing/TEST_PATTERNS.md** - Standardized patterns for writing tests, test coverage goals, and high-risk test details
 
 The Quick Reference section below provides quick access to common patterns. For comprehensive documentation, see the cross-referenced documents above.

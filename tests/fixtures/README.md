@@ -65,13 +65,33 @@ load fixtures/vpn_failing
 - If you add additional mocks after a fixture, you may need to call `add_mock_to_path()` again (though it's idempotent)
 - Always call `remove_mock_from_path()` for cleanup, even when using fixtures
 
+## Fixture Details
+
+Each fixture provides a setup function that:
+- Configures the test environment (config files, state files, mocks)
+- Sets up VPN monitoring state appropriate for the scenario
+- Creates mock commands for system interactions
+- Automatically adds mocks to PATH (no need to call `add_mock_to_path()`)
+
+### Common Arguments
+
+Most fixtures accept:
+- **Peer IP address** (first argument, often defaults to `${TEST_PEER_IP}`)
+- **Additional config variables** (as `KEY="VALUE"` pairs)
+
+Some fixtures have additional arguments specific to their scenario (e.g., tier number, partition type, byte counters).
+
+### Cleanup
+
+Always call `remove_mock_from_path()` in your test teardown or at the end of each test to clean up mocks added by fixtures.
+
 ## Related Documentation
 
 For comprehensive fixture documentation, see:
 
-- **[Test Patterns - Test Fixtures](../docs/TEST_PATTERNS.md#4-test-fixtures)** - Complete fixture reference with all arguments, examples, and usage patterns
-- **[BATS Guide - Test Fixtures](../docs/BATS_GUIDE.md#7-test-fixtures---reusable-test-scenarios)** - BATS framework usage with fixtures and advanced patterns
-- **[tests/README.md](../README.md)** - Quick start guide for running tests
+- **[Test Patterns - Test Fixtures](../../docs/testing/TEST_PATTERNS.md#4-test-fixtures)** - Complete fixture reference with all arguments, examples, and usage patterns
+- **[BATS Guide - Test Fixtures](../../docs/testing/BATS_GUIDE.md#7-test-fixtures---reusable-test-scenarios)** - BATS framework usage with fixtures and advanced patterns
+- **[tests/README.md](../README.md)** - Quick start guide for running tests and test suite overview
 
 ## Benefits
 

@@ -6,10 +6,11 @@ This document describes standardized patterns for writing tests in the UDM VPN M
 
 For additional test documentation, see:
 
-- **[tests/README.md](README.md)** - Quick start guide for running tests
-- **[BATS Guide](../docs/BATS_GUIDE.md)** - BATS framework usage, patterns, and advanced features
-- **[Test Strategy](../docs/TEST_STRATEGY.md)** - Test strategy, philosophy, and approach
-- **[Test Maintenance](../docs/TEST_MAINTENANCE.md)** - Test maintenance procedures and guidelines
+- **[tests/README.md](../tests/README.md)** - Quick start guide for running tests and test suite overview
+- **[tests/fixtures/README.md](../tests/fixtures/README.md)** - Reusable test fixtures for common VPN monitoring scenarios
+- **[BATS Guide](BATS_GUIDE.md)** - BATS framework usage, patterns, and advanced features
+- **[Test Strategy](TEST_STRATEGY.md)** - Test strategy, philosophy, and approach
+- **[Test Maintenance](TEST_MAINTENANCE.md)** - Test maintenance procedures and guidelines
 
 ## Standardized Patterns
 

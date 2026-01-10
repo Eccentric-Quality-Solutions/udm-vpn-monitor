@@ -113,18 +113,60 @@ See [BATS Guide - Troubleshooting](../docs/BATS_GUIDE.md#troubleshooting) for de
 
 ## Related Documentation
 
-- **[Test Patterns](TEST_PATTERNS.md)** - Standardized test patterns and best practices for writing tests
-- **[BATS Guide](../docs/BATS_GUIDE.md)** - Complete BATS framework guide, test environment setup, running tests, and advanced features
-- **[Test Strategy](../docs/TEST_STRATEGY.md)** - Test strategy, philosophy, and approach
-- **[Test Maintenance](../docs/TEST_MAINTENANCE.md)** - Test maintenance procedures and guidelines
+- **[fixtures/README.md](fixtures/README.md)** - Reusable test fixtures for common VPN monitoring scenarios
+- **[Test Patterns](../docs/testing/TEST_PATTERNS.md)** - Standardized test patterns and best practices for writing tests
+- **[BATS Guide](../docs/testing/BATS_GUIDE.md)** - Complete BATS framework guide, test environment setup, running tests, and advanced features
+- **[Test Strategy](../docs/testing/TEST_STRATEGY.md)** - Test strategy, philosophy, and approach
+- **[Test Maintenance](../docs/testing/TEST_MAINTENANCE.md)** - Test maintenance procedures and guidelines
+
+## Test Fixtures
+
+The `fixtures/` directory contains reusable test fixtures for common VPN monitoring scenarios. These fixtures combine multiple setup steps into single function calls, reducing duplication and ensuring consistent test environments.
+
+**Quick Example:**
+```bash
+load test_helper
+load fixtures/vpn_active
+
+@test "VPN active test" {
+    setup_vpn_active_fixture "192.168.1.1"
+    run bash "$TEST_SCRIPT" --fake
+    assert_success
+    remove_mock_from_path
+}
+```
+
+**Available Fixtures:**
+- `vpn_active.bash` - VPN is active and healthy
+- `vpn_down.bash` - VPN is down, no SA found
+- `vpn_failing.bash` - VPN has recorded failures
+- `vpn_cooldown.bash` - VPN is in cooldown period
+- `vpn_rekey.bash` - VPN has undergone a rekey
+- `vpn_flapping.bash` - VPN can transition between up/down states
+- `vpn_multiple_peers.bash` - Multiple VPN peers scenario
+- `vpn_mixed_peers.bash` - Multiple peers with mixed states
+- `vpn_recovery_disabled.bash` - Recovery actions disabled
+- `vpn_at_tier.bash` - VPN at specific tier threshold
+- `vpn_idle.bash` - VPN idle tunnel scenario
+- `vpn_network_partition.bash` - Network partition scenario
+- `vpn_rate_limited.bash` - Rate limiting scenario
+- `vpn_xfrm_recovery.bash` - XFRM recovery scenario
+- `vpn_bytes_zero.bash` - VPN SA exists but bytes=0 (suspect condition)
+- `vpn_recovery_test.bash` - Recovery test setup with pass-through mocks
+
+For complete fixture documentation, see:
+- **[fixtures/README.md](fixtures/README.md)** - Complete fixture reference and usage guide
+- **[Test Patterns - Test Fixtures](../docs/testing/TEST_PATTERNS.md#4-test-fixtures)** - Detailed fixture documentation with all arguments and examples
+- **[BATS Guide - Test Fixtures](../docs/testing/BATS_GUIDE.md#7-test-fixtures---reusable-test-scenarios)** - BATS framework usage with fixtures
 
 ## Writing New Tests
 
 For comprehensive guidance on writing new tests, see:
 
-- **[Test Patterns](TEST_PATTERNS.md)** - Standardized patterns, best practices, and examples
-- **[BATS Guide - Writing Tests](../docs/BATS_GUIDE.md#writing-new-tests)** - BATS framework usage and patterns
-- **[BATS Guide - Test Helper Infrastructure](../docs/BATS_GUIDE.md#test-helper-infrastructure)** - Available helper functions
+- **[Test Patterns](../docs/testing/TEST_PATTERNS.md)** - Standardized patterns, best practices, and examples
+- **[BATS Guide - Writing Tests](../docs/testing/BATS_GUIDE.md#writing-new-tests)** - BATS framework usage and patterns
+- **[BATS Guide - Test Helper Infrastructure](../docs/testing/BATS_GUIDE.md#test-helper-infrastructure)** - Available helper functions
+- **[fixtures/README.md](fixtures/README.md)** - Reusable test fixtures for common scenarios
 
 ## Test Coverage
 
