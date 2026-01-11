@@ -75,17 +75,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	mock_ip_xfrm_state "${TEST_PEER_IP}" 1000 >/dev/null
 
 	# Mock ipsec to fail (prevent fallback from succeeding and masking failure)
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "--help" ]] || [[ "$1" == "--version" ]]; then
-    # Handle command availability checks (used by check_command_available)
-    exit 0
-fi
-# Return failure to ensure xfrm failure is not masked by ipsec fallback
-exit 1
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 1 >/dev/null
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -128,17 +118,7 @@ EOF
 	add_mock_to_path
 
 	# Mock ipsec to fail (prevent fallback from succeeding and masking failure)
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "--help" ]] || [[ "$1" == "--version" ]]; then
-    # Handle command availability checks (used by check_command_available)
-    exit 0
-fi
-# Return failure to ensure xfrm failure is not masked by ipsec fallback
-exit 1
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 1 >/dev/null
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
@@ -178,15 +158,7 @@ EOF
 	add_mock_to_path
 
 	# Mock ipsec to fail (prevent fallback from succeeding and masking failure)
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "--help" ]] || [[ "$1" == "--version" ]]; then
-    exit 0
-fi
-exit 1
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 1 >/dev/null
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -323,22 +295,23 @@ EOF
 	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
 	echo "tunnel_down" >"$failure_type_file"
 
-	# Note: Recovery message is logged when failure_count > 0 OR had_failure_type == 1
-	# (see lib/recovery.sh:1630). The failure_type file alone is sufficient to trigger
-	# the recovery message logging. The code correctly handles the case where only
-	# had_failure_type == 1 (without failure_count > 0) by logging in the else branch
-	# at line 1651. Using get_peer_state_file_path ensures the correct path format.
+	# Note: With the false positive fix, recovery messages are only logged when
+	# failure_count > 0 (actual failures occurred). If only failure_type file exists
+	# without failure_count, the file is cleared silently to prevent false positive
+	# recovery messages. Using get_peer_state_file_path ensures the correct path format.
 
 	run bash "$TEST_SCRIPT" --fake
 
-	# VPN should recover
+	# VPN should be healthy
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "recovered" || assert_file_contains "$LOG_FILE" "restored"
+	# No recovery message should be logged when only failure_type exists (no actual failures)
+	# This prevents false positive recovery messages when VPN was already healthy
+	assert_log_not_contains "$LOG_FILE" "recovered"
+	assert_log_not_contains "$LOG_FILE" "restored"
 
-	# Failure type file should be cleared or removed
-	# Note: The actual behavior depends on implementation - may be removed or cleared
-	# This test verifies that recovery happens and failure type is handled
+	# Failure type file should be cleared silently (no recovery message logged)
+	# This verifies that stale failure_type files are cleaned up without false positives
 
 	remove_mock_from_path
 }

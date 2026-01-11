@@ -95,7 +95,7 @@ Phase 1 detection **could be implemented in the future** if:
 4. Fallback recovery: Fixes Phase 1 failures and re-establishes both phases
 
 **Code References**:
-- `lib/detection.sh`: `detect_failure_type()` - detects "tunnel_down" but cannot distinguish Phase 1 vs Phase 2
+- `lib/detection/failure_analysis.sh`: `detect_failure_type()` - detects "tunnel_down" but cannot distinguish Phase 1 vs Phase 2
 - `lib/recovery.sh`: `attempt_xfrm_recovery()` - attempts Phase 2 SA deletion, times out after 30 seconds
 - `lib/recovery.sh`: `surgical_cleanup()` / `full_restart()` - fallback to `ipsec reload`/`ipsec restart` when xfrm fails
 
@@ -108,6 +108,6 @@ Phase 1 detection **could be implemented in the future** if:
 - ARCHITECTURAL_REVIEW.md: "Phase 1 vs Phase 2 Failure Distinction" (section 6.2)
 - ARCHITECTURE.md: Detection Method Flow
 - UDM-Linux-Tools.md: Available tools on UDM OS
-- lib/detection.sh: `detect_failure_type()` implementation
+- lib/detection/failure_analysis.sh: `detect_failure_type()` implementation
 - lib/recovery.sh: Recovery strategy selection and fallback logic
 

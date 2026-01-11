@@ -54,7 +54,7 @@ We will implement network partition detection that:
 ## Implementation Details
 
 ### Detection Module
-- **Location**: `lib/detection.sh`
+- **Location**: `lib/detection/failure_analysis.sh`
 - **Function**: `check_network_partition()`
 - **Checks**:
   1. Default route exists (`check_default_route()`)
@@ -115,7 +115,7 @@ We will implement network partition detection that:
 ## References
 - ARCHITECTURE.md: "Network Partition Check" section
 - CODEBASE_REVIEW.md: Section 6.3 "Network Partition Detection"
-- lib/detection.sh: `check_network_partition()` implementation
+- lib/detection/failure_analysis.sh: `check_network_partition()` implementation
 - lib/state.sh: Network partition state management functions
 - vpn-monitor.conf: Configuration options documentation
 - tests/test_detection_network_partition.sh: Test coverage

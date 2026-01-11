@@ -28,7 +28,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Setup initial state - VPN is up, can switch states during test
 	setup_vpn_flapping_fixture "${TEST_PEER_IP}" "up" 1000 2000 \
-		'COOLDOWN_MINUTES=0.01' \
+		'COOLDOWN_MINUTES=1' \
+		'LOCKFILE_TIMEOUT=60' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -40,12 +41,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local test_script="$TEST_SCRIPT"
 
 	# Mock ipsec command for recovery strategy selection
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 0 >/dev/null
 	add_mock_to_path
 
 	# First run - VPN is up, should succeed
@@ -72,10 +68,11 @@ EOF
 	# In fake mode, Tier 3 recovery may log "Would attempt" but doesn't set cooldown
 	# Check if Tier 3 recovery was triggered (may not log if strategy selection fails in fake mode)
 	# Manually set cooldown to simulate real behavior - this allows test to verify cooldown behavior
+	# Use a short cooldown period (2 seconds) for testing purposes, even though config requires min 1 minute
 	local cooldown_file="${STATE_DIR:-${state_dir}}/cooldown_until"
-	local cooldown_minutes=0.01
+	local cooldown_seconds=2
 	local cooldown_until
-	cooldown_until=$(awk "BEGIN {print int($(date +%s) + $cooldown_minutes * 60 + 1)}")
+	cooldown_until=$(awk "BEGIN {print int($(date +%s) + $cooldown_seconds + 1)}")
 	echo "$cooldown_until" >"$cooldown_file"
 	assert_file_exist "$cooldown_file"
 
@@ -354,7 +351,8 @@ EOF
 		$now \
 		$((now - 100)) \
 		$((now - 200)) \
-		'COOLDOWN_MINUTES=0.01' \
+		'COOLDOWN_MINUTES=1' \
+		'LOCKFILE_TIMEOUT=60' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
@@ -366,9 +364,10 @@ EOF
 	local restart_count_file="${state_dir}/restart_count"
 	local test_script="$TEST_SCRIPT"
 
-	# Set cooldown to expired (2 seconds ago, which is longer than 0.01 minutes = 0.6 seconds)
+	# Set cooldown to expired (2 seconds ago, which is longer than 1 minute = 60 seconds)
+	# For testing, we set it to expired so rate limiting takes precedence
 	local cooldown_file="${state_dir}/cooldown_until"
-	echo "$((now - 2))" >"$cooldown_file"
+	echo "$((now - 62))" >"$cooldown_file"
 
 	# Mock ip command - VPN fails
 	mock_ip_vpn_down >/dev/null

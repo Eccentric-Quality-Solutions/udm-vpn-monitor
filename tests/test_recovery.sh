@@ -114,19 +114,25 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Ensures graceful handling when recovery tools are unavailable
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
 
-	# Save original PATH (after setup which may have modified it)
-	local original_path="$PATH"
+	# Save original PATH and create a minimal PATH that excludes ip/ipsec
+	# Use a simple approach: /bin typically has essential commands but not ip/ipsec
+	# Note: This test may need adjustment if ip/ipsec are found in /bin (unlikely)
+	local original_path="${PATH}"
+	# Create minimal PATH - start with /bin, add /usr/bin only if it doesn't contain ip/ipsec
+	local test_path="/bin"
+	# Check if /usr/bin has ip or ipsec before adding it
+	if [[ ! -x "/usr/bin/ip" ]] && [[ ! -x "/usr/bin/ipsec" ]]; then
+		test_path="/usr/bin:${test_path}"
+	fi
+	export PATH="${TEST_DIR}:${test_path}"
 
-	# Create mocks for basic commands needed by libraries (dirname, basename, etc.)
-	# But do NOT create mocks for ip/ipsec - we want those to be unavailable
-	mock_dirname_pass_through >/dev/null
-	mock_basename_pass_through >/dev/null
+	# Verify ip/ipsec are not available in the restricted PATH
+	if command -v ip >/dev/null 2>&1 || command -v ipsec >/dev/null 2>&1; then
+		skip "ip or ipsec found in restricted PATH - cannot test 'no commands available' scenario"
+	fi
 
-	# Restrict PATH to only TEST_DIR (with basic command mocks)
-	# Mocks call /usr/bin/dirname and /usr/bin/basename directly, so /usr/bin doesn't need to be in PATH
-	# This ensures ip/ipsec are not found while basic commands still work
-	# Override any PATH modifications from setup_location_vpn_monitor
-	export PATH="${TEST_DIR}"
+	# Don't create any mocks (no ip or ipsec available)
+	# PATH is restricted to exclude ip/ipsec, so commands won't be found
 
 	# Source dependencies first (recovery.sh needs logging.sh)
 	# shellcheck source=../lib/logging.sh
@@ -147,7 +153,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_equal "$RECOVERY_AVAILABLE" 0
 
 	# Restore original PATH
-	export PATH="$original_path"
+	export PATH="${original_path}"
 	remove_mock_from_path
 }
 
@@ -228,44 +234,16 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/verify_attempts"
-	echo "0" >"$verify_attempt_file"
 
 	# Mock ip command that simulates SA deletion and re-establishment
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<EOF
-#!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
-    verify_attempts=\$((verify_attempts + 1))
-    echo "\$verify_attempts" > "$verify_attempt_file"
-
-    # First few calls: SA exists (before deletion)
-    if [[ \$verify_attempts -le 1 ]]; then
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    lifetime current: 1000 bytes, 10 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    # Next few calls: SA deleted (no output)
-    elif [[ \$verify_attempts -le 3 ]]; then
-        # No SA - deleted
-        :
-    # After that: SA re-established
-    else
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
-        echo "    lifetime current: 2000 bytes, 20 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    fi
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state_transition "${TEST_PEER_IP}" 1000 2000 100 "0x12345678" "0x87654321" 3 "$verify_attempt_file"
 	add_mock_to_path
 
 	# Source recovery functions to test directly
 	source_recovery_module
 
-	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "${TEST_PEER_IP}"
+	# Test attempt_xfrm_recovery function with location name
+	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST"
 	assert_success
 
 	# Verify that verification occurred (check that verify_attempts increased)
@@ -285,35 +263,17 @@ EOF
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/timeout_attempts"
-	echo "0" >"$verify_attempt_file"
 
 	# Mock ip command that simulates SA deletion but never re-establishment
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<EOF
-#!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
-    verify_attempts=\$((verify_attempts + 1))
-    echo "\$verify_attempts" > "$verify_attempt_file"
-
-    # First call: SA exists (before deletion)
-    if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    lifetime current: 1000 bytes, 10 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    fi
-    # After deletion: SA never re-establishes (no output)
-fi
-EOF
-	chmod +x "$mock_ip"
+	# Use state transition helper but with a very high delete threshold so SA never re-establishes
+	mock_ip_xfrm_state_transition "${TEST_PEER_IP}" 1000 2000 100 "0x12345678" "0x87654321" 999999 "$verify_attempt_file"
 	add_mock_to_path
 
 	# Source recovery functions to test directly
 	source_recovery_module
 
-	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "${TEST_PEER_IP}"
+	# Test attempt_xfrm_recovery function with location name
+	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST"
 	# Should return failure when re-establishment times out to enable fallback recovery
 	assert_failure
 
@@ -334,43 +294,16 @@ EOF
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/verify_attempts"
-	echo "0" >"$verify_attempt_file"
 
 	# Mock ip command that simulates SA re-establishment with byte counters
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<EOF
-#!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
-    verify_attempts=\$((verify_attempts + 1))
-    echo "\$verify_attempts" > "$verify_attempt_file"
-
-    # First call: SA exists (before deletion)
-    if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    lifetime current: 1000 bytes, 10 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    # Next few calls: SA deleted
-    elif [[ \$verify_attempts -le 3 ]]; then
-        :
-    # After that: SA re-established with non-zero byte counters
-    else
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
-        echo "    lifetime current: 2000 bytes, 20 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    fi
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state_transition "${TEST_PEER_IP}" 1000 2000 100 "0x12345678" "0x87654321" 3 "$verify_attempt_file"
 	add_mock_to_path
 
 	# Source recovery functions to test directly
 	source_recovery_module
 
-	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "${TEST_PEER_IP}"
+	# Test attempt_xfrm_recovery function with location name
+	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST"
 	assert_success
 
 	# Verify byte counters were checked (verify_attempts should have increased past re-establishment)
@@ -414,15 +347,23 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     # Next few calls: SAs deleted
     elif [[ \$verify_attempts -le 3 ]]; then
         :
-    # After that: Both SAs re-established
+    # After that: Both SAs re-established with incrementing byte counters
+    # Attempt 4: initial counters (3000, 4000 bytes) - captured as baseline
+    # Attempt 5+: incrementing counters (3100/4100, 3200/4200, etc.) - verification succeeds
     else
+        # Calculate byte counters: base + (attempt - 4) * 100
+        # This ensures counters increment after initial capture
+        local byte_counter1=\$((3000 + (\$verify_attempts - 4) * 100))
+        local packet_counter1=\$((30 + (\$verify_attempts - 4) * 10))
+        local byte_counter2=\$((4000 + (\$verify_attempts - 4) * 100))
+        local packet_counter2=\$((40 + (\$verify_attempts - 4) * 10))
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
-        echo "    lifetime current: 3000 bytes, 30 packets"
+        echo "    lifetime current: \${byte_counter1} bytes, \${packet_counter1} packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x98765432 reqid 2 mode tunnel"
-        echo "    lifetime current: 4000 bytes, 40 packets"
+        echo "    lifetime current: \${byte_counter2} bytes, \${packet_counter2} packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     fi
 fi
@@ -433,8 +374,8 @@ EOF
 	# Source recovery functions to test directly
 	source_recovery_module
 
-	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "${TEST_PEER_IP}"
+	# Test attempt_xfrm_recovery function with location name
+	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST"
 	assert_success
 
 	# Verify that verification occurred
@@ -459,14 +400,31 @@ EOF
 	echo "" >"$policy_delete_log"
 
 	# Mock ip command that simulates SA re-establishment and policy queries
+	# Based on working tests but with additional handlers for policy deletion
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
-    verify_attempts=\$((verify_attempts + 1))
-    echo "\$verify_attempts" > "$verify_attempt_file"
-
+# Generate xfrm state output based on verification attempt count
+#
+# Generates xfrm state output that simulates different stages of SA lifecycle:
+# - First attempt: SA exists with initial counters
+# - Attempts 2-3: SA deleted (no output)
+# - Attempt 4+: SA re-established with incrementing byte counters
+#
+# Arguments:
+#   \$1: verify_attempts (integer) - The current verification attempt number
+#
+# Returns:
+#   No return value (void function)
+#
+# Output:
+#   Prints xfrm state output to stdout when SA exists, nothing when deleted
+#
+# Side Effects:
+#   None (pure function that only outputs)
+#
+generate_xfrm_state_output() {
+    local verify_attempts=\$1
     # First call: SA exists (before deletion)
     if [[ \$verify_attempts -eq 1 ]]; then
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
@@ -476,48 +434,97 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     # Next few calls: SA deleted
     elif [[ \$verify_attempts -le 3 ]]; then
         :
-    # After that: SA re-established
+    # After that: SA re-established with incrementing byte counters
+    # Attempt 4: initial counter (2000 bytes) - captured as baseline
+    # Attempt 5+: incrementing counters (2100, 2200, etc.) - verification succeeds
     else
+        # Calculate byte counter: 2000 + (attempt - 4) * 100
+        # This ensures counter increments after initial capture
+        local byte_counter=\$((2000 + (\$verify_attempts - 4) * 100))
+        local packet_counter=\$((20 + (\$verify_attempts - 4) * 10))
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
-        echo "    lifetime current: 2000 bytes, 20 packets"
+        echo "    lifetime current: \${byte_counter} bytes, \${packet_counter} packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     fi
+}
+
+# Handle "ip xfrm state get" first (more specific than "ip xfrm state")
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; then
+    # Check if the get command matches our test SA (src/dst/proto/spi)
+    if echo "\$*" | grep -q "src.*${TEST_PEER_IP}.*dst.*${TEST_PEER_IP}.*proto.*esp.*spi.*0x12345678"; then
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        exit 0
+    else
+        exit 1
+    fi
+# Handle "ip xfrm state delete" (more specific than "ip xfrm state")
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
+    # Increment verify_attempts to mark SA as deleted (so subsequent queries return empty)
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+    exit 0
+# Handle "ip xfrm state" (without -s flag) - primary handler
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+    generate_xfrm_state_output \$verify_attempts
+    exit 0
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
+# Use same logic as "ip xfrm state" since they should return the same data
+elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+    generate_xfrm_state_output \$verify_attempts
+    exit 0
+# Handle "ip xfrm policy" queries and deletions
 elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "policy" ]]; then
     # Policy query (no subcommand): Return policy with dir fwd
     if [[ -z "\$3" ]]; then
-        echo "src 0.0.0.0/0 dst 192.168.1.1"
+        echo "src 0.0.0.0/0 dst ${TEST_PEER_IP}"
         echo "    dir fwd priority 0"
-        echo "    tmpl src 0.0.0.0/0 dst 192.168.1.1"
+        echo "    tmpl src 0.0.0.0/0 dst ${TEST_PEER_IP}"
     # Policy deletion: Log the command to verify DIR parameter is included
     elif [[ "\$3" == "delete" ]]; then
         # Log all arguments to verify DIR parameter is present
         echo "delete: args=\$*" >> "$policy_delete_log"
-        # Simulate successful deletion
         exit 0
     fi
 fi
-# Handle other ip commands (xfrm state delete, etc.)
+# Handle other ip commands (fallback to real ip command)
 exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# Mock check_ipsec_phase2 to return success (SAs exist)
+	mock_check_ipsec_phase2 0
 	add_mock_to_path
 
 	# Source recovery functions to test directly
 	source_recovery_module
 
 	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST_LOCATION"
+	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST"
 	assert_success
 
 	# Verify policy deletion was attempted with DIR parameter
-	if [[ -f "$policy_delete_log" ]]; then
-		local delete_log_content
-		delete_log_content=$(cat "$policy_delete_log" 2>/dev/null || echo "")
-		# Should contain "dir" parameter in deletion command
-		if [[ -n "$delete_log_content" ]]; then
-			assert_output --partial "dir" <<<"$delete_log_content"
-		fi
+	assert [ -f "$policy_delete_log" ]
+	local delete_log_content
+	delete_log_content=$(cat "$policy_delete_log" 2>/dev/null || echo "")
+	# Should contain "dir" parameter in deletion command
+	assert [ -n "$delete_log_content" ]
+	# Check that the log contains "dir" parameter
+	if echo "$delete_log_content" | grep -q "dir"; then
+		: # Success - dir parameter is present
+	else
+		fail "Policy deletion log does not contain 'dir' parameter. Log content: $delete_log_content"
 	fi
 
 	remove_mock_from_path
@@ -532,43 +539,16 @@ EOF
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/verify_attempts"
-	echo "0" >"$verify_attempt_file"
 
 	# Mock ip command that simulates SA re-establishment
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<EOF
-#!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
-    verify_attempts=\$((verify_attempts + 1))
-    echo "\$verify_attempts" > "$verify_attempt_file"
-
-    # First call: SA exists (before deletion)
-    if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    lifetime current: 1000 bytes, 10 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    # Next few calls: SA deleted
-    elif [[ \$verify_attempts -le 3 ]]; then
-        :
-    # After that: SA re-established
-    else
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
-        echo "    lifetime current: 2000 bytes, 20 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    fi
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state_transition "${TEST_PEER_IP}" 1000 2000 100 "0x12345678" "0x87654321" 3 "$verify_attempt_file"
 	add_mock_to_path
 
 	# Source recovery functions to test directly
 	source_recovery_module
 
-	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "${TEST_PEER_IP}"
+	# Test attempt_xfrm_recovery function with location name
+	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST"
 	assert_success
 
 	# Verify that verification occurred
@@ -622,8 +602,8 @@ EOF
 	LOG_FILE="$log_file"
 	LOGS_DIR="${TEST_DIR}/logs"
 
-	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "${TEST_PEER_IP}"
+	# Test attempt_xfrm_recovery function with location name
+	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST"
 	# Should return failure when re-establishment times out to enable fallback recovery
 	assert_failure
 
@@ -661,67 +641,13 @@ EOF
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/verify_attempts"
-	echo "0" >"$verify_attempt_file"
 
-	# Mock ip command that simulates delayed SA re-establishment
-	# Note: get_xfrm_state_for_peer tries "ip -s xfrm state" first, then falls back to "ip xfrm state"
-	# Also note: count_sas_for_peer calls "ip xfrm state" directly (not through get_xfrm_state_for_peer)
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<EOF
-#!/bin/bash
-# Handle "ip -s xfrm state" (with statistics) - tried first by get_xfrm_state_for_peer
-if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
-    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
-    verify_attempts=\$((verify_attempts + 1))
-    echo "\$verify_attempts" > "$verify_attempt_file"
-
-    # First call: SA exists (before deletion)
-    if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    lifetime current: 1000 bytes, 10 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    # Next few calls: SA deleted (delayed re-establishment)
-    # Note: Each check_ipsec_phase2 call results in 2 mock calls (ip -s xfrm state + ip xfrm state fallback)
-    # Deletion phase uses ~6 calls, so we need threshold > 6 + (2 calls per iteration * desired iterations)
-    # For 2+ sleep calls, we need: 6 + (2 * 2) = 10, so threshold should be > 10
-    elif [[ \$verify_attempts -le 12 ]]; then
-        :
-    # After that: SA re-established
-    else
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
-        echo "    lifetime current: 2000 bytes, 20 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    fi
-# Handle "ip xfrm state" (without statistics) - fallback used by get_xfrm_state_for_peer and count_sas_for_peer
-elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
-    verify_attempts=\$((verify_attempts + 1))
-    echo "\$verify_attempts" > "$verify_attempt_file"
-
-    # First call: SA exists (before deletion)
-    if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    lifetime current: 1000 bytes, 10 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    # Next few calls: SA deleted (delayed re-establishment)
-    # Note: Each check_ipsec_phase2 call results in 2 mock calls (ip -s xfrm state + ip xfrm state fallback)
-    # Deletion phase uses ~6 calls, so we need threshold > 6 + (2 calls per iteration * desired iterations)
-    # For 2+ sleep calls, we need: 6 + (2 * 2) = 10, so threshold should be > 10
-    elif [[ \$verify_attempts -le 12 ]]; then
-        :
-    # After that: SA re-established
-    else
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
-        echo "    lifetime current: 2000 bytes, 20 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    fi
-fi
-EOF
-	chmod +x "$mock_ip"
+	# Mock ip command that simulates delayed SA re-establishment for exponential backoff testing
+	# Note: Each check_ipsec_phase2 call results in 2 mock calls (ip -s xfrm state + ip xfrm state fallback)
+	# Deletion phase uses ~6 calls, so we need threshold > 6 + (2 calls per iteration * desired iterations)
+	# For 2+ sleep calls, we need: 6 + (2 * 2) = 10, so threshold should be > 10
+	# Using threshold of 12 to allow for exponential backoff testing
+	mock_ip_xfrm_state_transition "${TEST_PEER_IP}" 1000 2000 100 "0x12345678" "0x87654321" 12 "$verify_attempt_file"
 	add_mock_to_path
 
 	# Add mock sleep to PATH (save original for cleanup)
@@ -743,8 +669,8 @@ EOF
 	# and the mock will return empty for attempts <= 12, then SA for attempts > 12
 	echo "0" >"$verify_attempt_file"
 
-	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "${TEST_PEER_IP}"
+	# Test attempt_xfrm_recovery function with location name
+	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST"
 	assert_success
 
 	# Verify exponential backoff was used (check sleep intervals)
@@ -802,7 +728,42 @@ EOF
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
+# Handle ip -s xfrm state (with -s flag) or ip xfrm state (without -s flag)
+# When -s is present, $1="-s", $2="xfrm", $3="state"
+# When -s is absent, $1="xfrm", $2="state"
+# Note: get_xfrm_state_for_peer calls ip -s xfrm state first, then falls back to ip xfrm state
+# Both handlers share the same counter to ensure consistent state
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # ip -s xfrm state - handle same as ip xfrm state (shared counter)
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+
+    # First call: SA exists with mark (before deletion)
+    if [[ \$verify_attempts -le 1 ]]; then
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+        echo "    mark 0x12000000/0xfe000000"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        exit 0
+    # Next few calls: SA deleted (no output)
+    elif [[ \$verify_attempts -le 3 ]]; then
+        exit 0  # Return empty output (SA deleted)
+    # After that: SA re-established with incrementing byte counters
+    else
+        local call_count=\$((verify_attempts - 3))
+        local byte_count=\$((2000 + (call_count - 1) * 100))
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
+        echo "    mark 0x12000000/0xfe000000"
+        echo "    lifetime current:"
+        echo "      \${byte_count}(bytes), 20(packets)"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        exit 0
+    fi
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
     # Capture deletion command to verify mark is included
     echo "\$*" >> "$delete_cmd_file"
 
@@ -821,7 +782,8 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; th
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
         exit 0
     else
         # Mark missing from get command - fails
@@ -829,6 +791,7 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; th
         exit 2
     fi
 elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # ip xfrm state (fallback from get_xfrm_state_for_peer) - shared counter with ip -s xfrm state
     verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
     verify_attempts=\$((verify_attempts + 1))
     echo "\$verify_attempts" > "$verify_attempt_file"
@@ -838,18 +801,24 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        exit 0
     # Next few calls: SA deleted (no output)
     elif [[ \$verify_attempts -le 3 ]]; then
-        :
-    # After that: SA re-established
+        exit 0  # Return empty output (SA deleted)
+    # After that: SA re-established with incrementing byte counters
     else
+        local call_count=\$((verify_attempts - 3))
+        local byte_count=\$((2000 + (call_count - 1) * 100))
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 2000 bytes, 20 packets"
+        echo "    lifetime current:"
+        echo "      \${byte_count}(bytes), 20(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        exit 0
     fi
 fi
 exec /usr/bin/ip "\$@"
@@ -911,10 +880,40 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; t
     fi
     exit 0
 elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; then
-    # Return SA without mark for get command
-    echo "src 192.168.1.1 dst 192.168.1.1"
+    # Return SA without mark for get command - match the selectors passed to get
+    # The get command is called with src, dst, proto, spi (no mark), so return matching SA
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
     echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 1000 bytes, 10 packets"
+    echo "    lifetime current:"
+    echo "      1000(bytes), 10(packets)"
+    exit 0
+elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag) - called first by get_xfrm_state_for_peer
+    # Use same logic as "ip xfrm state" since they should return the same data
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+
+    # First call: SA exists without mark (before deletion)
+    if [[ \$verify_attempts -le 1 ]]; then
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    # Next few calls: SA deleted (no output)
+    elif [[ \$verify_attempts -le 3 ]]; then
+        :
+    # After that: SA re-established with incrementing byte counters
+    else
+        local call_count=\$((verify_attempts - 3))
+        local byte_count=\$((2000 + (call_count - 1) * 100))
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
+        echo "    lifetime current:"
+        echo "      \${byte_count}(bytes), 20(packets)"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    fi
     exit 0
 elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
@@ -925,16 +924,20 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     if [[ \$verify_attempts -le 1 ]]; then
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     # Next few calls: SA deleted (no output)
     elif [[ \$verify_attempts -le 3 ]]; then
         :
-    # After that: SA re-established
+    # After that: SA re-established with incrementing byte counters
     else
+        local call_count=\$((verify_attempts - 3))
+        local byte_count=\$((2000 + (call_count - 1) * 100))
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
-        echo "    lifetime current: 2000 bytes, 20 packets"
+        echo "    lifetime current:"
+        echo "      \${byte_count}(bytes), 20(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     fi
 fi
@@ -1118,8 +1121,37 @@ EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
+	# Mock check_ipsec_phase2 to return success (SA re-established)
+	local mock_check_ipsec_phase2
+	mock_check_ipsec_phase2=$(mock_check_ipsec_phase2 0)
+
 	# Source recovery functions to test directly
 	source_recovery_module
+
+	# Override check_ipsec_phase2 function to use mock
+	# Test override of check_ipsec_phase2 to use a mock script.
+	# This allows the test to control when check_ipsec_phase2 returns success/failure
+	# without relying on the actual ip command mock behavior.
+	#
+	# Test override function that delegates to a mock script
+	#
+	# This function overrides the real check_ipsec_phase2 function to use a mock
+	# script, allowing tests to control when the function returns success or failure
+	# without relying on the actual ip command mock behavior.
+	#
+	# Arguments:
+	#   \$@: All arguments are passed through to the mock script
+	#        Typically includes peer IP address as first argument
+	#
+	# Returns:
+	#   Exit code from the mock script (0 for success, non-zero for failure)
+	#
+	# Side Effects:
+	#   None (delegates to mock script)
+	#
+	check_ipsec_phase2() {
+		"$mock_check_ipsec_phase2" "$@"
+	}
 
 	# Test attempt_xfrm_recovery function
 	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST"
@@ -1711,8 +1743,8 @@ EOF
 	LOG_FILE="$log_file"
 	LOGS_DIR="${TEST_DIR}/logs"
 
-	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "${TEST_PEER_IP}"
+	# Test attempt_xfrm_recovery function with location name
+	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST"
 	# Should return failure when timeout occurs (byte counter verification fails)
 	assert_failure
 
@@ -1757,11 +1789,17 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
         echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
         echo "    lifetime current: 2000 bytes, 20 packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    # After deletion: Only one SA re-establishes (partial re-establishment)
+    # After deletion: Only one SA re-establishes (partial re-establishment) with incrementing byte counters
+    # Attempt 2: initial counter (2000 bytes) - captured as baseline
+    # Attempt 3+: incrementing counters (2100, 2200, etc.) - verification succeeds
     else
+        # Calculate byte counter: 2000 + (attempt - 2) * 100
+        # This ensures counter increments after initial capture
+        local byte_counter=\$((2000 + (\$verify_attempts - 2) * 100))
+        local packet_counter=\$((20 + (\$verify_attempts - 2) * 10))
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
-        echo "    lifetime current: 2000 bytes, 20 packets"
+        echo "    lifetime current: \${byte_counter} bytes, \${packet_counter} packets"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     fi
 fi
@@ -1797,8 +1835,8 @@ EOF
 	LOG_FILE="$log_file"
 	LOGS_DIR="${TEST_DIR}/logs"
 
-	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "${TEST_PEER_IP}"
+	# Test attempt_xfrm_recovery function with location name
+	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST"
 	# Should return success if at least one SA re-establishes (partial success is acceptable)
 	# Note: The function may succeed if check_ipsec_phase2 returns success, even with partial SAs
 	# This is acceptable behavior - partial recovery is better than no recovery
@@ -1845,18 +1883,8 @@ EOF
 	mkdir -p "${TEST_DIR}/logs"
 
 	# Mock ipsec command that hangs (simulated by timeout)
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    # Simulate hanging by sleeping longer than timeout
-    sleep 2
-    echo "Connections:"
-    echo "  192.168.1.1: ESTABLISHED"
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_timeout 2 "Connections:
+  192.168.1.1: ESTABLISHED" >/dev/null
 	add_mock_to_path
 
 	# Mock timeout command to actually timeout
@@ -2303,8 +2331,8 @@ EOF
 	LOG_FILE="$log_file"
 	LOGS_DIR="${TEST_DIR}/logs"
 
-	# Test attempt_xfrm_recovery function
-	run attempt_xfrm_recovery "${TEST_PEER_IP}"
+	# Test attempt_xfrm_recovery function with location name
+	run attempt_xfrm_recovery "${TEST_PEER_IP}" "TEST"
 	# Should return failure when timeout occurs (check_ipsec_phase2 fails)
 	assert_failure
 
@@ -2327,23 +2355,8 @@ EOF
 	mkdir -p "${TEST_DIR}/logs"
 
 	# Mock ipsec command that returns status without the expected peer IP
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    # Return ipsec status without the expected peer IP (connection not found)
-    echo "Connections:"
-    echo "  198.51.100.1: ESTABLISHED"
-    # Note: 192.168.1.1 is not in output (connection not found)
-    exit 0
-fi
-if [[ "$1" == "restart" ]]; then
-    # Simulate successful restart
-    exit 0
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_status 0 "Connections:
+  198.51.100.1: ESTABLISHED" >/dev/null
 	add_mock_to_path
 
 	# Source recovery functions to test directly

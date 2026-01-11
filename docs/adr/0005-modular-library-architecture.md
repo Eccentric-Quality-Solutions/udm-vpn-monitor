@@ -36,7 +36,12 @@ We will refactor the codebase into a modular library architecture with dedicated
   - `lib/config.sh` - Configuration loading and validation
   - `lib/config_schema.sh` - Configuration schema definitions and validation rules
   - `lib/constants.sh` - Named constants for magic numbers
-  - `lib/detection.sh` - VPN status detection (xfrm, ipsec, ping)
+  - `lib/detection.sh` - VPN status detection (main entry point)
+  - `lib/detection/` - Detection module subdirectory (further modularization):
+    - `lib/detection/network_validation.sh` - IP validation, route checks
+    - `lib/detection/xfrm_detection.sh` - xfrm state and byte counter detection
+    - `lib/detection/ping_detection.sh` - Ping-based detection
+    - `lib/detection/failure_analysis.sh` - Failure type classification
   - `lib/lockfile.sh` - Lockfile management (flock/atomic)
   - `lib/logging.sh` - Centralized logging functionality
   - `lib/recovery.sh` - Tiered recovery actions
@@ -44,12 +49,17 @@ We will refactor the codebase into a modular library architecture with dedicated
 - **Module Loading**: Modules are sourced at script startup
 - **Function Documentation**: All functions include comprehensive documentation blocks
 - **Dependency Management**: Clear documentation of module dependencies
+- **Module Dependency Pattern**: When modules are split into subdirectories, each submodule sources its direct dependencies, making modules independently sourceable (useful for testing). The main entry point sources all modules in dependency order.
 
 ## Related ADRs
 - ADR-0007: Comprehensive In-Code Documentation
+
+## Change History
+- **2026-01-15**: Detection module further modularized - `lib/detection.sh` (3005 lines) split into 4 focused modules in `lib/detection/` subdirectory per Option B from SIMPLIFICATION_OPPORTUNITIES.md. This demonstrates the evolution of the modular architecture principle - large modules can be further decomposed when they grow too large.
 
 ## References
 - ARCHITECTURE.md: "Key Design Decisions #6: Modular Library Architecture"
 - ARCHITECTURE.md: "Modular Library Architecture" section
 - CHANGELOG.md: "Modular Library Architecture" entry
+- CODE_REVIEW_detection_split.md: Detection module split implementation details
 

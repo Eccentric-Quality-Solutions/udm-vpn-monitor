@@ -2429,7 +2429,8 @@ monitor_location() {
 			had_failure_type=1
 		fi
 
-		if [[ "$failure_count" -gt 0 ]] || [[ $had_failure_type -eq 1 ]]; then
+		if [[ "$failure_count" -gt 0 ]]; then
+			# Actual failures occurred - log recovery message
 			# Check if a recovery method was used (stored when recovery was attempted)
 			local recovery_method=""
 			recovery_method=$(get_recovery_method "$location_name" "$external_peer_ip")
@@ -2439,20 +2440,12 @@ monitor_location() {
 			fi
 
 			# Log recovery success with method if available
-			if [[ "$failure_count" -gt 0 ]]; then
-				if [[ -n "$recovery_method_display" ]]; then
-					log_message "INFO" "$location_name" "${VPN_NAME:-VPN} restored for $location_name ($external_peer_ip) after $failure_count failures (recovery method: $recovery_method_display)"
-				else
-					log_message "INFO" "$location_name" "${VPN_NAME:-VPN} recovered for $location_name ($external_peer_ip) after $failure_count failures"
-				fi
-				reset_failure_count "$location_name" "$external_peer_ip"
+			if [[ -n "$recovery_method_display" ]]; then
+				log_message "INFO" "$location_name" "${VPN_NAME:-VPN} restored for $location_name ($external_peer_ip) after $failure_count failures (recovery method: $recovery_method_display)"
 			else
-				if [[ -n "$recovery_method_display" ]]; then
-					log_message "INFO" "$location_name" "${VPN_NAME:-VPN} restored for $location_name ($external_peer_ip) (recovery method: $recovery_method_display)"
-				else
-					log_message "INFO" "$location_name" "${VPN_NAME:-VPN} recovered for $location_name ($external_peer_ip)"
-				fi
+				log_message "INFO" "$location_name" "${VPN_NAME:-VPN} recovered for $location_name ($external_peer_ip) after $failure_count failures"
 			fi
+			reset_failure_count "$location_name" "$external_peer_ip"
 
 			# Clear failure type file on recovery
 			# Use abstraction layer to ensure consistent path format
@@ -2463,6 +2456,13 @@ monitor_location() {
 			# Clear recovery method after logging (prevents stale information)
 			if [[ -n "$recovery_method" ]]; then
 				clear_recovery_method "$location_name" "$external_peer_ip"
+			fi
+		elif [[ $had_failure_type -eq 1 ]]; then
+			# Failure type file exists but no actual failures (false positive case)
+			# Clear the stale failure_type file silently without logging recovery
+			# This prevents false positive recovery messages when VPN was already healthy
+			if [[ -n "$failure_type_file" ]] && [[ -f "$failure_type_file" ]]; then
+				rm -f "$failure_type_file" 2>/dev/null || true
 			fi
 		else
 			# VPN is healthy with no previous failures - log periodic status update

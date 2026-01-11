@@ -144,8 +144,10 @@ fi
 if ! validate_config; then
 	# validate_config calls handle_error_or_exit_fake_mode which exits in normal mode
 	# or returns 1 in fake mode
-	# Validation errors should cause failure even in fake mode (configuration errors prevent script from running)
-	# Fake mode skips recovery actions, but configuration errors should still cause failure
+	# In fake mode, handle_error_or_exit_fake_mode logs the error and returns 1
+	# We exit with error code so tests can assert failure
+	# In normal mode, validate_config should have already exited via handle_error_or_exit_fake_mode
+	# But if we get here, exit with error code
 	exit "${EXIT_VALIDATION_ERROR:-3}"
 fi
 

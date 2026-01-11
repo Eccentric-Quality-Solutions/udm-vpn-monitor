@@ -275,7 +275,7 @@ EOF
 	# Expected: Only one recovery action executes at a time, others wait for lockfile
 	# Importance: Concurrent recovery actions could cause system instability or inconsistent state
 	# Use fixture to set up VPN down scenario (creates state files and basic setup)
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'LOCKFILE_TIMEOUT=5'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'LOCKFILE_TIMEOUT=60'
 
 	# Run first instance in background
 	bash "$TEST_SCRIPT" &

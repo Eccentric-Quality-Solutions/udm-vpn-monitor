@@ -2282,6 +2282,8 @@ validate_config() {
 	# - Relative validation (e.g., TIER2_THRESHOLD >= TIER1_THRESHOLD)
 	if ! validate_config_schema; then
 		handle_error_or_exit_fake_mode "SYSTEM" "Configuration validation failed - check schema rules" "${EXIT_VALIDATION_ERROR:-3}"
+		# If handle_error_or_exit_fake_mode doesn't exit (e.g., in fake mode), return error
+		return 1
 	fi
 
 	# Check for old format variables (should not exist)

@@ -1,5 +1,13 @@
 Considerations for the future, but want to avoid overarchitecting and premature optimization, as YAGNI.
 
+- Optimize detection module sourcing (optional)
+  - Currently, modules source dependencies even when already sourced by parent `detection.sh`
+  - Could add checks to avoid redundant sourcing: `if ! type validate_ipv4 >/dev/null 2>&1; then source ...; fi`
+  - Low priority: bash sourcing is fast and idempotent, redundancy is minimal overhead
+  - Benefit: Slightly faster sourcing, cleaner dependency graph
+  - Effort: LOW (add type checks before sourcing)
+  - Note: Split completed 2026-01-15, this is a post-split optimization opportunity
+
 - Enhanced recovery type analysis in log reports
     - Add recovery type breakdown to report summary statistics (app-managed vs self-healed percentages)
     - Add recovery type trends over time analysis (track how recovery types change over time)

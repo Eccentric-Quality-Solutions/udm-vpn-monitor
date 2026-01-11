@@ -680,7 +680,12 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │   ├── config.sh               # Configuration loading and management
 │   ├── config_schema.sh        # Configuration schema definitions and validation
 │   ├── constants.sh            # Named constants for magic numbers
-│   ├── detection.sh            # VPN status detection (xfrm, ipsec, ping)
+│   ├── detection.sh            # VPN status detection (main entry point)
+│   ├── detection/               # Detection module subdirectory
+│   │   ├── network_validation.sh  # IP validation, route checks
+│   │   ├── xfrm_detection.sh      # xfrm state and byte counter detection
+│   │   ├── ping_detection.sh      # Ping-based detection
+│   │   └── failure_analysis.sh    # Failure type classification
 │   ├── lockfile.sh             # Lockfile management (flock/atomic)
 │   ├── logging.sh              # Centralized logging functionality
 │   ├── recovery.sh             # Tiered recovery actions
@@ -800,21 +805,31 @@ The system uses a modular library architecture where functionality is organized 
 **Dependencies**: `lib/common.sh`
 
 #### `lib/detection.sh`
-**Purpose**: VPN status detection using multiple methods with automatic fallback.
+**Purpose**: VPN status detection using multiple methods with automatic fallback. Main entry point that sources all detection modules.
+
+**Module Structure**: The detection functionality is organized into focused modules in the `lib/detection/` subdirectory:
+- **`lib/detection/network_validation.sh`**: IP validation (IPv4/IPv6), route checks, DNS resolution, interface state checks
+- **`lib/detection/xfrm_detection.sh`**: xfrm state checks, byte counter detection, SA rekey detection, IPsec status fallback
+- **`lib/detection/ping_detection.sh`**: Ping-based connectivity verification, multiple IP support, ping summary logging
+- **`lib/detection/failure_analysis.sh`**: Failure type classification, VPN status determination, network partition detection
 
 **Key Functions**:
-- `check_vpn_status()` - Main detection function
-- `check_xfrm_state()` - Checks Security Associations via `ip xfrm state`
-- `check_ipsec_status()` - Fallback detection via `ipsec status`
-- `check_ping_connectivity()` - Optional ping-based connectivity verification
+- `check_vpn_status()` - Main detection function (in `failure_analysis.sh`)
+- `check_xfrm_status()` - Checks Security Associations via `ip xfrm state` (in `xfrm_detection.sh`)
+- `check_ipsec_status()` - Fallback detection via `ipsec status` (in `xfrm_detection.sh`)
+- `check_ping_connectivity()` - Optional ping-based connectivity verification (in `ping_detection.sh`)
+- `validate_ip_address()` - IP address validation (in `network_validation.sh`)
+- `detect_failure_type()` - Failure type classification (in `failure_analysis.sh`)
 
 **State Passing Pattern**: The detection system uses a state passing pattern to optimize performance and ensure consistency. Expensive system state checks (like SA existence) are performed once at the source (`check_xfrm_status()`) and passed explicitly to downstream functions (`check_ping_optional()`, `detect_failure_type()`) via function parameters. This eliminates duplicate system calls, reducing `ip xfrm state` calls by 66-75% (from 3 calls to 1 per VPN check cycle) and ensures all functions use the same state snapshot, eliminating temporal inconsistencies. See Design Decision #12 and ADR-0028 for details.
 
-**Dependencies**: `lib/logging.sh`, `lib/common.sh`, `lib/state.sh`
+**Module Dependency Pattern**: Each detection module sources its direct dependencies, making modules independently sourceable (useful for testing). The main `detection.sh` entry point sources all modules in dependency order. This design allows modules to be sourced independently while maintaining backward compatibility with existing code that sources `detection.sh`.
+
+**Dependencies**: `lib/logging.sh`, `lib/common.sh`, `lib/state.sh`, `lib/constants.sh`
 
 **Dependency Handling**: `detection.sh` sources `logging.sh` conditionally with fallback functions (`log_message`, `handle_error`) to ensure it works when sourced independently (e.g., during installation by `install.sh`). The fallback functions output to stderr only and provide basic error handling.
 
-**Note**: See Design Decision #5 for detection strategy details.
+**Note**: See Design Decision #5 for detection strategy details. The module split (completed 2026-01-15) decomposes the original 3005-line monolithic file into 4 focused modules for better organization and maintainability.
 
 #### `lib/lockfile.sh`
 **Purpose**: Lockfile management to prevent concurrent script execution.
@@ -1096,9 +1111,9 @@ graph TB
    - **Exit Code Handling**: Detect timeout exit code (124) and provide specific error messages
    - **Fallback**: If `timeout` command unavailable, run command without wrapper (shouldn't happen on UDM)
    - **Examples**:
-     - `ipsec status` wrapped with `IPSEC_STATUS_TIMEOUT` (5 seconds) in `lib/detection.sh` and `lib/recovery.sh`
-     - `ping` commands wrapped with calculated timeout in `check_ping_connectivity()` (lib/detection.sh)
-     - `dig` and `nslookup` wrapped with DNS timeout in `check_dns_resolution()` (lib/detection.sh)
+     - `ipsec status` wrapped with `IPSEC_STATUS_TIMEOUT` (5 seconds) in `lib/detection/xfrm_detection.sh` and `lib/recovery.sh`
+     - `ping` commands wrapped with calculated timeout in `check_ping_connectivity()` (`lib/detection/ping_detection.sh`)
+     - `dig` and `nslookup` wrapped with DNS timeout in `check_dns_resolution()` (`lib/detection/network_validation.sh`)
    - **Benefit**: Prevents script from hanging indefinitely when network commands hang due to network issues
 
 ## Performance Considerations

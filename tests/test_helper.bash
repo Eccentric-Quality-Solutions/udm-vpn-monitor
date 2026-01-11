@@ -263,7 +263,7 @@ MAX_RESTARTS_PER_HOUR=3
 LOG_FILE="/data/vpn-monitor/logs/vpn-monitor.log"
 STATE_DIR="/data/vpn-monitor"
 CRON_SCHEDULE="*/1 * * * *"
-LOCKFILE_TIMEOUT=5
+LOCKFILE_TIMEOUT=60
 ENABLE_PING_CHECK=1
 PING_COUNT=3
 PING_TIMEOUT=2
@@ -973,6 +973,114 @@ EOF
 	echo "$mock_ip"
 }
 
+# Create mock ip command for SA state transitions (exists -> deleted -> re-established)
+#
+# Creates a mock 'ip' command that simulates SA state transitions for xfrm recovery testing.
+# The mock tracks verification attempts and transitions through three phases:
+# 1. Initial state: SA exists with initial SPI and byte counter
+# 2. Deletion phase: SA is deleted (returns empty output)
+# 3. Re-establishment phase: SA re-establishes with new SPI and incrementing byte counters
+#
+# Arguments:
+#   $1: Peer IP address (required)
+#   $2: Initial byte counter value (default: 1000)
+#   $3: Final byte counter value (default: 2000) - Currently unused, reserved for future use
+#   $4: Byte increment per call after re-establishment (default: 100)
+#   $5: Initial SPI value (default: 0x12345678)
+#   $6: Final SPI value after re-establishment (default: 0x87654321)
+#   $7: Re-establishment attempt threshold (default: 3) - SA re-establishes after this many attempts
+#   $8: Path to file for tracking verification attempts (default: ${TEST_DIR}/verify_attempts)
+#   $9: Optional path to mock ip file (default: ${TEST_DIR}/ip)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   - Creates executable mock ip script at specified path
+#   - Creates state file to track call count
+#
+# Example:
+#   # Basic usage - SA exists, gets deleted, re-establishes after 3 attempts
+#   mock_ip_xfrm_state_transition "${TEST_PEER_IP}" 1000 2000 100 "0x12345678" "0x87654321" 3 "${TEST_DIR}/verify_attempts"
+#   add_mock_to_path
+#
+#   # Custom re-establishment threshold
+#   mock_ip_xfrm_state_transition "${TEST_PEER_IP}" 1000 2000 100 "0x12345678" "0x87654321" 12 "${TEST_DIR}/verify_attempts"
+mock_ip_xfrm_state_transition() {
+	local peer_ip="${1:-${TEST_PEER_IP}}"
+	local initial_bytes="${2:-1000}"
+	local final_bytes="${3:-2000}"
+	local increment="${4:-100}"
+	local initial_spi="${5:-0x12345678}"
+	local final_spi="${6:-0x87654321}"
+	local reestablishment_attempt="${7:-3}"
+	local verify_attempt_file="${8:-${TEST_DIR}/verify_attempts}"
+	local mock_ip="${9:-${TEST_DIR}/ip}"
+
+	# Initialize verify attempt counter
+	echo "0" >"$verify_attempt_file"
+
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+	verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+	verify_attempts=\$((verify_attempts + 1))
+	echo "\$verify_attempts" > "$verify_attempt_file"
+
+	# First call: SA exists with initial SPI and byte counter
+	if [[ \$verify_attempts -le 1 ]]; then
+		echo "src ${peer_ip} dst ${peer_ip}"
+		echo "    proto esp spi ${initial_spi} reqid 1 mode tunnel"
+		echo "    lifetime current: ${initial_bytes} bytes, 10 packets"
+		exit 0
+	# Next few calls: SA deleted (no output)
+	elif [[ \$verify_attempts -le ${reestablishment_attempt} ]]; then
+		exit 0  # Return empty output (SA deleted)
+	# After re-establishment threshold: SA re-established with new SPI and incrementing byte counters
+	else
+		local call_count=\$((verify_attempts - ${reestablishment_attempt}))
+		local byte_count=\$((initial_bytes + (call_count - 1) * ${increment}))
+		echo "src ${peer_ip} dst ${peer_ip}"
+		echo "    proto esp spi ${final_spi} reqid 1 mode tunnel"
+		echo "    lifetime current: \${byte_count} bytes, 10 packets"
+		exit 0
+	fi
+# Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+	verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+	verify_attempts=\$((verify_attempts + 1))
+	echo "\$verify_attempts" > "$verify_attempt_file"
+
+	# First call: SA exists with initial SPI and byte counter
+	if [[ \$verify_attempts -le 1 ]]; then
+		echo "src ${peer_ip} dst ${peer_ip}"
+		echo "    proto esp spi ${initial_spi} reqid 1 mode tunnel"
+		echo "    lifetime current: ${initial_bytes} bytes, 10 packets"
+		exit 0
+	# Next few calls: SA deleted (no output)
+	elif [[ \$verify_attempts -le ${reestablishment_attempt} ]]; then
+		exit 0  # Return empty output (SA deleted)
+	# After re-establishment threshold: SA re-established with new SPI and incrementing byte counters
+	else
+		local call_count=\$((verify_attempts - ${reestablishment_attempt}))
+		local byte_count=\$((initial_bytes + (call_count - 1) * ${increment}))
+		echo "src ${peer_ip} dst ${peer_ip}"
+		echo "    proto esp spi ${final_spi} reqid 1 mode tunnel"
+		echo "    lifetime current: \${byte_count} bytes, 10 packets"
+		exit 0
+	fi
+fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	echo "$mock_ip"
+}
+
 # Create mock ip command for empty xfrm state (VPN down)
 #
 # Creates a mock 'ip' command that returns empty output for xfrm state queries,
@@ -1326,6 +1434,69 @@ EOF
 	echo "$mock_ipsec"
 }
 
+# Create mock ipsec command that times out on status
+#
+# Creates a mock 'ipsec' command that simulates a timeout by sleeping
+# longer than the timeout period when status is called. Used for testing
+# timeout handling in recovery functions.
+#
+# Arguments:
+#   $1: Sleep duration in seconds (default: "2")
+#   $2: Optional status output to return after timeout (default: empty)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "ipsec"
+#
+# Example:
+#   # Status hangs for 2 seconds (default)
+#   mock_ipsec_timeout
+#   add_mock_to_path
+#
+#   # Status hangs for 5 seconds with custom output
+#   mock_ipsec_timeout 5 "Connections:
+#     192.168.1.1: ESTABLISHED"
+#   add_mock_to_path
+mock_ipsec_timeout() {
+	local sleep_duration="${1:-2}"
+	local status_output="${2:-}"
+
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	if [[ -n "$status_output" ]]; then
+		cat >"$mock_ipsec" <<EOF
+#!/bin/bash
+if [[ "\$1" == "status" ]]; then
+    # Simulate hanging by sleeping longer than timeout
+    sleep ${sleep_duration}
+    echo "$status_output"
+elif [[ "\$1" == "--help" ]] || [[ "\$1" == "--version" ]]; then
+    # Handle command availability checks (used by check_command_available)
+    exit 0
+fi
+exec /usr/bin/ipsec "\$@"
+EOF
+	else
+		cat >"$mock_ipsec" <<EOF
+#!/bin/bash
+if [[ "\$1" == "status" ]]; then
+    # Simulate hanging by sleeping longer than timeout
+    sleep ${sleep_duration}
+elif [[ "\$1" == "--help" ]] || [[ "\$1" == "--version" ]]; then
+    # Handle command availability checks (used by check_command_available)
+    exit 0
+fi
+exec /usr/bin/ipsec "\$@"
+EOF
+	fi
+	chmod +x "$mock_ipsec"
+	echo "$mock_ipsec"
+}
+
 # Create mock ipsec command
 #
 # Creates a mock 'ipsec' command that simulates IPsec service operations.
@@ -1532,6 +1703,142 @@ exec /usr/bin/ipsec "\$@"
 EOF
 		;;
 	esac
+	chmod +x "$mock_ipsec"
+	echo "$mock_ipsec"
+}
+
+# Create mock ipsec command that always fails
+#
+# Creates a mock 'ipsec' command that always fails (except for availability checks).
+# This is a convenience wrapper around mock_ipsec_status(1) for tests that need
+# ipsec to fail but don't need custom output.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "ipsec"
+#
+# Example:
+#   # ipsec always fails
+#   mock_ipsec_failure
+#   add_mock_to_path
+mock_ipsec_failure() {
+	mock_ipsec_status 1
+}
+
+# Create mock ipsec command with call tracking
+#
+# Creates a mock 'ipsec' command that tracks which commands were called.
+# Tracks calls to 'restart', 'reload', and 'status' subcommands by writing
+# to tracking files. Useful for tests that need to verify specific commands
+# were or were not called.
+#
+# Arguments:
+#   $1: Tracking file path (default: "${TEST_DIR}/ipsec_tracking.txt")
+#   $2: Optional status exit code (default: 0)
+#   $3: Optional status output (default: empty)
+#   $4: Optional status output after restart (default: empty)
+#       If provided, enables conditional status behavior:
+#       - Before restart: returns $3 (status_output) or empty
+#       - After restart: returns $4 (status_after_restart_output)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "ipsec"
+#   Creates tracking file at specified path
+#
+# Example:
+#   # Track ipsec calls
+#   local tracking_file="${TEST_DIR}/ipsec_calls.txt"
+#   mock_ipsec_with_tracking "$tracking_file"
+#   add_mock_to_path
+#
+#   # After test, check if reload was called
+#   if grep -q "reload" "$tracking_file"; then
+#       echo "Reload was called"
+#   fi
+#
+#   # Track with custom status behavior
+#   mock_ipsec_with_tracking "$tracking_file" 0 "192.168.1.1: ESTABLISHED"
+#   add_mock_to_path
+#
+#   # Track with conditional status (empty before restart, connection info after)
+#   mock_ipsec_with_tracking "$tracking_file" 0 "" "192.168.1.1: ESTABLISHED"
+#   add_mock_to_path
+mock_ipsec_with_tracking() {
+	local tracking_file="${1:-${TEST_DIR}/ipsec_tracking.txt}"
+	local status_exit="${2:-0}"
+	local status_output="${3:-}"
+	local status_after_restart_output="${4:-}"
+	local mock_ipsec="${TEST_DIR}/ipsec"
+
+	# Initialize tracking file
+	: >"$tracking_file"
+
+	# Build status command handler
+	# If status_after_restart_output is provided, status is conditional:
+	#   - Before restart: returns empty (or status_output if provided)
+	#   - After restart: returns status_after_restart_output
+	# Otherwise, always returns status_output (if provided) or empty
+	local status_handler
+	if [[ -n "$status_after_restart_output" ]]; then
+		# Conditional status: check if restart was called
+		local before_restart_output=""
+		if [[ -n "$status_output" ]]; then
+			before_restart_output="echo \"$status_output\""
+		fi
+		status_handler="echo \"status\" >> \"$tracking_file\"
+    if grep -q \"^restart\$\" \"$tracking_file\" 2>/dev/null; then
+        # After restart - return connection info
+        echo \"$status_after_restart_output\"
+    else
+        # Before restart - return empty (or status_output if provided)
+        $before_restart_output
+    fi
+    exit ${status_exit}"
+	elif [[ -n "$status_output" ]]; then
+		# Always return status_output
+		status_handler="echo \"status\" >> \"$tracking_file\"
+    echo \"$status_output\"
+    exit ${status_exit}"
+	else
+		# Always return empty
+		status_handler="echo \"status\" >> \"$tracking_file\"
+    exit ${status_exit}"
+	fi
+
+	cat >"$mock_ipsec" <<EOF
+#!/bin/bash
+if [[ "\$1" == "restart" ]]; then
+    echo "restart" >> "$tracking_file"
+    echo "Restarting IPsec..."
+    echo "Stopping IPsec..."
+    echo "Starting IPsec..."
+    exit 0
+elif [[ "\$1" == "reload" ]]; then
+    echo "reload" >> "$tracking_file"
+    echo "Reloading IPsec configuration..."
+    exit 0
+elif [[ "\$1" == "status" ]]; then
+    $status_handler
+elif [[ "\$1" == "--help" ]] || [[ "\$1" == "--version" ]]; then
+    # Handle command availability checks (used by check_command_available)
+    exit 0
+fi
+exec /usr/bin/ipsec "\$@"
+EOF
 	chmod +x "$mock_ipsec"
 	echo "$mock_ipsec"
 }
@@ -1756,7 +2063,7 @@ MAX_RESTARTS_PER_HOUR=3
 LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
 STATE_DIR="${TEST_DIR}"
 CRON_SCHEDULE="*/1 * * * *"
-LOCKFILE_TIMEOUT=5
+LOCKFILE_TIMEOUT=60
 ENABLE_PING_CHECK=1
 PING_COUNT=3
 PING_TIMEOUT=2
@@ -2112,7 +2419,7 @@ MAX_RESTARTS_PER_HOUR=3
 LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
 STATE_DIR="${TEST_DIR}"
 CRON_SCHEDULE="*/1 * * * *"
-LOCKFILE_TIMEOUT=5
+LOCKFILE_TIMEOUT=60
 ENABLE_PING_CHECK=1
 PING_COUNT=3
 PING_TIMEOUT=2
@@ -2507,10 +2814,34 @@ if [[ "\$1" == "link" ]] && [[ "\$2" == "show" ]]; then
     IFS=',' read -r -a state_array <<< "$states"
     IFS=',' read -r -a iface_array <<< "$interfaces"
     
+    # If specific interface is queried (third argument), show only that interface
+    if [[ -n "\${3:-}" ]]; then
+        for i in "\${!iface_array[@]}"; do
+            local iface="\${iface_array[\$i]}"
+            if [[ "\$iface" == "\$3" ]]; then
+                local state="\${state_array[\$i]:-UP}"
+                # Format output to match ip link show format with "state UP" or "state DOWN"
+                if [[ "\$state" == "UP" ]]; then
+                    echo "\${i}: \${iface}: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default"
+                else
+                    echo "\${i}: \${iface}: <BROADCAST,MULTICAST> mtu 1500 qdisc noqueue state DOWN group default"
+                fi
+                exit 0
+            fi
+        done
+        # Interface not found
+        exit 1
+    fi
+    
+    # No specific interface - show all interfaces
     for i in "\${!iface_array[@]}"; do
         local iface="\${iface_array[\$i]}"
         local state="\${state_array[\$i]:-UP}"
-        echo "\${i}: \${iface}: <BROADCAST,MULTICAST,\${state},LOWER_UP> mtu 1500"
+        if [[ "\$state" == "UP" ]]; then
+            echo "\${i}: \${iface}: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default"
+        else
+            echo "\${i}: \${iface}: <BROADCAST,MULTICAST> mtu 1500 qdisc noqueue state DOWN group default"
+        fi
     done
     exit 0
 fi

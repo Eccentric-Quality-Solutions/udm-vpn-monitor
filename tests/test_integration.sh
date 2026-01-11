@@ -277,27 +277,18 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Disable xfrm recovery to force ipsec reload (xfrm is preferred when peer IP is provided)
 	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0'
 
-	# Mock ipsec - track reload call
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "reload" ]]; then
-    echo "ipsec-reload-called" > /tmp/ipsec_called.txt
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
+	# Mock ipsec - track reload call (note: in fake mode, commands are logged but not executed)
+	local tracking_file="${TEST_DIR}/ipsec_called.txt"
+	mock_ipsec_with_tracking "$tracking_file" >/dev/null
 	add_mock_to_path
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	# Should use ipsec reload (affects all tunnels)
+	# In fake mode, the command is logged but not executed, so we verify via log
 	assert_file_exist "$LOG_FILE"
 	assert_file_contains "$LOG_FILE" "ipsec reload"
-	if [[ -f /tmp/ipsec_called.txt ]]; then
-		assert_file_exist /tmp/ipsec_called.txt
-		rm -f /tmp/ipsec_called.txt
-	fi
+	# Note: Tracking file won't be written in fake mode since commands aren't executed
 
 	remove_mock_from_path
 }

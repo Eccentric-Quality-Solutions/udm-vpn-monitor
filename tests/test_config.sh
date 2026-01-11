@@ -932,11 +932,8 @@ EOF
 	# Importance: Prevents arbitrary code execution if config file is compromised.
 	# Test Category: Security, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-VPN_NAME=$(echo "malicious")
-EOF
+	# Expand TEST_PEER_IP but keep dangerous content literal
+	printf 'LOCATION_TEST_EXTERNAL="%s"\nLOCATION_TEST_INTERNAL="%s"\nVPN_NAME=$(echo "malicious")\n' "${TEST_PEER_IP}" "${TEST_PEER_IP}" >"$config_file"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -965,11 +962,8 @@ EOF
 	# Importance: Prevents arbitrary code execution if config file is compromised.
 	# Test Category: Security, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-VPN_NAME=$(echo "malicious")
-EOF
+	# Expand TEST_PEER_IP but keep dangerous content literal
+	printf 'LOCATION_TEST_EXTERNAL="%s"\nLOCATION_TEST_INTERNAL="%s"\nVPN_NAME=`echo "malicious"`\n' "${TEST_PEER_IP}" "${TEST_PEER_IP}" >"$config_file"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"

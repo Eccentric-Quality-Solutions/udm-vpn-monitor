@@ -720,7 +720,7 @@ EOF
 	setup_test_location_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		'LOCKFILE_TIMEOUT=1'
+		'LOCKFILE_TIMEOUT=60'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -753,11 +753,11 @@ EOF
 	wait "$script_pid" 2>/dev/null || true
 
 	# Make lockfile old (beyond timeout) by touching it with old timestamp
-	# Use a timestamp that's definitely older than LOCKFILE_TIMEOUT
-	local old_timestamp=$(($(date +%s) - 2))
+	# Use a timestamp that's definitely older than LOCKFILE_TIMEOUT (60 seconds)
+	local old_timestamp=$(($(date +%s) - 62))
 	touch -d "@$old_timestamp" "$lockfile" 2>/dev/null || {
-		# Fallback: wait for timeout if touch -d doesn't work (reduced from 2s)
-		sleep 0.5
+		# Fallback: wait for timeout if touch -d doesn't work
+		sleep 1
 	}
 
 	# Now run script again - should detect stale lockfile and remove it

@@ -11,6 +11,7 @@ For additional test documentation, see:
 - **[BATS Guide](BATS_GUIDE.md)** - BATS framework usage, patterns, and advanced features
 - **[Test Strategy](TEST_STRATEGY.md)** - Test strategy, philosophy, and approach
 - **[Test Maintenance](TEST_MAINTENANCE.md)** - Test maintenance procedures and guidelines
+- **[tests/MOCK_REFACTORING_OPPORTUNITIES.md](../tests/MOCK_REFACTORING_OPPORTUNITIES.md)** - Lists refactoring opportunities for custom mocks
 
 ## Standardized Patterns
 
@@ -787,6 +788,61 @@ EOF
 
 **Helper Functions**: The helper functions in `test_helper.bash` already handle both formats correctly:
 - `mock_ip_xfrm_state()` - handles both formats
+
+#### Pattern 5b: Mocking Route Setup Commands (`ip addr show br0` and `ip addr add`)
+
+**Pattern**: When testing with `ENABLE_PING_CHECK=1` and `LOCAL_UDM_IP` configured, you must mock `ip addr show br0` and `ip addr add` commands because config validation attempts to set up routes during initialization.
+
+**When to use**: Any test that sets `ENABLE_PING_CHECK=1` and `LOCAL_UDM_IP` in the configuration.
+
+**Why this is required**: The `setup_routes_if_needed()` function is called during `validate_config()`. It checks if routes exist using `ip addr show br0` and adds them using `ip addr add` if needed. If these commands aren't mocked, tests will fail during config validation with route setup errors.
+
+**Standard Pattern**:
+```bash
+# ✅ CORRECT: Mock route setup commands
+local mock_ip="${TEST_DIR}/ip"
+cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    # Handle xfrm state queries
+    exit 0
+elif [[ "$1" == "addr" ]] && [[ "$2" == "show" ]] && [[ "$3" == "br0" ]]; then
+    # Route doesn't exist initially (so it will try to add it)
+    # Output something that doesn't contain the target IP
+    echo "1: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+    echo "    inet 192.168.1.1/24 brd 192.168.1.255 scope global br0"
+    exit 0
+elif [[ "$1" == "addr" ]] && [[ "$2" == "add" ]]; then
+    # Route add succeeds
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+chmod +x "$mock_ip"
+```
+
+**Alternative Pattern** (simpler, but less realistic):
+```bash
+# ✅ CORRECT: Simpler approach using exit codes
+local mock_ip="${TEST_DIR}/ip"
+cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    # Handle xfrm state queries
+    exit 0
+elif [[ "$1" == "addr" ]] && [[ "$2" == "show" ]] && [[ "$3" == "br0" ]]; then
+    # Route doesn't exist (exit 1 = route not found)
+    exit 1
+elif [[ "$1" == "addr" ]] && [[ "$2" == "add" ]]; then
+    # Route add succeeds
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+chmod +x "$mock_ip"
+```
+
+**Note**: Both patterns work because `check_route_exists()` uses `ip addr show br0 2>/dev/null | grep -q "inet ${local_ip}/"`. If the command exits with 1, the pipe fails and the function returns 1. If it exits with 0 but outputs something without the target IP, the grep fails and the function also returns 1.
 - `mock_ip_vpn_down()` - handles both formats
 - `mock_ip_xfrm_empty()` - handles both formats
 - `mock_ip_xfrm_with_incrementing_bytes()` - handles both formats
@@ -921,7 +977,118 @@ EOF
 - Don't escape test environment variables (they should expand during test execution)
 - Use quoted heredocs (`<<'EOF'`) only when you don't need variable expansion
 
-**Mock Commands Must Handle Command Availability Checks**
+#### Pattern 5f: Helper Function Output Format Must Match Real Command Output
+
+**Pattern**: Helper functions must produce output that matches the real command's output format, especially when the code under test uses `grep` to parse command output.
+
+**When to use**: When creating or refactoring helper functions that mock system commands.
+
+**Key Insight**: The code under test may use `grep` to parse command output (e.g., `grep -q "state UP"`). If the mock output doesn't match the real command's format, these checks will fail.
+
+**Example**:
+```bash
+# ✅ GOOD: mock_ip_link includes "state UP" in output (matches real ip link show)
+mock_ip_link "UP,DOWN" "br0,eth0"
+# Output: "1: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default"
+
+# ❌ BAD: Missing "state UP" - check_interface_state greps for it and will fail
+# Output: "1: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+```
+
+**Standard**:
+- Always verify mock output format matches what the code under test expects
+- Check how the code parses command output (grep, awk, etc.) and ensure mock output matches
+- Test helper functions with the actual code that uses them to verify format compatibility
+
+#### Pattern 5g: Per-Interface Queries Need Special Handling
+
+**Pattern**: When refactoring mocks, verify how the code under test calls the command. Some functions call commands with different argument patterns (with/without specific arguments).
+
+**When to use**: When creating or refactoring helper functions that mock commands that can be called with or without arguments.
+
+**Key Insight**: Functions may call commands in different ways:
+- `ip link show` (shows all interfaces)
+- `ip link show <interface>` (shows specific interface)
+
+If a helper only handles one pattern, tests will fail when the code uses the other pattern.
+
+**Example**:
+```bash
+# ✅ GOOD: mock_ip_link handles both patterns
+mock_ip_link "UP,DOWN" "br0,eth0"
+# Handles: ip link show (all interfaces)
+# Handles: ip link show br0 (specific interface)
+# Handles: ip link show eth0 (specific interface)
+
+# ❌ BAD: Only handles ip link show without arguments
+# Fails when check_interface_state calls: ip link show br0
+```
+
+**Standard**:
+- Test both argument patterns if the code calls commands with/without arguments
+- Extend helpers to handle both patterns when needed
+- Verify helper behavior matches how the code under test calls the command
+
+#### Pattern 5h: Using `additional_handlers` Parameter for Complex Mocks
+
+**Pattern**: When a test needs a mock that combines base functionality (e.g., VPN down) with additional handlers (e.g., route checks), use the `additional_handlers` parameter pattern.
+
+**When to use**: When you need a mock that combines a base helper function's behavior with additional command handlers specific to your test.
+
+**Key Insight**: Some helper functions (e.g., `mock_ip_vpn_down`) accept an `additional_handlers` parameter that allows you to add custom command handlers without rewriting the entire mock.
+
+**Example**:
+```bash
+# ✅ GOOD: Use additional_handlers to combine base + specific behavior
+local additional_handlers
+additional_handlers=$(cat <<ADDITIONAL_EOF
+elif [[ "\$1" == "route" ]] && [[ "\$2" == "get" ]]; then
+    # Return route information for alternative route
+    echo "172.31.13.239 via ${TEST_PEER_IP} dev eth0 src 172.31.19.169"
+    exit 0
+elif [[ "\$1" == "addr" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "br0" ]]; then
+    echo "1: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+    echo "    inet 192.168.1.1/24 brd 192.168.1.255 scope global br0"
+    exit 0
+ADDITIONAL_EOF
+)
+mock_ip_vpn_down "${TEST_DIR}/ip" "$additional_handlers"
+```
+
+**Benefits**:
+- Reduces code duplication
+- Maintains consistency with base mock behavior
+- Allows tests to add specific handlers without rewriting the entire mock
+
+**Standard**:
+- Use `additional_handlers` pattern for complex mocks that combine base + specific behavior
+- Prefer this pattern over creating completely custom mocks when possible
+- Document why custom mocks are kept when they can't use this pattern
+
+#### Pattern 5i: When to Keep Custom Mocks
+
+**Pattern**: Keep custom mocks when testing very specific edge cases, tool availability detection failures, or specific error message formats that are unlikely to be reused elsewhere.
+
+**When to use**: When a test needs behavior that doesn't fit existing helper functions and is unlikely to be needed by other tests.
+
+**Decision Criteria**: Keep custom mocks when:
+- Testing very specific edge cases (e.g., multiple lifetime lines in xfrm output)
+- Testing tool availability detection failures
+- Testing specific error message formats
+- The custom behavior is unlikely to be reused elsewhere
+
+**Examples**:
+- Multiple lifetime lines: Specific parsing edge case
+- Command availability failures: Testing tool detection logic
+- Interface doesn't exist: Testing specific error message format
+- SA exists but no lifetime: Testing byte extraction failure edge case
+
+**Standard**:
+- Document why custom mocks are kept in refactoring documentation
+- Extend helpers when multiple tests need similar behavior rather than creating custom mocks
+- Prefer helper functions for common patterns, custom mocks only for truly unique cases
+
+**Pattern**: Mock Commands Must Handle Command Availability Checks
 
 **Pattern**: When mocking commands, handle command availability check arguments (`--help` and `--version`) in addition to the actual command subcommands.
 
@@ -1733,16 +1900,59 @@ EOF
 
 **Systematic Application**:
 - When adding validation layers, identify all affected tests
-- Update test expectations to match validation order
-- Document validation order in test comments
-- Consider testing validation at each layer separately
+- Update test configurations to comply with schema validation rules
+- Test configurations must use valid values (e.g., `COOLDOWN_MINUTES` must be integer >= 1, `LOCKFILE_TIMEOUT` must be >= 60)
+
+### 20. Test Configurations Must Comply with Schema Validation
+
+**Pattern**: All test configuration values must comply with schema validation rules, even if tests manually manipulate state files.
+
+**When to use**: When writing or updating tests that set configuration values.
+
+**Key Insight**: Schema validation runs during `load_config()` and will reject invalid values before tests can run. Tests that need short durations for testing purposes can still manually manipulate state files (e.g., cooldown files) to bypass config validation, but the config values themselves must be valid.
+
+**Example**:
+```bash
+# ✅ GOOD: Config uses valid values, test manually sets short cooldown
+setup_vpn_flapping_fixture "${TEST_PEER_IP}" "up" 1000 2000 \
+    'COOLDOWN_MINUTES=1' \  # Valid: integer >= 1
+    'LOCKFILE_TIMEOUT=60' \  # Valid: >= 60
+    'TIER1_THRESHOLD=1'
+
+# Manually set short cooldown for testing (bypasses config validation)
+local cooldown_file="${STATE_DIR}/cooldown_until"
+local cooldown_seconds=2  # Short duration for fast test
+local cooldown_until=$(awk "BEGIN {print int($(date +%s) + $cooldown_seconds + 1)}")
+echo "$cooldown_until" >"$cooldown_file"
+
+# ❌ BAD: Config uses invalid values that fail schema validation
+setup_vpn_flapping_fixture "${TEST_PEER_IP}" "up" 1000 2000 \
+    'COOLDOWN_MINUTES=0.01' \  # Invalid: must be integer >= 1
+    'LOCKFILE_TIMEOUT=5' \     # Invalid: must be >= 60
+    'TIER1_THRESHOLD=1'
+# Test fails before it can run - schema validation rejects invalid values
+```
+
+**Common Schema Requirements**:
+- `COOLDOWN_MINUTES`: Must be integer, min: 1, max: 1440
+- `LOCKFILE_TIMEOUT`: Must be integer, min: 60, max: 3600
+- `TIER1_THRESHOLD`, `TIER2_THRESHOLD`, `TIER3_THRESHOLD`: Must be integers, min: 1, with relative ordering (TIER2 >= TIER1, TIER3 >= TIER2)
+
+**Systematic Application**:
+- Always check `lib/config_schema.sh` for valid ranges when setting test config values
+- Use minimum valid values (e.g., `COOLDOWN_MINUTES=1`, `LOCKFILE_TIMEOUT=60`) if tests need short durations
+- For tests that need very short durations, manually manipulate state files after config validation passes
+- Update test helper defaults to use valid schema-compliant values
 
 **Related Patterns**:
+- See `lib/config_schema.sh` for complete schema definitions
+- See ADR-0010 for schema validation design decisions
+- See "Schema Validation Order Affects Test Expectations" pattern above
 - See `lib/config.sh:safe_parse_config_file()` for schema validation
 - See `lib/config.sh:parse_location_config()` for location parsing
 - See `tests/test_config_location.sh` for updated test patterns
 
-### 20. Test Helper Functions Can Create Duplicate Configurations
+### 21. Test Helper Functions Can Create Duplicate Configurations
 
 **Pattern**: When test helpers add default configurations, either use the helper and accept the defaults, OR use lower-level helpers directly to avoid defaults.
 
@@ -1782,7 +1992,7 @@ setup_location_test_vpn_monitor "${TEST_DIR}" \
 - See `tests/test_helper.bash:setup_test_location_config()` for lower-level helper
 - See `tests/test_integration_location.sh` for examples of avoiding duplicates
 
-### 21. Test Setup: Heredoc Variable Expansion
+### 22. Test Setup: Heredoc Variable Expansion
 
 **Pattern**: When creating test config files with heredocs, use `<<EOF` (without quotes) if you need variable expansion, or `<<'EOF'` (with quotes) if you want literal strings.
 

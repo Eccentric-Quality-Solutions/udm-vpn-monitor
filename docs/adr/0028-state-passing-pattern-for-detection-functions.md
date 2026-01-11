@@ -159,9 +159,10 @@ check_vpn_status()
 
 ## References
 - analyze/ARCHITECTURE_REVIEW_SA_CHECK.md: Comprehensive architecture review of this refactoring
-- lib/detection.sh: `check_xfrm_status()` function (state provider, lines ~578-700)
-- lib/detection.sh: `check_vpn_status()` function (state capturer and passer, lines ~2300-2500)
-- lib/detection.sh: `check_ping_optional()` function (state consumer, lines ~2100-2200)
-- lib/detection.sh: `detect_failure_type()` function (state consumer, lines ~2600-2800)
+- lib/detection/xfrm_detection.sh: `check_xfrm_status()` function (state provider)
+- lib/detection/failure_analysis.sh: `check_vpn_status()` function (state capturer and passer)
+- lib/detection/ping_detection.sh: `check_ping_optional()` function (state consumer)
+- lib/detection/failure_analysis.sh: `detect_failure_type()` function (state consumer)
 - tests/test_detection_ping_optional.sh: Test coverage for state passing pattern
 - CHANGELOG.md: "SA State Passing Optimization" entry
+- CODE_REVIEW_detection_split.md: Detection module split (2026-01-15) - state passing pattern preserved across module boundaries

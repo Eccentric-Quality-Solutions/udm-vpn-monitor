@@ -85,7 +85,7 @@ We will use byte counters from `ip xfrm state` as the primary method for detecti
   - `current_bytes == last_bytes && ping_fails`: Likely broken
   - `last_bytes == 0`: First check or after rekey (accepts any non-zero, or zero with successful ping)
   - `current_bytes < last_bytes`: Abnormal decrease, logged as warning, then checked with ping
-- **Module**: Implemented in `lib/detection.sh` with `check_byte_counters()` function
+- **Module**: Implemented in `lib/detection/xfrm_detection.sh` with `check_byte_counters()` function
 
 ## Related ADRs
 - ADR-0006: Multi-Method Detection with Fallback (byte counters are primary method)
@@ -101,8 +101,9 @@ We will use byte counters from `ip xfrm state` as the primary method for detecti
 ## References
 - ARCHITECTURE.md: "Detection Method Flow" section
 - ARCHITECTURE.md: "State Management" section (byte counter storage)
-- lib/detection.sh: `check_byte_counters()` function implementation (lines 1372-1546)
-- lib/detection.sh: `check_xfrm_status()` function (byte counter extraction)
+- lib/detection/xfrm_detection.sh: `check_byte_counters()` function implementation
+- lib/detection/xfrm_detection.sh: `check_xfrm_status()` function (byte counter extraction)
 - lib/state.sh: State file management functions
 - CHANGELOG.md: v0.2.0 "Simplified Byte Counter Detection" entry
+- CODE_REVIEW_detection_split.md: Detection module split (2026-01-15) - byte counter detection moved to xfrm_detection.sh
 

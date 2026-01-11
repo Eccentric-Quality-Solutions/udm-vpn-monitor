@@ -560,7 +560,7 @@ This function standardizes error handling patterns and makes it easier to mainta
 
 **`handle_error_or_exit_fake_mode()` Function**:
 The `handle_error_or_exit_fake_mode()` function provides consistent error handling for fatal errors that need fake mode support:
-- **Fake mode (NO_ESCALATE=1)**: Logs error and exits with code 0 (graceful exit for testing)
+- **Fake mode (NO_ESCALATE=1)**: Logs error and returns 1 (allows caller to decide exit behavior)
 - **Normal mode**: Logs error and exits with specified exit code (default: 1)
 - **Usage**: `handle_error_or_exit_fake_mode "prefix" "message" [exit_code]`
 - **Location**: Defined in `lib/logging.sh` (centralized error handling)
@@ -568,6 +568,8 @@ The `handle_error_or_exit_fake_mode()` function provides consistent error handli
 **Important**: The prefix argument is REQUIRED. Use "SYSTEM" for system-level errors, or a location name for location-specific errors.
 
 This function should be used instead of manually checking `is_fake_mode()` for fatal errors. It standardizes the pattern of handling errors differently based on fake mode.
+
+**Exit Behavior in Fake Mode**: The caller must decide whether to exit with error code or code 0 based on whether the error is execution-blocking. See `docs/FAKE_MODE_EXIT_BEHAVIOR.md` for detailed guidance on categorizing errors and determining appropriate exit behavior.
 
 **Error Code Constants**:
 Standard exit codes are defined in `lib/constants.sh` for consistent error handling:

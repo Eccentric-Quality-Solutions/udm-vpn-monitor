@@ -164,8 +164,9 @@ fi
 **Key Points:**
 - Use `handle_error_or_exit_fake_mode()` instead of manual `is_fake_mode()` checks
 - Standardizes fake mode handling across codebase
-- Fake mode (NO_ESCALATE=1): Logs error and exits with code 0
+- Fake mode (NO_ESCALATE=1): Logs error and returns 1 (allows caller to decide exit behavior)
 - Normal mode: Logs error and exits with specified exit code
+- **See `docs/FAKE_MODE_EXIT_BEHAVIOR.md` for detailed guidance on when to exit with error code vs. code 0 in fake mode**
 
 **Pattern: Checking Return Value in Functions**
 

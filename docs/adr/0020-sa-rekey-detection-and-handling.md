@@ -56,7 +56,7 @@ We will detect SA rekey events by tracking SPI (Security Parameter Index) change
 - **Functions**:
   - `detect_sa_rekey()`: Detects rekey and resets baseline
   - `check_sa_rekey_occurred()`: Read-only check for rekey (doesn't modify state)
-- **Module**: Implemented in `lib/detection.sh` with rekey detection functions
+- **Module**: Implemented in `lib/detection/xfrm_detection.sh` with rekey detection functions
 
 ## Related ADRs
 - ADR-0019: Byte Counter Detection Method (rekey handling prevents false positives in byte counter detection)
@@ -67,8 +67,8 @@ We will detect SA rekey events by tracking SPI (Security Parameter Index) change
 
 ## References
 - ARCHITECTURE.md: "State Management" section (SPI storage)
-- lib/detection.sh: `detect_sa_rekey()` function implementation
-- lib/detection.sh: `check_sa_rekey_occurred()` function implementation
-- lib/detection.sh: `check_byte_counters()` function (rekey integration)
+- lib/detection/xfrm_detection.sh: `detect_sa_rekey()` function implementation
+- lib/detection/xfrm_detection.sh: `check_sa_rekey_occurred()` function implementation
+- lib/detection/xfrm_detection.sh: `check_byte_counters()` function (rekey integration)
 - lib/state.sh: SPI state management functions
 

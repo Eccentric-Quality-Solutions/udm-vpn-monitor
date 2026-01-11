@@ -11,6 +11,7 @@ load fixtures/vpn_down
 load fixtures/vpn_failing
 load fixtures/vpn_rekey
 load fixtures/vpn_bytes_zero
+load fixtures/vpn_idle
 
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
@@ -413,22 +414,26 @@ EOF
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="172.31.13.239"' 'LOCAL_UDM_IP="172.31.19.169"'
 
 	# Mock ip command - no SA (VPN down), but handle route get command
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    # Return empty (no SA - VPN down)
-    exit 0
-elif [[ "$1" == "route" ]] && [[ "$2" == "get" ]]; then
+	local additional_handlers
+	additional_handlers=$(
+		cat <<ADDITIONAL_EOF
+elif [[ "\$1" == "route" ]] && [[ "\$2" == "get" ]]; then
     # Return route information for alternative route
     # Format: "172.31.13.239 via 192.168.1.1 dev eth0 src 172.31.19.169"
     echo "172.31.13.239 via ${TEST_PEER_IP} dev eth0 src 172.31.19.169"
     exit 0
-fi
-# Handle other ip commands (addr show/add for route setup)
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
+elif [[ "\$1" == "addr" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "br0" ]]; then
+    # Route doesn't exist initially (so it will try to add it)
+    # Output something that doesn't contain the target IP
+    echo "1: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+    echo "    inet 192.168.1.1/24 brd 192.168.1.255 scope global br0"
+    exit 0
+elif [[ "\$1" == "addr" ]] && [[ "\$2" == "add" ]]; then
+    # Route add succeeds
+    exit 0
+ADDITIONAL_EOF
+	)
+	mock_ip_vpn_down "${TEST_DIR}/ip" "$additional_handlers"
 
 	# Mock ping - succeeds (connectivity exists via alternative route)
 	mock_ping "172.31.13.239" "1" >/dev/null
@@ -455,20 +460,24 @@ EOF
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="172.31.13.239"' 'LOCAL_UDM_IP="172.31.19.169"'
 
 	# Mock ip command - no SA (VPN down), route get fails
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    # Return empty (no SA - VPN down)
-    exit 0
-elif [[ "$1" == "route" ]] && [[ "$2" == "get" ]]; then
+	local additional_handlers
+	additional_handlers=$(
+		cat <<ADDITIONAL_EOF
+elif [[ "\$1" == "route" ]] && [[ "\$2" == "get" ]]; then
     # Simulate route get failure (route info unavailable)
     exit 1
-fi
-# Handle other ip commands (addr show/add for route setup)
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
+elif [[ "\$1" == "addr" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "br0" ]]; then
+    # Route doesn't exist initially (so it will try to add it)
+    # Output something that doesn't contain the target IP
+    echo "1: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+    echo "    inet 192.168.1.1/24 brd 192.168.1.255 scope global br0"
+    exit 0
+elif [[ "\$1" == "addr" ]] && [[ "\$2" == "add" ]]; then
+    # Route add succeeds
+    exit 0
+ADDITIONAL_EOF
+	)
+	mock_ip_vpn_down "${TEST_DIR}/ip" "$additional_handlers"
 
 	# Mock ping - succeeds (connectivity exists via alternative route)
 	mock_ping "172.31.13.239" "1" >/dev/null
@@ -529,33 +538,28 @@ EOF
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="172.31.13.239 172.31.13.240"' 'LOCAL_UDM_IP="172.31.19.169"'
 
 	# Mock ip command - no SA (VPN down), handle route get for first IP
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    # Return empty (no SA - VPN down)
-    exit 0
-elif [[ "$1" == "route" ]] && [[ "$2" == "get" ]]; then
+	local additional_handlers
+	additional_handlers=$(
+		cat <<ADDITIONAL_EOF
+elif [[ "\$1" == "route" ]] && [[ "\$2" == "get" ]]; then
     # Return route information for first IP
     echo "172.31.13.239 via ${TEST_PEER_IP} dev eth0 src 172.31.19.169"
     exit 0
-fi
-# Handle other ip commands (addr show/add for route setup)
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
+elif [[ "\$1" == "addr" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "br0" ]]; then
+    # Route doesn't exist initially (so it will try to add it)
+    # Output something that doesn't contain the target IP
+    echo "1: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+    echo "    inet 192.168.1.1/24 brd 192.168.1.255 scope global br0"
+    exit 0
+elif [[ "\$1" == "addr" ]] && [[ "\$2" == "add" ]]; then
+    # Route add succeeds
+    exit 0
+ADDITIONAL_EOF
+	)
+	mock_ip_vpn_down "${TEST_DIR}/ip" "$additional_handlers"
 
 	# Mock ping - succeeds for both IPs
-	local mock_ping="${TEST_DIR}/ping"
-	cat >"$mock_ping" <<'EOF'
-#!/bin/bash
-echo "PING $2 ($2): 56(84) bytes of data."
-echo "64 bytes from $2: icmp_seq=1 ttl=64 time=0.123 ms"
-echo "--- $2 ping statistics ---"
-echo "3 packets transmitted, 3 received, 0% packet loss"
-exit 0
-EOF
-	chmod +x "$mock_ping"
+	mock_ping_selective "172.31.13.239 172.31.13.240" >/dev/null
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -587,20 +591,7 @@ EOF
 
 	# Mock ipsec status to hang (simulates timeout)
 	# Sleep longer than IPSEC_STATUS_TIMEOUT (5 seconds) to trigger timeout
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	cat >"$mock_ipsec" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "status" ]]; then
-    # Simulate ipsec status hanging longer than timeout (6 seconds > 5 second timeout)
-    sleep 6
-    exit 0
-elif [[ "$1" == "--help" ]] || [[ "$1" == "--version" ]]; then
-    # Handle command availability checks (used by check_command_available)
-    exit 0
-fi
-exec /usr/bin/ipsec "$@"
-EOF
-	chmod +x "$mock_ipsec"
+	mock_ipsec_timeout 6 >/dev/null
 	add_mock_to_path
 
 	# Run with timeout to prevent test from hanging
@@ -781,22 +772,7 @@ EOF
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - one interface DOWN
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "link" ]] && [[ "$2" == "show" ]]; then
-    if [[ "$3" == "br0" ]]; then
-        echo "1: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default"
-        exit 0
-    elif [[ "$3" == "eth0" ]]; then
-        echo "2: eth0: <BROADCAST,MULTICAST> mtu 1500 qdisc noqueue state DOWN group default"
-        exit 0
-    fi
-fi
-# Handle other ip commands
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_link "UP,DOWN" "br0,eth0" >/dev/null
 	add_mock_to_path
 
 	# Source detection functions to test directly
@@ -1270,17 +1246,28 @@ EOF
 	# Purpose: Test verifies that failure type "unknown" is detected when unable to determine specific type
 	# Expected: Failure type is detected as "unknown" when detection methods fail
 	# Importance: Ensures failure tracking continues even when specific type cannot be determined
-	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
+	# Disable ping check so that when byte counter extraction fails, VPN check fails and failure type detection is triggered
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
 
 	# Mock ip command - SA exists but no byte counter info
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag)
     echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
     echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
     # No lifetime line (can't extract bytes)
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Handle "ip xfrm state" (without statistics flag)
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    # No lifetime line (can't extract bytes)
+    exit 0
 fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
