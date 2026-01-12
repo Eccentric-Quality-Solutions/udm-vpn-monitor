@@ -3,7 +3,7 @@
 # Recovery state management functions for UDM VPN Monitor
 # Manages recovery method tracking and peer display formatting
 #
-# Version: 0.5.0
+# Version: 0.6.0
 #
 
 # Store recovery method used for a location

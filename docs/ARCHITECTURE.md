@@ -325,6 +325,8 @@ The ping check is designed as a **supplementary diagnostic tool**, not a hard fa
 
 If validation fails (based on SA state and byte counters), it escalates through recovery tiers. The ping check helps distinguish between "tunnel exists but broken" and "tunnel exists and working but idle".
 
+**Note**: When ping check is enabled, `routing_issue` warnings may still appear for healthy VPNs in some edge cases. These warnings are logged "for diagnostic purposes" but can create log noise (Issue #16 - Partially Fixed). The VPN is still correctly identified as healthy (SA exists, bytes increasing), but the routing_issue warning may be logged even when the VPN is functioning correctly.
+
 ## Recovery Tier Flow
 
 ```mermaid
@@ -569,15 +571,21 @@ All per-location state files use sanitized location names and peer IP addresses 
 The log analysis script (`analyze-logs.sh`) distinguishes between two types of recoveries based on log message patterns:
 
 1. **App-Managed Recoveries** (with intervention):
-   - **Identification**: Log messages containing "recovery method" indicate that a recovery action (Tier 2 or Tier 3) was attempted
-   - **Pattern**: `"VPN restored for LOCATION (IP) after N failures (recovery method: METHOD)"` or `"VPN restored for LOCATION (IP) (recovery method: METHOD)"`
+   - **Identification**: Log messages containing "recovery method" or "VPN restored" indicate that a recovery action (Tier 2 or Tier 3) was attempted
+   - **Pattern**: 
+     - `"VPN restored for LOCATION (IP) after N failures (recovery method: METHOD)"` - Explicit recovery method
+     - `"VPN restored for LOCATION (IP) (recovery method: METHOD)"` - Recovery method without failure count
+     - `"VPN restored for LOCATION (IP) after N failures"` - "restored" terminology indicates intervention
+     - `"VPN restored for LOCATION (IP)"` - "restored" terminology indicates intervention
    - **Meaning**: The system took action to restore the VPN tunnel (xfrm recovery, ipsec reload, or ipsec restart)
    - **Statistics**: Tracked separately to evaluate effectiveness of recovery actions and intervention needs
    - **Example**: `"VPN restored for NYC (203.0.113.1) after 3 failures (recovery method: xfrm-based recovery)"`
 
 2. **Self-Healed Recoveries** (no intervention):
-   - **Identification**: Log messages containing "after N failures" but no "recovery method" indicate natural recovery
-   - **Pattern**: `"VPN recovered for LOCATION (IP) after N failures"`
+   - **Identification**: Log messages containing "VPN recovered" without "recovery method" indicate natural recovery
+   - **Pattern**: 
+     - `"VPN recovered for LOCATION (IP) after N failures"` - "recovered" without recovery method
+     - `"VPN recovered for LOCATION (IP)"` - "recovered" without recovery method or failure count
    - **Meaning**: The VPN tunnel recovered on its own without requiring intervention (e.g., SA rekey, network recovery, transient issues)
    - **Statistics**: Tracked separately to evaluate VPN stability and natural recovery capabilities
    - **Example**: `"VPN recovered for NYC (203.0.113.1) after 1 failures"`
@@ -588,11 +596,22 @@ The log analysis script (`analyze-logs.sh`) distinguishes between two types of r
 - **App-Managed Recovery Rate** = (App-Managed Recoveries / Total Failures) × 100%
 - **Self-Healed Recovery Rate** = (Self-Healed Recoveries / Total Failures) × 100%
 
+**Classification Method**:
+The classification logic uses a hierarchical pattern matching approach:
+1. **Check for "recovery method"** (most specific) - Always app-managed
+2. **Check for "VPN restored"** - Always app-managed (indicates intervention)
+3. **Check for "after X failures"** with "VPN recovered" - Self-healed (no intervention)
+4. **Default to self-healed** - Edge cases default to self-healed
+
 **Benefits**:
 - **Intervention Evaluation**: High app-managed recovery rate indicates frequent intervention needs
 - **System Stability**: High self-healed recovery rate indicates good VPN stability and natural recovery
 - **Recovery Tracking**: Helps identify if failures are transient (self-heal) or persistent (require intervention)
 - **Pattern Analysis**: Enables analysis of recovery patterns over time to identify trends
+- **CSV Export**: Recovery type labels in CSV export for spreadsheet analysis
+- **Report Generation**: Recovery type breakdown in text reports and event timelines
+
+**Note**: Recovery messages are only logged when `failure_count > 0` to prevent false positive recovery messages. Stale `failure_type` files are cleared silently without logging recovery (Issue #17 - Fixed).
 
 **Benefits of Per-Location Tracking**:
 - **Independent Recovery**: Each tunnel can be recovered independently based on its own failure count
@@ -1056,6 +1075,20 @@ graph TB
     CommonLib --> LoggingLib
 ```
 
+## Recent Improvements
+
+The following improvements have been implemented to enhance system reliability and operational clarity:
+
+- **Detection Reliability Safeguard** (ADR-0026): Prevents recovery escalation when detection tools are unavailable, avoiding false recovery actions that could disrupt working VPN connections. See Design Decision #3 for details.
+
+- **Enhanced Command Availability Checking** (ADR-0027): Three-tier fallback mechanism ensures commands are found even in restricted PATH environments common in cron/systemd contexts. See Design Decision #11 for details.
+
+- **Recovery Type Distinction** (ADR-0029): Log analysis distinguishes between app-managed recoveries (with intervention) and self-healed recoveries (no intervention), enabling evaluation of recovery action effectiveness and VPN stability patterns. See "Recovery Type Distinction" section above for details.
+
+- **State Passing Pattern** (ADR-0028): Optimizes detection system by reducing duplicate system calls by 66-75% (from 3 `ip xfrm state` calls to 1 per VPN check cycle). See Design Decision #12 for details.
+
+- **False Positive Recovery Messages Fix** (Issue #17): Recovery messages are now only logged when `failure_count > 0`, preventing false positive recovery messages from stale state files.
+
 ## Key Design Decisions
 
 ### 1. Cron-Based Execution
@@ -1188,7 +1221,12 @@ graph TB
 5. **State Recovery**: Stale lockfiles automatically cleaned up (see Design Decision #2)
 6. **Graceful Degradation**: If preferred tool unavailable, falls back to alternative without failing
 7. **Detection Reliability Safeguard**: When detection tools are unavailable, recovery escalation is blocked to prevent false recovery actions (see Design Decision #3). Failures are still logged for monitoring, but Tier 2/3 recovery actions are skipped when detection is unreliable.
-8. **Network Command Timeout Handling**: Network commands that may hang are wrapped with `timeout` command to prevent indefinite blocking:
+
+8. **False Positive Prevention**: 
+   - Recovery messages are only logged when `failure_count > 0` to prevent false positive recovery messages (Issue #17 - Fixed)
+   - Stale `failure_type` files are cleared silently without logging recovery
+   - Routing_issue warnings may still appear for healthy VPNs when ping check is enabled (Issue #16 - Partially Fixed), but VPN status is correctly identified as healthy
+9. **Network Command Timeout Handling**: Network commands that may hang are wrapped with `timeout` command to prevent indefinite blocking:
    - **Pattern**: Wrap potentially hanging network commands with `timeout` wrapper
    - **Implementation**: Check for `timeout` command availability, wrap command with calculated timeout value
    - **Timeout Calculation**: Use reasonable timeout based on expected command duration (e.g., `ping_count * ping_timeout + 1` seconds, capped at reasonable maximum)

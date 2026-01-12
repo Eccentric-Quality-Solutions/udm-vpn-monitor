@@ -3,7 +3,7 @@
 # Global state operations
 # Handles cooldown periods, rate limiting, restart tracking, and state validation
 #
-# Version: 0.5.0
+# Version: 0.6.0
 #
 
 # Get timestamp plus N minutes

@@ -2,7 +2,95 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
-## [Unreleased]
+## 0.6.0 - 2026-01-11
+
+### Added
+- **Modular Library Architecture Refactoring**: Major refactoring to improve code organization and maintainability:
+  - Split `lib/config.sh` (2365 lines) into modular subdirectories: `lib/config/config_defaults.sh`, `lib/config/config_loading.sh`, `lib/config/config_validation.sh`, `lib/config/location_parsing.sh`
+  - Split `lib/detection.sh` (3004 lines) into modular subdirectories: `lib/detection/failure_analysis.sh`, `lib/detection/network_validation.sh`, `lib/detection/ping_detection.sh`, `lib/detection/xfrm_detection.sh`
+  - Split `lib/recovery.sh` (2633 lines) into modular subdirectories: `lib/recovery/constants.sh`, `lib/recovery/ipsec_recovery.sh`, `lib/recovery/recovery_orchestration.sh`, `lib/recovery/recovery_state.sh`, `lib/recovery/recovery_verification.sh`, `lib/recovery/xfrm_recovery.sh`
+  - Split `lib/state.sh` (1421 lines) into modular subdirectories: `lib/state/global_state.sh`, `lib/state/location_state.sh`, `lib/state/peer_state.sh`, `lib/state/state_init.sh`, `lib/state/state_paths.sh`
+  - Added `lib/fallbacks.sh` module providing graceful degradation when modules can't be loaded
+  - Improved code organization, maintainability, and testability
+- **State Passing Pattern Implementation** (ADR-0028): Optimized detection system by reducing duplicate system calls by 66-75% (from 3 `ip xfrm state` calls to 1 per VPN check cycle):
+  - Detection functions now accept state objects to avoid redundant system calls
+  - Improved performance and reduced system load
+  - Better code organization with state management centralized
+- **Enhanced Test Infrastructure**: Major improvements to test infrastructure and organization:
+  - Moved testing documentation to `docs/testing/` subdirectory for better organization
+  - Added comprehensive test helpers in `tests/helpers/` subdirectory:
+    - `tests/helpers/assertions.bash` - Enhanced assertion functions
+    - `tests/helpers/config.bash` - Configuration test helpers
+    - `tests/helpers/detection.bash` - Detection test helpers
+    - `tests/helpers/fixtures.bash` - Fixture management helpers
+    - `tests/helpers/logging.bash` - Logging test helpers
+    - `tests/helpers/mocks.bash` - Mock management helpers
+    - `tests/helpers/recovery.bash` - Recovery test helpers
+    - `tests/helpers/resources.bash` - Resource test helpers
+    - `tests/helpers/state.bash` - State test helpers
+    - `tests/helpers/test_data.bash` - Test data generators
+  - Added test data templates in `tests/data/` subdirectory:
+    - `tests/data/configs/config_templates.sh` - Configuration templates
+    - `tests/data/mock_outputs/ipsec_status_templates.sh` - IPsec status mock templates
+    - `tests/data/mock_outputs/xfrm_state_templates.sh` - XFRM state mock templates
+  - Enhanced test fixtures: `tests/fixtures/vpn_active.bash`, `tests/fixtures/vpn_down.bash`
+  - Improved test isolation and reliability
+- **New API Script**: Added `scripts/api/list-udm-vpns.sh` utility script for listing VPN connections on UDM systems
+- **Comprehensive Test Coverage**: Expanded test suite with new test files:
+  - `tests/test_common_timestamp.sh` - Timestamp function tests
+  - `tests/test_config_validation.sh` - Configuration validation tests
+  - `tests/test_detection_network_partition.sh` - Network partition detection tests
+  - `tests/test_errors.sh` - Error handling tests
+  - `tests/test_fallbacks.sh` - Fallback mechanism tests
+  - `tests/test_lockfile.sh` - Enhanced lockfile tests
+  - `tests/test_main.sh` - Main script tests
+  - `tests/test_prepare_install_package.sh` - Install package preparation tests
+  - `tests/test_state.sh` - State management tests
+  - `tests/test_test_data_generators.sh` - Test data generator tests
+  - `tests/test_test_isolation.sh` - Test isolation verification tests
+
+### Changed
+- **Modular Architecture**: Refactored large monolithic library files into focused, single-responsibility modules:
+  - Better code organization and maintainability
+  - Improved testability with isolated modules
+  - Reduced cognitive load when working with specific functionality
+  - Maintained backward compatibility with existing function signatures
+- **Location Name Parameter Requirement**: Detection functions now require `location_name` parameter (no longer accepts empty string):
+  - Improved type safety and error detection
+  - Better logging context with location names
+  - Prevents bugs from missing location context
+  - Test fixes updated to use "TEST" location name instead of empty string
+- **Test Suite Improvements**: Enhanced test suite with better organization and reliability:
+  - Improved test helpers with better synchronization and mocking
+  - Enhanced test fixtures for common scenarios
+  - Better test isolation to prevent interference between tests
+  - Improved test data generators for consistent test scenarios
+- **Documentation Organization**: Reorganized documentation for better structure:
+  - Moved testing documentation to `docs/testing/` subdirectory
+  - Updated ADRs to reflect modular architecture changes
+  - Enhanced architecture documentation with recent improvements section
+- **False Positive Prevention**: Improved false positive prevention:
+  - Recovery messages only logged when `failure_count > 0` (Issue #17 - Fixed)
+  - Stale `failure_type` files cleared silently without logging recovery
+  - Routing_issue warnings may still appear for healthy VPNs when ping check is enabled (Issue #16 - Partially Fixed), but VPN status is correctly identified as healthy
+- **Code Coverage Improvements**: Enhanced kcov performance and coverage reporting
+- **CI/CD Workflow**: Updated GitHub Actions workflow for improved test execution and reporting
+
+### Fixed
+- **Test Fixes**: Fixed test cases to properly use location_name parameter:
+  - `tests/test_detection_xfrm_edge_cases.sh` - Added location_name variable to test cases
+  - `tests/test_helper_functions.sh` - Changed empty location_name to "TEST" for proper state management
+  - `tests/test_integration.sh` - Updated fixture setup to use correct fixture function
+- **Location Name Validation**: Removed unsafe `${location_name:-SYSTEM}` fallback patterns (14 instances) to prevent bugs:
+  - Functions now properly require location_name parameter
+  - Better error detection and type safety
+  - Prevents silent failures from missing location context
+
+### Removed
+- **Deprecated Documentation**: Removed outdated documentation files:
+  - `docs/AUDIT_MISSING_DEPENDENCIES.md` - Replaced by improved dependency checking
+  - `docs/MOCK_CLEANUP_AUDIT.md` - Replaced by improved test infrastructure
+- **Deprecated Script**: Removed `scripts/audit_mock_cleanup.sh` - Functionality integrated into improved test infrastructure
 
 ## 0.5.0 - 2026-01-06
 

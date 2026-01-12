@@ -3,7 +3,7 @@
 # Centralized fallback function definitions for UDM VPN Monitor
 # Provides standardized fallback implementations when modules can't be sourced
 #
-# Version: 0.5.0
+# Version: 0.6.0
 
 # Define schema fallback functions
 #

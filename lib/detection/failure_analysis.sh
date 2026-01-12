@@ -3,7 +3,7 @@
 # Failure analysis functions for UDM VPN Monitor
 # Handles failure type classification and VPN status determination
 #
-# Version: 0.5.0
+# Version: 0.6.0
 #
 
 # Source constants for magic numbers

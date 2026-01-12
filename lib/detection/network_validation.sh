@@ -3,7 +3,7 @@
 # Network validation functions for UDM VPN Monitor
 # Handles IP validation (IPv4/IPv6) and route checks
 #
-# Version: 0.5.0
+# Version: 0.6.0
 #
 
 # Source constants for magic numbers

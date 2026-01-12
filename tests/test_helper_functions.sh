@@ -3635,22 +3635,22 @@ source_lockfile_module() {
 	source_function "get_peer_state"
 
 	# Set initial state: stored SPI and byte counter
-	set_peer_state "" "203.0.113.1" "spi" "0x12345678" || true
-	set_peer_state "" "203.0.113.1" "last_bytes" "5000" || true
+	set_peer_state "TEST" "203.0.113.1" "spi" "0x12345678" || true
+	set_peer_state "TEST" "203.0.113.1" "last_bytes" "5000" || true
 
 	# Check with new SPI (rekey) and new bytes
-	run check_byte_counters "" "1000" "203.0.113.1" "0x87654321"
+	run check_byte_counters "TEST" "1000" "203.0.113.1" "0x87654321"
 	assert_success
 
 	# Verify byte counter baseline was reset and updated
 	local last_bytes
-	last_bytes=$(get_peer_state "" "203.0.113.1" "last_bytes" "0")
+	last_bytes=$(get_peer_state "TEST" "203.0.113.1" "last_bytes" "0")
 	# Use assert_equal for better error messages
 	assert_equal "$last_bytes" "1000"
 
 	# Verify SPI was updated
 	local stored_spi
-	stored_spi=$(get_peer_state "" "203.0.113.1" "spi" "")
+	stored_spi=$(get_peer_state "TEST" "203.0.113.1" "spi" "")
 	# Use assert_equal for better error messages
 	assert_equal "$stored_spi" "0x87654321"
 }
@@ -3676,16 +3676,16 @@ source_lockfile_module() {
 	source_function "get_peer_state"
 
 	# Set initial state: stored SPI and byte counter
-	set_peer_state "" "203.0.113.1" "spi" "0x12345678" || true
-	set_peer_state "" "203.0.113.1" "last_bytes" "5000" || true
+	set_peer_state "TEST" "203.0.113.1" "spi" "0x12345678" || true
+	set_peer_state "TEST" "203.0.113.1" "last_bytes" "5000" || true
 
 	# Check with new SPI (rekey) but bytes=0
-	run check_byte_counters "" "0" "203.0.113.1" "0x87654321"
+	run check_byte_counters "TEST" "0" "203.0.113.1" "0x87654321"
 	assert_failure
 
 	# Verify byte counter baseline was reset (rekey detected)
 	local last_bytes
-	last_bytes=$(get_peer_state "" "203.0.113.1" "last_bytes" "0")
+	last_bytes=$(get_peer_state "TEST" "203.0.113.1" "last_bytes" "0")
 	# Use assert_equal for better error messages
 	assert_equal "$last_bytes" "0"
 }

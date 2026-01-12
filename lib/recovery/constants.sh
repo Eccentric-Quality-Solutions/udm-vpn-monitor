@@ -3,7 +3,7 @@
 # Recovery module constants for UDM VPN Monitor
 # Defines recovery-specific constants used across recovery modules
 #
-# Version: 0.5.0
+# Version: 0.6.0
 #
 
 # shellcheck disable=SC2034

@@ -3,7 +3,7 @@
 # Common functions for UDM VPN Monitor
 # Shared logging and utility functions for installation/uninstallation scripts and main monitor
 #
-# Version: 0.5.0
+# Version: 0.6.0
 #
 # This module provides shared utility functions used throughout the codebase to reduce duplication:
 # - File operations: file_exists_and_readable(), ensure_file_exists(), atomic_write_file()

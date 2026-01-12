@@ -403,7 +403,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that monitor_location function increments failure counter when VPN check detects failure
 	# Expected: Function increments per-peer failure counter and logs failure message when VPN is down
 	# Importance: Failure counter tracking enables tier escalation system to trigger recovery actions
-	setup_vpn_at_tier_fixture 1 "${TEST_PEER_IP}"
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 0
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 

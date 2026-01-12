@@ -3,7 +3,7 @@
 # Configuration validation for UDM VPN Monitor
 # Handles schema-based validation, type checking, and rule validation
 #
-# Version: 0.5.0
+# Version: 0.6.0
 
 # Validate configuration variable type
 # Note: parse_config_schema() is defined in config_loading.sh and available here

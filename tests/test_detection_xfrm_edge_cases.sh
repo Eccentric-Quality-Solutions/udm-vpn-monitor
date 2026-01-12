@@ -99,6 +99,7 @@ load test_helper
 	# Importance: Multiple SAs with same peer IP can occur during rekey transitions.
 	setup_test_environment "${TEST_DIR}"
 	local peer_ip="${TEST_PEER_IP}"
+	local location_name="TEST"
 
 	# Mock ip command with multiple SAs for same peer IP
 	# Must handle both "ip -s xfrm state" and "ip xfrm state" formats
@@ -158,6 +159,7 @@ EOF
 	# Importance: Special characters in IP addresses could cause parsing failures if not handled properly.
 	setup_test_environment "${TEST_DIR}"
 	local peer_ip="2001:db8::1"
+	local location_name="TEST"
 
 	# Mock ip command with IPv6 address
 	local mock_ip="${TEST_DIR}/ip"
@@ -196,6 +198,7 @@ EOF
 	# Importance: IPv4-mapped IPv6 addresses contain special characters that could cause parsing failures.
 	setup_test_environment "${TEST_DIR}"
 	local peer_ip="::ffff:192.168.1.1"
+	local location_name="TEST"
 
 	# Mock ip command with IPv4-mapped IPv6 address
 	local mock_ip="${TEST_DIR}/ip"
@@ -237,6 +240,7 @@ EOF
 	# check_ipsec_status works correctly as a fallback mechanism.
 	setup_test_environment "${TEST_DIR}"
 	local peer_ip="${TEST_PEER_IP}"
+	local location_name="TEST"
 
 	# Mock ip command that fails (simulating xfrm failure)
 	local mock_ip="${TEST_DIR}/ip"
@@ -262,7 +266,7 @@ EOF
 	source_function "check_ipsec_status"
 
 	# Test that check_ipsec_status works as fallback when xfrm fails
-	run check_ipsec_status "$peer_ip" "$location_name"
+	run check_ipsec_status "$peer_ip" "TEST"
 	assert_success
 
 	remove_mock_from_path

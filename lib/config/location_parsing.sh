@@ -3,7 +3,7 @@
 # Location-based configuration parsing for UDM VPN Monitor
 # Handles parsing and accessing location-based configuration variables
 #
-# Version: 0.5.0
+# Version: 0.6.0
 
 # Extract location name from variable name
 #

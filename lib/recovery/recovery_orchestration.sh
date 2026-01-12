@@ -3,7 +3,7 @@
 # Recovery orchestration functions for UDM VPN Monitor
 # Coordinates recovery actions across xfrm and IPsec recovery methods
 #
-# Version: 0.5.0
+# Version: 0.6.0
 #
 
 # Source recovery modules
