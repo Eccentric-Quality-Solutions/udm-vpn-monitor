@@ -986,6 +986,7 @@ mv "$file.tmp" "$file"  # Can hang if $file is unreadable (chmod 000) or unwrita
 - `cp` - Copying files (check readability)
 - `mv` - Moving/overwriting files (during atomic writes) - can hang on unreadable OR unwritable files
 - `head`/`tail` - Reading file portions (check readability)
+- **Bash glob expansion** (`for file in "${DIR}"/*`) - Can hang when expanding patterns that match unreadable files. Use `find` with `-print0` and null-delimited reading instead.
 
 **Safe Operations (don't hang):**
 - `[[ -r "$file" ]]` - Permission check (returns immediately)
@@ -1001,6 +1002,21 @@ mv "$file.tmp" "$file"  # Can hang if $file is unreadable (chmod 000) or unwrita
 - Functions that output values must `echo` the value (even if empty)
 - Use `file_exists_and_readable` consistently across codebase
 - Note: `atomic_write_file()` automatically removes unreadable/unwritable files to prevent hangs
+- **Avoid bash glob expansion** (`for file in "${DIR}"/*`) when iterating over files that might be unreadable. Use `find` with `-print0` and null-delimited reading instead:
+  ```bash
+  # ✅ GOOD: Use find to safely enumerate files
+  while IFS= read -r -d '' file; do
+      if ! file_exists_and_readable "$file"; then
+          continue
+      fi
+      # Process file
+  done < <(find "$DIR" -maxdepth 1 -type f -name "pattern*" -print0 2>/dev/null)
+  
+  # ❌ BAD: Glob expansion can hang on unreadable files
+  for file in "${DIR}"/*pattern*; do
+      # Can hang if file is unreadable (chmod 000)
+  done
+  ```
 - Test with unreadable files (`chmod 000`) in test suite
 - Document why readability checks are needed
 

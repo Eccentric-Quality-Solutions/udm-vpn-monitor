@@ -2,6 +2,19 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
+## 0.6.1 - 2026-01-15
+
+### Fixed
+- **State File Validation Hang**: Fixed `validate_state_files_by_pattern()` function hanging indefinitely when encountering unreadable state files (000 permissions):
+  - Replaced bash glob expansion with `find` command to safely enumerate files matching patterns
+  - Added explicit readability check before processing each file to prevent hangs
+  - Added warning log when skipping unreadable files during validation
+  - Prevents script from hanging when state files have incorrect permissions
+- **Test Timeout**: Added timeout protection to test case "state file permissions prevent read - should handle gracefully":
+  - Added 30-second timeout to prevent test from hanging indefinitely
+  - Marked test as slow to reflect potential longer execution time
+  - Ensures test suite completes even if script doesn't handle unreadable files gracefully
+
 ## 0.6.0 - 2026-01-11
 
 ### Added

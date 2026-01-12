@@ -152,7 +152,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high
+# bats test_tags=category:high-risk,priority:high,slow
 @test "state file permissions prevent read - should handle gracefully" {
 	# Purpose: Test verifies that the script handles unreadable state files gracefully.
 	# Expected: Script defaults to 0 or handles error gracefully when state file cannot be read.
@@ -168,7 +168,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_file_permission 000 "$failure_counter"
 
 	add_mock_to_path
-	run bash "$TEST_SCRIPT" --fake
+	# Use timeout to prevent test from hanging if script doesn't handle unreadable file gracefully
+	# 30 seconds should be more than enough for the script to complete
+	run timeout 30 bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should handle unreadable state file gracefully (should default to 0 or handle error)

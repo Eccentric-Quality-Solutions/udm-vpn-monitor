@@ -722,17 +722,24 @@ validate_state_files_by_pattern() {
 		return 0
 	fi
 
+	# Use find to safely enumerate files matching the pattern
+	# This avoids glob expansion issues with unreadable files
+	# find will list files even if they're unreadable, but we check readability before processing
 	local state_file
-	for state_file in "${STATE_DIR}"/${pattern}; do
-		# Check if glob matched actual files
-		file_exists_and_readable "$state_file" || continue
+	while IFS= read -r -d '' state_file; do
+		# Check if file is readable before attempting validation
+		# Skip unreadable files (they will be handled by recovery code if needed)
+		if ! file_exists_and_readable "$state_file"; then
+			handle_error "WARNING" "SYSTEM" "$description is unreadable (skipping validation): $state_file" 0
+			continue
+		fi
 
 		if ! validate_state_file "$state_file" "$expected_format"; then
 			handle_error "WARNING" "SYSTEM" "$description corrupted, recovering: $state_file" 0
 			recover_corrupted_state_file "$state_file" "$default_value" "$expected_format"
 			validation_failed=1
 		fi
-	done
+	done < <(find "$STATE_DIR" -maxdepth 1 -type f -name "$pattern" -print0 2>/dev/null)
 
 	return $validation_failed
 }
