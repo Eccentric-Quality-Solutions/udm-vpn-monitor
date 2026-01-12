@@ -3,7 +3,7 @@
 # Lockfile management for UDM VPN Monitor
 # Handles flock-based and fallback lockfile mechanisms to prevent concurrent execution
 #
-# Version: 0.4.1
+# Version: 0.6.0
 #
 
 # Source common utility functions
@@ -11,18 +11,21 @@
 # Determine lib directory (where this file is located)
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${LIB_DIR}/common.sh" 2>/dev/null || {
-	# Fallback if common.sh not found - define minimal functions
-	get_unix_timestamp() {
-		date +%s
-	}
-	check_command_available() {
-		local cmd="$1"
-		command -v "$cmd" >/dev/null 2>&1
-	}
-	safe_source_lib() {
-		local lib_file="$1"
-		source "$lib_file" 2>/dev/null
-	}
+	# Fallback if common.sh not found - use centralized fallbacks
+	# shellcheck source=lib/fallbacks.sh
+	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
+		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
+	fi
+}
+
+# Source logging functions to ensure get_formatted_timestamp() is available
+# shellcheck source=lib/logging.sh
+source "${LIB_DIR}/logging.sh" 2>/dev/null || {
+	# Fallback if logging.sh not found - use centralized fallbacks
+	# shellcheck source=lib/fallbacks.sh
+	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
+		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_logging_timestamp_fallback
+	fi
 }
 
 # Extract PID from lockfile
@@ -52,6 +55,12 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 #   Uses cut -d: -f2 to extract PID field
 extract_lockfile_pid() {
 	local lockfile="${1:-$LOCKFILE}"
+	# Check if file is readable before attempting to read
+	# This prevents hangs when lockfile is unreadable (chmod 000)
+	if ! file_exists_and_readable "$lockfile"; then
+		echo "" # Return empty string (no PID available)
+		return 0
+	fi
 	cat "$lockfile" 2>/dev/null | cut -d: -f2 || echo ""
 }
 
@@ -106,7 +115,7 @@ is_process_running() {
 #
 # Side effects:
 #   - Creates lockfile with timestamp:pid format
-#   - Lockfile contains: "$(date +%s):$$"
+#   - Lockfile contains: "$(get_unix_timestamp):$$"
 #
 # Examples:
 #   if create_lockfile_atomically; then
@@ -139,6 +148,9 @@ create_lockfile_atomically() {
 # Stale lockfiles indicate a hung or crashed previous instance that didn't clean up.
 # Compares file modification time to current time.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Lockfile is stale (exceeded timeout) or unreadable
 #   1: Lockfile is not stale (within timeout) or doesn't exist
@@ -150,7 +162,7 @@ create_lockfile_atomically() {
 #   fi
 #
 # Note:
-#   Uses get_file_mtime to get file modification time (handles Linux/BSD/macOS)
+#   Uses get_file_mtime to get file modification time
 #   Requires LOCKFILE, LOCKFILE_TIMEOUT, and get_file_mtime to be set
 #   If file mtime cannot be determined (returns 0), considers lockfile stale
 #   Calculates age as: now - lockfile_mtime
@@ -185,6 +197,9 @@ check_lockfile_stale() {
 # Checks if lockfile is stale and removes it if so, logging a warning.
 # This is a helper function to reduce code duplication across lockfile functions.
 # Extracts PID from lockfile before removal for warning message.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Lockfile was stale and removed (or didn't exist)
@@ -276,7 +291,7 @@ log_and_exit_lockfile_conflict() {
 	# Always output to stderr (this is what tests check)
 	echo "WARNING: $message" >&2
 
-	exit 0
+	exit "${EXIT_SUCCESS:-0}"
 }
 
 # Acquire lockfile using flock (preferred method)
@@ -314,13 +329,7 @@ acquire_lockfile_flock() {
 			log_and_exit_lockfile_conflict "$lock_pid"
 		fi
 		# Lockfile exists but PID is not running or invalid - check if stale
-		if check_lockfile_stale; then
-			# Lockfile is stale, remove it
-			local stale_pid
-			stale_pid=$(extract_lockfile_pid "$LOCKFILE" || echo "unknown")
-			rm -f "$LOCKFILE"
-			echo "WARNING: Removed stale lockfile (timeout exceeded, PID was: $stale_pid)" >&2
-		fi
+		remove_stale_lockfile_if_needed || true
 	fi
 
 	# Use flock if available (preferred method)
@@ -328,21 +337,75 @@ acquire_lockfile_flock() {
 	# File descriptor 9 is used for the lockfile
 	# shellcheck disable=SC2094
 	(
+		# Track signal type for proper exit code
+		local signal_exit_code=0
+		# Track if we actually acquired the lock (to avoid removing another process's lockfile)
+		local lock_acquired=0
+		# Track if cleanup has already run (prevents double cleanup)
+		local cleanup_done=0
+
+		# Cleanup function for signal handlers
+		# Ensures file descriptor is closed and lockfile is removed even if one operation fails
+		#
+		# Arguments:
+		#   None (uses $? to capture exit code from trap context)
+		#
+		# Returns:
+		#   Never returns (exits script with appropriate exit code)
+		#
+		# Side effects:
+		#   - Closes file descriptor 9
+		#   - Removes lockfile if it was acquired by this process
+		#   - Exits script with appropriate exit code
+		cleanup_and_exit() {
+			# Capture the actual exit code from the script
+			# When called from EXIT trap, $? contains the exit code that triggered the trap
+			local actual_exit_code=$?
+
+			# Prevent double cleanup (defensive programming)
+			if [[ $cleanup_done -eq 1 ]]; then
+				# Use signal_exit_code if it's non-zero (set by signal handler)
+				# Otherwise use actual_exit_code (from die() or main return)
+				if [[ ${signal_exit_code:-0} -ne 0 ]]; then
+					exit "$signal_exit_code"
+				else
+					exit "$actual_exit_code"
+				fi
+			fi
+			cleanup_done=1
+
+			# Close file descriptor first (more critical than removing lockfile)
+			# Suppress errors - fd may already be closed or close may fail
+			exec 9>&- 2>/dev/null || true
+
+			# Remove lockfile only if we actually acquired it
+			# Suppress errors - file may already be removed or removal may fail
+			if [[ $lock_acquired -eq 1 ]]; then
+				rm -f "$LOCKFILE" 2>/dev/null || true
+			fi
+
+			# Use signal_exit_code if it's non-zero (set by signal handler)
+			# Otherwise use actual_exit_code (from die() or main return)
+			# This preserves exit codes from die() calls or main function returns
+			if [[ ${signal_exit_code:-0} -ne 0 ]]; then
+				exit "$signal_exit_code"
+			else
+				exit "$actual_exit_code"
+			fi
+		}
+
 		# Set up cleanup trap to ensure lock is released
-		trap 'rm -f "$LOCKFILE"; exec 9>&-' EXIT INT TERM
+		# INT (Ctrl+C) should exit with 130, TERM with 143
+		trap 'signal_exit_code=130; cleanup_and_exit' INT
+		trap 'signal_exit_code=143; cleanup_and_exit' TERM
+		trap 'cleanup_and_exit' EXIT
 
 		# Try to acquire lock first (prevents race condition)
 		# -n: non-blocking (fail immediately if lock can't be acquired)
 		if ! flock -n 9; then
 			# Lock acquisition failed - check if it's stale
-			if check_lockfile_stale; then
-				# Lockfile is stale, extract PID for logging before removal
-				local stale_pid
-				stale_pid=$(extract_lockfile_pid "$LOCKFILE" || echo "unknown")
-				# Force remove stale lockfile and log warning
-				rm -f "$LOCKFILE"
-				echo "WARNING: Removed stale lockfile (timeout exceeded, PID was: $stale_pid)" >&2
-				# Try again with non-blocking lock
+			if remove_stale_lockfile_if_needed; then
+				# Lockfile was stale and removed, try again with non-blocking lock
 				if ! flock -n 9; then
 					# Still can't acquire lock after removing stale lockfile
 					# This could happen if another process acquired it between
@@ -360,13 +423,27 @@ acquire_lockfile_flock() {
 
 		# Lock acquired successfully, write timestamp:pid to lockfile for timeout checking
 		echo "$(get_unix_timestamp):$$" >"$LOCKFILE"
+		lock_acquired=1
 
-		# Run main function
+		# Run main function and capture its exit code
 		"$main_func" "$@"
+		local main_exit_code=$?
 
-		# Explicitly close file descriptor and remove lockfile before exit
-		exec 9>&-
-		rm -f "$LOCKFILE"
+		# If no signal was received, use main function's exit code
+		# (signal_exit_code is only set by signal handlers)
+		if [[ $signal_exit_code -eq 0 ]]; then
+			signal_exit_code=$main_exit_code
+		fi
+
+		# Explicitly clean up before exit (EXIT trap will also run but cleanup_done prevents double cleanup)
+		# Close file descriptor first (more critical than removing lockfile)
+		exec 9>&- 2>/dev/null || true
+		# Remove lockfile only if we actually acquired it
+		if [[ $lock_acquired -eq 1 ]]; then
+			rm -f "$LOCKFILE" 2>/dev/null || true
+		fi
+		# Mark cleanup as done so EXIT trap doesn't try again
+		cleanup_done=1
 	) 9>"$LOCKFILE"
 }
 
@@ -456,21 +533,119 @@ acquire_lockfile_fallback() {
 	fi
 
 	if [[ $lock_acquired -eq 1 ]]; then
-		# Set up cleanup trap to ensure lockfile is removed on exit
-		# This must be done after lock acquisition to ensure trap is in correct shell context
-		# shellcheck disable=SC2064
-		trap "rm -f \"$LOCKFILE\"" EXIT INT TERM
+		# Track signal type for proper exit code
+		local signal_exit_code=0
 
-		# Run main function
+		# Cleanup function for signal handlers
+		# Ensures lockfile is removed on exit.
+		#
+		# Arguments:
+		#   None (uses $? to capture exit code from trap context)
+		#
+		# Returns:
+		#   Never returns (exits script with appropriate exit code)
+		#
+		# Side effects:
+		#   - Removes lockfile
+		#   - Exits script with appropriate exit code
+		cleanup_and_exit() {
+			# Capture the actual exit code from the script
+			# When called from EXIT trap, $? contains the exit code that triggered the trap
+			local actual_exit_code=$?
+
+			rm -f "$LOCKFILE"
+
+			# Use signal_exit_code if it's non-zero (set by signal handler)
+			# Otherwise use actual_exit_code (from die() or main return)
+			# This preserves exit codes from die() calls or main function returns
+			if [[ ${signal_exit_code:-0} -ne 0 ]]; then
+				exit "$signal_exit_code"
+			else
+				exit "$actual_exit_code"
+			fi
+		}
+
+		# Set up cleanup trap to ensure lockfile is removed on exit
+		# INT (Ctrl+C) should exit with 130, TERM with 143
+		# shellcheck disable=SC2064
+		trap 'signal_exit_code=130; cleanup_and_exit' INT
+		# shellcheck disable=SC2064
+		trap 'signal_exit_code=143; cleanup_and_exit' TERM
+		# shellcheck disable=SC2064
+		trap 'cleanup_and_exit' EXIT
+
+		# Run main function and capture its exit code
 		"$main_func" "$@"
+		local main_exit_code=$?
+
+		# If no signal was received, use main function's exit code
+		# (signal_exit_code is only set by signal handlers)
+		if [[ ${signal_exit_code:-0} -eq 0 ]]; then
+			signal_exit_code=$main_exit_code
+		fi
 
 		# Explicitly remove lockfile before exit (trap handles cleanup on error)
 		rm -f "$LOCKFILE"
 	fi
 }
 
-# Acquire lockfile (auto-detects method)
+# Check directory writability and exit with error if not writable
 #
+# Checks if a directory is writable before attempting to create lockfile.
+# This prevents hanging when directories are read-only.
+# Exits the script with appropriate error message if directory is not writable.
+#
+# Arguments:
+#   $1: Directory path to check
+#   $2: Description of directory for error message (e.g., "STATE_DIR" or "Lockfile directory")
+#
+# Returns:
+#   Never returns if directory is not writable (exits script)
+#   0: Directory is writable or doesn't exist (check passed)
+#
+# Side effects:
+#   - Exits script with error if directory exists but is not writable
+#   - Always exits with error code (even in fake mode) since lockfile is required for script execution
+check_directory_writable_for_lockfile() {
+	local dir="$1"
+	local description="$2"
+
+	# Skip check if directory doesn't exist or is empty
+	if [[ -z "$dir" ]] || [[ ! -d "$dir" ]]; then
+		return 0
+	fi
+
+	# Check if directory is writable
+	local is_writable=0
+	if type directory_writable >/dev/null 2>&1; then
+		directory_writable "$dir" && is_writable=1 || is_writable=0
+	elif [[ -w "$dir" ]]; then
+		is_writable=1
+	fi
+
+	# Exit with error if directory is not writable
+	# Note: This is a fatal error that prevents script execution (cannot create lockfile),
+	# so we exit with error code even in fake mode
+	if [[ $is_writable -eq 0 ]]; then
+		local error_msg="${description} is not writable: $dir (cannot create lockfile). Please check directory permissions or choose a writable directory"
+		# Log error message first (respects fake mode for logging)
+		if type handle_error_or_exit_fake_mode >/dev/null 2>&1; then
+			# Log the error (this respects fake mode for logging)
+			handle_error_or_exit_fake_mode "SYSTEM" "$error_msg" "${EXIT_PERMISSION_ERROR:-4}" 2>/dev/null || true
+		fi
+		# Always exit with error code - this is fatal and prevents script execution
+		# Even in fake mode, we cannot proceed without a lockfile
+		if type die >/dev/null 2>&1; then
+			die "$error_msg" "${EXIT_PERMISSION_ERROR:-4}"
+		else
+			echo "ERROR: $error_msg" >&2
+			exit "${EXIT_PERMISSION_ERROR:-4}"
+		fi
+	fi
+
+	return 0
+}
+
 # Attempts to acquire lockfile using flock if available, otherwise falls back to atomic file creation.
 #
 # Arguments:
@@ -478,15 +653,36 @@ acquire_lockfile_fallback() {
 #   $@: Arguments to pass to the function
 #
 # Returns:
-#   Never returns directly (exits via log_and_exit_lockfile_conflict or executes function)
+#   Never returns directly (exits via log_and_exit_lockfile_conflict, early error exit, or executes function)
 #
 # Side effects:
 #   - Creates lockfile with timestamp:pid
 #   - Executes provided function with arguments
 #   - Removes lockfile on exit
+#   - Exits early with error if STATE_DIR is not writable
 acquire_lockfile() {
 	local main_func="$1"
 	shift
+
+	# Check if STATE_DIR is writable before attempting to acquire lockfile
+	# This prevents hanging when STATE_DIR is read-only
+	local lockfile_dir
+	if [[ -n "${LOCKFILE:-}" ]]; then
+		lockfile_dir=$(dirname "$LOCKFILE" 2>/dev/null || echo "")
+	fi
+	if [[ -z "$lockfile_dir" ]] || [[ "$lockfile_dir" == "." ]]; then
+		# Fallback to STATE_DIR if we can't determine lockfile directory
+		lockfile_dir="${STATE_DIR:-}"
+	fi
+
+	# Always check STATE_DIR writability if it's set and exists
+	# This prevents hanging when STATE_DIR is read-only, even if LOCKFILE isn't set yet
+	check_directory_writable_for_lockfile "${STATE_DIR:-}" "STATE_DIR"
+
+	# Also check lockfile_dir if it's different from STATE_DIR
+	if [[ -n "$lockfile_dir" ]] && [[ "$lockfile_dir" != "${STATE_DIR:-}" ]]; then
+		check_directory_writable_for_lockfile "$lockfile_dir" "Lockfile directory"
+	fi
 
 	if check_command_available "flock"; then
 		acquire_lockfile_flock "$main_func" "$@"

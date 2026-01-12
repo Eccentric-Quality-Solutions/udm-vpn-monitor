@@ -14,10 +14,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # ============================================================================
 
 @test "STATE_DIR override in config updates all dependent paths" {
+	# Purpose: Test verifies that when STATE_DIR is overridden in config, all dependent paths are updated correctly
+	# Expected: Script updates all paths that depend on STATE_DIR (LOCKFILE, COOLDOWN_UNTIL_FILE, LOGS_DIR, etc.) to use the custom directory
+	# Importance: Ensures consistent path handling when custom state directories are specified
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local custom_state_dir="${TEST_DIR}/custom-state"
 	cat >"$config_file" <<EOF
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 STATE_DIR="${custom_state_dir}"
 EOF
 
@@ -31,20 +34,20 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$test_script" --fake
 
-	# Custom state directory should be created
+	assert_success
+	# Custom state directory should be created by init_state()
 	assert_dir_exist "$custom_state_dir"
 
 	# Dependent paths should use custom STATE_DIR:
 	# - LOCKFILE should be in custom_state_dir
 	# - COOLDOWN_UNTIL_FILE should be in custom_state_dir
 	# - LOGS_DIR should be custom_state_dir/logs
-	# - RESTART_COUNT_FILE should be in custom_state_dir/logs
+	# - RESTART_COUNT_FILE should be in custom_state_dir/state
 	# Note: Expected paths documented above but not directly asserted as script creates files dynamically
 
 	# Verify that state files are created in the custom directory
@@ -58,10 +61,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "LOG_FILE override to read-only directory" {
+	# Purpose: Test verifies that the script handles LOG_FILE paths pointing to read-only directories gracefully
+	# Expected: Script handles read-only log directory gracefully without crashing, may output to stderr
+	# Importance: Read-only directories can occur from permission issues; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local readonly_log_dir="${TEST_DIR}/readonly-logs"
 	cat >"$config_file" <<EOF
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 LOG_FILE="${readonly_log_dir}/vpn-monitor.log"
 EOF
 
@@ -76,11 +82,9 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$test_script" --fake
 	assert_success
 
@@ -95,10 +99,13 @@ EOF
 
 # bats test_tags=category:high-risk,priority:high
 @test "STATE_DIR override to read-only directory" {
+	# Purpose: Test verifies that the script handles STATE_DIR paths pointing to read-only directories gracefully
+	# Expected: Script fails early with clear error message when STATE_DIR is read-only because lockfile cannot be created
+	# Importance: Read-only state directories prevent lockfile creation; script must fail early with clear error
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local readonly_state_dir="${TEST_DIR}/readonly-state"
 	cat >"$config_file" <<EOF
-EXTERNAL_PEER_IPS="192.168.1.1"
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 STATE_DIR="${readonly_state_dir}"
 EOF
 
@@ -113,16 +120,15 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
-	add_mock_to_path
 	run bash "$test_script" --fake
-	assert_success
+	assert_failure
 
-	# Should handle read-only state directory gracefully
-	# Script should fail early with clear error message or handle gracefully
+	# Script should fail early with clear error message when STATE_DIR is read-only
+	# because lockfile cannot be created in read-only directory
+	assert_output --partial "STATE_DIR is not writable"
 
 	# Restore permissions for cleanup
 	chmod 755 "$readonly_state_dir" 2>/dev/null || true
@@ -132,14 +138,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:critical
 @test "config file with command substitution is rejected" {
-	# Test verifies that config files with command substitution ($()) are rejected.
-	# Expected: Script detects dangerous content and rejects config file without executing code.
-	# Importance: Prevents arbitrary code execution if config file is compromised.
+	# Purpose: Test verifies that config files with command substitution ($()) are rejected
+	# Expected: Script detects dangerous content and rejects config file without executing code
+	# Importance: Prevents arbitrary code execution if config file is compromised
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-VPN_NAME=$(echo "malicious")
-EOF
+	# Expand TEST_PEER_IP but keep dangerous content literal
+	printf 'LOCATION_TEST_EXTERNAL="%s"\nVPN_NAME=$(echo "malicious")\n' "${TEST_PEER_IP}" >"$config_file"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -161,14 +165,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:critical
 @test "config file with backticks is rejected" {
-	# Test verifies that config files with backticks are rejected.
-	# Expected: Script detects dangerous content and rejects config file without executing code.
-	# Importance: Prevents arbitrary code execution if config file is compromised.
+	# Purpose: Test verifies that config files with backticks are rejected
+	# Expected: Script detects dangerous content and rejects config file without executing code
+	# Importance: Prevents arbitrary code execution if config file is compromised
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-VPN_NAME=`echo "malicious"`
-EOF
+	# Expand TEST_PEER_IP but keep dangerous content literal
+	printf 'LOCATION_TEST_EXTERNAL="%s"\nVPN_NAME=`echo "malicious"`\n' "${TEST_PEER_IP}" >"$config_file"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -190,14 +192,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:critical
 @test "config file with eval is rejected" {
-	# Test verifies that config files with eval are rejected.
-	# Expected: Script detects dangerous content and rejects config file without executing code.
-	# Importance: Prevents arbitrary code execution if config file is compromised.
+	# Purpose: Test verifies that config files with eval are rejected
+	# Expected: Script detects dangerous content and rejects config file without executing code
+	# Importance: Prevents arbitrary code execution if config file is compromised
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-eval "malicious code"
-EOF
+	# Expand TEST_PEER_IP but keep dangerous content literal
+	printf 'LOCATION_TEST_EXTERNAL="%s"\neval "malicious code"\n' "${TEST_PEER_IP}" >"$config_file"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -219,12 +219,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:critical
 @test "config file with unknown variable is rejected" {
-	# Test verifies that config files with unknown variables (not in schema) are rejected.
-	# Expected: Script detects unknown variable and rejects config file.
-	# Importance: Prevents setting arbitrary variables that could be used for code injection.
+	# Purpose: Test verifies that config files with unknown variables (not in schema) are rejected
+	# Expected: Script detects unknown variable and rejects config file
+	# Importance: Prevents setting arbitrary variables that could be used for code injection
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 MALICIOUS_VAR="value"
 EOF
 
@@ -248,19 +248,19 @@ EOF
 
 # bats test_tags=category:high-risk,priority:critical
 @test "config file with valid assignments works correctly" {
-	# Test verifies that config files with valid variable assignments are parsed correctly.
-	# Expected: Script parses valid config file and sets variables safely.
-	# Importance: Ensures legitimate config files continue to work after security fix.
+	# Purpose: Test verifies that config files with valid variable assignments are parsed correctly
+	# Expected: Script parses valid config file and sets variables safely
+	# Importance: Ensures legitimate config files continue to work after security fix
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1 192.168.1.2"
-VPN_NAME="Test VPN"
-TIER1_THRESHOLD=2
-TIER2_THRESHOLD=4
-TIER3_THRESHOLD=6
-ENABLE_PING_CHECK=1
-DEBUG=0
-EOF
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST1_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		'LOCATION_TEST2_EXTERNAL="192.168.1.2"' \
+		'VPN_NAME="Test VPN"' \
+		'TIER1_THRESHOLD=2' \
+		'TIER2_THRESHOLD=4' \
+		'TIER3_THRESHOLD=6' \
+		'ENABLE_PING_CHECK=1' \
+		'DEBUG=0'
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -271,7 +271,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Script should parse valid config file successfully
@@ -288,14 +288,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:critical
 @test "config file with source is rejected" {
-	# Test verifies that config files with source command are rejected.
-	# Expected: Script detects dangerous content and rejects config file without executing code.
-	# Importance: Prevents arbitrary code execution if config file is compromised.
+	# Purpose: Test verifies that config files with source command are rejected
+	# Expected: Script detects dangerous content and rejects config file without executing code
+	# Importance: Prevents arbitrary code execution if config file is compromised
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-source /etc/passwd
-EOF
+	# Expand TEST_PEER_IP but keep dangerous content literal
+	printf 'LOCATION_TEST_EXTERNAL="%s"\nsource /etc/passwd\n' "${TEST_PEER_IP}" >"$config_file"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -317,14 +315,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:critical
 @test "config file with multiple dangerous patterns in one line is rejected" {
-	# Test verifies that config files with multiple dangerous patterns in one line are rejected.
-	# Expected: Script detects dangerous content and rejects config file.
-	# Importance: Ensures all dangerous patterns are detected even when combined.
+	# Purpose: Test verifies that config files with multiple dangerous patterns in one line are rejected
+	# Expected: Script detects dangerous content and rejects config file
+	# Importance: Ensures all dangerous patterns are detected even when combined
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-VPN_NAME=$(echo "test") `echo "test"` eval "test"
-EOF
+	# Expand TEST_PEER_IP but keep dangerous content literal
+	printf 'LOCATION_TEST_EXTERNAL="%s"\nVPN_NAME=$(echo "test") `echo "test"` eval "test"\n' "${TEST_PEER_IP}" >"$config_file"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -346,15 +342,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:critical
 @test "config file with dangerous pattern in comment is allowed" {
-	# Test verifies that dangerous patterns in comments are ignored (comments are allowed).
-	# Expected: Script ignores comments and allows dangerous patterns in comment lines.
-	# Importance: Comments should not trigger security checks.
+	# Purpose: Test verifies that dangerous patterns in comments are ignored (comments are allowed)
+	# Expected: Script ignores comments and allows dangerous patterns in comment lines
+	# Importance: Comments should not trigger security checks
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-# This is a comment with $(echo "test") `echo "test"` eval "test"
-VPN_NAME="Test VPN"
-EOF
+	# Expand TEST_PEER_IP but keep dangerous content literal in comments
+	printf 'LOCATION_TEST_EXTERNAL="%s"\n# This is a comment with $(echo "test") `echo "test"` eval "test"\nVPN_NAME="Test VPN"\n' "${TEST_PEER_IP}" >"$config_file"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -365,7 +358,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Script should parse config file successfully (comments are ignored)
@@ -383,12 +376,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:critical
 @test "config file with valid variable assignment without quotes is allowed" {
-	# Test verifies that valid variable assignments without quotes are parsed correctly.
-	# Expected: Script parses valid assignments without quotes safely.
-	# Importance: Ensures legitimate config files without quotes continue to work.
+	# Purpose: Test verifies that valid variable assignments without quotes are parsed correctly
+	# Expected: Script parses valid assignments without quotes safely
+	# Importance: Ensures legitimate config files without quotes continue to work
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -405,7 +398,7 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	# Mock ip command
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Script should parse valid config file successfully

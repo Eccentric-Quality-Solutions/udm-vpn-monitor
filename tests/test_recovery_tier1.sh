@@ -8,6 +8,7 @@ load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
 load fixtures/vpn_cooldown
+load fixtures/vpn_at_tier
 
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
@@ -22,10 +23,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:high
 @test "tier 1: logging triggered on first failure" {
-	# Test verifies that Tier 1 recovery action triggers logging when failure count reaches threshold.
-	# Expected: Script logs failure when failure count reaches Tier 1 threshold.
-	# Importance: Tier 1 is the first level of recovery and should log failures for monitoring.
-	setup_vpn_down_fixture "192.168.1.1" 1 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
+	# Purpose: Test verifies that Tier 1 recovery action triggers logging when failure count reaches threshold
+	# Expected: Script logs failure when failure count reaches Tier 1 threshold
+	# Importance: Tier 1 is the first level of recovery and should log failures for monitoring
+	setup_vpn_at_tier_fixture 1 "${TEST_PEER_IP}"
 
 	run bash "$TEST_SCRIPT"
 

@@ -3,7 +3,7 @@
 # Resource monitoring functions for UDM VPN Monitor
 # Monitors CPU, RAM, and disk space usage and implements throttling
 #
-# Version: 0.4.1
+# Version: 0.6.0
 #
 
 # Source common utility functions
@@ -11,19 +11,11 @@
 # Determine lib directory (where this file is located)
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${LIB_DIR}/common.sh" 2>/dev/null || {
-	# Fallback if common.sh not found - define minimal atomic_write_file
-	atomic_write_file() {
-		local file="$1"
-		local content="$2"
-		if ! (echo "$content" >"${file}.tmp" && mv "${file}.tmp" "$file"); then
-			return 1
-		fi
-		return 0
-	}
-	safe_source_lib() {
-		local lib_file="$1"
-		source "$lib_file" 2>/dev/null
-	}
+	# Fallback if common.sh not found - use centralized fallbacks
+	# shellcheck source=lib/fallbacks.sh
+	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
+		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
+	fi
 }
 
 # Get CPU usage percentage
@@ -31,6 +23,9 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 # Calculates current CPU usage percentage by sampling /proc/stat over a short interval.
 # Uses a simple method: compares CPU idle time before and after a 1-second sleep.
 # This provides a reasonable approximation of current CPU load.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Success, prints CPU usage percentage (0-100) to stdout
@@ -89,10 +84,25 @@ get_cpu_usage() {
 		return 1
 	fi
 
+	# Validate that idle_diff <= total_diff (shouldn't happen but possible with timing)
+	if [[ $idle_diff -gt $total_diff ]]; then
+		# Invalid state - idle time increased more than total time
+		# This shouldn't happen but can occur with timing issues
+		return 1
+	fi
+
 	# Calculate usage: (1 - idle/total) * 100
 	# Use awk for floating point math (UDM doesn't have bc)
 	local cpu_usage
 	cpu_usage=$(awk "BEGIN {printf \"%.0f\", (1 - $idle_diff/$total_diff) * 100}")
+
+	# Clamp CPU usage to 0-100 range (shouldn't be needed but protects against edge cases)
+	if [[ $cpu_usage -lt 0 ]]; then
+		cpu_usage=0
+	elif [[ $cpu_usage -gt 100 ]]; then
+		cpu_usage=100
+	fi
+
 	echo "$cpu_usage"
 	return 0
 }
@@ -102,6 +112,9 @@ get_cpu_usage() {
 # Calculates current memory usage percentage using the 'free' command.
 # Uses MemTotal and MemAvailable (or MemFree if MemAvailable not available) to calculate usage.
 # This provides an accurate view of actual memory pressure.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Success, prints memory usage percentage (0-100) to stdout
@@ -270,12 +283,13 @@ get_free_disk_space() {
 #
 # Returns:
 #   0: Resource is constrained (has been >= threshold for >= duration)
-#   1: Resource is not constrained or hasn't been constrained long enough
+#   1: Resource is not constrained, hasn't been constrained long enough, or invalid input
 #
 # Side effects:
 #   - Creates/updates state file: ${STATE_DIR}/resource_${resource}_constrained
 #   - State file contains timestamp when resource first became constrained
 #   - Removes state file when resource is no longer constrained
+#   - Logs warnings for invalid usage values (non-numeric or out of range)
 #
 # Examples:
 #   if check_resource_constrained "cpu" 95 90 60 "$STATE_DIR"; then
@@ -285,6 +299,8 @@ get_free_disk_space() {
 # Note:
 #   Requires STATE_DIR to be writable
 #   State file format: unix timestamp (seconds since epoch)
+#   Validates usage is numeric and within range (0-100) before processing
+#   Returns error (1) and logs warning for invalid usage values
 check_resource_constrained() {
 	local resource="$1"
 	local usage="$2"
@@ -296,9 +312,27 @@ check_resource_constrained() {
 		return 1
 	fi
 
+	# Validate usage is a number and within expected range (0-100)
+	if ! [[ "$usage" =~ ^-?[0-9]+$ ]]; then
+		# Not a number - invalid input
+		if command -v log_message >/dev/null 2>&1; then
+			log_message "WARNING" "SYSTEM" "check_resource_constrained: Invalid usage value for ${resource}: '${usage}' (not a number)"
+		fi
+		return 1
+	fi
+
+	# Validate usage is within expected range (0-100)
+	if [[ "$usage" -lt 0 ]] || [[ "$usage" -gt 100 ]]; then
+		# Out of range - log warning and return error for clearly invalid input
+		if command -v log_message >/dev/null 2>&1; then
+			log_message "WARNING" "SYSTEM" "check_resource_constrained: Usage value for ${resource} is out of expected range (0-100): ${usage}%"
+		fi
+		return 1
+	fi
+
 	local state_file="${state_dir}/resource_${resource}_constrained"
 	local current_time
-	current_time=$(date +%s 2>/dev/null)
+	current_time=$(get_unix_timestamp 2>/dev/null)
 	if [[ -z "$current_time" ]]; then
 		return 1
 	fi
@@ -311,7 +345,7 @@ check_resource_constrained() {
 	# Check if resource is currently constrained
 	if [[ "$usage" -ge "$threshold" ]]; then
 		# Resource is constrained - check if we have a state file
-		if [[ -f "$state_file" ]]; then
+		if [[ -f "$state_file" ]] && file_exists_and_readable "$state_file"; then
 			# Read when it first became constrained
 			local constrained_since
 			constrained_since=$(cat "$state_file" 2>/dev/null)
@@ -401,7 +435,7 @@ check_system_resources() {
 	local cpu_usage
 	if cpu_usage=$(get_cpu_usage 2>/dev/null); then
 		if check_resource_constrained "cpu" "$cpu_usage" "$cpu_threshold" "$cpu_duration" "$state_dir"; then
-			handle_error "WARNING" "CPU usage has been at ${cpu_threshold}%+ (currently ${cpu_usage}%) for ${cpu_duration}s - throttling execution" 0
+			handle_error "WARNING" "SYSTEM" "CPU usage has been at ${cpu_threshold}%+ (currently ${cpu_usage}%) for ${cpu_duration}s - throttling execution" 0
 			return 1
 		fi
 	fi
@@ -410,7 +444,7 @@ check_system_resources() {
 	local ram_usage
 	if ram_usage=$(get_memory_usage 2>/dev/null); then
 		if check_resource_constrained "ram" "$ram_usage" "$ram_threshold" "$ram_duration" "$state_dir"; then
-			handle_error "WARNING" "RAM usage has been at ${ram_threshold}%+ (currently ${ram_usage}%) for ${ram_duration}s - throttling execution" 0
+			handle_error "WARNING" "SYSTEM" "RAM usage has been at ${ram_threshold}%+ (currently ${ram_usage}%) for ${ram_duration}s - throttling execution" 0
 			return 1
 		fi
 	fi
@@ -424,7 +458,7 @@ check_system_resources() {
 			if [[ ! -f "$disk_warning_state_file" ]]; then
 				local filesystem
 				filesystem=$(df -P "$check_path" 2>/dev/null | tail -n1 | awk '{print $1}')
-				handle_error "WARNING" "Free disk space is low: ${free_space}% free on ${filesystem}" 0
+				handle_error "WARNING" "SYSTEM" "Free disk space is low: ${free_space}% free on ${filesystem}" 0
 				# Mark that we've logged the warning
 				atomic_write_file "$disk_warning_state_file" "1" 2>/dev/null || true
 			fi
@@ -440,7 +474,7 @@ check_system_resources() {
 		if [[ $free_space -lt $disk_critical ]]; then
 			local filesystem
 			filesystem=$(df -P "$check_path" 2>/dev/null | tail -n1 | awk '{print $1}')
-			handle_error "WARNING" "Free disk space is critical: ${free_space}% free on ${filesystem}" 0
+			handle_error "WARNING" "SYSTEM" "Free disk space is critical: ${free_space}% free on ${filesystem}" 0
 
 			# Clear warning state file (so it can warn again if it recovers to warning level)
 			local disk_warning_state_file="${state_dir}/resource_disk_warning_logged"
@@ -454,14 +488,14 @@ check_system_resources() {
 				local new_free_space
 				if new_free_space=$(get_free_disk_space "$check_path" 2>/dev/null); then
 					if [[ $new_free_space -ge $disk_critical ]]; then
-						log_message "INFO" "Disk space recovered to ${new_free_space}% after log cleanup"
+						log_message "INFO" "SYSTEM" "Disk space recovered to ${new_free_space}% after log cleanup"
 						return 0
 					fi
 				fi
 			fi
 
 			# Still critical - throttle execution
-			handle_error "WARNING" "Disk space still critical after cleanup - throttling execution" 0
+			handle_error "WARNING" "SYSTEM" "Disk space still critical after cleanup - throttling execution" 0
 			return 1
 		fi
 	fi
@@ -509,14 +543,11 @@ manage_log_files_on_low_disk() {
 	# Check if log file exists and is large
 	if [[ -f "$LOG_FILE" ]]; then
 		local log_size_kb
-		log_size_kb=$(stat -c%s "$LOG_FILE" 2>/dev/null | awk '{print int($1/1024)}')
-		if [[ -z "$log_size_kb" ]]; then
-			log_size_kb=$(stat -f%z "$LOG_FILE" 2>/dev/null | awk '{print int($1/1024)}' || echo "0")
-		fi
+		log_size_kb=$(stat -c%s "$LOG_FILE" 2>/dev/null | awk '{print int($1/1024)}' || echo "0")
 
 		# If log file is larger than 10MB, rotate it
 		if [[ -n "$log_size_kb" ]] && [[ "$log_size_kb" -gt 10240 ]]; then
-			handle_error "WARNING" "Log file is large (${log_size_kb}KB), rotating to free disk space" 0
+			handle_error "WARNING" "SYSTEM" "Log file is large (${log_size_kb}KB), rotating to free disk space" 0
 
 			# Create rotated log file name
 			local rotated_log="${LOG_FILE}.old"
@@ -528,7 +559,7 @@ manage_log_files_on_low_disk() {
 
 			# Move current log to rotated
 			if mv "$LOG_FILE" "$rotated_log" 2>/dev/null; then
-				log_message "INFO" "Log file rotated: $LOG_FILE -> $rotated_log"
+				log_message "INFO" "SYSTEM" "Log file rotated: $LOG_FILE -> $rotated_log"
 				# Create new empty log file
 				touch "$LOG_FILE" 2>/dev/null || true
 			fi
@@ -561,7 +592,7 @@ manage_log_files_on_low_disk() {
 		fi
 
 		if [[ $removed_count -gt 0 ]]; then
-			log_message "INFO" "Removed $removed_count old log file(s) to free disk space"
+			log_message "INFO" "SYSTEM" "Removed $removed_count old log file(s) to free disk space"
 		fi
 	fi
 

@@ -1,4 +1,5 @@
 # Logs
+/logs/
 *.log
 cron.log
 vpn-monitor.log
@@ -33,6 +34,7 @@ vpn-monitor.conf.local
 bats-support/
 bats-assert/
 bats-file/
+test_results_*_*.txt
 
 # Test coverage reports
 coverage/

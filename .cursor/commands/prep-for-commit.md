@@ -1,5 +1,9 @@
-- Review the changes that have been made (only staged) and update the changelog accordingly.
+- Review the changes that have been made (only staged) and update the CHANGELOG.md accordingly.
+    - Also review previous commits until one hits an updated version, include the changes that have occurred after that updated version.
 - Report if the version has not been incremented since the last git commit.
 - Recommend how the version should be incremented (e.g. is it a minor or major update?).
 - Update documentation to reflect the latest changes.
 - Do we need to add or update any ADRs?
+- Did we add any files that we need to include in `prepare_install_package.sh` or in `install.sh`?
+- Did we lose any functionality in the diff between the last git commit and what is currently staged?
+- Provide a succinct git commit message I could use, it should be based off the CHANGELOG.md.

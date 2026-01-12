@@ -3,7 +3,7 @@
 # UDM VPN Monitor Configuration Validator
 # Checks configuration file against schema and reports missing/deprecated settings
 #
-# Version: 0.4.1
+# Version: 0.6.0
 #
 
 set -euo pipefail
@@ -135,6 +135,9 @@ parse_config_variables() {
 # Arguments:
 #   $1: Variable name
 #
+# Returns:
+#   0: Always succeeds
+#
 # Output:
 #   Prints default value (or empty string if none)
 get_formatted_default() {
@@ -160,6 +163,9 @@ get_formatted_default() {
 # - Missing variables (in schema but not in config)
 # - Deprecated variables (in config but not in schema)
 # - Valid variables (in both)
+#
+# Arguments:
+#   None (command-line arguments are parsed before this function is called)
 #
 # Returns:
 #   0: Config is valid (may have warnings)

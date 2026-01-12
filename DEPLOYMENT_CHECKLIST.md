@@ -36,36 +36,50 @@ Before installation, gather:
 ## Installation Steps
 
 ### 1. Prepare Installation Package
-- [ ] Run `./prepare_install_package.sh` on development machine
-- [ ] Verify package created: `udm-vpn-monitor-installer.zip` (or `.tar.gz`)
-- [ ] Transfer package to UDM: `scp udm-vpn-monitor-installer.zip root@<UDM_IP>:/tmp/`
+- [ ] Run `./prepare_install_package.sh` on development machine (creates zip file)
+- [ ] Or create tar.gz: `./prepare_install_package.sh --tar`
+- [ ] Verify package created: `udm-vpn-monitor.zip` (or `udm-vpn-monitor.tar.gz`)
+- [ ] Transfer package to UDM: `scp udm-vpn-monitor.zip root@<UDM_IP>:/tmp/` (or `.tar.gz`)
 
 ### 2. Extract and Install
 - [ ] SSH into UDM: `ssh root@<UDM_IP>`
-- [ ] Extract package: `cd /tmp && unzip udm-vpn-monitor-installer.zip`
+- [ ] Extract package: `cd /tmp && unzip udm-vpn-monitor.zip` (or `tar -xzf udm-vpn-monitor.tar.gz` for tar.gz)
 - [ ] Make installer executable: `chmod +x install.sh`
 - [ ] Run installer:
   - **Interactive mode** (recommended for first-time): `./install.sh --interactive`
   - **Silent mode** (preserves existing config): `./install.sh --silent`
   - **Silent with overwrite**: `./install.sh --silent --overwrite-conf`
+  - **Install without cron** (for manual execution): `./install.sh --no-cron`
+  - **Keepalive-only mode** (requires existing installation): `./install.sh --keepalive-only`
 
 ### 3. Configure VPN Monitor
 - [ ] Edit configuration file: `nano /data/vpn-monitor/vpn-monitor.conf`
-- [ ] Set `EXTERNAL_PEER_IPS` to your remote VPN gateway external/public IP(s)
-- [ ] Optionally set `INTERNAL_PEER_IPS` for ping checks
+- [ ] Configure locations using location-based format (see below)
+- [ ] Optionally set `INTERNAL` IPs for ping checks
 - [ ] Review other settings (thresholds, cooldown, etc.)
 
 **Critical Configuration:**
 ```bash
-EXTERNAL_PEER_IPS="203.0.113.1 198.51.100.1"  # REQUIRED - External/public IPs
-INTERNAL_PEER_IPS="192.168.100.1 192.168.200.1"  # Optional - Internal/private IPs
+# Location-based configuration format
+LOCATION_NYC_EXTERNAL="203.0.113.1"  # REQUIRED - External/public IP
+LOCATION_NYC_INTERNAL="192.168.100.1"  # Optional - Internal/private IP(s)
+
+LOCATION_DC_EXTERNAL="198.51.100.1"  # REQUIRED - External/public IP
+LOCATION_DC_INTERNAL="192.168.200.1"  # Optional - Internal/private IP(s)
 ```
 
+**Note**: If migrating from old format (`EXTERNAL_PEER_IPS`/`INTERNAL_PEER_IPS`), use the migration script:
+```bash
+/data/vpn-monitor/scripts/migrate-config-to-locations.sh
+```
+See [MIGRATION.md](docs/MIGRATION.md) for detailed migration instructions.
+
 ### 4. Test Installation
-- [ ] Run monitor manually: `/data/vpn-monitor/vpn-monitor.sh --fake`
+- [ ] Run monitor manually: `/data/vpn-monitor/vpn-monitor.sh --fake` (fake mode tests without triggering recovery)
 - [ ] Verify no errors in output
 - [ ] Check log file: `tail -f /data/vpn-monitor/logs/vpn-monitor.log`
 - [ ] Verify cron job exists: `crontab -l | grep vpn-monitor`
+- [ ] Validate configuration: `/data/vpn-monitor/check-config.sh`
 
 ### 5. Verify Keepalive Daemon (if enabled)
 - [ ] Check keepalive status: `systemctl status vpn-keepalive`
@@ -80,6 +94,7 @@ INTERNAL_PEER_IPS="192.168.100.1 192.168.200.1"  # Optional - Internal/private I
 - [ ] Config file exists: `ls -l /data/vpn-monitor/vpn-monitor.conf`
 - [ ] Log directory exists: `ls -l /data/vpn-monitor/logs/`
 - [ ] Cron job installed: `crontab -l | grep vpn-monitor`
+- [ ] Utility scripts present: `ls -l /data/vpn-monitor/*.sh` (check-config.sh, compare-config.sh, analyze-logs.sh, etc.)
 
 ### Verify Functionality
 - [ ] Monitor runs via cron (wait 1-2 minutes, check logs/cron.log)
@@ -123,8 +138,11 @@ cat /data/vpn-monitor/vpn-monitor.lock
 # Verify config file syntax
 bash -n /data/vpn-monitor/vpn-monitor.conf
 
-# Check EXTERNAL_PEER_IPS is set
-grep EXTERNAL_PEER_IPS /data/vpn-monitor/vpn-monitor.conf
+# Check location-based configuration is set
+grep LOCATION_.*_EXTERNAL /data/vpn-monitor/vpn-monitor.conf
+
+# Validate configuration against schema
+/data/vpn-monitor/check-config.sh
 ```
 
 ### VPN Detection Issues
@@ -145,7 +163,7 @@ ping -c 3 <PEER_IP>
 command -v ipsec
 
 # Check rate limiting
-cat /data/vpn-monitor/logs/restart_count
+cat /data/vpn-monitor/state/restart_count
 
 # Check cooldown
 cat /data/vpn-monitor/cooldown_until
@@ -155,10 +173,12 @@ cat /data/vpn-monitor/cooldown_until
 
 If you need to remove the VPN monitor:
 - [ ] Run uninstaller: `./uninstall.sh`
+- [ ] **Non-interactive mode** (for automation): `./uninstall.sh --yes`
 - [ ] Or manually:
   - Remove cron entry: `crontab -e` (delete vpn-monitor line)
   - Remove directory: `rm -rf /data/vpn-monitor`
   - Remove systemd service: `systemctl disable vpn-keepalive` (if installed)
+  - Remove logrotate config: `rm /etc/logrotate.d/vpn-monitor` (if present)
 
 ## Additional Resources
 
@@ -172,5 +192,7 @@ If you need to remove the VPN monitor:
 - Scripts and config files persist across reboots (stored in `/data/`)
 - Cron jobs may be wiped during UniFi OS upgrades (re-run installer if needed)
 - Keepalive daemon requires systemd (available on UDM OS 4.3+)
+- Log rotation is automatically configured via logrotate (daily rotation, 7 days retention)
 - All recovery actions are logged to `/data/vpn-monitor/logs/vpn-monitor.log`
+- Utility scripts (check-config.sh, compare-config.sh, analyze-logs.sh) are installed for configuration validation and log analysis
 

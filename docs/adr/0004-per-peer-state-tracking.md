@@ -18,10 +18,10 @@ A shared failure counter would:
 
 ## Decision
 We will track state independently for each configured peer IP, including:
-- Per-peer failure counters (`failure_counter_<peer_ip>`)
-- Per-peer byte counters (`last_bytes_<peer_ip>`)
-- Independent recovery actions per peer
-- Separate state files with sanitized IP addresses in filenames
+- Per-location, per-peer failure counters (`failure_counter_<location>_<peer_ip>`)
+- Per-location, per-peer byte counters (`last_bytes_<location>_<peer_ip>`)
+- Independent recovery actions per location and peer
+- Separate state files with location names and sanitized IP addresses in filenames
 
 ## Consequences
 
@@ -38,8 +38,8 @@ We will track state independently for each configured peer IP, including:
 - **Filename Sanitization**: Need to sanitize IP addresses for safe filenames (dots/colons → underscores)
 
 ## Implementation Details
-- **Failure Counters**: Stored in `logs/failure_counter_<sanitized_ip>` (e.g., `failure_counter_192_168_1_1`)
-- **Byte Counters**: Stored in `last_bytes_<sanitized_ip>` (e.g., `last_bytes_192_168_1_1`)
+- **Failure Counters**: Stored in `state/failure_counter_<location>_<sanitized_ip>` (e.g., `failure_counter_NYC_192_168_1_1`)
+- **Byte Counters**: Stored in `state/last_bytes_<location>_<sanitized_ip>` (e.g., `last_bytes_NYC_192_168_1_1`)
 - **IP Sanitization**: Dots and colons replaced with underscores (IPv4: `192.168.1.1` → `192_168_1_1`, IPv6: `2001:db8::1` → `2001_db8__1`)
 - **Independent Tracking**: Each peer's failure count and byte counters tracked separately
 - **Recovery Actions**: Triggered independently based on each peer's failure count
@@ -49,6 +49,7 @@ We will track state independently for each configured peer IP, including:
 - ADR-0003: Tiered Recovery System
 - ADR-0006: Multi-Method Detection with Fallback
 - ADR-0012: Atomic File Operations
+- ADR-0024: Location-Based Configuration Format
 
 ## References
 - ARCHITECTURE.md: "Key Design Decisions #4: Per-Peer State Tracking"

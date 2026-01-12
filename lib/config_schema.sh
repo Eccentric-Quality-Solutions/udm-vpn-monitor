@@ -3,7 +3,7 @@
 # Configuration schema definition for UDM VPN Monitor
 # Defines validation rules for all configuration variables
 #
-# Version: 0.4.1
+# Version: 0.6.0
 #
 
 # Configuration schema definition
@@ -11,13 +11,31 @@
 # Format: CONFIG_SCHEMA["variable_name"]="required|type|rules|default"
 #   - required: "required" or "optional"
 #   - type: "string" or "integer"
-#   - rules: comma-separated list of validation rules:
+#   - rules: Multiple rules separated by pipe (|) characters in the schema definition.
+#            Internally, rules are joined with triple-pipe (|||) separator to avoid
+#            conflicts with commas in values: rules. When parsing, rules are split
+#            by ||| separator first, with fallback to comma for backward compatibility.
+#            Rule types:
 #     * non-empty: value must not be empty (for strings)
 #     * min:N: minimum value (for integers)
 #     * max:N: maximum value (for integers)
 #     * values:V1,V2,V3: allowed values (for integers or strings)
+#                  Note: Commas in values: rules are preserved (e.g., "values:0,1")
 #     * min:VAR: minimum value must be >= value of VAR (for integers)
 #   - default: default value if optional and not set
+#
+# RULE SEPARATOR FORMAT:
+#   Rules in the schema definition are separated by single pipe (|) characters.
+#   During parsing, multiple rules are joined with triple-pipe (|||) separator
+#   to avoid conflicts with commas in values: rules (e.g., "values:0,1").
+#
+#   Example schema: "optional|integer|min:1|max:10|default:3"
+#   After parsing: rules string becomes "min:1|||max:10"
+#   This allows proper splitting without breaking "values:0,1" rules.
+#
+#   When validating, rules are split by ||| separator first. If no ||| found,
+#   falls back to comma-separated format for backward compatibility.
+#   Special case: Single "values:" rule is not split (comma is part of value).
 #
 # LIMITATION: The pipe character (|) is used as a delimiter in the schema format.
 # Therefore, default values CANNOT contain pipe characters. If a default value
@@ -31,6 +49,9 @@
 #   ["TIER1_THRESHOLD"]="required|integer|min:1"
 #   ["TIER2_THRESHOLD"]="required|integer|min:TIER1_THRESHOLD"
 #   ["ENABLE_PING_CHECK"]="optional|integer|values:0,1|default:1"
+#   ["PING_COUNT"]="optional|integer|min:1|max:10|default:3"
+#     # Schema: "optional|integer|min:1|max:10|default:3"
+#     # Parsed rules: "min:1|||max:10" (joined with ||| separator)
 #
 # NOTE: Default values are defined in THIS file (CONFIG_SCHEMA) as the single source of truth.
 # The load_config() function in lib/config.sh reads defaults from this schema using
@@ -44,12 +65,16 @@
 #   - Early initialization in load_config() reads from schema
 #   - Validation and correction also use schema defaults
 #   - Ensures consistency across the codebase
-declare -A CONFIG_SCHEMA=(
+# Declare and populate CONFIG_SCHEMA array
+# Use -g flag to ensure global scope (important when sourced from config.sh)
+# This ensures the array is accessible in the parent scope even if config.sh
+# pre-declared it as empty
+declare -gA CONFIG_SCHEMA=(
 	# Required configuration
 	# NOTE: Required variables have backward compatibility defaults for old config files
 	# These defaults are applied in load_config() but validation still requires them to be set
-	["EXTERNAL_PEER_IPS"]="required|string|non-empty"
-	["INTERNAL_PEER_IPS"]="optional|string||default:"
+	# Location-based configuration: LOCATION_*_EXTERNAL and LOCATION_*_INTERNAL are pattern-matched
+	# Pattern matching is handled in get_config_schema() function
 	["TIER1_THRESHOLD"]="required|integer|min:1|default:1"
 	# NOTE: TIER2_THRESHOLD has relative validation (depends on TIER1_THRESHOLD)
 	# Validation order is handled safely - see validate_config_schema() documentation
@@ -66,6 +91,7 @@ declare -A CONFIG_SCHEMA=(
 	["LOCAL_UDM_IP"]="optional|string||default:"
 	["PING_COUNT"]="optional|integer|min:1|max:10|default:3"
 	["PING_TIMEOUT"]="optional|integer|min:1|max:30|default:2"
+	["PING_SUMMARY_INTERVAL_MINUTES"]="optional|integer|min:1|max:1440|default:7"
 	["ENABLE_KEEPALIVE"]="optional|integer|values:0,1|default:1"
 	["KEEPALIVE_INTERVAL"]="optional|integer|min:10|max:300|default:30"
 	["KEEPALIVE_PING_COUNT"]="optional|integer|min:1|max:5|default:1"
@@ -94,12 +120,17 @@ declare -A CONFIG_SCHEMA=(
 	["RESOURCE_RAM_DURATION"]="optional|integer|min:10|max:600|default:60"
 	["RESOURCE_DISK_WARNING_THRESHOLD"]="optional|integer|min:5|max:50|default:20"
 	["RESOURCE_DISK_CRITICAL_THRESHOLD"]="optional|integer|min:1|max:20|default:10"
+	# Status logging interval (seconds) - how often to log periodic status updates for healthy VPN peers
+	["STATUS_LOG_INTERVAL_SECONDS"]="optional|integer|min:0|max:3600|default:300"
 )
 
 # Get schema for a configuration variable
 #
 # Retrieves the schema definition for a given configuration variable from CONFIG_SCHEMA.
 # Schema format: "required|type|rules|default"
+# Supports pattern matching for location-based variables:
+#   - LOCATION_*_EXTERNAL: required|string|non-empty
+#   - LOCATION_*_INTERNAL: optional|string
 #
 # Arguments:
 #   $1: Configuration variable name to look up
@@ -112,17 +143,33 @@ declare -A CONFIG_SCHEMA=(
 #   Prints schema string to stdout in format: "required|type|rules|default"
 #
 # Examples:
-#   schema=$(get_config_schema "EXTERNAL_PEER_IPS")
+#   schema=$(get_config_schema "LOCATION_NYC_EXTERNAL")
 #   # Returns: "required|string|non-empty"
+#   schema=$(get_config_schema "LOCATION_NYC_INTERNAL")
+#   # Returns: "optional|string"
 #
 # Note:
 #   Requires CONFIG_SCHEMA associative array to be defined (from this file)
 get_config_schema() {
 	local var_name="$1"
+
+	# Check exact match first
 	if [[ -n "${CONFIG_SCHEMA[$var_name]:-}" ]]; then
 		echo "${CONFIG_SCHEMA[$var_name]}"
 		return 0
 	fi
+
+	# Check pattern matches for location-based variables
+	if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+		# LOCATION_*_EXTERNAL pattern: required, string, non-empty
+		echo "required|string|non-empty"
+		return 0
+	elif [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+		# LOCATION_*_INTERNAL pattern: optional, string
+		echo "optional|string"
+		return 0
+	fi
+
 	return 1
 }
 

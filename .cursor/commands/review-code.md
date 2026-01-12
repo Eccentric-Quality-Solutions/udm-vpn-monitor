@@ -1,5 +1,0 @@
-- Did you introduce any bugs or errors?
-- What about bad practices?
-- Was any functionality lost?
-- Do we need to DRY things up?
-- Run linting and formatting.

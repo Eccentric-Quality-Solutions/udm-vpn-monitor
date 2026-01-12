@@ -6,7 +6,7 @@
 # This fixture combines multiple setup steps for testing network partition detection.
 #
 # Arguments:
-#   $1: Peer IP address (default: "192.168.1.1")
+#   $1: Peer IP address (default: "${TEST_PEER_IP}")
 #   $2: Partition type (default: "all")
 #       - "no_default_route": No default route available
 #       - "interfaces_down": Network interfaces are down
@@ -24,7 +24,7 @@
 #
 # Example:
 #   # Test with all partition conditions
-#   setup_vpn_network_partition_fixture "192.168.1.1" "all"
+#   setup_vpn_network_partition_fixture "${TEST_PEER_IP}" "all"
 #
 #   # Test with only DNS failure
 #   setup_vpn_network_partition_fixture "192.168.1.1" "dns_failure"
@@ -32,7 +32,7 @@
 #   # Test with custom interfaces
 #   setup_vpn_network_partition_fixture "192.168.1.1" "no_default_route" "br0,eth0"
 setup_vpn_network_partition_fixture() {
-	local peer_ip="${1:-192.168.1.1}"
+	local peer_ip="${1:-${TEST_PEER_IP}}"
 	local partition_type="${2:-all}"
 	local interface_names="${3:-eth0,eth1}"
 	shift 3 || true
@@ -50,7 +50,7 @@ setup_vpn_network_partition_fixture() {
 
 	# Configure mock parameters based on partition type
 	local route_exists="1"
-	local route_output="default via 192.168.1.1 dev eth0"
+	local route_output="default via ${TEST_PEER_IP} dev eth0"
 	# Determine interface states based on partition type and number of interfaces
 	# Convert interface names to states array (default: all UP)
 	local IFS=','

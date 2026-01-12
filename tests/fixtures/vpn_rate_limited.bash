@@ -7,7 +7,7 @@
 # and configures the environment to trigger Tier 3 recovery (which is rate limited).
 #
 # Arguments:
-#   $1: Peer IP address (default: "192.168.1.1")
+#   $1: Peer IP address (default: "${TEST_PEER_IP}")
 #   $2: Number of restart timestamps to create if none provided (default: 3)
 #   $3+: Restart timestamps (epoch seconds, one per line in restart_count file)
 #        If not provided, creates timestamps relative to current time
@@ -21,23 +21,23 @@
 #
 # Example:
 #   # Use default: 3 restarts within last hour
-#   setup_vpn_rate_limited_fixture "192.168.1.1"
+#   setup_vpn_rate_limited_fixture "${TEST_PEER_IP}"
 #
 #   # Provide specific timestamps
 #   local now=$(date +%s)
-#   setup_vpn_rate_limited_fixture "192.168.1.1" 3 \
+#   setup_vpn_rate_limited_fixture "${TEST_PEER_IP}" 3 \
 #       $((now - 100)) \
 #       $((now - 200)) \
 #       $((now - 300))
 #
 #   # Custom config
-#   setup_vpn_rate_limited_fixture "192.168.1.1" 3 \
+#   setup_vpn_rate_limited_fixture "${TEST_PEER_IP}" 3 \
 #       $((now - 100)) \
 #       $((now - 200)) \
 #       $((now - 300)) \
 #       'MAX_RESTARTS_PER_HOUR=5'
 setup_vpn_rate_limited_fixture() {
-	local peer_ip="${1:-192.168.1.1}"
+	local peer_ip="${1:-${TEST_PEER_IP}}"
 	local restart_count="${2:-3}"
 	shift 2 || true
 
@@ -77,13 +77,15 @@ setup_vpn_rate_limited_fixture() {
 	setup_test_vpn_monitor "$peer_ip" "${TEST_DIR}" "${default_config[@]}" "${extra_config[@]}"
 
 	# Create restart count file with timestamps
-	local restart_file="${LOGS_DIR}/restart_count"
+	local restart_file="${STATE_DIR}/restart_count"
 	# Clear file if it exists
 	: >"$restart_file"
 	for ts in "${timestamps[@]}"; do
 		echo "$ts" >>"$restart_file"
 	done
 
-	# Set failure count to trigger Tier 3 (default is 5, matching TIER3_THRESHOLD)
-	setup_state_files "$peer_ip" 5
+	# Set failure count to trigger Tier 3 (default is 5, matching TIER3_THRESHOLD) using location-aware functions
+	ensure_state_functions_loaded
+	# setup_test_vpn_monitor creates location "TEST1" for single IP
+	set_peer_state "TEST1" "$peer_ip" "failure_count" "5" || true
 }

@@ -22,45 +22,78 @@ fi
 
 cd "$REPO_ROOT"
 
-# Helper function to find a command in PATH or common installation locations
-# Git hooks run with minimal environment, so we check multiple locations
+# Find a command in PATH or common installation locations
+#
+# Searches for a command in multiple locations to handle git hooks that run
+# with minimal environment variables. Checks current PATH first, then standard
+# system paths (/usr/bin, /usr/local/bin, /bin), and finally Homebrew paths.
+# This ensures development tools are found even when PATH is not fully set.
+#
+# Arguments:
+#   $1: Name of the command to find (e.g., "shfmt", "shellcheck")
+#
+# Returns:
+#   0: Command found (prints full path to stdout)
+#   1: Command not found in any checked location
+#
+# Output:
+#   Prints full path to command if found (e.g., "/usr/bin/shfmt")
+#
+# Side effects:
+#   None
+#
+# Examples:
+#   if SHFMT_CMD=$(find_command shfmt); then
+#       "$SHFMT_CMD" -w file.sh
+#   fi
+#
+#   if ! SHELLCHECK_CMD=$(find_command shellcheck); then
+#       echo "shellcheck not found"
+#   fi
+#
+# Note:
+#   Uses command -v for PATH checking (most reliable method)
+#   Checks system paths for apt-installed tools
+#   Checks common Homebrew locations (Linux and macOS)
+#   Only checks executable files (not just presence of file)
+#   Git hooks run with minimal environment, so PATH may not include all locations
 find_command() {
 	local cmd="$1"
-	
+
 	# First check if command is in PATH (works for apt-installed tools if PATH includes system paths)
 	if command -v "$cmd" >/dev/null 2>&1; then
 		command -v "$cmd"
 		return 0
 	fi
-	
+
 	# Check standard system paths (for apt-installed tools)
 	local system_paths=(
 		"/usr/bin"
 		"/usr/local/bin"
 		"/bin"
 	)
-	
+
 	for sys_path in "${system_paths[@]}"; do
 		if [[ -x "${sys_path}/${cmd}" ]]; then
 			echo "${sys_path}/${cmd}"
 			return 0
 		fi
 	done
-	
+
 	# Check common Homebrew locations (for Homebrew-installed tools)
 	local brew_paths=(
-		"/home/linuxbrew/.linuxbrew/bin"  # Linux Homebrew (default)
-		"$HOME/.linuxbrew/bin"             # Linux Homebrew (user install)
-		"/opt/homebrew/bin"                # macOS Homebrew (Apple Silicon)
+		"/home/linuxbrew/.linuxbrew/bin" # Linux Homebrew (default)
+		"$HOME/.linuxbrew/bin"           # Linux Homebrew (user install)
+		"/opt/homebrew/bin"              # macOS Homebrew (Apple Silicon)
 	)
-	
+
 	for brew_path in "${brew_paths[@]}"; do
 		if [[ -x "${brew_path}/${cmd}" ]]; then
 			echo "${brew_path}/${cmd}"
 			return 0
 		fi
 	done
-	
+
 	return 1
 }
 
@@ -104,6 +137,18 @@ if [[ ${#STAGED_SH_FILES[@]} -gt 0 ]]; then
 			exit 1
 		fi
 	fi
+
+	# Check documentation standards
+	DOC_CHECK_SCRIPT="${REPO_ROOT}/scripts/check-documentation.sh"
+	if [[ -f "$DOC_CHECK_SCRIPT" ]] && [[ -x "$DOC_CHECK_SCRIPT" ]]; then
+		echo "Checking function documentation standards..."
+		if ! "$DOC_CHECK_SCRIPT"; then
+			echo "Error: Documentation check failed. Please fix documentation issues before committing." >&2
+			exit 1
+		fi
+	else
+		echo "Warning: Documentation checker script not found or not executable: $DOC_CHECK_SCRIPT" >&2
+	fi
 fi
 
 # Check if prepare_install_package.sh exists
@@ -126,7 +171,7 @@ if ! "${REPO_ROOT}/prepare_install_package.sh"; then
 fi
 
 # Check if the zip file was created
-PACKAGE_FILE="${REPO_ROOT}/udm-vpn-monitor-installer.zip"
+PACKAGE_FILE="${REPO_ROOT}/udm-vpn-monitor.zip"
 if [[ ! -f "$PACKAGE_FILE" ]]; then
 	echo "Error: Package file not created: $PACKAGE_FILE" >&2
 	exit 1
@@ -137,4 +182,3 @@ echo "Adding ${PACKAGE_FILE} to commit..."
 git add "$PACKAGE_FILE"
 
 echo "Pre-commit hook completed successfully."
-

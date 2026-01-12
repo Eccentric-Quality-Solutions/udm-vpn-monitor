@@ -46,14 +46,29 @@ We will design ping checks as a **supplementary diagnostic tool** that:
   - Diagnostic information for troubleshooting
   - Helps distinguish between different failure types
 - **Failure Detection**: Based on SA state and byte counter analysis, not ping results
-- **Module**: Implemented in `lib/detection.sh` with `check_ping_connectivity()` function
+- **Route Detection**:
+  - When ping succeeds but SA doesn't exist (Scenario 2), the system attempts to identify the alternative route being used
+  - Uses `ip route get` command to determine gateway and interface for the destination IP
+  - Route information is included in warning messages: "VPN tunnel is down (no SA found), but connectivity exists via alternative route (route: via <gateway> dev <interface>)"
+  - Route detection gracefully handles failures - if route info cannot be determined, warning still logs without route information
+  - Helps administrators understand how traffic is flowing when VPN tunnel is down
+  - Implemented via `get_route_info()` and `build_route_message()` functions in `lib/detection/network_validation.sh`
+- **Multiple Internal IPs Support**:
+  - For locations with **single internal IP**: Requires 100% success (ping must succeed)
+  - For locations with **multiple internal IPs**: VPN considered healthy if ≥30% respond to pings (rounded up)
+  - Example: 3 internal IPs need at least 1 successful ping, 10 internal IPs need at least 3 successful pings
+  - Rationale: Allows for partial connectivity while still detecting complete failures
+  - Route detection uses first IP in multiple IP configurations
+- **Module**: Implemented in `lib/detection/ping_detection.sh` (`check_ping_connectivity()`) and `lib/detection/network_validation.sh` (`get_route_info()`, `build_route_message()`)
 
 ## Related ADRs
 - ADR-0006: Multi-Method Detection with Fallback
 - ADR-0003: Tiered Recovery System
+- ADR-0024: Location-Based Configuration Format
 
 ## References
 - README.md: "Ping Check Behavior" section
 - README.md: "Why This Design?" explanation
-- lib/detection.sh: Implementation details
+- lib/detection/ping_detection.sh: Ping check implementation
+- lib/detection/network_validation.sh: Route detection implementation
 

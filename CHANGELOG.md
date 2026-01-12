@@ -2,6 +2,272 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
+## 0.6.0 - 2026-01-11
+
+### Added
+- **Modular Library Architecture Refactoring**: Major refactoring to improve code organization and maintainability:
+  - Split `lib/config.sh` (2365 lines) into modular subdirectories: `lib/config/config_defaults.sh`, `lib/config/config_loading.sh`, `lib/config/config_validation.sh`, `lib/config/location_parsing.sh`
+  - Split `lib/detection.sh` (3004 lines) into modular subdirectories: `lib/detection/failure_analysis.sh`, `lib/detection/network_validation.sh`, `lib/detection/ping_detection.sh`, `lib/detection/xfrm_detection.sh`
+  - Split `lib/recovery.sh` (2633 lines) into modular subdirectories: `lib/recovery/constants.sh`, `lib/recovery/ipsec_recovery.sh`, `lib/recovery/recovery_orchestration.sh`, `lib/recovery/recovery_state.sh`, `lib/recovery/recovery_verification.sh`, `lib/recovery/xfrm_recovery.sh`
+  - Split `lib/state.sh` (1421 lines) into modular subdirectories: `lib/state/global_state.sh`, `lib/state/location_state.sh`, `lib/state/peer_state.sh`, `lib/state/state_init.sh`, `lib/state/state_paths.sh`
+  - Added `lib/fallbacks.sh` module providing graceful degradation when modules can't be loaded
+  - Improved code organization, maintainability, and testability
+- **State Passing Pattern Implementation** (ADR-0028): Optimized detection system by reducing duplicate system calls by 66-75% (from 3 `ip xfrm state` calls to 1 per VPN check cycle):
+  - Detection functions now accept state objects to avoid redundant system calls
+  - Improved performance and reduced system load
+  - Better code organization with state management centralized
+- **Enhanced Test Infrastructure**: Major improvements to test infrastructure and organization:
+  - Moved testing documentation to `docs/testing/` subdirectory for better organization
+  - Added comprehensive test helpers in `tests/helpers/` subdirectory:
+    - `tests/helpers/assertions.bash` - Enhanced assertion functions
+    - `tests/helpers/config.bash` - Configuration test helpers
+    - `tests/helpers/detection.bash` - Detection test helpers
+    - `tests/helpers/fixtures.bash` - Fixture management helpers
+    - `tests/helpers/logging.bash` - Logging test helpers
+    - `tests/helpers/mocks.bash` - Mock management helpers
+    - `tests/helpers/recovery.bash` - Recovery test helpers
+    - `tests/helpers/resources.bash` - Resource test helpers
+    - `tests/helpers/state.bash` - State test helpers
+    - `tests/helpers/test_data.bash` - Test data generators
+  - Added test data templates in `tests/data/` subdirectory:
+    - `tests/data/configs/config_templates.sh` - Configuration templates
+    - `tests/data/mock_outputs/ipsec_status_templates.sh` - IPsec status mock templates
+    - `tests/data/mock_outputs/xfrm_state_templates.sh` - XFRM state mock templates
+  - Enhanced test fixtures: `tests/fixtures/vpn_active.bash`, `tests/fixtures/vpn_down.bash`
+  - Improved test isolation and reliability
+- **New API Script**: Added `scripts/api/list-udm-vpns.sh` utility script for listing VPN connections on UDM systems
+- **Comprehensive Test Coverage**: Expanded test suite with new test files:
+  - `tests/test_common_timestamp.sh` - Timestamp function tests
+  - `tests/test_config_validation.sh` - Configuration validation tests
+  - `tests/test_detection_network_partition.sh` - Network partition detection tests
+  - `tests/test_errors.sh` - Error handling tests
+  - `tests/test_fallbacks.sh` - Fallback mechanism tests
+  - `tests/test_lockfile.sh` - Enhanced lockfile tests
+  - `tests/test_main.sh` - Main script tests
+  - `tests/test_prepare_install_package.sh` - Install package preparation tests
+  - `tests/test_state.sh` - State management tests
+  - `tests/test_test_data_generators.sh` - Test data generator tests
+  - `tests/test_test_isolation.sh` - Test isolation verification tests
+
+### Changed
+- **Modular Architecture**: Refactored large monolithic library files into focused, single-responsibility modules:
+  - Better code organization and maintainability
+  - Improved testability with isolated modules
+  - Reduced cognitive load when working with specific functionality
+  - Maintained backward compatibility with existing function signatures
+- **Location Name Parameter Requirement**: Detection functions now require `location_name` parameter (no longer accepts empty string):
+  - Improved type safety and error detection
+  - Better logging context with location names
+  - Prevents bugs from missing location context
+  - Test fixes updated to use "TEST" location name instead of empty string
+- **Test Suite Improvements**: Enhanced test suite with better organization and reliability:
+  - Improved test helpers with better synchronization and mocking
+  - Enhanced test fixtures for common scenarios
+  - Better test isolation to prevent interference between tests
+  - Improved test data generators for consistent test scenarios
+- **Documentation Organization**: Reorganized documentation for better structure:
+  - Moved testing documentation to `docs/testing/` subdirectory
+  - Updated ADRs to reflect modular architecture changes
+  - Enhanced architecture documentation with recent improvements section
+- **False Positive Prevention**: Improved false positive prevention:
+  - Recovery messages only logged when `failure_count > 0` (Issue #17 - Fixed)
+  - Stale `failure_type` files cleared silently without logging recovery
+  - Routing_issue warnings may still appear for healthy VPNs when ping check is enabled (Issue #16 - Partially Fixed), but VPN status is correctly identified as healthy
+- **Code Coverage Improvements**: Enhanced kcov performance and coverage reporting
+- **CI/CD Workflow**: Updated GitHub Actions workflow for improved test execution and reporting
+
+### Fixed
+- **Test Fixes**: Fixed test cases to properly use location_name parameter:
+  - `tests/test_detection_xfrm_edge_cases.sh` - Added location_name variable to test cases
+  - `tests/test_helper_functions.sh` - Changed empty location_name to "TEST" for proper state management
+  - `tests/test_integration.sh` - Updated fixture setup to use correct fixture function
+- **Location Name Validation**: Removed unsafe `${location_name:-SYSTEM}` fallback patterns (14 instances) to prevent bugs:
+  - Functions now properly require location_name parameter
+  - Better error detection and type safety
+  - Prevents silent failures from missing location context
+
+### Removed
+- **Deprecated Documentation**: Removed outdated documentation files:
+  - `docs/AUDIT_MISSING_DEPENDENCIES.md` - Replaced by improved dependency checking
+  - `docs/MOCK_CLEANUP_AUDIT.md` - Replaced by improved test infrastructure
+- **Deprecated Script**: Removed `scripts/audit_mock_cleanup.sh` - Functionality integrated into improved test infrastructure
+
+## 0.5.0 - 2026-01-06
+
+### Added
+- **Recovery Type Distinction in Log Analysis**: Enhanced `analyze-logs.sh` to distinguish between app-managed recoveries (with intervention) and self-healed recoveries (no intervention):
+  - App-managed recoveries: Identified by "recovery method" in log messages or "VPN restored" terminology (indicates Tier 2/3 recovery actions were taken)
+  - Self-healed recoveries: Identified by "VPN recovered" messages without "recovery method" (indicates natural recovery without intervention)
+  - Statistics now include separate counts and rates for both recovery types
+  - CSV export includes recovery type labels (`RECOVERY_APP_MANAGED` vs `RECOVERY_SELF_HEALED`)
+  - Text reports include recovery type breakdown in summary and event timeline
+  - Enables evaluation of intervention effectiveness and VPN stability patterns
+- **Recovery Type Test Suite**: Comprehensive test coverage for recovery type distinction in `tests/test_analyze_logs.sh`:
+  - Tests for app-managed recovery identification
+  - Tests for self-healed recovery identification
+  - Tests for statistics reporting
+  - Tests for CSV export with recovery types
+  - Tests for report generation with recovery type breakdown
+  - Tests for event timeline with recovery type labels
+- **Multiple IP Threshold Logic Test**: Added test in `tests/test_detection_failure_type.sh` to verify threshold logic for multiple internal IPs (2/3 IPs respond = pass, 0/3 = fail)
+- **Detection Reliability Safeguard**: Added safety check that prevents recovery escalation when detection is unreliable. If failure type is "unknown" and both `ip` and `ipsec` commands are unavailable, the system cannot reliably determine if VPN is actually down, so recovery escalation (Tier 2/3) is skipped to prevent false recovery actions. Failures are still logged for monitoring, but recovery actions are not executed when detection tools are unavailable.
+- **Enhanced Command Availability Checking**: Improved `check_command_available()` function in `lib/common.sh` to handle restricted PATH environments (common in cron/systemd on UDM OS):
+  - Falls back to checking common system directories (`/usr/sbin`, `/usr/bin`, `/sbin`, `/bin`) when `command -v` fails
+  - Handles cases where PATH doesn't include `/usr/sbin` (common in cron/systemd environments)
+  - Additional fallback: attempts to execute command with `--help`/`--version` flags to verify availability
+  - Better compatibility with UDM OS environments where PATH may be restricted
+- **Detection Reliability Test Suite**: New `tests/test_recovery_detection_reliability.sh` test file with comprehensive tests for the detection reliability safeguard, ensuring recovery escalation is properly blocked when detection tools are unavailable
+- **Installation Route Testing Enhancement**: Enhanced `check_and_setup_routes()` in `install.sh` to test ping connectivity to all internal IPs from all configured locations (not just the first IP). Uses `check_ping_connectivity()` from detection.sh which provides proper fallback logic for ping commands (ping vs ping6, timeout handling, etc.) and proper logging.
+- Migration script tests for interactive mode with mocked input
+- Migration script test for fallback `sanitize_location_name` when library fails to load
+- Migration script test for `CONFIG_FILE` environment variable override
+- Installation test for comprehensive route testing with multiple locations and IPs
+
+### Changed
+- **Log Analysis Pattern Matching**: Improved recovery type classification logic in `analyze-logs.sh` to check more specific patterns before general ones:
+  - Checks for "recovery method" first (most specific)
+  - Checks for "VPN restored" before "after X failures" (prevents misclassification)
+  - Ensures correct classification of app-managed vs self-healed recoveries
+- **Migration Script Default Behavior (BREAKING CHANGE)**: The `migrate-config-to-locations.sh` script now defaults to interactive mode (prompts for location names) instead of automatic generation. Use the `--auto` flag to restore the previous automatic behavior. This change improves the user experience by allowing meaningful location names by default.
+  - Default mode: Interactive (prompts for each location name)
+  - Use `--auto` flag for automatic generation (LOCATION_1, LOCATION_2, etc.)
+  - Use `--csv FILE` for bulk import from CSV file
+  - Previous versions defaulted to automatic generation
+- **Installation Route Testing**: Enhanced installation script to test ping connectivity to all internal IPs from all configured locations during route setup, instead of only testing the first internal IP. This ensures all configured VPN endpoints are properly reachable and routes are correctly configured.
+- **Documentation Updates**:
+  - Updated `docs/ARCHITECTURE.md` with recovery type distinction documentation, including identification patterns, analysis metrics, and benefits, and information about detection reliability safeguard in tiered recovery system
+  - Updated `docs/CODE_REVIEW_LESSONS_LEARNED.md` with Lesson 30: "Check more specific patterns before general ones in conditional logic" (pattern matching order matters for correct classification)
+  - Updated `docs/CODE_PATTERNS.md` with notes about PATH restrictions in cron/systemd environments and `BASH_REMATCH` safety patterns when using `set -u`
+  - Updated `docs/MIGRATION.md` to reflect new default interactive behavior of migration script
+  - Updated `FUTURE.md` with note about enhanced recovery type analysis (basic implementation completed)
+
+### Fixed
+- **Test Reliability**: Fixed test in `tests/test_detection.sh` to disable ping check when testing byte counter decrease detection (prevents false positives from ping-based idle detection)
+- **Test Assertions**: Improved test assertions in `tests/test_detection_failure_type.sh` to remove debug code and focus on core functionality
+- Fixed migration script default mode parameter mismatch in `migrate_config()` function
+- Added fallback `sanitize_location_name()` function when library files fail to load
+- Restored `CONFIG_FILE` environment variable override capability (needed for testing)
+- **BASH_REMATCH Safety**: Fixed potential "unbound variable" errors when using `set -u` (nounset) by using `${BASH_REMATCH[n]:-}` default values in `lib/recovery.sh` when accessing regex capture groups. This prevents errors if regex doesn't match or capture group is empty.
+- **External IP Extraction Safety**: Fixed potential unbound variable error in `verify_ipsec_connections_active()` function by using safe default value `${BASH_REMATCH[1]:-}` when extracting external IP from location data
+- **Error Handling Prefix**: Fixed missing prefix parameter in `handle_error_or_exit_fake_mode()` call in `vpn-monitor.sh` when no locations are configured. Error now follows standard prefix pattern with "SYSTEM" prefix.
+- **Migration Script Cleanup**: Added cleanup trap for temporary file in migration script to ensure proper cleanup on early exit or errors, preventing orphaned temp files
+
+## 0.4.3 - 2026-01-02
+
+### Added
+- **Location-Based Configuration**: New location-based configuration format that organizes VPN connections by named locations:
+  - Format: `LOCATION_<NAME>_EXTERNAL` and `LOCATION_<NAME>_INTERNAL` variables
+  - Better organization for managing multiple VPN connections
+  - Clearer logging with location names in logs and state files
+  - Independent tracking per location with separate failure counters and state files
+  - Supports multiple internal IPs per location with 30% ping threshold for health determination
+- **Configuration Migration Script**: New `scripts/migrate-config-to-locations.sh` script to automatically migrate from old `EXTERNAL_PEER_IPS`/`INTERNAL_PEER_IPS` format to new location-based format:
+  - Interactive mode with prompts for location names
+  - CSV mode for bulk import
+  - Automatic backup creation before migration
+  - Config validation after migration
+- **Multiple Internal IPs Support**: Enhanced ping health determination for locations with multiple internal IPs:
+  - For locations with multiple internal IPs: VPN is considered healthy if ≥30% respond to pings (rounded up)
+  - For locations with single internal IP: VPN requires 100% success (ping must succeed)
+  - Example: 3 internal IPs need at least 1 successful ping, 10 internal IPs need at least 3 successful pings
+- **Test Infrastructure Improvements**:
+  - New test fixtures: `vpn_at_tier.bash`, `vpn_idle.bash` for common test scenarios
+  - New test utilities: `detect_flaky_tests.sh` for identifying flaky tests
+  - New test verification: `verify_test_isolation.sh` for ensuring test isolation
+  - Enhanced test helpers with better mocking and synchronization
+- **Documentation Enhancements**:
+  - New `docs/CODE_PATTERNS.md` - Comprehensive code patterns and best practices guide
+  - New `docs/CODE_REVIEW_LESSONS_LEARNED.md` - Lessons learned from code reviews
+  - New `docs/TEST_MAINTENANCE.md` - Test maintenance guidelines and patterns
+  - New `docs/TEST_STRATEGY.md` - Testing strategy and approach documentation
+  - New `docs/MIGRATION.md` - Migration guide for location-based configuration
+  - New `tests/TEST_PATTERNS.md` - Test patterns and best practices
+  - New `ACCEPTABLE_RISKS.md` - Documented acceptable risks and limitations
+- **Development Tools**:
+  - New `scripts/audit_mock_cleanup.sh` - Script to audit and clean up test mocks
+  - New `scripts/check-documentation.sh` - Script to verify documentation completeness
+  - Enhanced CI/CD workflow with improved test execution and reporting
+
+### Changed
+- **Configuration System**: Major refactoring of configuration loading and parsing:
+  - New location-based configuration format replaces `EXTERNAL_PEER_IPS`/`INTERNAL_PEER_IPS` format
+  - Enhanced configuration parsing with better error handling and validation
+  - Improved quote handling and escaping in configuration values
+  - Better handling of empty or missing configuration values
+  - Enhanced location name extraction and sanitization
+- **State File Management**: Updated state file naming to include location names:
+  - Old format: `state/failure_counter_203_0_113_1`
+  - New format: `state/failure_counter_NYC_203_0_113_1`
+  - State files now include location name for better organization
+- **Test Suite Expansion**: Major expansion of test coverage:
+  - New test files: `test_config_location.sh`, `test_detection_error_recovery.sh`, `test_detection_ping_multiple.sh`, `test_fixtures_vpn_at_tier.sh`, `test_fixtures_vpn_idle.sh`, `test_integration_location.sh`, `test_migration.sh`, `test_recovery_cascading_failures.sh`, `test_recovery_multi_location_partial.sh`, `test_state_atomic_write_failures.sh`, `test_state_location.sh`, `test_test_isolation.sh`
+  - Enhanced existing tests with better fixtures and improved test isolation
+  - Improved test helpers with better synchronization and mocking capabilities
+- **Detection Module**: Enhanced detection logic for location-based configuration:
+  - Support for multiple internal IPs per location with 30% ping threshold
+  - Improved error recovery and handling
+  - Better ping health determination for multiple IPs
+- **Recovery Module**: Enhanced recovery actions for location-based configuration:
+  - Per-location recovery tracking and actions
+  - Improved cascading failure handling
+  - Better multi-location partial failure recovery
+- **Test Execution**: Improved test execution and reporting:
+  - Enhanced `run_tests.sh` with better test filtering and execution
+  - Improved test isolation verification
+  - Better flaky test detection
+- **Documentation Updates**:
+  - Updated `README.md` with location-based configuration documentation
+  - Updated `QUICK_START.md` with migration guidance
+  - Updated `DEPLOYMENT_CHECKLIST.md` with migration steps
+  - Updated `DEVELOPER.md` with new development guidelines
+  - Updated `TROUBLESHOOTING.md` with location-based configuration troubleshooting
+  - Updated ADRs to reflect location-based configuration changes
+- **Code Quality Improvements**:
+  - Enhanced error handling throughout configuration and detection modules
+  - Improved code organization and maintainability
+  - Better separation of concerns with location-based configuration parsing
+  - Enhanced validation and error messages
+
+### Fixed
+- **Configuration Parsing**: Fixed quote handling and escaping in configuration values
+- **State File Operations**: Fixed state file operations for location-based configuration
+- **Test Isolation**: Improved test isolation to prevent test interference
+- **Error Recovery**: Enhanced error recovery in detection and configuration modules
+
+### Removed
+- **Deprecated Test File**: Removed `tests/run_individual_tests.sh` (functionality integrated into `run_tests.sh`)
+- **Deprecated Documentation**: Removed `docs/TEST_REVIEW.md` and `docs/TROUBLESHOOTING_LOG_FILE_OVERRIDE.md` (replaced by new documentation)
+
+## 0.4.2 - 2025-12-29
+
+### Added
+- **Periodic Status Logging**: New `STATUS_LOG_INTERVAL_SECONDS` configuration option to log periodic status updates for healthy VPN peers (default: 300 seconds / 5 minutes). Ensures monitoring activity is visible in logs even when VPNs are healthy. Set to 0 to disable periodic status logging.
+- **Recovery Verification Timeout**: New `RECOVERY_VERIFY_TIMEOUT` configuration option (default: 30 seconds) to control maximum time to wait for recovery verification after xfrm-based recovery actions. Range: 10-300 seconds.
+- **Keepalive Daemon Config Reloading**: VPN keepalive daemon now automatically reloads configuration every 10 iterations (or every 5 minutes, whichever is longer) to pick up configuration changes without requiring service restart.
+- **Keepalive LOCAL_UDM_IP Support**: Keepalive daemon now supports `LOCAL_UDM_IP` configuration for proper ping source routing when using `INTERNAL_PEER_IPS`, matching the behavior of `vpn-monitor.sh` ping checks.
+- **Developer Troubleshooting Documentation**: New `docs/DEV_TROUBLESHOOTING.md` with troubleshooting tips for developers, including keepalive service restart instructions.
+
+### Changed
+- **Keepalive Daemon Improvements**:
+  - Enhanced error handling and logging for keepalive ping failures
+  - Improved peer IP parsing with better fallback handling
+  - Better route management for internal IP pings
+  - More robust daemon operation with config reloading capability
+- **Installation Script Improvements**:
+  - Enhanced error handling for keepalive systemd service startup with detailed journal output
+  - Improved error messages when keepalive service fails to start
+  - Updated library file list to include `resources.sh` in error messages
+- **Recovery Module Refactoring**:
+  - Extracted `format_peer_display()` function for consistent peer display formatting across logging statements
+  - Improved code organization and maintainability
+- **Documentation Updates**:
+  - Updated `README.md` with new configuration options (`STATUS_LOG_INTERVAL_SECONDS`, `RECOVERY_VERIFY_TIMEOUT`)
+  - Updated ADR-0013 status to "Deprecated (Removed in v0.2.0)" in `docs/adr/README.md` and `docs/adr/0013-state-file-checksum-validation.md`
+  - Added deprecation note to ADR-0013 explaining removal in v0.2.0
+
+### Fixed
+- **Config Schema**: Added missing `STATUS_LOG_INTERVAL_SECONDS` to configuration schema validation
+
 ## 0.4.1 - 2025-12-29
 
 ### Added
@@ -43,9 +309,6 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 - **Test Timing**: Replaced sleep-based synchronization with deterministic file-based signaling
 - **Config Parsing**: Improved error message validation in config schema tests
 - **Daemon Startup**: Fixed PID file handling in keepalive daemon for proper systemd integration
-
-### Removed
-- **Binary Artifacts**: Removed `udm-vpn-monitor-installer.zip` from repository (should be generated, not committed)
 
 ## 0.4.0 - 2025-12-29
 

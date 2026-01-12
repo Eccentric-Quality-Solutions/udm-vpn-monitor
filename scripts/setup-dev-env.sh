@@ -94,7 +94,37 @@ fi
 echo ""
 echo "Checking for development tools..."
 
-# Helper function to check if a tool exists in PATH or standard locations
+# Check if a development tool exists in PATH or standard installation locations
+#
+# Searches for a tool in multiple locations: current PATH, standard system
+# paths (/usr/bin, /usr/local/bin, /bin), and Homebrew paths. This ensures
+# tools are found even if they're not in the current PATH (e.g., when running
+# in git hooks with minimal environment).
+#
+# Arguments:
+#   $1: Name of the tool/command to check (e.g., "shfmt", "shellcheck")
+#
+# Returns:
+#   0: Tool found in PATH or standard locations
+#   1: Tool not found in any checked location
+#
+# Side effects:
+#   None
+#
+# Examples:
+#   if tool_exists "shfmt"; then
+#       echo "shfmt is available"
+#   fi
+#
+#   if ! tool_exists "shellcheck"; then
+#       echo "shellcheck not found"
+#   fi
+#
+# Note:
+#   Uses command -v for PATH checking (most reliable method)
+#   Checks system paths for apt-installed tools
+#   Checks Homebrew paths if BREW_BIN variable is set
+#   Only checks executable files (not just presence of file)
 tool_exists() {
 	local tool="$1"
 

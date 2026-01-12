@@ -139,6 +139,17 @@ service cron status
    ```
    Check debug output for detailed information.
 
+5. **Check for false positive detection patterns**:
+   Look for these log patterns that indicate false positives:
+   ```
+   [WARNING] VPN suspect: SA exists for <IP> but byte counter info unavailable
+   [WARNING] VPN suspect: No connection found via ipsec status for <IP>
+   [INFO] Ping check OK: <internal_IP> from <local_IP> (0% packet loss)
+   [WARNING] VPN tunnel is down (no SA found), but connectivity exists via alternative route
+   [WARNING] VPN failure type: Unknown (unable to determine specific failure type)
+   ```
+   If you see this pattern with successful ping checks, the VPN may actually be healthy but detection is failing due to byte counter extraction issues. The system should automatically fall back to ping checks when byte counters are unavailable (if `ENABLE_PING_CHECK=1` and internal IPs are configured).
+
 ### Solutions
 
 **If VPN is idle (no traffic)**:
@@ -150,7 +161,7 @@ service cron status
 **If ping checks are failing**:
 - Ping may be blocked by firewall
 - Disable ping checks: `ENABLE_PING_CHECK=0`
-- Or configure `INTERNAL_PEER_IPS` to a reachable IP
+- Or configure `LOCATION_*_INTERNAL` to a reachable IP
 
 **If thresholds are too low**:
 - Increase thresholds in config:
@@ -203,9 +214,16 @@ service cron status
 
 5. **Check rate limiting**:
    ```bash
-   cat /data/vpn-monitor/logs/restart_count
+   cat /data/vpn-monitor/state/restart_count
    ```
    This file contains Unix timestamps (one per line) of Tier 3 recovery actions (full IPsec restarts and successful xfrm-based per-connection recovery). If too many restarts occurred in the last hour (default: max 3), rate limiting may block further Tier 3 recovery actions.
+   
+   **Important Note**: Log messages showing "Tier 3: Attempting..." are logged BEFORE the rate limit check. If you see many "Tier 3: Attempting..." messages but no actual restart commands executing, this indicates rate limiting is working correctly. The restart command only executes if rate limiting allows it. If you see "Rate limit exceeded: 3 restarts in last hour (max: 3)", this confirms rate limiting is blocking the restart.
+   
+   **Why 0 restarts when limit is 3?** If you see many restart attempts but 0 completed restarts, possible explanations:
+   - Restart count file already contained 3 entries from before the current monitoring period (within the last hour)
+   - All restart attempts occurred after the first 3 restarts had already been recorded
+   - Check the restart count file timestamps to verify when the last 3 restarts occurred
 
 6. **Check cooldown period**:
    ```bash
@@ -224,6 +242,7 @@ service cron status
 - Too many restarts in last hour (default: max 3)
 - Wait for rate limit to expire (1 hour)
 - Or increase `MAX_RESTARTS_PER_HOUR` in config
+- **Note**: If you see "Tier 3: Attempting..." messages but no actual restart, rate limiting is working as designed. The log message appears before the rate limit check, but the restart only executes if allowed.
 
 **If in cooldown**:
 - Cooldown period after restart (default: 15 minutes)
@@ -249,6 +268,43 @@ service cron status
 - VPN is working but ping fails
 - "Route not found on br0" or "Failed to add route" messages in logs
 
+### How Routes Work
+
+Routes (IP addresses on the `br0` interface) are automatically managed by the VPN monitor in three scenarios:
+
+1. **During Installation** (`install.sh`):
+   - Function: `check_and_setup_routes()`
+   - When: Runs during installation if `ENABLE_PING_CHECK=1` and internal IPs are configured
+   - What it does:
+     - Checks if `LOCAL_UDM_IP` is configured (auto-detects from br0 if not)
+     - Adds route: `ip addr add <LOCAL_UDM_IP>/32 dev br0`
+     - Tests ping connectivity to all internal IPs from all locations
+
+2. **During Config Validation** (`lib/config.sh`):
+   - Function: `setup_routes_if_needed()`
+   - When: Called automatically during `validate_config()` when config is loaded
+   - What it does:
+     - Checks if ping checks are enabled and internal IPs are configured
+     - Retrieves `LOCAL_UDM_IP` using `get_local_ip_for_ping()`
+     - Checks if route exists via `check_route_exists()`
+     - If route doesn't exist, calls `add_route_if_needed()` to add it
+     - Fails validation if route setup fails when routes are actually needed
+   - **Key Benefit:** Routes are set up proactively before any checks run, ensuring they're available even if VPN checks are skipped
+
+3. **During Normal Operation** (`lib/detection.sh`):
+   - Function: `check_ping_connectivity()`
+   - When: Called during VPN monitoring when ping checks are enabled
+   - What it does:
+     - Checks if route exists via `check_route_exists()`
+     - If route doesn't exist, calls `add_route_if_needed()` to add it
+     - Then performs ping check with `-I <local_ip>` flag
+   - **Note:** This now serves as a fallback/re-check mechanism, since routes should already be set up during config validation
+
+**Key Functions:**
+- `check_route_exists()`: Checks if IP exists on br0 interface
+- `add_route_if_needed()`: Adds IP to br0 if it doesn't exist
+- `get_local_ip_for_ping()`: Retrieves `LOCAL_UDM_IP` from config
+
 ### Diagnosis Steps
 
 1. **Test ping manually**:
@@ -259,11 +315,11 @@ service cron status
 
 2. **Check ping target configuration**:
    ```bash
-   grep INTERNAL_PEER_IPS /data/vpn-monitor/vpn-monitor.conf
+   grep LOCATION.*INTERNAL /data/vpn-monitor/vpn-monitor.conf
    ```
-   If empty, uses peer IP (external IP, may not be pingable).
+   If empty, uses external IP (may not be pingable).
 
-3. **Check LOCAL_UDM_IP configuration** (if using INTERNAL_PEER_IPS):
+3. **Check LOCAL_UDM_IP configuration** (if using INTERNAL IPs):
    ```bash
    grep LOCAL_UDM_IP /data/vpn-monitor/vpn-monitor.conf
    ```
@@ -299,9 +355,9 @@ service cron status
 - Monitor relies only on byte counters
 
 **If ping target is wrong**:
-- Configure `INTERNAL_PEER_IPS` to internal/private IPs on remote network
-- Example: `INTERNAL_PEER_IPS="192.168.100.1"`
-- See [README.md Configuration section](README.md#configuration) for INTERNAL_PEER_IPS details
+- Configure `LOCATION_*_INTERNAL` to internal/private IPs on remote network
+- Example: `LOCATION_NYC_INTERNAL="192.168.100.1"`
+- See [README.md Configuration section](README.md#configuration) for location-based configuration details
 
 **If LOCAL_UDM_IP is not configured**:
 - Set `LOCAL_UDM_IP` to your local UDM's internal IP address
@@ -314,6 +370,17 @@ service cron status
 - Manually add route: `ip addr add <LOCAL_UDM_IP>/32 dev br0`
 - Verify route exists: `ip addr show br0 | grep <LOCAL_UDM_IP>`
 - The script will automatically re-add the route when needed (route is temporary and lost on reboot)
+- **Verify route setup during config validation:**
+  ```bash
+  # Routes should be added automatically when config is validated
+  /data/vpn-monitor/vpn-monitor.sh --check-config
+  ip addr show br0 | grep <LOCAL_UDM_IP>
+  ```
+- **Check logs for route setup messages:**
+  ```bash
+  grep -i "route" /data/vpn-monitor/logs/vpn-monitor.log
+  ```
+- If route setup fails during validation, you'll see clear ERROR messages with manual fix instructions
 
 **If ping command not available**:
 - Install ping: `apt-get install iputils-ping`
@@ -371,7 +438,7 @@ service cron status
 
 6. **Verify configuration**:
    ```bash
-   grep -E "KEEPALIVE|EXTERNAL_PEER_IPS|INTERNAL_PEER_IPS" /data/vpn-monitor/vpn-monitor.conf
+   grep -E "KEEPALIVE|LOCATION.*EXTERNAL|LOCATION.*INTERNAL" /data/vpn-monitor/vpn-monitor.conf
    ```
 
 ### Solutions
@@ -394,7 +461,7 @@ service cron status
    - Check systemd logs: `journalctl -u vpn-keepalive -n 50`
 
 4. **Keepalive pings failing**:
-   - Verify `INTERNAL_PEER_IPS` or `EXTERNAL_PEER_IPS` are configured
+   - Verify location-based configuration is set (e.g., `LOCATION_*_EXTERNAL` and `LOCATION_*_INTERNAL`)
    - Check if VPN tunnel is actually up
    - Test ping manually: `ping -c 1 <peer_ip>`
    - Check firewall rules that might block ping
@@ -512,9 +579,9 @@ For complete configuration documentation, including all parameters and their des
 
 3. **Check required values**:
    ```bash
-   grep EXTERNAL_PEER_IPS /data/vpn-monitor/vpn-monitor.conf
+   grep LOCATION.*EXTERNAL /data/vpn-monitor/vpn-monitor.conf
    ```
-   Should not be empty.
+   Should show at least one location configured (e.g., `LOCATION_NYC_EXTERNAL="203.0.113.1"`).
 
 4. **Check config file permissions**:
    ```bash
@@ -524,16 +591,25 @@ For complete configuration documentation, including all parameters and their des
 
 ### Solutions
 
-**If EXTERNAL_PEER_IPS is empty**:
+**If no locations are configured**:
 ```bash
 # Edit config
 nano /data/vpn-monitor/vpn-monitor.conf
-# Set EXTERNAL_PEER_IPS to your remote VPN gateway's external/public IP address(es)
-# Example: EXTERNAL_PEER_IPS="203.0.113.1"
-# Optionally set INTERNAL_PEER_IPS for ping checks
-# Example: INTERNAL_PEER_IPS="192.168.100.1"
+# Configure VPN locations using location-based format:
+# LOCATION_<NAME>_EXTERNAL="external_ip"
+# LOCATION_<NAME>_INTERNAL="internal_ip1 internal_ip2 ..."
+# Example:
+LOCATION_NYC_EXTERNAL="203.0.113.1"
+LOCATION_NYC_INTERNAL="192.168.100.1"
 ```
-See [README.md Configuration section](README.md#configuration) for details on configuring EXTERNAL_PEER_IPS and INTERNAL_PEER_IPS.
+See [README.md Configuration section](README.md#configuration) for details on location-based configuration.
+
+**If migrating from old format**:
+If you have an existing configuration using `EXTERNAL_PEER_IPS`/`INTERNAL_PEER_IPS`, use the migration script:
+```bash
+/data/vpn-monitor/scripts/migrate-config-to-locations.sh
+```
+The migration script runs in interactive mode by default (prompts for location names). Use `--auto` for automatic generation or `--csv FILE` for bulk import. See [MIGRATION.md](docs/MIGRATION.md) for detailed migration instructions.
 
 **If config syntax error**:
 - Check for unclosed quotes
@@ -569,11 +645,11 @@ See [README.md Configuration section](README.md#configuration) for details on co
    ```
    Should complete in < 30 seconds.
 
-2. **Check for multiple peers**:
+2. **Check for multiple locations**:
    ```bash
-   grep EXTERNAL_PEER_IPS /data/vpn-monitor/vpn-monitor.conf
+   grep LOCATION.*EXTERNAL /data/vpn-monitor/vpn-monitor.conf
    ```
-   More peers = longer execution time.
+   More locations = longer execution time.
 
 3. **Check ping timeout**:
    ```bash
@@ -589,8 +665,8 @@ See [README.md Configuration section](README.md#configuration) for details on co
 
 ### Solutions
 
-**If too many peers**:
-- Reduce number of peers monitored
+**If too many locations**:
+- Reduce number of locations monitored
 - Or increase cron interval (check less frequently)
 
 **If ping timeout too long**:
@@ -684,7 +760,7 @@ If you're still experiencing issues:
 2. **Enable debug mode**: `DEBUG=1` in config
 3. **Run manually**: `/data/vpn-monitor/vpn-monitor.sh` (not --fake)
 4. **Review documentation**: [README.md](README.md)
-5. **Check architectural review**: [ARCHITECTURAL_REVIEW.md](ARCHITECTURAL_REVIEW.md) for code quality analysis and known issues
+5. **Check architecture documentation**: [ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical implementation details and design decisions
 
 ## Reporting Issues
 

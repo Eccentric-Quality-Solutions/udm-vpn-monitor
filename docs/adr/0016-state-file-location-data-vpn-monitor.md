@@ -18,7 +18,7 @@ State files need to:
 - Not interfere with system operations
 
 ## Decision
-We will store all state files, logs, and configuration in `/data/vpn-monitor/` directory.
+We will store all state files, logs, and configuration in `/data/vpn-monitor/` directory, with state files in a dedicated `state/` subdirectory.
 
 ## Consequences
 
@@ -42,7 +42,7 @@ We will store all state files, logs, and configuration in `/data/vpn-monitor/` d
   - Configuration: `/data/vpn-monitor/vpn-monitor.conf`
   - Library modules: `/data/vpn-monitor/lib/`
   - Logs: `/data/vpn-monitor/logs/`
-  - State files: `/data/vpn-monitor/` (root of installation directory)
+  - State files: `/data/vpn-monitor/state/` (dedicated state subdirectory)
 - **Installation**: Created during `install.sh` execution
 - **Uninstallation**: Removed during `uninstall.sh` execution
 - **Persistence Note**: Documented that files may need re-installation after major OS upgrades

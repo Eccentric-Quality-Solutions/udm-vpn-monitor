@@ -5,7 +5,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.4.1
+# Version: 0.6.0
 #
 
 set -euo pipefail
@@ -30,7 +30,7 @@ KEEPALIVE_ONLY=0
 if [[ ! -d "${INSTALL_SCRIPT_DIR}/lib" ]]; then
 	echo "[ERROR] Library directory not found: ${INSTALL_SCRIPT_DIR}/lib"
 	echo "[ERROR] Please ensure the installation package was extracted correctly"
-	echo "[ERROR] Required library files: common.sh, config.sh, config_schema.sh, constants.sh, detection.sh, lockfile.sh, logging.sh, recovery.sh, state.sh"
+	echo "[ERROR] Required library files: common.sh, config.sh, config_schema.sh, constants.sh, detection.sh, lockfile.sh, logging.sh, recovery.sh, resources.sh, state.sh"
 	exit 1
 fi
 
@@ -53,6 +53,9 @@ source "${INSTALL_SCRIPT_DIR}/lib/detection.sh"
 #
 # Verifies that the system is a UniFi Dream Machine by checking for /data directory.
 # Skips check if DEV_MODE is enabled (for testing on non-UDM systems).
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: UDM detected or dev mode enabled
@@ -77,6 +80,9 @@ check_udm() {
 # Creates the installation directory (INSTALL_DIR) if it doesn't exist.
 # In production mode: /data/vpn-monitor
 # In dev mode: ./vpn-monitor (current working directory)
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Always succeeds (exits script on failure)
@@ -224,9 +230,13 @@ prompt_all_config_values() {
 	local default_keepalive_interval="${15}"
 	local default_keepalive_ping_count="${16}"
 
-	# Prompt for each value (variables will be set in global scope via declare -g)
-	prompt_and_set_config "external_peer_ips" "$default_peer_ips" "External/Public peer IP address(es) to monitor (space-separated, external/public IPs)"
-	prompt_and_set_config "internal_peer_ips" "" "Internal/Private peer IP address(es) (optional, space-separated, for ping checks, empty to skip)"
+	# Prompt for location-based configuration
+	# Prompt for at least one location
+	prompt_and_set_config "location_name" "NYC" "Location name for first VPN location (e.g., NYC, DC, OFFICE)"
+	# Get location_name value (it was set in global scope by prompt_and_set_config)
+	local current_location_name="${location_name}"
+	prompt_and_set_config "external_peer_ips" "$default_peer_ips" "External/Public IP address for location ${current_location_name} (external/public IP of remote VPN gateway)"
+	prompt_and_set_config "internal_peer_ips" "" "Internal/Private IP address(es) for location ${current_location_name} (optional, space-separated, for ping checks, empty to skip)"
 	prompt_and_set_config "vpn_name" "$default_vpn_name" "VPN connection identifier/name"
 	prompt_and_set_config "tier1" "$default_tier1" "Tier 1 threshold (failures before logging)"
 	prompt_and_set_config "tier2" "$default_tier2" "Tier 2 threshold (failures before surgical cleanup)"
@@ -249,6 +259,9 @@ prompt_all_config_values() {
 # Prompts the user for each configuration value with defaults.
 # Creates the config file with user-provided values.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Always succeeds (exits script on failure)
 #
@@ -269,7 +282,7 @@ create_interactive_config() {
 	local default_cooldown=15
 	local default_max_restarts=3
 	local default_log_file="${INSTALL_DIR}/logs/vpn-monitor.log"
-	local default_state_dir="${INSTALL_DIR}"
+	local default_state_dir="${INSTALL_DIR}/state"
 	local default_cron_schedule="*/1 * * * *"
 	local default_lockfile_timeout=300
 	local default_enable_ping=1
@@ -303,21 +316,27 @@ create_interactive_config() {
 	# Create config file
 	# shellcheck disable=SC2154
 	# Variables are set in global scope by prompt_all_config_values() via declare -g
+	# Sanitize location name for use in variable name (uppercase, replace invalid chars with underscore)
+	local sanitized_location_name
+	sanitized_location_name=$(echo "${location_name}" | sed 's/[^A-Za-z0-9_]/_/g' | tr '[:lower:]' '[:upper:]')
+	# Ensure it doesn't start with underscore
+	sanitized_location_name=$(echo "$sanitized_location_name" | sed 's/^_*//')
+	# If empty after sanitization, use default (matches library function behavior)
+	if [[ -z "$sanitized_location_name" ]]; then
+		sanitized_location_name="LOCATION"
+	fi
+
 	cat >"${INSTALL_DIR}/${CONFIG_NAME}" <<EOF
 # UDM VPN Monitor Configuration
 # Generated via interactive installation
 
-# External/Public peer IP address(es) to monitor (space-separated list)
-# This should be the EXTERNAL/PUBLIC IP address(es) of the remote VPN gateway(s)
-# This is the IP address used to establish the IPsec tunnel and check xfrm state
-EXTERNAL_PEER_IPS="${external_peer_ips}"
-
-# Internal/Private peer IP address(es) to monitor (space-separated list)
-# This should be the INTERNAL/PRIVATE IP address(es) of the remote VPN gateway(s)
-# This is the IP address used for ping connectivity checks through the tunnel
-# Must match the order of EXTERNAL_PEER_IPS (first internal IP corresponds to first external IP)
-# If empty, ping checks will use EXTERNAL_PEER_IPS instead
-INTERNAL_PEER_IPS="${internal_peer_ips}"
+# Location-based VPN configuration
+# Format: LOCATION_<NAME>_EXTERNAL="external_ip"
+# Format: LOCATION_<NAME>_INTERNAL="internal_ip1 internal_ip2 ..."
+# Location names are automatically extracted from variable names (text between LOCATION_ and _EXTERNAL)
+# For locations with multiple internal IPs, VPN is considered healthy if ≥30% respond to pings
+LOCATION_${sanitized_location_name}_EXTERNAL="${external_peer_ips}"
+LOCATION_${sanitized_location_name}_INTERNAL="${internal_peer_ips}"
 
 # VPN connection identifier/name (optional, for logging)
 VPN_NAME="${vpn_name}"
@@ -358,6 +377,12 @@ PING_TIMEOUT=${ping_timeout}
 ENABLE_KEEPALIVE=${enable_keepalive}
 KEEPALIVE_INTERVAL=${keepalive_interval}
 KEEPALIVE_PING_COUNT=${keepalive_ping_count}
+
+# Network Partition Detection
+ENABLE_NETWORK_PARTITION_CHECK=1
+
+# Resource Monitoring
+ENABLE_RESOURCE_MONITORING=1
 
 # Enable debug logging (set to 1 for verbose output)
 DEBUG=${debug}
@@ -403,8 +428,18 @@ install_config_file() {
 		log_warn "Config template not found, creating default"
 		cat >"${INSTALL_DIR}/${CONFIG_NAME}" <<EOF
 # UDM VPN Monitor Configuration
-EXTERNAL_PEER_IPS=""
-INTERNAL_PEER_IPS=""
+# Location-based VPN configuration
+# Format: LOCATION_<NAME>_EXTERNAL="external_ip"
+# Format: LOCATION_<NAME>_INTERNAL="internal_ip1 internal_ip2 ..."
+# Location names are automatically extracted from variable names (text between LOCATION_ and _EXTERNAL)
+# For locations with multiple internal IPs, VPN is considered healthy if ≥30% respond to pings
+# Example:
+#   LOCATION_NYC_EXTERNAL="203.0.113.1"
+#   LOCATION_NYC_INTERNAL="192.168.1.1 192.168.1.88"
+#   LOCATION_DC_EXTERNAL="203.0.113.2"
+#   LOCATION_DC_INTERNAL="192.168.10.1 192.168.10.254"
+LOCATION_NYC_EXTERNAL=""
+LOCATION_NYC_INTERNAL=""
 VPN_NAME="Site-to-Site VPN"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
@@ -412,7 +447,7 @@ TIER3_THRESHOLD=5
 COOLDOWN_MINUTES=15
 MAX_RESTARTS_PER_HOUR=3
 LOG_FILE="${INSTALL_DIR}/logs/vpn-monitor.log"
-STATE_DIR="${INSTALL_DIR}"
+STATE_DIR="${INSTALL_DIR}/state"
 CRON_SCHEDULE="*/1 * * * *"
 LOCKFILE_TIMEOUT=300
 ENABLE_PING_CHECK=1
@@ -421,6 +456,8 @@ PING_TIMEOUT=2
 ENABLE_KEEPALIVE=1
 KEEPALIVE_INTERVAL=30
 KEEPALIVE_PING_COUNT=1
+ENABLE_NETWORK_PARTITION_CHECK=1
+ENABLE_RESOURCE_MONITORING=1
 DEBUG=0
 EOF
 	fi
@@ -463,6 +500,9 @@ get_script_version() {
 # Extracts the version from the source vpn-monitor.sh script.
 # Falls back to install script version comment if not found.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Version found and printed to stdout
 #   1: Version not found
@@ -494,6 +534,9 @@ get_current_version() {
 #
 # Detects if an existing installation exists and displays version upgrade information
 # including old version, new version, and changelog summary.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Always succeeds (warnings logged but don't fail)
@@ -539,10 +582,68 @@ display_upgrade_info() {
 	echo ""
 }
 
+# Compare template config with existing config
+#
+# Runs compare-config.sh to show differences between template and existing config.
+# Only runs when config file is preserved (not overwritten) and not in silent mode.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Comparison completed (or skipped)
+#
+# Side effects:
+#   - Prints comparison results to terminal
+compare_template_with_existing_config() {
+	local existing_config="${INSTALL_DIR}/${CONFIG_NAME}"
+	local template_config="${INSTALL_SCRIPT_DIR}/${CONFIG_NAME}"
+	local compare_script="${INSTALL_DIR}/compare-config.sh"
+
+	# Skip in silent mode
+	if [[ $SILENT -eq 1 ]]; then
+		return 0
+	fi
+
+	# Skip if config file doesn't exist
+	if [[ ! -f "$existing_config" ]]; then
+		return 0
+	fi
+
+	# Skip if template doesn't exist
+	if [[ ! -f "$template_config" ]]; then
+		return 0
+	fi
+
+	# Skip if compare script doesn't exist (shouldn't happen, but be safe)
+	if [[ ! -f "$compare_script" ]] || [[ ! -x "$compare_script" ]]; then
+		return 0
+	fi
+
+	# Run comparison (suppress errors to avoid failing install)
+	echo ""
+	log_info "Comparing template configuration with your existing config..."
+	echo ""
+	if "$compare_script" --template "$template_config" --existing "$existing_config" 2>/dev/null; then
+		# Comparison succeeded
+		echo ""
+		log_info "To review configuration differences anytime, run: ${compare_script}"
+		echo ""
+	else
+		# Comparison failed (script may have issues, but don't fail install)
+		log_warn "Could not compare template with existing config (non-fatal)"
+	fi
+
+	return 0
+}
+
 # Install scripts
 #
 # Copies the main VPN monitor script, library files, and configuration file to the installation directory.
 # Handles existing config files based on SILENT and OVERWRITE_CONF flags.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Always succeeds (exits script on failure)
@@ -553,6 +654,7 @@ display_upgrade_info() {
 #   - Copies vpn-keepalive.sh to installation directory (if available)
 #   - Copies analyze-logs.sh to installation directory (if available)
 #   - Copies check-utilities.sh to installation directory (if available)
+#   - Copies scripts/anonymize-logs.sh to installation directory (if available)
 #   - Sets executable permissions on scripts
 #   - Installs config file (may prompt user in interactive mode)
 install_scripts() {
@@ -609,6 +711,22 @@ install_scripts() {
 		log_info "Installed check-config.sh (configuration validator)"
 	fi
 
+	# Copy config comparison script (optional utility)
+	if [[ -f "${INSTALL_SCRIPT_DIR}/compare-config.sh" ]]; then
+		cp "${INSTALL_SCRIPT_DIR}/compare-config.sh" "${INSTALL_DIR}/compare-config.sh"
+		chmod 755 "${INSTALL_DIR}/compare-config.sh"
+		log_info "Installed compare-config.sh (template vs existing config comparison)"
+	fi
+
+	# Copy anonymize logs script (optional utility)
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/anonymize-logs.sh" ]]; then
+		# Create scripts directory in installation directory
+		mkdir -p "${INSTALL_DIR}/scripts"
+		cp "${INSTALL_SCRIPT_DIR}/scripts/anonymize-logs.sh" "${INSTALL_DIR}/scripts/anonymize-logs.sh"
+		chmod 755 "${INSTALL_DIR}/scripts/anonymize-logs.sh"
+		log_info "Installed scripts/anonymize-logs.sh (log anonymization utility)"
+	fi
+
 	# Handle config file installation
 	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
 		# Config file already exists
@@ -621,6 +739,8 @@ install_scripts() {
 				install_config_file "Overwriting existing config file (--overwrite-conf flag)"
 			else
 				log_info "Config file already exists, preserving: ${INSTALL_DIR}/${CONFIG_NAME}"
+				# Compare template with existing config to show what's new
+				compare_template_with_existing_config
 			fi
 		else
 			# Non-interactive, non-silent mode: ask user
@@ -632,6 +752,8 @@ install_scripts() {
 				install_config_file "Overwriting existing config file"
 			else
 				log_info "Preserving existing config file: ${INSTALL_DIR}/${CONFIG_NAME}"
+				# Compare template with existing config to show what's new
+				compare_template_with_existing_config
 			fi
 		fi
 	else
@@ -731,6 +853,9 @@ parse_cron_schedule() {
 # Reads CRON_SCHEDULE from config file if available, otherwise uses default (*/1 * * * *).
 # Skips if cron entry already exists (to avoid duplicates).
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Always succeeds (warnings logged but don't fail)
 #
@@ -787,8 +912,11 @@ setup_cron() {
 
 # Install systemd service for keepalive daemon
 #
-# Installs and enables the systemd service file for the VPN keepalive daemon.
-# Only installs if systemd is available, keepalive is enabled in config, and not in dev mode.
+# Installs the systemd service file for the VPN keepalive daemon.
+# Only installs if systemd is available and not in dev mode.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Service installed successfully (or skipped if not applicable)
@@ -797,7 +925,8 @@ setup_cron() {
 # Side effects:
 #   - Creates /etc/systemd/system/vpn-keepalive.service
 #   - Reloads systemd daemon
-#   - Enables service (but doesn't start it - user must enable keepalive first)
+# Note: Service restart is handled by enable_and_start_keepalive_service() or
+#       by the caller if the service is running but keepalive is disabled.
 install_keepalive_service() {
 	# Skip in dev mode (systemd services are system-wide)
 	if [[ $DEV_MODE -eq 1 ]]; then
@@ -861,8 +990,12 @@ install_keepalive_service() {
 
 # Enable and start keepalive service
 #
-# Enables and starts the systemd service for the VPN keepalive daemon.
+# Enables and starts (or restarts) the systemd service for the VPN keepalive daemon.
 # Only works if systemd is available and service is installed.
+# Uses restart instead of start so it works whether the service is already running or not.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Service enabled/started successfully (or skipped if not applicable)
@@ -870,7 +1003,7 @@ install_keepalive_service() {
 #
 # Side effects:
 #   - Enables systemd service for auto-start on boot
-#   - Starts the service immediately
+#   - Starts or restarts the service immediately
 enable_and_start_keepalive_service() {
 	# Skip in dev mode
 	if [[ $DEV_MODE -eq 1 ]]; then
@@ -912,17 +1045,34 @@ enable_and_start_keepalive_service() {
 	log_info "Enabling and starting VPN keepalive service..."
 
 	# Enable service for auto-start on boot
-	if ! systemctl enable vpn-keepalive >/dev/null 2>&1; then
+	if ! systemctl enable vpn-keepalive 2>&1; then
 		log_error "Failed to enable systemd service"
 		log_warn "Keepalive daemon can still be started manually: ${INSTALL_DIR}/vpn-keepalive.sh start"
 		return 0 # Don't fail installation for optional feature
 	fi
 
-	# Start service immediately
-	if ! systemctl start vpn-keepalive >/dev/null 2>&1; then
-		log_error "Failed to start systemd service"
+	# Start or restart service immediately
+	# Use restart instead of start so it works whether service is running or not
+	local start_output
+	start_output=$(systemctl restart vpn-keepalive 2>&1)
+	local start_exit=$?
+	if [[ $start_exit -ne 0 ]]; then
+		log_error "Failed to start/restart systemd service"
+		if [[ -n "$start_output" ]]; then
+			log_error "Error details: $start_output"
+		fi
+		# Try to get more details from systemd journal
+		local journal_output
+		journal_output=$(journalctl -u vpn-keepalive -n 10 --no-pager 2>&1 | tail -5 || true)
+		if [[ -n "$journal_output" ]]; then
+			log_error "Systemd journal output:"
+			# Use here-string to avoid subshell issues with while loop
+			while IFS= read -r line; do
+				log_error "  $line"
+			done <<<"$journal_output"
+		fi
 		log_warn "Service enabled but not started. Check status: systemctl status vpn-keepalive"
-		log_warn "Start manually: systemctl start vpn-keepalive or ${INSTALL_DIR}/vpn-keepalive.sh start"
+		log_warn "Start manually: systemctl restart vpn-keepalive or ${INSTALL_DIR}/vpn-keepalive.sh start"
 		return 0 # Don't fail installation for optional feature
 	fi
 
@@ -936,6 +1086,9 @@ enable_and_start_keepalive_service() {
 # cron.log and vpn-monitor.log. Rotates logs daily, keeps 7 days of logs,
 # compresses old logs. Only installs in production mode (not dev mode) and
 # if logrotate is available.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Logrotate config installed successfully (or skipped if not applicable)
@@ -1007,6 +1160,9 @@ EOF
 #   - Config file exists
 #   - Cron entry exists (if cron setup was not skipped)
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Installation verified successfully
 #   1: Verification failed (errors found)
@@ -1039,6 +1195,7 @@ verify_installation() {
 			"detection.sh"
 			"recovery.sh"
 			"lockfile.sh"
+			"resources.sh"
 		)
 		# Also check for indirectly required files (sourced by other lib files)
 		local indirect_libs=(
@@ -1093,6 +1250,9 @@ verify_installation() {
 # Attempts to auto-detect the local UDM internal IP address from the br0 interface.
 # Used during installation to help configure LOCAL_UDM_IP if not manually set.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: IP address detected and printed to stdout
 #   1: Failed to detect IP address
@@ -1104,7 +1264,7 @@ verify_installation() {
 #   Uses 'ip addr show br0' to extract the first IPv4 address
 #   Requires 'ip' command to be available
 detect_local_udm_ip() {
-	if ! command -v ip >/dev/null 2>&1; then
+	if ! check_command_available "ip"; then
 		return 1
 	fi
 
@@ -1126,7 +1286,12 @@ detect_local_udm_ip() {
 #
 # Verifies that LOCAL_UDM_IP is configured and route exists on br0 interface.
 # If LOCAL_UDM_IP is not configured, attempts auto-detection from br0.
-# Adds route if needed and tests ping connectivity.
+# Adds route if needed and tests ping connectivity to all internal IPs from all locations.
+# Uses check_ping_connectivity() from detection.sh which has proper fallback logic
+# for finding ping commands (ping vs ping6, timeout handling, etc.).
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Route setup successful (or not needed)
@@ -1135,15 +1300,36 @@ detect_local_udm_ip() {
 # Side effects:
 #   - May update config file with detected LOCAL_UDM_IP
 #   - Adds route to br0 interface if needed
-#   - Tests ping connectivity to first INTERNAL_PEER_IP
+#   - Tests ping connectivity to all INTERNAL_PEER_IPs from all configured locations
 check_and_setup_routes() {
 	# Only proceed if ping checks are enabled and internal peer IPs are configured
 	if [[ "${ENABLE_PING_CHECK:-0}" -ne 1 ]]; then
 		return 0
 	fi
 
-	# Check if INTERNAL_PEER_IPS is configured
-	if [[ -z "${INTERNAL_PEER_IPS:-}" ]]; then
+	# Check if any location has internal IPs configured (location-based config)
+	# Source config file to check for LOCATION_*_INTERNAL variables
+	local config_file="${INSTALL_DIR}/${CONFIG_NAME}"
+	local has_internal_ips=0
+	if [[ -f "$config_file" ]]; then
+		while IFS='=' read -r key value || [[ -n "$key" ]]; do
+			# Skip comments and empty lines
+			[[ "$key" =~ ^# ]] && continue
+			[[ -z "$key" ]] && continue
+
+			# Check for LOCATION_*_INTERNAL pattern
+			if [[ "$key" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+				# Remove quotes and trim whitespace
+				value=$(echo "$value" | sed "s/^[\"']//" | sed "s/[\"']$//" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+				if [[ -n "$value" ]]; then
+					has_internal_ips=1
+					break
+				fi
+			fi
+		done <"$config_file" || true
+	fi
+
+	if [[ $has_internal_ips -eq 0 ]]; then
 		# No internal peer IPs configured - route setup not needed
 		return 0
 	fi
@@ -1158,8 +1344,7 @@ check_and_setup_routes() {
 		log_info "LOCAL_UDM_IP not configured, attempting auto-detection from br0 interface..."
 		if local_udm_ip=$(detect_local_udm_ip 2>/dev/null); then
 			log_info "Auto-detected LOCAL_UDM_IP: $local_udm_ip"
-			# Update config file with detected IP
-			local config_file="${INSTALL_DIR}/${CONFIG_NAME}"
+			# Update config file with detected IP (reuse existing config_file variable)
 			if [[ -f "$config_file" ]]; then
 				update_config_value "$config_file" "LOCAL_UDM_IP" "$local_udm_ip" "^ENABLE_PING_CHECK="
 				log_info "Updated config file with LOCAL_UDM_IP: $local_udm_ip"
@@ -1179,8 +1364,7 @@ check_and_setup_routes() {
 	fi
 
 	# Check if route exists, add if needed
-	if ! command -v ip >/dev/null 2>&1; then
-		log_warn "ip command not available, cannot check/add route"
+	if ! check_command_or_warn "ip" "Cannot detect local IP"; then
 		return 1
 	fi
 
@@ -1203,19 +1387,69 @@ check_and_setup_routes() {
 		fi
 	fi
 
-	# Test ping connectivity to first internal peer IP
-	local IFS=' '
-	local -a internal_peer_ips_array
-	read -ra internal_peer_ips_array <<<"$INTERNAL_PEER_IPS"
-	if [[ ${#internal_peer_ips_array[@]} -gt 0 ]] && [[ -n "${internal_peer_ips_array[0]}" ]]; then
-		local first_internal_ip="${internal_peer_ips_array[0]}"
-		log_info "Testing ping connectivity to $first_internal_ip from $local_udm_ip..."
-		if ping -I "$local_udm_ip" -c 1 -W 2 "$first_internal_ip" >/dev/null 2>&1; then
-			log_info "Ping test successful: $first_internal_ip is reachable from $local_udm_ip"
+	# Test ping connectivity to all internal peer IPs from all locations
+	# Use check_ping_connectivity() from detection.sh which has proper fallback logic
+	# This function handles ping6 fallback, timeout wrapping, and proper error messages
+	# Set LOG_FILE for log_message() used by check_ping_connectivity()
+	# If log directory exists, use it; otherwise log_message() will output to stderr
+	if [[ -f "$config_file" ]]; then
+		# Set LOG_FILE for log_message() used by check_ping_connectivity()
+		# The log directory should exist (created by create_install_dir()), but handle gracefully if not
+		if [[ -d "${INSTALL_DIR}/logs" ]]; then
+			LOG_FILE="${INSTALL_DIR}/logs/vpn-monitor.log"
+			export LOG_FILE
+		fi
+		# If LOG_FILE is not set, log_message() will output to stderr (which is fine for installation)
+
+		local tested_any=0
+		local ping_failed_any=0
+		local location_name=""
+
+		# Collect all internal IPs from all locations
+		while IFS='=' read -r key value || [[ -n "$key" ]]; do
+			# Skip comments and empty lines
+			[[ "$key" =~ ^# ]] && continue
+			[[ -z "$key" ]] && continue
+
+			# Check for LOCATION_*_INTERNAL pattern
+			if [[ "$key" =~ ^LOCATION_(.+)_INTERNAL$ ]]; then
+				# Extract location name from variable name (e.g., LOCATION_NYC_INTERNAL -> NYC)
+				location_name="${BASH_REMATCH[1]}"
+
+				# Remove quotes and trim whitespace
+				value=$(echo "$value" | sed "s/^[\"']//" | sed "s/[\"']$//" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+				if [[ -n "$value" ]]; then
+					# Split space-separated IPs into array
+					# Use inline IFS to avoid affecting while loop (critical: while loop uses IFS='=')
+					# Inline IFS=' ' only affects this read command, similar to while IFS='=' read
+					local internal_ips_array
+					IFS=' ' read -ra internal_ips_array <<<"$value"
+
+					# Test each internal IP for this location
+					for internal_ip in "${internal_ips_array[@]}"; do
+						# Skip empty entries
+						[[ -z "$internal_ip" ]] && continue
+
+						tested_any=1
+						# Use check_ping_connectivity() which logs its own messages and has proper fallback logic
+						# This function handles ping6 fallback, timeout wrapping, and proper error messages
+						# Note: check_ping_connectivity() uses log_message() which outputs to log file or stderr
+						if ! check_ping_connectivity "$internal_ip" "$local_udm_ip" "$location_name"; then
+							ping_failed_any=1
+						fi
+					done
+				fi
+			fi
+		done <"$config_file" || true
+
+		if [[ $tested_any -eq 0 ]]; then
+			log_info "No internal IPs configured for ping testing"
 		else
-			log_warn "Ping test failed: $first_internal_ip is not reachable from $local_udm_ip"
-			log_warn "This may be normal if the VPN tunnel is not yet established"
-			log_warn "The route has been added and will be used during monitoring"
+			log_info "Ping connectivity tests completed (route has been added and will be used during monitoring)"
+			# Log VPN tunnel warning once if any ping tests failed (reduces noise)
+			if [[ $ping_failed_any -eq 1 ]]; then
+				log_warn "Some ping tests failed - this may be normal if the VPN tunnel is not yet established"
+			fi
 		fi
 	fi
 
@@ -1224,16 +1458,19 @@ check_and_setup_routes() {
 
 # Validate configuration after installation
 #
-# Checks if EXTERNAL_PEER_IPS is configured in the config file.
-# If empty and not in silent mode, prompts the user to configure it.
+# Checks if at least one location is configured in the config file.
+# If no locations found and not in silent mode, prompts the user to configure it.
 # This helps catch configuration issues early during installation.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Configuration is valid (or silent mode)
-#   1: Configuration is invalid (EXTERNAL_PEER_IPS is empty)
+#   1: Configuration is invalid (no locations configured)
 #
 # Side effects:
-#   - May prompt user for EXTERNAL_PEER_IPS if empty and not in silent mode
+#   - May prompt user for location configuration if empty and not in silent mode
 #   - Logs warnings if configuration is invalid
 validate_config_after_install() {
 	local config_file="${INSTALL_DIR}/${CONFIG_NAME}"
@@ -1243,36 +1480,60 @@ validate_config_after_install() {
 		return 0
 	fi
 
-	# Extract EXTERNAL_PEER_IPS value from config file
-	local external_peer_ips
-	external_peer_ips=$(grep -E "^EXTERNAL_PEER_IPS=" "$config_file" 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "")
+	# Check if at least one LOCATION_*_EXTERNAL variable exists and is not empty
+	local location_found=0
+	while IFS='=' read -r key value || [[ -n "$key" ]]; do
+		# Skip comments and empty lines
+		[[ "$key" =~ ^# ]] && continue
+		[[ -z "$key" ]] && continue
 
-	# Trim whitespace
-	external_peer_ips=$(echo "$external_peer_ips" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+		# Check for LOCATION_*_EXTERNAL pattern
+		if [[ "$key" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+			# Remove quotes and trim whitespace
+			value=$(echo "$value" | sed "s/^[\"']//" | sed "s/[\"']$//" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+			if [[ -n "$value" ]]; then
+				location_found=1
+				break
+			fi
+		fi
+	done <"$config_file" || true
 
-	# Check if EXTERNAL_PEER_IPS is empty
-	if [[ -z "$external_peer_ips" ]]; then
+	# Check if any location was found
+	if [[ $location_found -eq 0 ]]; then
 		echo ""
-		log_warn "⚠️  CONFIGURATION REQUIRED: EXTERNAL_PEER_IPS is not set"
+		log_warn "⚠️  CONFIGURATION REQUIRED: No VPN locations configured"
 		echo ""
-		log_info "EXTERNAL_PEER_IPS is required for the VPN monitor to work."
-		log_info "This should be the external/public IP address(es) of your remote VPN gateway(s)."
+		log_info "At least one LOCATION_*_EXTERNAL variable is required for the VPN monitor to work."
+		log_info "Example: LOCATION_NYC_EXTERNAL=\"203.0.113.1\""
+		log_info "This should be the external/public IP address of your remote VPN gateway."
 		echo ""
 		if [[ $INTERACTIVE -eq 0 ]]; then
 			# Not in interactive mode, but config is empty - prompt user
-			read -p "Enter EXTERNAL_PEER_IPS now? (yes/no) [yes]: " -r
+			read -p "Configure a location now? (yes/no) [yes]: " -r
 			echo ""
 			if [[ -z "$REPLY" ]] || [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]] || [[ $REPLY =~ ^[Yy]$ ]]; then
-				local peer_ips
-				read -p "EXTERNAL_PEER_IPS (space-separated IP addresses): " peer_ips
-				if [[ -n "$peer_ips" ]]; then
-					# Update config file with provided IPs
-					update_config_value "$config_file" "EXTERNAL_PEER_IPS" "$peer_ips"
-					log_info "EXTERNAL_PEER_IPS updated in configuration file"
+				local location_name
+				local external_ip
+				read -p "Location name (e.g., NYC, DC, OFFICE): " location_name
+				read -p "External/Public IP address: " external_ip
+				if [[ -n "$location_name" ]] && [[ -n "$external_ip" ]]; then
+					# Sanitize location name
+					local sanitized_name
+					sanitized_name=$(echo "$location_name" | sed 's/[^A-Za-z0-9_]/_/g' | tr '[:lower:]' '[:upper:]' | sed 's/^_*//')
+					# If empty after sanitization, use default (matches library function behavior)
+					if [[ -z "$sanitized_name" ]]; then
+						sanitized_name="LOCATION"
+					fi
+					# Add location config to file
+					echo "" >>"$config_file"
+					echo "# Location configuration" >>"$config_file"
+					echo "LOCATION_${sanitized_name}_EXTERNAL=\"${external_ip}\"" >>"$config_file"
+					echo "LOCATION_${sanitized_name}_INTERNAL=\"\"" >>"$config_file"
+					log_info "Location configuration added to ${config_file}"
 					log_info "Note: IP addresses will be validated when the monitor runs"
 					return 0
 				else
-					log_warn "No IP addresses provided. Please configure EXTERNAL_PEER_IPS manually."
+					log_warn "Location name and IP address are required. Please configure manually."
 					return 1
 				fi
 			else
@@ -1281,8 +1542,8 @@ validate_config_after_install() {
 			fi
 		else
 			# Interactive mode already handled this, but config is still empty
-			log_warn "EXTERNAL_PEER_IPS is still empty after interactive configuration."
-			log_warn "Please edit ${config_file} and set EXTERNAL_PEER_IPS before running the monitor."
+			log_warn "No locations configured after interactive configuration."
+			log_warn "Please edit ${config_file} and add at least one LOCATION_*_EXTERNAL variable before running the monitor."
 			return 1
 		fi
 	fi
@@ -1295,6 +1556,9 @@ validate_config_after_install() {
 # Displays post-installation instructions to the user.
 # Shows configuration file location, testing instructions, and persistence notes.
 # Skips output in silent mode.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Always succeeds
@@ -1311,8 +1575,10 @@ display_next_steps() {
 	echo "  1. Edit the configuration file:"
 	echo "     ${INSTALL_DIR}/${CONFIG_NAME}"
 	echo ""
-	echo "  2. Set EXTERNAL_PEER_IPS to your remote VPN endpoint external/public IP address(es)"
-	echo "  3. Optionally set INTERNAL_PEER_IPS to your remote VPN endpoint internal/private IP address(es)"
+	echo "  2. Configure at least one VPN location using location-based format:"
+	echo "     LOCATION_<NAME>_EXTERNAL=\"external_ip\""
+	echo "     LOCATION_<NAME>_INTERNAL=\"internal_ip\" (optional)"
+	echo "     Example: LOCATION_NYC_EXTERNAL=\"203.0.113.1\""
 	echo ""
 	echo "  4. Test the script manually:"
 	echo "     ${INSTALL_DIR}/${SCRIPT_NAME}"
@@ -1365,6 +1631,9 @@ display_next_steps() {
 # Display help message
 #
 # Prints usage information and available options for the install script.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Always succeeds
@@ -1619,11 +1888,11 @@ main() {
 	# Check and setup routes for ping connectivity (if ping checks enabled)
 	# Load config values needed for route setup
 	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
-		# Source config to get ENABLE_PING_CHECK, INTERNAL_PEER_IPS, LOCAL_UDM_IP
+		# Source config to get ENABLE_PING_CHECK, LOCAL_UDM_IP
+		# Note: Internal IPs are now checked from location-based config in check_and_setup_routes()
 		# shellcheck source=/dev/null
 		source "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null || true
 		ENABLE_PING_CHECK="${ENABLE_PING_CHECK:-1}"
-		INTERNAL_PEER_IPS="${INTERNAL_PEER_IPS:-}"
 		LOCAL_UDM_IP="${LOCAL_UDM_IP:-}"
 		check_and_setup_routes || log_warn "Route setup completed with warnings (ping checks may not work until LOCAL_UDM_IP is configured)"
 	fi
@@ -1646,6 +1915,17 @@ main() {
 		enable_keepalive=$(grep -E "^ENABLE_KEEPALIVE=" "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "0")
 		if [[ "$enable_keepalive" == "1" ]]; then
 			enable_and_start_keepalive_service
+		else
+			# If service is already running but keepalive is disabled, restart it to pick up service file changes
+			if command -v systemctl >/dev/null 2>&1 && systemctl is-active vpn-keepalive >/dev/null 2>&1; then
+				log_info "Service is running but keepalive is disabled, restarting to pick up service file changes..."
+				if systemctl restart vpn-keepalive 2>&1; then
+					log_info "Service restarted successfully"
+				else
+					log_warn "Failed to restart service, but service file was updated"
+					log_warn "Restart manually: systemctl restart vpn-keepalive"
+				fi
+			fi
 		fi
 	fi
 

@@ -6,7 +6,7 @@
 # This fixture combines common setup steps for tests that need a VPN failure scenario.
 #
 # Arguments:
-#   $1: Peer IP address (default: "192.168.1.1")
+#   $1: Peer IP address (default: "${TEST_PEER_IP}")
 #   $2: Failure count (default: 0, will be incremented when script runs)
 #   $3+: Additional config variables as KEY="VALUE" pairs
 #
@@ -18,39 +18,42 @@
 #   - Adds mock commands to PATH
 #
 # Example:
-#   setup_vpn_down_fixture "192.168.1.1"
+#   setup_vpn_down_fixture "${TEST_PEER_IP}"
 #   # VPN is down, no SA found
 #
-#   setup_vpn_down_fixture "192.168.1.1" 2
+#   setup_vpn_down_fixture "${TEST_PEER_IP}" 2
 #   # VPN is down, already has 2 failures recorded
 setup_vpn_down_fixture() {
-	local peer_ip="${1:-192.168.1.1}"
+	# Validate parameters to detect common mistakes BEFORE assignment
+	# Check if config variables (containing '=') are being passed as required parameters
+	if [[ -n "${2:-}" ]] && [[ "$2" == *"="* ]]; then
+		echo "Error: setup_vpn_down_fixture: Config variable detected in position 2 (failure_count)." >&2
+		echo "  Did you mean to pass failure_count before config variables?" >&2
+		echo "  Example: setup_vpn_down_fixture \"\$peer_ip\" 0 'CONFIG_VAR=value'" >&2
+		echo "  Got: setup_vpn_down_fixture \"${1:-}\" \"$2\" ..." >&2
+		return 1
+	fi
+
+	local peer_ip="${1:-${TEST_PEER_IP}}"
 	local failure_count="${2:-0}"
 	shift 2 || true
 	local extra_config=("$@")
 
-	# Set up test VPN monitor with config
-	setup_test_vpn_monitor "$peer_ip" "${TEST_DIR}" "${extra_config[@]}"
+	# Set up test VPN monitor with location-based config
+	setup_location_vpn_monitor "$peer_ip" "${TEST_DIR}" "${extra_config[@]}"
 
-	# Set up state files if failure count > 0 (otherwise no state files needed)
+	# Set up state files if failure count > 0 (otherwise no state files needed) using location-based state functions
+	# setup_location_vpn_monitor creates location "TEST"
 	if [[ "$failure_count" -gt 0 ]]; then
-		setup_state_files "$peer_ip" "$failure_count" 0
+		ensure_state_functions_loaded
+		set_peer_state "TEST" "$peer_ip" "failure_count" "$failure_count" || true
 	fi
 
 	# Create mock ip command that returns empty output (VPN down, no SA)
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-	# Return empty output (no SA found - VPN is down)
-	exit 0
-fi
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_vpn_down >/dev/null
 
 	# Add mocks to PATH
 	add_mock_to_path
 
-	export MOCK_IP="$mock_ip"
+	export MOCK_IP="${TEST_DIR}/ip"
 }
-

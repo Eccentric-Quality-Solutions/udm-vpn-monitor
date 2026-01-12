@@ -52,19 +52,20 @@ This guide provides information for developers contributing to the UDM VPN Monit
    All tests should pass. If not, check tool installation.
 
 6. **Read the architecture documentation**
-   - Start with [ARCHITECTURE.md](ARCHITECTURE.md) to understand system design, component interactions, and technical implementation
+   - Start with [ARCHITECTURE.md](docs/ARCHITECTURE.md) to understand system design, component interactions, and technical implementation
    - Review [Architecture Decision Records](docs/adr/README.md) to understand design decisions
-   - Review [ARCHITECTURAL_REVIEW.md](ARCHITECTURAL_REVIEW.md) for code quality analysis and improvement areas
+   - Review [docs/CODEBASE_REVIEW.md](docs/CODEBASE_REVIEW.md) for comprehensive codebase review and code quality analysis
+   - Review [docs/ACCEPTABLE_RISKS.md](docs/ACCEPTABLE_RISKS.md) for documented acceptable risks and limitations
    - Check [TODO.md](TODO.md) for planned features
 
 7. **Understand the codebase structure**
    - **Main Script**: `vpn-monitor.sh` - Entry point, orchestrates monitoring
    - **Library Modules**: Modular architecture with dedicated modules in `lib/` directory
-     - See [ARCHITECTURE.md](ARCHITECTURE.md) "Modular Library Architecture" section for complete module documentation
+     - See [ARCHITECTURE.md](docs/ARCHITECTURE.md) "Modular Library Architecture" section for complete module documentation
      - See [ADR-0005](docs/adr/0005-modular-library-architecture.md) for design decision rationale
 
 8. **Pick a small issue to start**
-   - Check [ARCHITECTURAL_REVIEW.md](ARCHITECTURAL_REVIEW.md) for improvement recommendations
+   - Check [docs/CODEBASE_REVIEW.md](docs/CODEBASE_REVIEW.md) for improvement recommendations
    - Review [TODO.md](TODO.md) for planned features
    - Start with documentation improvements or small refactorings
 
@@ -78,13 +79,20 @@ For comprehensive architecture information including:
 - Code flow diagrams
 - Library module documentation
 
-See [ARCHITECTURE.md](ARCHITECTURE.md).
+See [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 For design decisions and rationale behind architectural choices, see [Architecture Decision Records](docs/adr/README.md).
 
 **Testing:**
 
 For comprehensive testing documentation including test structure, running tests, writing new tests, coverage reporting, and CI/CD integration, see [tests/README.md](tests/README.md).
+
+The test suite includes **827 tests** across multiple test files:
+- **Fast tests** (~605 tests): Run by default, include unit tests, script-specific tests, and split high-risk test files
+- **Slow tests** (~222 tests): High-risk tests and integration tests, excluded by default (use `--slow` flag to include)
+
+For test patterns and best practices, see [docs/TEST_PATTERNS.md](docs/TEST_PATTERNS.md).
+For BATS framework guide and advanced features, see [docs/BATS_GUIDE.md](docs/BATS_GUIDE.md).
 
 ### Common Development Tasks
 
@@ -511,18 +519,24 @@ For consistent error handling, use the provided helper functions:
 
 ```bash
 # Logging (always available)
-log_message "INFO" "Operation completed successfully"
-log_message "WARNING" "Optional feature unavailable"
-log_message "ERROR" "Operation failed but continuing"
-log_message "DEBUG" "Debug information"  # Only if DEBUG=1
+# System-level messages use "SYSTEM" prefix
+log_message "INFO" "SYSTEM" "Operation completed successfully"
+log_message "WARNING" "SYSTEM" "Optional feature unavailable"
+log_message "ERROR" "SYSTEM" "Operation failed but continuing"
+log_message "DEBUG" "SYSTEM" "Debug information"  # Only if DEBUG=1
+
+# Location-specific messages use location name prefix
+log_message "INFO" "NYC" "VPN check OK for NYC (192.168.1.1)"
+log_message "WARNING" "NYC" "VPN check failed for NYC (192.168.1.1)"
 
 # Unified error handling (recommended for consistency)
-handle_error "WARNING" "Optional feature unavailable, using fallback"
-handle_error "ERROR" "Critical configuration missing" 1  # Logs and exits
-handle_error "INFO" "Operation completed with minor issues"
+handle_error "WARNING" "SYSTEM" "Optional feature unavailable, using fallback"
+handle_error "ERROR" "SYSTEM" "Critical configuration missing" 1  # Logs and exits
+handle_error "INFO" "SYSTEM" "Operation completed with minor issues"
+handle_error "WARNING" "NYC" "VPN check failed for NYC (192.168.1.1)"
 
 # Fatal errors (direct call)
-die "Fatal error message"  # Logs and exits with code 1
+die "Fatal error message"  # Logs and exits with code 1 (uses SYSTEM prefix automatically)
 
 # Check if command exists (logs warning if missing)
 if ! warn_if_missing "ipsec"; then
@@ -546,12 +560,16 @@ This function standardizes error handling patterns and makes it easier to mainta
 
 **`handle_error_or_exit_fake_mode()` Function**:
 The `handle_error_or_exit_fake_mode()` function provides consistent error handling for fatal errors that need fake mode support:
-- **Fake mode (NO_ESCALATE=1)**: Logs error and exits with code 0 (graceful exit for testing)
+- **Fake mode (NO_ESCALATE=1)**: Logs error and returns 1 (allows caller to decide exit behavior)
 - **Normal mode**: Logs error and exits with specified exit code (default: 1)
-- **Usage**: `handle_error_or_exit_fake_mode "message" [exit_code]`
+- **Usage**: `handle_error_or_exit_fake_mode "prefix" "message" [exit_code]`
 - **Location**: Defined in `lib/logging.sh` (centralized error handling)
 
+**Important**: The prefix argument is REQUIRED. Use "SYSTEM" for system-level errors, or a location name for location-specific errors.
+
 This function should be used instead of manually checking `is_fake_mode()` for fatal errors. It standardizes the pattern of handling errors differently based on fake mode.
+
+**Exit Behavior in Fake Mode**: The caller must decide whether to exit with error code or code 0 based on whether the error is execution-blocking. See `docs/FAKE_MODE_EXIT_BEHAVIOR.md` for detailed guidance on categorizing errors and determining appropriate exit behavior.
 
 **Error Code Constants**:
 Standard exit codes are defined in `lib/constants.sh` for consistent error handling:
@@ -565,7 +583,8 @@ Standard exit codes are defined in `lib/constants.sh` for consistent error handl
 
 Use these constants instead of magic numbers for better readability:
 ```bash
-handle_error_or_exit_fake_mode "Configuration validation failed" "${EXIT_VALIDATION_ERROR:-3}"
+handle_error_or_exit_fake_mode "SYSTEM" "Configuration validation failed" "${EXIT_VALIDATION_ERROR:-3}"
+handle_error_or_exit_fake_mode "NYC" "Failed to get external IP" "${EXIT_VALIDATION_ERROR:-3}"
 ```
 
 **5. Error Handling Patterns by Function Type**
@@ -861,7 +880,7 @@ Fixes #123
 
 ### 8. Git Pre-commit Hook
 
-This repository includes a pre-commit hook that runs code quality checks and automatically regenerates the installer package (`udm-vpn-monitor-installer.zip`) before each commit. This ensures code quality and that the installer package is always up-to-date with the current codebase.
+This repository includes a pre-commit hook that runs code quality checks and automatically regenerates the installer package (`udm-vpn-monitor.zip`) before each commit. This ensures code quality and that the installer package is always up-to-date with the current codebase.
 
 **Setup:**
 
@@ -878,12 +897,13 @@ This should be run once after cloning the repository (see [First Time Setup](#fi
 1. **Code Quality Checks** (if tools are installed):
    - Runs ShellCheck on staged shell scripts to catch errors and security issues
    - Checks code formatting with shfmt on staged shell scripts
+   - Validates function documentation standards (enforces ADR-0007)
    - Blocks commit if errors are found (with helpful error messages)
    - Warns if ShellCheck or shfmt are not installed (but allows commit to proceed)
 
 2. **Package Regeneration**:
    - Runs `prepare_install_package.sh` to regenerate the installer package
-   - Adds the generated `udm-vpn-monitor-installer.zip` file to the commit
+   - Adds the generated `udm-vpn-monitor.zip` file to the commit
    - Ensures the package is always synchronized with source code changes
 
 **Note**: The hook will warn if ShellCheck or shfmt are not installed, but will still proceed with package regeneration. For best results and to catch issues early, install both tools (see [Required Tools](#required-tools) above).
@@ -940,8 +960,11 @@ udm-vpn-monitor/
 │   ├── run_tests.sh         # Test runner
 │   └── generate_coverage_report.sh
 ├── README.md                 # User documentation
-├── ARCHITECTURE.md           # Architecture documentation
-├── ARCHITECTURAL_REVIEW.md   # Code quality analysis and recommendations
+├── docs/
+│   ├── ARCHITECTURE.md       # Architecture documentation
+│   ├── CODEBASE_REVIEW.md    # Comprehensive codebase review
+│   ├── ACCEPTABLE_RISKS.md   # Documented acceptable risks and limitations
+│   └── ...                   # Additional documentation files
 ├── CHANGELOG.md              # Version history
 ├── DEVELOPER.md              # This file
 ├── QUICK_START.md            # 5-minute setup guide
@@ -1022,8 +1045,9 @@ If shfmt makes unexpected changes:
 ## Getting Help
 
 - Check existing documentation in this repository
-- Review [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions
-- Review [ARCHITECTURAL_REVIEW.md](ARCHITECTURAL_REVIEW.md) for code quality analysis
+- Review [ARCHITECTURE.md](docs/ARCHITECTURE.md) for design decisions
+- Review [docs/CODEBASE_REVIEW.md](docs/CODEBASE_REVIEW.md) for comprehensive codebase review and code quality analysis
+- Review [docs/ACCEPTABLE_RISKS.md](docs/ACCEPTABLE_RISKS.md) for documented acceptable risks and limitations
 - Review [TODO.md](TODO.md) for planned features
 - Open an issue on GitHub for bugs or questions
 

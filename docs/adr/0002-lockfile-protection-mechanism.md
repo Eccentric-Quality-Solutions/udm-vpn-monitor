@@ -25,7 +25,7 @@ We will implement lockfile protection using `flock` (preferred) with atomic file
 - **Prevents Race Conditions**: Ensures only one instance runs at a time
 - **Atomic Operations**: Lockfile acquisition is atomic, preventing race conditions
 - **Stale Lockfile Detection**: Automatically detects and cleans up lockfiles from hung processes
-- **Cross-Platform**: Works on systems with or without `flock` command
+- **Fallback Support**: Works on systems with or without `flock` command (fallback mode available)
 - **Timeout Protection**: Detects hung processes via lockfile timestamp checking
 
 ### Negative

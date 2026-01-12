@@ -3,13 +3,14 @@
 # Common functions for UDM VPN Monitor
 # Shared logging and utility functions for installation/uninstallation scripts and main monitor
 #
-# Version: 0.4.1
+# Version: 0.6.0
 #
 # This module provides shared utility functions used throughout the codebase to reduce duplication:
 # - File operations: file_exists_and_readable(), ensure_file_exists(), atomic_write_file()
 # - Directory operations: directory_exists(), directory_writable()
-# - Timestamp operations: get_unix_timestamp()
+# - Timestamp operations: get_unix_timestamp(), validate_timestamp(), safe_timestamp_subtract(), safe_timestamp_add(), safe_timestamp_diff()
 # - String escaping: escape_sed_replacement(), escape_sed_regex()
+# - String sanitization: sanitize_location_name()
 # - Config file operations: update_config_value()
 # - Logging: log_info(), log_warn(), log_error()
 # - System checks: check_root()
@@ -130,6 +131,9 @@ debug_log() {
 # Required for installing to /data/ and modifying crontab.
 # Exits script with error code 1 if not running as root.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Running as root (continues execution)
 #   1: Not running as root (exits script with error)
@@ -146,7 +150,7 @@ debug_log() {
 check_root() {
 	if [[ $EUID -ne 0 ]]; then
 		log_error "This script must be run as root"
-		exit 1
+		exit "${EXIT_PERMISSION_ERROR:-4}"
 	fi
 }
 
@@ -216,6 +220,9 @@ ensure_file_exists() {
 # This provides a consistent way to get timestamps throughout the codebase,
 # replacing direct calls to 'date +%s'.
 #
+# Arguments:
+#   None
+#
 # Returns:
 #   0: Always succeeds
 #
@@ -230,9 +237,207 @@ ensure_file_exists() {
 #
 # Note:
 #   Uses 'date +%s' command internally
-#   Compatible with Linux and BSD/macOS date commands
 get_unix_timestamp() {
 	date +%s
+}
+
+# Validate timestamp is reasonable
+#
+# Validates that a Unix timestamp is within reasonable bounds to prevent
+# arithmetic overflow/underflow issues. Checks that timestamp is:
+# - Not negative
+# - Not too far in the future (reasonable upper bound)
+# - A valid integer
+#
+# Arguments:
+#   $1: Timestamp to validate (Unix timestamp in seconds)
+#
+# Returns:
+#   0: Timestamp is valid
+#   1: Timestamp is invalid (negative, too large, or not a number)
+#
+# Examples:
+#   if validate_timestamp "$timestamp"; then
+#       # use timestamp safely
+#   fi
+#
+# Note:
+#   Upper bound is set to year 2100 (4102444800) to allow reasonable future dates
+#   while preventing arithmetic overflow issues
+validate_timestamp() {
+	local timestamp="$1"
+
+	# Check if timestamp is a valid integer
+	if [[ ! "$timestamp" =~ ^[0-9]+$ ]]; then
+		return 1
+	fi
+
+	# Check if timestamp is too far in the future (year 2100 = 4102444800)
+	# This prevents arithmetic overflow while allowing reasonable future dates
+	local max_timestamp=4102444800
+	if [[ $timestamp -gt $max_timestamp ]]; then
+		return 1
+	fi
+
+	return 0
+}
+
+# Safely subtract seconds from a timestamp
+#
+# Performs timestamp subtraction with bounds checking to prevent underflow.
+# Validates both input timestamp and result before returning.
+#
+# Arguments:
+#   $1: Base timestamp (Unix timestamp in seconds)
+#   $2: Seconds to subtract (positive integer)
+#
+# Returns:
+#   0: Success (result printed to stdout)
+#   1: Invalid input timestamp
+#   2: Invalid seconds value (negative or not a number)
+#   3: Result would be negative (underflow)
+#
+# Output:
+#   Prints the result timestamp to stdout if successful
+#
+# Examples:
+#   result=$(safe_timestamp_subtract "$now" "$SECONDS_PER_HOUR")
+#   one_day_ago=$(safe_timestamp_subtract "$timestamp" "$SECONDS_PER_DAY" 2>/dev/null || echo "0")
+#
+# Note:
+#   If subtraction would result in negative value, returns error code 3
+#   Caller should handle this case appropriately (e.g., use 0 or current time)
+safe_timestamp_subtract() {
+	local base_timestamp="$1"
+	local seconds_to_subtract="$2"
+
+	# Validate base timestamp
+	if ! validate_timestamp "$base_timestamp"; then
+		return 1
+	fi
+
+	# Validate seconds_to_subtract is a non-negative integer
+	# Note: Negative check is redundant since ^[0-9]+ won't match negatives
+	if [[ ! "$seconds_to_subtract" =~ ^[0-9]+$ ]]; then
+		return 2
+	fi
+
+	# Perform subtraction
+	local result=$((base_timestamp - seconds_to_subtract))
+
+	# Check for underflow (negative result)
+	if [[ $result -lt 0 ]]; then
+		return 3
+	fi
+
+	# Validate result is still reasonable
+	if ! validate_timestamp "$result"; then
+		return 1
+	fi
+
+	# Output result
+	echo "$result"
+	return 0
+}
+
+# Safely add seconds to a timestamp
+#
+# Performs timestamp addition with bounds checking to prevent overflow.
+# Validates both input timestamp and result before returning.
+#
+# Arguments:
+#   $1: Base timestamp (Unix timestamp in seconds)
+#   $2: Seconds to add (positive integer)
+#
+# Returns:
+#   0: Success (result printed to stdout)
+#   1: Invalid input timestamp
+#   2: Invalid seconds value (negative or not a number)
+#   3: Result would exceed maximum (overflow)
+#
+# Output:
+#   Prints the result timestamp to stdout if successful
+#
+# Examples:
+#   future_time=$(safe_timestamp_add "$now" "$SECONDS_PER_HOUR")
+#   if result=$(safe_timestamp_add "$timestamp" 3600); then
+#       future_timestamp=$result
+#   fi
+#
+# Note:
+#   If addition would result in value exceeding maximum timestamp, returns error code 3
+#   Caller should handle this case appropriately
+safe_timestamp_add() {
+	local base_timestamp="$1"
+	local seconds_to_add="$2"
+
+	# Validate base timestamp
+	if ! validate_timestamp "$base_timestamp"; then
+		return 1
+	fi
+
+	# Validate seconds_to_add is a non-negative integer
+	if [[ ! "$seconds_to_add" =~ ^[0-9]+$ ]]; then
+		return 2
+	fi
+
+	# Perform addition
+	local result=$((base_timestamp + seconds_to_add))
+
+	# Validate result is still reasonable (check for overflow)
+	if ! validate_timestamp "$result"; then
+		return 3
+	fi
+
+	# Output result
+	echo "$result"
+	return 0
+}
+
+# Safely calculate difference between two timestamps
+#
+# Calculates the difference (timestamp1 - timestamp2) with bounds checking.
+# Validates both input timestamps before calculation.
+#
+# Arguments:
+#   $1: First timestamp (Unix timestamp in seconds)
+#   $2: Second timestamp (Unix timestamp in seconds)
+#
+# Returns:
+#   0: Success (result printed to stdout, may be negative)
+#   1: Invalid first timestamp
+#   2: Invalid second timestamp
+#
+# Output:
+#   Prints the difference (timestamp1 - timestamp2) to stdout if successful
+#   Result may be negative if timestamp2 > timestamp1
+#
+# Examples:
+#   elapsed=$(safe_timestamp_diff "$end_time" "$start_time")
+#   remaining=$(safe_timestamp_diff "$cooldown_until" "$now")
+#
+# Note:
+#   Returns the raw difference, which may be negative
+#   Caller should handle negative results appropriately
+safe_timestamp_diff() {
+	local timestamp1="$1"
+	local timestamp2="$2"
+
+	# Validate both timestamps
+	if ! validate_timestamp "$timestamp1"; then
+		return 1
+	fi
+
+	if ! validate_timestamp "$timestamp2"; then
+		return 2
+	fi
+
+	# Perform subtraction (may be negative)
+	local result=$((timestamp1 - timestamp2))
+
+	# Output result (even if negative, as this is valid for duration calculations)
+	echo "$result"
+	return 0
 }
 
 # Check if directory exists
@@ -351,6 +556,22 @@ atomic_write_file() {
 	local file="$1"
 	local content="$2"
 
+	# If target file exists but is unreadable or unwritable, remove it first to avoid potential hangs
+	# This can happen if file permissions were changed (e.g., chmod 000 or chmod 444)
+	# Removing unwritable files prevents mv from hanging when trying to overwrite them
+	if [[ -f "$file" ]] && (! file_exists_and_readable "$file" || ! [[ -w "$file" ]]); then
+		rm -f "$file" 2>/dev/null || true
+	fi
+
+	# Clean up any leftover .tmp file from previous failed attempts
+	# This prevents hangs when directory becomes unwritable but .tmp file exists
+	# Also ensures we start with a clean slate for the atomic write
+	if [[ -f "${file}.tmp" ]]; then
+		# Remove .tmp file if unreadable (prevents mv from hanging)
+		# or if readable (ensures clean start)
+		rm -f "${file}.tmp" 2>/dev/null || true
+	fi
+
 	if ! (echo "$content" >"${file}.tmp" && mv "${file}.tmp" "$file"); then
 		return 1
 	fi
@@ -423,6 +644,55 @@ escape_sed_regex() {
 	echo "$value" | sed 's/[[\.*^$()+?{|]/\\&/g'
 }
 
+# Sanitize location name for filename safety
+#
+# Sanitizes a location name to be safe for use in filenames.
+# Replaces invalid characters with underscores and ensures valid identifier format.
+#
+# Arguments:
+#   $1: Location name to sanitize
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints sanitized location name to stdout
+#
+# Examples:
+#   sanitized=$(sanitize_location_name "NYC-Office")
+#   # Returns: "NYC_Office"
+#
+# Note:
+#   - Replaces invalid chars (non-alphanumeric, non-underscore) with underscore
+#   - Ensures max length of 64 chars for filename safety
+#   - Ensures result is valid identifier (alphanumeric + underscore)
+sanitize_location_name() {
+	local location_name="$1"
+	local sanitized
+
+	# Replace invalid chars with underscore (keep alphanumeric and underscore)
+	# Use bash parameter expansion instead of sed for better performance
+	sanitized="${location_name//[^A-Za-z0-9_]/_}"
+
+	# Ensure max length (64 chars for filename safety)
+	if [[ ${#sanitized} -gt 64 ]]; then
+		sanitized="${sanitized:0:64}"
+	fi
+
+	# Ensure it starts with alphanumeric (not underscore)
+	if [[ "$sanitized" =~ ^_ ]]; then
+		sanitized="LOC${sanitized}"
+	fi
+
+	# If empty after sanitization, use default
+	if [[ -z "$sanitized" ]]; then
+		sanitized="LOCATION"
+	fi
+
+	echo "$sanitized"
+	return 0
+}
+
 # Update or add a configuration variable in config file
 #
 # Updates an existing configuration variable or adds it if it doesn't exist.
@@ -472,7 +742,7 @@ update_config_value() {
 			# Insert after specified pattern
 			# Note: insert_after is used as a regex pattern in sed, so special regex
 			# characters should be escaped by the caller if literal matching is desired
-			sed -i "/${insert_after}/a ${var_name}=\"${var_value}\"" "$config_file"
+			sed -i "/${insert_after}/a ${var_name}=\"${escaped_value}\"" "$config_file"
 		else
 			# Append to end of file
 			echo "${var_name}=\"${var_value}\"" >>"$config_file"
@@ -516,6 +786,9 @@ safe_set_variable() {
 # Check if command is available
 #
 # Checks if a command is available in the system PATH using command -v.
+# Falls back to checking if command can be executed directly if command -v fails.
+# This handles cases where command exists but isn't found by command -v
+# (e.g., functions, aliases, or commands in non-standard PATH locations).
 # Returns error code if command is not found.
 # This is useful for checking command availability before use (both required and optional commands).
 #
@@ -523,7 +796,7 @@ safe_set_variable() {
 #   $1: Command name to check (e.g., "ip", "ipsec", "ping6")
 #
 # Returns:
-#   0: Command is available (found in PATH)
+#   0: Command is available (found in PATH or executable)
 #   1: Command is not available
 #
 # Examples:
@@ -535,11 +808,180 @@ safe_set_variable() {
 #   fi
 #
 # Note:
-#   Uses command -v to check command availability
+#   Uses command -v to check command availability (POSIX compliant)
+#   Falls back to trying to execute command with --help/--version flags if command -v fails
 #   This function can be used for both required and optional commands
+#
+# When to use check_command_available() vs check_command_or_warn():
+#   - Use check_command_available() for:
+#     * Optional commands that enhance functionality but aren't critical (e.g., readlink, ping6)
+#     * Commands where you handle the missing case gracefully without logging
+#     * Early initialization code where logging may not be set up yet
+#   - Use check_command_or_warn() for:
+#     * Required commands that are critical for functionality (e.g., ip, ipsec, ping)
+#     * Commands where missing should be logged as a warning to help with debugging
+#     * When you want standardized warning messages across the codebase
 check_command_available() {
 	local cmd="$1"
-	command -v "$cmd" >/dev/null 2>&1
+
+	# First try command -v (POSIX compliant, checks PATH)
+	if command -v "$cmd" >/dev/null 2>&1; then
+		return 0
+	fi
+
+	# Fallback 1: Check common system directories
+	# This handles cases where PATH doesn't include /usr/sbin or /sbin
+	# (common in cron/systemd environments on UDM systems)
+	local system_dirs=("/usr/sbin" "/usr/bin" "/sbin" "/bin")
+	for dir in "${system_dirs[@]}"; do
+		if [[ -x "${dir}/${cmd}" ]]; then
+			return 0
+		fi
+	done
+
+	# Fallback 2: try to execute the command with --help or --version flag
+	# This handles cases where command exists but command -v doesn't find it
+	# (e.g., functions, aliases, or commands in non-standard locations)
+	# Exit code 127 means "command not found", any other exit code means command exists
+	# Use timeout to prevent hanging, and redirect output to avoid side effects
+	local exit_code=127
+	if command -v timeout >/dev/null 2>&1; then
+		# Try --help first
+		timeout 1 "$cmd" --help >/dev/null 2>&1
+		exit_code=$?
+		# If --help fails with "command not found" (127), try --version
+		if [[ $exit_code -eq 127 ]]; then
+			timeout 1 "$cmd" --version >/dev/null 2>&1
+			exit_code=$?
+		fi
+	else
+		# If timeout not available, try without timeout (should be quick for --help)
+		"$cmd" --help >/dev/null 2>&1
+		exit_code=$?
+		# If --help fails with "command not found" (127), try --version
+		if [[ $exit_code -eq 127 ]]; then
+			"$cmd" --version >/dev/null 2>&1
+			exit_code=$?
+		fi
+	fi
+
+	# Exit code 127 means "command not found", any other exit code means command exists
+	if [[ $exit_code -eq 127 ]]; then
+		return 1
+	else
+		return 0
+	fi
+}
+
+# Get full path to a command
+#
+# Attempts to find the full path to a command, handling PATH restrictions
+# common in cron/systemd environments. Returns the command name itself if
+# path cannot be determined (fallback to PATH at execution time).
+#
+# Arguments:
+#   $1: Command name to find (e.g., "ip", "ipsec", "ping")
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints full path to stdout if found, or command name if not found
+#
+# Examples:
+#   ip_path=$(get_command_path "ip")
+#   # Returns: "/usr/sbin/ip" or "ip" if not found
+#
+#   ipsec_cmd=$(get_command_path "ipsec")
+#   "$ipsec_cmd" reload
+#
+# Note:
+#   Uses same fallback logic as check_command_available() but returns path
+#   Falls back to command name if path cannot be determined
+#   Useful for executing commands in PATH-restricted environments (cron/systemd)
+get_command_path() {
+	local cmd="$1"
+	local cmd_path=""
+
+	# First try command -v (POSIX compliant, checks PATH)
+	cmd_path=$(command -v "$cmd" 2>/dev/null || echo "")
+	if [[ -n "$cmd_path" ]]; then
+		echo "$cmd_path"
+		return 0
+	fi
+
+	# Fallback: Check common system directories
+	# This handles cases where PATH doesn't include /usr/sbin or /sbin
+	# (common in cron/systemd environments on UDM systems)
+	local system_dirs=("/usr/sbin" "/usr/bin" "/sbin" "/bin")
+	for dir in "${system_dirs[@]}"; do
+		if [[ -x "${dir}/${cmd}" ]]; then
+			echo "${dir}/${cmd}"
+			return 0
+		fi
+	done
+
+	# Path not found - return command name (will rely on PATH at execution time)
+	echo "$cmd"
+	return 0
+}
+
+# Check command availability and log warning if missing
+#
+# Checks if a command is available in PATH and logs a standardized warning
+# message if it is not. This function standardizes the pattern of checking
+# command availability and logging warnings, replacing the duplicate patterns
+# of check_command_available() + handle_error() or warn_if_missing() + handle_error().
+#
+# Arguments:
+#   $1: Command name to check
+#   $2: Optional context message for the warning (e.g., "Cannot add route", "Ping check enabled")
+#
+# Returns:
+#   0: Command is available (found in PATH)
+#   1: Command is not available (warning logged)
+#
+# Side effects:
+#   - Logs a warning message via handle_error() if command is not available
+#   - Warning message format: "<context> but <command> command not available"
+#     or "<command> command not available" if no context provided
+#
+# Examples:
+#   if ! check_command_or_warn "ip" "Cannot add route"; then
+#       return 1
+#   fi
+#   if ! check_command_or_warn "ping"; then
+#       return 1
+#   fi
+#
+# Note:
+#   Requires handle_error() function to be available (from logging.sh)
+#   Use check_command_available() if you need silent checks without logging
+#   This function standardizes error messages across the codebase
+#
+# When to use check_command_or_warn() vs check_command_available():
+#   - Use check_command_or_warn() for:
+#     * Required commands that are critical for functionality (e.g., ip, ipsec, ping)
+#     * Commands where missing should be logged as a warning to help with debugging
+#     * When you want standardized warning messages across the codebase
+#   - Use check_command_available() for:
+#     * Optional commands that enhance functionality but aren't critical (e.g., readlink, ping6)
+#     * Commands where you handle the missing case gracefully without logging
+#     * Early initialization code where logging may not be set up yet
+check_command_or_warn() {
+	local cmd="$1"
+	local context="${2:-}"
+
+	if ! check_command_available "$cmd"; then
+		if [[ -n "$context" ]]; then
+			handle_error "WARNING" "SYSTEM" "$context but $cmd command not available"
+		else
+			handle_error "WARNING" "SYSTEM" "$cmd command not available"
+		fi
+		return 1
+	fi
+
+	return 0
 }
 
 # Safely source a library file with error suppression

@@ -15,9 +15,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Schema defaults - All variables get defaults before config file parsing" {
-	# Test verifies that all schema variables get defaults applied before config file parsing.
-	# Expected: Variables have default values before config file is parsed.
-	# Importance: Ensures variables are safe to reference before config parsing.
+	# Purpose: Test verifies that all schema variables get defaults applied before config file parsing
+	# Expected: Variables have default values before config file is parsed
+	# Importance: Ensures variables are safe to reference before config parsing
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Create empty config file (no values set)
 	touch "$config_file"
@@ -29,7 +29,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Source the script to access functions directly
@@ -54,14 +54,16 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Schema defaults - Config file values override defaults" {
-	# Test verifies that config file values override schema defaults.
-	# Expected: Config file values take precedence over defaults.
-	# Importance: Ensures config file customization works correctly.
+	# Purpose: Test verifies that config file values override schema defaults
+	# Expected: Config file values take precedence over defaults
+	# Importance: Ensures config file customization works correctly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 VPN_NAME="Custom VPN Name"
 TIER1_THRESHOLD=5
+TIER2_THRESHOLD=5
+TIER3_THRESHOLD=5
 ENABLE_PING_CHECK=0
 EOF
 
@@ -72,7 +74,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$test_script" --fake
@@ -88,14 +90,15 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Schema defaults - Required variables without defaults remain empty until validation" {
-	# Test verifies that required variables without schema defaults remain empty until validation.
-	# Expected: Required variables without defaults are empty after apply_schema_defaults but fail validation.
-	# Importance: Ensures validation catches missing required values.
+	# Purpose: Test verifies that required variables without schema defaults remain empty until validation
+	# Expected: Required variables without defaults are empty after apply_schema_defaults but fail validation
+	# Importance: Ensures validation catches missing required values
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	# Create config file without EXTERNAL_PEER_IPS (required, no default in schema)
+	# Create config file without location configuration (required, no default in schema)
 	cat >"$config_file" <<'EOF'
-# EXTERNAL_PEER_IPS not set (required variable)
+# No LOCATION_*_EXTERNAL variables set (required)
 TIER1_THRESHOLD=1
+ENABLE_NETWORK_PARTITION_CHECK=0
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -105,33 +108,33 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$test_script" --fake
-	assert_success
+	# Should fail validation (location configuration is required)
+	# Script should exit with error status (validation error)
+	assert_failure
 
-	# Should fail validation (EXTERNAL_PEER_IPS is required)
-	# Script should exit with error or log validation error
-	assert_file_exist "$log_file"
-	# Should contain error about missing required variable or validation failure
-	# The error message format is: "EXTERNAL_PEER_IPS is required but not configured"
+	# Should contain error about missing location configuration or validation failure
+	# The error message format is: "No location-based configuration found. At least one LOCATION_*_EXTERNAL variable is required."
 	# or "Configuration validation failed - required variables missing or invalid values"
-	assert_file_contains "$log_file" "EXTERNAL_PEER_IPS" || assert_file_contains "$log_file" "required" || assert_file_contains "$log_file" "ERROR" || assert_file_contains "$log_file" "validation" || assert_file_contains "$log_file" "not configured"
+	assert_file_exist "$log_file"
+	assert_file_contains "$log_file" "LOCATION" || assert_file_contains "$log_file" "required" || assert_file_contains "$log_file" "ERROR" || assert_file_contains "$log_file" "validation" || assert_file_contains "$log_file" "No location"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Schema defaults - Optional variables without defaults remain empty" {
-	# Test verifies that optional variables without schema defaults remain empty.
-	# Expected: Optional variables without defaults are empty and remain empty.
-	# Importance: Ensures optional variables work correctly when not set.
+	# Purpose: Test verifies that optional variables without schema defaults remain empty
+	# Expected: Optional variables without defaults are empty and remain empty
+	# Importance: Ensures optional variables work correctly when not set
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	# Create config file without INTERNAL_PEER_IPS (optional, no default in schema)
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
-# INTERNAL_PEER_IPS not set (optional variable without default)
+	# Create config file without LOCATION_TEST_INTERNAL (optional, no default in schema)
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+# LOCATION_TEST_INTERNAL not set (optional variable without default)
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -141,7 +144,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	run bash "$test_script" --fake
@@ -156,12 +159,12 @@ EOF
 
 # bats test_tags=category:high-risk,priority:medium
 @test "Schema defaults - Default application order (before config parsing)" {
-	# Test verifies that defaults are applied before config file parsing.
-	# Expected: Defaults are set, then config file values override them.
-	# Importance: Ensures correct order of operations in load_config.
+	# Purpose: Test verifies that defaults are applied before config file parsing
+	# Expected: Defaults are set, then config file values override them
+	# Importance: Ensures correct order of operations in load_config
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-EXTERNAL_PEER_IPS="192.168.1.1"
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 VPN_NAME="Override Default"
 EOF
 
@@ -172,7 +175,7 @@ EOF
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
-	setup_mock_vpn_environment "192.168.1.1" 1000
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Source config functions to test order
@@ -192,6 +195,7 @@ EOF
 	export STATE_DIR="$state_dir"
 	export LOG_FILE="$log_file"
 	export LOGS_DIR="${state_dir}/logs"
+	export CONFIG_FILE="$config_file"
 
 	# Unset VPN_NAME to ensure we start clean
 	unset VPN_NAME

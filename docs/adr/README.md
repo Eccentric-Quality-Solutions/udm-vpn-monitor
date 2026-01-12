@@ -26,7 +26,7 @@ Architecture Decision Records are documents that capture important architectural
 | [ADR-0010](0010-configuration-schema-validation.md) | Configuration Schema Validation | Accepted |
 | [ADR-0011](0011-security-measures-ip-validation-fixed-string-matching.md) | Security Measures (IP Validation, Fixed-String Matching) | Accepted |
 | [ADR-0012](0012-atomic-file-operations.md) | Atomic File Operations | Accepted |
-| [ADR-0013](0013-state-file-checksum-validation.md) | State File Checksum Validation | Accepted |
+| [ADR-0013](0013-state-file-checksum-validation.md) | State File Checksum Validation | Deprecated (Removed in v0.2.0) |
 | [ADR-0014](0014-ping-check-as-supplementary-diagnostic.md) | Ping Check as Supplementary Diagnostic Tool | Accepted |
 | [ADR-0015](0015-file-based-state-storage.md) | File-Based State Storage | Accepted |
 | [ADR-0016](0016-state-file-location-data-vpn-monitor.md) | State File Location (/data/vpn-monitor/) | Accepted |
@@ -37,6 +37,12 @@ Architecture Decision Records are documents that capture important architectural
 | [ADR-0021](0021-bats-testing-framework.md) | BATS Testing Framework | Accepted |
 | [ADR-0022](0022-phase-1-detection-deferred.md) | Phase 1 Detection Deferred | Accepted |
 | [ADR-0023](0023-resource-monitoring-and-throttling.md) | Resource Monitoring and Throttling | Accepted |
+| [ADR-0024](0024-location-based-configuration.md) | Location-Based Configuration Format | Accepted |
+| [ADR-0025](0025-network-partition-detection.md) | Network Partition Detection | Accepted |
+| [ADR-0026](0026-detection-reliability-safeguard.md) | Detection Reliability Safeguard | Accepted |
+| [ADR-0027](0027-enhanced-command-availability-checking.md) | Enhanced Command Availability Checking | Accepted |
+| [ADR-0028](0028-state-passing-pattern-for-detection-functions.md) | State Passing Pattern for Detection Functions | Accepted |
+| [ADR-0029](0029-recovery-type-distinction.md) | Recovery Type Distinction | Accepted |
 
 ## ADR Format
 

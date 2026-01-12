@@ -1,0 +1,21 @@
+- Perform a comprehensive review of the codebase and create an md file with your conclusions.
+- You should act as several different individuals all contributing to a single document. We don't need all their voices or conversations in the end document, but we do want the productive conclusions:
+    - Network Engineer
+    - Software Architect
+    - Experienced Software Tester
+    - UniFi Expert
+    - Senior Software Engineer
+- Our codebase is meant to be pragmatic and productive not perfect. We want to balance speed and quality. Make sure your recommendations consider the likelihood of something actually happening.
+- Include in your conclusions for each recommendation the general priority for each item as well as the pragmatic priority.
+- You should address questions like:
+    - Are there bugs or errors?
+    - Are there bad practices?
+    - Is the code DRY?
+    - Are there adequate tests?
+    - Is cyclomatic complexity high?
+    - Is the code readable?
+    - Have we lost any functionality?
+    - Are there architectural issues with the software?
+    - Have we overarchitected?
+    - Are there security issues?
+- Again, remember to be pragmatic. We don't need to know about every possible issue, only those that practically will affect the software in a negative manner and result in problems for our end users.

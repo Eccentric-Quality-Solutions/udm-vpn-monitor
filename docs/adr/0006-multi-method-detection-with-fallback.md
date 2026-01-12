@@ -49,7 +49,7 @@ We will implement a multi-method detection system with automatic fallback:
   - Ping failures log warnings but don't cause VPN failure
   - SA state + byte counters are authoritative
   - Ping provides supplementary diagnostic information
-- **Module**: Implemented in `lib/detection.sh` with `check_vpn_status()` function
+- **Module**: Implemented in `lib/detection/failure_analysis.sh` with `check_vpn_status()` function (main entry point: `lib/detection.sh`)
 
 ## Related ADRs
 - ADR-0004: Per-Peer State Tracking
@@ -58,5 +58,8 @@ We will implement a multi-method detection system with automatic fallback:
 ## References
 - ARCHITECTURE.md: "Key Design Decisions #5: Multi-Method Detection with Fallback"
 - ARCHITECTURE.md: "Detection Method Flow" diagram
-- lib/detection.sh: Implementation details
+- lib/detection.sh: Main entry point (sources all detection modules)
+- lib/detection/xfrm_detection.sh: Primary detection method (xfrm state, byte counters)
+- lib/detection/ping_detection.sh: Supplementary ping checks
+- lib/detection/failure_analysis.sh: Failure type classification
 

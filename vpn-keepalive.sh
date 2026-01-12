@@ -6,7 +6,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.4.1
+# Version: 0.6.0
 #
 
 # Strict error handling: exit on error, undefined vars, pipe failures
@@ -15,13 +15,14 @@ set -euo pipefail
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/vpn-monitor.conf"
-STATE_DIR="${SCRIPT_DIR}"
-LOGS_DIR="${STATE_DIR}/logs"
+STATE_DIR="${SCRIPT_DIR}/state"
+LOGS_DIR="${SCRIPT_DIR}/logs"
 PIDFILE="${STATE_DIR}/vpn-keepalive.pid"
+# Set keepalive log file before load_config() - load_config() will preserve it
 LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"
 
 # Script version
-SCRIPT_VERSION="0.4.1"
+SCRIPT_VERSION="0.6.0"
 
 # Source library modules
 # shellcheck source=lib/logging.sh
@@ -58,30 +59,30 @@ restart)
 	echo "  status   Check if daemon is running"
 	echo "  restart  Restart the keepalive daemon"
 	echo ""
-	exit 0
+	exit "${EXIT_SUCCESS:-0}"
 	;;
 --version | -v)
 	echo "UDM VPN Keepalive Daemon v${SCRIPT_VERSION}"
-	exit 0
+	exit "${EXIT_SUCCESS:-0}"
 	;;
 "")
 	echo "Usage: $0 {start|stop|status|restart}"
 	echo "Run '$0 --help' for more information"
-	exit 1
+	exit "${EXIT_GENERAL_ERROR:-1}"
 	;;
 *)
 	echo "Unknown command: $COMMAND"
 	echo "Usage: $0 {start|stop|status|restart}"
-	exit 1
+	exit "${EXIT_GENERAL_ERROR:-1}"
 	;;
 esac
 
 # Ensure directories exist
 if ! ensure_directory_exists "$STATE_DIR" "state"; then
-	exit 1
+	exit "${EXIT_GENERAL_ERROR:-1}"
 fi
 if ! ensure_directory_exists "$LOGS_DIR" "logs"; then
-	exit 1
+	exit "${EXIT_GENERAL_ERROR:-1}"
 fi
 
 # Test log file write capability
@@ -90,22 +91,33 @@ if ! touch "$LOG_FILE" 2>/dev/null; then
 fi
 
 # Load configuration
-load_config "$CONFIG_FILE"
-
-# Update log file path if LOGS_DIR was overridden in config
-LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"
-PIDFILE="${STATE_DIR}/vpn-keepalive.pid"
+# Note: Path recalculation (log paths and state paths) is now handled inside load_config()
+# Note: load_config() will preserve LOG_FILE since it's a custom log file (vpn-keepalive.log, not vpn-monitor.log)
+#       and will update its directory if LOGS_DIR changed
+if ! load_config "$CONFIG_FILE"; then
+	die "Failed to load configuration from $CONFIG_FILE"
+fi
 
 # Check if keepalive is enabled
 if [[ "${ENABLE_KEEPALIVE:-0}" -ne 1 ]]; then
 	if [[ "$COMMAND" == "start" ]]; then
-		log_message "INFO" "VPN keepalive is disabled (ENABLE_KEEPALIVE=0), not starting"
-		exit 0
+		log_message "INFO" "SYSTEM" "VPN keepalive is disabled (ENABLE_KEEPALIVE=0), not starting"
+		exit "${EXIT_SUCCESS:-0}"
 	fi
 	# For other commands, continue (may need to stop disabled daemon)
 fi
 
 # Check if PID file exists and process is running
+#
+# Checks if the VPN keepalive daemon is currently running by verifying PID file and process.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Daemon is running
+#   1: Daemon is not running
+#
 is_running() {
 	if [[ ! -f "$PIDFILE" ]]; then
 		return 1
@@ -128,38 +140,43 @@ is_running() {
 }
 
 # Start the keepalive daemon
+#
+# Starts the VPN keepalive daemon in the background.
+# Validates configuration and ensures at least one location is configured before starting.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Daemon started successfully
+#   1: Failed to start daemon (exits script)
+#
 start_daemon() {
 	if is_running; then
 		local pid
 		pid=$(cat "$PIDFILE")
-		log_message "INFO" "VPN keepalive daemon is already running (PID: $pid)"
+		log_message "INFO" "SYSTEM" "VPN keepalive daemon is already running (PID: $pid)"
 		return 0
 	fi
 
-	# Validate configuration
-	if [[ -z "${EXTERNAL_PEER_IPS:-}" ]]; then
-		die "EXTERNAL_PEER_IPS not configured - cannot start keepalive"
+	# Validate configuration - load and validate location-based config
+	# This ensures at least one location is configured before starting daemon
+	# Set LOG_FILE before load_config() so it's preserved (load_config() preserves custom log files)
+	LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"
+	if ! load_config "$CONFIG_FILE"; then
+		die "Failed to load configuration from $CONFIG_FILE"
 	fi
 
-	# Parse peer IPs (space-separated, consistent with vpn-monitor.sh)
-	local IFS=' '
-	local -a external_ips
-	read -ra external_ips <<<"$EXTERNAL_PEER_IPS"
-
-	local -a internal_ips
-	if [[ -n "${INTERNAL_PEER_IPS:-}" ]]; then
-		read -ra internal_ips <<<"$INTERNAL_PEER_IPS"
-	else
-		# Use external IPs as fallback
-		internal_ips=("${external_ips[@]}")
+	if ! validate_config; then
+		die "Configuration validation failed - cannot start keepalive"
 	fi
 
-	# Validate we have at least one peer
-	if [[ ${#external_ips[@]} -eq 0 ]]; then
-		die "No VPN peers configured - cannot start keepalive"
+	# Ensure at least one location is configured
+	if [[ ${#LOCATIONS[@]} -eq 0 ]]; then
+		die "No VPN locations configured - cannot start keepalive. At least one LOCATION_*_EXTERNAL variable is required."
 	fi
 
-	log_message "INFO" "Starting VPN keepalive daemon..."
+	log_message "INFO" "SYSTEM" "Starting VPN keepalive daemon..."
 
 	# Start daemon in background and capture PID
 	# For systemd Type=forking: parent must write PID file and exit immediately
@@ -168,6 +185,10 @@ start_daemon() {
 		set +e
 		set +u
 		set +o pipefail
+
+		# Ensure keepalive log file is set correctly in daemon
+		# LOG_FILE should already be set correctly by load_config() above, but ensure it's set
+		LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"
 
 		# Detach from terminal
 		exec >/dev/null 2>&1
@@ -179,66 +200,255 @@ start_daemon() {
 		local keepalive_interval="${KEEPALIVE_INTERVAL:-30}"
 		local keepalive_ping_count="${KEEPALIVE_PING_COUNT:-1}"
 
+		# Config reload interval: reload config every 10 iterations (or every 5 minutes, whichever is longer)
+		# This allows the daemon to pick up config changes without reloading too frequently
+		local config_reload_interval=10
+		local iteration_count=0
+
+		# Declare location arrays in daemon scope (so they can be updated by reload function)
+		# Structure: locations["<name>"]["external"] and locations["<name>"]["internal"]
+		declare -A locations=()
+
+		# Function to load/parse location configuration from current config variables
+		#
+		# Parses location-based configuration and populates local locations array.
+		# Clears and repopulates locations array from global LOCATIONS array.
+		#
+		# Arguments:
+		#   None
+		#
+		# Returns:
+		#   None (populates local locations array)
+		#
+		parse_peer_config() {
+			# Clear locations array
+			locations=()
+
+			# Parse location-based configuration
+			# parse_location_config() populates global LOCATIONS array
+			if ! parse_location_config 2>/dev/null; then
+				# parse_location_config failed - log warning but don't exit daemon
+				log_message "WARNING" "SYSTEM" "Failed to parse location configuration - keepalive will not send pings until locations are configured" || true
+				return
+			fi
+
+			# Copy LOCATIONS to local locations array (for daemon scope)
+			for loc_name in "${!LOCATIONS[@]}"; do
+				locations["$loc_name"]="${LOCATIONS[$loc_name]}"
+			done
+		}
+
+		# Function to reload configuration and update peer arrays
+		#
+		# Reloads configuration from config file and updates peer arrays.
+		# This allows the daemon to pick up config changes automatically.
+		# Note: We call load_config directly (not in subshell) so variables persist.
+		# With set +e, most errors won't kill the daemon. If config is so broken that
+		# load_config calls exit/die, the daemon will restart via systemd (Restart=on-failure).
+		#
+		# Arguments:
+		#   None
+		#
+		# Returns:
+		#   None
+		#
+		reload_peer_config() {
+			# Log that we're reloading config
+			log_message "INFO" "SYSTEM" "Reloading configuration from $CONFIG_FILE" || true
+
+			# Reload config (suppress output, errors won't kill daemon due to set +e)
+			# If config is invalid, load_config may call exit, which will kill the daemon.
+			# This is acceptable - systemd will restart it, and the admin can fix the config.
+			local load_result
+			if ! load_config "$CONFIG_FILE" >/dev/null 2>&1; then
+				load_result=$?
+				# load_config failed but didn't exit - log explicit error
+				log_message "ERROR" "SYSTEM" "Failed to reload configuration from $CONFIG_FILE (exit code: $load_result)" || true
+				# Continue with existing configuration rather than failing completely
+			fi
+
+			# Set LOG_FILE before load_config() so it's preserved (load_config() preserves custom log files)
+			LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"
+
+			# Reparse peer IPs from reloaded config
+			parse_peer_config
+
+			# Check if we have any locations configured after reload
+			if [[ ${#locations[@]} -eq 0 ]]; then
+				log_message "WARNING" "SYSTEM" "No VPN locations configured after config reload - keepalive will not send pings until locations are configured" || true
+			else
+				# Log successful reload with location count
+				log_message "INFO" "SYSTEM" "Configuration reloaded successfully (${#locations[@]} location(s) configured)" || true
+			fi
+
+			# Update keepalive interval if changed
+			local old_interval="$keepalive_interval"
+			keepalive_interval="${KEEPALIVE_INTERVAL:-30}"
+			keepalive_ping_count="${KEEPALIVE_PING_COUNT:-1}"
+
+			# Log if interval changed
+			if [[ "$old_interval" != "$keepalive_interval" ]]; then
+				log_message "INFO" "SYSTEM" "Keepalive interval changed from ${old_interval}s to ${keepalive_interval}s" || true
+			fi
+		}
+
+		# Initial parse of peer config
+		parse_peer_config
+
 		# Log startup (errors ignored to prevent daemon exit)
-		log_message "INFO" "VPN keepalive daemon started (PID: $$, interval: ${keepalive_interval}s)" || true
+		log_message "INFO" "SYSTEM" "VPN keepalive daemon started (PID: $$, interval: ${keepalive_interval}s)" || true
 
 		# Main keepalive loop
 		while true; do
-			# Ping each configured peer
-			local i=0
-			for external_ip in "${external_ips[@]}"; do
-				# Get corresponding internal IP if available
-				# Handle case where internal_ips array might be shorter than external_ips
-				local internal_ip
-				if [[ $i -lt ${#internal_ips[@]} ]]; then
-					internal_ip="${internal_ips[$i]}"
+			# Reload config periodically to pick up changes
+			if [[ $iteration_count -ge $config_reload_interval ]]; then
+				reload_peer_config
+				iteration_count=0
+			fi
+
+			# Get LOCAL_UDM_IP for ping source (if configured)
+			# This is needed when using internal IPs to ensure ping goes through the VPN tunnel
+			local local_udm_ip
+			local_udm_ip=$(get_local_ip_for_ping 2>/dev/null || echo "")
+
+			# If LOCAL_UDM_IP is configured and we have locations with internal IPs, ensure route exists on br0
+			# This matches the behavior of vpn-monitor.sh ping checks
+			if [[ -n "$local_udm_ip" ]] && [[ ${#locations[@]} -gt 0 ]]; then
+				# Check if route exists, add if needed (errors ignored to prevent daemon exit)
+				if ! check_route_exists "$local_udm_ip" 2>/dev/null; then
+					add_route_if_needed "$local_udm_ip" >/dev/null 2>&1 || true
+				fi
+			fi
+
+			# Ping each configured location
+			for location_name in "${!locations[@]}"; do
+				# Get external IP for this location
+				local external_ip
+				if ! external_ip=$(get_location_external_ip "$location_name"); then
+					log_message "WARNING" "$location_name" "Keepalive: failed to get external IP (skipping)" || true
+					continue
+				fi
+
+				# Get internal IPs for this location (may be empty)
+				local internal_ips
+				internal_ips=$(get_location_internal_ips "$location_name")
+
+				# Determine ping target(s)
+				local ping_target
+				if [[ -n "$internal_ips" ]]; then
+					ping_target="$internal_ips"
 				else
-					internal_ip="$external_ip"
+					ping_target="$external_ip"
 				fi
 
-				# Fallback to external IP if internal IP is empty
-				if [[ -z "$internal_ip" ]]; then
-					internal_ip="$external_ip"
-				fi
-
-				# Use internal IP for ping (better for keepalive)
-				local ping_target="$internal_ip"
-
-				# Skip if IP is empty
+				# Skip if ping target is empty
 				if [[ -z "$ping_target" ]]; then
 					continue
 				fi
 
-				# Perform keepalive ping (quiet, minimal logging)
-				# Use a simple ping command directly to avoid logging overhead
-				local ping_cmd="ping"
-				local ping_args=()
+				# Check if multiple internal IPs (has spaces)
+				if [[ "$ping_target" =~ [[:space:]] ]]; then
+					# Multiple IPs - use check_ping_multiple_ips with 30% threshold
+					if ! check_ping_multiple_ips "$ping_target" "$local_udm_ip" >/dev/null 2>&1; then
+						log_message "WARNING" "$location_name" "Keepalive: ping check failed (<30% of internal IPs responded)" || true
+					fi
+				else
+					# Single IP - use existing ping logic
+					local ping_cmd="ping"
+					local ping_args=()
 
-				# Determine if IPv6
-				if [[ ! "$ping_target" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-					# IPv6
-					if command -v ping6 >/dev/null 2>&1; then
-						ping_cmd="ping6"
-					elif ping -6 >/dev/null 2>&1; then
-						ping_cmd="ping"
-						ping_args=(-6)
+					# Determine if we should use source IP (LOCAL_UDM_IP configured and using internal IP)
+					local use_source_ip=false
+					if [[ -n "$local_udm_ip" ]] && [[ "$ping_target" != "$external_ip" ]]; then
+						use_source_ip=true
+					fi
+
+					# Determine if IPv6
+					if [[ ! "$ping_target" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+						# IPv6
+						if check_command_available "ping6"; then
+							ping_cmd="ping6"
+							if [[ "$use_source_ip" == "true" ]]; then
+								ping_args=(-I "$local_udm_ip")
+							fi
+						elif check_command_available "ping" && ping -6 >/dev/null 2>&1; then
+							ping_cmd="ping"
+							ping_args=(-6)
+							if [[ "$use_source_ip" == "true" ]]; then
+								ping_args=(-6 -I "$local_udm_ip")
+							fi
+						else
+							# IPv6 ping not available, skip this location
+							continue
+						fi
 					else
-						# IPv6 ping not available, skip this peer
-						continue
+						# IPv4 - add source IP if needed
+						if [[ "$use_source_ip" == "true" ]]; then
+							ping_args=(-I "$local_udm_ip")
+						fi
+					fi
+
+					# Perform quiet ping (suppress all output)
+					# Only log failures, not successes (to reduce log noise)
+					# UDM runs Linux, so we use Linux-style ping (-W flag)
+					# Wrap ping commands with timeout to prevent hanging
+					# Calculate timeout: min(ping_timeout + 1, min(ping_count * ping_timeout + 1, 5))
+					# This ensures we catch hanging commands quickly (ping_timeout + 1) while allowing
+					# normal pings to complete (ping_count * ping_timeout + 1), capped at 5 seconds
+					local ping_timeout="${PING_TIMEOUT:-2}"
+					local ping_wrapper_timeout
+					local quick_timeout=$((ping_timeout + 1))
+					local normal_timeout=$((keepalive_ping_count * ping_timeout + 1))
+					# Use the smaller of the two to catch hangs quickly, but cap normal timeout at 5 seconds
+					if [[ $normal_timeout -gt 5 ]]; then
+						normal_timeout=5
+					fi
+					# Use the smaller timeout to ensure daemon remains responsive
+					if [[ $quick_timeout -lt $normal_timeout ]]; then
+						ping_wrapper_timeout=$quick_timeout
+					else
+						ping_wrapper_timeout=$normal_timeout
+					fi
+
+					local ping_success=0
+					# Use Linux-style ping with timeout wrapper
+					if check_command_available "timeout"; then
+						# Try Linux-style ping with timeout wrapper
+						if timeout "$ping_wrapper_timeout" "$ping_cmd" "${ping_args[@]}" -c "$keepalive_ping_count" -W "$ping_timeout" -q "$ping_target" >/dev/null 2>&1; then
+							ping_success=1
+						else
+							local ping_exit_code=$?
+							# If timeout occurred (exit code 124), don't try fallbacks
+							if [[ $ping_exit_code -ne 124 ]]; then
+								# Try without timeout flag as fallback (only if not timeout)
+								if timeout "$ping_wrapper_timeout" "$ping_cmd" "${ping_args[@]}" -c "$keepalive_ping_count" -q "$ping_target" >/dev/null 2>&1; then
+									ping_success=1
+								fi
+							fi
+						fi
+					else
+						# Fallback if timeout command not available (shouldn't happen on UDM)
+						if "$ping_cmd" "${ping_args[@]}" -c "$keepalive_ping_count" -W "$ping_timeout" -q "$ping_target" >/dev/null 2>&1; then
+							ping_success=1
+						# Try without timeout flag as fallback
+						elif "$ping_cmd" "${ping_args[@]}" -c "$keepalive_ping_count" -q "$ping_target" >/dev/null 2>&1; then
+							ping_success=1
+						fi
+					fi
+
+					if [[ $ping_success -eq 0 ]]; then
+						# Log failure but continue (don't exit daemon)
+						# Errors in log_message are ignored to prevent daemon exit
+						if [[ "$ping_target" == "$external_ip" ]]; then
+							log_message "WARNING" "$location_name" "Keepalive: ping failed for $external_ip" || true
+						else
+							log_message "WARNING" "$location_name" "Keepalive: ping failed for $ping_target (external: $external_ip)" || true
+						fi
 					fi
 				fi
-
-				# Perform quiet ping (suppress all output)
-				# Only log failures, not successes (to reduce log noise)
-				# UDM runs Linux, so we use Linux-style ping (-W flag)
-				if ! "$ping_cmd" "${ping_args[@]}" -c "$keepalive_ping_count" -W "${PING_TIMEOUT:-2}" -q "$ping_target" >/dev/null 2>&1; then
-					# Log failure but continue (don't exit daemon)
-					# Errors in log_message are ignored to prevent daemon exit
-					log_message "WARNING" "Keepalive ping failed for $ping_target (external: $external_ip)" || true
-				fi
-
-				((i++)) || true
 			done
+
+			((iteration_count++)) || true
 
 			# Sleep until next interval (errors ignored)
 			sleep "$keepalive_interval" || sleep 30
@@ -251,33 +461,44 @@ start_daemon() {
 	if ! echo "$daemon_pid" >"$PIDFILE" 2>/dev/null; then
 		# Failed to write PID file, kill the daemon
 		kill "$daemon_pid" 2>/dev/null || true
-		handle_error "ERROR" "Failed to write PID file: $PIDFILE" 1
+		handle_error "ERROR" "SYSTEM" "Failed to write PID file: $PIDFILE" 1
 	fi
 
 	# Verify the process is still running (quick check)
 	if ! kill -0 "$daemon_pid" 2>/dev/null; then
 		# Process died immediately, remove PID file
 		rm -f "$PIDFILE"
-		handle_error "ERROR" "VPN keepalive daemon process died immediately after start" 1
+		handle_error "ERROR" "SYSTEM" "VPN keepalive daemon process died immediately after start" 1
 	fi
 
 	# For systemd Type=forking: parent must exit immediately after writing PID file
 	# Systemd will read the PID file and track the child process
-	log_message "INFO" "VPN keepalive daemon started successfully (PID: $daemon_pid)"
+	log_message "INFO" "SYSTEM" "VPN keepalive daemon started successfully (PID: $daemon_pid)"
 	return 0
 }
 
 # Stop the keepalive daemon
+#
+# Stops the VPN keepalive daemon gracefully by sending TERM signal.
+# Force kills if daemon doesn't exit within 10 seconds.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Daemon stopped successfully
+#   1: Failed to stop daemon (exits script)
+#
 stop_daemon() {
 	if ! is_running; then
-		log_message "INFO" "VPN keepalive daemon is not running"
+		log_message "INFO" "SYSTEM" "VPN keepalive daemon is not running"
 		return 0
 	fi
 
 	local pid
 	pid=$(cat "$PIDFILE")
 
-	log_message "INFO" "Stopping VPN keepalive daemon (PID: $pid)..."
+	log_message "INFO" "SYSTEM" "Stopping VPN keepalive daemon (PID: $pid)..."
 
 	# Send TERM signal
 	if kill -TERM "$pid" 2>/dev/null; then
@@ -285,12 +506,12 @@ stop_daemon() {
 		local count=0
 		while kill -0 "$pid" 2>/dev/null && [[ $count -lt 10 ]]; do
 			sleep 1
-			((count++))
+			((count++)) || true
 		done
 
 		# Force kill if still running
 		if kill -0 "$pid" 2>/dev/null; then
-			log_message "WARNING" "Daemon did not exit gracefully, forcing termination"
+			log_message "WARNING" "SYSTEM" "Daemon did not exit gracefully, forcing termination"
 			kill -KILL "$pid" 2>/dev/null || true
 			sleep 1
 		fi
@@ -298,14 +519,35 @@ stop_daemon() {
 		# Remove PID file
 		rm -f "$PIDFILE"
 
-		log_message "INFO" "VPN keepalive daemon stopped"
+		log_message "INFO" "SYSTEM" "VPN keepalive daemon stopped"
 		return 0
 	else
-		handle_error "ERROR" "Failed to stop VPN keepalive daemon (PID: $pid)" 1
+		# kill -TERM failed - check if process is still running
+		# If process already exited, that's fine - just clean up PID file
+		if ! kill -0 "$pid" 2>/dev/null; then
+			# Process already exited, clean up PID file
+			log_message "INFO" "SYSTEM" "VPN keepalive daemon process already exited (PID: $pid), cleaning up PID file"
+			rm -f "$PIDFILE"
+			return 0
+		else
+			# Process is still running but we couldn't send TERM signal
+			# This is an error (permission issue, etc.)
+			handle_error "ERROR" "SYSTEM" "Failed to stop VPN keepalive daemon (PID: $pid)" 1
+		fi
 	fi
 }
 
 # Check daemon status
+#
+# Checks and displays the current status of the VPN keepalive daemon.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Daemon is running
+#   1: Daemon is not running
+#
 check_status() {
 	if is_running; then
 		local pid
@@ -339,4 +581,4 @@ restart)
 	;;
 esac
 
-exit 0
+exit "${EXIT_SUCCESS:-0}"

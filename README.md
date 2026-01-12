@@ -15,6 +15,7 @@ This tool monitors Site-to-Site VPN connections on UniFi Dream Machines (UDM/UDM
 ## Recovery Behavior
 
 - **Detection**: Uses `ip xfrm state` (primary) → `ipsec status` (fallback). For detailed detection flow, see [ARCHITECTURE.md](docs/ARCHITECTURE.md#detection-method-flow)
+- **Detection Reliability Safeguard**: Recovery escalation (Tier 2/3) is automatically blocked when detection is unreliable. If both `ip` and `ipsec` commands are unavailable and the failure type is "unknown", the system cannot reliably determine if the VPN is actually down, so recovery actions are skipped to prevent false recovery actions. Failures are still logged for monitoring, but Tier 2/3 recovery actions are not executed when detection tools are unavailable.
 - **Tier 2 Recovery**: 
   - **Default**: xfrm-based per-connection recovery (enabled by default, `ENABLE_XFRM_RECOVERY=1`) - affects only the failing tunnel
   - **Fallback**: `ipsec reload` (affects **all connections**) if xfrm recovery fails or is disabled
@@ -32,10 +33,12 @@ For detailed recovery tier flow diagrams and technical implementation, see the [
 - **Resource Monitoring**: Monitors CPU, RAM, and disk space usage and throttles execution when resources are constrained to prevent system overload
 - **Tiered Recovery**: Escalates from logging → surgical SA cleanup → full restart
 - **VPN Keepalive Daemon**: Optional background daemon sends periodic pings to prevent idle VPN tunnels from timing out
-- **Safety Controls**: Lockfiles with timeout detection, cooldown timers, and rate limiting prevent restart loops
+- **Safety Controls**: Lockfiles with timeout detection, cooldown timers, rate limiting, and detection reliability safeguards prevent restart loops and false recovery actions
 - **Persistent Logging**: Logs stored in `/data/` survive reboots
 - **Cron-Based**: More resilient than long-running processes on UDM
-- **Per-Peer Tracking**: Monitors multiple VPN peers independently with independent failure counters
+- **Location-Based Configuration**: Organize VPNs by location with named locations and multiple internal IPs per location
+- **Per-Location Tracking**: Monitors multiple VPN locations independently with independent failure counters
+- **Multiple Internal IPs**: Supports multiple internal IPs per location with 30% ping threshold for health determination
 - **Log Analysis**: Built-in `analyze-logs.sh` script for failure pattern analysis and CSV export
 - **Comprehensive Testing**: Extensive test suite with CI/CD integration
 - **Security**: Robust IP address validation prevents injection attacks
@@ -71,16 +74,16 @@ The install package (recommended) includes all required files with proper direct
    # Or create tar.gz:
    ./prepare_install_package.sh --tar         # Creates tar.gz file
    # Then transfer and extract:
-   scp udm-vpn-monitor-installer.zip root@<UDM_IP>:/tmp/
+   scp udm-vpn-monitor.zip root@<UDM_IP>:/tmp/
 
    ```
 
 2. **SSH into your UDM**:
    ```bash
    ssh root@<UDM_IP>
-   cd /tmp && unzip udm-vpn-monitor-installer.zip
+   cd /tmp && unzip udm-vpn-monitor.zip
    # Or for tar.gz:
-   # cd /tmp && tar -xzf udm-vpn-monitor-installer.tar.gz
+   # cd /tmp && tar -xzf udm-vpn-monitor.tar.gz
    ```
 
 3. **Run the installer**:
@@ -119,6 +122,11 @@ The install package (recommended) includes all required files with proper direct
      ./install.sh --dev
      ```
    
+   - **Keepalive-only mode** (only install and enable keepalive daemon, requires existing installation):
+     ```bash
+     ./install.sh --keepalive-only
+     ```
+   
    - **Combine options**:
      ```bash
      ./install.sh --silent --no-cron --overwrite-conf
@@ -131,6 +139,7 @@ The install package (recommended) includes all required files with proper direct
    - `--silent`: Perform installation silently without prompts (by default preserves existing config)
    - `--overwrite-conf`: Overwrite existing config file (only effective with `--silent`)
    - `--dev`: Install to current working directory instead of `/data/vpn-monitor` (useful for development/testing)
+   - `--keepalive-only`: Only install and enable keepalive daemon (requires existing installation, ignores other flags)
    
    **Note:** `--interactive` and `--silent` flags cannot be used together.
 
@@ -139,23 +148,40 @@ The install package (recommended) includes all required files with proper direct
    nano /data/vpn-monitor/vpn-monitor.conf
    ```
    
-   Set `EXTERNAL_PEER_IPS` to the **external/public IP address(es)** of your remote VPN gateway(s):
+   Configure VPN locations using the location-based format:
    ```bash
-   EXTERNAL_PEER_IPS="203.0.113.1 198.51.100.1"
+   # Location-based configuration format
+   # Format: LOCATION_<NAME>_EXTERNAL="external_ip"
+   # Format: LOCATION_<NAME>_INTERNAL="internal_ip1 internal_ip2 ..."
+   # Location names are automatically extracted from variable names
+   
+   LOCATION_NYC_EXTERNAL="203.0.113.1"
+   LOCATION_NYC_INTERNAL="192.168.100.1"
+   
+   LOCATION_DC_EXTERNAL="198.51.100.1"
+   LOCATION_DC_INTERNAL="192.168.200.1 192.168.200.2"
    ```
    
-   Optionally, set `INTERNAL_PEER_IPS` to the **internal/private IP address(es)** for ping checks:
-   ```bash
-   INTERNAL_PEER_IPS="192.168.100.1 192.168.200.1"
-   ```
+   **Key Points:**
+   - Each location requires an `EXTERNAL` IP (the public/external IP of the remote VPN gateway)
+   - `INTERNAL` IPs are optional and used for ping checks
+   - For locations with multiple internal IPs, VPN is considered healthy if ≥30% respond to pings
+   - Location names are extracted from variable names (text between `LOCATION_` and `_EXTERNAL`)
+   - Each location has its own independent failure counter tracked separately
    
-   If using `INTERNAL_PEER_IPS` for ping checks, also set `LOCAL_UDM_IP` to your local UDM's internal IP address:
+   If using `INTERNAL` IPs for ping checks, also set `LOCAL_UDM_IP` to your local UDM's internal IP address:
    ```bash
    LOCAL_UDM_IP="192.168.1.1"
    ```
    The installer will attempt to auto-detect this from the br0 interface if not configured.
    
-   **Important**: Use the external/public IP address that the VPN tunnel is established with, not the internal/private IP address. The script checks IPsec Security Associations (SAs) which are identified by external IP addresses. If `INTERNAL_PEER_IPS` is not set, ping checks will use `EXTERNAL_PEER_IPS` instead.
+   **Important**: Use the external/public IP address that the VPN tunnel is established with, not the internal/private IP address. The script checks IPsec Security Associations (SAs) which are identified by external IP addresses. If `INTERNAL` IPs are not set, ping checks will use `EXTERNAL` IPs instead.
+   
+   **Migrating from old format**: If you have an existing configuration using `EXTERNAL_PEER_IPS`/`INTERNAL_PEER_IPS`, use the migration script:
+   ```bash
+   /data/vpn-monitor/scripts/migrate-config-to-locations.sh
+   ```
+   The migration script runs in **interactive mode by default** (prompts for location names). Use `--auto` for automatic generation (`LOCATION_1`, `LOCATION_2`, etc.) or `--csv FILE` for bulk import from CSV. See [MIGRATION.md](docs/MIGRATION.md) for detailed migration instructions.
 
 5. **Monitor logs**:
    ```bash
@@ -168,9 +194,9 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `EXTERNAL_PEER_IPS` | Space-separated list of remote VPN endpoint **external/public** IPs | (required) |
-| `INTERNAL_PEER_IPS` | Space-separated list of remote VPN endpoint **internal/private** IPs (for ping checks, optional) | "" |
-| `LOCAL_UDM_IP` | Local UDM internal IP address (required when `ENABLE_PING_CHECK=1` and `INTERNAL_PEER_IPS` is set). Used as source IP for ping checks. The script automatically adds this IP to br0 if needed. | "" |
+| `LOCATION_<NAME>_EXTERNAL` | External/public IP address of remote VPN gateway for location `<NAME>`. Location names are extracted from variable names (text between `LOCATION_` and `_EXTERNAL`). At least one location is required. | (required) |
+| `LOCATION_<NAME>_INTERNAL` | Internal/private IP address(es) for location `<NAME>` (space-separated, optional). Used for ping checks. For multiple IPs, VPN is healthy if ≥30% respond. | "" |
+| `LOCAL_UDM_IP` | Local UDM internal IP address (required when `ENABLE_PING_CHECK=1` and `INTERNAL` IPs are set). Used as source IP for ping checks. The script automatically adds this IP to br0 if needed. | "" |
 | `VPN_NAME` | VPN identifier for logging | "Site-to-Site VPN" |
 | `TIER1_THRESHOLD` | Failures before logging starts | 1 |
 | `TIER2_THRESHOLD` | Failures before surgical cleanup | 3 |
@@ -182,6 +208,7 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `ENABLE_PING_CHECK` | Enable ping connectivity verification (0 or 1) | 1 |
 | `PING_COUNT` | Number of ping packets to send | 3 |
 | `PING_TIMEOUT` | Ping timeout per packet (seconds) | 2 |
+| `PING_SUMMARY_INTERVAL_MINUTES` | Interval for logging ping check summaries (minutes, 1-1440) | 7 |
 | `ENABLE_KEEPALIVE` | Enable VPN keepalive daemon (0 or 1, see [Keepalive Daemon](#keepalive-daemon)) | 1 |
 | `KEEPALIVE_INTERVAL` | Keepalive ping interval (seconds, 10-300) | 30 |
 | `KEEPALIVE_PING_COUNT` | Number of ping packets per keepalive ping (1-5) | 1 |
@@ -199,6 +226,8 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `RESOURCE_RAM_DURATION` | RAM constraint duration in seconds (10-600). RAM must be at threshold or above for this duration before throttling. | 60 |
 | `RESOURCE_DISK_WARNING_THRESHOLD` | Disk space warning threshold (percentage free, 5-50). Script logs a warning when free disk space drops below this threshold. | 20 |
 | `RESOURCE_DISK_CRITICAL_THRESHOLD` | Disk space critical threshold (percentage free, 1-20). Script throttles execution and takes action (e.g., rotates logs) when free disk space drops below this threshold. | 10 |
+| `STATUS_LOG_INTERVAL_SECONDS` | How often to log periodic status updates for healthy VPN peers (seconds, 0-3600). Set to 0 to disable periodic status logging. Ensures monitoring activity is visible in logs even when VPNs are healthy. | 300 |
+| `RECOVERY_VERIFY_TIMEOUT` | Maximum time to wait for recovery verification after xfrm-based recovery actions (seconds, 10-300). The script verifies that the VPN tunnel has recovered after performing recovery actions. | 30 |
 
 
 **Cron Schedule Examples:**
@@ -241,8 +270,8 @@ The VPN keepalive daemon is an optional background process that sends periodic p
 **How It Works:**
 
 - Runs as a separate background daemon process (independent from the monitoring script)
-- Pings each configured peer at regular intervals (default: every 30 seconds)
-- Uses internal IP addresses (from `INTERNAL_PEER_IPS`) when available, falls back to external IPs
+- Pings each configured location at regular intervals (default: every 30 seconds)
+- Uses internal IP addresses (from `LOCATION_*_INTERNAL`) when available, falls back to external IPs
 - Minimal logging (only logs failures, not successful pings)
 - Automatically restarts on failure (when managed via systemd)
 - Respects `ENABLE_KEEPALIVE` configuration - won't start if disabled
@@ -308,19 +337,27 @@ ENABLE_RESOURCE_MONITORING=0
 
 ### Monitoring 3 Site-to-Site VPNs
 
-When monitoring multiple VPN tunnels, configure all peer IPs in your config file:
+When monitoring multiple VPN tunnels, configure all locations in your config file:
 
 ```bash
 # /data/vpn-monitor/vpn-monitor.conf
-EXTERNAL_PEER_IPS="203.0.113.1 198.51.100.1 192.0.2.1"
-INTERNAL_PEER_IPS="192.168.100.1 192.168.200.1 192.168.300.1"
+LOCATION_NYC_EXTERNAL="203.0.113.1"
+LOCATION_NYC_INTERNAL="192.168.100.1"
+
+LOCATION_DC_EXTERNAL="198.51.100.1"
+LOCATION_DC_INTERNAL="192.168.200.1"
+
+LOCATION_CHICAGO_EXTERNAL="192.0.2.1"
+LOCATION_CHICAGO_INTERNAL="192.168.300.1"
+
 VPN_NAME="Multi-Site VPN"
 ```
 
 **Key Points:**
-- Each VPN is monitored independently with its own failure counter
-- Failures in one tunnel don't affect monitoring of other tunnels
-- State files are created per peer (e.g., `failure_counter_203_0_113_1`, `last_bytes_198_51_100_1`)
+- Each location is monitored independently with its own failure counter
+- Failures in one location don't affect monitoring of other locations
+- State files are created per location (e.g., `failure_counter_NYC_203_0_113_1`, `last_bytes_DC_198_51_100_1`)
+- Location names are automatically extracted from variable names and sanitized for use in filenames
 
 **Example Log Output:**
 ```
@@ -330,7 +367,7 @@ VPN_NAME="Multi-Site VPN"
 ```
 
 **Recovery Behavior:**
-Recovery actions are per-peer (each peer has independent failure tracking). See the [Important: Recovery Behavior](#-important-recovery-behavior) section above for details on Tier 2 and Tier 3 recovery actions. For detailed recovery tier flow diagrams and technical implementation, see the [Recovery Tier Flow section in ARCHITECTURE.md](docs/ARCHITECTURE.md#recovery-tier-flow).
+Recovery actions are per-location (each location has independent failure tracking). See the [Important: Recovery Behavior](#-important-recovery-behavior) section above for details on Tier 2 and Tier 3 recovery actions. For detailed recovery tier flow diagrams and technical implementation, see the [Recovery Tier Flow section in ARCHITECTURE.md](docs/ARCHITECTURE.md#recovery-tier-flow).
 
 ### Testing without Affecting Production VPNs
 
@@ -387,7 +424,7 @@ The monitor uses a multi-layered approach to verify VPN tunnel health and automa
 
 **Recovery**: Three-tier escalation system (see [Important: Recovery Behavior](#-important-recovery-behavior) section above for details).
 
-**Safety**: Lockfile protection, cooldown periods, rate limiting, and per-peer failure tracking prevent restart loops and ensure safe operation.
+**Safety**: Lockfile protection, cooldown periods, rate limiting, per-location failure tracking, and detection reliability safeguards prevent restart loops and ensure safe operation. The system includes a detection reliability safeguard that prevents recovery escalation when detection tools (`ip` and `ipsec` commands) are unavailable, avoiding false recovery actions when detection is unreliable.
 
 For detailed architecture information including detection flow diagrams, recovery tier details, failure type detection, ping check behavior, state management, and technical implementation, see [ARCHITECTURE.md](docs/ARCHITECTURE.md). For design decisions behind these choices, see [Architecture Decision Records](docs/adr/README.md).
 
@@ -447,6 +484,79 @@ cat /data/vpn-monitor/reports/vpn-monitor-report.txt
 ```
 
 Reports include summary statistics, tier action analysis, and event timelines. CSV exports are available for spreadsheet analysis.
+
+**Note:** The script supports both the old log format (peer IP only, e.g., `VPN check failed for 203.0.113.1`) and the new location-based format (e.g., `VPN check failed for location NYC (203.0.113.1)`). Peer IPs are automatically extracted from either format.
+
+### Anonymize Logs
+
+The `anonymize-logs.sh` script anonymizes IP addresses and location names in VPN monitor logs while maintaining consistency, making logs safe to share for troubleshooting without exposing sensitive information:
+
+```bash
+# Anonymize log file and save to output file
+/data/vpn-monitor/scripts/anonymize-logs.sh -i /data/vpn-monitor/logs/vpn-monitor.log -o anonymized.log
+
+# Anonymize and view directly (stdout)
+/data/vpn-monitor/scripts/anonymize-logs.sh -i vpn-monitor.log | less
+
+# Anonymize with verbose output
+/data/vpn-monitor/scripts/anonymize-logs.sh -i vpn-monitor.log -o anonymized.log -v
+```
+
+**Features:**
+- **IP Address Anonymization**: Replaces all IP addresses with anonymized IPs in the 10.x.x.x range
+- **Location Name Anonymization**: Replaces location names with anonymized city names
+- **Consistency**: Same IPs and locations always map to the same anonymized values across multiple runs
+- **Preserves Log Structure**: Maintains log formatting, timestamps, and structure for readability
+
+**Options:**
+- `-i, --input FILE`: Input log file (required)
+- `-o, --output FILE`: Output file for anonymized log (default: stdout)
+- `-v, --verbose`: Verbose output showing anonymization progress
+- `-h, --help`: Show help message
+
+**Use Cases:**
+- Sharing logs for troubleshooting without exposing network topology
+- Creating sanitized log samples for documentation or testing
+- Preparing logs for external analysis or support requests
+
+### Configuration Utilities
+
+The installation includes utility scripts to help manage and validate your configuration:
+
+**Check Configuration Against Schema (`check-config.sh`):**
+```bash
+# Validate your config file against the schema
+/data/vpn-monitor/check-config.sh
+
+# Check a specific config file
+/data/vpn-monitor/check-config.sh --config /path/to/vpn-monitor.conf
+```
+
+This script compares your configuration file against the **schema** (the code-based definition of what's valid). It reports:
+- Missing settings (in schema but not in your config) - shows what the code expects
+- Deprecated settings (in your config but not in schema) - shows what's no longer valid
+- Valid settings (in both)
+
+**Use this when:** You want to validate that your config matches what the code expects/accepts.
+
+**Compare Template with Existing Config (`compare-config.sh`):**
+```bash
+# Compare template config with your existing config
+/data/vpn-monitor/compare-config.sh
+
+# Compare specific files
+/data/vpn-monitor/compare-config.sh --template ./vpn-monitor.conf --existing /data/vpn-monitor/vpn-monitor.conf
+```
+
+This script compares the **template configuration file** (the `vpn-monitor.conf` file that ships with the code) with your existing configuration file. It shows:
+- New settings in the template that aren't in your existing config (fields you might want to add) - with template values shown
+- Deprecated settings in your existing config that aren't in the template (fields that may have been removed)
+
+**Special handling for LOCATION variables:** The script uses pattern matching for `LOCATION_*_EXTERNAL` and `LOCATION_*_INTERNAL` variables. If the template has any LOCATION variables (e.g., `LOCATION_NYC_EXTERNAL`), your customer-specific location variables (e.g., `LOCATION_CUSTOMER1_EXTERNAL`) will not be flagged as deprecated, even if they don't exactly match the template. This allows you to use your own location names without false warnings.
+
+**Use this when:** You want to see what's new in the template during upgrades without overwriting your existing config.
+
+**Note:** During installation/upgrade, if your existing config is preserved (not overwritten), `compare-config.sh` runs automatically to show you what's new in the template. You can also run it manually anytime to check for new configuration options.
 
 ### Manual Testing
 
@@ -549,7 +659,7 @@ For detailed detection flow diagrams, sequence diagrams, ping check behavior sce
 
 ### State Management
 
-For detailed state management documentation including file structure, atomic operations, checksum validation, per-peer isolation, and technical implementation details, see the [State Management section in ARCHITECTURE.md](docs/ARCHITECTURE.md#state-management).
+For detailed state management documentation including file structure, atomic operations, checksum validation, per-location isolation, and technical implementation details, see the [State Management section in ARCHITECTURE.md](docs/ARCHITECTURE.md#state-management).
 
 ## License
 
@@ -576,9 +686,7 @@ For development setup, including installation of development tools (ShellCheck, 
 
 This project uses GitHub Actions for continuous integration. The CI pipeline automatically runs on every push and pull request.
 
-Check the [Actions](https://github.com/YOUR_USERNAME/udm-vpn-monitor/actions) tab to view the status of CI runs.
-
-**Note:** Update the badge URL in the README header with your actual GitHub username/repository name to display the CI status badge correctly.
+Check the [Actions](https://github.com/eccentric-quality-solutions/udm-vpn-monitor/actions) tab to view the status of CI runs.
 
 For detailed CI/CD pipeline information, local development checks, and workflow instructions, see [DEVELOPER.md](DEVELOPER.md).
 

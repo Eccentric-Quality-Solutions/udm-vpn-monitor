@@ -57,10 +57,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install bats
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bats
+          sudo apt-get install -y bats parallel
 
       - name: Install bats helper libraries
         run: |
@@ -91,7 +91,7 @@ jobs:
     name: Test Coverage
     runs-on: ubuntu-latest
     needs: lint
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -99,12 +99,10 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bats jq
-          
-      - name: Build and install kcov
-        run: |
-          # Install build dependencies for kcov
           sudo apt-get install -y \
+            bats \
+            jq \
+            parallel \
             cmake \
             build-essential \
             libcurl4-openssl-dev \
@@ -115,14 +113,34 @@ jobs:
             zlib1g-dev \
             git
           
-          # Clone and build kcov from source
-          git clone https://github.com/SimonKagstrom/kcov.git /tmp/kcov
+      - name: Cache kcov build
+        id: cache-kcov
+        uses: actions/cache@v4
+        with:
+          path: /tmp/kcov/build
+          key: kcov-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: |
+            kcov-${{ runner.os }}-
+
+      - name: Build and install kcov
+        run: |
+          # Clone kcov repository if not cached
+          if [ ! -d /tmp/kcov ]; then
+            git clone https://github.com/SimonKagstrom/kcov.git /tmp/kcov
+          fi
+          
           cd /tmp/kcov
           
-          # Build kcov
+          # Build kcov (use cached build directory if available)
           mkdir -p build
           cd build
-          cmake ..
+          
+          # Only run cmake if CMakeCache.txt doesn't exist (build not cached)
+          if [ ! -f CMakeCache.txt ]; then
+            cmake ..
+          fi
+          
+          # Build kcov (will be faster if build artifacts are cached)
           make -j$(nproc)
           sudo make install
           
@@ -139,7 +157,7 @@ jobs:
       - name: Run tests with coverage
         env:
           RUN_SLOW_TESTS: 1
-          PARALLEL_JOBS: 4  # Enable parallel execution for faster test runs
+          PARALLEL_JOBS: 8  # Increased from 4 - kcov is I/O bound, so more parallel jobs help
         run: |
           ./tests/run_tests.sh --coverage
 
@@ -237,3 +255,124 @@ jobs:
               });
             }
 
+  flaky-test-detection:
+    name: Flaky Test Detection
+    runs-on: ubuntu-latest
+    needs: lint
+    # Run on schedule (nightly) and on pull requests
+    # Skip on push to avoid running on every commit (too expensive)
+    if: github.event_name == 'pull_request' || github.event_name == 'schedule'
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats parallel
+
+      - name: Install bats helper libraries
+        run: |
+          cd tests
+          if [ -f install_bats_helpers.sh ]; then
+            bash install_bats_helpers.sh
+          fi
+
+      - name: Run flaky test detection
+        id: flaky_detection
+        env:
+          RUN_SLOW_TESTS: 0  # Exclude slow tests for faster detection (can be overridden)
+          NUM_RUNS: 3  # Run tests 3 times to detect flakiness
+        run: |
+          ./tests/detect_flaky_tests.sh --runs ${NUM_RUNS} || true
+        continue-on-error: true
+
+      - name: Upload flaky test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flaky-test-results
+          path: |
+            logs/flaky_detection_*/
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Report flaky tests
+        if: always() && steps.flaky_detection.outputs.flaky_count && steps.flaky_detection.outputs.flaky_count != '0'
+        run: |
+          echo "::warning::Flaky tests detected! Check the flaky-test-results artifact for details."
+          echo "Number of flaky tests: ${{ steps.flaky_detection.outputs.flaky_count }}"
+          
+          # Try to read and display flaky test summary
+          if [ -d logs/flaky_detection_* ]; then
+            RESULTS_DIR=$(ls -td logs/flaky_detection_* | head -1)
+            if [ -f "$RESULTS_DIR/flaky_analysis.txt" ]; then
+              echo ""
+              echo "=== Flaky Test Summary ==="
+              cat "$RESULTS_DIR/flaky_analysis.txt"
+            fi
+          fi
+
+      - name: Comment flaky tests on PR
+        if: github.event_name == 'pull_request' && steps.flaky_detection.outputs.flaky_count && steps.flaky_detection.outputs.flaky_count != '0'
+        uses: actions/github-script@v7
+        continue-on-error: true
+        with:
+          script: |
+            const flakyCount = '${{ steps.flaky_detection.outputs.flaky_count }}';
+            
+            // Try to read flaky test details
+            let flakyDetails = '';
+            const { execSync } = require('child_process');
+            try {
+              const resultsDir = execSync('ls -td logs/flaky_detection_* | head -1', { encoding: 'utf-8' }).trim();
+              const analysisFile = `${resultsDir}/flaky_analysis.txt`;
+              const fs = require('fs');
+              if (fs.existsSync(analysisFile)) {
+                const content = fs.readFileSync(analysisFile, 'utf-8');
+                // Extract just the flaky tests section
+                const flakySection = content.match(/FLAKY TESTS.*?(?=\n\n|$)/s);
+                if (flakySection) {
+                  flakyDetails = '\n\n```\n' + flakySection[0] + '\n```';
+                }
+              }
+            } catch (e) {
+              // If we can't read details, just report the count
+            }
+            
+            const comment = `## ⚠️ Flaky Test Detection\n\n` +
+              `**${flakyCount} flaky test(s) detected** during ${process.env.NUM_RUNS || 3} test runs.` +
+              `\n\nFlaky tests are tests that pass in some runs but fail in others, indicating unreliable tests that need fixing.` +
+              `\n\nView detailed analysis in the workflow artifacts (flaky-test-results).` +
+              flakyDetails;
+            
+            // Find existing flaky test comment
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const existingComment = comments.data.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('## ⚠️ Flaky Test Detection')
+            );
+            
+            if (existingComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body: comment
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: comment
+              });
+            }

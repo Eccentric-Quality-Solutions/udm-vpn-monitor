@@ -45,14 +45,16 @@ We will implement an optional VPN keepalive daemon that:
 - **Operation**:
   - Runs continuously as background daemon
   - Sends pings at configured intervals (default: 30 seconds)
-  - Uses internal IP addresses (from `INTERNAL_PEER_IPS`) when available
+  - Uses internal IP addresses from location-based configuration (`LOCATION_<NAME>_INTERNAL`) when available
   - Falls back to external IPs if internal IPs not configured
+  - Supports multiple internal IPs per location (pings all configured internal IPs)
 - **Management**: Controlled via systemd (`systemctl enable/start/stop vpn-keepalive`)
 - **Logging**: Minimal logging (only logs failures, not successful pings)
 
 ## Related ADRs
 - ADR-0006: Multi-Method Detection with Fallback
 - ADR-0001: Cron-Based Execution Instead of Daemon
+- ADR-0024: Location-Based Configuration Format
 
 ## References
 - ARCHITECTURE.md: "Key Design Decisions #10: VPN Keepalive Daemon"

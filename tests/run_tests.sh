@@ -14,6 +14,46 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Signal handling for clean interruption
+# Track if we've been interrupted to prevent cascading signals
+INTERRUPTED=0
+
+# Cleanup function for signal handlers
+#
+# Handles SIGINT (Ctrl+C) and SIGTERM signals to gracefully terminate test execution.
+# Kills all child processes in the process group and exits with code 130 (standard for SIGINT).
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   Exits with code 130 (standard for SIGINT)
+#
+cleanup_on_signal() {
+	if [[ $INTERRUPTED -eq 1 ]]; then
+		# Already handling interruption, force exit
+		exit 130
+	fi
+	INTERRUPTED=1
+
+	echo "" >&2
+	echo -e "${YELLOW}Interrupted by user (Ctrl+C)${NC}" >&2
+	echo -e "${YELLOW}Cleaning up and exiting...${NC}" >&2
+
+	# Kill any child processes in the process group
+	# This ensures timeout, stdbuf, bats, kcov, etc. are all terminated
+	# Use process group kill to catch all descendants
+	# Send SIGTERM first to allow graceful shutdown
+	kill -TERM -"$$" 2>/dev/null || true
+
+	# Exit with code 130 (standard for SIGINT)
+	# Don't force kill here - let the shell handle cleanup naturally
+	exit 130
+}
+
+# Set up signal handlers for SIGINT (Ctrl+C) and SIGTERM
+trap cleanup_on_signal INT TERM
+
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -29,8 +69,8 @@ COVERAGE_TOOL=""
 RUN_SLOW_TESTS="${RUN_SLOW_TESTS:-0}"
 
 # Fast-fail settings
-# Stop on first failure by default (fast-fail enabled)
-# Set FAST_FAIL=0 or use --all flag to disable fast-fail
+# Continue running all tests by default (fast-fail disabled)
+# Set FAST_FAIL=1 to stop on first failure, or use --all flag to explicitly disable fast-fail
 FAST_FAIL="${FAST_FAIL:-0}"
 
 # Rerun failed tests only
@@ -39,8 +79,9 @@ RERUN_FAILED="${RERUN_FAILED:-0}"
 
 # Parallel execution settings
 # Number of parallel jobs (0 = disabled, auto = detect CPU cores, or specific number)
+# Default: auto (run in batch/parallel by default if parallel tool is available)
 # Set PARALLEL_JOBS=0 to disable, auto to auto-detect, or a number like 4, 8, etc.
-PARALLEL_JOBS="${PARALLEL_JOBS:-0}"
+PARALLEL_JOBS="${PARALLEL_JOBS:-auto}"
 PARALLEL_TOOL=""
 
 # Test tag filtering settings
@@ -53,7 +94,27 @@ FILTER_TAGS="${FILTER_TAGS:-}"
 # Tests that exceed this timeout will be skipped
 TEST_TIMEOUT="${TEST_TIMEOUT:-120}"
 
+# Individual test mode
+# Run each test case individually with detailed per-test output
+# Set INDIVIDUAL_MODE=1 or use --individual flag to enable
+INDIVIDUAL_MODE="${INDIVIDUAL_MODE:-0}"
+
+# Resume from checkpoint
+# Resume tests from last checkpoint (only works in individual mode)
+# Set RESUME_MODE=1 or use --resume flag to enable
+RESUME_MODE="${RESUME_MODE:-0}"
+
 # Show bats installation instructions
+#
+# Displays installation instructions for bats (Bash Automated Testing System).
+# Shows platform-specific installation commands for macOS, Linux, Ubuntu/Debian, and Fedora/RHEL.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None (outputs to stderr)
+#
 show_bats_instructions() {
 	echo "Install bats using one of the following methods:" >&2
 	echo "" >&2
@@ -74,6 +135,17 @@ show_bats_instructions() {
 }
 
 # Check if bats is installed
+#
+# Verifies that bats (Bash Automated Testing System) is installed and available.
+# Checks bats version and warns if outdated. Shows installation instructions if not found.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: bats is installed and available
+#   1: bats is not installed (exits script)
+#
 check_bats() {
 	if ! command -v bats >/dev/null 2>&1; then
 		echo -e "${RED}Error: bats is not installed${NC}" >&2
@@ -112,6 +184,17 @@ check_bats() {
 }
 
 # Check for kcov (optional, for coverage reporting)
+#
+# Checks if kcov is installed and available for test coverage reporting.
+# Sets COVERAGE_TOOL global variable if kcov is found.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: kcov is installed
+#   1: kcov is not installed
+#
 check_kcov() {
 	if command -v kcov >/dev/null 2>&1; then
 		COVERAGE_TOOL="kcov"
@@ -122,13 +205,20 @@ check_kcov() {
 }
 
 # Detect number of CPU cores
+#
+# Detects the number of CPU cores available on the system.
+# Uses nproc on Linux, falls back to default of 4 if nproc is unavailable.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   Outputs number of CPU cores to stdout (default: 4)
+#
 detect_cpu_cores() {
-	# Try nproc first (Linux)
+	# Use nproc (Linux)
 	if command -v nproc >/dev/null 2>&1; then
 		nproc 2>/dev/null || echo "4"
-	# Try sysctl (macOS/BSD)
-	elif command -v sysctl >/dev/null 2>&1; then
-		sysctl -n hw.ncpu 2>/dev/null || echo "4"
 	# Fallback to default
 	else
 		echo "4"
@@ -136,6 +226,17 @@ detect_cpu_cores() {
 }
 
 # Check for parallel execution tools (GNU parallel or rush)
+#
+# Checks if GNU parallel or rush is available for parallel test execution.
+# Sets PARALLEL_TOOL global variable if a tool is found.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Parallel tool is available
+#   1: No parallel tool is available
+#
 check_parallel_tool() {
 	if command -v parallel >/dev/null 2>&1; then
 		# Check if it's GNU parallel (not the moreutils version)
@@ -154,6 +255,16 @@ check_parallel_tool() {
 }
 
 # Show parallel tool installation instructions
+#
+# Displays installation instructions for GNU parallel.
+# Shows platform-specific installation commands for macOS, Ubuntu/Debian, Fedora/RHEL, and from source.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None (outputs to stderr)
+#
 show_parallel_instructions() {
 	echo "Parallel test execution requires GNU parallel or rush to be installed." >&2
 	echo "" >&2
@@ -179,6 +290,16 @@ show_parallel_instructions() {
 }
 
 # Determine number of parallel jobs
+#
+# Determines the number of parallel jobs to use based on PARALLEL_JOBS setting.
+# Supports "auto" (auto-detect CPU cores), "0" (disabled), or a specific number.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   Outputs number of parallel jobs to stdout (0, auto-detected number, or specified number)
+#
 get_parallel_jobs() {
 	local jobs="$PARALLEL_JOBS"
 
@@ -206,6 +327,16 @@ get_parallel_jobs() {
 }
 
 # Show kcov installation instructions
+#
+# Displays installation instructions for kcov (code coverage tool).
+# Shows platform-specific installation commands for macOS, Ubuntu/Debian, Fedora/RHEL, and from source.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None (outputs to stderr)
+#
 show_kcov_instructions() {
 	echo "Install kcov using one of the following methods:" >&2
 	echo "" >&2
@@ -229,6 +360,17 @@ show_kcov_instructions() {
 }
 
 # Check coverage tools and enable if available
+#
+# Checks if coverage tools (kcov) are available when coverage is enabled.
+# Shows installation instructions if kcov is not found and coverage is requested.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Coverage tool is available or coverage is disabled
+#   1: Coverage is enabled but tool is not available
+#
 check_coverage_tools() {
 	if [[ "$COVERAGE_ENABLED" -eq 1 ]]; then
 		if check_kcov; then
@@ -262,6 +404,16 @@ check_coverage_tools() {
 }
 
 # Check for bats-support and bats-assert (optional but recommended)
+#
+# Checks if optional bats helper libraries (bats-support, bats-assert, bats-file) are installed.
+# Prompts user to install if missing and in interactive mode.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None (warnings logged but function always succeeds)
+#
 check_bats_helpers() {
 	local helpers_missing=0
 	local missing_helpers=()
@@ -334,7 +486,17 @@ check_bats_helpers() {
 }
 
 # Filter test files based on slow test setting
-# Outputs filtered file list to stdout (one per line)
+#
+# Filters test files based on RUN_SLOW_TESTS setting.
+# Slow tests (integration and high-risk tests) are excluded unless RUN_SLOW_TESTS=1.
+# Outputs filtered file list to stdout (one per line).
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   Outputs filtered test file paths to stdout (one per line)
+#
 filter_test_files() {
 	local test_files=("${SCRIPT_DIR}"/test_*.sh)
 
@@ -370,7 +532,17 @@ filter_test_files() {
 }
 
 # Extract test names from a test file
-# Outputs test names (one per line) matching @test declarations
+#
+# Extracts test names from a bats test file by parsing @test declarations.
+# Handles both single and double quotes in test names.
+# Outputs test names (one per line) matching @test declarations.
+#
+# Arguments:
+#   $1: Path to test file
+#
+# Returns:
+#   Outputs test names to stdout (one per line)
+#
 extract_test_names() {
 	local test_file="$1"
 	# Extract test names from @test declarations
@@ -380,6 +552,16 @@ extract_test_names() {
 }
 
 # Escape special regex characters in test name for bats filter
+#
+# Escapes special regex characters in test names for use with bats --filter flag.
+# Escapes: . [ ] { } ( ) + * ? ^ $ | \
+#
+# Arguments:
+#   $1: Test name to escape
+#
+# Returns:
+#   Outputs escaped test name to stdout
+#
 escape_test_name_for_filter() {
 	local test_name="$1"
 	# Escape special regex characters: . [ ] { } ( ) + * ? ^ $ | \
@@ -388,9 +570,150 @@ escape_test_name_for_filter() {
 	echo "$test_name" | sed 's/[.[{}()*+?^$|\\]/\\&/g'
 }
 
+# Get checkpoint file path
+#
+# Returns the path to the checkpoint file used for resuming test execution.
+# Creates logs directory if it doesn't exist.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   Outputs checkpoint file path to stdout
+#
+get_checkpoint_file() {
+	local logs_dir="${PROJECT_ROOT}/logs"
+	mkdir -p "$logs_dir"
+	echo "${logs_dir}/test_checkpoint.txt"
+}
+
+# Save test result to checkpoint file
+#
+# Saves test result to checkpoint file for resume functionality.
+# Format: test_id|status|timestamp
+#
+# Arguments:
+#   $1: Test ID (format: filename::test_name)
+#   $2: Test status (PASSED, FAILED, or TIMEOUT)
+#
+# Returns:
+#   None
+#
+save_checkpoint() {
+	local test_id="$1"
+	local status="$2" # PASSED, FAILED, or TIMEOUT
+	local checkpoint_file
+	checkpoint_file=$(get_checkpoint_file)
+	# Append to checkpoint file
+	echo "${test_id}|${status}|$(date +%s)" >>"$checkpoint_file"
+}
+
+# Load checkpoint and return passed test IDs
+#
+# Loads checkpoint file and populates CHECKPOINT_PASSED associative array with passed test IDs.
+# Returns associative array of passed test IDs (via global variable CHECKPOINT_PASSED).
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None (populates global CHECKPOINT_PASSED array)
+#
+load_checkpoint() {
+	local checkpoint_file
+	checkpoint_file=$(get_checkpoint_file)
+	declare -gA CHECKPOINT_PASSED
+
+	if [[ ! -f "$checkpoint_file" ]]; then
+		return 0
+	fi
+
+	# Read checkpoint file and store passed tests
+	while IFS='|' read -r test_id status _timestamp; do
+		if [[ "$status" == "PASSED" ]]; then
+			CHECKPOINT_PASSED["$test_id"]=1
+		fi
+	done <"$checkpoint_file"
+}
+
+# Check if test should be skipped (already passed in checkpoint)
+#
+# Checks if a test should be skipped because it already passed in the checkpoint.
+#
+# Arguments:
+#   $1: Test ID (format: filename::test_name)
+#
+# Returns:
+#   0: Test should be skipped (already passed)
+#   1: Test should not be skipped
+#
+should_skip_test() {
+	local test_id="$1"
+	[[ -n "${CHECKPOINT_PASSED[$test_id]:-}" ]]
+}
+
+# Clear checkpoint file
+#
+# Removes the checkpoint file to start a fresh test run.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None
+#
+clear_checkpoint() {
+	local checkpoint_file
+	checkpoint_file=$(get_checkpoint_file)
+	rm -f "$checkpoint_file"
+}
+
+# Get kcov arguments for coverage reporting
+#
+# Builds and returns array of kcov arguments for coverage reporting.
+# Returns array of kcov arguments via global variable KCOV_ARGS.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None (populates global KCOV_ARGS array)
+#
+get_kcov_args() {
+	KCOV_ARGS=(
+		"--include-path=${PROJECT_ROOT}"
+		"--exclude-path=${PROJECT_ROOT}/tests"
+		"--exclude-path=${PROJECT_ROOT}/coverage"
+		"--exclude-path=${PROJECT_ROOT}/.git"
+		"--exclude-path=${PROJECT_ROOT}/logs"
+		"--exclude-path=${PROJECT_ROOT}/state"
+		"--exclude-path=${PROJECT_ROOT}/reports"
+		"--exclude-path=${PROJECT_ROOT}/analyze"
+		"--exclude-path=/usr"
+		"--exclude-path=/tmp"
+		"--exclude-path=/var"
+		"--exclude-path=/home/runner"
+	)
+}
+
 # Run a single test case with timeout
-# Runs an individual test by name with timeout, skipping if it exceeds the limit
-# Returns: 0 on success, 1 on test failure, 2 on timeout (caller should handle)
+#
+# Runs an individual test by name with timeout, skipping if it exceeds the limit.
+# Supports coverage reporting when enabled.
+#
+# Arguments:
+#   $1: Test file path
+#   $2: Test name
+#   $3: Timeout in seconds
+#   $4: Use coverage flag (0 or 1, optional, default: 0)
+#   $5: Coverage directory (optional, required if coverage enabled)
+#   ${@:6}: kcov arguments (optional, required if coverage enabled)
+#
+# Returns:
+#   0: Test passed
+#   1: Test failed
+#   2: Test timed out
+#
 run_single_test_with_timeout() {
 	local test_file="$1"
 	local test_name="$2"
@@ -453,13 +776,16 @@ run_single_test_with_timeout() {
 	local exit_code=0
 	if [[ $use_coverage -eq 1 ]] && [[ -n "$coverage_dir" ]]; then
 		# Run with coverage and timeout
+		# Note: Use timeout without --preserve-status for kcov to ensure it exits cleanly
+		# kcov can hang if the test process exits unexpectedly, so we need timeout to kill it
 		if command -v stdbuf >/dev/null 2>&1; then
-			timeout --preserve-status "$timeout_seconds" stdbuf -oL -eL -i0 kcov "${kcov_args[@]}" "$coverage_dir" bats "${bats_args[@]}" 2>&1 || exit_code=$?
+			timeout "$timeout_seconds" stdbuf -oL -eL -i0 kcov "${kcov_args[@]}" "$coverage_dir" bats "${bats_args[@]}" 2>&1 || exit_code=$?
 		else
-			timeout --preserve-status "$timeout_seconds" kcov "${kcov_args[@]}" "$coverage_dir" bats "${bats_args[@]}" 2>&1 || exit_code=$?
+			timeout "$timeout_seconds" kcov "${kcov_args[@]}" "$coverage_dir" bats "${bats_args[@]}" 2>&1 || exit_code=$?
 		fi
 	else
 		# Run without coverage, with timeout
+		# Use --preserve-status for bats-only runs to preserve test exit codes
 		if command -v stdbuf >/dev/null 2>&1; then
 			# Use stdbuf for unbuffered output streaming
 			timeout --preserve-status "$timeout_seconds" stdbuf -oL -eL -i0 bats "${bats_args[@]}" 2>&1 || exit_code=$?
@@ -475,15 +801,42 @@ run_single_test_with_timeout() {
 		# Test timed out - bats will show it as skipped
 		echo -e "${YELLOW}# skip Test '${test_name}' timed out after ${timeout_seconds}s${NC}" >&2
 		return 2
+	elif [[ $exit_code -eq 143 ]]; then
+		# SIGTERM (timeout killed the process) - treat as timeout
+		# This can happen with kcov when timeout kills it
+		echo -e "${YELLOW}# skip Test '${test_name}' timed out after ${timeout_seconds}s${NC}" >&2
+		return 2
 	else
 		# Other exit codes are test failures
-		return 1
+		# For kcov runs, exit code 1 from bats is preserved, but kcov may exit with different codes
+		# If exit code is 1, it's a test failure; otherwise it might be kcov cleanup
+		if [[ $exit_code -eq 1 ]]; then
+			return 1
+		else
+			# Non-zero exit that's not timeout or test failure - likely kcov issue
+			# Still treat as test failure to be safe
+			return 1
+		fi
 	fi
 }
 
 # Run a single test file with per-test timeout
-# Extracts individual tests and runs each with timeout
-# Returns: 0 if all tests passed, 1 if any failed, 2 if any timed out
+#
+# Extracts individual tests from a test file and runs each with timeout.
+# Supports coverage reporting when enabled.
+#
+# Arguments:
+#   $1: Test file path
+#   $2: Timeout in seconds
+#   $3: Use coverage flag (0 or 1, optional, default: 0)
+#   $4: Coverage directory (optional, required if coverage enabled)
+#   ${@:5}: kcov arguments (optional, required if coverage enabled)
+#
+# Returns:
+#   0: All tests passed
+#   1: One or more tests failed
+#   2: One or more tests timed out
+#
 run_test_file_with_timeout() {
 	local test_file="$1"
 	local timeout_seconds="$2"
@@ -554,12 +907,27 @@ run_test_file_with_timeout() {
 }
 
 # Run tests sequentially (without coverage)
+#
+# Runs test files sequentially (one at a time) without coverage reporting.
+# Results are stored in global variables SEQUENTIAL_FAILED and SEQUENTIAL_TIMED_OUT.
+#
+# Arguments:
+#   $@: Test file paths
+#
+# Returns:
+#   0: Always succeeds (results in global variables SEQUENTIAL_FAILED and SEQUENTIAL_TIMED_OUT)
+#
 run_tests_sequential() {
 	local test_files=("$@")
 	local failed_tests=0
 	local timed_out_tests=0
 
 	for test_file in "${test_files[@]}"; do
+		# Check if interrupted
+		if [[ $INTERRUPTED -eq 1 ]]; then
+			break
+		fi
+
 		echo -e "${BLUE}Running: $(basename "$test_file")${NC}"
 
 		# Run test file with timeout wrapper
@@ -567,6 +935,11 @@ run_tests_sequential() {
 		local test_result=0
 		if ! run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT"; then
 			test_result=$?
+		fi
+
+		# Check if interrupted (exit code 130 = SIGINT)
+		if [[ $test_result -eq 130 ]] || [[ $INTERRUPTED -eq 1 ]]; then
+			break
 		fi
 
 		if [[ $test_result -eq 2 ]]; then
@@ -591,6 +964,17 @@ run_tests_sequential() {
 }
 
 # Run tests in parallel (without coverage)
+#
+# Runs test files in parallel using GNU parallel or rush.
+# Results are stored in global variables PARALLEL_FAILED and PARALLEL_TIMED_OUT.
+#
+# Arguments:
+#   $1: Number of parallel jobs
+#   ${@:2}: Test file paths
+#
+# Returns:
+#   0: Always succeeds (results in global variables PARALLEL_FAILED and PARALLEL_TIMED_OUT)
+#
 run_tests_parallel() {
 	local num_jobs="$1"
 	shift
@@ -622,6 +1006,18 @@ run_tests_parallel() {
 	export PROJECT_ROOT
 
 	# Create a function that parallel can call
+	#
+	# Runs a single test file with timeout and writes results to files.
+	# This function is called by GNU parallel or rush for parallel execution.
+	#
+	# Arguments:
+	#   $1: Test file path
+	#
+	# Returns:
+	#   0: Test passed
+	#   1: Test failed
+	#   2: Test timed out
+	#
 	parallel_test_runner() {
 		local test_file="$1"
 		local test_name
@@ -649,6 +1045,18 @@ run_tests_parallel() {
 	export results_file
 	export timeout_file
 	export failed_file
+
+	# Function that parallel can call
+	# Note: This function is defined inside run_tests_parallel but exported for parallel execution
+	# It's documented here for completeness but the actual definition is above
+	# parallel_test_runner() {
+	#   Arguments:
+	#     $1: Test file path
+	#   Returns:
+	#     0: Test passed
+	#     1: Test failed
+	#     2: Test timed out
+	# }
 
 	# Run tests in parallel using GNU parallel or rush
 	if [[ "$PARALLEL_TOOL" == "parallel" ]]; then
@@ -691,8 +1099,389 @@ run_tests_parallel() {
 	return 0
 }
 
+# Run tests in individual mode - each test case runs separately with detailed output
+#
+# Runs each test case individually with detailed per-test output.
+# Supports checkpoint/resume functionality and coverage reporting.
+# Results are saved to logs/test_results_TIMESTAMP.txt.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: All tests passed
+#   1: One or more tests failed or timed out (exits script)
+#
+run_tests_individual() {
+	# Filter test files based on slow test setting
+	local test_files
+	mapfile -t test_files < <(filter_test_files)
+	local test_count=${#test_files[@]}
+
+	if [[ $test_count -eq 0 ]]; then
+		echo -e "${RED}Error: No test files found${NC}" >&2
+		exit 1
+	fi
+
+	# Results tracking
+	local failed_tests=()
+	local timed_out_tests=()
+	local passed_tests=()
+	local skipped_tests=()
+	local total_tests=0
+	local failed_count=0
+	local timed_out_count=0
+	local passed_count=0
+	local skipped_count=0
+
+	# Initialize checkpoint tracking
+	declare -gA CHECKPOINT_PASSED
+
+	# Load checkpoint if resuming
+	local checkpoint_file
+	checkpoint_file=$(get_checkpoint_file)
+	if [[ "$RESUME_MODE" -eq 1 ]]; then
+		if [[ -f "$checkpoint_file" ]]; then
+			load_checkpoint
+			local checkpoint_size
+			checkpoint_size=$(wc -l <"$checkpoint_file" | tr -d ' ')
+			local passed_in_checkpoint
+			passed_in_checkpoint=${#CHECKPOINT_PASSED[@]}
+			echo -e "${BLUE}Resuming from checkpoint: ${checkpoint_file}${NC}"
+			echo -e "${BLUE}Found ${checkpoint_size} test(s) in checkpoint (${passed_in_checkpoint} passed)${NC}"
+			echo ""
+		else
+			echo -e "${YELLOW}Warning: No checkpoint file found at ${checkpoint_file}${NC}"
+			echo -e "${YELLOW}Starting fresh test run...${NC}"
+			echo ""
+		fi
+	else
+		# Clear checkpoint if not resuming
+		clear_checkpoint
+	fi
+
+	# Results file
+	local logs_dir="${PROJECT_ROOT}/logs"
+	mkdir -p "$logs_dir"
+	local results_file="${logs_dir}/test_results_$(date +%Y%m%d_%H%M%S).txt"
+
+	echo -e "${GREEN}Running individual test cases with ${TEST_TIMEOUT}s timeout...${NC}"
+	echo "Results will be saved to: ${results_file}"
+	if [[ "$RESUME_MODE" -eq 1 ]]; then
+		echo "Checkpoint file: ${checkpoint_file}"
+	fi
+	if [[ "$RUN_SLOW_TESTS" -eq 0 ]]; then
+		echo -e "${YELLOW}(Slow tests excluded - use --slow to include)${NC}"
+	fi
+	if [[ -n "$FILTER_TAGS" ]]; then
+		echo -e "${BLUE}Filtering tests by tags: ${FILTER_TAGS}${NC}"
+	fi
+	echo ""
+
+	# Initialize results file
+	{
+		echo "Test Results - $(date)"
+		echo "================================"
+		echo "Timeout: ${TEST_TIMEOUT} seconds"
+		if [[ "$RUN_SLOW_TESTS" -eq 0 ]]; then
+			echo "Slow tests: excluded"
+		else
+			echo "Slow tests: included"
+		fi
+		if [[ -n "$FILTER_TAGS" ]]; then
+			echo "Filter tags: ${FILTER_TAGS}"
+		fi
+		echo ""
+	} >"$results_file"
+
+	cd "$PROJECT_ROOT"
+
+	# Set up coverage directory if coverage is enabled
+	if [[ "$COVERAGE_ENABLED" -eq 1 ]] && [[ -n "$COVERAGE_TOOL" ]]; then
+		# Clean or create coverage directory
+		if [[ -d "$COVERAGE_DIR" ]]; then
+			echo -e "${YELLOW}Cleaning existing coverage directory...${NC}"
+			rm -rf "$COVERAGE_DIR"
+		fi
+		mkdir -p "$COVERAGE_DIR"
+		echo -e "${BLUE}Coverage output directory: ${COVERAGE_DIR}${NC}"
+	fi
+
+	# Process each test file
+	local should_stop=0
+	for test_file in "${test_files[@]}"; do
+		# Break out of outer loop if fast-fail triggered or interrupted
+		if [[ $should_stop -eq 1 ]] || [[ $INTERRUPTED -eq 1 ]]; then
+			break
+		fi
+
+		local filename
+		filename=$(basename "$test_file")
+		echo -e "${BLUE}Processing: ${filename}${NC}"
+
+		# Extract test names from the file
+		local test_names
+		mapfile -t test_names < <(extract_test_names "$test_file")
+
+		if [[ ${#test_names[@]} -eq 0 ]]; then
+			echo -e "${YELLOW}  No tests found in ${filename}${NC}"
+			continue
+		fi
+
+		echo -e "${BLUE}  Found ${#test_names[@]} test(s)${NC}"
+
+		# Run each test individually
+		for test_name in "${test_names[@]}"; do
+			# Check if interrupted
+			if [[ $INTERRUPTED -eq 1 ]]; then
+				break
+			fi
+
+			total_tests=$((total_tests + 1))
+			local test_id="${filename}::${test_name}"
+
+			# Check if we should skip this test (already passed in checkpoint)
+			if should_skip_test "$test_id"; then
+				skipped_count=$((skipped_count + 1))
+				skipped_tests+=("$test_id")
+				echo "  [${total_tests}] Skipping: ${test_name}... (already passed in checkpoint)"
+				echo "SKIPPED: ${test_id} (from checkpoint)" >>"$results_file"
+				continue
+			fi
+
+			echo "  [${total_tests}] Running: ${test_name}..."
+
+			# Run the test, streaming output to terminal while capturing it
+			local start_time
+			start_time=$(date +%s)
+			local test_output
+			local test_result
+			# Use a temporary file to capture output while streaming to terminal
+			local temp_output
+			temp_output=$(mktemp)
+
+			# Run with coverage if enabled, using unbuffered tee to stream and capture output
+			# Note: run_single_test_with_timeout already uses stdbuf internally, but we ensure tee is also unbuffered
+			# Use explicit error handling to prevent set -e from stopping execution
+			set +e # Temporarily disable exit on error for pipeline
+			if [[ "$COVERAGE_ENABLED" -eq 1 ]] && [[ -n "$COVERAGE_TOOL" ]]; then
+				local kcov_args
+				get_kcov_args
+				kcov_args=("${KCOV_ARGS[@]}")
+				if command -v stdbuf >/dev/null 2>&1; then
+					run_single_test_with_timeout "$test_file" "$test_name" "$TEST_TIMEOUT" "1" "$COVERAGE_DIR" "${kcov_args[@]}" 2>&1 | stdbuf -oL -eL -i0 tee "$temp_output"
+				else
+					run_single_test_with_timeout "$test_file" "$test_name" "$TEST_TIMEOUT" "1" "$COVERAGE_DIR" "${kcov_args[@]}" 2>&1 | tee "$temp_output"
+				fi
+			else
+				if command -v stdbuf >/dev/null 2>&1; then
+					run_single_test_with_timeout "$test_file" "$test_name" "$TEST_TIMEOUT" 2>&1 | stdbuf -oL -eL -i0 tee "$temp_output"
+				else
+					run_single_test_with_timeout "$test_file" "$test_name" "$TEST_TIMEOUT" 2>&1 | tee "$temp_output"
+				fi
+			fi
+			test_result=${PIPESTATUS[0]}
+			set -e # Re-enable exit on error
+
+			# Check if interrupted (exit code 130 = SIGINT)
+			if [[ $test_result -eq 130 ]] || [[ $INTERRUPTED -eq 1 ]]; then
+				rm -f "$temp_output"
+				should_stop=1
+				break
+			fi
+
+			test_output=$(cat "$temp_output")
+			rm -f "$temp_output"
+			local end_time
+			end_time=$(date +%s)
+			local duration=$((end_time - start_time))
+
+			# Process results and log to file
+			if [[ $test_result -eq 2 ]]; then
+				# Timeout
+				timed_out_count=$((timed_out_count + 1))
+				timed_out_tests+=("$test_id")
+				echo -e " ${RED}[TIMEOUT after ${duration}s]${NC}"
+				{
+					echo "TIMEOUT: ${test_id} (${duration}s)"
+					echo "  Output:"
+					echo "$test_output" | sed 's/^/    /'
+					echo ""
+				} >>"$results_file"
+				# Save to checkpoint
+				save_checkpoint "$test_id" "TIMEOUT"
+			elif [[ $test_result -ne 0 ]]; then
+				# Failure
+				failed_count=$((failed_count + 1))
+				failed_tests+=("$test_id")
+				echo -e " ${RED}[FAILED after ${duration}s]${NC}"
+				{
+					echo "FAILED: ${test_id} (${duration}s)"
+					echo "  Output:"
+					echo "$test_output" | sed 's/^/    /'
+					echo ""
+				} >>"$results_file"
+				# Save to checkpoint
+				save_checkpoint "$test_id" "FAILED"
+				# Show resume tip immediately after failure (but only once)
+				if [[ "$INDIVIDUAL_MODE" -eq 1 ]] && [[ "$RESUME_MODE" -eq 0 ]] && [[ $failed_count -eq 1 ]]; then
+					echo -e "${BLUE}  (Tests will continue. Use --resume to skip passed tests on next run)${NC}"
+				fi
+			else
+				# Success
+				passed_count=$((passed_count + 1))
+				passed_tests+=("$test_id")
+				echo -e " ${GREEN}[PASSED in ${duration}s]${NC}"
+				{
+					echo "PASSED: ${test_id} (${duration}s)"
+					echo "  Output:"
+					echo "$test_output" | sed 's/^/    /'
+					echo ""
+				} >>"$results_file"
+				# Save to checkpoint (only passed tests are used for skipping)
+				save_checkpoint "$test_id" "PASSED"
+			fi
+
+			# If fast-fail is enabled, stop on first failure or timeout
+			if [[ "$FAST_FAIL" -eq 1 ]] && [[ $test_result -ne 0 ]]; then
+				echo -e "${RED}Fast-fail enabled: stopping test execution${NC}" >&2
+				should_stop=1
+				break
+			fi
+		done
+
+		echo ""
+	done
+
+	# Print summary
+	echo ""
+	echo -e "${GREEN}========================================${NC}"
+	echo -e "${GREEN}Test Execution Summary${NC}"
+	echo -e "${GREEN}========================================${NC}"
+	echo -e "Total tests: ${total_tests}"
+	echo -e "${GREEN}Passed: ${passed_count}${NC}"
+	echo -e "${RED}Failed: ${failed_count}${NC}"
+	echo -e "${YELLOW}Timed out: ${timed_out_count}${NC}"
+	if [[ $skipped_count -gt 0 ]]; then
+		echo -e "${BLUE}Skipped (from checkpoint): ${skipped_count}${NC}"
+	fi
+	echo ""
+
+	# Write detailed summary to results file
+	{
+		echo ""
+		echo "=========================================="
+		echo "Summary"
+		echo "=========================================="
+		echo "Total tests: ${total_tests}"
+		echo "Passed: ${passed_count}"
+		echo "Failed: ${failed_count}"
+		echo "Timed out: ${timed_out_count}"
+		if [[ $skipped_count -gt 0 ]]; then
+			echo "Skipped (from checkpoint): ${skipped_count}"
+		fi
+		echo ""
+
+		if [[ ${#failed_tests[@]} -gt 0 ]]; then
+			echo "Failed Tests:"
+			echo "-------------"
+			for test in "${failed_tests[@]}"; do
+				echo "  - ${test}"
+			done
+			echo ""
+		fi
+
+		if [[ ${#timed_out_tests[@]} -gt 0 ]]; then
+			echo "Timed Out Tests:"
+			echo "----------------"
+			for test in "${timed_out_tests[@]}"; do
+				echo "  - ${test}"
+			done
+			echo ""
+		fi
+	} >>"$results_file"
+
+	# Print failed tests
+	if [[ ${#failed_tests[@]} -gt 0 ]]; then
+		echo -e "${RED}Failed Tests:${NC}"
+		for test in "${failed_tests[@]}"; do
+			echo -e "  ${RED}✗${NC} ${test}"
+		done
+		echo ""
+	fi
+
+	# Print timed out tests
+	if [[ ${#timed_out_tests[@]} -gt 0 ]]; then
+		echo -e "${YELLOW}Timed Out Tests:${NC}"
+		for test in "${timed_out_tests[@]}"; do
+			echo -e "  ${YELLOW}⏱${NC} ${test}"
+		done
+		echo ""
+	fi
+
+	echo -e "Results saved to: ${results_file}"
+	if [[ "$RESUME_MODE" -eq 1 ]]; then
+		echo -e "Checkpoint file: ${checkpoint_file}"
+		echo -e "${BLUE}To resume from this point, run: ./tests/run_tests.sh --individual --resume${NC}"
+	fi
+
+	# Show resume suggestion if tests failed and we're in individual mode
+	if [[ "$INDIVIDUAL_MODE" -eq 1 ]] && [[ "$RESUME_MODE" -eq 0 ]] && ([[ $failed_count -gt 0 ]] || [[ $timed_out_count -gt 0 ]]); then
+		echo ""
+		echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+		echo -e "${BLUE}Tip: To resume from this point and skip already passed tests:${NC}"
+		echo -e "${BLUE}  ./tests/run_tests.sh --individual --resume${NC}"
+		if [[ "$RUN_SLOW_TESTS" -eq 1 ]]; then
+			echo -e "${BLUE}  ./tests/run_tests.sh --individual --resume --slow${NC}"
+		fi
+		echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+	fi
+	echo ""
+
+	# Show coverage summary if coverage was enabled
+	if [[ "$COVERAGE_ENABLED" -eq 1 ]] && [[ -n "$COVERAGE_TOOL" ]]; then
+		# Check if coverage reports were generated
+		if [[ -f "${COVERAGE_DIR}/index.html" ]] || [[ -f "${COVERAGE_DIR}/index.js" ]] || [[ -f "${COVERAGE_DIR}/index.json" ]]; then
+			echo ""
+			echo -e "${GREEN}Coverage report generated successfully!${NC}"
+			echo -e "${GREEN}View HTML report: ${COVERAGE_DIR}/index.html${NC}"
+			echo ""
+
+			# Print summary if available
+			print_coverage_summary
+		else
+			echo -e "${YELLOW}Warning: Coverage reports not found${NC}" >&2
+			echo "kcov may have encountered an error. Check kcov output above." >&2
+		fi
+	fi
+
+	# Exit with error if any tests failed or timed out
+	# Note: This is expected behavior - the script should exit with error code when tests fail
+	# but all tests have already been run (tests continue even when one fails)
+	if [[ $failed_count -gt 0 ]] || [[ $timed_out_count -gt 0 ]]; then
+		exit 1
+	fi
+}
+
 # Run tests with coverage if enabled
+#
+# Main test runner function. Routes to individual mode, sequential mode, or parallel mode.
+# Handles coverage reporting when enabled.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: All tests passed
+#   1: One or more tests failed (exits script)
+#
 run_tests() {
+	# Check if individual mode is enabled
+	if [[ "$INDIVIDUAL_MODE" -eq 1 ]]; then
+		run_tests_individual
+		return
+	fi
+
 	# Filter test files based on slow test setting
 	local test_files
 	mapfile -t test_files < <(filter_test_files)
@@ -717,7 +1506,7 @@ run_tests() {
 		echo -e "${BLUE}Fast-fail: disabled (will run all tests)${NC}"
 	fi
 	if [[ "$PARALLEL_JOBS" == "0" ]]; then
-		echo -e "${BLUE}Parallel execution: disabled${NC}"
+		echo -e "${BLUE}Parallel execution: disabled (sequential mode)${NC}"
 	fi
 	echo -e "${BLUE}Test timeout: ${TEST_TIMEOUT}s (tests exceeding this will be skipped)${NC}"
 	echo ""
@@ -775,12 +1564,27 @@ run_tests() {
 # This ensures consistent per-test timeout behavior for both coverage and non-coverage runs.
 
 # Run tests sequentially (with coverage)
+#
+# Runs test files sequentially (one at a time) with coverage reporting.
+# Results are stored in global variables SEQUENTIAL_COV_FAILED and SEQUENTIAL_COV_TIMED_OUT.
+#
+# Arguments:
+#   $1: Coverage directory
+#   $2-$N: kcov arguments (variable number: --include-path and --exclude-path args)
+#   ${@:N+1}: Test file paths
+#
+# Returns:
+#   0: Always succeeds (results in global variables SEQUENTIAL_COV_FAILED and SEQUENTIAL_COV_TIMED_OUT)
+#
 run_tests_sequential_with_coverage() {
 	local coverage_dir="$1"
 	shift
-	# kcov_args are always exactly 6 arguments: --include-path and 5 --exclude-path args
-	local kcov_args=("$1" "$2" "$3" "$4" "$5" "$6")
-	shift 6
+	# Collect kcov arguments until we hit a test file (arguments that don't start with --)
+	local kcov_args=()
+	while [[ $# -gt 0 ]] && [[ "$1" == --* ]]; do
+		kcov_args+=("$1")
+		shift
+	done
 	# Remaining arguments are test files
 	local test_files=("$@")
 
@@ -824,13 +1628,29 @@ run_tests_sequential_with_coverage() {
 }
 
 # Run tests in parallel (with coverage)
+#
+# Runs test files in parallel with coverage reporting using GNU parallel or rush.
+# Results are stored in global variables PARALLEL_COV_FAILED and PARALLEL_COV_TIMED_OUT.
+#
+# Arguments:
+#   $1: Number of parallel jobs
+#   $2: Coverage directory
+#   $3-$N: kcov arguments (variable number: --include-path and --exclude-path args)
+#   ${@:N+1}: Test file paths
+#
+# Returns:
+#   0: Always succeeds (results in global variables PARALLEL_COV_FAILED and PARALLEL_COV_TIMED_OUT)
+#
 run_tests_parallel_with_coverage() {
 	local num_jobs="$1"
 	local coverage_dir="$2"
 	shift 2
-	# kcov_args are always exactly 6 arguments: --include-path and 5 --exclude-path args
-	local kcov_args=("$1" "$2" "$3" "$4" "$5" "$6")
-	shift 6
+	# Collect kcov arguments until we hit a test file (arguments that don't start with --)
+	local kcov_args=()
+	while [[ $# -gt 0 ]] && [[ "$1" == --* ]]; do
+		kcov_args+=("$1")
+		shift
+	done
 	# Remaining arguments are test files
 	local test_files=("$@")
 	local failed_tests=0
@@ -854,6 +1674,7 @@ run_tests_parallel_with_coverage() {
 	export -f run_single_test_with_timeout
 	export -f extract_test_names
 	export -f escape_test_name_for_filter
+	export -f get_kcov_args
 	export TEST_TIMEOUT
 	export RERUN_FAILED
 	export FILTER_TAGS
@@ -861,6 +1682,18 @@ run_tests_parallel_with_coverage() {
 	export COVERAGE_DIR="$coverage_dir"
 
 	# Create a function that parallel can call
+	#
+	# Runs a single test file with timeout and coverage, writing results to files.
+	# This function is called by GNU parallel or rush for parallel execution with coverage.
+	#
+	# Arguments:
+	#   $1: Test file path
+	#
+	# Returns:
+	#   0: Test passed
+	#   1: Test failed
+	#   2: Test timed out
+	#
 	parallel_test_runner_with_coverage() {
 		local test_file="$1"
 		local test_name
@@ -868,14 +1701,10 @@ run_tests_parallel_with_coverage() {
 		echo -e "${BLUE}Running with coverage: ${test_name}${NC}" >&2
 
 		# Reconstruct kcov_args array (bash limitation with parallel)
-		local kcov_args_array=(
-			"--include-path=${PROJECT_ROOT}"
-			"--exclude-path=${PROJECT_ROOT}/tests"
-			"--exclude-path=${PROJECT_ROOT}/coverage"
-			"--exclude-path=${PROJECT_ROOT}/.git"
-			"--exclude-path=/usr"
-			"--exclude-path=/tmp"
-		)
+		# Use get_kcov_args function to get the arguments
+		local kcov_args_array
+		get_kcov_args
+		kcov_args_array=("${KCOV_ARGS[@]}")
 
 		# Capture exit code explicitly to prevent set -e from stopping execution
 		local test_result=0
@@ -898,6 +1727,18 @@ run_tests_parallel_with_coverage() {
 	export results_file
 	export timeout_file
 	export failed_file
+
+	# Function that parallel can call (with coverage)
+	# Note: This function is defined inside run_tests_parallel_with_coverage but exported for parallel execution
+	# It's documented here for completeness but the actual definition is above
+	# parallel_test_runner_with_coverage() {
+	#   Arguments:
+	#     $1: Test file path
+	#   Returns:
+	#     0: Test passed
+	#     1: Test failed
+	#     2: Test timed out
+	# }
 
 	# Run tests in parallel using GNU parallel or rush
 	if [[ "$PARALLEL_TOOL" == "parallel" ]]; then
@@ -935,6 +1776,17 @@ run_tests_parallel_with_coverage() {
 }
 
 # Run tests with kcov coverage
+#
+# Main test runner function for coverage mode. Routes to sequential or parallel execution with coverage.
+# Generates coverage reports in HTML format.
+#
+# Arguments:
+#   $@: Test file paths
+#
+# Returns:
+#   0: All tests passed
+#   1: One or more tests failed (exits script)
+#
 run_tests_with_coverage() {
 	local test_files=("$@")
 
@@ -956,14 +1808,9 @@ run_tests_with_coverage() {
 	# kcov arguments
 	# kcov traces bash script execution, so wrapping bats will capture
 	# coverage for all bash scripts executed during test runs
-	local kcov_args=(
-		"--include-path=${PROJECT_ROOT}"
-		"--exclude-path=${PROJECT_ROOT}/tests"
-		"--exclude-path=${PROJECT_ROOT}/coverage"
-		"--exclude-path=${PROJECT_ROOT}/.git"
-		"--exclude-path=/usr"
-		"--exclude-path=/tmp"
-	)
+	local kcov_args
+	get_kcov_args
+	kcov_args=("${KCOV_ARGS[@]}")
 
 	# Add filter for failed tests if rerun-failed is enabled
 	if [[ "$RERUN_FAILED" -eq 1 ]]; then
@@ -1024,6 +1871,16 @@ run_tests_with_coverage() {
 }
 
 # Print coverage summary from kcov report
+#
+# Extracts and prints coverage summary from kcov-generated reports.
+# Supports both JavaScript format (kcov v43+) and JSON format (older versions).
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None (outputs coverage summary to stdout)
+#
 print_coverage_summary() {
 	# kcov v43+ uses JavaScript file with embedded JSON data
 	# Older versions may use index.json
@@ -1095,6 +1952,17 @@ print_coverage_summary() {
 }
 
 # Parse command line arguments
+#
+# Parses command-line arguments and sets corresponding global flags.
+# Handles --coverage, --slow, --all, --failed, --jobs, --filter-tags, --individual, --resume, --sequential, --help.
+#
+# Arguments:
+#   $@: Command-line arguments
+#
+# Returns:
+#   0: Arguments parsed successfully
+#   1: Invalid arguments (exits script)
+#
 parse_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -1138,6 +2006,19 @@ parse_args() {
 			FILTER_TAGS="$2"
 			shift 2
 			;;
+		--individual | -i)
+			INDIVIDUAL_MODE=1
+			shift
+			;;
+		--resume | -r)
+			RESUME_MODE=1
+			INDIVIDUAL_MODE=1 # Resume only works in individual mode
+			shift
+			;;
+		--sequential)
+			PARALLEL_JOBS=0
+			shift
+			;;
 		--help | -h)
 			show_help
 			exit 0
@@ -1152,6 +2033,15 @@ parse_args() {
 }
 
 # Show help message
+#
+# Displays comprehensive help message with usage information, options, and examples.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   None (outputs help message to stdout)
+#
 show_help() {
 	cat <<EOF
 UDM VPN Monitor Test Runner
@@ -1164,29 +2054,41 @@ Options:
     --all, -a              Run all tests even if some fail (disables fast-fail)
     --failed, -f           Rerun only failed tests from the last completed run
     --jobs, -j <N>         Number of parallel jobs (auto, 0=disabled, or number)
-                           Default: 0 (sequential execution, no parallelization)
+                           Default: auto (batch/parallel execution if parallel tool available)
+    --sequential           Run tests sequentially (disable parallel execution)
     --filter-tags, -t <T>  Filter tests by tags (e.g., category:unit, priority:high)
                            Supports multiple tags: category:integration,priority:high
+    --individual, -i       Run each test case individually with detailed per-test output
+                           Results saved to logs/test_results_TIMESTAMP.txt
+    --resume, -r           Resume tests from last checkpoint (only works in individual mode)
+                           Skips tests that already passed in the checkpoint
     --help, -h             Show this help message
 
 Examples:
-    $0                              Run fast tests only, run all tests (no fast-fail), sequential
-    $0 --slow                       Run all tests including slow tests, sequential, no fast-fail
-    $0 --coverage                   Run fast tests with coverage reporting, sequential, no fast-fail
-    $0 --slow --coverage            Run all tests with coverage reporting, sequential, no fast-fail
+    $0                              Run fast tests only in batch/parallel mode (default)
+    $0 --slow                       Run all tests including slow tests in batch/parallel mode
+    $0 --sequential                 Run tests sequentially (disable parallel execution)
+    $0 --coverage                   Run fast tests with coverage reporting in batch/parallel mode
+    $0 --slow --coverage            Run all tests with coverage reporting in batch/parallel mode
     $0 --all                        Run all tests even if some fail (same as default)
     $0 --failed                     Rerun only tests that failed in the last run
     $0 --slow --failed              Rerun only failed tests from last run (includes slow tests)
     $0 --jobs 8                     Run tests with 8 parallel jobs (requires GNU parallel)
-    $0 --jobs auto                  Auto-detect CPU cores for parallel execution
-    $0 --jobs 0                     Disable parallel execution (run sequentially, default)
+    $0 --jobs auto                  Auto-detect CPU cores for parallel execution (default)
+    $0 --jobs 0                     Disable parallel execution (run sequentially)
+    $0 --sequential                 Run tests sequentially (same as --jobs 0)
     $0 --filter-tags category:unit  Run only unit tests
     $0 --filter-tags priority:high  Run only high-priority tests
     $0 --filter-tags category:integration,priority:high  Run integration tests with high priority
+    $0 --individual                Run each test case individually with detailed output
+    $0 --individual --slow         Run all tests individually including slow tests
+    $0 --individual --resume       Resume tests from checkpoint (skips already passed tests)
+    $0 --individual --resume --slow Resume all tests including slow tests from checkpoint
 
 Test Behavior:
     By default, tests run all tests regardless of failures (fast-fail disabled).
-    Tests run sequentially (no parallelization) to ensure output streams properly.
+    Tests run in batch/parallel mode by default if GNU parallel or rush is available.
+    Use --sequential or --jobs 0 to run tests sequentially.
     Tests that exceed 2 minutes (120 seconds) will be skipped automatically.
     Use --all flag or set FAST_FAIL=0 to run all tests regardless of failures (default).
     
@@ -1198,21 +2100,32 @@ Test Behavior:
     Test timeout is set to 120 seconds (2 minutes) by default. Tests exceeding this
     timeout will be skipped. Set TEST_TIMEOUT environment variable to change.
 
+Individual Mode:
+    Use --individual to run each test case separately with detailed per-test output.
+    This mode provides:
+    - Per-test timing information
+    - Detailed results saved to logs/test_results_TIMESTAMP.txt
+    - Clear pass/fail/timeout status for each test
+    - Useful for debugging specific test failures
+    
+    Individual mode runs tests sequentially (parallel execution is disabled).
+    Coverage reporting is supported in individual mode.
+
 Coverage Reporting:
     Coverage reports are generated in HTML format in the 'coverage' directory.
     Requires kcov to be installed. See installation instructions when running
     with --coverage if kcov is not found.
 
 Parallel Execution:
-    By default, parallel execution is disabled (sequential execution) to ensure
-    output streams properly to the terminal. Parallel execution can significantly
-    reduce test execution time (often 3-4x faster on multi-core systems).
+    By default, tests run in batch/parallel mode (auto-detect CPU cores) if GNU parallel
+    or rush is available. This significantly reduces test execution time (often 3-4x faster
+    on multi-core systems).
     
-    Parallel execution requires GNU parallel or rush to be installed. If not
-    available, tests will run sequentially.
+    Parallel execution requires GNU parallel or rush to be installed. If not available,
+    tests will automatically fall back to sequential execution.
     
-    Set PARALLEL_JOBS=0 to disable parallel execution (default), or use --jobs 0.
-    Set PARALLEL_JOBS=auto to auto-detect CPU cores.
+    Use --sequential or --jobs 0 to disable parallel execution and run sequentially.
+    Set PARALLEL_JOBS=auto to auto-detect CPU cores (default).
     Set PARALLEL_JOBS=N to use a specific number of jobs.
 
 Test Tag Filtering:
@@ -1240,15 +2153,26 @@ Test Timeout:
 
 Performance Tips:
     - Install GNU parallel for faster test execution: brew install parallel
-    - Use --jobs auto to utilize all CPU cores (disabled by default for streaming output)
+    - Tests run in batch/parallel mode by default (auto-detect CPU cores)
+    - Use --sequential to run tests sequentially if needed
     - Parallel execution works best with fast tests (exclude slow tests locally)
     - Coverage reporting may be slower with parallel execution due to kcov overhead
-    - Tests run sequentially by default to ensure output streams to terminal
 
 EOF
 }
 
 # Main execution
+#
+# Main entry point for the test runner script.
+# Initializes environment, checks dependencies, and runs tests.
+#
+# Arguments:
+#   $@: Command-line arguments (passed to parse_args)
+#
+# Returns:
+#   0: All tests passed
+#   1: One or more tests failed or errors occurred (exits script)
+#
 main() {
 	parse_args "$@"
 
@@ -1265,6 +2189,9 @@ main() {
 	fi
 
 	echo -e "${GREEN}Starting tests...${NC}"
+	if [[ "$INDIVIDUAL_MODE" -eq 1 ]]; then
+		echo -e "${BLUE}Individual mode: enabled (running each test case separately)${NC}"
+	fi
 	if [[ "$COVERAGE_ENABLED" -eq 1 ]]; then
 		echo -e "${BLUE}Coverage reporting: enabled${NC}"
 	fi
@@ -1274,16 +2201,20 @@ main() {
 		echo -e "${BLUE}Fast-fail: disabled (run all tests)${NC}"
 	fi
 
-	# Check parallel execution status
-	local num_jobs
-	num_jobs=$(get_parallel_jobs)
-	if [[ "$num_jobs" != "0" ]] && check_parallel_tool; then
-		echo -e "${BLUE}Parallel execution: enabled (${num_jobs} jobs using ${PARALLEL_TOOL})${NC}"
-	elif [[ "$num_jobs" != "0" ]]; then
-		echo -e "${YELLOW}Parallel execution: disabled (parallel tool not found)${NC}"
-		echo -e "${YELLOW}Install GNU parallel for faster test execution: brew install parallel${NC}"
+	# Check parallel execution status (disabled in individual mode)
+	if [[ "$INDIVIDUAL_MODE" -eq 0 ]]; then
+		local num_jobs
+		num_jobs=$(get_parallel_jobs)
+		if [[ "$num_jobs" != "0" ]] && check_parallel_tool; then
+			echo -e "${BLUE}Parallel execution: enabled (${num_jobs} jobs using ${PARALLEL_TOOL})${NC}"
+		elif [[ "$num_jobs" != "0" ]]; then
+			echo -e "${YELLOW}Parallel execution: disabled (parallel tool not found)${NC}"
+			echo -e "${YELLOW}Install GNU parallel for faster test execution: brew install parallel${NC}"
+		else
+			echo -e "${BLUE}Parallel execution: disabled${NC}"
+		fi
 	else
-		echo -e "${BLUE}Parallel execution: disabled${NC}"
+		echo -e "${BLUE}Parallel execution: disabled (not available in individual mode)${NC}"
 	fi
 	echo -e "${BLUE}Test timeout: ${TEST_TIMEOUT}s (tests exceeding this will be skipped)${NC}"
 	echo ""

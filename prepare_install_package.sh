@@ -10,7 +10,7 @@
 #   --tar    Create a tar.gz file instead of zip
 #
 # Output:
-#   udm-vpn-monitor-installer.zip (default) or udm-vpn-monitor-installer.tar.gz
+#   udm-vpn-monitor.zip (default) or udm-vpn-monitor.tar.gz
 #   Contains all required files for installation
 #
 
@@ -42,13 +42,26 @@ done
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ $USE_TAR -eq 1 ]]; then
-	PACKAGE_NAME="udm-vpn-monitor-installer.tar.gz"
+	PACKAGE_NAME="udm-vpn-monitor.tar.gz"
 else
-	PACKAGE_NAME="udm-vpn-monitor-installer.zip"
+	PACKAGE_NAME="udm-vpn-monitor.zip"
 fi
 TEMP_DIR=$(mktemp -d)
 
 # Cleanup function
+#
+# Removes the temporary directory created for package preparation.
+# This function is registered as an EXIT trap to ensure cleanup happens
+# even if the script exits unexpectedly.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Removes the temporary directory and all its contents
 cleanup() {
 	rm -rf "$TEMP_DIR"
 }
@@ -93,6 +106,7 @@ MAIN_FILES=(
 	"analyze-logs.sh"
 	"check-utilities.sh"
 	"check-config.sh"
+	"compare-config.sh"
 	"vpn-monitor.conf"
 	"vpn-keepalive.service"
 )
@@ -104,10 +118,18 @@ LIB_FILES=(
 	"lib/config_schema.sh"
 	"lib/constants.sh"
 	"lib/detection.sh"
+	"lib/fallbacks.sh"
 	"lib/lockfile.sh"
 	"lib/logging.sh"
 	"lib/recovery.sh"
+	"lib/resources.sh"
 	"lib/state.sh"
+)
+
+# Script files (utility scripts)
+SCRIPT_FILES=(
+	"scripts/migrate-config-to-locations.sh"
+	"scripts/anonymize-logs.sh"
 )
 
 echo "Preparing install package..."
@@ -117,6 +139,31 @@ copy_files_with_validation "$SCRIPT_DIR" "$TEMP_DIR" "${MAIN_FILES[@]}"
 
 # Copy library files
 copy_files_with_validation "$SCRIPT_DIR" "$TEMP_DIR" "${LIB_FILES[@]}"
+
+# Copy module subdirectories
+MODULE_DIRS=(
+	"lib/detection"
+	"lib/recovery"
+	"lib/config"
+	"lib/state"
+)
+
+for dir in "${MODULE_DIRS[@]}"; do
+	if [[ -d "${SCRIPT_DIR}/${dir}" ]]; then
+		mkdir -p "${TEMP_DIR}/${dir}"
+		# Copy files if directory is not empty
+		# Check if directory has any files before copying to avoid glob expansion issues with set -u
+		if [[ -n "$(ls -A "${SCRIPT_DIR}/${dir}" 2>/dev/null)" ]]; then
+			cp -r "${SCRIPT_DIR}/${dir}"/* "${TEMP_DIR}/${dir}/"
+			echo "  Added directory: ${dir}/"
+		else
+			echo "  Warning: ${dir}/ is empty, skipping" >&2
+		fi
+	fi
+done
+
+# Copy script files
+copy_files_with_validation "$SCRIPT_DIR" "$TEMP_DIR" "${SCRIPT_FILES[@]}"
 
 # Create package file (zip or tar)
 cd "$TEMP_DIR"
@@ -141,6 +188,18 @@ echo "  Library files:"
 for file in "${LIB_FILES[@]}"; do
 	if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
 		echo "    - ${file}"
+	fi
+done
+echo "  Script files:"
+for file in "${SCRIPT_FILES[@]}"; do
+	if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
+		echo "    - ${file}"
+	fi
+done
+echo "  Module directories:"
+for dir in "${MODULE_DIRS[@]}"; do
+	if [[ -d "${SCRIPT_DIR}/${dir}" ]]; then
+		echo "    - ${dir}/"
 	fi
 done
 echo ""
