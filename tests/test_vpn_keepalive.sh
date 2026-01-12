@@ -11,12 +11,18 @@ KEEPALIVE_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-keepalive.sh"
 # Teardown function to ensure cleanup after each test
 #
 # BATS teardown function that runs after each test case to clean up resources.
+# This extends the standard teardown with keepalive-specific cleanup.
 #
 # Arguments:
 #   None
 #
 # Returns:
 #   0: Always succeeds
+#
+# Test Isolation:
+#   This function performs keepalive-specific cleanup (processes, daemons) before
+#   calling standard_teardown() to restore the test environment. This ensures
+#   complete isolation between tests.
 teardown() {
 	# Clean up any running daemon processes
 	cleanup_keepalive_daemon
@@ -24,6 +30,8 @@ teardown() {
 	remove_mock_from_path 2>/dev/null || true
 	# Kill any remaining vpn-keepalive processes
 	pkill -9 -f "vpn-keepalive.sh" 2>/dev/null || true
+	# Call standard teardown to restore environment and clean up test directory
+	standard_teardown
 }
 
 # Setup function for keepalive tests

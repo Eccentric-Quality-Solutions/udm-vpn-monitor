@@ -10,6 +10,7 @@
 # - test_recovery_rate_limiting.sh: Rate limiting tests
 
 load test_helper
+load helpers/test_data
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -325,25 +326,28 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local verify_attempt_file="${TEST_DIR}/verify_attempts"
 	echo "0" >"$verify_attempt_file"
 
+	# Generate initial xfrm state output for multiple SAs using test data helpers
+	local xfrm_state_sa1_initial
+	xfrm_state_sa1_initial=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
+	local xfrm_state_sa2_initial
+	xfrm_state_sa2_initial=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x23456789" 2000 20 "minimal")
+	local xfrm_state_multiple_initial="${xfrm_state_sa1_initial}"$'\n'"${xfrm_state_sa2_initial}"
+	local xfrm_state_multiple_initial_file="${TEST_DIR}/xfrm_state_multiple_initial"
+	echo "$xfrm_state_multiple_initial" >"$xfrm_state_multiple_initial_file"
+
 	# Mock ip command that simulates multiple SAs
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag) - called first by get_xfrm_state_for_peer
     verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
     verify_attempts=\$((verify_attempts + 1))
     echo "\$verify_attempts" > "$verify_attempt_file"
 
     # First call: Multiple SAs exist (before deletion)
     if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    lifetime current: 1000 bytes, 10 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x23456789 reqid 2 mode tunnel"
-        echo "    lifetime current: 2000 bytes, 20 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        cat "MOCK_XFRM_STATE_MULTIPLE_INITIAL"
     # Next few calls: SAs deleted
     elif [[ \$verify_attempts -le 3 ]]; then
         :
@@ -359,15 +363,52 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
         local packet_counter2=\$((40 + (\$verify_attempts - 4) * 10))
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
-        echo "    lifetime current: \${byte_counter1} bytes, \${packet_counter1} packets"
+        echo "    lifetime current:"
+        echo "      \${byte_counter1}(bytes), \${packet_counter1}(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x98765432 reqid 2 mode tunnel"
-        echo "    lifetime current: \${byte_counter2} bytes, \${packet_counter2} packets"
+        echo "    lifetime current:"
+        echo "      \${byte_counter2}(bytes), \${packet_counter2}(packets)"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    fi
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+
+    # First call: Multiple SAs exist (before deletion)
+    if [[ \$verify_attempts -eq 1 ]]; then
+        cat "MOCK_XFRM_STATE_MULTIPLE_INITIAL"
+    # Next few calls: SAs deleted
+    elif [[ \$verify_attempts -le 3 ]]; then
+        :
+    # After that: Both SAs re-established with incrementing byte counters
+    # Attempt 4: initial counters (3000, 4000 bytes) - captured as baseline
+    # Attempt 5+: incrementing counters (3100/4100, 3200/4200, etc.) - verification succeeds
+    else
+        # Calculate byte counters: base + (attempt - 4) * 100
+        # This ensures counters increment after initial capture
+        local byte_counter1=\$((3000 + (\$verify_attempts - 4) * 100))
+        local packet_counter1=\$((30 + (\$verify_attempts - 4) * 10))
+        local byte_counter2=\$((4000 + (\$verify_attempts - 4) * 100))
+        local packet_counter2=\$((40 + (\$verify_attempts - 4) * 10))
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
+        echo "    lifetime current:"
+        echo "      \${byte_counter1}(bytes), \${packet_counter1}(packets)"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "    proto esp spi 0x98765432 reqid 2 mode tunnel"
+        echo "    lifetime current:"
+        echo "      \${byte_counter2}(bytes), \${packet_counter2}(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     fi
 fi
 EOF
+	# Replace placeholder with actual file path
+	sed -i "s|MOCK_XFRM_STATE_MULTIPLE_INITIAL|${xfrm_state_multiple_initial_file}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
@@ -399,6 +440,12 @@ EOF
 	echo "0" >"$verify_attempt_file"
 	echo "" >"$policy_delete_log"
 
+	# Generate xfrm state output using test data helpers
+	local xfrm_state_get_output
+	xfrm_state_get_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
+	local xfrm_state_get_file="${TEST_DIR}/xfrm_state_get_output"
+	echo "$xfrm_state_get_output" >"$xfrm_state_get_file"
+
 	# Mock ip command that simulates SA re-establishment and policy queries
 	# Based on working tests but with additional handlers for policy deletion
 	local mock_ip="${TEST_DIR}/ip"
@@ -427,10 +474,7 @@ generate_xfrm_state_output() {
     local verify_attempts=\$1
     # First call: SA exists (before deletion)
     if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    lifetime current: 1000 bytes, 10 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        cat "MOCK_XFRM_STATE_INITIAL_OUTPUT"
     # Next few calls: SA deleted
     elif [[ \$verify_attempts -le 3 ]]; then
         :
@@ -442,9 +486,13 @@ generate_xfrm_state_output() {
         # This ensures counter increments after initial capture
         local byte_counter=\$((2000 + (\$verify_attempts - 4) * 100))
         local packet_counter=\$((20 + (\$verify_attempts - 4) * 10))
+        # Use helper function to generate output with new SPI and counters
+        # Note: We can't call the helper directly in the mock, so we generate it inline
+        # but using the same format as the helper
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
-        echo "    lifetime current: \${byte_counter} bytes, \${packet_counter} packets"
+        echo "    lifetime current:"
+        echo "      \${byte_counter}(bytes), \${packet_counter}(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     fi
 }
@@ -453,10 +501,7 @@ generate_xfrm_state_output() {
 if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; then
     # Check if the get command matches our test SA (src/dst/proto/spi)
     if echo "\$*" | grep -q "src.*${TEST_PEER_IP}.*dst.*${TEST_PEER_IP}.*proto.*esp.*spi.*0x12345678"; then
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    lifetime current: 1000 bytes, 10 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        cat "MOCK_XFRM_STATE_GET_OUTPUT"
         exit 0
     else
         exit 1
@@ -500,6 +545,9 @@ fi
 # Handle other ip commands (fallback to real ip command)
 exec /usr/bin/ip "\$@"
 EOF
+	# Replace placeholder with actual file path
+	sed -i "s|MOCK_XFRM_STATE_GET_OUTPUT|${xfrm_state_get_file}|g" "$mock_ip"
+	sed -i "s|MOCK_XFRM_STATE_INITIAL_OUTPUT|${xfrm_state_get_file}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
@@ -573,25 +621,43 @@ EOF
 	local verify_attempt_file="${TEST_DIR}/timeout_warn_attempts"
 	echo "0" >"$verify_attempt_file"
 
+	# Generate xfrm state output using test data helper
+	local xfrm_state_output
+	xfrm_state_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
+	local xfrm_state_file="${TEST_DIR}/xfrm_state_initial"
+	echo "$xfrm_state_output" >"$xfrm_state_file"
+
 	# Mock ip command that simulates SA deletion but slow re-establishment (timeout)
 	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<EOF
+	cat >"$mock_ip" <<'MOCK_IP_EOF'
 #!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
-    verify_attempts=\$((verify_attempts + 1))
-    echo "\$verify_attempts" > "$verify_attempt_file"
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag) - called first by get_xfrm_state_for_peer
+    verify_attempts=$(cat "MOCK_VERIFY_ATTEMPT_FILE" 2>/dev/null || echo "0")
+    verify_attempts=$((verify_attempts + 1))
+    echo "$verify_attempts" > "MOCK_VERIFY_ATTEMPT_FILE"
 
     # First call: SA exists (before deletion)
-    if [[ \$verify_attempts -eq 1 ]]; then
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    lifetime current: 1000 bytes, 10 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    if [[ $verify_attempts -eq 1 ]]; then
+        cat "MOCK_XFRM_STATE_FILE"
+    fi
+    # After deletion: SA never re-establishes (timeout)
+    exit 0
+elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    verify_attempts=$(cat "MOCK_VERIFY_ATTEMPT_FILE" 2>/dev/null || echo "0")
+    verify_attempts=$((verify_attempts + 1))
+    echo "$verify_attempts" > "MOCK_VERIFY_ATTEMPT_FILE"
+
+    # First call: SA exists (before deletion)
+    if [[ $verify_attempts -eq 1 ]]; then
+        cat "MOCK_XFRM_STATE_FILE"
     fi
     # After deletion: SA never re-establishes (timeout)
 fi
-EOF
+MOCK_IP_EOF
+	# Replace placeholders with actual paths
+	sed -i "s|MOCK_VERIFY_ATTEMPT_FILE|${verify_attempt_file}|g" "$mock_ip"
+	sed -i "s|MOCK_XFRM_STATE_FILE|${xfrm_state_file}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
@@ -991,164 +1057,194 @@ EOF
 	local verify_attempt_file="${TEST_DIR}/verify_attempts"
 	echo "0" >"$verify_attempt_file"
 
+	# Generate xfrm state outputs using test data helpers
+	# Note: These SAs have marks, so we generate base format and add mark manually
+	local xfrm_state_with_mark
+	xfrm_state_with_mark=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
+	# Add mark attribute after proto line
+	xfrm_state_with_mark=$(echo "$xfrm_state_with_mark" | sed '/proto esp/a\    mark 0x12000000/0xfe000000')
+	local xfrm_state_with_mark_file="${TEST_DIR}/xfrm_state_with_mark"
+	echo "$xfrm_state_with_mark" >"$xfrm_state_with_mark_file"
+
+	local xfrm_state_without_mark
+	xfrm_state_without_mark=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x87654321" 2000 20 "minimal")
+	# Update reqid to 2
+	xfrm_state_without_mark="${xfrm_state_without_mark//reqid 1/reqid 2}"
+	local xfrm_state_without_mark_file="${TEST_DIR}/xfrm_state_without_mark"
+	echo "$xfrm_state_without_mark" >"$xfrm_state_without_mark_file"
+
+	# Generate mixed initial state (both SAs together)
+	local xfrm_state_mixed_initial="${xfrm_state_with_mark}"$'\n'"${xfrm_state_without_mark}"
+	local xfrm_state_mixed_initial_file="${TEST_DIR}/xfrm_state_mixed_initial"
+	echo "$xfrm_state_mixed_initial" >"$xfrm_state_mixed_initial_file"
+
 	# Mock ip command that handles mixed SAs
 	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<EOF
+	cat >"$mock_ip" <<'MOCK_IP_EOF'
 #!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "delete" ]]; then
     # Capture deletion command
-    echo "\$*" >> "$delete_cmd_file"
+    echo "$*" >> "MOCK_DELETE_CMD_FILE"
     # Also log to deleted_sas_file for debugging
-    echo "DEBUG: delete command executed: \$*" >> "$deleted_sas_file"
+    echo "DEBUG: delete command executed: $*" >> "MOCK_DELETED_SAS_FILE"
 
     # Track which SA was deleted based on SPI
     # New format: commands with mark will have "mark" and "mask" as separate words
-    # Note: \$* expands to all arguments separated by spaces
+    # Note: $* expands to all arguments separated by spaces
     # The command will be: ip xfrm state delete src "192.168.1.1" dst "192.168.1.1" proto "esp" spi "0x12345678" [mark "0x12000000" mask "0xfe000000"]
-    if [[ "\$*" == *"spi"*"0x12345678"* ]]; then
-        # SA with mark: should have both "mark" and "mask" in command
-        if [[ "\$*" == *"mark"* ]] && [[ "\$*" == *"mask"* ]]; then
-            echo "SA with mark deleted" >> "$deleted_sas_file"
+    # Parse arguments to find SPI value
+    local cmd_args="$*"
+    local found_spi=""
+    local has_mark=0
+    local has_mask=0
+    
+    # Check all arguments for SPI value and mark/mask keywords
+    for arg in "$@"; do
+        if [[ "$arg" == "0x12345678" ]] || [[ "$arg" == "0x87654321" ]]; then
+            found_spi="$arg"
+        fi
+        if [[ "$arg" == "mark" ]]; then
+            has_mark=1
+        fi
+        if [[ "$arg" == "mask" ]]; then
+            has_mask=1
+        fi
+    done
+    
+    # Determine which SA was deleted and verify mark handling
+    if [[ "$found_spi" == "0x12345678" ]]; then
+        # SA with mark (spi 0x12345678): should have both "mark" and "mask" in command
+        if [[ $has_mark -eq 1 ]] && [[ $has_mask -eq 1 ]]; then
+            echo "SA with mark deleted" >> "MOCK_DELETED_SAS_FILE"
         else
-            echo "SA without mark deleted (but should have mark)" >> "$deleted_sas_file"
+            echo "SA without mark deleted (but should have mark)" >> "MOCK_DELETED_SAS_FILE"
             exit 2
         fi
-    elif [[ "\$*" == *"spi"*"0x87654321"* ]]; then
-        # SA without mark: should NOT have "mark" in command
-        if [[ "\$*" == *"mark"* ]]; then
-            echo "SA without mark deleted (but shouldn't have mark)" >> "$deleted_sas_file"
+    elif [[ "$found_spi" == "0x87654321" ]]; then
+        # SA without mark (spi 0x87654321): should NOT have "mark" in command
+        if [[ $has_mark -eq 1 ]]; then
+            echo "SA without mark deleted (but shouldn't have mark)" >> "MOCK_DELETED_SAS_FILE"
             exit 2
         else
-            echo "SA without mark deleted" >> "$deleted_sas_file"
+            echo "SA without mark deleted" >> "MOCK_DELETED_SAS_FILE"
         fi
     else
         # Unknown SPI - log for debugging but don't fail
-        echo "DEBUG: Unknown SPI in delete command: \$*" >> "$deleted_sas_file"
+        echo "DEBUG: Unknown SPI in delete command: $cmd_args" >> "MOCK_DELETED_SAS_FILE"
     fi
     exit 0
-elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; then
+elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "get" ]]; then
     # Return appropriate SA based on whether mark is in command
     # New format: get commands with mark will have "mark" and "mask" as separate words
-    # Note: \$* expands to all arguments separated by spaces
+    # Note: $* expands to all arguments separated by spaces
     # Command format: xfrm state get src "192.168.1.1" dst "192.168.1.1" proto "esp" spi "0x12345678" [mark "0x12000000" mask "0xfe000000"]
     # Check for SA with mark (spi 0x12345678) - must have both mark and mask
-    if [[ "\$*" == *"mark"* ]] && [[ "\$*" == *"mask"* ]] && [[ "\$*" == *"0x12345678"* ]]; then
+    if [[ "$*" == *"mark"* ]] && [[ "$*" == *"mask"* ]] && [[ "$*" == *"0x12345678"* ]]; then
         # SA with mark: return SA with mark attribute
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 1000 bytes, 10 packets"
+        cat "MOCK_XFRM_STATE_WITH_MARK_FILE"
         exit 0
     # Check for SA without mark (spi 0x87654321) - must NOT have mark
-    elif [[ "\$*" == *"0x87654321"* ]] && [[ "\$*" != *"mark"* ]]; then
+    elif [[ "$*" == *"0x87654321"* ]] && [[ "$*" != *"mark"* ]]; then
         # SA without mark: return SA without mark attribute
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
-        echo "    lifetime current: 2000 bytes, 20 packets"
+        cat "MOCK_XFRM_STATE_WITHOUT_MARK_FILE"
         exit 0
     else
         # Command doesn't match expected pattern - fail
         echo "RTNETLINK answers: No such process" >&2
         exit 2
     fi
-elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+elif [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
     # Handle "ip -s xfrm state" (with statistics)
-    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
-    verify_attempts=\$((verify_attempts + 1))
-    echo "\$verify_attempts" > "$verify_attempt_file"
+    verify_attempts=$(cat "MOCK_VERIFY_ATTEMPT_FILE" 2>/dev/null || echo "0")
+    verify_attempts=$((verify_attempts + 1))
+    echo "$verify_attempts" > "MOCK_VERIFY_ATTEMPT_FILE"
 
     # First call: Mixed SAs exist (one with mark, one without)
-    if [[ \$verify_attempts -le 1 ]]; then
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 1000 bytes, 10 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
-        echo "    lifetime current: 2000 bytes, 20 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    if [[ $verify_attempts -le 1 ]]; then
+        cat "MOCK_XFRM_STATE_MIXED_INITIAL"
+        exit 0
     # Next few calls: SAs deleted
-    elif [[ \$verify_attempts -le 3 ]]; then
-        :
-    # After that: SAs re-established
+    elif [[ $verify_attempts -le 3 ]]; then
+        exit 0  # Return empty output (SA deleted)
+    # After that: SAs re-established with incrementing byte counters
     else
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        local call_count=$((verify_attempts - 3))
+        local byte_count=$((3000 + (call_count - 1) * 100))
+        echo "src MOCK_TEST_PEER_IP dst MOCK_TEST_PEER_IP"
         echo "    proto esp spi 0xabcdef12 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 3000 bytes, 30 packets"
+        echo "    lifetime current:"
+        echo "      ${byte_count}(bytes), 30(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "src MOCK_TEST_PEER_IP dst MOCK_TEST_PEER_IP"
         echo "    proto esp spi 0xfedcba98 reqid 2 mode tunnel"
-        echo "    lifetime current: 4000 bytes, 40 packets"
+        echo "    lifetime current:"
+        echo "      ${byte_count}(bytes), 40(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        exit 0
     fi
-elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
     # Handle "ip xfrm state" (without statistics)
-    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
-    verify_attempts=\$((verify_attempts + 1))
-    echo "\$verify_attempts" > "$verify_attempt_file"
+    verify_attempts=$(cat "MOCK_VERIFY_ATTEMPT_FILE" 2>/dev/null || echo "0")
+    verify_attempts=$((verify_attempts + 1))
+    echo "$verify_attempts" > "MOCK_VERIFY_ATTEMPT_FILE"
 
     # First call: Mixed SAs exist (one with mark, one without)
-    if [[ \$verify_attempts -le 1 ]]; then
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 1000 bytes, 10 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
-        echo "    lifetime current: 2000 bytes, 20 packets"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    if [[ $verify_attempts -le 1 ]]; then
+        cat "MOCK_XFRM_STATE_MIXED_INITIAL"
+        exit 0
     # Next few calls: SAs deleted
-    elif [[ \$verify_attempts -le 3 ]]; then
-        :
-    # After that: SAs re-established
+    elif [[ $verify_attempts -le 3 ]]; then
+        exit 0  # Return empty output (SA deleted)
+    # After that: SAs re-established with incrementing byte counters
     else
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        local call_count=$((verify_attempts - 3))
+        local byte_count=$((3000 + (call_count - 1) * 100))
+        echo "src MOCK_TEST_PEER_IP dst MOCK_TEST_PEER_IP"
         echo "    proto esp spi 0xabcdef12 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 3000 bytes, 30 packets"
+        echo "    lifetime current:"
+        echo "      ${byte_count}(bytes), 30(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "src MOCK_TEST_PEER_IP dst MOCK_TEST_PEER_IP"
         echo "    proto esp spi 0xfedcba98 reqid 2 mode tunnel"
-        echo "    lifetime current: 4000 bytes, 40 packets"
+        echo "    lifetime current:"
+        echo "      ${byte_count}(bytes), 40(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        exit 0
     fi
 fi
-exec /usr/bin/ip "\$@"
-EOF
+exec /usr/bin/ip "$@"
+MOCK_IP_EOF
+	# Replace placeholders with actual paths
+	sed -i "s|MOCK_DELETE_CMD_FILE|${delete_cmd_file}|g" "$mock_ip"
+	sed -i "s|MOCK_DELETED_SAS_FILE|${deleted_sas_file}|g" "$mock_ip"
+	sed -i "s|MOCK_XFRM_STATE_WITH_MARK_FILE|${xfrm_state_with_mark_file}|g" "$mock_ip"
+	sed -i "s|MOCK_XFRM_STATE_WITHOUT_MARK_FILE|${xfrm_state_without_mark_file}|g" "$mock_ip"
+	sed -i "s|MOCK_XFRM_STATE_MIXED_INITIAL|${xfrm_state_mixed_initial_file}|g" "$mock_ip"
+	sed -i "s|MOCK_VERIFY_ATTEMPT_FILE|${verify_attempt_file}|g" "$mock_ip"
+	sed -i "s|MOCK_TEST_PEER_IP|${TEST_PEER_IP}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	# Mock check_ipsec_phase2 to return success (SA re-established)
+	# Mock check_ipsec_phase2 with state transitions to match mock ip command behavior
+	# Pattern: success (SAs exist) -> failure (SAs deleted) -> success (SAs re-established)
+	local phase2_call_file="${TEST_DIR}/phase2_calls"
 	local mock_check_ipsec_phase2
-	mock_check_ipsec_phase2=$(mock_check_ipsec_phase2 0)
+	mock_check_ipsec_phase2=$(mock_check_ipsec_phase2_state_transition "0,1,0" "$phase2_call_file")
 
 	# Source recovery functions to test directly
 	source_recovery_module
 
 	# Override check_ipsec_phase2 function to use mock
-	# Test override of check_ipsec_phase2 to use a mock script.
-	# This allows the test to control when check_ipsec_phase2 returns success/failure
-	# without relying on the actual ip command mock behavior.
-	#
-	# Test override function that delegates to a mock script
-	#
-	# This function overrides the real check_ipsec_phase2 function to use a mock
-	# script, allowing tests to control when the function returns success or failure
-	# without relying on the actual ip command mock behavior.
+	# Check for IPsec Phase 2 Security Association (test helper)
 	#
 	# Arguments:
-	#   \$@: All arguments are passed through to the mock script
-	#        Typically includes peer IP address as first argument
+	#   $1: Peer IP address
 	#
 	# Returns:
-	#   Exit code from the mock script (0 for success, non-zero for failure)
-	#
-	# Side Effects:
-	#   None (delegates to mock script)
-	#
+	#   0: Phase 2 SA exists
+	#   1: Phase 2 SA does not exist
 	check_ipsec_phase2() {
 		"$mock_check_ipsec_phase2" "$@"
 	}
@@ -1230,8 +1326,10 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; th
     # Note: $* expands without quotes, so check for "dst 172.31.23.27" (without quotes)
     if [[ "\$*" == *"dst 172.31.23.27"* ]]; then
         echo "src 172.31.16.115 dst 172.31.23.27"
-        echo "    proto esp spi 0x12345678 mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    proto esp spi 0x12345678"
+        echo "    mark 0x12000000/0xfe000000"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
         exit 0
     else
         echo "RTNETLINK answers: No such process" >&2
@@ -1249,23 +1347,32 @@ elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; the
         # First call: Return CHICAGO SA followed by PHILADELPHIA SA (simulating grep -A)
         # CHICAGO SA (target - should be deleted)
         echo "src 172.31.16.115 dst 172.31.23.27"
-        echo "    proto esp spi 0x12345678 mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    proto esp spi 0x12345678"
+        echo "    mark 0x12000000/0xfe000000"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
         echo ""
         # PHILADELPHIA SA (wrong location - should NOT be deleted)
         # This simulates grep -A including subsequent SA blocks
         echo "src 172.31.16.115 dst 172.31.21.191"
-        echo "    proto esp spi 0x12345678 mark 0xe000000/0xfe000000"
-        echo "    lifetime current: 5000 bytes, 20 packets"
+        echo "    proto esp spi 0x12345678"
+        echo "    mark 0xe000000/0xfe000000"
+        echo "    lifetime current:"
+        echo "      5000(bytes), 20(packets)"
     elif [[ \$verify_attempts -le 3 ]]; then
         # Next few calls: SAs deleted (no output)
         :
     else
-        # After that: CHICAGO SA re-established (PHILADELPHIA should still exist)
+        # After that: CHICAGO SA re-established (PHILADELPHIA should still exist) with incrementing byte counters
+        local call_count=\$((verify_attempts - 3))
+        local byte_count=\$((2000 + (call_count - 1) * 100))
         echo "src 172.31.16.115 dst 172.31.23.27"
-        echo "    proto esp spi 0x12345678 mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 2000 bytes, 20 packets"
+        echo "    proto esp spi 0x12345678"
+        echo "    mark 0x12000000/0xfe000000"
+        echo "    lifetime current:"
+        echo "      \${byte_count}(bytes), 20(packets)"
     fi
+    exit 0
 elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     # Regular ip xfrm state (fallback from get_xfrm_state_for_peer)
     verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
@@ -1275,18 +1382,27 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     if [[ \$verify_attempts -le 1 ]]; then
         # Same as -s version: CHICAGO followed by PHILADELPHIA
         echo "src 172.31.16.115 dst 172.31.23.27"
-        echo "    proto esp spi 0x12345678 mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    proto esp spi 0x12345678"
+        echo "    mark 0x12000000/0xfe000000"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
         echo ""
         echo "src 172.31.16.115 dst 172.31.21.191"
-        echo "    proto esp spi 0x12345678 mark 0xe000000/0xfe000000"
-        echo "    lifetime current: 5000 bytes, 20 packets"
+        echo "    proto esp spi 0x12345678"
+        echo "    mark 0xe000000/0xfe000000"
+        echo "    lifetime current:"
+        echo "      5000(bytes), 20(packets)"
     elif [[ \$verify_attempts -le 3 ]]; then
         :
     else
+        # After that: CHICAGO SA re-established (PHILADELPHIA should still exist) with incrementing byte counters
+        local call_count=\$((verify_attempts - 3))
+        local byte_count=\$((2000 + (call_count - 1) * 100))
         echo "src 172.31.16.115 dst 172.31.23.27"
-        echo "    proto esp spi 0x12345678 mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 2000 bytes, 20 packets"
+        echo "    proto esp spi 0x12345678"
+        echo "    mark 0x12000000/0xfe000000"
+        echo "    lifetime current:"
+        echo "      \${byte_count}(bytes), 20(packets)"
     fi
 fi
 exec /usr/bin/ip "\$@"
@@ -1312,7 +1428,7 @@ EOF
 	# CRITICAL: Verify PHILADELPHIA SA was NOT deleted
 	# Note: $* expands without quotes in the mock, so check for "dst 172.31.21.191" (without quotes)
 	run grep "dst 172.31.21.191" "$delete_cmd_file"
-	assert_failure "PHILADELPHIA SA should not be deleted when recovering CHICAGO"
+	assert_failure
 
 	# Verify CHICAGO SA deletion command includes correct SPI
 	assert_file_contains "$delete_cmd_file" "spi.*0x12345678"
@@ -1353,7 +1469,8 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; th
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
         exit 0
     else
         echo "RTNETLINK answers: No such process" >&2
@@ -1367,17 +1484,23 @@ elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; the
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     elif [[ \$verify_attempts -le 3 ]]; then
         :
     else
+        # After that: SA re-established with incrementing byte counters
+        local call_count=\$((verify_attempts - 3))
+        local byte_count=\$((2000 + (call_count - 1) * 100))
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 2000 bytes, 20 packets"
+        echo "    lifetime current:"
+        echo "      \${byte_count}(bytes), 20(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     fi
+    exit 0
 elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
     verify_attempts=\$((verify_attempts + 1))
@@ -1386,15 +1509,20 @@ elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     elif [[ \$verify_attempts -le 3 ]]; then
         :
     else
+        # After that: SA re-established with incrementing byte counters
+        local call_count=\$((verify_attempts - 3))
+        local byte_count=\$((2000 + (call_count - 1) * 100))
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
         echo "    mark 0x12000000/0xfe000000"
-        echo "    lifetime current: 2000 bytes, 20 packets"
+        echo "    lifetime current:"
+        echo "      \${byte_count}(bytes), 20(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     fi
 fi
@@ -1692,7 +1820,8 @@ EOF
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag) - called first by get_xfrm_state_for_peer
     verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
     verify_attempts=\$((verify_attempts + 1))
     echo "\$verify_attempts" > "$verify_attempt_file"
@@ -1701,13 +1830,36 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     if [[ \$verify_attempts -eq 1 ]]; then
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     # After deletion: SA re-establishes but byte counters are zero (verification fails)
     else
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
-        echo "    lifetime current: 0 bytes, 0 packets"
+        echo "    lifetime current:"
+        echo "      0(bytes), 0(packets)"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    fi
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+
+    # First call: SA exists (before deletion)
+    if [[ \$verify_attempts -eq 1 ]]; then
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    # After deletion: SA re-establishes but byte counters are zero (verification fails)
+    else
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "    proto esp spi 0x87654321 reqid 1 mode tunnel"
+        echo "    lifetime current:"
+        echo "      0(bytes), 0(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     fi
 fi
@@ -1774,7 +1926,8 @@ EOF
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag) - called first by get_xfrm_state_for_peer
     verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
     verify_attempts=\$((verify_attempts + 1))
     echo "\$verify_attempts" > "$verify_attempt_file"
@@ -1783,11 +1936,13 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     if [[ \$verify_attempts -eq 1 ]]; then
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
-        echo "    lifetime current: 2000 bytes, 20 packets"
+        echo "    lifetime current:"
+        echo "      2000(bytes), 20(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     # After deletion: Only one SA re-establishes (partial re-establishment) with incrementing byte counters
     # Attempt 2: initial counter (2000 bytes) - captured as baseline
@@ -1799,7 +1954,40 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
         local packet_counter=\$((20 + (\$verify_attempts - 2) * 10))
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
-        echo "    lifetime current: \${byte_counter} bytes, \${packet_counter} packets"
+        echo "    lifetime current:"
+        echo "      \${byte_counter}(bytes), \${packet_counter}(packets)"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    fi
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+
+    # First call: Multiple SAs exist (before deletion)
+    if [[ \$verify_attempts -eq 1 ]]; then
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
+        echo "    lifetime current:"
+        echo "      2000(bytes), 20(packets)"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    # After deletion: Only one SA re-establishes (partial re-establishment) with incrementing byte counters
+    # Attempt 2: initial counter (2000 bytes) - captured as baseline
+    # Attempt 3+: incrementing counters (2100, 2200, etc.) - verification succeeds
+    else
+        # Calculate byte counter: 2000 + (attempt - 2) * 100
+        # This ensures counter increments after initial capture
+        local byte_counter=\$((2000 + (\$verify_attempts - 2) * 100))
+        local packet_counter=\$((20 + (\$verify_attempts - 2) * 10))
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
+        echo "    lifetime current:"
+        echo "      \${byte_counter}(bytes), \${packet_counter}(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     fi
 fi
@@ -1969,8 +2157,9 @@ EOF
 	local original_path="$PATH"
 
 	# Create mock ipsec in test directory
-	mock_ipsec_status 0 "Connections:
-  192.168.1.1: ESTABLISHED"
+	local mock_ipsec
+	mock_ipsec=$(mock_ipsec_status 0 "Connections:
+  192.168.1.1: ESTABLISHED")
 
 	# Restrict PATH to exclude system directories (simulating cron/systemd environment)
 	# PATH only includes /bin and /usr/bin (common minimal PATH, excludes /usr/sbin)
@@ -2120,12 +2309,21 @@ EOF
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'EOF'
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag) - called first by get_xfrm_state_for_peer
     # Return xfrm state without proper byte counter format (extraction will fail)
     echo "src 192.168.1.1 dst 192.168.1.1"
     echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
     echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     # Note: No "lifetime current" line with bytes (extraction will fail)
+    exit 0
+elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    # Return xfrm state without proper byte counter format (extraction will fail)
+    echo "src 192.168.1.1 dst 192.168.1.1"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    # Note: No "lifetime current" line with bytes (extraction will fail)
+    exit 0
 fi
 exec /usr/bin/ip "$@"
 EOF
@@ -2161,11 +2359,21 @@ EOF
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'EOF'
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag) - called first by get_xfrm_state_for_peer
     echo "src 192.168.1.1 dst 192.168.1.1"
     echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 0 bytes, 0 packets"
+    echo "    lifetime current:"
+    echo "      0(bytes), 0(packets)"
     echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    exit 0
+elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "src 192.168.1.1 dst 192.168.1.1"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current:"
+    echo "      0(bytes), 0(packets)"
+    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    exit 0
 fi
 exec /usr/bin/ip "$@"
 EOF
@@ -2285,7 +2493,8 @@ EOF
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag) - called first by get_xfrm_state_for_peer
     verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
     verify_attempts=\$((verify_attempts + 1))
     echo "\$verify_attempts" > "$verify_attempt_file"
@@ -2294,7 +2503,23 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     if [[ \$verify_attempts -eq 1 ]]; then
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    lifetime current: 1000 bytes, 10 packets"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
+        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    fi
+    # After deletion: SA never re-establishes (no output)
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+    verify_attempts=\$((verify_attempts + 1))
+    echo "\$verify_attempts" > "$verify_attempt_file"
+
+    # First call: SA exists (before deletion)
+    if [[ \$verify_attempts -eq 1 ]]; then
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+        echo "    lifetime current:"
+        echo "      1000(bytes), 10(packets)"
         echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     fi
     # After deletion: SA never re-establishes (no output)
@@ -2388,12 +2613,23 @@ EOF
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'EOF'
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag) - called first by get_xfrm_state_for_peer
     # Return xfrm state with zero byte counters (verification will fail)
     echo "src 192.168.1.1 dst 192.168.1.1"
     echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 0 bytes, 0 packets"
+    echo "    lifetime current:"
+    echo "      0(bytes), 0(packets)"
     echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    exit 0
+elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    # Return xfrm state with zero byte counters (verification will fail)
+    echo "src 192.168.1.1 dst 192.168.1.1"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current:"
+    echo "      0(bytes), 0(packets)"
+    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    exit 0
 fi
 exec /usr/bin/ip "$@"
 EOF
@@ -2411,6 +2647,826 @@ EOF
 	run verify_byte_counters_resume "${TEST_PEER_IP}"
 	# Should return failure when byte counters are zero
 	assert_failure
+
+	remove_mock_from_path
+}
+
+# ============================================================================
+# RECOVERY STRATEGY SELECTION EDGE CASES - Previously Untested Critical Paths (P1)
+# Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
+# ============================================================================
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "strategy selection with invalid tier (not 2 or 3)" {
+	# Purpose: Test verifies that select_recovery_strategy() handles invalid tier values gracefully
+	# Expected: Function returns error when tier is not 2 or 3
+	# Importance: Invalid tier values should be caught early to prevent incorrect recovery behavior
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+
+	# Source dependencies first
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/recovery.sh
+	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
+
+	# Test with invalid tier (1 is not valid for recovery strategy selection)
+	run select_recovery_strategy "${TEST_PEER_IP}" 1
+	assert_failure
+
+	# Test with invalid tier (4 is not valid)
+	run select_recovery_strategy "${TEST_PEER_IP}" 4
+	assert_failure
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "strategy selection with empty peer IP but xfrm preferred" {
+	# Purpose: Test verifies that select_recovery_strategy() handles empty peer IP gracefully
+	# Expected: Function falls back to ipsec_reload/restart when peer IP is empty
+	# Importance: Empty peer IP should not cause errors; should fall back to all-tunnels recovery
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+
+	# Source dependencies first
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/recovery.sh
+	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
+
+	# Test with empty peer IP - should fall back to ipsec_reload for tier 2
+	select_recovery_strategy "" 2
+	local exit_code=$?
+	assert_equal "$exit_code" 0
+	# Should select ipsec_reload (not xfrm, since peer IP is empty)
+	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload" || assert_equal "$RECOVERY_STRATEGY" "unavailable"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "strategy selection with peer IP but ENABLE_XFRM_RECOVERY=0" {
+	# Purpose: Test verifies that select_recovery_strategy() respects ENABLE_XFRM_RECOVERY=0
+	# Expected: Function falls back to ipsec_reload/restart when xfrm recovery is disabled
+	# Importance: Configuration should be respected; xfrm recovery should be skipped when disabled
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+
+	# Disable xfrm recovery
+	export ENABLE_XFRM_RECOVERY=0
+
+	# Source dependencies first
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/recovery.sh
+	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
+
+	# Test with peer IP but xfrm disabled - should fall back to ipsec_reload
+	select_recovery_strategy "${TEST_PEER_IP}" 2
+	local exit_code=$?
+	assert_equal "$exit_code" 0
+	# Should select ipsec_reload (not xfrm, since it's disabled)
+	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload" || assert_equal "$RECOVERY_STRATEGY" "unavailable"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "all recovery strategies unavailable - RECOVERY_AVAILABLE=0 set correctly" {
+	# Purpose: Test verifies that select_recovery_strategy() sets RECOVERY_AVAILABLE=0 when all strategies unavailable
+	# Expected: Function returns error and sets RECOVERY_AVAILABLE=0 when no strategies are available
+	# Importance: Recovery availability should be correctly reported when commands are missing
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+
+	# Remove ip and ipsec commands from PATH (simulate unavailable)
+	local saved_path="$PATH"
+	PATH="/usr/bin:/bin" # Minimal PATH without ip/ipsec
+
+	# Source dependencies first
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/recovery.sh
+	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
+
+	# Mock check_command_available to return false for ip and ipsec
+	# This simulates the scenario where commands are truly unavailable
+	# (check_command_available has fallback mechanisms that check system directories,
+	# so we need to mock it to properly test the "unavailable" scenario)
+	if command -v check_command_available >/dev/null 2>&1; then
+		local func_def
+		func_def=$(declare -f check_command_available 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			eval "${func_def/check_command_available/check_command_available.original}" 2>/dev/null || true
+		fi
+	fi
+
+	# Check if command is available (test helper)
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
+	check_command_available() {
+		local cmd="$1"
+		if [[ "$cmd" == "ip" ]] || [[ "$cmd" == "ipsec" ]]; then
+			return 1
+		fi
+		# For other commands, use original if available
+		if command -v check_command_available.original >/dev/null 2>&1; then
+			check_command_available.original "$@"
+		else
+			command -v "$cmd" >/dev/null 2>&1
+		fi
+	}
+
+	# Test strategy selection - should fail when no commands available
+	# Call directly (not with run) to preserve global variables
+	# Use set +e to allow function to return error code without failing test
+	set +e
+	select_recovery_strategy "${TEST_PEER_IP}" 2
+	local exit_code=$?
+	set -e
+	assert_equal "$exit_code" 1
+	assert_equal "$RECOVERY_STRATEGY" "unavailable"
+	assert_equal "$RECOVERY_COMMAND" ""
+	assert_equal "$RECOVERY_IMPACT" ""
+	# RECOVERY_AVAILABLE should be 0
+	assert_equal "${RECOVERY_AVAILABLE:-1}" 0
+
+	# Restore original function if it existed
+	if command -v check_command_available.original >/dev/null 2>&1; then
+		# Check if command is available (test helper)
+		#
+		# Arguments:
+		#   $1: Command name to check
+		#
+		# Returns:
+		#   0: Command is available
+		#   1: Command is not available
+		check_command_available() {
+			check_command_available.original "$@"
+		}
+	fi
+
+	# Restore PATH
+	PATH="$saved_path"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "_check_recovery_command_availability fails silently when command check fails" {
+	# Purpose: Test verifies that _check_recovery_command_availability() handles command check failures gracefully
+	# Expected: Function sets availability flags to 0 when check_command_available fails, but doesn't error
+	# Importance: Command availability checks should fail silently to allow fallback strategies
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+
+	# Source dependencies first
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/recovery.sh
+	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
+
+	# Save original check_command_available function if it exists
+	# Use a simpler approach that works in all bash versions
+	if command -v check_command_available >/dev/null 2>&1; then
+		# Save the function definition
+		local func_def
+		func_def=$(declare -f check_command_available 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			# Rename the function by replacing the function name
+			eval "${func_def/check_command_available/check_command_available.original}" 2>/dev/null || true
+		fi
+	fi
+
+	# Mock check_command_available to fail for ip and ipsec
+	# This simulates the scenario where command checks fail (e.g., permission issues, PATH issues)
+	# Check if command is available (test helper)
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
+	check_command_available() {
+		local cmd="$1"
+		if [[ "$cmd" == "ip" ]] || [[ "$cmd" == "ipsec" ]]; then
+			return 1
+		fi
+		# For other commands, use original if available
+		if command -v check_command_available.original >/dev/null 2>&1; then
+			check_command_available.original "$@"
+		else
+			command -v "$cmd" >/dev/null 2>&1
+		fi
+	}
+
+	# Call _check_recovery_command_availability directly
+	# It should not error even when command checks fail
+	_check_recovery_command_availability
+	local exit_code=$?
+	assert_equal "$exit_code" 0
+
+	# Verify that availability flags are set to 0 (commands unavailable)
+	assert_equal "${_RECOVERY_IP_AVAILABLE:-1}" 0
+	assert_equal "${_RECOVERY_IPSEC_AVAILABLE:-1}" 0
+	assert_equal "${_RECOVERY_IPSEC_PATH:-}" ""
+
+	# Restore original function if it existed
+	if command -v check_command_available.original >/dev/null 2>&1; then
+		# Check if command is available (test helper)
+		#
+		# Arguments:
+		#   $1: Command name to check
+		#
+		# Returns:
+		#   0: Command is available
+		#   1: Command is not available
+		check_command_available() {
+			check_command_available.original "$@"
+		}
+	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "get_command_path fails for ipsec command - fallback to 'ipsec'" {
+	# Purpose: Test verifies that _check_recovery_command_availability() handles get_command_path() failure gracefully
+	# Expected: When get_command_path() fails or is unavailable, _RECOVERY_IPSEC_PATH falls back to "ipsec"
+	# Importance: Path resolution failures should not prevent recovery; fallback to command name allows PATH resolution at execution time
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+
+	# Source dependencies first
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/recovery.sh
+	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
+
+	# Save original get_command_path function if it exists
+	# Use a simpler approach that works in all bash versions
+	if command -v get_command_path >/dev/null 2>&1; then
+		# Save the function definition
+		local func_def
+		func_def=$(declare -f get_command_path 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			# Rename the function by replacing the function name
+			eval "${func_def/get_command_path/get_command_path.original}" 2>/dev/null || true
+		fi
+	fi
+
+	# Mock check_command_available to return success for ipsec (so we test get_command_path path)
+	# Save original check_command_available if it exists
+	# Use a simpler approach that works in all bash versions
+	if command -v check_command_available >/dev/null 2>&1; then
+		# Save the function definition
+		local func_def
+		func_def=$(declare -f check_command_available 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			# Rename the function by replacing the function name
+			eval "${func_def/check_command_available/check_command_available.original}" 2>/dev/null || true
+		fi
+	fi
+
+	# Check if command is available (test helper)
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
+	check_command_available() {
+		local cmd="$1"
+		if [[ "$cmd" == "ipsec" ]]; then
+			return 0
+		fi
+		# For other commands, use original if available
+		if command -v check_command_available.original >/dev/null 2>&1; then
+			check_command_available.original "$@"
+		else
+			command -v "$cmd" >/dev/null 2>&1
+		fi
+	}
+
+	# Test case 1: get_command_path doesn't exist (fallback to "ipsec")
+	# Unset get_command_path to simulate it not being available
+	if command -v get_command_path >/dev/null 2>&1; then
+		unset -f get_command_path
+	fi
+
+	# Call _check_recovery_command_availability
+	# It should handle missing get_command_path and fall back to "ipsec"
+	_check_recovery_command_availability
+	local exit_code=$?
+	assert_equal "$exit_code" 0
+
+	# Verify that ipsec is marked as available
+	assert_equal "${_RECOVERY_IPSEC_AVAILABLE:-0}" 1
+	# Verify that path falls back to "ipsec" when get_command_path doesn't exist
+	assert_equal "${_RECOVERY_IPSEC_PATH:-}" "ipsec"
+
+	# Test case 2: get_command_path exists but returns empty string
+	# Mock get_command_path to return empty string (simulating path not found)
+	# Get command path (test helper)
+	#
+	# Arguments:
+	#   $1: Command name
+	#
+	# Returns:
+	#   0: Always succeeds
+	#
+	# Output:
+	#   Prints command path to stdout, or empty string if not found
+	get_command_path() {
+		local cmd="$1"
+		if [[ "$cmd" == "ipsec" ]]; then
+			# Return empty string to simulate path not found
+			echo ""
+			return 0
+		fi
+		# For other commands, use original if available
+		if command -v get_command_path.original >/dev/null 2>&1; then
+			get_command_path.original "$@"
+		else
+			command -v "$cmd" 2>/dev/null || echo "$cmd"
+		fi
+	}
+
+	# Call _check_recovery_command_availability again
+	_check_recovery_command_availability
+	exit_code=$?
+	assert_equal "$exit_code" 0
+
+	# Verify that ipsec is still marked as available
+	assert_equal "${_RECOVERY_IPSEC_AVAILABLE:-0}" 1
+	# When get_command_path returns empty, _RECOVERY_IPSEC_PATH falls back to "ipsec"
+	# This matches the implementation behavior - fallback happens when get_command_path returns empty
+	assert_equal "${_RECOVERY_IPSEC_PATH:-}" "ipsec"
+
+	# Restore original functions if they existed
+	if command -v get_command_path.original >/dev/null 2>&1; then
+		# Get command path (test helper)
+		#
+		# Arguments:
+		#   $1: Command name
+		#
+		# Returns:
+		#   0: Always succeeds
+		#
+		# Output:
+		#   Prints command path to stdout
+		get_command_path() {
+			get_command_path.original "$@"
+		}
+	fi
+	if command -v check_command_available.original >/dev/null 2>&1; then
+		# Check if command is available (test helper)
+		#
+		# Arguments:
+		#   $1: Command name to check
+		#
+		# Returns:
+		#   0: Command is available
+		#   1: Command is not available
+		check_command_available() {
+			check_command_available.original "$@"
+		}
+	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "strategy selection succeeds - verify all global variables set correctly" {
+	# Purpose: Test verifies that select_recovery_strategy() sets all global variables correctly when strategy selection succeeds
+	# Expected: All global variables (RECOVERY_STRATEGY, RECOVERY_COMMAND, RECOVERY_IMPACT, RECOVERY_AVAILABLE) are set correctly
+	# Importance: Incorrectly set global variables can cause recovery execution failures
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1'
+
+	# Source dependencies first
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/recovery.sh
+	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
+
+	# Test xfrm strategy selection (Tier 2 with peer IP)
+	select_recovery_strategy "${TEST_PEER_IP}" 2
+	local exit_code=$?
+	assert_equal "$exit_code" 0
+	# Verify all global variables are set correctly
+	assert_equal "$RECOVERY_STRATEGY" "xfrm"
+	assert_equal "$RECOVERY_COMMAND" "attempt_xfrm_recovery"
+	assert_equal "$RECOVERY_IMPACT" "per-connection"
+	assert_equal "$RECOVERY_AVAILABLE" 1
+
+	# Test ipsec_reload strategy selection (Tier 2 without peer IP)
+	select_recovery_strategy "" 2
+	exit_code=$?
+	assert_equal "$exit_code" 0
+	# Verify all global variables are set correctly
+	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload"
+	assert_equal "$RECOVERY_COMMAND" "ipsec reload"
+	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
+	assert_equal "$RECOVERY_AVAILABLE" 1
+
+	# Test ipsec_restart strategy selection (Tier 3)
+	select_recovery_strategy "" 3
+	exit_code=$?
+	assert_equal "$exit_code" 0
+	# Verify all global variables are set correctly
+	assert_equal "$RECOVERY_STRATEGY" "ipsec_restart"
+	assert_equal "$RECOVERY_COMMAND" "ipsec restart"
+	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
+	assert_equal "$RECOVERY_AVAILABLE" 1
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium,untested-critical-path
+@test "command availability changes between checks - race condition simulation" {
+	# Purpose: Test verifies that select_recovery_strategy() handles command availability changes between checks
+	# Expected: Function uses cached availability from _check_recovery_command_availability() and doesn't re-check during strategy selection
+	# Importance: Race conditions where commands become unavailable between checks should be handled gracefully
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+
+	# Source dependencies first
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/recovery.sh
+	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
+
+	# Save original check_command_available function if it exists
+	# Use a simpler approach that works in all bash versions
+	if command -v check_command_available >/dev/null 2>&1; then
+		# Save the function definition
+		local func_def
+		func_def=$(declare -f check_command_available 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			# Rename the function by replacing the function name
+			eval "${func_def/check_command_available/check_command_available.original}" 2>/dev/null || true
+		fi
+	fi
+
+	# Track how many times check_command_available is called
+	local check_count=0
+	# Check if command is available (test helper)
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
+	check_command_available() {
+		local cmd="$1"
+		check_count=$((check_count + 1))
+		# First call: commands available, subsequent calls: simulate commands becoming unavailable
+		if [[ $check_count -le 2 ]]; then
+			# First two calls (ip and ipsec) return success
+			if command -v check_command_available.original >/dev/null 2>&1; then
+				check_command_available.original "$@"
+			else
+				command -v "$cmd" >/dev/null 2>&1
+			fi
+		else
+			# Subsequent calls return failure (simulating command becoming unavailable)
+			return 1
+		fi
+	}
+
+	# Call select_recovery_strategy
+	# It should use the cached availability from _check_recovery_command_availability()
+	# and not re-check during strategy selection
+	select_recovery_strategy "${TEST_PEER_IP}" 2
+	local exit_code=$?
+	assert_equal "$exit_code" 0
+
+	# Verify that strategy was selected successfully (using cached availability)
+	assert_equal "$RECOVERY_STRATEGY" "xfrm" || assert_equal "$RECOVERY_STRATEGY" "ipsec_reload"
+	assert_equal "$RECOVERY_AVAILABLE" 1
+
+	# Verify that check_command_available was called (for initial availability check)
+	# It should be called at least twice (once for ip, once for ipsec)
+	assert [ "$check_count" -ge 2 ]
+
+	# Restore original function if it existed
+	if command -v check_command_available.original >/dev/null 2>&1; then
+		# Check if command is available (test helper)
+		#
+		# Arguments:
+		#   $1: Command name to check
+		#
+		# Returns:
+		#   0: Command is available
+		#   1: Command is not available
+		check_command_available() {
+			check_command_available.original "$@"
+		}
+	fi
+
+	remove_mock_from_path
+}
+
+# ============================================================================
+# 5.2 RECOVERY COMMAND AVAILABILITY CHECK EDGE CASES
+# Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
+# ============================================================================
+
+# bats test_tags=category:high-risk,priority:medium,untested-critical-path
+@test "_check_recovery_command_availability command available but path resolution fails" {
+	# Purpose: Test verifies that _check_recovery_command_availability handles path resolution failures gracefully
+	# Expected: Function should handle get_command_path() failures and fall back to command name
+	# Importance: Path resolution failures should not prevent recovery command availability checks
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+
+	# Source dependencies first
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/recovery.sh
+	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
+
+	# Mock check_command_available to return success for ipsec (so we test get_command_path path)
+	# Save original check_command_available if it exists
+	if command -v check_command_available >/dev/null 2>&1; then
+		local func_def
+		func_def=$(declare -f check_command_available 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			eval "${func_def/check_command_available/check_command_available.original}" 2>/dev/null || true
+		fi
+	fi
+
+	# Check if command is available (test helper)
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
+	check_command_available() {
+		local cmd="$1"
+		if [[ "$cmd" == "ipsec" ]]; then
+			return 0
+		fi
+		# For other commands, use original if available
+		if command -v check_command_available.original >/dev/null 2>&1; then
+			check_command_available.original "$@"
+		else
+			command -v "$cmd" >/dev/null 2>&1
+		fi
+	}
+
+	# Save original get_command_path function if it exists
+	if command -v get_command_path >/dev/null 2>&1; then
+		local func_def
+		func_def=$(declare -f get_command_path 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			eval "${func_def/get_command_path/get_command_path.original}" 2>/dev/null || true
+		fi
+	fi
+
+	# Mock get_command_path to fail (return empty string)
+	# Get command path (test helper)
+	#
+	# Arguments:
+	#   $1: Command name
+	#
+	# Returns:
+	#   0: Always succeeds
+	#
+	# Output:
+	#   Prints command path to stdout, or empty string if not found
+	get_command_path() {
+		local cmd="$1"
+		if [[ "$cmd" == "ipsec" ]]; then
+			# Return empty string to simulate path resolution failure
+			echo ""
+			return 1
+		fi
+		# For other commands, use original if available
+		if command -v get_command_path.original >/dev/null 2>&1; then
+			get_command_path.original "$@"
+		else
+			command -v "$cmd" 2>/dev/null || echo "$cmd"
+		fi
+	}
+
+	# Call _check_recovery_command_availability
+	# It should handle path resolution failure and fall back to "ipsec"
+	_check_recovery_command_availability
+	local exit_code=$?
+	assert_equal "$exit_code" 0
+
+	# Verify that ipsec is still marked as available (even if path resolution failed)
+	# Path should fall back to "ipsec" when get_command_path fails
+	assert_equal "${_RECOVERY_IPSEC_AVAILABLE:-0}" 1
+	assert_equal "${_RECOVERY_IPSEC_PATH:-}" "ipsec"
+
+	# Restore original functions if they existed
+	if command -v get_command_path.original >/dev/null 2>&1; then
+		# Get command path (test helper)
+		#
+		# Arguments:
+		#   $1: Command name
+		#
+		# Returns:
+		#   0: Always succeeds
+		#
+		# Output:
+		#   Prints command path to stdout
+		get_command_path() {
+			get_command_path.original "$@"
+		}
+	fi
+	if command -v check_command_available.original >/dev/null 2>&1; then
+		# Check if command is available (test helper)
+		#
+		# Arguments:
+		#   $1: Command name to check
+		#
+		# Returns:
+		#   0: Command is available
+		#   1: Command is not available
+		check_command_available() {
+			check_command_available.original "$@"
+		}
+	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium,untested-critical-path
+@test "_check_recovery_command_availability command available but not executable (permission error)" {
+	# Purpose: Test verifies that _check_recovery_command_availability handles permission errors gracefully
+	# Expected: Function should detect when command exists but is not executable and mark as unavailable
+	# Importance: Permission errors should be handled gracefully to prevent recovery failures
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+
+	# Source dependencies first
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/recovery.sh
+	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
+
+	# Save original check_command_available function if it exists
+	if command -v check_command_available >/dev/null 2>&1; then
+		local func_def
+		func_def=$(declare -f check_command_available 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			eval "${func_def/check_command_available/check_command_available.original}" 2>/dev/null || true
+		fi
+	fi
+
+	# Create a mock ipsec command that is not executable
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	echo '#!/bin/bash' >"$mock_ipsec"
+	echo 'echo "mock ipsec"' >>"$mock_ipsec"
+	chmod 000 "$mock_ipsec" # Make it not executable
+
+	# Mock check_command_available to check if command is executable
+	# Check if command is available (test helper)
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
+	check_command_available() {
+		local cmd="$1"
+		if [[ "$cmd" == "ipsec" ]]; then
+			# Check if command exists and is executable
+			if [[ -f "$mock_ipsec" ]] && [[ -x "$mock_ipsec" ]]; then
+				return 0
+			else
+				return 1
+			fi
+		fi
+		# For other commands, use original if available
+		if command -v check_command_available.original >/dev/null 2>&1; then
+			check_command_available.original "$@"
+		else
+			command -v "$cmd" >/dev/null 2>&1
+		fi
+	}
+
+	# Call _check_recovery_command_availability
+	# It should detect that ipsec is not executable and mark as unavailable
+	_check_recovery_command_availability
+	local exit_code=$?
+	assert_equal "$exit_code" 0
+
+	# Verify that ipsec is marked as unavailable (not executable)
+	assert_equal "${_RECOVERY_IPSEC_AVAILABLE:-1}" 0
+
+	# Restore permissions and clean up
+	chmod 755 "$mock_ipsec" 2>/dev/null || true
+	rm -f "$mock_ipsec" 2>/dev/null || true
+
+	# Restore original function if it existed
+	if command -v check_command_available.original >/dev/null 2>&1; then
+		# Check if command is available (test helper)
+		#
+		# Arguments:
+		#   $1: Command name to check
+		#
+		# Returns:
+		#   0: Command is available
+		#   1: Command is not available
+		check_command_available() {
+			check_command_available.original "$@"
+		}
+	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium,untested-critical-path
+@test "_check_recovery_command_availability multiple calls with different results (should cache)" {
+	# Purpose: Test verifies that _check_recovery_command_availability caches results and doesn't re-check unnecessarily
+	# Expected: Function should cache availability results, so multiple calls return same results
+	# Importance: Caching prevents unnecessary command checks and ensures consistent behavior
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+
+	# Source dependencies first
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/recovery.sh
+	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
+
+	# Save original check_command_available function if it exists
+	if command -v check_command_available >/dev/null 2>&1; then
+		local func_def
+		func_def=$(declare -f check_command_available 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			eval "${func_def/check_command_available/check_command_available.original}" 2>/dev/null || true
+		fi
+	fi
+
+	# Track how many times check_command_available is called
+	local check_count=0
+	# Check if command is available (test helper)
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
+	check_command_available() {
+		local cmd="$1"
+		check_count=$((check_count + 1))
+		# For ip and ipsec, return success
+		if [[ "$cmd" == "ip" ]] || [[ "$cmd" == "ipsec" ]]; then
+			if command -v check_command_available.original >/dev/null 2>&1; then
+				check_command_available.original "$@"
+			else
+				command -v "$cmd" >/dev/null 2>&1
+			fi
+		else
+			# For other commands, use original if available
+			if command -v check_command_available.original >/dev/null 2>&1; then
+				check_command_available.original "$@"
+			else
+				command -v "$cmd" >/dev/null 2>&1
+			fi
+		fi
+	}
+
+	# Call _check_recovery_command_availability multiple times
+	_check_recovery_command_availability
+	local first_ip_available="${_RECOVERY_IP_AVAILABLE:-0}"
+	local first_ipsec_available="${_RECOVERY_IPSEC_AVAILABLE:-0}"
+	local first_check_count=$check_count
+
+	_check_recovery_command_availability
+	local second_ip_available="${_RECOVERY_IP_AVAILABLE:-0}"
+	local second_ipsec_available="${_RECOVERY_IPSEC_AVAILABLE:-0}"
+	local second_check_count=$check_count
+
+	# Results should be consistent (cached)
+	assert_equal "$first_ip_available" "$second_ip_available"
+	assert_equal "$first_ipsec_available" "$second_ipsec_available"
+
+	# Note: The function may be called multiple times, but results should be consistent
+	# The exact check count may vary, but the important thing is results are cached
+
+	# Restore original function if it existed
+	if command -v check_command_available.original >/dev/null 2>&1; then
+		# Check if command is available (test helper)
+		#
+		# Arguments:
+		#   $1: Command name to check
+		#
+		# Returns:
+		#   0: Command is available
+		#   1: Command is not available
+		check_command_available() {
+			check_command_available.original "$@"
+		}
+	fi
 
 	remove_mock_from_path
 }

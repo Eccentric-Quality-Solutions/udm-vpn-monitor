@@ -152,6 +152,9 @@ EOF
 		MAX_RESTARTS_PER_HOUR=3 \
 		run bash "$test_script" --fake
 
+	# Script should run successfully
+	assert_success
+
 	# Script should use all environment variable values
 	assert_file_exist "$log_file"
 

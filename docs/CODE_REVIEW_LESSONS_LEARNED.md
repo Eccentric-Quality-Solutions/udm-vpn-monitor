@@ -1,7 +1,7 @@
 # Code Review Lessons Learned
 
 **Date:** 2025-01-15
-**Last Updated:** 2026-01-10
+**Last Updated:** 2026-01-11
 **Context:** Comprehensive codebase review for errors, bugs, DRY violations, and bad practices
 
 **Note:** For a pragmatic assessment of this document's value and recommendations for improvement, see `CODE_REVIEW_LESSONS_LEARNED_ASSESSMENT.md`.
@@ -557,6 +557,24 @@ Common duplication patterns to watch for:
 - Use grep to find patterns systematically
 - Create linting rules where possible
 - Document patterns in coding guidelines
+
+### Code Review Checklist Items
+When reviewing code, check for:
+- [ ] Convergent conditionals (all branches end with same operation) - see Lesson 23
+- [ ] Code duplication across files
+- [ ] Functions with identical names in multiple files
+- [ ] Similar logic repeated with slight variations
+- [ ] Magic numbers used in multiple places
+- [ ] Error handling patterns repeated
+- [ ] Function calls with wrong number of arguments
+- [ ] Inconsistent use of abstraction layers
+- [ ] Direct path construction instead of using helpers
+- [ ] Missing input validation
+- [ ] Debug code left in production
+- [ ] Hardcoded paths
+- [ ] Commented-out code blocks
+- [ ] Inconsistent error handling
+- [ ] Magic numbers without constants
 
 ### Best Practices Comparison
 
@@ -2123,6 +2141,14 @@ fi
 - Simplify conditionals by removing unnecessary flags and intermediate variables
 - Verify logic equivalence after simplification
 
+### Code Review Checklist
+When reviewing conditionals, check for:
+- [ ] All branches of if/elif/else blocks that end with the same operation
+- [ ] Common operations that can be extracted outside the conditional
+- [ ] Complex fallback logic that duplicates existing functionality
+- [ ] Unnecessary intermediate variables or flags that can be removed
+- [ ] Logic equivalence after simplification (verify with tests)
+
 ### Related Patterns
 - See `CODE_PATTERNS.md` section "Error Handling Patterns" → "Simplify Complex Conditionals When All Branches Converge" for the consolidated pattern
 - See `lib/config.sh:696-713` for simplified log path computation
@@ -2771,9 +2797,12 @@ log_message "INFO" "$location_name" "Surgical cleanup completed for $location_na
 **Note:** Lessons 30-33 (testing-specific mock and fixture patterns) have been moved to `TEST_PATTERNS.md` where they belong with other testing patterns. See `TEST_PATTERNS.md` section 5 (Mock Setup and Cleanup) for:
 - Lesson 30: Mock Command Handling: Always Handle All Command Variants
 - Lesson 31: When Refactoring Helper Functions, Maintain Backward Compatibility or Update All Callers
-- Lesson 32: Fixtures Can Export Helper Functions for Dynamic Test Behavior
-- Lesson 33: Escape Variables in Heredocs When Creating Mock Scripts
-- Lesson 34: Mock Commands Must Handle Command Availability Checks
+- Lesson 32: Centralize Test Data to Improve Maintainability
+- Lesson 33: Error Handling Functions Should Be Defensive with Invalid Input
+- Lesson 33: Fixtures Can Export Helper Functions for Dynamic Test Behavior
+- Lesson 34: Escape Variables in Heredocs When Creating Mock Scripts
+- Lesson 35: Mock Commands Must Handle Command Availability Checks
+- Lesson 36: Use Standalone `if` Statements in `additional_handlers` for Mock Helpers
 
 ---
 
@@ -2813,3 +2842,14 @@ These lessons should be applied systematically in future development and code re
 27. **Parse all selectors when interacting with kernel interfaces** - When parsing structured output from kernel interfaces (netlink, xfrm, iproute2), parse ALL attributes that could be selectors, not just the required ones. Optional attributes become required selectors when present. Missing selectors cause operations to fail with "No such process" errors even when the object exists. Include all parsed selectors in operations (get, delete, modify) to ensure successful matching.
 28. **Avoid over-engineering edge case protections** - Don't add safeguards for edge cases that are extremely unlikely, would be caught by testing, are protected by existing safeguards, or add complexity without significant benefit
 29. **Log messages must accurately reflect the operation performed** - Use different terminology for different code paths when behavior differs, include context in messages, match terminology to actual behavior not function name
+30. **Include all identifying attributes in deduplication keys** - When deduplicating structured data (e.g., Security Associations), use composite keys that include all identifying attributes, not just a subset. Multiple objects can share some attributes (e.g., same src/dst IPs) but differ in others (e.g., SPI values). Deduplication based on partial keys will incorrectly treat unique objects as duplicates. Example: SA deduplication must use src+dst+SPI, not just src+dst, because multiple SAs can exist for the same peer IP with different SPI values during rekey transitions or mixed configurations.
+
+31. **Test helpers must be module-aware when decomposing large files** - When decomposing large files into modules, test helpers that search for function definitions need to be updated to search module files, not just the main compatibility layer file. The `source_function()` helper must check module files first, then fall back to the main file. This pattern ensures tests continue to work after decomposition while maintaining backward compatibility. Example: When `lib/state.sh` was decomposed into `lib/state/*.sh` modules, `source_function()` in `test_helper.bash` needed updates to search module files for function definitions. Same pattern applies to `lib/config.sh` (decomposed into `lib/config/*.sh` modules) and `lib/detection.sh` (decomposed into `lib/detection/*.sh` modules).
+
+32. **Centralize test data to improve maintainability** - Extract embedded test data (mock outputs, expected values, configuration templates) from test files into a centralized `tests/data/` directory structure. Create generator functions for parameterized data patterns. This centralizes maintenance (changes in one place), ensures consistency (all tests use same format), improves discoverability (easier to find and reuse), and serves as documentation of test data patterns. Use structured bash format (functions and variables) for consistency with the codebase. Example: Created `tests/data/` with `mock_outputs/`, `configs/`, and `expected_values/` subdirectories, with generator functions in `helpers/test_data.bash` for xfrm state, ipsec status, and config templates.
+
+33. **Path resolution in sourced bash scripts** - When writing helper modules that are sourced (not executed), be careful with path resolution. `BATS_TEST_DIRNAME` is relative to the test file, not the helper file. Use `${BASH_SOURCE[0]}` to get the helper's directory: `helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"`. Also, `local` cannot be used at the top level of a sourced script (only inside functions) - use regular variables with a naming convention like `_helper_dir` to avoid namespace pollution. Example: Fixed `tests/helpers/test_data.bash` to use `_helper_dir` instead of `local helper_dir` at the top level, and to use `${BASH_SOURCE[0]}` instead of `BATS_TEST_DIRNAME` for path resolution.
+
+33. **Error handling functions should be defensive with invalid input** - When error handling functions receive invalid input (e.g., invalid severity levels, non-numeric exit codes), they should be conservative and not cause unexpected script termination. Invalid input should not trigger exits unless an exit code was explicitly provided. This prevents accidental exits when typos or incorrect parameters are passed. Example: `handle_error()` now defaults invalid severity to ERROR but sets exit_code to 0 (no exit) unless an exit code was explicitly provided. Similarly, non-numeric last arguments are treated as part of the message with exit_code set to 0 to prevent accidental exits.
+
+34. **Extract core test infrastructure into reusable standard functions** - When standardizing test setup/teardown patterns, extract core logic into `standard_setup()` and `standard_teardown()` functions that can be called from custom implementations. Keep default `setup()` and `teardown()` calling the standard functions to maintain backward compatibility. This pattern allows tests with custom setup/teardown to extend standard functions while ensuring consistent test isolation. Benefits: reduces duplication, ensures consistency, maintains backward compatibility, and provides clear extension points. Example: Extracted `standard_setup()` and `standard_teardown()` from `setup()` and `teardown()` in `test_helper.bash`, allowing `test_vpn_keepalive.sh` to extend standard teardown with keepalive-specific cleanup.

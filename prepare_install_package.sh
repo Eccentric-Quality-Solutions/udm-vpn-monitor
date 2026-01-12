@@ -49,6 +49,19 @@ fi
 TEMP_DIR=$(mktemp -d)
 
 # Cleanup function
+#
+# Removes the temporary directory created for package preparation.
+# This function is registered as an EXIT trap to ensure cleanup happens
+# even if the script exits unexpectedly.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Removes the temporary directory and all its contents
 cleanup() {
 	rm -rf "$TEMP_DIR"
 }
@@ -105,6 +118,7 @@ LIB_FILES=(
 	"lib/config_schema.sh"
 	"lib/constants.sh"
 	"lib/detection.sh"
+	"lib/fallbacks.sh"
 	"lib/lockfile.sh"
 	"lib/logging.sh"
 	"lib/recovery.sh"
@@ -125,6 +139,28 @@ copy_files_with_validation "$SCRIPT_DIR" "$TEMP_DIR" "${MAIN_FILES[@]}"
 
 # Copy library files
 copy_files_with_validation "$SCRIPT_DIR" "$TEMP_DIR" "${LIB_FILES[@]}"
+
+# Copy module subdirectories
+MODULE_DIRS=(
+	"lib/detection"
+	"lib/recovery"
+	"lib/config"
+	"lib/state"
+)
+
+for dir in "${MODULE_DIRS[@]}"; do
+	if [[ -d "${SCRIPT_DIR}/${dir}" ]]; then
+		mkdir -p "${TEMP_DIR}/${dir}"
+		# Copy files if directory is not empty
+		# Check if directory has any files before copying to avoid glob expansion issues with set -u
+		if [[ -n "$(ls -A "${SCRIPT_DIR}/${dir}" 2>/dev/null)" ]]; then
+			cp -r "${SCRIPT_DIR}/${dir}"/* "${TEMP_DIR}/${dir}/"
+			echo "  Added directory: ${dir}/"
+		else
+			echo "  Warning: ${dir}/ is empty, skipping" >&2
+		fi
+	fi
+done
 
 # Copy script files
 copy_files_with_validation "$SCRIPT_DIR" "$TEMP_DIR" "${SCRIPT_FILES[@]}"
@@ -158,6 +194,12 @@ echo "  Script files:"
 for file in "${SCRIPT_FILES[@]}"; do
 	if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
 		echo "    - ${file}"
+	fi
+done
+echo "  Module directories:"
+for dir in "${MODULE_DIRS[@]}"; do
+	if [[ -d "${SCRIPT_DIR}/${dir}" ]]; then
+		echo "    - ${dir}/"
 	fi
 done
 echo ""

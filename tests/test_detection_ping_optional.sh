@@ -5,6 +5,7 @@
 # when vpn_ok=0 but SA actually exists
 
 load test_helper
+load helpers/detection
 
 # Source the detection library functions
 # shellcheck source=../lib/detection.sh
@@ -21,28 +22,6 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 # ============================================================================
 # SETUP
 # ============================================================================
-
-# Setup test environment for ping optional tests
-#
-# Initializes test directories and environment variables for ping-related tests.
-#
-# Arguments:
-#   None
-#
-# Returns:
-#   0: Always succeeds
-setup_ping_optional_test() {
-	STATE_DIR="${TEST_DIR}/state"
-	LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${STATE_DIR}"
-	mkdir -p "${LOGS_DIR}"
-	export STATE_DIR LOGS_DIR
-	export LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
-	export ENABLE_PING_CHECK=1
-	export PING_COUNT=1
-	export PING_TIMEOUT=1
-	export DEBUG="${DEBUG:-0}"
-}
 
 # ============================================================================
 # TESTS FOR check_ping_optional()

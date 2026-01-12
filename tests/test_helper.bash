@@ -56,10 +56,10 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
-# Setup function run before each test
+# Standard setup function - core setup logic
 #
-# Bats framework calls this function automatically before each test.
-# Creates a clean test environment with temporary directories and mock structures.
+# This function contains the core setup logic that should be run before each test.
+# It can be called from custom setup() functions to ensure consistent test initialization.
 #
 # Side effects:
 #   - Creates TEST_DIR for this test using temp_make
@@ -69,8 +69,15 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 #
 # Test Isolation:
 #   This function saves all environment variables that tests might modify to ensure
-#   complete isolation between tests. See teardown() for restoration logic.
-setup() {
+#   complete isolation between tests. See standard_teardown() for restoration logic.
+#
+# Usage:
+#   # In a custom setup() function:
+#   setup() {
+#       standard_setup
+#       # Add custom setup logic here
+#   }
+standard_setup() {
 	# Save original PATH before any modifications
 	# This ensures we can restore PATH in teardown even if test fails
 	# PATH may be modified by add_mock_to_path() during tests
@@ -125,10 +132,31 @@ setup() {
 	export MOCK_INSTALL_DIR
 }
 
-# Teardown function run after each test
+# Setup function run before each test
 #
-# Bats framework calls this function automatically after each test.
-# Cleans up test environment and restores original state.
+# Bats framework calls this function automatically before each test.
+# Creates a clean test environment with temporary directories and mock structures.
+#
+# Side effects:
+#   - Creates TEST_DIR for this test using temp_make
+#   - Creates MOCK_DATA_DIR and MOCK_INSTALL_DIR
+#   - Saves original PWD, HOME, PATH, and all test-related environment variables
+#   - Sets TEST_DIR, MOCK_DATA_DIR, MOCK_INSTALL_DIR environment variables
+#
+# Test Isolation:
+#   This function saves all environment variables that tests might modify to ensure
+#   complete isolation between tests. See teardown() for restoration logic.
+#
+# Note: Most tests should use this default setup(). If you need custom setup,
+#       override setup() and call standard_setup() first.
+setup() {
+	standard_setup
+}
+
+# Standard teardown function - core teardown logic
+#
+# This function contains the core teardown logic that should be run after each test.
+# It can be called from custom teardown() functions to ensure consistent test cleanup.
 #
 # Side effects:
 #   - Restores original PATH (removes any mock PATH modifications)
@@ -144,7 +172,16 @@ setup() {
 #
 # Note: Set BATSLIB_TEMP_PRESERVE_ON_FAILURE=1 to preserve temp directories
 #       for debugging when tests fail
-teardown() {
+#
+# Usage:
+#   # In a custom teardown() function:
+#   teardown() {
+#       # Add custom cleanup logic first (e.g., kill processes)
+#       cleanup_custom_resources
+#       # Then call standard teardown to restore environment
+#       standard_teardown
+#   }
+standard_teardown() {
 	# Always restore PATH, even if test fails
 	# This ensures PATH modifications don't persist between tests
 	if [[ -n "${ORIGINAL_PATH:-}" ]]; then
@@ -231,6 +268,32 @@ teardown() {
 			crontab -r 2>/dev/null || true
 		fi
 	fi
+}
+
+# Teardown function run after each test
+#
+# Bats framework calls this function automatically after each test.
+# Cleans up test environment and restores original state.
+#
+# Side effects:
+#   - Restores original PATH (removes any mock PATH modifications)
+#   - Restores all test-related environment variables to their original values
+#   - Removes TEST_DIR and all contents using temp_del
+#   - Restores original working directory
+#   - Removes test cron entries containing "test-vpn-monitor"
+#
+# Test Isolation:
+#   This function ensures complete test isolation by restoring all environment
+#   variables to their original state before the test ran. This prevents test
+#   pollution where one test's modifications affect subsequent tests.
+#
+# Note: Set BATSLIB_TEMP_PRESERVE_ON_FAILURE=1 to preserve temp directories
+#       for debugging when tests fail
+#
+# Note: Most tests should use this default teardown(). If you need custom teardown,
+#       override teardown() and call standard_teardown() at the end.
+teardown() {
+	standard_teardown
 }
 
 # Create a mock config file
@@ -665,67 +728,6 @@ run_script() {
 	run bash "$script" "${args[@]}"
 }
 
-# Assert log file contains pattern
-#
-# Verifies that a log file contains a specific pattern (fixed string match).
-# Fails the test if pattern is not found or file doesn't exist.
-#
-# Arguments:
-#   $1: Path to log file
-#   $2: Pattern to search for (fixed string, not regex)
-#
-# Returns:
-#   0: Pattern found in log file
-#   1: Pattern not found or file doesn't exist (fails test)
-#
-# Note: Uses BATS_TEST_NAME for better error messages when available
-assert_log_contains() {
-	local log_file="$1"
-	local pattern="$2"
-
-	assert_file_exist "$log_file"
-
-	run grep -Fq -- "$pattern" "$log_file"
-	# Use BATS_TEST_NAME in error message if available for better debugging
-	if [[ -n "${BATS_TEST_NAME:-}" ]]; then
-		assert_success "Log file should contain '$pattern' in test '${BATS_TEST_NAME}'"
-	else
-		assert_success "Log file should contain: $pattern"
-	fi
-}
-
-# Assert log file does not contain pattern
-#
-# Verifies that a log file does NOT contain a specific pattern.
-# Succeeds if file doesn't exist (empty file doesn't contain pattern).
-# Fails the test if pattern is found.
-#
-# Arguments:
-#   $1: Path to log file
-#   $2: Pattern to search for (fixed string, not regex)
-#
-# Returns:
-#   0: Pattern not found (or file doesn't exist)
-#   1: Pattern found (fails test)
-#
-# Note: Uses BATS_TEST_NAME for better error messages when available
-assert_log_not_contains() {
-	local log_file="$1"
-	local pattern="$2"
-
-	if [[ ! -f "$log_file" ]]; then
-		return 0 # File doesn't exist, so pattern doesn't exist
-	fi
-
-	run grep -Fq -- "$pattern" "$log_file"
-	# Use BATS_TEST_NAME in error message if available for better debugging
-	if [[ -n "${BATS_TEST_NAME:-}" ]]; then
-		assert_failure "Log file should not contain '$pattern' in test '${BATS_TEST_NAME}'"
-	else
-		assert_failure "Log file should not contain: $pattern"
-	fi
-}
-
 # Assert log file contains one of multiple patterns
 #
 # Checks if log file contains at least one of the specified patterns.
@@ -740,6 +742,8 @@ assert_log_not_contains() {
 #   1: No patterns found (fails test)
 #
 # Note: Uses BATS_TEST_NAME for better error messages when available
+# Note: This function is now provided by helpers/assertions.bash
+# It is kept here for backward compatibility.
 #
 # Example:
 #   assert_log_contains_any "$log_file" "ipsec reload failed" "reload failed"
@@ -1953,6 +1957,9 @@ with_mocks() {
 # Returns:
 #   0: File exists and contains expected value
 #   1: File doesn't exist or contains different value (fails test)
+#
+# Note: This function is now provided by helpers/state.bash
+# It is kept here for backward compatibility.
 assert_state_file() {
 	local state_file="$1"
 	local expected_value="$2"
@@ -2020,74 +2027,6 @@ wait_for_file() {
 # Test Setup Helper Functions - Reduce Duplication Across Tests
 # ============================================================================
 
-# Create a test config file with common settings (DEPRECATED - use setup_test_location_config instead)
-#
-# Creates a vpn-monitor.conf file with customizable settings using old EXTERNAL_PEER_IPS format.
-# DEPRECATED: This function uses the deprecated EXTERNAL_PEER_IPS format which is no longer supported.
-# Use setup_test_location_config() instead for location-based configuration.
-#
-# Arguments:
-#   $1: Path to config file (default: ${TEST_DIR}/vpn-monitor.conf)
-#   $2: EXTERNAL_PEER_IPS value (default: "192.168.1.1")
-#   $3+: Additional config variables as KEY="VALUE" pairs
-#
-# Returns:
-#   0: Always succeeds
-#
-# Output:
-#   Prints the path to the created config file
-#
-# Example:
-#   setup_test_config "${TEST_DIR}/vpn-monitor.conf" "192.168.1.1 10.0.0.1" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3'
-#
-# Deprecated:
-#   This function creates config files with EXTERNAL_PEER_IPS which is deprecated.
-#   Use setup_test_location_config() instead.
-setup_test_config() {
-	local config_file="${1:-${TEST_DIR}/vpn-monitor.conf}"
-	# Use ${2-} instead of ${2:-} to allow empty strings to pass through
-	local peer_ips="${2-${TEST_PEER_IP}}"
-	shift 2 || true
-	local extra_config=("$@")
-
-	mkdir -p "$(dirname "$config_file")"
-
-	cat >"$config_file" <<EOF
-EXTERNAL_PEER_IPS="${peer_ips}"
-VPN_NAME="Test VPN"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-COOLDOWN_MINUTES=15
-MAX_RESTARTS_PER_HOUR=3
-LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
-STATE_DIR="${TEST_DIR}"
-CRON_SCHEDULE="*/1 * * * *"
-LOCKFILE_TIMEOUT=60
-ENABLE_PING_CHECK=1
-PING_COUNT=3
-PING_TIMEOUT=2
-ENABLE_NETWORK_PARTITION_CHECK=0
-DEBUG=0
-EOF
-
-	# Add any extra config variables
-	for config_var in "${extra_config[@]}"; do
-		if [[ -n "$config_var" ]]; then
-			# Ensure config_var is in KEY=VALUE format, not just a bare value
-			if [[ "$config_var" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
-				echo "$config_var" >>"$config_file"
-			else
-				# Skip bare values that aren't in KEY=VALUE format
-				# This prevents bare IP addresses or other values from being written
-				continue
-			fi
-		fi
-	done
-
-	echo "$config_file"
-}
-
 # Set up location-based VPN monitor test environment
 #
 # Creates a test VPN monitor environment using location-based configuration.
@@ -2148,38 +2087,6 @@ setup_location_vpn_monitor() {
 		"$LOG_FILE")
 
 	export TEST_CONFIG_FILE TEST_SCRIPT
-}
-
-# Set up test config with recovery settings disabled
-#
-# Creates a test configuration file with recovery-related settings disabled.
-# This is commonly needed for tests that need ipsec reload/restart to be triggered
-# instead of xfrm recovery, or tests that need network partition checks disabled.
-#
-# Arguments:
-#   $1: Config file path (optional, defaults to ${TEST_DIR}/vpn-monitor.conf)
-#   $2: Peer IPs (optional, defaults to "192.168.1.1")
-#   $3+: Additional config variables as KEY="VALUE" pairs
-#
-# Returns:
-#   Prints config file path to stdout
-#
-# Side effects:
-#   - Creates config file with ENABLE_XFRM_RECOVERY=0 and ENABLE_NETWORK_PARTITION_CHECK=0
-#
-# Example:
-#   setup_test_config_with_recovery_disabled "${TEST_DIR}/vpn-monitor.conf" "192.168.1.1" 'TIER1_THRESHOLD=1'
-setup_test_config_with_recovery_disabled() {
-	local config_file="${1:-${TEST_DIR}/vpn-monitor.conf}"
-	local peer_ips="${2-192.168.1.1}"
-	shift 2 || true
-	local extra_config=("$@")
-
-	# Call setup_test_config with recovery settings disabled
-	setup_test_config "$config_file" "$peer_ips" \
-		'ENABLE_XFRM_RECOVERY=0' \
-		'ENABLE_NETWORK_PARTITION_CHECK=0' \
-		"${extra_config[@]}"
 }
 
 # Set up test environment variables
@@ -2577,6 +2484,8 @@ setup_location_test_vpn_monitor() {
 # Note:
 #   Uses 2>/dev/null || true to suppress errors if state.sh is not found
 #   (for maximum compatibility in test environments)
+# Note: This function is now provided by helpers/state.bash
+# It is kept here for backward compatibility.
 ensure_state_functions_loaded() {
 	# Check if state functions are already available
 	if command -v set_peer_state >/dev/null 2>&1; then
@@ -3512,6 +3421,209 @@ source_function() {
 	# Try to find the function in each module
 	for module in "${modules[@]}"; do
 		if [[ -f "$module" ]]; then
+			# Special handling for state.sh: functions are now in module files
+			# Since state.sh now sources module files, we should source the entire state.sh
+			# when looking for any function that might be from state.sh
+			if [[ "$module" == "${LIB_DIR}/state.sh" ]]; then
+				# Check if function exists in any state module file
+				local state_modules=(
+					"${LIB_DIR}/state/state_paths.sh"
+					"${LIB_DIR}/state/peer_state.sh"
+					"${LIB_DIR}/state/location_state.sh"
+					"${LIB_DIR}/state/global_state.sh"
+					"${LIB_DIR}/state/state_init.sh"
+				)
+				local found_in_module=0
+				for state_module in "${state_modules[@]}"; do
+					if [[ -f "$state_module" ]]; then
+						func_def=$(sed -n "/^${func_name}(/,/^}/p" "$state_module" 2>/dev/null)
+						if [[ -n "$func_def" ]]; then
+							found_in_module=1
+							break
+						fi
+					fi
+				done
+				# If function found in module files, source entire state.sh module
+				if [[ $found_in_module -eq 1 ]]; then
+					# Set minimal required variables for functions that need them
+					# Export these so they're available in subshells created by 'run'
+					SCRIPT_DIR="${SCRIPT_DIR:-${BATS_TEST_DIRNAME}/..}"
+					export SCRIPT_DIR
+					STATE_DIR="${STATE_DIR:-${TEST_DIR:-/tmp}}"
+					export STATE_DIR
+					LOGS_DIR="${LOGS_DIR:-${STATE_DIR}/logs}"
+					export LOGS_DIR
+					LOCKFILE="${LOCKFILE:-${STATE_DIR}/vpn-monitor.lock}"
+					export LOCKFILE
+					LOG_FILE="${LOG_FILE:-${LOGS_DIR}/vpn-monitor.log}"
+					export LOG_FILE
+					RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
+					export RESTART_COUNT_FILE
+					COOLDOWN_UNTIL_FILE="${COOLDOWN_UNTIL_FILE:-${STATE_DIR}/cooldown_until}"
+					export COOLDOWN_UNTIL_FILE
+					CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
+					export CONFIG_FILE
+					DEBUG="${DEBUG:-0}"
+					export DEBUG
+					# state.sh needs logging.sh and common.sh
+					# Source entire state.sh module since functions depend on each other
+					if [[ -f "${LIB_DIR}/constants.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/constants.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/common.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/common.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+					fi
+					# Source entire state.sh to make all functions available
+					if [[ -f "${LIB_DIR}/state.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+						# Function already sourced, skip eval below
+						return 0
+					fi
+				fi
+			fi
+			# Special handling for config.sh: functions are in module files
+			# Since config.sh sources module files, we should source the entire config.sh
+			# when looking for any function that might be from config.sh
+			if [[ "$module" == "${LIB_DIR}/config.sh" ]]; then
+				# Check if function exists in any config module file
+				local config_modules=(
+					"${LIB_DIR}/config/config_loading.sh"
+					"${LIB_DIR}/config/config_defaults.sh"
+					"${LIB_DIR}/config/config_validation.sh"
+					"${LIB_DIR}/config/location_parsing.sh"
+				)
+				local found_in_module=0
+				for config_module in "${config_modules[@]}"; do
+					if [[ -f "$config_module" ]]; then
+						func_def=$(sed -n "/^${func_name}(/,/^}/p" "$config_module" 2>/dev/null)
+						if [[ -n "$func_def" ]]; then
+							found_in_module=1
+							break
+						fi
+					fi
+				done
+				# If function found in module files, source entire config.sh module
+				if [[ $found_in_module -eq 1 ]]; then
+					# Set minimal required variables for functions that need them
+					# Export these so they're available in subshells created by 'run'
+					SCRIPT_DIR="${SCRIPT_DIR:-${BATS_TEST_DIRNAME}/..}"
+					export SCRIPT_DIR
+					STATE_DIR="${STATE_DIR:-${TEST_DIR:-/tmp}}"
+					export STATE_DIR
+					LOGS_DIR="${LOGS_DIR:-${STATE_DIR}/logs}"
+					export LOGS_DIR
+					LOCKFILE="${LOCKFILE:-${STATE_DIR}/vpn-monitor.lock}"
+					export LOCKFILE
+					LOG_FILE="${LOG_FILE:-${LOGS_DIR}/vpn-monitor.log}"
+					export LOG_FILE
+					RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
+					export RESTART_COUNT_FILE
+					COOLDOWN_UNTIL_FILE="${COOLDOWN_UNTIL_FILE:-${STATE_DIR}/cooldown_until}"
+					export COOLDOWN_UNTIL_FILE
+					CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
+					export CONFIG_FILE
+					DEBUG="${DEBUG:-0}"
+					export DEBUG
+					# config.sh needs logging.sh and common.sh
+					# Source entire config.sh module since functions depend on each other
+					if [[ -f "${LIB_DIR}/constants.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/constants.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/common.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/common.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+					fi
+					# Source entire config.sh to make all functions available
+					if [[ -f "${LIB_DIR}/config.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/config.sh" 2>/dev/null || true
+						# Function already sourced, skip eval below
+						return 0
+					fi
+				fi
+			fi
+			# Special handling for detection.sh: functions are in module files
+			# Since detection.sh sources module files, we should source the entire detection.sh
+			# when looking for any function that might be from detection.sh
+			if [[ "$module" == "${LIB_DIR}/detection.sh" ]]; then
+				# Check if function exists in any detection module file
+				local detection_modules=(
+					"${LIB_DIR}/detection/network_validation.sh"
+					"${LIB_DIR}/detection/xfrm_detection.sh"
+					"${LIB_DIR}/detection/ping_detection.sh"
+					"${LIB_DIR}/detection/failure_analysis.sh"
+				)
+				local found_in_module=0
+				for detection_module in "${detection_modules[@]}"; do
+					if [[ -f "$detection_module" ]]; then
+						func_def=$(sed -n "/^${func_name}(/,/^}/p" "$detection_module" 2>/dev/null)
+						if [[ -n "$func_def" ]]; then
+							found_in_module=1
+							break
+						fi
+					fi
+				done
+				# If function found in module files, source entire detection.sh module
+				if [[ $found_in_module -eq 1 ]]; then
+					# Set minimal required variables for functions that need them
+					# Export these so they're available in subshells created by 'run'
+					SCRIPT_DIR="${SCRIPT_DIR:-${BATS_TEST_DIRNAME}/..}"
+					export SCRIPT_DIR
+					STATE_DIR="${STATE_DIR:-${TEST_DIR:-/tmp}}"
+					export STATE_DIR
+					LOGS_DIR="${LOGS_DIR:-${STATE_DIR}/logs}"
+					export LOGS_DIR
+					LOCKFILE="${LOCKFILE:-${STATE_DIR}/vpn-monitor.lock}"
+					export LOCKFILE
+					LOG_FILE="${LOG_FILE:-${LOGS_DIR}/vpn-monitor.log}"
+					export LOG_FILE
+					RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
+					export RESTART_COUNT_FILE
+					COOLDOWN_UNTIL_FILE="${COOLDOWN_UNTIL_FILE:-${STATE_DIR}/cooldown_until}"
+					export COOLDOWN_UNTIL_FILE
+					CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
+					export CONFIG_FILE
+					DEBUG="${DEBUG:-0}"
+					export DEBUG
+					# detection.sh needs logging.sh, state.sh, and common.sh
+					# Source entire detection.sh module since functions depend on each other
+					if [[ -f "${LIB_DIR}/constants.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/constants.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/common.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/common.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/state.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+					fi
+					# Source entire detection.sh to make all functions available
+					if [[ -f "${LIB_DIR}/detection.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/detection.sh" 2>/dev/null || true
+						# Function already sourced, skip eval below
+						return 0
+					fi
+				fi
+			fi
 			# Extract function using sed, matching from function start to closing brace
 			func_def=$(sed -n "/^${func_name}(/,/^}/p" "$module" 2>/dev/null)
 			if [[ -n "$func_def" ]]; then
@@ -3636,70 +3748,6 @@ source_function() {
 	return 1
 }
 
-# Test peer state with empty location (backward compatibility pattern)
-#
-# Helper function that encapsulates the common test pattern of:
-# - Calling set_peer_state with empty location (for backward compatibility)
-# - Getting the file path using get_peer_state_file_path
-# - Asserting file existence
-#
-# This reduces duplication across tests that need to verify peer state file creation.
-#
-# Arguments:
-#   $1: Peer IP address
-#   $2: State key (e.g., "failure_count", "last_bytes", "spi")
-#   $3: Value to set
-#   $4: Optional expected value to verify (if not provided, only existence is checked)
-#
-# Returns:
-#   0: File exists (and optionally matches expected value)
-#   1: File doesn't exist or value mismatch (fails test)
-#
-# Side effects:
-#   - Calls set_peer_state with empty location
-#   - Creates state file
-#   - Asserts file existence
-#   - Optionally verifies file content
-#
-# Example:
-#   # Basic usage - just verify file exists
-#   source_function "set_peer_state"
-#   source_function "get_peer_state_file_path"
-#   test_peer_state_with_empty_location "192.168.1.1" "failure_count" "5"
-#
-#   # With value verification
-#   source_function "set_peer_state"
-#   source_function "get_peer_state_file_path"
-#   test_peer_state_with_empty_location "192.168.1.1" "failure_count" "5" "5"
-#
-# Note:
-#   Requires set_peer_state and get_peer_state_file_path functions to be sourced
-#   before calling this helper. Tests should source these functions first.
-test_peer_state_with_empty_location() {
-	local peer_ip="$1"
-	local key="$2"
-	local value="$3"
-	local expected_value="${4:-}"
-
-	# Set peer state with empty location (backward compatibility)
-	run set_peer_state "" "$peer_ip" "$key" "$value"
-	assert_success
-
-	# Get file path using get_peer_state_file_path
-	local state_file
-	state_file=$(get_peer_state_file_path "" "$peer_ip" "$key")
-
-	# Assert file exists
-	assert_file_exist "$state_file"
-
-	# If expected value provided, verify file content
-	if [[ -n "$expected_value" ]]; then
-		local file_content
-		file_content=$(cat "$state_file")
-		assert_equal "$file_content" "$expected_value"
-	fi
-}
-
 # Save permissions for a file or directory
 #
 # Helper function that saves the original permissions of a file or directory
@@ -3811,6 +3859,8 @@ restore_permissions_after_test() {
 # Note:
 #   Requires get_peer_state_file_path function to be available.
 #   Automatically sources it if not already loaded.
+# Note: This function is now provided by helpers/state.bash
+# It is kept here for backward compatibility.
 get_state_file_path() {
 	local location="${1:-}"
 	local peer_ip="${2:-${TEST_PEER_IP}}"
@@ -3855,6 +3905,8 @@ get_state_file_path() {
 # Note:
 #   Requires get_peer_state_file_path function to be available.
 #   Automatically sources it if not already loaded.
+# Note: This function is now provided by helpers/state.bash
+# It is kept here for backward compatibility.
 create_corrupted_state_file() {
 	local location="${1:-}"
 	local peer_ip="${2:-${TEST_PEER_IP}}"
@@ -3908,6 +3960,8 @@ create_corrupted_state_file() {
 #   Requires get_peer_state_file_path function to be available.
 #   Automatically sources it if not already loaded.
 #   The trap is set up automatically and will restore permissions even if test fails.
+# Note: This function is now provided by helpers/state.bash
+# It is kept here for backward compatibility.
 setup_readonly_state_file() {
 	local location="${1:-}"
 	local peer_ip="${2:-${TEST_PEER_IP}}"
@@ -3919,15 +3973,34 @@ setup_readonly_state_file() {
 	local state_file
 	state_file=$(get_state_file_path "$location" "$peer_ip" "$key") || return 1
 
-	# Create file with initial value
-	echo "$initial_value" >"$state_file"
+	# Ensure parent directory exists
+	local parent_dir
+	parent_dir=$(dirname "$state_file")
+	mkdir -p "$parent_dir" || return 1
 
-	# Save original permissions
+	# Remove existing file if it exists to ensure clean state
+	rm -f "$state_file"
+
+	# Create file with initial value and set permissions in one step using install
+	# This ensures the file is created with the correct permissions from the start
+	printf '%s' "$initial_value" | install -m "$readonly_perms" /dev/stdin "$state_file" || {
+		# Fallback to echo + chmod if install fails
+		echo "$initial_value" >"$state_file" || return 1
+		chmod "$readonly_perms" "$state_file" || {
+			echo "Failed to set permissions on $state_file" >&2
+			return 1
+		}
+	}
+
+	# Verify file was created
+	[[ -f "$state_file" ]] || {
+		echo "Failed to create file: $state_file" >&2
+		return 1
+	}
+
+	# Save original permissions for restoration
 	local original_perms
 	original_perms=$(save_permissions_for_restore "$state_file")
-
-	# Set read-only permissions
-	chmod "$readonly_perms" "$state_file"
 
 	# Set up trap to restore permissions on EXIT
 	# Use actual path value, not variable, since trap executes after function returns
@@ -3936,3 +4009,13 @@ setup_readonly_state_file() {
 	# Return the path for use in tests
 	echo "$state_file"
 }
+
+# Source helper modules for backward compatibility
+# These modules provide the functions defined above, but loading them here
+# ensures they're available when test_helper is loaded.
+# shellcheck source=helpers/state.bash
+source "${BATS_TEST_DIRNAME}/helpers/state.bash" 2>/dev/null || true
+# shellcheck source=helpers/assertions.bash
+source "${BATS_TEST_DIRNAME}/helpers/assertions.bash" 2>/dev/null || true
+# shellcheck source=helpers/fixtures.bash
+source "${BATS_TEST_DIRNAME}/helpers/fixtures.bash" 2>/dev/null || true

@@ -10,6 +10,7 @@
 # - Multiple recovery actions triggered simultaneously (should be prevented by lockfile, but verify)
 
 load test_helper
+load helpers/test_data
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -70,6 +71,9 @@ load fixtures/vpn_at_tier
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file_path="${LOG_FILE:-${TEST_DIR}/logs/vpn-monitor.log}"
 	local recovery_started_flag="${TEST_DIR}/recovery_started"
+	# Generate xfrm state output using test data helper
+	local xfrm_state_output
+	xfrm_state_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'MOCK_IP_EOF'
 #!/bin/bash
@@ -94,30 +98,12 @@ elif [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
         # Mark that recovery has started (for efficiency, avoid repeated log reads)
         touch "MOCK_RECOVERY_STARTED_FLAG" 2>/dev/null || true
         # Recovery phase: return SAs so they can be deleted
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    replay-window 0"
-        echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
-        echo "    enc cbc(aes) 0x1234567890abcdef"
-        echo "    lifetime current: 1000 bytes, 10 packets"
-        echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
-        echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
-        echo "    current use: 1"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        cat "MOCK_XFRM_STATE_OUTPUT"
         exit 0
     elif [[ -f "MOCK_RECOVERY_STARTED_FLAG" ]]; then
         # Recovery has started (flag file exists), return SAs
         # This avoids repeated log file reads for better performance
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    replay-window 0"
-        echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
-        echo "    enc cbc(aes) 0x1234567890abcdef"
-        echo "    lifetime current: 1000 bytes, 10 packets"
-        echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
-        echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
-        echo "    current use: 1"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        cat "MOCK_XFRM_STATE_OUTPUT"
         exit 0
     else
         # Initial checks: return empty (VPN down, triggers recovery)
@@ -138,30 +124,12 @@ elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
         # Mark that recovery has started (for efficiency, avoid repeated log reads)
         touch "MOCK_RECOVERY_STARTED_FLAG" 2>/dev/null || true
         # Recovery phase: return SAs so they can be deleted
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    replay-window 0"
-        echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
-        echo "    enc cbc(aes) 0x1234567890abcdef"
-        echo "    lifetime current: 1000 bytes, 10 packets"
-        echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
-        echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
-        echo "    current use: 1"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        cat "MOCK_XFRM_STATE_OUTPUT"
         exit 0
     elif [[ -f "MOCK_RECOVERY_STARTED_FLAG" ]]; then
         # Recovery has started (flag file exists), return SAs
         # This avoids repeated log file reads for better performance
-        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-        echo "    replay-window 0"
-        echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
-        echo "    enc cbc(aes) 0x1234567890abcdef"
-        echo "    lifetime current: 1000 bytes, 10 packets"
-        echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
-        echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
-        echo "    current use: 1"
-        echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+        cat "MOCK_XFRM_STATE_OUTPUT"
         exit 0
     else
         # Initial checks: return empty (VPN down, triggers recovery)
@@ -171,10 +139,14 @@ fi
 # Handle other ip commands
 exec /usr/bin/ip "$@"
 MOCK_IP_EOF
+	# Create temporary file with xfrm state output
+	local xfrm_state_file="${TEST_DIR}/xfrm_state_output"
+	echo "$xfrm_state_output" >"$xfrm_state_file"
 	# Replace placeholders with actual paths
 	sed -i "s|MOCK_SAS_DELETED_FILE|${TEST_DIR}/sas_deleted|g" "$mock_ip"
 	sed -i "s|MOCK_LOG_FILE_PATH|${log_file_path}|g" "$mock_ip"
 	sed -i "s|MOCK_RECOVERY_STARTED_FLAG|${recovery_started_flag}|g" "$mock_ip"
+	sed -i "s|MOCK_XFRM_STATE_OUTPUT|${xfrm_state_file}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
@@ -219,36 +191,23 @@ MOCK_IP_EOF
 	set_peer_state "TEST1" "${TEST_PEER_IP}" "last_bytes" "0" || true
 	# Note: get_xfrm_state_for_peer tries "ip -s xfrm state" first, then falls back to "ip xfrm state"
 	# Use higher byte count (2000) to ensure bytes are increasing from any previous state
+	# Generate xfrm state output using test data helper
+	local xfrm_state_output
+	xfrm_state_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 2000 20)
+	local xfrm_state_file="${TEST_DIR}/xfrm_state_output_2"
+	echo "$xfrm_state_output" >"$xfrm_state_file"
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
 if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     # Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
     # Return healthy VPN with complete SA format and increasing byte counters
-    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    replay-window 0"
-    echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
-    echo "    enc cbc(aes) 0x1234567890abcdef"
-    echo "    lifetime current: 2000 bytes, 20 packets"
-    echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
-    echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
-    echo "    current use: 1"
-    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    cat "${xfrm_state_file}"
     exit 0
 elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     # Handle "ip xfrm state" (without statistics flag) - fallback
     # Return healthy VPN with complete SA format and increasing byte counters
-    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    replay-window 0"
-    echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
-    echo "    enc cbc(aes) 0x1234567890abcdef"
-    echo "    lifetime current: 2000 bytes, 20 packets"
-    echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
-    echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
-    echo "    current use: 1"
-    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    cat "${xfrm_state_file}"
     exit 0
 fi
 exec /usr/bin/ip "\$@"

@@ -5,6 +5,7 @@
 # and DEBUG level logging behavior
 
 load test_helper
+load helpers/detection
 
 # Source the detection library functions
 # shellcheck source=../lib/detection.sh
@@ -21,41 +22,6 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 # ============================================================================
 # PING SUMMARY LOGGING TESTS
 # ============================================================================
-
-# Setup test environment with state directory
-#
-# Initializes test directories and environment variables for ping summary tests.
-#
-# Arguments:
-#   None
-#
-# Returns:
-#   0: Always succeeds
-setup_ping_summary_test() {
-	STATE_DIR="${TEST_DIR}/state"
-	LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${STATE_DIR}"
-	mkdir -p "${LOGS_DIR}"
-	export STATE_DIR LOGS_DIR
-	export LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
-	export PING_SUMMARY_INTERVAL_MINUTES="${PING_SUMMARY_INTERVAL_MINUTES:-7}"
-	# SECONDS_PER_MINUTE is already defined as readonly in constants.sh (sourced by detection.sh)
-	export DEBUG="${DEBUG:-0}"
-}
-
-# Helper to set up mock timestamp using existing mock_date function
-# This uses the standard mock_date from test_helper.bash
-#
-# Arguments:
-#   $1: Timestamp value to mock
-#
-# Returns:
-#   0: Always succeeds
-setup_mock_timestamp() {
-	local timestamp="$1"
-	mock_date "$timestamp" 0
-	add_mock_to_path
-}
 
 # bats test_tags=category:unit
 @test "log_ping_summary_if_due - logs summary when interval elapsed" {

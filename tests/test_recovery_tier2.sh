@@ -4,6 +4,7 @@
 # Tests critical paths and error handling scenarios for Tier 2 recovery
 
 load test_helper
+load helpers/test_data
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -121,6 +122,14 @@ exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
 
+	# Generate ipsec status output using test data helpers
+	local ipsec_status_output
+	ipsec_status_output=$(generate_ipsec_status_output "libreswan" "test-conn" "${TEST_PEER_IP}" "${TEST_LOCAL_IP}")
+	# Also include peer IP on separate line for grep matching
+	ipsec_status_output="${ipsec_status_output}"$'\n'"${TEST_PEER_IP}"
+	local ipsec_status_file="${TEST_DIR}/ipsec_status_output"
+	echo "$ipsec_status_output" >"$ipsec_status_file"
+
 	# Mock ipsec - reload fails, restart succeeds (tests fallback)
 	# Track recovery state: ipsec status returns empty initially (VPN down), peer IP after recovery
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -145,13 +154,13 @@ if [[ "\$1" == "status" ]]; then
         exit 0
     else
         # VPN healthy after recovery - return status with peer IP for verification
-        # Use format that includes the peer IP clearly
-        echo "test-conn: ESTABLISHED 1 hour ago, ${TEST_PEER_IP}...${TEST_LOCAL_IP}"
-        echo "${TEST_PEER_IP}"  # Also include peer IP on separate line for grep matching
+        cat "MOCK_IPSEC_STATUS_OUTPUT"
         exit 0
     fi
 fi
 EOF
+	# Replace placeholder with actual file path
+	sed -i "s|MOCK_IPSEC_STATUS_OUTPUT|${ipsec_status_file}|g" "$mock_ipsec"
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
@@ -442,6 +451,14 @@ EOF
 	local original_path="${PATH}"
 
 	# Create mock system directory in test directory (safer than modifying /usr/sbin)
+	# Generate ipsec status output using test data helpers
+	local ipsec_status_output
+	ipsec_status_output=$(generate_ipsec_status_output "libreswan" "test-conn" "${TEST_PEER_IP}" "${TEST_PEER_IP2}")
+	# Format with "Connections:" header
+	ipsec_status_output="Connections:"$'\n'"  ${ipsec_status_output}"
+	local ipsec_status_file="${TEST_DIR}/ipsec_status_output_path_test"
+	echo "$ipsec_status_output" >"$ipsec_status_file"
+
 	local mock_system_dir="${TEST_DIR}/usr/sbin"
 	mkdir -p "$mock_system_dir"
 	local mock_ipsec="${mock_system_dir}/ipsec"
@@ -452,12 +469,13 @@ if [[ "$1" == "reload" ]]; then
     exit 0
 fi
 if [[ "$1" == "status" ]]; then
-    echo "Connections:"
-    echo "  test-conn: ESTABLISHED 1 hour ago, ${TEST_PEER_IP}...${TEST_PEER_IP2}"
+    cat "MOCK_IPSEC_STATUS_OUTPUT"
     exit 0
 fi
 exit 1
 EOF
+	# Replace placeholder with actual file path
+	sed -i "s|MOCK_IPSEC_STATUS_OUTPUT|${ipsec_status_file}|g" "$mock_ipsec"
 	chmod +x "$mock_ipsec"
 
 	# Restrict PATH to exclude system directories (simulating cron/systemd environment)

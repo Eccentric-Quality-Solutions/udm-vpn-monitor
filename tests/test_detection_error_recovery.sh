@@ -9,6 +9,7 @@
 # - State Management Integration: state file corruption, write failures, read failures
 
 load test_helper
+load helpers/test_data
 
 # ============================================================================
 # ERROR RECOVERY PATHS TESTS
@@ -218,6 +219,7 @@ EOF
 	assert_failure
 
 	# Test with empty SPI (should fail validation)
+	# Note: location_name is required, so we use the provided location_name
 	run detect_sa_rekey "" "$peer_ip" "$location_name"
 	assert_failure
 
@@ -800,6 +802,110 @@ EOF
 	[[ "$diagnostic" == *"ping check disabled"* ]] || fail "Diagnostic should mention ping check status"
 }
 
+# bats test_tags=category:high-risk,priority:medium
+@test "XFRM output reuse optimization - ip xfrm state called once per VPN check cycle" {
+	# Purpose: Test verifies that ip xfrm state is only called once per VPN check cycle when
+	#          check_vpn_status() → detect_failure_type() flow executes
+	# Expected: ip xfrm state is called once (from check_xfrm_primary), and xfrm_output is
+	#           passed through determine_vpn_status() → detect_failure_type() to avoid duplicate call
+	# Importance: Verifies optimization works correctly and prevents regression
+	# Note: Optimization implemented to reduce ip xfrm state calls from 2 to 1 per cycle
+	setup_test_environment "${TEST_DIR}"
+	local peer_ip="${TEST_PEER_IP}"
+	local internal_ip="${TEST_PEER_IP2}"
+	local location_name="TEST"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+
+	# Set up logging
+	export LOG_FILE="$log_file"
+	mkdir -p "$(dirname "$log_file")"
+
+	# Mock ip command that counts xfrm state calls
+	# Track both "ip -s xfrm state" and "ip xfrm state" variants
+	# Note: get_xfrm_state_for_peer() tries "ip -s xfrm state" first, then falls back to "ip xfrm state" if needed
+	# The optimization means get_xfrm_state_for_peer() should only be called once (from check_xfrm_primary),
+	# not again from detect_failure_type()
+	local call_count_file="${TEST_DIR}/xfrm_call_count"
+	echo "0" >"$call_count_file"
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Increment call count
+    count=\$(cat "$call_count_file" 2>/dev/null || echo "0")
+    count=\$((count + 1))
+    echo "\$count" > "$call_count_file"
+    # Return SA with byte counter info (same value as last_bytes to trigger "bytes not increasing")
+    echo "src ${peer_ip} dst ${peer_ip}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: 1000 bytes, 10 packets"
+    exit 0
+fi
+# Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
+# This should NOT be called if ip -s xfrm state succeeds
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Increment call count
+    count=\$(cat "$call_count_file" 2>/dev/null || echo "0")
+    count=\$((count + 1))
+    echo "\$count" > "$call_count_file"
+    # Return SA with byte counter info
+    echo "src ${peer_ip} dst ${peer_ip}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: 1000 bytes, 10 packets"
+    exit 0
+fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# Mock ipsec command - ipsec check fails (no connection found)
+	mock_ipsec_status 1
+	add_mock_to_path
+
+	# Initialize state with last_bytes set to same value (bytes not increasing)
+	# This will cause xfrm check to find SA but validation fails (bytes not increasing)
+	# xfrm_output will be captured, but VPN check will fail, triggering failure type detection
+	source_function "set_peer_state"
+	set_peer_state "$location_name" "$peer_ip" "failure_count" "0"
+	set_peer_state "$location_name" "$peer_ip" "last_bytes" "1000"
+
+	# Disable ping check to ensure we test the xfrm path (not ping path)
+	# When bytes not increasing and ping disabled, xfrm check fails and triggers failure type detection
+	export ENABLE_PING_CHECK=0
+
+	# Source required functions
+	source_function "check_vpn_status"
+
+	# Call check_vpn_status - should fail (bytes not increasing)
+	# Flow: check_xfrm_primary() → captures xfrm_output (SA exists, but bytes not increasing)
+	#       → xfrm check fails → determine_vpn_status() called with vpn_ok=0 and xfrm_output
+	#       → detect_failure_type() called with xfrm_output (should NOT call get_xfrm_state_for_peer again)
+	run check_vpn_status "$peer_ip" "$internal_ip" "$location_name"
+	assert_failure
+
+	# Verify ip xfrm state was called at most twice (from check_xfrm_primary via get_xfrm_state_for_peer)
+	# get_xfrm_state_for_peer() calls execute_xfrm_state_command() which tries "ip -s xfrm state" first,
+	# then falls back to "ip xfrm state" if needed. So we might see 1-2 calls from a single get_xfrm_state_for_peer() invocation.
+	# The optimization means get_xfrm_state_for_peer() should only be called once (from check_xfrm_primary),
+	# not again from detect_failure_type(). So we should see at most 2 calls total (both variants from one invocation).
+	# If detect_failure_type() called get_xfrm_state_for_peer() again, we'd see 3+ calls.
+	local call_count
+	call_count=$(cat "$call_count_file" 2>/dev/null || echo "0")
+	# Should be at most 2 calls (ip -s xfrm state and possibly ip xfrm state fallback from one get_xfrm_state_for_peer() call)
+	# If detect_failure_type() called get_xfrm_state_for_peer() again, we'd see 3+ calls
+	[ "$call_count" -le 2 ] || fail "ip xfrm state should be called at most twice per VPN check cycle (from check_xfrm_primary via get_xfrm_state_for_peer, not again from detect_failure_type). Found $call_count calls"
+
+	# Verify failure type was detected (confirms detect_failure_type was called)
+	assert_file_exist "$log_file"
+	# Should have detected failure type (not "unknown" - should be "routing_issue" or similar)
+	assert_file_contains "$log_file" "failure type" || assert_file_contains "$log_file" "Failure type"
+
+	remove_mock_from_path
+}
+
 # bats test_tags=category:detection,priority:medium
 @test "check_vpn_status combined diagnostic includes detailed byte counter validation reason" {
 	# Purpose: Test verifies that combined diagnostic messages include detailed byte counter validation failure reasons
@@ -817,22 +923,24 @@ EOF
 	mkdir -p "$(dirname "$log_file")"
 
 	# Mock ip command - xfrm check finds SA with byte counters
-	# Return xfrm output with SA and byte counter info
+	# Generate xfrm output using test data helpers
+	local xfrm_output
+	xfrm_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
+	local xfrm_output_file="${TEST_DIR}/xfrm_output"
+	echo "$xfrm_output" >"$xfrm_output_file"
+
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'EOF'
 #!/bin/bash
 if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
     # Return xfrm output with SA and byte counter info
-    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime config: 1000000 bytes, 1000 packets"
-    echo "    lifetime current:"
-    echo "      1000(bytes), 10(packets)"
-    echo "      add 2026-01-03 12:19:25 use 2026-01-03 12:19:34"
+    cat "MOCK_XFRM_OUTPUT"
     exit 0
 fi
 exec /usr/bin/ip "$@"
 EOF
+	# Replace placeholder with actual file path
+	sed -i "s|MOCK_XFRM_OUTPUT|${xfrm_output_file}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 
 	# Mock ipsec command - ipsec check fails (no connection found)

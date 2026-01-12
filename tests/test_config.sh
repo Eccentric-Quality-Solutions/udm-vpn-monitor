@@ -5,6 +5,7 @@
 
 load test_helper
 load fixtures/vpn_active
+load helpers/test_data
 
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
@@ -53,10 +54,8 @@ EOF
 	# Importance: Permission issues can occur from incorrect file ownership or chmod operations; script must handle gracefully.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-EOF
+	# Use test data generator to create minimal config
+	generate_config_file "minimal" "$config_file" "${TEST_PEER_IP}"
 
 	# Make config file unreadable
 	chmod 000 "$config_file"
@@ -120,11 +119,8 @@ EOF
 	# Importance: Ensures log file paths work correctly when custom LOG_FILE paths are specified.
 	# Test Category: Configuration path handling
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-LOG_FILE="/tmp/custom-logs/vpn-monitor.log"
-EOF
+	# Use test data generator to create config with custom log file
+	generate_config_file "custom_log" "$config_file" "${TEST_PEER_IP}" "/tmp/custom-logs/vpn-monitor.log"
 
 	mkdir -p "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
@@ -1471,6 +1467,8 @@ LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 VPN_NAME="Custom VPN Name"
 TIER1_THRESHOLD=5
+TIER2_THRESHOLD=7
+TIER3_THRESHOLD=9
 ENABLE_PING_CHECK=0
 EOF
 
@@ -1625,10 +1623,11 @@ EOF
 # ============================================================================
 
 # bats test_tags=category:high-risk,priority:high
-@test "Missing required variable in fake mode - should exit with code 0" {
-	# Purpose: Test verifies that missing required variables cause script to exit with code 0 in fake mode.
-	# Expected: Script detects missing required variable and exits gracefully with code 0 in fake mode.
-	# Importance: Fake mode should not cause test failures, allowing tests to verify error handling.
+@test "Missing required variable in fake mode - should exit with code 3" {
+	# Purpose: Test verifies that missing required variables cause script to exit with error code 3 in fake mode.
+	# Expected: Script detects missing required variable and exits with error code 3 (EXIT_VALIDATION_ERROR) in fake mode.
+	# Importance: Validation errors are execution-blocking (Category 1 errors per FAKE_MODE_EXIT_BEHAVIOR.md),
+	# so they should exit with error code even in fake mode to allow tests to assert failure.
 	# Test Category: Error handling, Fake mode vs normal mode
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Create config file without LOCATION_*_EXTERNAL (required, no default in schema)
@@ -1646,9 +1645,11 @@ EOF
 
 	add_mock_to_path
 
-	# Run in fake mode - should exit with code 0
+	# Run in fake mode - should exit with error code 3 (validation errors are Category 1)
 	run bash "$test_script" --fake
-	assert_success
+	assert_failure
+	assert_output --partial "No location-based configuration found"
+	assert_output --partial "Failed to parse location-based configuration"
 
 	# Should log error about missing required variable
 	assert_file_exist "$log_file"
@@ -1757,10 +1758,11 @@ EOF
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "Invalid variable value in fake mode - should exit with code 0" {
-	# Purpose: Test verifies that invalid variable values cause script to exit with code 0 in fake mode.
-	# Expected: Script detects invalid value and exits gracefully with code 0 in fake mode.
-	# Importance: Fake mode should not cause test failures, allowing tests to verify error handling.
+@test "Invalid variable value in fake mode - should exit with code 3" {
+	# Purpose: Test verifies that invalid variable values cause script to exit with error code 3 in fake mode.
+	# Expected: Script detects invalid value and exits with error code 3 (EXIT_VALIDATION_ERROR) in fake mode.
+	# Importance: Validation errors are execution-blocking (Category 1 errors per FAKE_MODE_EXIT_BEHAVIOR.md),
+	# so they should exit with error code even in fake mode to allow tests to assert failure.
 	# Test Category: Error handling, Fake mode vs normal mode
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<EOF
@@ -1780,9 +1782,11 @@ EOF
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
-	# Run in fake mode - should exit with code 0
+	# Run in fake mode - should exit with error code 3 (validation errors are Category 1)
 	run bash "$test_script" --fake
-	assert_success
+	assert_failure
+	assert_output --partial "COOLDOWN_MINUTES must be an integer"
+	assert_output --partial "Configuration validation failed"
 
 	# Should log error about invalid value
 	# COOLDOWN_MINUTES is required with min:1, so -1 should fail validation
@@ -1925,6 +1929,12 @@ EOF
 	local state_dir="${TEST_DIR}"
 
 	# Create mock ip command that handles route checks and additions
+	# Generate xfrm state output using test data helper
+	local test_peer_ip="192.168.1.1"
+	local xfrm_state_output
+	xfrm_state_output=$(generate_xfrm_state_output "healthy" "$test_peer_ip" "0x12345678" 1000 10)
+	local xfrm_state_file="${TEST_DIR}/xfrm_state_output_config"
+	echo "$xfrm_state_output" >"$xfrm_state_file"
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'EOF'
 #!/bin/bash
@@ -1937,14 +1947,14 @@ elif [[ "$1" == "addr" ]] && [[ "$2" == "add" ]]; then
 fi
 # Handle xfrm for other tests
 if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src 192.168.1.1 dst 192.168.1.1"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 1000 bytes, 10 packets"
+    cat "MOCK_XFRM_STATE_OUTPUT"
     exit 0
 fi
 # Fallback to real ip for other commands
 exec /usr/bin/ip "$@"
 EOF
+	# Replace placeholder with actual xfrm state file path
+	sed -i "s|MOCK_XFRM_STATE_OUTPUT|${xfrm_state_file}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 	add_mock_to_path
 

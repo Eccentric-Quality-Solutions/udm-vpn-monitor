@@ -310,3 +310,125 @@ EOF
 
 	remove_mock_from_path
 }
+
+# ============================================================================
+# NETWORK PARTITION STATE MANAGEMENT - Previously Untested Critical Paths (P1)
+# Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
+# ============================================================================
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "network partition state transitions (healthy -> partitioned -> healthy)" {
+	# Purpose: Test verifies that network partition state transitions are handled correctly
+	# Expected: State transitions from healthy to partitioned and back to healthy are tracked correctly
+	# Importance: State transitions must be tracked to prevent unnecessary recovery actions
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+
+	# Source state and detection functions
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" || true
+	# shellcheck source=../lib/detection.sh
+	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+
+	# Set up state directory
+	export STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR="${TEST_DIR}/logs"
+
+	# Test 1: Initially healthy (state should be 0)
+	local partition_state
+	partition_state=$(get_network_partition_state)
+	assert_equal "$partition_state" 0
+
+	# Test 2: Simulate partition (set state to 1)
+	set_network_partition_state 1
+	partition_state=$(get_network_partition_state)
+	assert_equal "$partition_state" 1
+
+	# Test 3: Simulate recovery (set state back to 0)
+	set_network_partition_state 0
+	partition_state=$(get_network_partition_state)
+	assert_equal "$partition_state" 0
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "network partition detected but state file write fails" {
+	# Purpose: Test verifies that script handles network partition state file write failures gracefully
+	# Expected: Script detects write failure, logs error, handles gracefully without crashing
+	# Importance: State file write failures should not crash script; errors should be logged
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"ENABLE_NETWORK_PARTITION_CHECK=1"
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}/state"
+
+	# Create test version of script first (before making directory read-only)
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	# Make state directory read-only to prevent state file writes
+	mkdir -p "$state_dir"
+	chmod 555 "$state_dir" 2>/dev/null || true
+
+	# Mock ip command - default route missing (network partitioned)
+	mock_ip_route "0" "" # No default route
+	add_mock_to_path
+
+	# Run script - should handle state file write failure gracefully
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	# Should succeed (errors are logged but don't crash script)
+	assert_success
+
+	# Restore permissions
+	chmod 755 "$state_dir" 2>/dev/null || true
+
+	# Should have logged error about state file write failure
+	assert_file_exist "$log_file"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "get_network_partition_state fails - returns 0 as default" {
+	# Purpose: Test verifies that get_network_partition_state() returns 0 (healthy) as default when it fails
+	# Expected: Function returns 0 when state file doesn't exist or cannot be read
+	# Importance: Default to healthy state prevents false partition detection when state is unavailable
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+
+	# Source state functions
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" || true
+
+	# Set up state directory
+	export STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR="${TEST_DIR}/logs"
+
+	# Test when state file doesn't exist - should return 0 (healthy) as default
+	local partition_state
+	partition_state=$(get_network_partition_state)
+	assert_equal "$partition_state" 0
+
+	# Test when state file is unreadable - should return 0 (healthy) as default
+	local partition_file
+	partition_file=$(get_network_partition_state_file)
+	mkdir -p "$(dirname "$partition_file")"
+	echo "1" >"$partition_file"
+	chmod 000 "$partition_file" 2>/dev/null || true
+
+	partition_state=$(get_network_partition_state)
+	# Should return 0 (healthy) as default when file is unreadable
+	assert_equal "$partition_state" 0
+
+	# Restore permissions for cleanup
+	chmod 644 "$partition_file" 2>/dev/null || true
+
+	remove_mock_from_path
+}

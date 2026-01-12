@@ -5,14 +5,7 @@
 #
 
 load test_helper
-
-# Source logging functions directly for unit testing
-source_logging_functions() {
-	# shellcheck source=../lib/common.sh
-	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
-	# shellcheck source=../lib/logging.sh
-	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
-}
+load helpers/logging
 
 # bats test_tags=category:unit,priority:high
 @test "log_message with SYSTEM prefix formats correctly" {

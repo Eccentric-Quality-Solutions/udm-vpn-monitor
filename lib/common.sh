@@ -811,6 +811,16 @@ safe_set_variable() {
 #   Uses command -v to check command availability (POSIX compliant)
 #   Falls back to trying to execute command with --help/--version flags if command -v fails
 #   This function can be used for both required and optional commands
+#
+# When to use check_command_available() vs check_command_or_warn():
+#   - Use check_command_available() for:
+#     * Optional commands that enhance functionality but aren't critical (e.g., readlink, ping6)
+#     * Commands where you handle the missing case gracefully without logging
+#     * Early initialization code where logging may not be set up yet
+#   - Use check_command_or_warn() for:
+#     * Required commands that are critical for functionality (e.g., ip, ipsec, ping)
+#     * Commands where missing should be logged as a warning to help with debugging
+#     * When you want standardized warning messages across the codebase
 check_command_available() {
 	local cmd="$1"
 
@@ -948,6 +958,16 @@ get_command_path() {
 #   Requires handle_error() function to be available (from logging.sh)
 #   Use check_command_available() if you need silent checks without logging
 #   This function standardizes error messages across the codebase
+#
+# When to use check_command_or_warn() vs check_command_available():
+#   - Use check_command_or_warn() for:
+#     * Required commands that are critical for functionality (e.g., ip, ipsec, ping)
+#     * Commands where missing should be logged as a warning to help with debugging
+#     * When you want standardized warning messages across the codebase
+#   - Use check_command_available() for:
+#     * Optional commands that enhance functionality but aren't critical (e.g., readlink, ping6)
+#     * Commands where you handle the missing case gracefully without logging
+#     * Early initialization code where logging may not be set up yet
 check_command_or_warn() {
 	local cmd="$1"
 	local context="${2:-}"

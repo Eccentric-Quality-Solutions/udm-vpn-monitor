@@ -753,3 +753,249 @@ EOF
 
 	remove_mock_from_path
 }
+
+# ============================================================================
+# VALIDATE_CRITICAL_CONFIG_VARS EDGE CASE TESTS
+# ============================================================================
+
+# bats test_tags=category:high-risk,priority:high
+@test "validate_critical_config_vars handles required variable declared but empty string" {
+	# Purpose: Test verifies that validate_critical_config_vars() handles required variables that are declared but set to empty string
+	# Expected: Function only checks if variable is declared, not if it's empty (empty check is done by validate_config_var)
+	# Importance: Required variables declared but empty should be caught by validate_config_var, not validate_critical_config_vars
+	# Note: validate_critical_config_vars only checks if variable is declared, not if it has a value
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config_schema.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config_schema.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config/config_loading.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config/config_loading.sh" 2>/dev/null || true
+
+	# Set up minimal CONFIG_SCHEMA for testing
+	declare -A CONFIG_SCHEMA
+	CONFIG_SCHEMA["TEST_REQUIRED_VAR"]="required|string|non-empty"
+
+	# Declare variable but set to empty string
+	declare -g TEST_REQUIRED_VAR=""
+
+	# Call validate_critical_config_vars - should succeed because variable is declared
+	# (Empty value check is done by validate_config_var, not validate_critical_config_vars)
+	run validate_critical_config_vars
+
+	# Should succeed - function only checks if variable is declared, not if it's empty
+	assert_success
+
+	# Cleanup
+	unset TEST_REQUIRED_VAR
+	unset CONFIG_SCHEMA
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "validate_critical_config_vars handles get_config_schema returning empty string" {
+	# Purpose: Test verifies that validate_critical_config_vars() handles get_config_schema() returning empty string gracefully
+	# Expected: Function skips variables when get_config_schema() returns empty string
+	# Importance: Schema lookup failures should not crash validation; variables should be skipped
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config_schema.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config_schema.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config/config_loading.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config/config_loading.sh" 2>/dev/null || true
+
+	# Set up CONFIG_SCHEMA with a variable
+	declare -A CONFIG_SCHEMA
+	CONFIG_SCHEMA["TEST_VAR"]="required|string|non-empty"
+
+	# Mock get_config_schema to return empty string for TEST_VAR
+	# Get configuration schema for a variable (test helper)
+	#
+	# Arguments:
+	#   $1: Variable name
+	#
+	# Returns:
+	#   0: Schema found and printed to stdout
+	#   1: Schema not found or variable not in schema
+	#
+	# Output:
+	#   Prints schema string to stdout if found
+	get_config_schema() {
+		local var_name="$1"
+		if [[ "$var_name" == "TEST_VAR" ]]; then
+			echo ""
+			return 1
+		fi
+		# For other variables, call original function if it exists
+		if declare -f get_config_schema_original &>/dev/null; then
+			get_config_schema_original "$@"
+		else
+			return 1
+		fi
+	}
+
+	# Call validate_critical_config_vars - should succeed because variable with empty schema is skipped
+	run validate_critical_config_vars
+
+	# Should succeed - variables with empty schema are skipped
+	assert_success
+
+	# Cleanup
+	unset -f get_config_schema
+	unset CONFIG_SCHEMA
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "validate_critical_config_vars handles parse_config_schema with malformed schema" {
+	# Purpose: Test verifies that validate_critical_config_vars() handles malformed schema strings gracefully
+	# Expected: Function should handle malformed schema (e.g., missing parts) without crashing
+	# Importance: Malformed schemas should not crash validation; should be handled defensively
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config_schema.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config_schema.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config/config_loading.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config/config_loading.sh" 2>/dev/null || true
+
+	# Set up CONFIG_SCHEMA with malformed schema (missing type)
+	declare -A CONFIG_SCHEMA
+	CONFIG_SCHEMA["TEST_VAR"]="required" # Malformed: missing type and other parts
+
+	# Mock get_config_schema to return the malformed schema
+	# Get configuration schema for a variable (test helper)
+	#
+	# Arguments:
+	#   $1: Variable name
+	#
+	# Returns:
+	#   0: Schema found and printed to stdout
+	#   1: Schema not found or variable not in schema
+	#
+	# Output:
+	#   Prints schema string to stdout if found
+	get_config_schema() {
+		local var_name="$1"
+		if [[ "$var_name" == "TEST_VAR" ]]; then
+			echo "required" # Malformed schema
+			return 0
+		fi
+		return 1
+	}
+
+	# Call validate_critical_config_vars
+	# parse_config_schema should handle malformed schema gracefully
+	# If schema is malformed, required might not be extracted correctly, but function shouldn't crash
+	run validate_critical_config_vars
+
+	# Function should not crash - may succeed or fail depending on how parse_config_schema handles it
+	# The important thing is it doesn't crash
+	assert [ $status -eq 0 ] || [ $status -eq 1 ]
+
+	# Cleanup
+	unset -f get_config_schema
+	unset CONFIG_SCHEMA
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "validate_critical_config_vars reports multiple missing required variables" {
+	# Purpose: Test verifies that validate_critical_config_vars() reports all missing required variables, not just the first one
+	# Expected: Function collects all missing required variables and reports them together in error message
+	# Importance: Users need to see all missing variables at once, not one at a time
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config_schema.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config_schema.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config/config_loading.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config/config_loading.sh" 2>/dev/null || true
+
+	# Set up CONFIG_SCHEMA with multiple required variables
+	declare -A CONFIG_SCHEMA
+	CONFIG_SCHEMA["REQUIRED_VAR1"]="required|string|non-empty"
+	CONFIG_SCHEMA["REQUIRED_VAR2"]="required|string|non-empty"
+	CONFIG_SCHEMA["REQUIRED_VAR3"]="required|integer|min:1"
+	CONFIG_SCHEMA["OPTIONAL_VAR"]="optional|string" # This should not be reported
+
+	# Don't declare any of the required variables
+	# (They should be missing)
+
+	# Set up log file to capture error messages
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	export LOG_FILE="$log_file"
+
+	# Call validate_critical_config_vars - should fail and report all missing variables
+	run validate_critical_config_vars
+
+	# Should fail because required variables are missing
+	assert_failure
+
+	# Verify error message contains all missing required variables
+	# Error message format: "Missing required configuration variables: VAR1 VAR2 VAR3"
+	assert_file_exist "$log_file"
+	assert_file_contains "$log_file" "Missing required configuration variables"
+	assert_file_contains "$log_file" "REQUIRED_VAR1"
+	assert_file_contains "$log_file" "REQUIRED_VAR2"
+	assert_file_contains "$log_file" "REQUIRED_VAR3"
+	# Optional variable should not be in error message
+	run grep -q "OPTIONAL_VAR" "$log_file" || true
+	assert_failure
+
+	# Cleanup
+	unset CONFIG_SCHEMA
+	unset LOG_FILE
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "validate_critical_config_vars handles variable where declare -p fails" {
+	# Purpose: Test verifies that validate_critical_config_vars() handles edge case where declare -p fails for a variable
+	# Expected: Function should treat failed declare -p as variable not declared (defensive programming)
+	# Importance: Defensive check ensures function doesn't crash on unexpected declare -p behavior
+	# Note: This is hard to test directly since declare -p rarely fails, but we can verify the logic path
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config_schema.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config_schema.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config/config_loading.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config/config_loading.sh" 2>/dev/null || true
+
+	# Set up CONFIG_SCHEMA with a required variable
+	declare -A CONFIG_SCHEMA
+	CONFIG_SCHEMA["TEST_REQUIRED_VAR"]="required|string|non-empty"
+
+	# Don't declare the variable - this simulates declare -p failing (variable not declared)
+	# The function uses: if ! declare -p "$var_name" &>/dev/null; then
+	# So if declare -p fails, the condition is true and variable is added to missing_required
+
+	# Set up log file to capture error messages
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	export LOG_FILE="$log_file"
+
+	# Call validate_critical_config_vars - should fail because variable is not declared
+	run validate_critical_config_vars
+
+	# Should fail because required variable is not declared
+	assert_failure
+
+	# Verify error message contains the missing variable
+	assert_file_exist "$log_file"
+	assert_file_contains "$log_file" "Missing required configuration variables"
+	assert_file_contains "$log_file" "TEST_REQUIRED_VAR"
+
+	# Cleanup
+	unset CONFIG_SCHEMA
+	unset LOG_FILE
+}

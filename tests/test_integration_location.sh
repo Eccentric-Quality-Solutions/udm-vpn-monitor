@@ -5,6 +5,7 @@
 # location-based config, and recovery actions with location-based state files
 
 load test_helper
+load helpers/test_data
 load fixtures/vpn_active
 load fixtures/vpn_down
 
@@ -28,6 +29,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		'ENABLE_PING_CHECK=0' \
 		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
+	# Generate xfrm state output for NYC location (bidirectional SAs)
+	# Note: This is a special case with different src/dst IPs, so we generate it manually
+	# but using the helper function format as a base
+	local xfrm_state_nyc
+	xfrm_state_nyc="src ${TEST_PEER_IP} dst 203.0.113.1"$'\n'"src 203.0.113.1 dst ${TEST_PEER_IP}"$'\n'"    proto esp spi 0x12345678 reqid 1 mode tunnel"$'\n'"    lifetime current: 2000 bytes, 10 packets"
+	local xfrm_state_nyc_file="${TEST_DIR}/xfrm_state_nyc"
+	echo "$xfrm_state_nyc" >"$xfrm_state_nyc_file"
+
 	# Mock VPN as active for NYC location (203.0.113.1)
 	# Note: get_xfrm_state_for_peer tries "ip -s xfrm state" first, then falls back to "ip xfrm state"
 	local mock_ip="${TEST_DIR}/ip"
@@ -36,24 +45,20 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
 if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     # Return SA for NYC external IP with increasing bytes
-    echo "src ${TEST_PEER_IP} dst 203.0.113.1"
-    echo "src 203.0.113.1 dst ${TEST_PEER_IP}"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 2000 bytes, 10 packets"
+    cat "MOCK_XFRM_STATE_NYC"
     exit 0
 fi
 # Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
 if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     # Return SA for NYC external IP with increasing bytes
-    echo "src ${TEST_PEER_IP} dst 203.0.113.1"
-    echo "src 203.0.113.1 dst ${TEST_PEER_IP}"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 2000 bytes, 10 packets"
+    cat "MOCK_XFRM_STATE_NYC"
     exit 0
 fi
 # Handle other ip commands
 exec /usr/bin/ip "\$@"
 EOF
+	# Replace placeholder with actual file path
+	sed -i "s|MOCK_XFRM_STATE_NYC|${xfrm_state_nyc_file}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 	add_mock_to_path
 

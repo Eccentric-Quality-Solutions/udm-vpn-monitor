@@ -26,10 +26,19 @@ EXPECTED_LIB_FILES=(
 	"lib/config_schema.sh"
 	"lib/constants.sh"
 	"lib/detection.sh"
+	"lib/fallbacks.sh"
 	"lib/lockfile.sh"
 	"lib/logging.sh"
 	"lib/recovery.sh"
+	"lib/resources.sh"
 	"lib/state.sh"
+)
+
+EXPECTED_MODULE_DIRS=(
+	"lib/detection"
+	"lib/recovery"
+	"lib/config"
+	"lib/state"
 )
 
 EXPECTED_SCRIPT_FILES=(
@@ -186,6 +195,36 @@ EXPECTED_SCRIPT_FILES=(
 }
 
 # bats test_tags=category:unit
+@test "prepare_install_package.sh includes all module subdirectories in zip" {
+	# Purpose: Test verifies that the prepare_install_package script includes all module subdirectories in the ZIP archive
+	# Expected: ZIP archive contains all module subdirectories (lib/detection/, lib/recovery/, lib/config/, lib/state/) with their files
+	# Importance: Module subdirectories contain critical functionality that must be included for the application to function
+	cd "$PROJECT_ROOT"
+
+	# Run script to create zip
+	run bash "$PREPARE_SCRIPT"
+	assert_success
+
+	# Extract zip and verify contents
+	local extract_dir="${TEST_DIR}/extracted-modules"
+	mkdir -p "$extract_dir"
+	cd "$extract_dir"
+	unzip -q "${PROJECT_ROOT}/udm-vpn-monitor.zip"
+
+	# Check all module directories exist
+	for dir in "${EXPECTED_MODULE_DIRS[@]}"; do
+		assert_dir_exist "${extract_dir}/${dir}"
+		# Verify directory is not empty
+		if [[ -z "$(ls -A "${extract_dir}/${dir}" 2>/dev/null)" ]]; then
+			fail "Module directory ${dir} is empty in package"
+		fi
+	done
+
+	# Clean up
+	rm -f "${PROJECT_ROOT}/udm-vpn-monitor.zip"
+}
+
+# bats test_tags=category:unit
 @test "prepare_install_package.sh includes all required script files in zip" {
 	# Purpose: Test verifies that the prepare_install_package script includes all required script files in the ZIP archive
 	# Expected: ZIP archive contains all script files from scripts/ directory required for utility functions
@@ -250,6 +289,11 @@ EXPECTED_SCRIPT_FILES=(
 	# Check all script files are present
 	for file in "${EXPECTED_SCRIPT_FILES[@]}"; do
 		assert_file_exist "${extract_dir}/${file}"
+	done
+
+	# Check all module directories are present
+	for dir in "${EXPECTED_MODULE_DIRS[@]}"; do
+		assert_dir_exist "${extract_dir}/${dir}"
 	done
 
 	# Clean up

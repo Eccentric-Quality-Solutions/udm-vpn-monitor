@@ -6,6 +6,7 @@
 # for better organization and maintainability.
 
 load test_helper
+load helpers/test_data
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -203,18 +204,27 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Test Category: VPN status detection, Parsing edge cases
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=0'
 
+	# Generate xfrm state output with multiple lifetime lines (edge case test)
+	# Note: This is a special case with duplicate lifetime lines, so we generate it manually
+	# but using the helper function format as a base
+	# Use "custom" scenario with "full" format to get the complete xfrm state output
+	local xfrm_state_multiple_lifetime
+	xfrm_state_multiple_lifetime=$(generate_xfrm_state_output "custom" "${TEST_PEER_IP}" "0x12345678" 1000 10 "full")
+	# Add duplicate lifetime line for edge case test
+	xfrm_state_multiple_lifetime="${xfrm_state_multiple_lifetime}"$'\n'"    lifetime current: 2000 bytes, 20 packets"
+	local xfrm_state_multiple_lifetime_file="${TEST_DIR}/xfrm_state_multiple_lifetime"
+	echo "$xfrm_state_multiple_lifetime" >"$xfrm_state_multiple_lifetime_file"
+
 	# Mock ip command with multiple lifetime lines
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
 if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    echo "    lifetime current: 1000 bytes, 10 packets"
-    echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
-    echo "    lifetime current: 2000 bytes, 20 packets"
+    cat "MOCK_XFRM_STATE_MULTIPLE_LIFETIME"
 fi
 EOF
+	# Replace placeholder with actual file path
+	sed -i "s|MOCK_XFRM_STATE_MULTIPLE_LIFETIME|${xfrm_state_multiple_lifetime_file}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
@@ -417,20 +427,23 @@ EOF
 	local additional_handlers
 	additional_handlers=$(
 		cat <<ADDITIONAL_EOF
-elif [[ "\$1" == "route" ]] && [[ "\$2" == "get" ]]; then
+if [[ "\$1" == "route" ]] && [[ "\$2" == "get" ]]; then
     # Return route information for alternative route
     # Format: "172.31.13.239 via 192.168.1.1 dev eth0 src 172.31.19.169"
     echo "172.31.13.239 via ${TEST_PEER_IP} dev eth0 src 172.31.19.169"
     exit 0
-elif [[ "\$1" == "addr" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "br0" ]]; then
+fi
+if [[ "\$1" == "addr" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "br0" ]]; then
     # Route doesn't exist initially (so it will try to add it)
     # Output something that doesn't contain the target IP
     echo "1: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
     echo "    inet 192.168.1.1/24 brd 192.168.1.255 scope global br0"
     exit 0
-elif [[ "\$1" == "addr" ]] && [[ "\$2" == "add" ]]; then
+fi
+if [[ "\$1" == "addr" ]] && [[ "\$2" == "add" ]]; then
     # Route add succeeds
     exit 0
+fi
 ADDITIONAL_EOF
 	)
 	mock_ip_vpn_down "${TEST_DIR}/ip" "$additional_handlers"
@@ -463,18 +476,21 @@ ADDITIONAL_EOF
 	local additional_handlers
 	additional_handlers=$(
 		cat <<ADDITIONAL_EOF
-elif [[ "\$1" == "route" ]] && [[ "\$2" == "get" ]]; then
+if [[ "\$1" == "route" ]] && [[ "\$2" == "get" ]]; then
     # Simulate route get failure (route info unavailable)
     exit 1
-elif [[ "\$1" == "addr" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "br0" ]]; then
+fi
+if [[ "\$1" == "addr" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "br0" ]]; then
     # Route doesn't exist initially (so it will try to add it)
     # Output something that doesn't contain the target IP
     echo "1: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
     echo "    inet 192.168.1.1/24 brd 192.168.1.255 scope global br0"
     exit 0
-elif [[ "\$1" == "addr" ]] && [[ "\$2" == "add" ]]; then
+fi
+if [[ "\$1" == "addr" ]] && [[ "\$2" == "add" ]]; then
     # Route add succeeds
     exit 0
+fi
 ADDITIONAL_EOF
 	)
 	mock_ip_vpn_down "${TEST_DIR}/ip" "$additional_handlers"
@@ -541,19 +557,22 @@ ADDITIONAL_EOF
 	local additional_handlers
 	additional_handlers=$(
 		cat <<ADDITIONAL_EOF
-elif [[ "\$1" == "route" ]] && [[ "\$2" == "get" ]]; then
+if [[ "\$1" == "route" ]] && [[ "\$2" == "get" ]]; then
     # Return route information for first IP
     echo "172.31.13.239 via ${TEST_PEER_IP} dev eth0 src 172.31.19.169"
     exit 0
-elif [[ "\$1" == "addr" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "br0" ]]; then
+fi
+if [[ "\$1" == "addr" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "br0" ]]; then
     # Route doesn't exist initially (so it will try to add it)
     # Output something that doesn't contain the target IP
     echo "1: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
     echo "    inet 192.168.1.1/24 brd 192.168.1.255 scope global br0"
     exit 0
-elif [[ "\$1" == "addr" ]] && [[ "\$2" == "add" ]]; then
+fi
+if [[ "\$1" == "addr" ]] && [[ "\$2" == "add" ]]; then
     # Route add succeeds
     exit 0
+fi
 ADDITIONAL_EOF
 	)
 	mock_ip_vpn_down "${TEST_DIR}/ip" "$additional_handlers"
@@ -1249,26 +1268,31 @@ EOF
 	# Disable ping check so that when byte counter extraction fails, VPN check fails and failure type detection is triggered
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
 
+	# Generate xfrm state output without lifetime line (edge case - can't extract bytes)
+	# This is a special case, so we generate it manually but using helper format
+	local xfrm_state_no_lifetime
+	xfrm_state_no_lifetime="src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"$'\n'"    proto esp spi 0x12345678 reqid 1 mode tunnel"
+	local xfrm_state_no_lifetime_file="${TEST_DIR}/xfrm_state_no_lifetime"
+	echo "$xfrm_state_no_lifetime" >"$xfrm_state_no_lifetime_file"
+
 	# Mock ip command - SA exists but no byte counter info
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
 if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     # Handle "ip -s xfrm state" (with statistics flag)
-    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    # No lifetime line (can't extract bytes)
+    cat "MOCK_XFRM_STATE_NO_LIFETIME"
     exit 0
 elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     # Handle "ip xfrm state" (without statistics flag)
-    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-    # No lifetime line (can't extract bytes)
+    cat "MOCK_XFRM_STATE_NO_LIFETIME"
     exit 0
 fi
 # Handle other ip commands
 exec /usr/bin/ip "\$@"
 EOF
+	# Replace placeholder with actual file path
+	sed -i "s|MOCK_XFRM_STATE_NO_LIFETIME|${xfrm_state_no_lifetime_file}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
@@ -1332,16 +1356,23 @@ EOF
 	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
 	echo "tunnel_down" >"$failure_type_file"
 
+	# Note: With the false positive fix, recovery messages are only logged when
+	# failure_count > 0 (actual failures occurred). If only failure_type file exists
+	# without failure_count, the file is cleared silently to prevent false positive
+	# recovery messages. Using get_peer_state_file_path ensures the correct path format.
+
 	run bash "$TEST_SCRIPT" --fake
 
-	# VPN should recover
+	# VPN should be healthy
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "recovered"
+	# No recovery message should be logged when only failure_type exists (no actual failures)
+	# This prevents false positive recovery messages when VPN was already healthy
+	assert_log_not_contains "$LOG_FILE" "recovered"
+	assert_log_not_contains "$LOG_FILE" "restored"
 
-	# Failure type file should be cleared or removed
-	# Note: The actual behavior depends on implementation - may be removed or cleared
-	# This test verifies that recovery happens and failure type is handled
+	# Failure type file should be cleared silently (no recovery message logged)
+	# This verifies that stale failure_type files are cleaned up without false positives
 
 	remove_mock_from_path
 }

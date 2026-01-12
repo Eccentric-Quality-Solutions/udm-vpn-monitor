@@ -11,42 +11,11 @@
 # Determine lib directory (where this file is located)
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${LIB_DIR}/common.sh" 2>/dev/null || {
-	# Fallback if common.sh not found - define minimal atomic_write_file
-	# Write file atomically
-	#
-	# Writes content to a file using atomic operation (write to temp, then rename).
-	# This is a fallback implementation when common.sh is not available.
-	#
-	# Arguments:
-	#   $1: Path to file to write
-	#   $2: Content to write to file
-	#
-	# Returns:
-	#   0: File written successfully
-	#   1: Failed to write file
-	atomic_write_file() {
-		local file="$1"
-		local content="$2"
-		if ! (echo "$content" >"${file}.tmp" && mv "${file}.tmp" "$file"); then
-			return 1
-		fi
-		return 0
-	}
-	# Safely source a library file
-	#
-	# Attempts to source a library file, silently failing if it doesn't exist.
-	# This is a fallback implementation when common.sh is not available.
-	#
-	# Arguments:
-	#   $1: Path to library file to source
-	#
-	# Returns:
-	#   0: File sourced successfully
-	#   1: File not found or error sourcing
-	safe_source_lib() {
-		local lib_file="$1"
-		source "$lib_file" 2>/dev/null
-	}
+	# Fallback if common.sh not found - use centralized fallbacks
+	# shellcheck source=lib/fallbacks.sh
+	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
+		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
+	fi
 }
 
 # Get CPU usage percentage

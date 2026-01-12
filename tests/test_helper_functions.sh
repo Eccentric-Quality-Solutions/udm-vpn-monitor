@@ -572,7 +572,7 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state_file_path"
 
 	# Use helper function to set state and verify file creation with value
-	test_peer_state_with_empty_location "${TEST_PEER_IP}" "failure_count" "7" "7"
+	test_peer_state "${TEST_PEER_IP}" "failure_count" "7" "TEST" "7"
 }
 
 # bats test_tags=category:unit
@@ -633,7 +633,7 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state_file_path"
 
 	# Use helper function to set state and verify file creation with value
-	test_peer_state_with_empty_location "${TEST_PEER_IP}" "last_bytes" "123456" "123456"
+	test_peer_state "${TEST_PEER_IP}" "last_bytes" "123456" "TEST" "123456"
 }
 
 # bats test_tags=category:unit
@@ -648,7 +648,7 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state_file_path"
 
 	# Create file and verify it exists using helper function
-	test_peer_state_with_empty_location "${TEST_PEER_IP}" "failure_count" "5"
+	test_peer_state "${TEST_PEER_IP}" "failure_count" "5"
 
 	# Get file path for deletion verification
 	local counter_file
@@ -3484,8 +3484,8 @@ source_lockfile_module() {
 	# First check - no stored SPI
 	# get_peer_state returns "" (empty) when file doesn't exist and default is ""
 	# But the function checks if last_spi is empty with -z
-	# Use empty string for location to test backward compatibility
-	run check_sa_rekey_occurred "0x12345678" "203.0.113.1" ""
+	# Use TEST location name
+	run check_sa_rekey_occurred "0x12345678" "203.0.113.1" "TEST"
 	# Function should return 1 (no rekey) when no stored SPI
 	# But get_peer_state with default "" might return "0" if default handling is wrong
 	# Let's check if status is 1 (expected) or if we need to verify the logic differently
@@ -3508,11 +3508,11 @@ source_lockfile_module() {
 	# shellcheck source=/dev/null
 	source_function "check_sa_rekey_occurred"
 
-	# Store initial SPI - use empty string for location to test backward compatibility
-	set_peer_state "" "203.0.113.1" "spi" "0x12345678" || true
+	# Store initial SPI - use TEST location name
+	set_peer_state "TEST" "203.0.113.1" "spi" "0x12345678" || true
 
-	# Check with same SPI - use empty string for location to test backward compatibility
-	run check_sa_rekey_occurred "0x12345678" "203.0.113.1" ""
+	# Check with same SPI - use TEST location name
+	run check_sa_rekey_occurred "0x12345678" "203.0.113.1" "TEST"
 	assert_failure
 }
 
@@ -3531,11 +3531,11 @@ source_lockfile_module() {
 	# shellcheck source=/dev/null
 	source_function "check_sa_rekey_occurred"
 
-	# Store initial SPI - use empty string for location to test backward compatibility
-	set_peer_state "" "203.0.113.1" "spi" "0x12345678" || true
+	# Store initial SPI - use TEST location name
+	set_peer_state "TEST" "203.0.113.1" "spi" "0x12345678" || true
 
-	# Check with different SPI (rekey occurred) - use empty string for location to test backward compatibility
-	run check_sa_rekey_occurred "0x87654321" "203.0.113.1" ""
+	# Check with different SPI (rekey occurred) - use TEST location name
+	run check_sa_rekey_occurred "0x87654321" "203.0.113.1" "TEST"
 	assert_success
 }
 
@@ -3558,17 +3558,17 @@ source_lockfile_module() {
 	source_function "get_peer_state"
 
 	# Ensure no SPI file exists
-	local spi_file="${STATE_DIR}/spi_LOCATION_203_0_113_1"
+	local spi_file="${STATE_DIR}/spi_TEST_203_0_113_1"
 	[[ ! -f "$spi_file" ]] || rm -f "$spi_file"
 
 	# First check - should store SPI but return false (no rekey)
-	run detect_sa_rekey "0x12345678" "203.0.113.1" ""
+	run detect_sa_rekey "0x12345678" "203.0.113.1" "TEST"
 	# Function returns 1 when no rekey (first check)
 	assert_equal "$status" 1
 
 	# Verify SPI was stored
 	local stored_spi
-	stored_spi=$(get_peer_state "" "203.0.113.1" "spi" "")
+	stored_spi=$(get_peer_state "TEST" "203.0.113.1" "spi" "")
 	# Use assert_equal for better error messages
 	assert_equal "$stored_spi" "0x12345678"
 }
@@ -3594,22 +3594,22 @@ source_lockfile_module() {
 	source_function "get_peer_state"
 
 	# Set initial state: stored SPI and byte counter
-	set_peer_state "" "203.0.113.1" "spi" "0x12345678" || true
-	set_peer_state "" "203.0.113.1" "last_bytes" "5000" || true
+	set_peer_state "TEST" "203.0.113.1" "spi" "0x12345678" || true
+	set_peer_state "TEST" "203.0.113.1" "last_bytes" "5000" || true
 
 	# Detect rekey with new SPI
-	run detect_sa_rekey "0x87654321" "203.0.113.1" ""
+	run detect_sa_rekey "0x87654321" "203.0.113.1" "TEST"
 	assert_success
 
 	# Verify SPI was updated
 	local stored_spi
-	stored_spi=$(get_peer_state "" "203.0.113.1" "spi" "")
+	stored_spi=$(get_peer_state "TEST" "203.0.113.1" "spi" "")
 	# Use assert_equal for better error messages
 	assert_equal "$stored_spi" "0x87654321"
 
 	# Verify byte counter baseline was reset
 	local last_bytes
-	last_bytes=$(get_peer_state "" "203.0.113.1" "last_bytes" "0")
+	last_bytes=$(get_peer_state "TEST" "203.0.113.1" "last_bytes" "0")
 	# Use assert_equal for better error messages
 	assert_equal "$last_bytes" "0"
 }

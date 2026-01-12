@@ -391,7 +391,52 @@ start_daemon() {
 					# Perform quiet ping (suppress all output)
 					# Only log failures, not successes (to reduce log noise)
 					# UDM runs Linux, so we use Linux-style ping (-W flag)
-					if ! "$ping_cmd" "${ping_args[@]}" -c "$keepalive_ping_count" -W "${PING_TIMEOUT:-2}" -q "$ping_target" >/dev/null 2>&1; then
+					# Wrap ping commands with timeout to prevent hanging
+					# Calculate timeout: min(ping_timeout + 1, min(ping_count * ping_timeout + 1, 5))
+					# This ensures we catch hanging commands quickly (ping_timeout + 1) while allowing
+					# normal pings to complete (ping_count * ping_timeout + 1), capped at 5 seconds
+					local ping_timeout="${PING_TIMEOUT:-2}"
+					local ping_wrapper_timeout
+					local quick_timeout=$((ping_timeout + 1))
+					local normal_timeout=$((keepalive_ping_count * ping_timeout + 1))
+					# Use the smaller of the two to catch hangs quickly, but cap normal timeout at 5 seconds
+					if [[ $normal_timeout -gt 5 ]]; then
+						normal_timeout=5
+					fi
+					# Use the smaller timeout to ensure daemon remains responsive
+					if [[ $quick_timeout -lt $normal_timeout ]]; then
+						ping_wrapper_timeout=$quick_timeout
+					else
+						ping_wrapper_timeout=$normal_timeout
+					fi
+
+					local ping_success=0
+					# Use Linux-style ping with timeout wrapper
+					if check_command_available "timeout"; then
+						# Try Linux-style ping with timeout wrapper
+						if timeout "$ping_wrapper_timeout" "$ping_cmd" "${ping_args[@]}" -c "$keepalive_ping_count" -W "$ping_timeout" -q "$ping_target" >/dev/null 2>&1; then
+							ping_success=1
+						else
+							local ping_exit_code=$?
+							# If timeout occurred (exit code 124), don't try fallbacks
+							if [[ $ping_exit_code -ne 124 ]]; then
+								# Try without timeout flag as fallback (only if not timeout)
+								if timeout "$ping_wrapper_timeout" "$ping_cmd" "${ping_args[@]}" -c "$keepalive_ping_count" -q "$ping_target" >/dev/null 2>&1; then
+									ping_success=1
+								fi
+							fi
+						fi
+					else
+						# Fallback if timeout command not available (shouldn't happen on UDM)
+						if "$ping_cmd" "${ping_args[@]}" -c "$keepalive_ping_count" -W "$ping_timeout" -q "$ping_target" >/dev/null 2>&1; then
+							ping_success=1
+						# Try without timeout flag as fallback
+						elif "$ping_cmd" "${ping_args[@]}" -c "$keepalive_ping_count" -q "$ping_target" >/dev/null 2>&1; then
+							ping_success=1
+						fi
+					fi
+
+					if [[ $ping_success -eq 0 ]]; then
 						# Log failure but continue (don't exit daemon)
 						# Errors in log_message are ignored to prevent daemon exit
 						if [[ "$ping_target" == "$external_ip" ]]; then

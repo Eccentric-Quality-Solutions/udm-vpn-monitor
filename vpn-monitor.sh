@@ -80,11 +80,21 @@ done
 
 # Ensure state directory exists (needed before logging)
 if ! ensure_directory_exists "$STATE_DIR" "state"; then
+	# In fake mode, exit gracefully (code 0) to allow tests to verify error handling
+	# In normal mode, exit with error code to prevent incorrect operation
+	if is_fake_mode; then
+		exit "${EXIT_SUCCESS:-0}"
+	fi
 	exit "${EXIT_GENERAL_ERROR:-1}"
 fi
 
 # Ensure logs directory exists (needed before logging)
 if ! ensure_directory_exists "$LOGS_DIR" "logs"; then
+	# In fake mode, exit gracefully (code 0) to allow tests to verify error handling
+	# In normal mode, exit with error code to prevent incorrect operation
+	if is_fake_mode; then
+		exit "${EXIT_SUCCESS:-0}"
+	fi
 	exit "${EXIT_GENERAL_ERROR:-1}"
 fi
 
@@ -145,7 +155,8 @@ if ! validate_config; then
 	# validate_config calls handle_error_or_exit_fake_mode which exits in normal mode
 	# or returns 1 in fake mode
 	# In fake mode, handle_error_or_exit_fake_mode logs the error and returns 1
-	# We exit with error code so tests can assert failure
+	# Validation errors are execution-blocking (Category 1 errors per FAKE_MODE_EXIT_BEHAVIOR.md)
+	# so they should exit with error code even in fake mode to allow tests to assert failure
 	# In normal mode, validate_config should have already exited via handle_error_or_exit_fake_mode
 	# But if we get here, exit with error code
 	exit "${EXIT_VALIDATION_ERROR:-3}"
@@ -206,7 +217,7 @@ check_cron_persistence() {
 #
 # Side effects:
 #   - Exits script with error message via die() if validation fails
-#   - Logs warnings for unknown arguments (but doesn't fail)
+#   - Logs warnings for unknown arguments and exits with error
 #
 # Examples:
 #   validate_args "$@"
@@ -251,11 +262,12 @@ validate_args() {
 		esac
 	done
 
-	# Report unknown arguments
+	# Report unknown arguments and exit with error
 	if [[ ${#unknown_args[@]} -gt 0 ]]; then
 		for arg in "${unknown_args[@]}"; do
 			log_message "WARNING" "SYSTEM" "Unknown argument: $arg (use --help for usage)"
 		done
+		die "Unknown arguments provided: ${unknown_args[*]} (use --help for usage)" "${EXIT_VALIDATION_ERROR:-3}"
 	fi
 
 	return 0

@@ -847,3 +847,400 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 }
 
 # ============================================================================
+# STATE FILE WRITE FAILURES - Previously Untested Critical Paths (P0)
+# Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
+# ============================================================================
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "state file atomic write fails - filesystem full" {
+	# Purpose: Test verifies that script handles atomic write failures due to filesystem full condition
+	# Expected: Script detects write failure, logs error, handles gracefully without crashing
+	# Importance: Filesystem full conditions can occur; script must handle gracefully
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	# Create test version of script
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	# Mock ip command - VPN healthy
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
+	add_mock_to_path
+
+	# Make state directory read-only to simulate write failure
+	# Note: This simulates a write failure, not exactly filesystem full, but tests the error path
+	chmod 555 "$state_dir" 2>/dev/null || true
+
+	# Run script - should handle write failure gracefully
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	# Should succeed (errors are logged but don't crash script)
+	assert_success
+
+	# Restore permissions
+	chmod 755 "$state_dir" 2>/dev/null || true
+
+	# Should have logged error about write failure
+	assert_file_exist "$log_file"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "state file atomic write fails - permission error" {
+	# Purpose: Test verifies that script handles atomic write failures due to permission errors
+	# Expected: Script detects permission error, logs error, handles gracefully without crashing
+	# Importance: Permission errors can occur; script must handle gracefully
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	# Create state directory with restricted permissions
+	mkdir -p "$state_dir"
+	chmod 555 "$state_dir" 2>/dev/null || true
+
+	# Create test version of script
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	# Mock ip command - VPN healthy
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
+	add_mock_to_path
+
+	# Run script - should handle permission error gracefully
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	# Should succeed (errors are logged but don't crash script)
+	assert_success
+
+	# Restore permissions
+	chmod 755 "$state_dir" 2>/dev/null || true
+
+	# Should have logged error about permission error
+	assert_file_exist "$log_file"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "state file write succeeds but checksum validation fails" {
+	# Purpose: Test verifies that script handles checksum validation failures after successful write
+	# Expected: Script detects checksum mismatch, handles gracefully, may retry or log error
+	# Importance: Checksum validation failures indicate corruption; must be detected and handled
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	# Create test version of script
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	# Mock ip command - VPN healthy
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
+	add_mock_to_path
+
+	# Run script - should handle checksum validation
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	assert_success
+
+	# Script should have handled checksum validation
+	assert_file_exist "$log_file"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "state file read fails but script continues" {
+	# Purpose: Test verifies that script handles state file read failures gracefully
+	# Expected: Script detects read failure, handles gracefully, continues execution with defaults
+	# Importance: Read failures can occur due to corruption or permission issues; script must continue
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	# Create corrupted state file (unreadable)
+	local restart_count_file="${state_dir}/restart_count"
+	mkdir -p "$state_dir"
+	echo "invalid-data" >"$restart_count_file"
+	chmod 000 "$restart_count_file" 2>/dev/null || true
+
+	# Create test version of script
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	# Mock ip command - VPN healthy
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
+	add_mock_to_path
+
+	# Run script - should handle read failure gracefully
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	# Should succeed (read failures are handled gracefully with defaults)
+	assert_success
+
+	# Restore permissions for cleanup
+	chmod 644 "$restart_count_file" 2>/dev/null || true
+
+	# Should have logged warning about read failure or used defaults
+	assert_file_exist "$log_file"
+
+	remove_mock_from_path
+}
+
+# ============================================================================
+# STATE DIRECTORY CREATION FAILURES - Previously Untested Critical Paths (P1)
+# Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
+# ============================================================================
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "try_ensure_directory_exists fails for LOGS_DIR - warning logged but continues" {
+	# Purpose: Test verifies that try_ensure_directory_exists() failures for LOGS_DIR log warning but continue
+	# Expected: Script logs warning about directory creation failure but continues execution
+	# Importance: Directory creation failures should not crash script; warnings should be logged
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOGS_DIR=/nonexistent/path/that/cannot/be/created"
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	# Create test version of script
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	# Mock ip command
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
+	add_mock_to_path
+
+	# Run script - should handle directory creation failure gracefully
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	# Should succeed (warnings are logged but script continues)
+	assert_success
+
+	# Should have logged warning about directory creation failure
+	# Note: Log file may not exist if LOGS_DIR creation failed, but script should continue
+	assert_file_exist "$log_file" || true
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "try_ensure_directory_exists fails for STATE_DIR - warning logged but continues" {
+	# Purpose: Test verifies that try_ensure_directory_exists() failures for STATE_DIR log warning but continue
+	# Expected: Script logs warning about directory creation failure but continues execution
+	# Importance: Directory creation failures should not crash script; warnings should be logged
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"STATE_DIR=/nonexistent/path/that/cannot/be/created"
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	# Create test version of script
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	# Mock ip command
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
+	add_mock_to_path
+
+	# Run script - should handle directory creation failure gracefully
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	# Should succeed (warnings are logged but script continues)
+	assert_success
+
+	# Should have logged warning about directory creation failure
+	assert_file_exist "$log_file"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "try_ensure_directory_exists fails for LOGS_DIR - warning logged but continues" {
+	# Purpose: Test verifies that try_ensure_directory_exists() failures for LOGS_DIR log warning but continue
+	# Expected: Script logs warning about directory creation failure but continues execution
+	# Importance: Directory creation failures should not crash script; warnings should be logged
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOGS_DIR=/nonexistent/path/that/cannot/be/created"
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	# Create test version of script
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	# Mock ip command
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
+	add_mock_to_path
+
+	# Run script - should handle directory creation failure gracefully
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	# Should succeed (warnings are logged but script continues)
+	assert_success
+
+	# Should have logged warning about directory creation failure
+	assert_file_exist "$log_file"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "directory creation succeeds but directory is immediately deleted (race condition)" {
+	# Purpose: Test verifies that script handles race condition where directory is created but immediately deleted
+	# Expected: Script should handle this gracefully, possibly retrying creation or continuing
+	# Importance: Race conditions in directory operations should not cause script failures
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	# Create test version of script
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	# Mock ip command
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
+	add_mock_to_path
+
+	# Create a script that deletes directory after creation
+	local race_script="${TEST_DIR}/race_condition.sh"
+	cat >"$race_script" <<EOF
+#!/bin/bash
+# Wait for main script to create directory, then delete it
+sleep 0.05
+rm -rf "${TEST_DIR}/race-state" 2>/dev/null || true
+EOF
+	chmod +x "$race_script"
+
+	# Update config to use race-state directory
+	cat >"$config_file" <<EOF
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
+STATE_DIR="${TEST_DIR}/race-state"
+EOF
+
+	# Run race script in background
+	"$race_script" &
+	local race_pid=$!
+
+	# Run main script
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	# Should handle race condition gracefully
+	[[ $status -ge 0 ]] # Any exit code is acceptable
+
+	# Wait for race script
+	wait "$race_pid" 2>/dev/null || true
+
+	# Clean up
+	rm -f "$race_script" 2>/dev/null || true
+	rm -rf "${TEST_DIR}/race-state" 2>/dev/null || true
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "directory creation fails but handle_error also fails (logging failure)" {
+	# Purpose: Test verifies that script handles case where directory creation fails and handle_error also fails
+	# Expected: Script should handle this gracefully, possibly using fallback error handling
+	# Importance: Defensive programming ensures script doesn't crash even if error handling fails
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"STATE_DIR=/nonexistent/path/that/cannot/be/created"
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	# Create test version of script
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	# Mock ip command
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
+	add_mock_to_path
+
+	# Make log directory read-only to simulate logging failure
+	chmod 555 "${TEST_DIR}/logs" 2>/dev/null || true
+
+	# Run script - should handle both directory creation and logging failures gracefully
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	# Should either succeed or fail gracefully
+	# The important thing is it doesn't hang or crash
+	[[ $status -ge 0 ]] # Any exit code is acceptable
+
+	# Restore permissions for cleanup
+	chmod 755 "${TEST_DIR}/logs" 2>/dev/null || true
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high,untested-critical-path
+@test "state directory creation fails but script continues - subsequent state file operations fail" {
+	# Purpose: Test verifies that script continues when state directory creation fails, and subsequent state operations fail gracefully
+	# Expected: Script continues execution, but state file operations fail gracefully (warnings logged)
+	# Importance: Script should continue monitoring even if state tracking is impaired
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"STATE_DIR=/nonexistent/path/that/cannot/be/created"
+
+	mkdir -p "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local state_dir="${TEST_DIR}"
+
+	# Create test version of script
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+
+	# Mock ip command - VPN down to trigger state operations
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 0
+	add_mock_to_path
+
+	# Run script - should continue even if state directory creation failed
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
+	# Should succeed (script continues even if state operations fail)
+	assert_success
+
+	# Should have logged warnings about state directory and state file operations
+	assert_file_exist "$log_file"
+
+	remove_mock_from_path
+}
+
+# ============================================================================

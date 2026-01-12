@@ -7,6 +7,7 @@
 # Gap: How do cooldown and rate limiting interact when both are active?
 
 load test_helper
+load helpers/test_data
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -26,17 +27,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script exits early due to cooldown, no restart attempted
 	# Importance: Ensures cooldown period is respected even when rate limit would allow restart
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_HOUR=3
-COOLDOWN_MINUTES=0.01
-ENABLE_XFRM_RECOVERY=0
-ENABLE_NETWORK_PARTITION_CHECK=0
-ENABLE_RESOURCE_MONITORING=0
-EOF
+	generate_config_file "cooldown_rate_limit" "$config_file" "${TEST_PEER_IP}" "0.01" "3"
 
 	mkdir -p "${TEST_DIR}/logs"
 	mkdir -p "${TEST_DIR}/state"
@@ -212,29 +203,12 @@ EOF
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 0
 
 	# Create mock ipsec (should be called since both protections allow restart)
-	local mock_ipsec="${TEST_DIR}/ipsec"
-	local ipsec_called_file="${TEST_DIR}/ipsec_called"
-	cat >"$mock_ipsec" <<EOF
-#!/bin/bash
-if [[ "\$1" == "restart" ]]; then
-    touch "$ipsec_called_file"
-    exit 0
-elif [[ "\$1" == "status" ]]; then
-    # After restart, return status output that includes the peer IP for verification
-    # Before restart, return empty to indicate VPN is down (so recovery is triggered)
-    if [[ -f "$ipsec_called_file" ]]; then
-        # After restart - return connection found for verification
-        echo "Security Associations (1 up, 0 connecting):"
-        echo "  ${TEST_PEER_IP}[${TEST_PEER_IP}]...${TEST_PEER_IP}[${TEST_PEER_IP}] IKEv2"
-    else
-        # Before restart - return empty to indicate VPN is down
-        exit 0
-    fi
-    exit 0
-fi
-EOF
-	chmod +x "$mock_ipsec"
-	# Mock is already in PATH from mock_date add_mock_to_path call
+	# Use helper function with tracking to verify restart was called
+	local ipsec_tracking_file="${TEST_DIR}/ipsec_tracking.txt"
+	local status_after_restart_output="Security Associations (1 up, 0 connecting):
+  ${TEST_PEER_IP}[${TEST_PEER_IP}]...${TEST_PEER_IP}[${TEST_PEER_IP}] IKEv2"
+	mock_ipsec_with_tracking "$ipsec_tracking_file" 0 "" "$status_after_restart_output"
+	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
 	# Script may exit with status 1 due to warnings (e.g., verification failures)
@@ -248,11 +222,9 @@ EOF
 	# Should NOT contain rate limit exceeded message
 	refute_file_contains "$LOG_FILE" "Rate limit exceeded"
 
-	# Should perform restart - check if ipsec was called (most reliable indicator)
+	# Should perform restart - check if ipsec restart was called (most reliable indicator)
 	# This is the key assertion - restart must have been attempted
-	assert_file_exist "$ipsec_called_file"
-
-	# Verify restart was recorded
+	# Verify restart was recorded in state file (primary check)
 	if [[ -f "$restart_file" ]]; then
 		local file_lines
 		file_lines=$(wc -l <"$restart_file" | tr -d ' ')

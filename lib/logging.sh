@@ -11,25 +11,11 @@
 # Determine lib directory (where this file is located)
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${LIB_DIR}/common.sh" 2>/dev/null || {
-	# Fallback if common.sh not found - define minimal try_ensure_directory_exists
-	# Try to ensure directory exists
-	#
-	# Attempts to create a directory if it doesn't exist.
-	# This is a fallback implementation when common.sh is not available.
-	#
-	# Arguments:
-	#   $1: Directory path to ensure exists
-	#
-	# Returns:
-	#   0: Directory exists or was created successfully
-	#   1: Failed to create directory
-	try_ensure_directory_exists() {
-		local dir="$1"
-		if [[ ! -d "$dir" ]]; then
-			mkdir -p "$dir" 2>/dev/null || return 1
-		fi
-		return 0
-	}
+	# Fallback if common.sh not found - use centralized fallbacks
+	# shellcheck source=lib/fallbacks.sh
+	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
+		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
+	fi
 }
 
 # Get formatted timestamp
@@ -269,6 +255,7 @@ handle_error() {
 	shift 2
 	local message="$*"
 	local exit_code="1"
+	local exit_code_provided=0
 
 	# Parse arguments: prefix message [exit_code]
 	# Prefix is REQUIRED - must be provided explicitly
@@ -283,11 +270,15 @@ handle_error() {
 		local last_arg="${args_array[$((arg_count - 1))]}"
 		if [[ "$last_arg" =~ ^[0-9]+$ ]]; then
 			exit_code="$last_arg"
+			exit_code_provided=1
 			# Remove last arg from message
 			set -- "${args_array[@]:0:$((arg_count - 1))}"
 			message="$*"
 		else
+			# Non-numeric last argument is treated as part of message
+			# Set exit_code to 0 to prevent accidental exits when exit code parsing fails
 			message="$*"
+			exit_code="0"
 		fi
 	else
 		message=""
@@ -305,6 +296,11 @@ handle_error() {
 		# Invalid severity, default to ERROR
 		log_message "ERROR" "SYSTEM" "Invalid severity '$severity' in handle_error, defaulting to ERROR"
 		severity="ERROR"
+		# When severity is defaulted due to invalid input, only exit if exit code was explicitly provided
+		# This prevents accidental exits when invalid severity is passed
+		if [[ $exit_code_provided -eq 0 ]]; then
+			exit_code="0"
+		fi
 	fi
 
 	# Log the message with prefix (always present)

@@ -39,52 +39,11 @@ source "${LIB_DIR}/common.sh"
 # Note: logging.sh may require LOG_FILE to be set, but log_message will work
 # without it (outputs to stderr only). Source conditionally with fallback.
 if ! source "${LIB_DIR}/logging.sh" 2>/dev/null; then
-	# Fallback if logging.sh not found - define minimal log_message and handle_error
-	# These will output to stderr only (no log file)
-	# Log a message with timestamp and level
-	#
-	# Outputs a formatted log message to stderr with timestamp and log level.
-	# This is a fallback implementation used when logging.sh is not available.
-	#
-	# Arguments:
-	#   $1: Log level (e.g., INFO, WARN, ERROR)
-	#   $@: Remaining arguments form the log message
-	#
-	# Returns:
-	#   0: Always succeeds
-	#
-	# Output:
-	#   Prints formatted log message to stderr (format: [YYYY-MM-DD HH:MM:SS] [LEVEL] message)
-	log_message() {
-		local level="$1"
-		shift
-		local message="$*"
-		local timestamp
-		timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date +%s)
-		echo "[$timestamp] [$level] $message" >&2
-	}
-	# Handle error with logging and optional exit
-	#
-	# Logs an error message and optionally exits the script. This is a fallback
-	# implementation used when logging.sh is not available.
-	#
-	# Arguments:
-	#   $1: Error severity level (e.g., ERROR, WARN)
-	#   $2: Error message
-	#   $3: Exit code (optional, default: 1)
-	#
-	# Returns:
-	#   0: Success (if not exiting)
-	#   Exits script with specified exit code if severity is ERROR and exit_code is non-zero
-	handle_error() {
-		local severity="$1"
-		local message="$2"
-		local exit_code="${3:-1}"
-		log_message "$severity" "$message"
-		if [[ "$severity" == "ERROR" ]] && [[ $exit_code -ne 0 ]]; then
-			exit "$exit_code"
-		fi
-	}
+	# Fallback if logging.sh not found - use centralized fallbacks
+	# shellcheck source=lib/fallbacks.sh
+	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
+		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_logging_fallbacks
+	fi
 fi
 
 # Source network validation functions
@@ -113,9 +72,10 @@ source "${LIB_DIR}/detection/ping_detection.sh"
 # Arguments:
 #   $1: External peer IP address (used for SA checks)
 #   $2: Internal peer IP address (optional, used for ping checks)
-#   $3: Location name (optional, used for state file naming)
+#   $3: Location name (required, used for state file naming)
 #   $4: SA existence state (optional, 0 = no SA, 1 = SA exists, if not provided will check SA existence)
 #   $5: VPN status (optional, 0 = VPN check failed, 1 = VPN check passed, defaults to 0 for backward compatibility)
+#   $6: XFRM output (optional, xfrm state output for reuse, if not provided will fetch if needed)
 #
 # Returns:
 #   0: Failure type detected and printed to stdout
@@ -129,7 +89,7 @@ source "${LIB_DIR}/detection/ping_detection.sh"
 #   - Only logs warnings when VPN check failed (vpn_ok=0) to avoid false positives for healthy VPNs
 #
 # Examples:
-#   failure_type=$(detect_failure_type "203.0.113.1" "192.168.1.1" "NYC" "1" "0")
+#   failure_type=$(detect_failure_type "203.0.113.1" "192.168.1.1" "NYC" "1" "0" "$xfrm_output")
 #   case "$failure_type" in
 #       "tunnel_down") echo "VPN tunnel is down" ;;
 #       "routing_issue") echo "Routing issue detected" ;;
@@ -140,18 +100,26 @@ source "${LIB_DIR}/detection/ping_detection.sh"
 #   Requires check_ipsec_phase2, check_byte_counters, check_ping_connectivity, detect_sa_rekey
 #   External IP is used for SA checks, internal IP is used for ping checks
 #   When vpn_ok=1 (VPN is healthy), warnings are suppressed to avoid false positives
+#   When xfrm_output is provided, reuses it to avoid duplicate ip xfrm state calls (optimization)
 detect_failure_type() {
 	local external_peer_ip="$1"
 	local internal_peer_ip="${2:-}"
-	local location_name="${3:-}"
+	local location_name="$3"
 	local sa_exists="${4:-}"
 	local vpn_ok="${5:-0}"
+	local xfrm_output="${6:-}"
+
+	# Validate location_name is provided
+	if [[ -z "$location_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "detect_failure_type: location_name is required" 0
+		echo "unknown"
+		return 1
+	fi
 
 	# Check if ip command is available (required for Phase 2 SA detection)
 	# If ip command is unavailable, we cannot determine failure type
 	if ! check_command_or_warn "ip" "Detecting failure type"; then
-		# location_name should always be provided in production code
-		log_message "WARNING" "${location_name:-SYSTEM}" "Failure type detection: 'ip' command unavailable, cannot determine failure type${location_name:+ for $location_name ($external_peer_ip)}"
+		log_message "WARNING" "$location_name" "Failure type detection: 'ip' command unavailable, cannot determine failure type for $location_name ($external_peer_ip)"
 		echo "unknown"
 		return 1
 	fi
@@ -176,19 +144,19 @@ detect_failure_type() {
 		return 0
 	elif [[ $ipsec_phase2_up -eq 1 ]]; then
 		# Phase 2 SA exists - tunnel is established
-		# Fetch xfrm output once for reuse in rekey check, byte counter check, and diagnostics
-		local xfrm_output=""
+		# Use provided xfrm_output if available, otherwise fetch it (for backward compatibility)
 		local current_spi=""
 		local current_bytes=""
-		if [[ -n "$external_peer_ip" ]]; then
+		if [[ -z "$xfrm_output" ]] && [[ -n "$external_peer_ip" ]]; then
+			# Fallback: fetch xfrm output if not provided (for backward compatibility)
 			# Use fixed-string matching to prevent regex pattern injection
 			# Match on "dst $external_peer_ip" pattern which appears at the start of each SA entry
 			# This ensures we capture the complete SA block including SPI and lifetime information
 			xfrm_output=$(get_xfrm_state_for_peer "$external_peer_ip")
-			if [[ -n "$xfrm_output" ]]; then
-				current_spi=$(extract_spi "$xfrm_output" 2>/dev/null || echo "")
-				current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null || echo "")
-			fi
+		fi
+		if [[ -n "$xfrm_output" ]]; then
+			current_spi=$(extract_spi "$xfrm_output" 2>/dev/null || echo "")
+			current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null || echo "")
 		fi
 
 		# Check for SA rekey by comparing SPI
@@ -291,8 +259,7 @@ detect_failure_type() {
 		# When VPN is healthy (vpn_ok=1), returning "unknown" is expected behavior
 		# and should not generate warnings to avoid false positives
 		if [[ $vpn_ok -eq 0 ]]; then
-			# location_name should always be provided in production code
-			log_message "WARNING" "${location_name:-SYSTEM}" "Failure type detection: Unable to determine specific failure type${location_name:+ for $location_name ($external_peer_ip)} - Detection method: Phase 2 SA check (SA exists), Reasons: $diagnostic_msg"
+			log_message "WARNING" "$location_name" "Failure type detection: Unable to determine specific failure type for $location_name ($external_peer_ip) - Detection method: Phase 2 SA check (SA exists), Reasons: $diagnostic_msg"
 		fi
 	fi
 
@@ -365,6 +332,7 @@ get_failure_type() {
 #   $4: Sanitized peer IP (for state file operations)
 #   $5: Location name (optional, used for state file naming)
 #   $6: SA existence state (optional, 0 = no SA, 1 = SA exists, if not provided will check SA existence)
+#   $7: XFRM output (optional, xfrm state output for reuse, if not provided will fetch if needed)
 #
 # Returns:
 #   Outputs final VPN status (0 or 1) to stdout
@@ -380,6 +348,7 @@ determine_vpn_status() {
 	local peer_sanitized="$4"
 	local location_name="${5:-}"
 	local sa_exists="${6:-}"
+	local xfrm_output="${7:-}"
 
 	# If VPN check failed, detect and log the failure type
 	# Also check for rekey events (which are not failures but should be logged)
@@ -420,7 +389,8 @@ determine_vpn_status() {
 		# Note: stderr is not redirected so diagnostic log messages from detect_failure_type are visible
 		# Pass SA existence state to detect_failure_type to avoid duplicate check
 		# Pass vpn_ok status so detect_failure_type can suppress warnings for healthy VPNs
-		failure_type=$(detect_failure_type "$external_peer_ip" "$internal_peer_ip" "$location_name" "$sa_exists" "$vpn_ok")
+		# Pass xfrm_output to detect_failure_type to avoid duplicate ip xfrm state call (optimization)
+		failure_type=$(detect_failure_type "$external_peer_ip" "$internal_peer_ip" "$location_name" "$sa_exists" "$vpn_ok" "$xfrm_output")
 		# If detect_failure_type failed or returned empty, use "unknown"
 		if [[ -z "$failure_type" ]]; then
 			failure_type="unknown"
@@ -429,29 +399,26 @@ determine_vpn_status() {
 		# Store failure type in state file for recovery actions
 		# Use abstraction layer to ensure consistent path format with location component
 		local failure_type_file
-		if [[ -n "$location_name" ]]; then
-			failure_type_file=$(get_peer_state_file_path "$location_name" "$external_peer_ip" "failure_type")
-		else
-			# Fallback for backward compatibility (shouldn't happen in new code)
-			failure_type_file=$(get_peer_state_file_path "" "$external_peer_ip" "failure_type")
+		if [[ -z "$location_name" ]]; then
+			handle_error "ERROR" "SYSTEM" "determine_vpn_status: location_name is required" 0
+			# Continue with empty location_name for backward compatibility, but log error
+			location_name="SYSTEM"
 		fi
+		failure_type_file=$(get_peer_state_file_path "$location_name" "$external_peer_ip" "failure_type")
 		atomic_write_file "$failure_type_file" "$failure_type" 2>/dev/null || true
 
 		case "$failure_type" in
 		"rekey")
 			# Rekey detected - not a failure, but log for monitoring
 			# Rekey is already logged in detect_sa_rekey, but we mark VPN as OK
-			# location_name should always be provided in production code
-			log_message "INFO" "${location_name:-SYSTEM}" "SA rekey detected${location_name:+ for $location_name ($external_peer_ip)} (not a failure)"
+			log_message "INFO" "$location_name" "SA rekey detected for $location_name ($external_peer_ip) (not a failure)"
 			vpn_ok=1
 			;;
 		"tunnel_down")
-			# location_name should always be provided in production code
-			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN failure type: Tunnel down (no Phase 2 SA found)${location_name:+ for $location_name ($external_peer_ip)}"
+			handle_error "WARNING" "$location_name" "VPN failure type: Tunnel down (no Phase 2 SA found) for $location_name ($external_peer_ip)"
 			;;
 		"routing_issue")
-			# location_name should always be provided in production code
-			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN failure type: Routing issue (tunnel established but traffic not flowing)${location_name:+ for $location_name ($external_peer_ip)}"
+			handle_error "WARNING" "$location_name" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $location_name ($external_peer_ip)"
 			# Note: If vpn_ok was 1 (VPN appeared OK), we keep it as 1 since ping is supplementary
 			# The routing_issue is logged for diagnostic purposes but doesn't change VPN status
 			;;
@@ -462,8 +429,7 @@ determine_vpn_status() {
 			# Only log "unknown" if VPN check actually failed (vpn_ok was 0)
 			if [[ $vpn_ok -eq 0 ]]; then
 				# Detailed diagnostic information was already logged by detect_failure_type()
-				# location_name should always be provided in production code
-				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN failure type: Unknown (unable to determine specific failure type)${location_name:+ for $location_name ($external_peer_ip)} - see previous diagnostic messages for detection method details"
+				handle_error "WARNING" "$location_name" "VPN failure type: Unknown (unable to determine specific failure type) for $location_name ($external_peer_ip) - see previous diagnostic messages for detection method details"
 			fi
 			# If vpn_ok was 1, silently ignore "unknown" since VPN is healthy
 			;;
@@ -557,8 +523,10 @@ check_vpn_status() {
 	local ipsec_diagnostic=""
 	# Capture SA existence state from xfrm check to eliminate duplicate checks
 	local sa_exists=""
+	# Capture xfrm_output from xfrm check to eliminate duplicate ip xfrm state calls
+	local xfrm_output=""
 
-	if check_xfrm_primary "$external_peer_ip" "$first_internal_ip" "$location_name" "xfrm_diagnostic" "sa_exists"; then
+	if check_xfrm_primary "$external_peer_ip" "$first_internal_ip" "$location_name" "xfrm_diagnostic" "sa_exists" "xfrm_output"; then
 		vpn_ok=1
 	else
 		# xfrm check failed - try ipsec fallback
@@ -611,8 +579,8 @@ check_vpn_status() {
 	check_ping_optional "$vpn_ok" "$external_peer_ip" "$internal_peer_ips" "$location_name" "$sa_exists"
 
 	# Determine final VPN status based on failure type detection
-	# Pass location_name, first internal IP, peer_sanitized, and SA existence state for failure type detection
-	vpn_ok=$(determine_vpn_status "$vpn_ok" "$external_peer_ip" "$first_internal_ip" "$peer_sanitized" "$location_name" "$sa_exists")
+	# Pass location_name, first internal IP, peer_sanitized, SA existence state, and xfrm_output for failure type detection
+	vpn_ok=$(determine_vpn_status "$vpn_ok" "$external_peer_ip" "$first_internal_ip" "$peer_sanitized" "$location_name" "$sa_exists" "$xfrm_output")
 
 	# Return 0 if OK, 1 if failed (invert vpn_ok: 1 becomes 0, 0 becomes 1)
 	return $((1 - vpn_ok))

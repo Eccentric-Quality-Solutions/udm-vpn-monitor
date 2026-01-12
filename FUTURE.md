@@ -1,5 +1,7 @@
 Considerations for the future, but want to avoid overarchitecting and premature optimization, as YAGNI.
 
+**Note:** Items marked with ✅ COMPLETED have been finished and can be considered resolved.
+
 - Optimize detection module sourcing (optional)
   - Currently, modules source dependencies even when already sourced by parent `detection.sh`
   - Could add checks to avoid redundant sourcing: `if ! type validate_ipv4 >/dev/null 2>&1; then source ...; fi`
@@ -14,27 +16,11 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Add location-specific recovery type statistics (which locations require more intervention)
     - Note: Basic recovery type distinction implemented in analyze-logs.sh (2026-01-06)
 
-- Add timeout wrapping to ping commands in vpn-keepalive.sh
-    - Currently, `vpn-keepalive.sh` uses ping commands without timeout wrapping (unlike `check_ping_connectivity()` in `lib/detection.sh`)
-    - While less critical than the main monitoring script (it's a daemon), adding timeout wrapping would provide consistency and prevent potential hangs
-    - The ping commands use `-W` flag which has its own timeout, but if the ping command itself hangs before starting, it could still block
-    - This would follow the same pattern as `check_ping_connectivity()`: wrap ping with `timeout` command using calculated timeout value
-
 - Log rate limiting
     - e.g., for duplicate messages occurring within x time span we only log once, then log again sum of messages received within timeframe at expiration of window
     - or we retroactively clean up logs when we notice there is a pattern of log entries recurring continuously or the same log entry repeatedly
     - Note: Partial fix implemented - `check_vpn_status()` combines diagnostic messages when both xfrm and ipsec checks fail (see `lib/detection.sh:2410,2474`)
     - Still needed: General message combining across codebase for related events (recovery sequences, detection failures, verification steps)
-
-- Add tests for test isolation functionality itself
-    - Test that `setup()` saves environment variables correctly (including empty strings)
-    - Test that `teardown()` restores environment variables correctly
-    - Test that unset variables remain unset after teardown
-    - Test that sentinel value `__UNSET__` is handled correctly
-    - Test that multiple tests in sequence don't interfere with each other
-    - This would provide additional verification beyond the `verify_test_isolation.sh` script
-    - Note: Basic test isolation tests added in `tests/test_test_isolation.sh` (covers environment variables, TEST_DIR isolation, PATH cleanup, mock commands, state/log isolation, and multiple test independence)
-    - Still needed: Edge case tests for empty strings, unset variables, and sentinel value `__UNSET__` handling
 
 - Automate mock cleanup verification in CI/CD
     - Run `scripts/audit_mock_cleanup.sh` as part of CI/CD pipeline to catch missing cleanup calls early
@@ -48,29 +34,63 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Standardize to explicit check pattern for consistency and clarity
     - Low priority: current code works correctly, this is a style consistency improvement
     - See `lib/config.sh` lines 1108, 1154, 1179, 1212, 1405 for examples that could be refactored
-    - Pattern documented in `docs/CODE_PATTERNS.md` under "Fake Mode Support" section
 
-- Add tests for uninstall.sh logs and state retention features
-    - Tests for `--keep-logs` / `--remove-logs` flags
-    - Tests for `--keep-state` / `--remove-state` flags
-    - Tests for interactive prompts for logs/state directories
-    - Tests for combined retention scenarios (config + logs + state)
-    - Tests for verification of preserved logs/state directories
-    - Note: Existing tests pass, but new retention features need coverage
+- Continue migrating test data to use test data helpers
+    - Many test files still have embedded xfrm state output, ipsec status output, and config files
+    - Files with significant embedded data include: `test_recovery.sh`, `test_detection.sh`, `test_integration_location.sh`, and others
+    - Pattern is established: use `generate_xfrm_state_output()`, `generate_config_file()`, etc. from `helpers/test_data`
+    - Benefits: Centralized maintenance, consistency, easier to update test data formats
+    - Note: Migration started 2026-01-11 with `test_recovery_partial_failures.sh`, `test_recovery_cooldown_rate_limit_interaction.sh`, and `test_config.sh`
+    - Note: Key instances migrated 2026-01-27 in `test_recovery.sh`, `test_detection.sh`, and `test_integration_location.sh`
+    - Pattern for mock scripts: Generate output using helpers, store in file, use placeholders in mock script, replace with sed after creation
+    - Note: Additional migrations completed 2026-01-28: Migrated 2 more test cases in `test_recovery.sh`:
+      - "xfrm recovery - Verification timeout exceeded" - migrated static xfrm state outputs
+      - "xfrm recovery - Mixed SAs with and without marks" - migrated static outputs (including mark handling via sed post-processing)
+    - Remaining: ~110 embedded instances in `test_recovery.sh` (mostly complex dynamic cases with calculated counters, marks, or state transitions), can be migrated gradually
 
-- Add IPv6 support to anonymize-logs.sh
-    - Currently, `anonymize-logs.sh` only handles IPv4 addresses
-    - `analyze-logs.sh` already supports IPv6 addresses in logs
-    - Would need to add IPv6 address extraction and anonymization functions
-    - Low priority - IPv6 is less common in VPN logs, but would improve completeness
-    - See `docs/ANONYMIZE_LOGS_REVIEW.md` for details
+- Migrate more tests to use test data helpers
+    - Many test files still have embedded test data (xfrm state, ipsec status, config templates)
+    - Gradual migration as tests are updated or refactored
+    - See `MOCK_REFACTORING_OPPORTUNITIES.md` for candidates (file does not exist)
+    - Test data helpers available in `helpers/test_data.bash` and `tests/data/`
+    - Low priority: existing tests work fine, migration is optional improvement
+    - Status: Test data management infrastructure completed 2026-01-11
+    - Current state: Migration in progress - significant progress made 2026-01-27:
+      - `test_detection_error_recovery.sh`: Migrated static xfrm outputs to use helpers
+      - `test_recovery_tier2.sh`: Migrated ipsec status outputs to use helpers
+      - `test_detection.sh`: Already uses helpers for most cases (some edge cases remain with special formats)
+      - `test_recovery.sh`: Still has many embedded outputs, mostly in dynamic contexts or with special fields (e.g., "mark" attribute)
+        - Many tests already use helpers for static initial states (pattern established)
+        - Remaining embedded outputs are mostly in dynamic mock scripts that generate different outputs based on state
+        - Some embedded outputs include special fields (e.g., "mark") that helpers don't currently support
+    - Note: This is a gradual, ongoing migration task. Dynamic outputs and special fields may require helper extensions in the future.
 
-- Make routes persistent across reboots
-    - Routes added via `ip addr add` are not persistent across reboots
-    - Currently, routes are automatically re-added during config validation on each script execution, which handles the reboot case
-    - For true persistence, routes could be added to a startup script or systemd service
-    - This would ensure routes are available immediately on boot, before the first VPN monitor execution
-    - Low priority - current approach (re-adding on each execution) works well and handles reboots
+- Add module-level unit tests for recovery modules
+  - Each recovery module (`recovery_verification.sh`, `recovery_state.sh`, `recovery_orchestration.sh`, `ipsec_recovery.sh`, `xfrm_recovery.sh`) could have focused unit tests
+  - Would allow testing modules in isolation without full integration test setup
+  - Low priority: existing integration tests cover functionality well
+  - Benefit: Faster test execution, easier debugging of module-specific issues
+  - Status: Decomposition completed 2026-01-11, enables this future enhancement
+  - Pattern documented in `docs/CODE_PATTERNS.md` under "Fake Mode Support" section
+  - Current coverage:
+    - `recovery_verification.sh`: ⚠️ No dedicated unit tests (functions tested via integration tests in `test_recovery.sh`)
+    - `recovery_state.sh`: ⚠️ No dedicated unit tests (functions tested via integration tests)
+    - `recovery_orchestration.sh`: ⚠️ Partial coverage (some unit tests for `select_recovery_strategy` in `test_helper_functions.sh` and `test_recovery.sh`)
+    - `ipsec_recovery.sh`: ⚠️ No dedicated unit tests (functions tested via integration tests)
+    - `xfrm_recovery.sh`: ⚠️ No dedicated unit tests (functions tested via integration tests)
+
+- Add module-level unit tests for config modules
+  - Each config module (`config_loading.sh`, `config_validation.sh`, `config_defaults.sh`, `location_parsing.sh`) could have focused unit tests
+  - Would allow testing modules in isolation without full integration test setup
+  - Low priority: existing integration tests cover functionality well
+  - Benefit: Faster test execution, easier debugging of module-specific issues
+  - Note: Decomposition completed 2026-01-11, enables this future enhancement
+  - Current coverage:
+    - `location_parsing.sh`: ✅ Has dedicated unit tests in `test_config_location.sh`
+    - `config_defaults.sh`: ⚠️ Partial coverage (some tests in `test_config_schema.sh` and `test_helper_functions.sh`)
+    - `config_loading.sh`: ⚠️ Mostly integration tests, not focused module-level unit tests
+    - `config_validation.sh`: ⚠️ Partial coverage (some tests in `test_config_validation.sh`)
+
 
 - Investigate SA count mismatch and asymmetric SA state
     - Issue: Inconsistent SA counts found during recovery - sometimes 2 SAs (bidirectional) are found, sometimes only 1 SA
@@ -96,3 +116,11 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Likely root cause: Network configuration issue or asymmetric SA state, not code bug, but understanding SA state may enable proper recovery
     - Code changes may be needed: Possibly SA discovery/recovery logic if asymmetric state is the issue
     - See: `analyze/LOG_ANALYSIS_ISSUES.md` Issue #3 for detailed analysis
+
+- Improve lockfile removal failure test reliability
+    - Current test "lockfile cleanup fails - lockfile removal fails" attempts to make directory read-only during script execution
+    - This may not work reliably on all systems due to timing and permission handling
+    - Consider finding a better way to simulate lockfile removal failures (e.g., mock `rm` command, use filesystem that doesn't support removal, etc.)
+    - Low priority: Current test still verifies that script doesn't crash, which is the important behavior
+    - Note: Test includes comment acknowledging limitation - "Note: This may not work on all systems, but tests the error handling path"
+    - See: `tests/test_lockfile.sh:1031-1063` for current implementation

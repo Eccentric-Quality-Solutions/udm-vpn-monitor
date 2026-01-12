@@ -736,7 +736,145 @@ load fixtures/vpn_active
 }
 ```
 
-### 5. Mock Setup and Cleanup
+### 5. Test Setup and Teardown
+
+**Pattern**: Use `standard_setup()` and `standard_teardown()` for consistent test isolation
+
+**Standard**: All tests should use the standard setup/teardown functions to ensure complete test isolation. Custom setup/teardown should extend the standard functions, not replace them.
+
+#### Default Setup/Teardown
+
+Most tests should use the default `setup()` and `teardown()` functions provided by `test_helper.bash`. These functions:
+
+- Create isolated temporary directories for each test
+- Save and restore all test-related environment variables
+- Clean up test artifacts (cron entries, temporary files, etc.)
+- Ensure complete test isolation between test runs
+
+**Example - Using default setup/teardown**:
+```bash
+#!/usr/bin/env bats
+
+load test_helper
+
+@test "my test" {
+    # setup() is called automatically by BATS
+    # TEST_DIR, MOCK_DATA_DIR, MOCK_INSTALL_DIR are available
+    local config_file="${TEST_DIR}/vpn-monitor.conf"
+    generate_config_file "standard" "$config_file" "${TEST_PEER_IP}"
+    
+    # Your test code here
+    run bash "$TEST_SCRIPT" --fake
+    assert_success
+    
+    # teardown() is called automatically by BATS
+}
+```
+
+#### Custom Setup/Teardown
+
+When you need custom setup or teardown (e.g., to clean up processes, daemons, or special resources), extend the standard functions:
+
+**Pattern for custom setup**:
+```bash
+setup() {
+    # Call standard setup first
+    standard_setup
+    # Add custom setup logic here
+    setup_custom_resources
+}
+```
+
+**Pattern for custom teardown**:
+```bash
+teardown() {
+    # Add custom cleanup first (e.g., kill processes)
+    cleanup_custom_resources
+    # Then call standard teardown to restore environment
+    standard_teardown
+}
+```
+
+**Example - Custom teardown for keepalive tests**:
+```bash
+#!/usr/bin/env bats
+
+load test_helper
+
+teardown() {
+    # Clean up keepalive-specific resources first
+    cleanup_keepalive_daemon
+    remove_mock_from_path 2>/dev/null || true
+    pkill -9 -f "vpn-keepalive.sh" 2>/dev/null || true
+    # Then restore standard test environment
+    standard_teardown
+}
+
+@test "keepalive test" {
+    # Test code here
+}
+```
+
+#### Test Isolation Requirements
+
+**Critical**: Tests must be completely isolated from each other. The following must be cleaned up or restored:
+
+1. **Environment Variables**: All test-related environment variables are automatically saved and restored by `standard_setup()` and `standard_teardown()`
+2. **Temporary Directories**: `TEST_DIR` is automatically created and cleaned up
+3. **Processes**: Custom processes (daemons, background jobs) must be cleaned up in custom teardown
+4. **Cron Entries**: Test cron entries are automatically cleaned up by `standard_teardown()`
+5. **File Permissions**: If tests modify file permissions, they should be restored (see `save_permissions_for_restore()` helper)
+6. **Working Directory**: Original working directory is automatically restored
+7. **PATH Modifications**: PATH is automatically restored to original value
+
+**Don't use**:
+```bash
+# ❌ Overriding setup/teardown without calling standard functions
+setup() {
+    TEST_DIR="$(mktemp -d)"
+    # Missing standard setup - no environment variable tracking!
+}
+
+teardown() {
+    rm -rf "$TEST_DIR"
+    # Missing standard teardown - environment not restored!
+}
+```
+
+**Use**:
+```bash
+# ✅ Extending standard setup/teardown
+setup() {
+    standard_setup
+    # Custom setup here
+}
+
+teardown() {
+    # Custom cleanup here
+    standard_teardown
+}
+```
+
+#### Standard Setup/Teardown Functions
+
+**`standard_setup()`**:
+- Saves original PATH, PWD, HOME
+- Saves all test-related environment variables (with `ORIGINAL_` prefix)
+- Creates `TEST_DIR` using `temp_make` (BATS file helper)
+- Creates `MOCK_DATA_DIR` and `MOCK_INSTALL_DIR`
+- Exports test directory variables
+
+**`standard_teardown()`**:
+- Restores original PATH
+- Restores all test-related environment variables
+- Removes `TEST_DIR` using `temp_del` (respects `BATSLIB_TEMP_PRESERVE_ON_FAILURE`)
+- Restores original working directory
+- Cleans up accidentally created directories
+- Removes test cron entries
+
+**Note**: Set `BATSLIB_TEMP_PRESERVE_ON_FAILURE=1` to preserve temp directories for debugging when tests fail.
+
+### 6. Mock Setup and Cleanup
 
 **CRITICAL REQUIREMENT: Always Handle Both `ip -s xfrm state` and `ip xfrm state` Formats**
 
@@ -788,6 +926,35 @@ EOF
 
 **Helper Functions**: The helper functions in `test_helper.bash` already handle both formats correctly:
 - `mock_ip_xfrm_state()` - handles both formats
+
+**CRITICAL: Test Mocks Must Match Real Output Format**
+
+When creating mocks for kernel interface output (like `ip xfrm state`), **the mock output format must exactly match the real output format** that the code expects. Tests should validate what the code actually does with real formats, not make the code conform to incorrect test expectations.
+
+**Why this matters**: If a test mock uses an incorrect format (e.g., mark on same line as proto/spi when real output has mark on its own line), the test may pass but doesn't validate that the code works with real output. This can lead to production bugs.
+
+**Example - Correct Format**:
+```bash
+# ✅ CORRECT: Mark on its own line (matches real xfrm output)
+echo "src 172.31.16.115 dst 172.31.23.27"
+echo "    proto esp spi 0x12345678"
+echo "    mark 0x12000000/0xfe000000"
+echo "    lifetime current:"
+echo "      1000(bytes), 10(packets)"
+```
+
+**Example - Incorrect Format**:
+```bash
+# ❌ WRONG: Mark on same line as proto/spi (doesn't match real output)
+echo "src 172.31.16.115 dst 172.31.23.27"
+echo "    proto esp spi 0x12345678 mark 0x12000000/0xfe000000"
+echo "    lifetime current:"
+echo "      1000(bytes), 10(packets)"
+```
+
+**How to verify format**: Check documentation (e.g., `docs/CODE_REVIEW_LESSONS_LEARNED.md`) or run the actual command on a UDM device to see the real output format. All test mocks should match this format exactly.
+
+**Related**: See `docs/CODE_REVIEW_LESSONS_LEARNED.md` section on xfrm mark parsing for documented format examples.
 
 #### Pattern 5b: Mocking Route Setup Commands (`ip addr show br0` and `ip addr add`)
 
@@ -971,11 +1138,13 @@ EOF
 - Variables from the test environment (like `${TEST_PEER_IP}`) should NOT be escaped - they should expand during test execution
 - Alternatively, use `<<'EOF'` (with quotes) to prevent all expansion, but then you can't use test variables
 - Check existing mocks in `test_helper.bash` for correct patterns (e.g., `mock_ip_xfrm_state()`)
+- **CRITICAL**: Always include `exit 0` (or appropriate exit code) after each branch in mock scripts. Without explicit exit statements, the script will fall through to `exec /usr/bin/ip "$@"` at the end, calling the real command instead of returning mock output. This causes tests to fail with "SAs exist but parsing failed" or similar errors when the real command returns unexpected output.
 
 **Standard**:
 - Always escape script arguments (`\$1`, `\$2`, `\$@`) in unquoted heredocs
 - Don't escape test environment variables (they should expand during test execution)
 - Use quoted heredocs (`<<'EOF'`) only when you don't need variable expansion
+- **Always include explicit exit statements** in all branches of mock scripts to prevent fall-through to real commands
 
 #### Pattern 5f: Helper Function Output Format Must Match Real Command Output
 
@@ -1042,18 +1211,22 @@ mock_ip_link "UP,DOWN" "br0,eth0"
 # ✅ GOOD: Use additional_handlers to combine base + specific behavior
 local additional_handlers
 additional_handlers=$(cat <<ADDITIONAL_EOF
-elif [[ "\$1" == "route" ]] && [[ "\$2" == "get" ]]; then
+if [[ "\$1" == "route" ]] && [[ "\$2" == "get" ]]; then
     # Return route information for alternative route
     echo "172.31.13.239 via ${TEST_PEER_IP} dev eth0 src 172.31.19.169"
     exit 0
-elif [[ "\$1" == "addr" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "br0" ]]; then
+fi
+if [[ "\$1" == "addr" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "br0" ]]; then
     echo "1: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
     echo "    inet 192.168.1.1/24 brd 192.168.1.255 scope global br0"
     exit 0
+fi
 ADDITIONAL_EOF
 )
 mock_ip_vpn_down "${TEST_DIR}/ip" "$additional_handlers"
 ```
+
+**Important**: When using `additional_handlers` with `mock_ip_vpn_down`, use standalone `if` statements, not `elif`. The handlers are inserted after standalone `if` statements in the base mock, so `elif` would be invalid syntax. Each handler should be a complete `if...fi` block.
 
 **Benefits**:
 - Reduces code duplication
@@ -1064,6 +1237,38 @@ mock_ip_vpn_down "${TEST_DIR}/ip" "$additional_handlers"
 - Use `additional_handlers` pattern for complex mocks that combine base + specific behavior
 - Prefer this pattern over creating completely custom mocks when possible
 - Document why custom mocks are kept when they can't use this pattern
+
+**Important**: When using `additional_handlers` with `mock_ip_vpn_down`, use standalone `if` statements, not `elif`. The handlers are inserted after standalone `if` statements in the base mock, so `elif` would be invalid bash syntax (elif can only follow an `if` in the same if-elif-else chain). Each handler should be a complete `if...fi` block.
+
+**Example of the issue**:
+```bash
+# ❌ BAD: Using elif in additional_handlers (invalid syntax)
+additional_handlers=$(cat <<ADDITIONAL_EOF
+elif [[ "\$1" == "route" ]] && [[ "\$2" == "get" ]]; then
+    echo "route info"
+    exit 0
+elif [[ "\$1" == "addr" ]] && [[ "\$2" == "add" ]]; then
+    exit 0
+ADDITIONAL_EOF
+)
+# This creates invalid bash syntax when inserted into mock_ip_vpn_down
+# because the base mock has standalone if statements, not an if-elif chain
+```
+
+**Fixed example**:
+```bash
+# ✅ GOOD: Using standalone if statements
+additional_handlers=$(cat <<ADDITIONAL_EOF
+if [[ "\$1" == "route" ]] && [[ "\$2" == "get" ]]; then
+    echo "route info"
+    exit 0
+fi
+if [[ "\$1" == "addr" ]] && [[ "\$2" == "add" ]]; then
+    exit 0
+fi
+ADDITIONAL_EOF
+)
+```
 
 #### Pattern 5i: When to Keep Custom Mocks
 
@@ -1285,6 +1490,50 @@ add_mock_to_path
 - Review `lib/recovery.sh` and `lib/detection.sh` to see function dependencies
 - Override functions after sourcing modules, before calling recovery functions
 
+**Important: Capture Mock Outputs When Overriding Functions**:
+When overriding functions that need to reference mock command paths, capture the output from helper functions that create mocks. Helper functions like `mock_ipsec_status()`, `mock_ip_xfrm_state()`, etc. print the path to the created mock script to stdout.
+
+**Example**:
+```bash
+# ✅ GOOD: Capture mock path when overriding functions that reference it
+local mock_ipsec
+mock_ipsec=$(mock_ipsec_status 0 "Connections:
+  192.168.1.1: ESTABLISHED")
+
+source_recovery_module
+
+# Override function to use captured mock path
+check_command_available() {
+    local cmd="$1"
+    if [[ "$cmd" == "ipsec" ]]; then
+        if [[ -x "$mock_ipsec" ]]; then
+            return 0
+        fi
+    fi
+    # ... delegate to original function
+}
+
+get_command_path() {
+    local cmd="$1"
+    if [[ "$cmd" == "ipsec" ]]; then
+        echo "$mock_ipsec"
+        return 0
+    fi
+    # ... delegate to original function
+}
+
+# ❌ BAD: Don't capture mock path (variable will be empty)
+mock_ipsec_status 0 "Connections:
+  192.168.1.1: ESTABLISHED"
+# $mock_ipsec is undefined, causing function overrides to fail
+```
+
+**Key Points**:
+- Helper functions (e.g., `mock_ipsec_status()`, `mock_ip_xfrm_state()`) output the mock path to stdout
+- Always capture this output when your custom function overrides need to reference the mock path
+- Use `local mock_name; mock_name=$(helper_function ...)` pattern for clarity
+- See `tests/test_recovery.sh` line 2131-2133 for a real example
+
 **Related Patterns**:
 - See `tests/test_recovery_method_tracking.sh` for examples of function overriding
 - See `tests/test_recovery.sh` lines 987-990 for another example
@@ -1295,7 +1544,7 @@ add_mock_to_path
 - Check if those functions are commands (use PATH mock) or functions (override definition)
 - Override functions after sourcing modules, before calling recovery functions
 
-### 6. Test Structure and Comments
+### 7. Test Structure and Comments
 
 **Pattern**: Use structured test comments with Purpose, Expected, and Importance
 
@@ -1326,7 +1575,7 @@ add_mock_to_path
 - Include Importance (why this test matters)
 - Use descriptive test names that explain the scenario
 
-### 7. Test Tags
+### 8. Test Tags
 
 **Pattern**: Use test tags to categorize and prioritize tests
 
@@ -1357,7 +1606,7 @@ add_mock_to_path
 - Use `slow` tag for tests that take significant time
 - Multiple tags can be comma-separated
 
-### 8. Assertion Patterns
+### 9. Assertion Patterns
 
 **Pattern**: Use appropriate assertion functions for different scenarios
 
@@ -1390,7 +1639,7 @@ add_mock_to_path
 - Use `assert_equal` for exact value comparisons
 - Prefer descriptive assertions over generic `assert`
 
-### 9. Recovery Message Patterns
+### 10. Recovery Message Patterns
 
 **Pattern**: When checking for VPN recovery messages in logs, account for both "recovered" and "restored" message formats.
 
@@ -1492,7 +1741,7 @@ add_mock_to_path
 - Use `delete_peer_state()` to clear recovery method if you want to test "recovered" format specifically
 - Use recovery actions (like `surgical_cleanup()`) if you want to test "restored" format specifically
 
-### 10. Config Setup Patterns
+### 11. Config Setup Patterns
 
 **Pattern**: Use appropriate config setup helper for your test type
 
@@ -1523,7 +1772,7 @@ setup_test_config_with_recovery_disabled "${TEST_DIR}/vpn-monitor.conf" "192.168
 - Use helper functions instead of manual config file creation
 - Always use `setup_location_config_and_load()` after creating location configs
 
-### 11. Source Function Pattern
+### 12. Source Function Pattern
 
 **Pattern**: Use `source_function()` for unit testing individual functions
 
@@ -1547,7 +1796,7 @@ setup_test_config_with_recovery_disabled "${TEST_DIR}/vpn-monitor.conf" "192.168
 - Use direct `source` for integration tests that need full modules
 - Use `source_recovery_module()` for recovery-related tests
 
-### 12. Test File Structure
+### 13. Test File Structure
 
 **Pattern**: Follow consistent file structure for test files
 
@@ -1585,7 +1834,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 - Use section headers for organization
 - Group related tests together
 
-### 13. Running Tests
+### 14. Running Tests
 
 **Pattern**: Use `run bash` for executing scripts, `run` for functions
 
@@ -1613,7 +1862,7 @@ PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
 - Use `--fake` flag for main script execution
 - Ensure mocks are in PATH before running scripts
 
-### 14. Testing Configuration Validation and Early-Exit Scenarios
+### 15. Testing Configuration Validation and Early-Exit Scenarios
 
 **Pattern**: Be aware of execution order when testing configuration validation failures
 
@@ -1663,7 +1912,7 @@ EOF
 - Tests for configuration validation should verify the script exits with the expected validation error message
 - Be aware that other early-exit conditions (network partition, cooldown, etc.) happen after configuration validation
 
-### 15. DRY Improvements During Bug Fixes
+### 16. DRY Improvements During Bug Fixes
 
 **Pattern**: When fixing bugs, look for redundant code and improve DRY (Don't Repeat Yourself)
 
@@ -1707,7 +1956,7 @@ process_locations() {
 - Update documentation to reflect new execution flow
 - Keep defensive checks that verify expected state
 
-### 16. Stateful Mocks for Testing State Transitions
+### 17. Stateful Mocks for Testing State Transitions
 
 **Pattern**: Use file-based counters or log file checks to create mocks that change behavior based on call count or execution phase
 
@@ -2047,7 +2296,7 @@ EOF
 - See `tests/test_main.sh:923` for correct usage
 - Always verify test config files contain expected values after creation
 
-### 22. Byte Counter Increment Pattern for XFRM Recovery Verification
+### 23. Byte Counter Increment Pattern for XFRM Recovery Verification
 
 **Pattern**: Mock `ip` command to return increasing byte counter values when testing xfrm recovery verification
 
@@ -2184,7 +2433,7 @@ EOF
 - Initialize counter files before creating mocks: `echo "0" >"$counter_file"`
 - Use reasonable increment values (1000-10000 bytes per call) to simulate realistic traffic
 
-### 23. Mock Counter Design: Account for All Phases When Testing Specific Behavior
+### 24. Mock Counter Design: Account for All Phases When Testing Specific Behavior
 
 **Pattern**: When designing mocks with counters that span multiple phases, account for all calls that occur before the phase you're testing.
 
@@ -2261,7 +2510,7 @@ fi
 
 **Related Patterns**:
 - See Pattern 16 (Stateful Mocks for Testing State Transitions) for call counter patterns
-- See Pattern 22 (Byte Counter Increment Pattern) for incrementing counter patterns
+- See Pattern 23 (Byte Counter Increment Pattern) for incrementing counter patterns
 - Each `check_ipsec_phase2` call results in 2 mock calls (`ip -s xfrm state` + `ip xfrm state` fallback)
 
 ## Helper Functions
@@ -2661,8 +2910,9 @@ When adding new features or making changes:
 12. **Use stateful mocks** with call counters or log file checks when testing state transitions
 13. **Account for timing differences** when testing partition clearing - checks happen at different execution points
 14. **Use location name helpers** when setting up failure counters - use `get_failure_counter_path_for_location_var()` instead of manually extracting location names from config variables
+15. **Use weak assertions for graceful degradation tests** - When testing error handling where multiple valid error messages are possible, use `||` operators in assertions to accept any valid error message (e.g., `assert_file_contains "$log_file" "Cannot create" || assert_file_contains "$log_file" "ERROR" || assert_file_contains "$log_file" "WARNING"`). This is appropriate for tests that verify graceful degradation rather than specific error messages.
 
-### 24. Location Name Extraction from Config Variables
+### 25. Location Name Extraction from Config Variables
 
 **Pattern**: Use helper functions to extract location names from config variables instead of hardcoding them.
 
@@ -2694,6 +2944,68 @@ echo "5" >"$failure_counter"
 - Helper functions handle sourcing of required functions automatically
 - Helper functions have fallback regex extraction if `extract_location_name()` from lib/config.sh is not available
 
+### 10. Using Test Data Helpers with Mock Scripts
+
+**Pattern**: Generate test data using helpers, store in files, use placeholders in mock scripts, replace with sed after creation.
+
+**When to use**: When creating mock scripts that need xfrm state output, ipsec status output, or config files. This centralizes test data maintenance and ensures consistency.
+
+**Standard Pattern**:
+```bash
+load helpers/test_data
+
+# Generate xfrm state output using test data helper
+local xfrm_state_output
+xfrm_state_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
+local xfrm_state_file="${TEST_DIR}/xfrm_state_initial"
+echo "$xfrm_state_output" >"$xfrm_state_file"
+
+# Create mock script with placeholder
+local mock_ip="${TEST_DIR}/ip"
+cat >"$mock_ip" <<'MOCK_IP_EOF'
+#!/bin/bash
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    cat "MOCK_XFRM_STATE_FILE"
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+MOCK_IP_EOF
+
+# Replace placeholders with actual paths
+sed -i "s|MOCK_XFRM_STATE_FILE|${xfrm_state_file}|g" "$mock_ip"
+chmod +x "$mock_ip"
+add_mock_to_path
+```
+
+**Handling Special Cases**:
+
+For xfrm state output with marks or other attributes not directly supported by helpers:
+```bash
+# Generate base output
+local xfrm_state_with_mark
+xfrm_state_with_mark=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
+# Add mark attribute after proto line using sed
+xfrm_state_with_mark=$(echo "$xfrm_state_with_mark" | sed '/proto esp/a\    mark 0x12000000/0xfe000000')
+local xfrm_state_file="${TEST_DIR}/xfrm_state_with_mark"
+echo "$xfrm_state_with_mark" >"$xfrm_state_file"
+```
+
+For modifying generated output (e.g., changing reqid):
+```bash
+# Generate output
+local xfrm_state
+xfrm_state=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x87654321" 2000 20 "minimal")
+# Update reqid using bash parameter expansion (preferred over sed for simple replacements)
+xfrm_state="${xfrm_state//reqid 1/reqid 2}"
+```
+
+**Benefits**:
+- Centralized maintenance: Update test data format in one place
+- Consistency: All tests use the same data generation logic
+- Easier updates: When xfrm output format changes, update helpers instead of many test files
+
+**Related**: See `tests/data/README.md` and `tests/helpers/test_data.bash` for available helpers and templates.
+
 ## Migration Notes
 
 - Old pattern `NO_ESCALATE=1; export NO_ESCALATE` → Use `enable_fake_mode()`
@@ -2702,3 +3014,4 @@ echo "5" >"$failure_counter"
 - Old pattern manual mock setup → Use `setup_mock_vpn_environment()` or fixtures
 - Old pattern missing cleanup → Always use `remove_mock_from_path()`
 - Old pattern manual location name extraction → Use `get_failure_counter_path_for_location_var()` or `get_location_name_from_config_var()`
+- Old pattern embedded xfrm/ipsec output in mock scripts → Use `generate_xfrm_state_output()` or `generate_ipsec_status_output()` with placeholder pattern

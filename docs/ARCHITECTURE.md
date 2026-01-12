@@ -107,7 +107,7 @@ graph TB
         LoggingLib[lib/logging.sh<br/>Logging Functions]
         ResourcesLib[lib/resources.sh<br/>Resource Monitoring]
         DetectionLib[lib/detection.sh<br/>VPN Detection]
-        RecoveryLib[lib/recovery.sh<br/>Recovery Actions]
+        RecoveryLib[lib/recovery.sh<br/>Recovery Actions<br/>Compatibility Layer]
         CommonLib[lib/common.sh<br/>Shared Utilities]
         ConstantsLib[lib/constants.sh<br/>Named Constants]
     end
@@ -688,7 +688,13 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │   │   └── failure_analysis.sh    # Failure type classification
 │   ├── lockfile.sh             # Lockfile management (flock/atomic)
 │   ├── logging.sh              # Centralized logging functionality
-│   ├── recovery.sh             # Tiered recovery actions
+│   ├── recovery.sh             # Tiered recovery actions (compatibility layer)
+│   ├── recovery/                # Recovery module subdirectory
+│   │   ├── recovery_verification.sh  # Recovery verification functions
+│   │   ├── recovery_state.sh         # Recovery state management
+│   │   ├── xfrm_recovery.sh          # xfrm-based recovery operations
+│   │   ├── ipsec_recovery.sh         # IPsec recovery operations
+│   │   └── recovery_orchestration.sh # Recovery orchestration and coordination
 │   ├── resources.sh            # Resource monitoring and throttling
 │   └── state.sh                # State file management (counters, cooldown, rate limiting)
 │
@@ -859,22 +865,35 @@ The system uses a modular library architecture where functionality is organized 
 **Used By**: All modules for consistent logging
 
 #### `lib/recovery.sh`
-**Purpose**: Tiered recovery actions (logging → surgical cleanup → full restart).
+**Purpose**: Tiered recovery actions (logging → surgical cleanup → full restart). Compatibility layer that sources all recovery modules.
 
-**Key Functions**:
-- `surgical_cleanup()` - Tier 2 recovery (per-connection xfrm recovery or ipsec reload)
-- `full_restart()` - Tier 3 recovery (per-connection xfrm recovery or ipsec restart)
-- `attempt_xfrm_recovery()` - Per-connection xfrm state recovery with verification
-- `reload_ipsec()` - Reload all IPsec connections
-- `restart_ipsec()` - Full IPsec restart
-- `count_sas_for_peer()` - Counts Security Associations for a peer IP
-- `verify_byte_counters_resume()` - Verifies byte counters resume after recovery
+**Module Structure**: The recovery functionality is organized into focused modules in the `lib/recovery/` subdirectory:
+- **`lib/recovery/recovery_verification.sh`**: Recovery verification functions (SA re-establishment, byte counter resumption)
+- **`lib/recovery/recovery_state.sh`**: Recovery state management (recovery method tracking, state updates)
+- **`lib/recovery/xfrm_recovery.sh`**: xfrm-based recovery operations (per-connection SA deletion, recovery attempts)
+- **`lib/recovery/ipsec_recovery.sh`**: IPsec recovery operations (ipsec reload, ipsec restart)
+- **`lib/recovery/recovery_orchestration.sh`**: Recovery orchestration and coordination (monitor_location, surgical_cleanup, full_restart, recovery strategy selection)
 
-**Recovery Verification**: After xfrm-based recovery actions, the system performs verification to ensure SAs are re-established and byte counters resume. Uses exponential backoff polling (2s → 4s → 8s → 16s intervals) with configurable timeout (`RECOVERY_VERIFY_TIMEOUT`, default: 30 seconds). If verification fails or times out, the system falls back to full IPsec restart/reload.
+**Key Functions** (distributed across modules):
+- `monitor_location()` - Main orchestration function (in `recovery_orchestration.sh`)
+- `surgical_cleanup()` - Tier 2 recovery (in `recovery_orchestration.sh`)
+- `full_restart()` - Tier 3 recovery (in `recovery_orchestration.sh`)
+- `attempt_xfrm_recovery()` - Per-connection xfrm state recovery (in `xfrm_recovery.sh`)
+- `reload_ipsec()` - Reload all IPsec connections (in `ipsec_recovery.sh`)
+- `restart_ipsec()` - Full IPsec restart (in `ipsec_recovery.sh`)
+- `count_sas_for_peer()` - Counts Security Associations for a peer IP (in `xfrm_recovery.sh`)
+- `verify_byte_counters_resume()` - Verifies byte counters resume after recovery (in `recovery_verification.sh`)
+- `select_recovery_strategy()` - Selects recovery strategy based on configuration (in `recovery_orchestration.sh`)
+
+**Recovery Verification**: After xfrm-based recovery actions, the system performs verification to ensure SAs are re-established and byte counters resume. Uses exponential backoff polling (2s → 4s → 8s → 16s intervals) with configurable timeout (`RECOVERY_VERIFY_TIMEOUT`, default: 30 seconds). If verification fails or times out, the system falls back to full IPsec restart/reload. Verification functions are in `recovery_verification.sh`.
+
+**Backward Compatibility**: The `lib/recovery.sh` file serves as a compatibility layer that sources all recovery modules, ensuring existing code continues to work unchanged. All functions are accessible via `lib/recovery.sh` as before.
+
+**Module Dependency Pattern**: Each recovery module sources its direct dependencies, making modules independently sourceable (useful for testing). The main `recovery.sh` entry point sources all modules in dependency order. This design allows modules to be sourced independently while maintaining backward compatibility with existing code that sources `recovery.sh`.
 
 **Dependencies**: `lib/logging.sh`, `lib/state.sh`, `lib/common.sh`, `lib/detection.sh`
 
-**Note**: See Design Decision #3 and Recovery Tier Flow diagram for recovery strategy details.
+**Note**: See Design Decision #3 and Recovery Tier Flow diagram for recovery strategy details. The module split (completed 2026-01-11) decomposes the original 2633-line monolithic file into 5 focused modules for better organization and maintainability.
 
 #### `lib/state.sh`
 **Purpose**: State file management for failure counters, cooldown periods, and rate limiting.

@@ -39,52 +39,11 @@ source "${LIB_DIR}/common.sh"
 # Note: logging.sh may require LOG_FILE to be set, but log_message will work
 # without it (outputs to stderr only). Source conditionally with fallback.
 if ! source "${LIB_DIR}/logging.sh" 2>/dev/null; then
-	# Fallback if logging.sh not found - define minimal log_message and handle_error
-	# These will output to stderr only (no log file)
-	# Log a message with timestamp and level
-	#
-	# Outputs a formatted log message to stderr with timestamp and log level.
-	# This is a fallback implementation used when logging.sh is not available.
-	#
-	# Arguments:
-	#   $1: Log level (e.g., INFO, WARN, ERROR)
-	#   $@: Remaining arguments form the log message
-	#
-	# Returns:
-	#   0: Always succeeds
-	#
-	# Output:
-	#   Prints formatted log message to stderr (format: [YYYY-MM-DD HH:MM:SS] [LEVEL] message)
-	log_message() {
-		local level="$1"
-		shift
-		local message="$*"
-		local timestamp
-		timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date +%s)
-		echo "[$timestamp] [$level] $message" >&2
-	}
-	# Handle error with logging and optional exit
-	#
-	# Logs an error message and optionally exits the script. This is a fallback
-	# implementation used when logging.sh is not available.
-	#
-	# Arguments:
-	#   $1: Error severity level (e.g., ERROR, WARN)
-	#   $2: Error message
-	#   $3: Exit code (optional, default: 1)
-	#
-	# Returns:
-	#   0: Success (if not exiting)
-	#   Exits script with specified exit code if severity is ERROR and exit_code is non-zero
-	handle_error() {
-		local severity="$1"
-		local message="$2"
-		local exit_code="${3:-1}"
-		log_message "$severity" "$message"
-		if [[ "$severity" == "ERROR" ]] && [[ $exit_code -ne 0 ]]; then
-			exit "$exit_code"
-		fi
-	}
+	# Fallback if logging.sh not found - use centralized fallbacks
+	# shellcheck source=lib/fallbacks.sh
+	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
+		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_logging_fallbacks
+	fi
 fi
 
 # Source network validation functions

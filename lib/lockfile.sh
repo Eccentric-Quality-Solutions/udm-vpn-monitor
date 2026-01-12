@@ -11,75 +11,21 @@
 # Determine lib directory (where this file is located)
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${LIB_DIR}/common.sh" 2>/dev/null || {
-	# Fallback if common.sh not found - define minimal functions
-	# Get current Unix timestamp
-	#
-	# Returns the current Unix timestamp (seconds since epoch).
-	# This is a fallback implementation when common.sh is not available.
-	#
-	# Arguments:
-	#   None
-	#
-	# Returns:
-	#   0: Always succeeds
-	#
-	# Output:
-	#   Prints Unix timestamp (integer) to stdout
-	get_unix_timestamp() {
-		date +%s
-	}
-	# Check if a command is available
-	#
-	# Checks if a command exists in the system PATH.
-	# This is a fallback implementation when common.sh is not available.
-	#
-	# Arguments:
-	#   $1: Command name to check
-	#
-	# Returns:
-	#   0: Command is available
-	#   1: Command is not available
-	check_command_available() {
-		local cmd="$1"
-		command -v "$cmd" >/dev/null 2>&1
-	}
-	# Safely source a library file
-	#
-	# Attempts to source a library file, silently failing if it doesn't exist.
-	# This is a fallback implementation when common.sh is not available.
-	#
-	# Arguments:
-	#   $1: Path to library file to source
-	#
-	# Returns:
-	#   0: File sourced successfully
-	#   1: File not found or error sourcing
-	safe_source_lib() {
-		local lib_file="$1"
-		source "$lib_file" 2>/dev/null
-	}
+	# Fallback if common.sh not found - use centralized fallbacks
+	# shellcheck source=lib/fallbacks.sh
+	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
+		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
+	fi
 }
 
 # Source logging functions to ensure get_formatted_timestamp() is available
 # shellcheck source=lib/logging.sh
 source "${LIB_DIR}/logging.sh" 2>/dev/null || {
-	# Fallback if logging.sh not found - define minimal get_formatted_timestamp
-	# Get formatted timestamp
-	#
-	# Returns a formatted timestamp string in the format "YYYY-MM-DD HH:MM:SS".
-	# This is a fallback implementation when logging.sh is not available.
-	#
-	# Arguments:
-	#   None
-	#
-	# Returns:
-	#   0: Always succeeds
-	#
-	# Output:
-	#   Prints formatted timestamp string to stdout
-	get_formatted_timestamp() {
-		date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S'
-	}
+	# Fallback if logging.sh not found - use centralized fallbacks
+	# shellcheck source=lib/fallbacks.sh
+	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
+		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_logging_timestamp_fallback
+	fi
 }
 
 # Extract PID from lockfile

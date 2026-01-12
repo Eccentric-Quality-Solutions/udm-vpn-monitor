@@ -4,55 +4,10 @@
 # Tests configuration comparison functionality between template and existing config files
 
 load test_helper
+load helpers/config
 
 # Path to the compare-config script
 COMPARE_CONFIG_SCRIPT="${BATS_TEST_DIRNAME}/../compare-config.sh"
-
-# Create a test config file with specified variables
-#
-# Creates a config file with the provided variable assignments.
-# Used to test various config scenarios.
-#
-# Arguments:
-#   $1: Config file path
-#   $2+: Variable assignments (e.g., "VAR1=value1" "VAR2=value2")
-#
-# Returns:
-#   0: Always succeeds
-create_test_config() {
-	local config_file="$1"
-	shift
-	mkdir -p "$(dirname "$config_file")"
-
-	cat >"$config_file" <<EOF
-# Test configuration file
-EOF
-
-	# Add each variable assignment
-	for var_assignment in "$@"; do
-		echo "$var_assignment" >>"$config_file"
-	done
-}
-
-# Create a minimal valid config file
-#
-# Creates a config file with all required settings.
-#
-# Arguments:
-#   $1: Config file path
-#
-# Returns:
-#   0: Always succeeds
-create_valid_config() {
-	local config_file="$1"
-	create_test_config "$config_file" \
-		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		'TIER1_THRESHOLD=1' \
-		'TIER2_THRESHOLD=3' \
-		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3'
-}
 
 # bats test_tags=category:unit
 @test "compare-config.sh exists and is executable" {

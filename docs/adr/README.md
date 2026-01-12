@@ -42,6 +42,7 @@ Architecture Decision Records are documents that capture important architectural
 | [ADR-0026](0026-detection-reliability-safeguard.md) | Detection Reliability Safeguard | Accepted |
 | [ADR-0027](0027-enhanced-command-availability-checking.md) | Enhanced Command Availability Checking | Accepted |
 | [ADR-0028](0028-state-passing-pattern-for-detection-functions.md) | State Passing Pattern for Detection Functions | Accepted |
+| [ADR-0029](0029-recovery-type-distinction.md) | Recovery Type Distinction | Accepted |
 
 ## ADR Format
 

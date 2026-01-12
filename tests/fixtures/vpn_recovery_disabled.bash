@@ -34,7 +34,6 @@ setup_vpn_recovery_disabled_fixture() {
 	local extra_config=("$@")
 
 	# Set up test VPN monitor with recovery disabled
-	# Use setup_test_config_with_recovery_disabled pattern
 	setup_test_vpn_monitor "$peer_ip" "${TEST_DIR}" \
 		'ENABLE_XFRM_RECOVERY=0' \
 		'ENABLE_NETWORK_PARTITION_CHECK=0' \

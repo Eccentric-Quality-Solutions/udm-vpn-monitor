@@ -39,52 +39,11 @@ source "${LIB_DIR}/common.sh"
 # Note: logging.sh may require LOG_FILE to be set, but log_message will work
 # without it (outputs to stderr only). Source conditionally with fallback.
 if ! source "${LIB_DIR}/logging.sh" 2>/dev/null; then
-	# Fallback if logging.sh not found - define minimal log_message and handle_error
-	# These will output to stderr only (no log file)
-	# Log a message with timestamp and level
-	#
-	# Outputs a formatted log message to stderr with timestamp and log level.
-	# This is a fallback implementation used when logging.sh is not available.
-	#
-	# Arguments:
-	#   $1: Log level (e.g., INFO, WARN, ERROR)
-	#   $@: Remaining arguments form the log message
-	#
-	# Returns:
-	#   0: Always succeeds
-	#
-	# Output:
-	#   Prints formatted log message to stderr (format: [YYYY-MM-DD HH:MM:SS] [LEVEL] message)
-	log_message() {
-		local level="$1"
-		shift
-		local message="$*"
-		local timestamp
-		timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date +%s)
-		echo "[$timestamp] [$level] $message" >&2
-	}
-	# Handle error with logging and optional exit
-	#
-	# Logs an error message and optionally exits the script. This is a fallback
-	# implementation used when logging.sh is not available.
-	#
-	# Arguments:
-	#   $1: Error severity level (e.g., ERROR, WARN)
-	#   $2: Error message
-	#   $3: Exit code (optional, default: 1)
-	#
-	# Returns:
-	#   0: Success (if not exiting)
-	#   Exits script with specified exit code if severity is ERROR and exit_code is non-zero
-	handle_error() {
-		local severity="$1"
-		local message="$2"
-		local exit_code="${3:-1}"
-		log_message "$severity" "$message"
-		if [[ "$severity" == "ERROR" ]] && [[ $exit_code -ne 0 ]]; then
-			exit "$exit_code"
-		fi
-	}
+	# Fallback if logging.sh not found - use centralized fallbacks
+	# shellcheck source=lib/fallbacks.sh
+	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
+		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_logging_fallbacks
+	fi
 fi
 
 # Source network validation functions
@@ -245,12 +204,129 @@ extract_spi() {
 	return 0
 }
 
+# Execute xfrm state command
+#
+# Executes the xfrm state command, trying with statistics first (ip -s xfrm state)
+# and falling back to regular ip xfrm state if the first attempt fails or returns empty.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Success (output printed to stdout)
+#   1: Failed to query xfrm state or command unavailable
+#
+# Output:
+#   Prints full xfrm state output to stdout
+#
+# Note:
+#   Requires ip command to be available
+execute_xfrm_state_command() {
+	if ! check_command_available "ip"; then
+		return 1
+	fi
+
+	# Try with statistics first (ip -s xfrm state) which may show more detail
+	local full_xfrm_output
+	if full_xfrm_output=$(ip -s xfrm state 2>/dev/null); then
+		if [[ -n "$full_xfrm_output" ]]; then
+			echo "$full_xfrm_output"
+			return 0
+		fi
+	fi
+
+	# Fall back to regular ip xfrm state (without -s)
+	if full_xfrm_output=$(ip xfrm state 2>/dev/null); then
+		if [[ -n "$full_xfrm_output" ]]; then
+			echo "$full_xfrm_output"
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+# Deduplicate SA blocks from xfrm output
+#
+# Deduplicates Security Association (SA) blocks from xfrm output using a composite key
+# of header (src ... dst ...) + SPI value. This handles the edge case where multiple SAs
+# can have the same src/dst IP addresses but different SPI values (e.g., during rekey
+# transitions or mixed SA configurations). Using only the header line for deduplication
+# would incorrectly treat such SAs as duplicates and skip them.
+#
+# Arguments:
+#   None (reads from stdin)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints deduplicated SA blocks to stdout
+#
+# Note:
+#   Reads xfrm output from stdin and writes deduplicated output to stdout
+#   Uses awk script to identify unique SA blocks by src+dst+spi combination
+deduplicate_sa_blocks() {
+	# Awk script to deduplicate SA blocks by src+dst+spi (not just src+dst)
+	# Multiple SAs can have the same src/dst but different SPI values
+	local dedupe_awk_script='
+		BEGIN { in_block = 0; current_header = ""; current_spi = "" }
+		/^src[[:space:]]+/ {
+			# New SA block detected - save previous block if unique
+			if (in_block == 1 && current_header != "" && current_spi != "") {
+				# Create unique key from header + SPI
+				sa_key = current_header "|" current_spi
+				if (!(sa_key in seen_sas)) {
+					seen_sas[sa_key] = 1
+					# Print the saved block
+					print saved_block
+				}
+			}
+			# Start new block
+			current_header = $0
+			current_spi = ""
+			saved_block = $0
+			in_block = 1
+			next
+		}
+		in_block == 1 {
+			# Continuation line - look for SPI value
+			if (current_spi == "" && /[[:space:]]+spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+)/) {
+				# Extract SPI value (hex or decimal)
+				if (match($0, /spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+)/)) {
+					# Extract matched portion and remove "spi" prefix and whitespace
+					current_spi = substr($0, RSTART, RLENGTH)
+					gsub(/^spi[[:space:]]+/, "", current_spi)
+				}
+			}
+			saved_block = saved_block "\n" $0
+		}
+		END {
+			# Handle last block
+			if (in_block == 1 && current_header != "" && current_spi != "") {
+				sa_key = current_header "|" current_spi
+				if (!(sa_key in seen_sas)) {
+					print saved_block
+				}
+			}
+		}
+	'
+	awk "$dedupe_awk_script"
+}
+
 # Get xfrm state output for a peer IP
 #
 # Retrieves xfrm state output filtered for a specific peer IP address.
 # Finds both forward SAs (dst=$peer_ip) and reverse SAs (src=$peer_ip) to handle asymmetric SA state.
 # Uses fixed-string matching for forward SAs and anchored regex for reverse SAs (safe due to IP validation).
 # IP address is validated before use to prevent regex injection attacks.
+#
+# Deduplication Logic:
+#   When both forward and reverse outputs exist, deduplicates SA blocks using a composite key
+#   of header (src ... dst ...) + SPI value. This handles the edge case where multiple SAs
+#   can have the same src/dst IP addresses but different SPI values (e.g., during rekey
+#   transitions or mixed SA configurations). Using only the header line for deduplication
+#   would incorrectly treat such SAs as duplicates and skip them.
 #
 # Arguments:
 #   $1: Peer IP address to filter for (must be valid IPv4 or IPv6)
@@ -271,10 +347,6 @@ get_xfrm_state_for_peer() {
 	local peer_ip="$1"
 	local context_lines="${2:-${XFRM_OUTPUT_CONTEXT_LINES:-10}}"
 
-	if ! check_command_available "ip"; then
-		return 1
-	fi
-
 	# Validate peer IP format to prevent regex injection and ensure safe matching
 	# This is a defense-in-depth measure - IPs should be validated at configuration load time,
 	# but we validate here to prevent regex injection if invalid IPs reach this function
@@ -282,103 +354,51 @@ get_xfrm_state_for_peer() {
 		return 1
 	fi
 
-	# Try with statistics first (ip -s xfrm state) which may show more detail
+	# Get full xfrm state output
+	local full_xfrm_output
+	if ! full_xfrm_output=$(execute_xfrm_state_command); then
+		return 1
+	fi
+	if [[ -z "$full_xfrm_output" ]]; then
+		return 1
+	fi
+
 	# Increase context lines to ensure we capture lifetime current section which may appear after lifetime config
 	# lifetime config section can be long, so we need more lines to get to lifetime current
 	local extended_context=$((context_lines + 10))
-	local xfrm_output=""
 	local forward_output=""
 	local reverse_output=""
 
-	# Get full xfrm state output once
-	local full_xfrm_output
-	full_xfrm_output=$(ip -s xfrm state 2>/dev/null)
-	local ip_exit_code=$?
-	if [[ $ip_exit_code -eq 0 ]] && [[ -n "$full_xfrm_output" ]]; then
-		# Find forward SAs (dst=$peer_ip) - matches forward SA header lines "src <local_ip> dst $peer_ip"
-		forward_output=$(echo "$full_xfrm_output" | grep -F "dst ${peer_ip}" -A "${extended_context}" 2>/dev/null || true)
-		# Find reverse SAs (src=$peer_ip) - matches reverse SA header lines "src $peer_ip dst <local_ip>"
-		# Use grep -E with anchored pattern to match lines starting with "src $peer_ip"
-		# Safe because peer_ip is validated above to prevent regex injection
-		# The pattern "^[[:space:]]*src $peer_ip[[:space:]]" matches SA header lines for reverse SAs
-		reverse_output=$(echo "$full_xfrm_output" | grep -E "^[[:space:]]*src ${peer_ip}[[:space:]]" -A "${extended_context}" 2>/dev/null || true)
+	# Find forward SAs (dst=$peer_ip) - matches forward SA header lines "src <local_ip> dst $peer_ip"
+	forward_output=$(echo "$full_xfrm_output" | grep -F "dst ${peer_ip}" -A "${extended_context}" 2>/dev/null || true)
+	# Find reverse SAs (src=$peer_ip) - matches reverse SA header lines "src $peer_ip dst <local_ip>"
+	# Use grep -E with anchored pattern to match lines starting with "src $peer_ip"
+	# Safe because peer_ip is validated above to prevent regex injection
+	# The pattern "^[[:space:]]*src $peer_ip[[:space:]]" matches SA header lines for reverse SAs
+	reverse_output=$(echo "$full_xfrm_output" | grep -E "^[[:space:]]*src ${peer_ip}[[:space:]]" -A "${extended_context}" 2>/dev/null || true)
 
-		# Combine outputs if both exist (they represent different SAs in a bidirectional tunnel)
-		# If only one exists, use it (asymmetric SA state)
-		# Note: Deduplicate by SA header lines (src ... dst ...) to avoid duplicates when
-		# reverse SA appears in forward_output context lines (grep -A includes context)
-		if [[ -n "$forward_output" ]] && [[ -n "$reverse_output" ]]; then
-			# Both exist - combine them, but deduplicate SA header lines
-			# Extract unique SA header lines (lines starting with "src") to identify duplicates
-			local combined="${forward_output}"$'\n'"${reverse_output}"
-			# Use awk to deduplicate: keep first occurrence of each unique SA header line
-			# SA blocks are identified by their header line (src ... dst ...)
-			xfrm_output=$(echo "$combined" | awk '
-				BEGIN { in_block = 0 }
-				/^src[[:space:]]+/ {
-					# New SA block detected - check if we have seen this header before
-					header = $0
-					if (header in seen_headers) {
-						# Duplicate SA header - skip this block
-						in_block = 0
-						next
-					}
-					# New unique SA header - mark as seen and start new block
-					seen_headers[header] = 1
-					in_block = 1
-					print
-					next
-				}
-				in_block == 1 {
-					# Continuation line of current SA block
-					print
-				}
-			')
-		elif [[ -n "$forward_output" ]]; then
-			xfrm_output="$forward_output"
-		elif [[ -n "$reverse_output" ]]; then
-			xfrm_output="$reverse_output"
-		fi
-
-		if [[ -n "$xfrm_output" ]]; then
-			echo "$xfrm_output"
-			return 0
-		fi
+	# Combine outputs if both exist (they represent different SAs in a bidirectional tunnel)
+	# If only one exists, use it (asymmetric SA state)
+	# Note: Deduplicate by SA header lines (src ... dst ...) to avoid duplicates when
+	# reverse SA appears in forward_output context lines (grep -A includes context)
+	# Multiple SAs can have the same src/dst but different SPI values, so we include SPI in uniqueness check
+	if [[ -n "$forward_output" ]] && [[ -n "$reverse_output" ]]; then
+		# Both exist - combine them, but deduplicate SA blocks
+		# Multiple SAs can have the same src/dst but different SPI values
+		# So we need to include SPI in the uniqueness check, not just the header line
+		local combined="${forward_output}"$'\n'"${reverse_output}"
+		echo "$combined" | deduplicate_sa_blocks
+		return 0
+	elif [[ -n "$forward_output" ]]; then
+		echo "$forward_output"
+		return 0
+	elif [[ -n "$reverse_output" ]]; then
+		echo "$reverse_output"
+		return 0
 	fi
 
-	# Fall back to regular ip xfrm state (without -s)
-	# Also search for both forward and reverse SAs
-	full_xfrm_output=$(ip xfrm state 2>/dev/null)
-	if [[ $? -eq 0 ]] && [[ -n "$full_xfrm_output" ]]; then
-		forward_output=$(echo "$full_xfrm_output" | grep -F "dst ${peer_ip}" -A "${extended_context}" 2>/dev/null || true)
-		reverse_output=$(echo "$full_xfrm_output" | grep -E "^[[:space:]]*src ${peer_ip}[[:space:]]" -A "${extended_context}" 2>/dev/null || true)
-
-		# Deduplicate when combining outputs (same logic as above)
-		if [[ -n "$forward_output" ]] && [[ -n "$reverse_output" ]]; then
-			local combined="${forward_output}"$'\n'"${reverse_output}"
-			echo "$combined" | awk '
-				BEGIN { in_block = 0 }
-				/^src[[:space:]]+/ {
-					header = $0
-					if (header in seen_headers) {
-						in_block = 0
-						next
-					}
-					seen_headers[header] = 1
-					in_block = 1
-					print
-					next
-				}
-				in_block == 1 {
-					print
-				}
-			'
-		elif [[ -n "$forward_output" ]]; then
-			echo "$forward_output"
-		elif [[ -n "$reverse_output" ]]; then
-			echo "$reverse_output"
-		fi
-	fi
+	# No output found
+	return 1
 }
 
 # Get ipsec status output for a peer IP
@@ -427,7 +447,7 @@ get_ipsec_status_for_peer() {
 # Arguments:
 #   $1: Current SPI value (from xfrm output, hex or decimal format)
 #   $2: Peer IP address (used for state lookup)
-#   $3: Location name (optional, used for state file naming)
+#   $3: Location name (required, used for state file naming)
 #
 # Returns:
 #   0: Rekey detected (SPI changed)
@@ -448,33 +468,29 @@ get_ipsec_status_for_peer() {
 check_sa_rekey_occurred() {
 	local current_spi="$1"
 	local peer_ip="$2"
-	local location_name="${3:-}"
+	local location_name="$3"
 
 	# Validate SPI format
 	if [[ -z "$current_spi" ]] || [[ ! "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
 		return 1
 	fi
 
+	# Validate location_name is provided
+	if [[ -z "$location_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "check_sa_rekey_occurred: location_name is required" 0
+		return 1
+	fi
+
 	# Get last known SPI using abstraction layer
 	# Check if the file exists first for efficiency (avoid unnecessary function call)
-	# get_peer_state now properly handles empty string defaults
 	local last_spi
 	local spi_file
-	if [[ -n "$location_name" ]]; then
-		spi_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "spi")
-	else
-		# Fallback for backward compatibility (shouldn't happen in new code)
-		spi_file=$(get_peer_state_file_path "" "$peer_ip" "spi")
-	fi
+	spi_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "spi")
 	if [[ ! -f "$spi_file" ]]; then
 		# No SPI file exists - no rekey
 		return 1
 	fi
-	if [[ -n "$location_name" ]]; then
-		last_spi=$(get_peer_state "$location_name" "$peer_ip" "spi" "")
-	else
-		last_spi=$(get_peer_state "" "$peer_ip" "spi" "")
-	fi
+	last_spi=$(get_peer_state "$location_name" "$peer_ip" "spi" "")
 
 	# If last_spi is empty or "0" and file doesn't exist, no rekey
 	# But we already checked file existence above, so if we get here, SPI exists
@@ -502,6 +518,7 @@ check_sa_rekey_occurred() {
 # Arguments:
 #   $1: Current SPI value (from xfrm output, hex or decimal format)
 #   $2: Peer IP address (used for state management and logging)
+#   $3: Location name (required, used for state file naming)
 #
 # Returns:
 #   0: Rekey detected (SPI changed)
@@ -513,7 +530,7 @@ check_sa_rekey_occurred() {
 #   - Logs rekey events for monitoring
 #
 # Examples:
-#   if detect_sa_rekey "$current_spi" "$peer_ip"; then
+#   if detect_sa_rekey "$current_spi" "$peer_ip" "$location_name"; then
 #       echo "SA rekey detected"
 #   fi
 #
@@ -524,10 +541,16 @@ check_sa_rekey_occurred() {
 detect_sa_rekey() {
 	local current_spi="$1"
 	local peer_ip="$2"
-	local location_name="${3:-}"
+	local location_name="$3"
 
 	# Validate SPI format
 	if [[ -z "$current_spi" ]] || [[ ! "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+		return 1
+	fi
+
+	# Validate location_name is provided
+	if [[ -z "$location_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "detect_sa_rekey: location_name is required" 0
 		return 1
 	fi
 
@@ -535,62 +558,35 @@ detect_sa_rekey() {
 	# Check if SPI file exists first to distinguish between "no file" and "file with value"
 	local last_spi
 	local spi_file
-	if [[ -n "$location_name" ]]; then
-		spi_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "spi")
-	else
-		# Fallback for backward compatibility (shouldn't happen in new code)
-		spi_file=$(get_peer_state_file_path "" "$peer_ip" "spi")
-	fi
+	spi_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "spi")
 	if [[ ! -f "$spi_file" ]]; then
 		# No SPI file exists - store current SPI and return (no rekey)
-		if [[ -n "$location_name" ]]; then
-			set_peer_state_non_critical "$location_name" "$peer_ip" "spi" "$current_spi"
-		else
-			set_peer_state_non_critical "" "$peer_ip" "spi" "$current_spi"
-		fi
+		set_peer_state_non_critical "$location_name" "$peer_ip" "spi" "$current_spi"
 		return 1
 	fi
-	if [[ -n "$location_name" ]]; then
-		last_spi=$(get_peer_state "$location_name" "$peer_ip" "spi" "")
-	else
-		last_spi=$(get_peer_state "" "$peer_ip" "spi" "")
-	fi
+	last_spi=$(get_peer_state "$location_name" "$peer_ip" "spi" "")
 
 	# Validate stored SPI format - if corrupted, recover by storing current SPI
 	if [[ -n "$last_spi" ]] && [[ "$last_spi" != "0" ]] && [[ ! "$last_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
 		# Stored SPI is corrupted - recover by storing current SPI
-		if [[ -n "$location_name" ]]; then
-			set_peer_state_non_critical "$location_name" "$peer_ip" "spi" "$current_spi"
-		else
-			set_peer_state_non_critical "" "$peer_ip" "spi" "$current_spi"
-		fi
+		set_peer_state_non_critical "$location_name" "$peer_ip" "spi" "$current_spi"
 		return 1
 	fi
 
 	# If last_spi is empty or "0", treat as no stored SPI (shouldn't happen if file exists, but be safe)
 	if [[ -z "$last_spi" ]] || [[ "$last_spi" == "0" ]]; then
-		if [[ -n "$location_name" ]]; then
-			set_peer_state_non_critical "$location_name" "$peer_ip" "spi" "$current_spi"
-		else
-			set_peer_state_non_critical "" "$peer_ip" "spi" "$current_spi"
-		fi
+		set_peer_state_non_critical "$location_name" "$peer_ip" "spi" "$current_spi"
 		return 1
 	fi
 
 	# Compare SPI values
 	if [[ "$current_spi" != "$last_spi" ]]; then
 		# SPI changed - rekey detected
-		# location_name should always be provided in production code
-		log_message "INFO" "${location_name:-SYSTEM}" "SA rekey detected${location_name:+ for $location_name ($peer_ip)}: SPI changed from $last_spi to $current_spi"
+		log_message "INFO" "$location_name" "SA rekey detected for $location_name ($peer_ip): SPI changed from $last_spi to $current_spi"
 
 		# Reset byte counter baseline to 0 (allows new baseline after rekey)
-		if [[ -n "$location_name" ]]; then
-			set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "0"
-			set_peer_state_non_critical "$location_name" "$peer_ip" "spi" "$current_spi"
-		else
-			set_peer_state_non_critical "" "$peer_ip" "last_bytes" "0"
-			set_peer_state_non_critical "" "$peer_ip" "spi" "$current_spi"
-		fi
+		set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "0"
+		set_peer_state_non_critical "$location_name" "$peer_ip" "spi" "$current_spi"
 
 		return 0
 	fi
@@ -829,6 +825,7 @@ check_byte_counters() {
 #   $3: Location name (optional, used for state file naming)
 #   $4: Diagnostic variable name (optional, if provided, diagnostic message is stored here instead of logging)
 #   $5: SA existence output variable name (optional, if provided, SA existence state (0 or 1) is stored here)
+#   $6: XFRM output variable name (optional, if provided, xfrm state output is stored here for reuse)
 #
 # Returns:
 #   0: SA found and valid (byte counters validated successfully, or byte counters unavailable but ping check succeeds)
@@ -841,12 +838,14 @@ check_byte_counters() {
 #     determine_vpn_status to detect failure type as "unknown"
 #   - If diagnostic variable name is provided, stores diagnostic message in that variable instead of logging
 #   - If SA existence output variable name is provided, stores SA existence state (0 or 1) in that variable
+#   - If XFRM output variable name is provided, stores xfrm state output in that variable for reuse (optimization)
 check_xfrm_status() {
 	local peer_ip="$1"
 	local internal_peer_ip="${2:-}"
 	local location_name="${3:-}"
 	local diagnostic_var="${4:-}"
 	local sa_exists_var="${5:-}"
+	local xfrm_output_var="${6:-}"
 
 	# Try ip xfrm state first (most reliable)
 	# xfrm = Linux IPsec framework - shows Security Associations (SAs) and byte counters
@@ -863,6 +862,11 @@ check_xfrm_status() {
 	# Match on "dst $peer_ip" pattern which appears at the start of each SA entry
 	# This ensures we capture the complete SA block including lifetime information
 	xfrm_output=$(get_xfrm_state_for_peer "$peer_ip")
+
+	# Store xfrm_output in output variable if provided (for reuse by downstream functions)
+	if [[ -n "$xfrm_output_var" ]]; then
+		printf -v "$xfrm_output_var" "%s" "$xfrm_output"
+	fi
 
 	if [[ -z "$xfrm_output" ]]; then
 		# Set SA existence to 0 if output variable provided
@@ -1152,6 +1156,8 @@ check_ipsec_phase2() {
 #   $2: Internal peer IP address (optional, used for idle detection via ping checks)
 #   $3: Location name (optional, used for state file naming)
 #   $4: Diagnostic variable name (optional, if provided, diagnostic message is stored here instead of logging)
+#   $5: SA existence output variable name (optional, if provided, SA existence state (0 or 1) is stored here)
+#   $6: XFRM output variable name (optional, if provided, xfrm state output is stored here for reuse)
 #
 # Returns:
 #   0: VPN is healthy (SA exists and valid)
@@ -1160,17 +1166,21 @@ check_ipsec_phase2() {
 # Side effects:
 #   - Logs debug/warning messages (unless diagnostic variable name is provided)
 #   - If diagnostic variable name is provided, stores diagnostic message in that variable instead of logging
+#   - If SA existence output variable name is provided, stores SA existence state (0 or 1) in that variable
+#   - If XFRM output variable name is provided, stores xfrm state output in that variable for reuse (optimization)
 check_xfrm_primary() {
 	local external_peer_ip="$1"
 	local internal_peer_ip="${2:-}"
 	local location_name="${3:-}"
 	local diagnostic_var="${4:-}"
 	local sa_exists_var="${5:-}"
+	local xfrm_output_var="${6:-}"
 
 	# Try detection using xfrm (most reliable method)
 	# Pass internal IP and location_name to check_xfrm_status for idle detection via ping checks
 	# Also pass SA existence output variable to expose SA state separately
-	check_xfrm_status "$external_peer_ip" "$internal_peer_ip" "$location_name" "$diagnostic_var" "$sa_exists_var"
+	# Pass xfrm_output_var to expose xfrm state output for reuse by downstream functions (optimization)
+	check_xfrm_status "$external_peer_ip" "$internal_peer_ip" "$location_name" "$diagnostic_var" "$sa_exists_var" "$xfrm_output_var"
 }
 
 # Check VPN status using ipsec (fallback method)
