@@ -636,7 +636,7 @@ ADDITIONAL_EOF
 	# Expected: Function returns 0 when default route is present.
 	# Importance: Default route check is critical for network partition detection.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - default route exists
 	mock_ip_route "1" "default via ${TEST_PEER_IP} dev eth0"
@@ -661,7 +661,7 @@ ADDITIONAL_EOF
 	# Expected: Function returns 1 when default route is not found.
 	# Importance: Missing default route indicates network partition.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - default route missing
 	mock_ip_route "0"
@@ -686,7 +686,7 @@ ADDITIONAL_EOF
 	# Expected: Function returns 0 when DNS resolution succeeds.
 	# Importance: DNS resolution check is critical for network partition detection.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock dig command - DNS resolution succeeds
 	mock_dig "1" "8.8.8.8"
@@ -711,7 +711,7 @@ ADDITIONAL_EOF
 	# Expected: Function returns 1 when DNS resolution times out.
 	# Importance: DNS timeout indicates network partition.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock dig command - DNS resolution fails (timeout)
 	mock_dig "0" "8.8.8.8" "timeout"
@@ -738,7 +738,7 @@ ADDITIONAL_EOF
 	# Expected: Function returns 1 when DNS server is unreachable.
 	# Importance: Unreachable DNS server indicates network partition.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock dig command - DNS server unreachable
 	mock_dig 0
@@ -763,7 +763,7 @@ ADDITIONAL_EOF
 	# Expected: Function returns 0 when all checked interfaces are UP.
 	# Importance: Interface state check is critical for network partition detection.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - all interfaces UP
 	mock_ip_interfaces_up "br0,eth0" "0" >/dev/null
@@ -813,7 +813,7 @@ ADDITIONAL_EOF
 	# Expected: Function returns 1 when interface doesn't exist.
 	# Importance: Non-existent interfaces indicate network partition or misconfiguration.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - interface doesn't exist
 	local mock_ip="${TEST_DIR}/ip"
@@ -850,7 +850,7 @@ EOF
 	# Expected: Function returns 0 when all checks pass.
 	# Importance: Network partition detection prevents false VPN failure detection.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - default route exists, interfaces UP
 	mock_ip_interfaces_up "br0,eth0" "1" >/dev/null
@@ -878,7 +878,7 @@ EOF
 	# Expected: Function returns 1 when one or more checks fail.
 	# Importance: Network partition detection prevents false VPN failure detection.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - default route missing, interfaces UP
 	mock_ip_interfaces_up "br0,eth0" "0" >/dev/null
@@ -906,7 +906,7 @@ EOF
 	# Expected: Function uses custom DNS server, hostname, and interfaces.
 	# Importance: Custom parameters allow flexible network partition detection.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
 
 	# Mock ip command - interfaces UP
 	mock_ip_interfaces_up "eth1,eth2" "1" >/dev/null

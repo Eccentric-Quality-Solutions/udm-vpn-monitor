@@ -27,7 +27,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script exits early due to cooldown, no restart attempted
 	# Importance: Ensures cooldown period is respected even when rate limit would allow restart
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	generate_config_file "cooldown_rate_limit" "$config_file" "${TEST_PEER_IP}" "0.01" "3"
+	generate_config_file "cooldown_rate_limit" "$config_file" "${TEST_PEER_IP}" "1" "3"
 
 	mkdir -p "${TEST_DIR}/logs"
 	mkdir -p "${TEST_DIR}/state"
@@ -56,8 +56,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local recent=$((now - 1800)) # 30 minutes ago (within 1 hour)
 	echo "$recent" >"$restart_file"
 
-	# Set up active cooldown: 1 second remaining (cooldown is 0.01 minutes = 0.6 seconds)
-	local cooldown_until=$((now + 1)) # 1 second in future
+	# Set up active cooldown: 30 seconds remaining (cooldown is 1 minute, so still active)
+	local cooldown_until=$((now + 30)) # 30 seconds in future
 	echo "$cooldown_until" >"$cooldown_file"
 
 	# Set failure count to Tier 3 threshold (would trigger restart if not for cooldown)

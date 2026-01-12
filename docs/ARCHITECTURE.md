@@ -101,15 +101,16 @@ graph TB
 
     subgraph "Library Modules"
         LockfileLib[lib/lockfile.sh<br/>Lockfile Management]
-        ConfigLib[lib/config.sh<br/>Config Loading]
+        ConfigLib[lib/config.sh<br/>Config Loading<br/>Compatibility Layer]
         SchemaLib[lib/config_schema.sh<br/>Schema Validation]
-        StateLib[lib/state.sh<br/>State Management]
+        StateLib[lib/state.sh<br/>State Management<br/>Compatibility Layer]
         LoggingLib[lib/logging.sh<br/>Logging Functions]
         ResourcesLib[lib/resources.sh<br/>Resource Monitoring]
-        DetectionLib[lib/detection.sh<br/>VPN Detection]
+        DetectionLib[lib/detection.sh<br/>VPN Detection<br/>Compatibility Layer]
         RecoveryLib[lib/recovery.sh<br/>Recovery Actions<br/>Compatibility Layer]
         CommonLib[lib/common.sh<br/>Shared Utilities]
         ConstantsLib[lib/constants.sh<br/>Named Constants]
+        FallbacksLib[lib/fallbacks.sh<br/>Fallback Functions]
     end
 
     subgraph "Detection Layer"
@@ -143,6 +144,8 @@ graph TB
     MainScript --> RecoveryLib
     MainScript --> CommonLib
     MainScript --> ConstantsLib
+    ConfigLib --> FallbacksLib
+    DetectionLib --> FallbacksLib
 
     DetectionLib --> XfrmCheck
     XfrmCheck -->|No SA| IpsecCheck
@@ -677,15 +680,21 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │
 ├── lib/                        # Library modules
 │   ├── common.sh               # Shared utilities (logging, validation, helpers)
-│   ├── config.sh               # Configuration loading and management
+│   ├── config.sh               # Configuration loading and management (compatibility layer)
+│   ├── config/                  # Configuration module subdirectory
+│   │   ├── config_loading.sh      # Configuration file loading and parsing
+│   │   ├── config_validation.sh   # Configuration validation logic
+│   │   ├── location_parsing.sh    # Location-based configuration parsing
+│   │   └── config_defaults.sh     # Default value application logic
 │   ├── config_schema.sh        # Configuration schema definitions and validation
 │   ├── constants.sh            # Named constants for magic numbers
-│   ├── detection.sh            # VPN status detection (main entry point)
+│   ├── detection.sh            # VPN status detection (main entry point, compatibility layer)
 │   ├── detection/               # Detection module subdirectory
 │   │   ├── network_validation.sh  # IP validation, route checks
 │   │   ├── xfrm_detection.sh      # xfrm state and byte counter detection
 │   │   ├── ping_detection.sh      # Ping-based detection
 │   │   └── failure_analysis.sh    # Failure type classification
+│   ├── fallbacks.sh            # Centralized fallback function definitions
 │   ├── lockfile.sh             # Lockfile management (flock/atomic)
 │   ├── logging.sh              # Centralized logging functionality
 │   ├── recovery.sh             # Tiered recovery actions (compatibility layer)
@@ -694,9 +703,16 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │   │   ├── recovery_state.sh         # Recovery state management
 │   │   ├── xfrm_recovery.sh          # xfrm-based recovery operations
 │   │   ├── ipsec_recovery.sh         # IPsec recovery operations
-│   │   └── recovery_orchestration.sh # Recovery orchestration and coordination
+│   │   ├── recovery_orchestration.sh # Recovery orchestration and coordination
+│   │   └── constants.sh              # Recovery-specific constants
 │   ├── resources.sh            # Resource monitoring and throttling
-│   └── state.sh                # State file management (counters, cooldown, rate limiting)
+│   ├── state.sh                # State file management (compatibility layer)
+│   └── state/                   # State module subdirectory
+│       ├── state_paths.sh         # State file path generation and sanitization
+│       ├── peer_state.sh          # Per-peer state operations
+│       ├── location_state.sh      # Per-location state operations
+│       ├── global_state.sh         # Global state operations
+│       └── state_init.sh           # State initialization and validation
 │
 ├── logs/                       # Logs directory
 │   ├── vpn-monitor.log         # Main monitor log file
@@ -753,12 +769,21 @@ The system uses a modular library architecture where functionality is organized 
 **Used By**: `vpn-monitor.sh`, `install.sh`, `uninstall.sh`
 
 #### `lib/config.sh`
-**Purpose**: Configuration file loading, validation, and management.
+**Purpose**: Configuration file loading, validation, and management. Compatibility layer that sources all config modules.
 
-**Key Functions**:
-- `load_config()` - Loads and validates configuration from `vpn-monitor.conf`
-- `recalculate_log_paths()` - Updates log paths after config changes
-- `validate_config()` - Validates configuration against schema
+**Module Structure**: The configuration functionality is organized into focused modules in the `lib/config/` subdirectory:
+- **`lib/config/config_loading.sh`**: Configuration file loading, parsing, and file operations
+- **`lib/config/config_validation.sh`**: Configuration validation logic, type checking, and schema integration
+- **`lib/config/location_parsing.sh`**: Location-based configuration parsing, location name extraction and sanitization
+- **`lib/config/config_defaults.sh`**: Default value application logic and default handling
+
+**Key Functions** (distributed across modules):
+- `load_config()` - Loads and validates configuration from `vpn-monitor.conf` (in `config_loading.sh`)
+- `recalculate_log_paths()` - Updates log paths after config changes (in `config_loading.sh`)
+- `validate_config()` - Validates configuration against schema (in `config_validation.sh`)
+- `parse_location_config()` - Parses location-based configuration variables (in `location_parsing.sh`)
+- `parse_single_location()` - Parses a single location's configuration (in `location_parsing.sh`)
+- `validate_location_config()` - Validates location configuration (in `location_parsing.sh`)
 
 **LOG_FILE Preservation Behavior**:
 - `load_config()` preserves `LOG_FILE` if it was set before calling `load_config()` AND the filename is not the default monitor log (`vpn-monitor.log`)
@@ -772,7 +797,13 @@ The system uses a modular library architecture where functionality is organized 
   # LOG_FILE is preserved if filename is not "vpn-monitor.log"
   ```
 
+**Backward Compatibility**: The `lib/config.sh` file serves as a compatibility layer that sources all config modules, ensuring existing code continues to work unchanged. All functions are accessible via `lib/config.sh` as before.
+
+**Module Dependency Pattern**: Each config module sources its direct dependencies, making modules independently sourceable (useful for testing). The main `config.sh` entry point sources all modules in dependency order. This design allows modules to be sourced independently while maintaining backward compatibility with existing code that sources `config.sh`.
+
 **Dependencies**: `lib/config_schema.sh`, `lib/logging.sh`, `lib/common.sh`
+
+**Note**: The module split (completed 2026-01-11) decomposes the original 2393-line monolithic file into 4 focused modules for better organization and maintainability.
 
 #### `lib/config_schema.sh`
 **Purpose**: Defines configuration schema, validation rules, and default values.
@@ -864,6 +895,25 @@ The system uses a modular library architecture where functionality is organized 
 
 **Used By**: All modules for consistent logging
 
+#### `lib/fallbacks.sh`
+**Purpose**: Centralized fallback function definitions for when modules cannot be sourced.
+
+**Key Functions**:
+- `define_schema_fallbacks()` - Defines fallback implementations for schema-related functions
+- `define_logging_fallbacks()` - Defines fallback implementations for logging functions
+- `define_common_fallbacks()` - Defines fallback implementations for common utility functions
+- `define_logging_timestamp_fallback()` - Defines fallback timestamp formatting function
+
+**Usage Pattern**: Modules that may be sourced independently (e.g., during installation) source `lib/fallbacks.sh` and call appropriate fallback definition functions when dependencies cannot be loaded. This ensures graceful degradation when modules are used in isolation.
+
+**Benefits**:
+- Single source of truth for fallback implementations
+- Consistent fallback behavior across all modules
+- Easier maintenance (all fallbacks in one place)
+- Prevents code duplication of fallback definitions
+
+**Used By**: `lib/config.sh`, `lib/detection.sh`, and other modules that need fallback functions
+
 #### `lib/recovery.sh`
 **Purpose**: Tiered recovery actions (logging → surgical cleanup → full restart). Compatibility layer that sources all recovery modules.
 
@@ -893,21 +943,32 @@ The system uses a modular library architecture where functionality is organized 
 
 **Dependencies**: `lib/logging.sh`, `lib/state.sh`, `lib/common.sh`, `lib/detection.sh`
 
-**Note**: See Design Decision #3 and Recovery Tier Flow diagram for recovery strategy details. The module split (completed 2026-01-11) decomposes the original 2633-line monolithic file into 5 focused modules for better organization and maintainability.
+**Note**: See Design Decision #3 and Recovery Tier Flow diagram for recovery strategy details. The module split (completed 2026-01-16) decomposes the original 2633-line monolithic file into 5 focused modules for better organization and maintainability.
 
 #### `lib/state.sh`
-**Purpose**: State file management for failure counters, cooldown periods, and rate limiting.
+**Purpose**: State file management for failure counters, cooldown periods, and rate limiting. Compatibility layer that sources all state modules.
 
-**Key Functions**:
-- `increment_failure()` - Increments per-location failure counter
-- `reset_failure_count()` - Resets per-location failure counter
-- `get_failure_count()` - Retrieves current failure count for a location
-- `check_cooldown()` - Checks if system is in cooldown period
-- `set_cooldown()` - Sets cooldown period after restart
-- `check_rate_limit()` - Validates restart rate limiting
-- `record_restart()` - Records restart timestamp
-- `set_peer_state()` - Updates per-location state (byte counters, SPI, etc.)
-- `get_peer_state()` - Retrieves per-location state values
+**Module Structure**: The state management functionality is organized into focused modules in the `lib/state/` subdirectory:
+- **`lib/state/state_paths.sh`**: State file path generation, sanitization, and path management utilities
+- **`lib/state/peer_state.sh`**: Per-peer state operations (connection name caching)
+- **`lib/state/location_state.sh`**: Per-location state operations (failure counters, byte counters, SPI, failure type, idle detection, status logging, recovery method tracking)
+- **`lib/state/global_state.sh`**: Global state operations (cooldown, restart count, network partition state)
+- **`lib/state/state_init.sh`**: State initialization and validation functions
+
+**Key Functions** (distributed across modules):
+- `increment_failure()` - Increments per-location failure counter (in `location_state.sh`)
+- `reset_failure_count()` - Resets per-location failure counter (in `location_state.sh`)
+- `get_failure_count()` - Retrieves current failure count for a location (in `location_state.sh`)
+- `check_cooldown()` - Checks if system is in cooldown period (in `global_state.sh`)
+- `set_cooldown()` - Sets cooldown period after restart (in `global_state.sh`)
+- `check_rate_limit()` - Validates restart rate limiting (in `global_state.sh`)
+- `record_restart()` - Records restart timestamp (in `global_state.sh`)
+- `set_peer_state()` - Updates per-location state (byte counters, SPI, etc.) (in `location_state.sh`)
+- `get_peer_state()` - Retrieves per-location state values (in `location_state.sh`)
+- `get_peer_state_file_path()` - Generates state file path with proper sanitization (in `state_paths.sh`)
+- `sanitize_peer_ip()` - Sanitizes IP addresses for use in filenames (in `state_paths.sh`)
+- `sanitize_location_name()` - Sanitizes location names for use in filenames (in `state_paths.sh`)
+- `validate_state_file()` - Validates state file format and detects corruption (in `state_init.sh`)
 
 **Features**:
 - Atomic file operations (write-tmp-move pattern)
@@ -916,9 +977,13 @@ The system uses a modular library architecture where functionality is organized 
 - Per-location state isolation
 - Location-based state file naming (format: `<key>_<location>_<peer_ip>`)
 
+**Backward Compatibility**: The `lib/state.sh` file serves as a compatibility layer that sources all state modules, ensuring existing code continues to work unchanged. All functions are accessible via `lib/state.sh` as before.
+
+**Module Dependency Pattern**: Each state module sources its direct dependencies, making modules independently sourceable (useful for testing). The main `state.sh` entry point sources all modules in dependency order. This design allows modules to be sourced independently while maintaining backward compatibility with existing code that sources `state.sh`.
+
 **Dependencies**: `lib/logging.sh`, `lib/common.sh`
 
-**Note**: See File Structure section and Design Decision #4 for state file details.
+**Note**: See File Structure section and Design Decision #4 for state file details. The module split (completed 2026-01-11) decomposes the original 1404-line monolithic file into 5 focused modules for better organization and maintainability.
 
 ## VPN Keepalive Daemon
 

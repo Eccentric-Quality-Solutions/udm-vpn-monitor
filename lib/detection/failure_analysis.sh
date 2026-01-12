@@ -330,7 +330,7 @@ get_failure_type() {
 #   $2: External peer IP address (external/public IP of remote VPN gateway)
 #   $3: Internal peer IP address (optional, used for failure type detection)
 #   $4: Sanitized peer IP (for state file operations)
-#   $5: Location name (optional, used for state file naming)
+#   $5: Location name (required, used for state file naming)
 #   $6: SA existence state (optional, 0 = no SA, 1 = SA exists, if not provided will check SA existence)
 #   $7: XFRM output (optional, xfrm state output for reuse, if not provided will fetch if needed)
 #
@@ -346,9 +346,16 @@ determine_vpn_status() {
 	local external_peer_ip="$2"
 	local internal_peer_ip="${3:-}"
 	local peer_sanitized="$4"
-	local location_name="${5:-}"
+	local location_name="$5"
 	local sa_exists="${6:-}"
 	local xfrm_output="${7:-}"
+
+	# Validate location_name is provided
+	if [[ -z "$location_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "determine_vpn_status: location_name is required" 0
+		echo "0"
+		return 1
+	fi
 
 	# If VPN check failed, detect and log the failure type
 	# Also check for rekey events (which are not failures but should be logged)
@@ -399,11 +406,6 @@ determine_vpn_status() {
 		# Store failure type in state file for recovery actions
 		# Use abstraction layer to ensure consistent path format with location component
 		local failure_type_file
-		if [[ -z "$location_name" ]]; then
-			handle_error "ERROR" "SYSTEM" "determine_vpn_status: location_name is required" 0
-			# Continue with empty location_name for backward compatibility, but log error
-			location_name="SYSTEM"
-		fi
 		failure_type_file=$(get_peer_state_file_path "$location_name" "$external_peer_ip" "failure_type")
 		atomic_write_file "$failure_type_file" "$failure_type" 2>/dev/null || true
 
@@ -450,7 +452,7 @@ determine_vpn_status() {
 # Arguments:
 #   $1: External peer IP address (external/public IP of remote VPN gateway, used for xfrm state checks)
 #   $2: Internal peer IP address(es) (optional, can be single IP string or space-separated string of multiple IPs, falls back to external if not provided)
-#   $3: Location name (optional, used for state file naming, if not provided uses IP-only format)
+#   $3: Location name (required, used for state file naming)
 #
 # Returns:
 #   0: VPN is healthy (SA exists, bytes increasing or non-zero)
@@ -476,7 +478,7 @@ determine_vpn_status() {
 check_vpn_status() {
 	local external_peer_ip="$1"
 	local internal_peer_ips="${2:-}"
-	local location_name="${3:-}"
+	local location_name="$3"
 	local vpn_ok=0
 
 	# Validate external peer IP format using proper validation function
@@ -485,26 +487,26 @@ check_vpn_status() {
 		return 1
 	fi
 
+	# Validate location_name is provided
+	if [[ -z "$location_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "check_vpn_status: location_name is required" 0
+		return 1
+	fi
+
 	# Per-peer state tracking (use location name + external IP for state management)
-	# Location name is passed as optional parameter, if not provided use IP-only format for backward compat
 	local peer_sanitized
 	local location_sanitized=""
 
-	if [[ -n "$location_name" ]]; then
-		# Use location-based naming: sanitize location name and combine with IP
-		if command -v sanitize_location_name >/dev/null 2>&1; then
-			location_sanitized=$(sanitize_location_name "$location_name")
-		else
-			# Fallback if sanitize_location_name not available (shouldn't happen)
-			location_sanitized="${location_name//[^A-Za-z0-9_]/_}"
-		fi
-		local ip_sanitized
-		ip_sanitized=$(sanitize_peer_ip "$external_peer_ip")
-		peer_sanitized="${location_sanitized}_${ip_sanitized}"
+	# Use location-based naming: sanitize location name and combine with IP
+	if command -v sanitize_location_name >/dev/null 2>&1; then
+		location_sanitized=$(sanitize_location_name "$location_name")
 	else
-		# No location name - use IP-only format (backward compat, shouldn't happen in new code)
-		peer_sanitized=$(sanitize_peer_ip "$external_peer_ip")
+		# Fallback if sanitize_location_name not available (shouldn't happen)
+		location_sanitized="${location_name//[^A-Za-z0-9_]/_}"
 	fi
+	local ip_sanitized
+	ip_sanitized=$(sanitize_peer_ip "$external_peer_ip")
+	peer_sanitized="${location_sanitized}_${ip_sanitized}"
 
 	# Try detection methods in order of reliability
 	# For xfrm check, use first internal IP if multiple provided (or empty if single/external)
@@ -532,7 +534,7 @@ check_vpn_status() {
 		# xfrm check failed - try ipsec fallback
 		# Note: If xfrm check failed, sa_exists may still be set (SA exists but validation failed)
 		# If sa_exists is empty, we'll fall back to checking SA existence in downstream functions
-		if check_ipsec_fallback "$external_peer_ip" "ipsec_diagnostic"; then
+		if check_ipsec_fallback "$external_peer_ip" "$location_name" "ipsec_diagnostic"; then
 			vpn_ok=1
 			# If ipsec fallback succeeded, SA exists (set sa_exists if not already set)
 			if [[ -z "$sa_exists" ]]; then
@@ -560,12 +562,10 @@ check_vpn_status() {
 						diagnostic_msg="$diagnostic_msg; $diag"
 					fi
 				done
-				# location_name should always be provided in production code
-				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect${location_name:+ for $location_name ($external_peer_ip)} - $diagnostic_msg"
+				handle_error "WARNING" "$location_name" "VPN suspect for $location_name ($external_peer_ip) - $diagnostic_msg"
 			else
 				# Fallback if diagnostics weren't collected (shouldn't happen)
-				# location_name should always be provided in production code
-				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: Both xfrm and ipsec status checks failed${location_name:+ for $location_name ($external_peer_ip)}"
+				handle_error "WARNING" "$location_name" "VPN suspect: Both xfrm and ipsec status checks failed for $location_name ($external_peer_ip)"
 			fi
 			# If both methods failed and sa_exists is not set, assume no SA exists
 			if [[ -z "$sa_exists" ]]; then

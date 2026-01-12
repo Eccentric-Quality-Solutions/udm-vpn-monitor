@@ -332,7 +332,7 @@ check_resource_constrained() {
 
 	local state_file="${state_dir}/resource_${resource}_constrained"
 	local current_time
-	current_time=$(date +%s 2>/dev/null)
+	current_time=$(get_unix_timestamp 2>/dev/null)
 	if [[ -z "$current_time" ]]; then
 		return 1
 	fi

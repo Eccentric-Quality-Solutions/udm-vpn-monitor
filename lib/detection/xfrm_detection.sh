@@ -603,7 +603,7 @@ detect_sa_rekey() {
 # Detects SA rekey events before checking bytes to prevent false positives.
 #
 # Arguments:
-#   $1: Location name (required, sanitized)
+#   $1: Location name (required, sanitized, must not be empty)
 #   $2: Current byte count (integer from xfrm state)
 #   $3: Peer IP address (used for state management and logging)
 #   $4: Current SPI value (optional, used for rekey detection)
@@ -646,6 +646,12 @@ check_byte_counters() {
 	local internal_peer_ip="${5:-}"
 	local diagnostic_var="${6:-}"
 
+	# Validate location_name is provided (required for state file operations)
+	if [[ -z "$location_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "check_byte_counters: location_name is required" 0
+		return 1
+	fi
+
 	# Check for SA rekey if SPI is provided
 	if [[ -n "$current_spi" ]]; then
 		if detect_sa_rekey "$current_spi" "$peer_ip" "$location_name"; then
@@ -658,12 +664,10 @@ check_byte_counters() {
 			if [[ "$current_bytes" -gt 0 ]]; then
 				# Bytes are non-zero after rekey - update baseline
 				if set_peer_state "$location_name" "$peer_ip" "last_bytes" "$current_bytes"; then
-					# location_name should always be provided in production code
-					log_message "INFO" "${location_name:-SYSTEM}" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset)${location_name:+ for $location_name ($peer_ip)}"
+					log_message "INFO" "$location_name" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset) for $location_name ($peer_ip)"
 					return 0
 				else
-					# location_name should always be provided in production code
-					log_message "INFO" "${location_name:-SYSTEM}" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset, state update failed)${location_name:+ for $location_name ($peer_ip)}"
+					log_message "INFO" "$location_name" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset, state update failed) for $location_name ($peer_ip)"
 					return 0
 				fi
 			fi
@@ -690,8 +694,7 @@ check_byte_counters() {
 					# Ping succeeds - VPN is healthy but idle (newly established or idle)
 					set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "$current_bytes"
 					set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
-					# location_name should always be provided in production code
-					log_message "INFO" "${location_name:-SYSTEM}" "VPN OK: SA exists, bytes=0 (first check, idle but healthy, ping check passed)${location_name:+ for $location_name ($peer_ip)}"
+					log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=0 (first check, idle but healthy, ping check passed) for $location_name ($peer_ip)"
 					return 0
 				else
 					# Ping fails - VPN is likely broken
@@ -699,7 +702,7 @@ check_byte_counters() {
 					if [[ -n "$diagnostic_var" ]]; then
 						printf -v "$diagnostic_var" "%s" "$failure_reason"
 					else
-						handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but $failure_reason${location_name:+ for $location_name ($peer_ip)}"
+						handle_error "WARNING" "$location_name" "VPN suspect: SA exists but $failure_reason for $location_name ($peer_ip)"
 					fi
 					return 1
 				fi
@@ -709,7 +712,7 @@ check_byte_counters() {
 				if [[ -n "$diagnostic_var" ]]; then
 					printf -v "$diagnostic_var" "%s" "$failure_reason"
 				else
-					handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but $failure_reason${location_name:+ for $location_name ($peer_ip)}"
+					handle_error "WARNING" "$location_name" "VPN suspect: SA exists but $failure_reason for $location_name ($peer_ip)"
 				fi
 				return 1
 			fi
@@ -719,7 +722,7 @@ check_byte_counters() {
 			if [[ -n "$diagnostic_var" ]]; then
 				printf -v "$diagnostic_var" "%s" "$failure_reason"
 			else
-				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but $failure_reason${location_name:+ for $location_name ($peer_ip)}"
+				handle_error "WARNING" "$location_name" "VPN suspect: SA exists but $failure_reason for $location_name ($peer_ip)"
 			fi
 			return 1
 		fi
@@ -740,7 +743,7 @@ check_byte_counters() {
 				if [[ -n "$diagnostic_var" ]]; then
 					printf -v "$diagnostic_var" "%s" "$failure_reason"
 				else
-					handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists, $failure_reason${location_name:+ for $location_name ($peer_ip)}"
+					handle_error "WARNING" "$location_name" "VPN suspect: SA exists, $failure_reason for $location_name ($peer_ip)"
 				fi
 				return 1
 			fi
@@ -749,12 +752,10 @@ check_byte_counters() {
 		if set_peer_state "$location_name" "$peer_ip" "last_bytes" "$current_bytes"; then
 			# Clear idle state if set (traffic is flowing again)
 			delete_peer_state "$location_name" "$peer_ip" "idle_detected" || true
-			# location_name should always be provided in production code
-			log_message "INFO" "${location_name:-SYSTEM}" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, traffic flowing)${location_name:+ for $location_name ($peer_ip)}"
+			log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, traffic flowing) for $location_name ($peer_ip)"
 			return 0
 		else
-			# location_name should always be provided in production code
-			log_message "INFO" "${location_name:-SYSTEM}" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, state update failed)${location_name:+ for $location_name ($peer_ip)}"
+			log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, state update failed) for $location_name ($peer_ip)"
 			return 0
 		fi
 	fi
@@ -766,7 +767,7 @@ check_byte_counters() {
 		# Note: This is logged separately from the final failure message below
 		# We still need to check ping to determine if it's actually broken
 		if [[ -z "$diagnostic_var" ]]; then
-			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but bytes decreased (current=$current_bytes, last=$last_bytes) - bytes not increasing${location_name:+ for $location_name ($peer_ip)}"
+			handle_error "WARNING" "$location_name" "VPN suspect: SA exists but bytes decreased (current=$current_bytes, last=$last_bytes) - bytes not increasing for $location_name ($peer_ip)"
 		fi
 	fi
 
@@ -779,18 +780,15 @@ check_byte_counters() {
 			# Ping succeeds - tunnel is idle but healthy
 			set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "$current_bytes"
 			set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
-			# location_name should always be provided in production code
-			log_message "INFO" "${location_name:-SYSTEM}" "VPN OK: SA exists, bytes=$current_bytes (idle but healthy, ping check passed)${location_name:+ for $location_name ($peer_ip)}"
+			log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (idle but healthy, ping check passed) for $location_name ($peer_ip)"
 			# Check keepalive status and suggest action if needed
 			if [[ "${ENABLE_KEEPALIVE:-0}" -ne 1 ]]; then
-				# location_name should always be provided in production code
-				log_message "INFO" "${location_name:-SYSTEM}" "Consider enabling ENABLE_KEEPALIVE=1 in config to prevent idle tunnel timeouts${location_name:+ for $location_name}"
+				log_message "INFO" "$location_name" "Consider enabling ENABLE_KEEPALIVE=1 in config to prevent idle tunnel timeouts for $location_name"
 			else
 				# Keepalive is enabled - check if daemon is running
 				local keepalive_pidfile="${STATE_DIR:-/data/vpn-monitor}/vpn-keepalive.pid"
 				if [[ ! -f "$keepalive_pidfile" ]] || ! file_exists_and_readable "$keepalive_pidfile" || ! kill -0 "$(cat "$keepalive_pidfile" 2>/dev/null)" 2>/dev/null; then
-					# location_name should always be provided in production code
-					log_message "INFO" "${location_name:-SYSTEM}" "Keepalive is enabled but daemon is not running - consider starting: vpn-keepalive.sh start${location_name:+ (for $location_name)}"
+					log_message "INFO" "$location_name" "Keepalive is enabled but daemon is not running - consider starting: vpn-keepalive.sh start (for $location_name)"
 				fi
 			fi
 			return 0
@@ -809,7 +807,7 @@ check_byte_counters() {
 	if [[ -n "$diagnostic_var" ]]; then
 		printf -v "$diagnostic_var" "%s" "$failure_reason"
 	else
-		handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists but $failure_reason${location_name:+ for $location_name ($peer_ip)}"
+		handle_error "WARNING" "$location_name" "VPN suspect: SA exists but $failure_reason for $location_name ($peer_ip)"
 	fi
 	return 1
 }
@@ -822,7 +820,7 @@ check_byte_counters() {
 # Arguments:
 #   $1: External peer IP address (used for xfrm state checks)
 #   $2: Internal peer IP address (optional, used for ping checks in idle detection)
-#   $3: Location name (optional, used for state file naming)
+#   $3: Location name (required, used for state file naming and passed to check_byte_counters)
 #   $4: Diagnostic variable name (optional, if provided, diagnostic message is stored here instead of logging)
 #   $5: SA existence output variable name (optional, if provided, SA existence state (0 or 1) is stored here)
 #   $6: XFRM output variable name (optional, if provided, xfrm state output is stored here for reuse)
@@ -842,10 +840,16 @@ check_byte_counters() {
 check_xfrm_status() {
 	local peer_ip="$1"
 	local internal_peer_ip="${2:-}"
-	local location_name="${3:-}"
+	local location_name="$3"
 	local diagnostic_var="${4:-}"
 	local sa_exists_var="${5:-}"
 	local xfrm_output_var="${6:-}"
+
+	# Validate location_name is provided (required for check_byte_counters and state operations)
+	if [[ -z "$location_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "check_xfrm_status: location_name is required" 0
+		return 1
+	fi
 
 	# Try ip xfrm state first (most reliable)
 	# xfrm = Linux IPsec framework - shows Security Associations (SAs) and byte counters
@@ -877,7 +881,7 @@ check_xfrm_status() {
 		if [[ -n "$diagnostic_var" ]]; then
 			printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
 		else
-			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: No SA found${location_name:+ for $location_name ($peer_ip)} in xfrm state"
+			handle_error "WARNING" "$location_name" "VPN suspect: No SA found for $location_name ($peer_ip) in xfrm state"
 		fi
 		return 1
 	fi
@@ -932,8 +936,7 @@ check_xfrm_status() {
 				# Ping succeeds - VPN is likely healthy but byte counters unavailable
 				# Treat as "idle but healthy" similar to check_byte_counters logic
 				set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
-				# location_name should always be provided in production code
-				log_message "INFO" "${location_name:-SYSTEM}" "VPN OK: SA exists${location_name:+ for $location_name ($peer_ip)}, byte counters unavailable but ping check passed (treating as idle but healthy)"
+				log_message "INFO" "$location_name" "VPN OK: SA exists for $location_name ($peer_ip), byte counters unavailable but ping check passed (treating as idle but healthy)"
 				return 0
 			else
 				# Ping fails - cannot verify VPN health
@@ -941,7 +944,7 @@ check_xfrm_status() {
 				if [[ -n "$diagnostic_var" ]]; then
 					printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
 				else
-					handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists${location_name:+ for $location_name ($peer_ip)} but byte counter info unavailable and ping check failed"
+					handle_error "WARNING" "$location_name" "VPN suspect: SA exists for $location_name ($peer_ip) but byte counter info unavailable and ping check failed"
 				fi
 				return 1
 			fi
@@ -949,8 +952,7 @@ check_xfrm_status() {
 			# Ping check disabled or internal IP not provided - cannot verify VPN health
 			# Log debug info about why byte counter extraction failed
 			if [[ "${DEBUG:-0}" -eq 1 ]]; then
-				# location_name should always be provided in production code
-				log_message "DEBUG" "${location_name:-SYSTEM}" "Byte counter extraction failed${location_name:+ for $location_name ($peer_ip)} - xfrm output format may differ. Consider enabling ENABLE_PING_CHECK=1 for fallback verification."
+				log_message "DEBUG" "$location_name" "Byte counter extraction failed for $location_name ($peer_ip) - xfrm output format may differ. Consider enabling ENABLE_PING_CHECK=1 for fallback verification."
 			fi
 			local reason="ping check disabled"
 			if [[ -z "$internal_peer_ip" ]]; then
@@ -960,7 +962,7 @@ check_xfrm_status() {
 			if [[ -n "$diagnostic_var" ]]; then
 				printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
 			else
-				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: SA exists${location_name:+ for $location_name ($peer_ip)} but byte counter info unavailable (ping check disabled or internal IP not provided)"
+				handle_error "WARNING" "$location_name" "VPN suspect: SA exists for $location_name ($peer_ip) but byte counter info unavailable (ping check disabled or internal IP not provided)"
 			fi
 			return 1
 		fi
@@ -973,7 +975,8 @@ check_xfrm_status() {
 #
 # Arguments:
 #   $1: Peer IP address
-#   $2: Diagnostic variable name (optional, if provided, diagnostic message is stored here instead of logging)
+#   $2: Location name (required, used for logging)
+#   $3: Diagnostic variable name (optional, if provided, diagnostic message is stored here instead of logging)
 #
 # Returns:
 #   0: Connection found
@@ -984,7 +987,14 @@ check_xfrm_status() {
 #   - If diagnostic variable name is provided, stores diagnostic message in that variable instead of logging
 check_ipsec_status() {
 	local peer_ip="$1"
-	local diagnostic_var="${2:-}"
+	local location_name="$2"
+	local diagnostic_var="${3:-}"
+
+	# Validate location_name is provided (required for logging)
+	if [[ -z "$location_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "check_ipsec_status: location_name is required" 0
+		return 1
+	fi
 
 	# ipsec = legacy IPsec tools (libreswan/strongswan compatibility command)
 	if ! check_command_or_warn "ipsec" "Checking IPsec status"; then
@@ -999,15 +1009,14 @@ check_ipsec_status() {
 	ipsec_output=$(get_ipsec_status_for_peer "$peer_ip" || true)
 
 	if [[ -n "$ipsec_output" ]]; then
-		# location_name should always be provided in production code
-		log_message "INFO" "${location_name:-SYSTEM}" "VPN OK: Connection found via ipsec status${location_name:+ for $location_name ($peer_ip)}"
+		log_message "INFO" "$location_name" "VPN OK: Connection found via ipsec status for $location_name ($peer_ip)"
 		return 0
 	else
 		local diagnostic_msg="Detection method: ipsec status - No connection found via ipsec status for $peer_ip"
 		if [[ -n "$diagnostic_var" ]]; then
 			printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
 		else
-			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN suspect: No connection found via ipsec status${location_name:+ for $location_name ($peer_ip)}"
+			handle_error "WARNING" "$location_name" "VPN suspect: No connection found via ipsec status for $location_name ($peer_ip)"
 		fi
 		return 1
 	fi
@@ -1154,7 +1163,7 @@ check_ipsec_phase2() {
 # Arguments:
 #   $1: External peer IP address (external/public IP of remote VPN gateway)
 #   $2: Internal peer IP address (optional, used for idle detection via ping checks)
-#   $3: Location name (optional, used for state file naming)
+#   $3: Location name (required, used for state file naming and passed to check_xfrm_status)
 #   $4: Diagnostic variable name (optional, if provided, diagnostic message is stored here instead of logging)
 #   $5: SA existence output variable name (optional, if provided, SA existence state (0 or 1) is stored here)
 #   $6: XFRM output variable name (optional, if provided, xfrm state output is stored here for reuse)
@@ -1171,10 +1180,16 @@ check_ipsec_phase2() {
 check_xfrm_primary() {
 	local external_peer_ip="$1"
 	local internal_peer_ip="${2:-}"
-	local location_name="${3:-}"
+	local location_name="$3"
 	local diagnostic_var="${4:-}"
 	local sa_exists_var="${5:-}"
 	local xfrm_output_var="${6:-}"
+
+	# Validate location_name is provided (required for check_xfrm_status)
+	if [[ -z "$location_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "check_xfrm_primary: location_name is required" 0
+		return 1
+	fi
 
 	# Try detection using xfrm (most reliable method)
 	# Pass internal IP and location_name to check_xfrm_status for idle detection via ping checks
@@ -1189,7 +1204,8 @@ check_xfrm_primary() {
 #
 # Arguments:
 #   $1: External peer IP address (external/public IP of remote VPN gateway)
-#   $2: Diagnostic variable name (optional, if provided, diagnostic message is stored here instead of logging)
+#   $2: Location name (required, used for logging)
+#   $3: Diagnostic variable name (optional, if provided, diagnostic message is stored here instead of logging)
 #
 # Returns:
 #   0: VPN is healthy (connection found)
@@ -1200,8 +1216,15 @@ check_xfrm_primary() {
 #   - If diagnostic variable name is provided, stores diagnostic message in that variable instead of logging
 check_ipsec_fallback() {
 	local external_peer_ip="$1"
-	local diagnostic_var="${2:-}"
+	local location_name="$2"
+	local diagnostic_var="${3:-}"
+
+	# Validate location_name is provided (required for check_ipsec_status)
+	if [[ -z "$location_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "check_ipsec_fallback: location_name is required" 0
+		return 1
+	fi
 
 	# Fallback to ipsec status check if xfrm didn't confirm
-	check_ipsec_status "$external_peer_ip" "$diagnostic_var"
+	check_ipsec_status "$external_peer_ip" "$location_name" "$diagnostic_var"
 }

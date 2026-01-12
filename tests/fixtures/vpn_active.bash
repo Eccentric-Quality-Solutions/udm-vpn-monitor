@@ -25,6 +25,30 @@
 #   setup_vpn_active_fixture "${TEST_PEER_IP2}" 5000 6000
 #   # VPN is active, bytes increased from 5000 to 6000
 setup_vpn_active_fixture() {
+	# Validate parameters to detect common mistakes BEFORE assignment
+	# Check if config variables (containing '=') are being passed as required parameters
+	if [[ -n "${2:-}" ]] && [[ "$2" == *"="* ]]; then
+		echo "Error: setup_vpn_active_fixture: Config variable detected in position 2 (initial_bytes)." >&2
+		echo "  Did you mean to pass initial_bytes before config variables?" >&2
+		echo "  Example: setup_vpn_active_fixture \"\$peer_ip\" 1000 2000 \"\" 'CONFIG_VAR=value'" >&2
+		echo "  Got: setup_vpn_active_fixture \"${1:-}\" \"$2\" ..." >&2
+		return 1
+	fi
+	if [[ -n "${3:-}" ]] && [[ "$3" == *"="* ]]; then
+		echo "Error: setup_vpn_active_fixture: Config variable detected in position 3 (current_bytes)." >&2
+		echo "  Did you mean to pass current_bytes before config variables?" >&2
+		echo "  Example: setup_vpn_active_fixture \"\$peer_ip\" 1000 2000 \"\" 'CONFIG_VAR=value'" >&2
+		echo "  Got: setup_vpn_active_fixture \"${1:-}\" \"${2:-}\" \"$3\" ..." >&2
+		return 1
+	fi
+	if [[ -n "${4:-}" ]] && [[ "$4" == *"="* ]]; then
+		echo "Error: setup_vpn_active_fixture: Config variable detected in position 4 (SPI)." >&2
+		echo "  Did you mean to pass SPI (or \"\" for default) before config variables?" >&2
+		echo "  Example: setup_vpn_active_fixture \"\$peer_ip\" 1000 2000 \"\" 'CONFIG_VAR=value'" >&2
+		echo "  Got: setup_vpn_active_fixture \"${1:-}\" \"${2:-}\" \"${3:-}\" \"$4\" ..." >&2
+		return 1
+	fi
+
 	local peer_ip="${1:-${TEST_PEER_IP}}"
 	local initial_bytes="${2:-1000}"
 	local current_bytes="${3:-2000}"

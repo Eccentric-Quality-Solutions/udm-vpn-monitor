@@ -3817,7 +3817,7 @@ source_lockfile_module() {
 	# Skip condition: Requires mock IP command to be available in PATH for integration test
 	# Check VPN status (skip if mock not found in PATH)
 	if command -v ip 2>/dev/null | grep -q "^${TEST_DIR}/mock_ip$"; then
-		run check_xfrm_status "203.0.113.1"
+		run check_xfrm_status "203.0.113.1" "" "TEST"
 		assert_success
 
 		# Verify SPI was stored - use empty string for location to test backward compatibility
@@ -3886,7 +3886,7 @@ source_lockfile_module() {
 	local found_ip_cmd
 	found_ip_cmd=$(command -v ip 2>/dev/null || echo "")
 	if [[ -n "$found_ip_cmd" ]] && [[ "$found_ip_cmd" == "${TEST_DIR}/mock_ip" ]]; then
-		run check_xfrm_status "203.0.113.1"
+		run check_xfrm_status "203.0.113.1" "" "TEST"
 		assert_success
 
 		# Verify SPI was updated - use empty string for location to test backward compatibility

@@ -1,7 +1,7 @@
 # Test Maintenance Procedures
 
 **Date**: 2026-01-02  
-**Last Updated**: 2026-01-02  
+**Last Updated**: 2026-01-11  
 **Status**: Active
 
 ---
@@ -260,6 +260,71 @@ For comprehensive troubleshooting information including common issues, debugging
 - **Slow Tests**: Use `./tests/tag_slow_tests.sh` to identify and tag slow tests
 - **Coverage Gaps**: Run `./tests/run_tests.sh --coverage` and review `coverage/index.html`
 - **Test Isolation Issues**: Use `./tests/verify_test_isolation.sh` to detect tests that leak state
+
+### Common Fixture Parameter Mistakes
+
+**Problem**: Test fixtures have required positional parameters before optional config variables. Missing these parameters causes config variables to be misinterpreted, leading to silent test failures.
+
+**Common Mistake - Missing Required Parameters**:
+
+```bash
+# ❌ WRONG: Config variable gets interpreted as initial_bytes parameter
+setup_vpn_active_fixture "${TEST_PEER_IP}" 'TIER1_THRESHOLD=1'
+
+# ❌ WRONG: Config variable gets interpreted as SPI parameter
+setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 'ENABLE_PING_CHECK=1'
+
+# ✅ CORRECT: Explicitly pass all required parameters (use "" for defaults)
+setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'TIER1_THRESHOLD=1' 'ENABLE_PING_CHECK=1'
+```
+
+**How to Identify**:
+- Test fails with "Executed 0 instead of expected 1 tests" (BATS warning)
+- Test setup appears to succeed but test doesn't run
+- Fixture function receives wrong parameter values
+
+**Fixture Parameter Patterns**:
+
+**`setup_vpn_active_fixture`**:
+- `$1`: Peer IP (default: `${TEST_PEER_IP}`)
+- `$2`: Initial bytes (default: `1000`)
+- `$3`: Current bytes (default: `2000`)
+- `$4`: SPI value (default: `0x12345678`, use `""` for default)
+- `$5+`: Config variables as `KEY="VALUE"` pairs
+
+**`setup_vpn_down_fixture`**:
+- `$1`: Peer IP (default: `${TEST_PEER_IP}`)
+- `$2`: Failure count (default: `0`)
+- `$3+`: Config variables as `KEY="VALUE"` pairs
+
+**`setup_vpn_at_tier_fixture`**:
+- `$1`: Tier number (1, 2, or 3) (default: `1`)
+- `$2`: Peer IP (default: `${TEST_PEER_IP}`)
+- `$3+`: Config variables as `KEY="VALUE"` pairs
+
+**Best Practices**:
+1. **Always check fixture documentation** - See `tests/fixtures/README.md` for parameter requirements
+2. **Use explicit defaults** - When you want defaults but need to pass config, use `""` for optional parameters:
+   ```bash
+   # Want defaults for bytes/SPI but need to pass config
+   setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'CONFIG_VAR=value'
+   ```
+3. **Validate fixture calls** - Fixture functions now include validation that detects common mistakes early
+4. **Check test execution** - If a test shows "Executed 0 instead of expected 1 tests", check fixture parameter order
+
+**Example Fix**:
+
+```bash
+# Before (broken - test doesn't execute):
+setup_vpn_active_fixture "${TEST_PEER_IP}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3'
+
+# After (fixed):
+setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3'
+```
+
+**Related Documentation**:
+- See [tests/fixtures/README.md](../../tests/fixtures/README.md) for complete fixture reference
+- See [Test Patterns](TEST_PATTERNS.md) for fixture usage patterns
 
 ## Test Performance Optimization
 

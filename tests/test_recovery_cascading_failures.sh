@@ -380,7 +380,7 @@ EOF
 	# Purpose: Test verifies that script handles reset_failure_count failures after successful recovery
 	# Expected: VPN recovers but failure count reset fails; script logs error and continues
 	# Importance: Reset failures can cause false failure detection; must be handled gracefully
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_NETWORK_PARTITION_CHECK=0'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	# Set failure count to simulate recovery scenario
 	local state_dir="${STATE_DIR:-${TEST_DIR}}"

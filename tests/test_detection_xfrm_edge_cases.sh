@@ -143,7 +143,7 @@ EOF
 	source_function "set_peer_state"
 
 	# Should handle multiple SAs gracefully
-	run check_xfrm_status "$peer_ip" ""
+	run check_xfrm_status "$peer_ip" "" "$location_name"
 	# Should succeed (SA found) - may use first or second SA
 	# The function uses grep -F "dst $peer_ip" -A 10, so it will get the first match
 	assert_success
@@ -183,7 +183,7 @@ EOF
 	source_function "set_peer_state"
 
 	# Should handle IPv6 address correctly
-	run check_xfrm_status "$peer_ip" ""
+	run check_xfrm_status "$peer_ip" "" "$location_name"
 	assert_success
 
 	remove_mock_from_path
@@ -221,7 +221,7 @@ EOF
 	source_function "set_peer_state"
 
 	# Should handle IPv4-mapped IPv6 address correctly
-	run check_xfrm_status "$peer_ip" ""
+	run check_xfrm_status "$peer_ip" "" "$location_name"
 	assert_success
 
 	remove_mock_from_path
@@ -262,7 +262,7 @@ EOF
 	source_function "check_ipsec_status"
 
 	# Test that check_ipsec_status works as fallback when xfrm fails
-	run check_ipsec_status "$peer_ip"
+	run check_ipsec_status "$peer_ip" "$location_name"
 	assert_success
 
 	remove_mock_from_path

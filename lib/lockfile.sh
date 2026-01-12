@@ -115,7 +115,7 @@ is_process_running() {
 #
 # Side effects:
 #   - Creates lockfile with timestamp:pid format
-#   - Lockfile contains: "$(date +%s):$$"
+#   - Lockfile contains: "$(get_unix_timestamp):$$"
 #
 # Examples:
 #   if create_lockfile_atomically; then
@@ -329,13 +329,7 @@ acquire_lockfile_flock() {
 			log_and_exit_lockfile_conflict "$lock_pid"
 		fi
 		# Lockfile exists but PID is not running or invalid - check if stale
-		if check_lockfile_stale; then
-			# Lockfile is stale, remove it
-			local stale_pid
-			stale_pid=$(extract_lockfile_pid "$LOCKFILE" || echo "unknown")
-			rm -f "$LOCKFILE"
-			echo "WARNING: Removed stale lockfile (timeout exceeded, PID was: $stale_pid)" >&2
-		fi
+		remove_stale_lockfile_if_needed || true
 	fi
 
 	# Use flock if available (preferred method)
@@ -410,14 +404,8 @@ acquire_lockfile_flock() {
 		# -n: non-blocking (fail immediately if lock can't be acquired)
 		if ! flock -n 9; then
 			# Lock acquisition failed - check if it's stale
-			if check_lockfile_stale; then
-				# Lockfile is stale, extract PID for logging before removal
-				local stale_pid
-				stale_pid=$(extract_lockfile_pid "$LOCKFILE" || echo "unknown")
-				# Force remove stale lockfile and log warning
-				rm -f "$LOCKFILE"
-				echo "WARNING: Removed stale lockfile (timeout exceeded, PID was: $stale_pid)" >&2
-				# Try again with non-blocking lock
+			if remove_stale_lockfile_if_needed; then
+				# Lockfile was stale and removed, try again with non-blocking lock
 				if ! flock -n 9; then
 					# Still can't acquire lock after removing stale lockfile
 					# This could happen if another process acquired it between

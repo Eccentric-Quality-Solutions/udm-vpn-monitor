@@ -132,7 +132,7 @@ EOF
 #
 # Arguments:
 #   $1: External peer IP
-#   $2: Cooldown minutes (optional, defaults to 0.01)
+#   $2: Cooldown minutes (optional, defaults to 1)
 #   $3: Max restarts per hour (optional, defaults to 3)
 #
 # Returns:
@@ -142,7 +142,7 @@ EOF
 #   Prints configuration content to stdout
 generate_config_cooldown_rate_limit() {
 	local external_ip="$1"
-	local cooldown_minutes="${2:-0.01}"
+	local cooldown_minutes="${2:-1}"
 	local max_restarts="${3:-3}"
 
 	cat <<EOF

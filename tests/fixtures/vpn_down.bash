@@ -24,6 +24,16 @@
 #   setup_vpn_down_fixture "${TEST_PEER_IP}" 2
 #   # VPN is down, already has 2 failures recorded
 setup_vpn_down_fixture() {
+	# Validate parameters to detect common mistakes BEFORE assignment
+	# Check if config variables (containing '=') are being passed as required parameters
+	if [[ -n "${2:-}" ]] && [[ "$2" == *"="* ]]; then
+		echo "Error: setup_vpn_down_fixture: Config variable detected in position 2 (failure_count)." >&2
+		echo "  Did you mean to pass failure_count before config variables?" >&2
+		echo "  Example: setup_vpn_down_fixture \"\$peer_ip\" 0 'CONFIG_VAR=value'" >&2
+		echo "  Got: setup_vpn_down_fixture \"${1:-}\" \"$2\" ..." >&2
+		return 1
+	fi
+
 	local peer_ip="${1:-${TEST_PEER_IP}}"
 	local failure_count="${2:-0}"
 	shift 2 || true

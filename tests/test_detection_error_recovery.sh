@@ -93,7 +93,7 @@ EOF
 	source_function "check_xfrm_status"
 
 	# Should handle command failure gracefully
-	run check_xfrm_status "$peer_ip" "" ""
+	run check_xfrm_status "$peer_ip" "" "TEST"
 	assert_failure
 
 	remove_mock_from_path
@@ -134,11 +134,11 @@ EOF
 	# The function should eventually fail when ipsec times out
 	if command -v timeout >/dev/null 2>&1 && timeout --version >/dev/null 2>&1; then
 		# timeout command is available and works
-		run timeout 7 check_ipsec_status "$peer_ip" || true
+		run timeout 7 check_ipsec_status "$peer_ip" "TEST" || true
 	else
 		# timeout command not available - just run the function
 		# It will hang for 6 seconds then fail, which is acceptable for this test
-		run check_ipsec_status "$peer_ip" || true
+		run check_ipsec_status "$peer_ip" "TEST" || true
 	fi
 	# Command should fail (either timeout or ipsec failure)
 	# We check that it doesn't hang indefinitely
@@ -289,19 +289,20 @@ EOF
 	add_mock_to_path
 
 	# Initialize state for both IPs
+	local location_name="TEST"
 	source_function "set_peer_state"
-	set_peer_state "" "$peer_ip1" "failure_count" "0"
-	set_peer_state "" "$peer_ip2" "failure_count" "0"
+	set_peer_state "$location_name" "$peer_ip1" "failure_count" "0"
+	set_peer_state "$location_name" "$peer_ip2" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_vpn_status"
 
 	# Check first IP (should succeed)
-	run check_vpn_status "$peer_ip1" "$internal_ip1" ""
+	run check_vpn_status "$peer_ip1" "$internal_ip1" "$location_name"
 	assert_success
 
 	# Check second IP (should fail)
-	run check_vpn_status "$peer_ip2" "$internal_ip2" ""
+	run check_vpn_status "$peer_ip2" "$internal_ip2" "$location_name"
 	assert_failure
 
 	remove_mock_from_path

@@ -365,7 +365,7 @@ load helpers/test_data
 	# Verify file contains expected fields
 	assert_file_contains "$config_file" "LOCATION_NYC_EXTERNAL=\"${peer_ip}\""
 	assert_file_contains "$config_file" "MAX_RESTARTS_PER_HOUR=3"
-	assert_file_contains "$config_file" "COOLDOWN_MINUTES=0.01"
+	assert_file_contains "$config_file" "COOLDOWN_MINUTES=1"
 	assert_file_contains "$config_file" "ENABLE_XFRM_RECOVERY=0"
 	assert_file_contains "$config_file" "ENABLE_NETWORK_PARTITION_CHECK=0"
 	assert_file_contains "$config_file" "ENABLE_RESOURCE_MONITORING=0"
@@ -377,7 +377,7 @@ load helpers/test_data
 	# Expected: Config file uses provided cooldown minutes and max restarts
 	local config_file="${BATS_TEST_TMPDIR}/test_cooldown_rate_limit_custom.conf"
 	local peer_ip="${TEST_PEER_IP}"
-	local cooldown_minutes=0.5
+	local cooldown_minutes=2
 	local max_restarts=5
 	generate_config_file "cooldown_rate_limit" "$config_file" "$peer_ip" "$cooldown_minutes" "$max_restarts"
 
