@@ -35,7 +35,12 @@ jobs:
       - name: Run ShellCheck
         run: |
           shellcheck --version
-          shellcheck --severity=error *.sh lib/*.sh tests/*.sh || {
+          # Find all shell files excluding coverage, git, and bats helper directories
+          find . -name "*.sh" -type f \
+            -not -path "./coverage/*" \
+            -not -path "./.git/*" \
+            -not -path "./tests/bats-*/*" \
+            | xargs shellcheck --severity=error || {
             echo "::error::ShellCheck found errors. Please fix them before merging."
             exit 1
           }
@@ -43,49 +48,15 @@ jobs:
       - name: Check code formatting with shfmt
         run: |
           shfmt --version
-          if ! shfmt -d *.sh lib/*.sh tests/*.sh; then
-            echo "::error::Code formatting issues detected. Please run 'shfmt -w *.sh lib/*.sh tests/*.sh' to fix."
+          # Find all shell files excluding coverage, git, and bats helper directories
+          if ! find . -name "*.sh" -type f \
+            -not -path "./coverage/*" \
+            -not -path "./.git/*" \
+            -not -path "./tests/bats-*/*" \
+            | xargs shfmt -d; then
+            echo "::error::Code formatting issues detected. Please run 'shfmt -w' on the affected files to fix."
             exit 1
           fi
-
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
-    needs: lint
-    timeout-minutes: 45
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bats parallel
-
-      - name: Install bats helper libraries
-        run: |
-          cd tests
-          if [ -f install_bats_helpers.sh ]; then
-            bash install_bats_helpers.sh
-          fi
-
-      - name: Run tests
-        env:
-          RUN_SLOW_TESTS: 1
-          PARALLEL_JOBS: 4  # Enable parallel execution for faster test runs
-        run: |
-          ./tests/run_tests.sh
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: |
-            tests/test_*.sh
-            tests/*.log
-          retention-days: 7
-          if-no-files-found: ignore
 
   test-coverage:
     name: Test Coverage
@@ -96,23 +67,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            bats \
-            jq \
-            parallel \
-            cmake \
-            build-essential \
-            libcurl4-openssl-dev \
-            libelf-dev \
-            libdw-dev \
-            binutils-dev \
-            libiberty-dev \
-            zlib1g-dev \
-            git
-          
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          install_kcov_deps: true
+
       - name: Cache kcov build
         id: cache-kcov
         uses: actions/cache@v4
@@ -146,13 +105,6 @@ jobs:
           
           # Verify installation
           kcov --version
-
-      - name: Install bats helper libraries
-        run: |
-          cd tests
-          if [ -f install_bats_helpers.sh ]; then
-            bash install_bats_helpers.sh
-          fi
 
       - name: Run tests with coverage
         env:
@@ -267,17 +219,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bats parallel
-
-      - name: Install bats helper libraries
-        run: |
-          cd tests
-          if [ -f install_bats_helpers.sh ]; then
-            bash install_bats_helpers.sh
-          fi
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          install_kcov_deps: false
 
       - name: Run flaky test detection
         id: flaky_detection
