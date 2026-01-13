@@ -852,24 +852,25 @@ monitor_hanging_processes() {
 					fi
 
 					# Parse etime (format: [[DD-]HH:]MM:SS or MM:SS)
+					# Use 10# prefix to force base-10 interpretation (prevents octal interpretation of leading zeros)
 					local runtime_seconds=0
 					if [[ "$etime_str" =~ ^([0-9]+)-([0-9]+):([0-9]+):([0-9]+)$ ]]; then
 						# DD-HH:MM:SS format
-						local days=${BASH_REMATCH[1]}
-						local hours=${BASH_REMATCH[2]}
-						local minutes=${BASH_REMATCH[3]}
-						local seconds=${BASH_REMATCH[4]}
+						local days=$((10#${BASH_REMATCH[1]}))
+						local hours=$((10#${BASH_REMATCH[2]}))
+						local minutes=$((10#${BASH_REMATCH[3]}))
+						local seconds=$((10#${BASH_REMATCH[4]}))
 						runtime_seconds=$((days * 86400 + hours * 3600 + minutes * 60 + seconds))
 					elif [[ "$etime_str" =~ ^([0-9]+):([0-9]+):([0-9]+)$ ]]; then
 						# HH:MM:SS format
-						local hours=${BASH_REMATCH[1]}
-						local minutes=${BASH_REMATCH[2]}
-						local seconds=${BASH_REMATCH[3]}
+						local hours=$((10#${BASH_REMATCH[1]}))
+						local minutes=$((10#${BASH_REMATCH[2]}))
+						local seconds=$((10#${BASH_REMATCH[3]}))
 						runtime_seconds=$((hours * 3600 + minutes * 60 + seconds))
 					elif [[ "$etime_str" =~ ^([0-9]+):([0-9]+)$ ]]; then
 						# MM:SS format
-						local minutes=${BASH_REMATCH[1]}
-						local seconds=${BASH_REMATCH[2]}
+						local minutes=$((10#${BASH_REMATCH[1]}))
+						local seconds=$((10#${BASH_REMATCH[2]}))
 						runtime_seconds=$((minutes * 60 + seconds))
 					fi
 
