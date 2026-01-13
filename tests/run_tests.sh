@@ -1824,8 +1824,7 @@ run_tests() {
 	fi
 }
 
-# Note: run_test_file_with_coverage_timeout() has been removed.
-# Coverage is now handled by run_test_file_with_timeout() with use_coverage flag.
+# Coverage is handled by run_test_file_with_timeout() with use_coverage flag.
 # This ensures consistent per-test timeout behavior for both coverage and non-coverage runs.
 
 # Run tests sequentially (with coverage)

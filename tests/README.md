@@ -118,6 +118,7 @@ See [BATS Guide - Troubleshooting](../docs/BATS_GUIDE.md#troubleshooting) for de
 - **[BATS Guide](../docs/testing/BATS_GUIDE.md)** - Complete BATS framework guide, test environment setup, running tests, and advanced features
 - **[Test Strategy](../docs/testing/TEST_STRATEGY.md)** - Test strategy, philosophy, and approach
 - **[Test Maintenance](../docs/testing/TEST_MAINTENANCE.md)** - Test maintenance procedures and guidelines
+- **[Test Suite Review](../docs/testing/TEST_SUITE_REVIEW.md)** - Pragmatic engineering review of the test suite with recommendations
 
 ## Test Fixtures
 

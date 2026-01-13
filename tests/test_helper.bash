@@ -96,7 +96,7 @@ standard_setup() {
 	local var_name
 	for var_name in \
 		CONFIG_FILE STATE_DIR LOGS_DIR LOCKFILE LOG_FILE \
-		RESTART_COUNT_FILE COOLDOWN_UNTIL_FILE \
+		RESTART_COUNT_FILE \
 		MOCK_IP MOCK_PING MOCK_IPSEC \
 		NO_ESCALATE DEBUG BASE_TIME \
 		TEST_CONFIG_FILE TEST_SCRIPT \
@@ -215,7 +215,6 @@ standard_teardown() {
 	restore_env_var LOCKFILE
 	restore_env_var LOG_FILE
 	restore_env_var RESTART_COUNT_FILE
-	restore_env_var COOLDOWN_UNTIL_FILE
 	restore_env_var MOCK_IP
 	restore_env_var MOCK_PING
 	restore_env_var MOCK_IPSEC
@@ -587,7 +586,6 @@ create_test_vpn_monitor_script() {
 	if [[ -n "$escaped_state" ]]; then
 		sed_script="${sed_script}s|^STATE_DIR=.*|STATE_DIR=\"${escaped_state}\"|;"
 		sed_script="${sed_script}s|^LOCKFILE=.*|LOCKFILE=\"${escaped_state}/vpn-monitor.lock\"|;"
-		sed_script="${sed_script}s|^COOLDOWN_UNTIL_FILE=.*|COOLDOWN_UNTIL_FILE=\"${escaped_state}/cooldown_until\"|;"
 		sed_script="${sed_script}s|^RESTART_COUNT_FILE=.*|RESTART_COUNT_FILE=\"${escaped_state}/restart_count\"|;"
 	fi
 	if [[ -n "$escaped_log" ]]; then
@@ -858,6 +856,126 @@ fi
 exec /usr/bin/ip "\$@"
 EOF
 	fi
+	chmod +x "$mock_ip"
+	echo "$mock_ip"
+}
+
+# Create mock ip command for multiple peers
+#
+# Creates a mock 'ip' command that returns fake xfrm state output for multiple peers.
+# Used to simulate VPN tunnel states for multiple peers in tests without requiring actual IPsec.
+# Handles both "ip xfrm state" and "ip -s xfrm state" (with statistics flag) formats.
+#
+# Arguments:
+#   $1: Space-separated list of peer IP addresses to include in mock output
+#   $2: Byte counter value for all peers (default: 1000)
+#   $3: SPI value for all peers (default: 0x12345678)
+#   $4: Optional path to mock ip file (default: ${TEST_DIR}/ip)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script at specified path (default: ${TEST_DIR}/ip)
+#
+# Example:
+#   # Basic usage - three peers with default values
+#   mock_ip_xfrm_state_multiple_peers "${TEST_PEER_IP} ${TEST_PEER_IP2} 172.16.0.1"
+#   add_mock_to_path
+#
+#   # Custom bytes and SPI
+#   mock_ip_xfrm_state_multiple_peers "192.168.1.1 10.0.0.1" 5000 "0xabcdef12"
+mock_ip_xfrm_state_multiple_peers() {
+	local peer_ips="$1"
+	local bytes="${2:-1000}"
+	local spi="${3:-0x12345678}"
+	local mock_ip="${4:-${TEST_DIR}/ip}"
+
+	local mock_content
+	mock_content=$(
+		cat <<EOF
+#!/bin/bash
+# Handle both "ip -s xfrm state" and "ip xfrm state"
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Return SA for all configured peers based on grep filter
+    # The detection code uses "grep -F dst \$peer_ip", so we need to output
+    # matching lines for each peer IP when queried
+    # Since we can't know which IP is being queried, output all SAs
+EOF
+	)
+
+	# Add SA output for each peer
+	local reqid=1
+	for peer_ip in $peer_ips; do
+		# Skip empty IPs (from multiple spaces)
+		[[ -z "$peer_ip" ]] && continue
+		mock_content+=$(
+			cat <<EOF
+
+    echo "src ${peer_ip} dst ${peer_ip}"
+    echo "    proto esp spi ${spi} reqid ${reqid} mode tunnel"
+    echo "    replay-window 0"
+    echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
+    echo "    enc cbc(aes) 0x1234567890abcdef"
+    echo "    lifetime current: ${bytes} bytes, 10 packets"
+    echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
+    echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
+    echo "    current use: 1"
+    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+EOF
+		)
+		reqid=$((reqid + 1))
+	done
+
+	mock_content+=$(
+		cat <<EOF
+
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Return SA for all configured peers based on grep filter
+    # The detection code uses "grep -F dst \$peer_ip", so we need to output
+    # matching lines for each peer IP when queried
+    # Since we can't know which IP is being queried, output all SAs
+EOF
+	)
+
+	# Add SA output for each peer (same as above)
+	reqid=1
+	for peer_ip in $peer_ips; do
+		# Skip empty IPs (from multiple spaces)
+		[[ -z "$peer_ip" ]] && continue
+		mock_content+=$(
+			cat <<EOF
+
+    echo "src ${peer_ip} dst ${peer_ip}"
+    echo "    proto esp spi ${spi} reqid ${reqid} mode tunnel"
+    echo "    replay-window 0"
+    echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
+    echo "    enc cbc(aes) 0x1234567890abcdef"
+    echo "    lifetime current: ${bytes} bytes, 10 packets"
+    echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
+    echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
+    echo "    current use: 1"
+    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+EOF
+		)
+		reqid=$((reqid + 1))
+	done
+
+	mock_content+=$(
+		cat <<EOF
+
+    exit 0
+fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
+EOF
+	)
+
+	echo "$mock_content" >"$mock_ip"
 	chmod +x "$mock_ip"
 	echo "$mock_ip"
 }
@@ -2125,7 +2243,7 @@ setup_location_vpn_monitor() {
 #
 # Side effects:
 #   - Creates directories
-#   - Exports LOGS_DIR, STATE_DIR, LOCKFILE, LOG_FILE, RESTART_COUNT_FILE (in STATE_DIR), COOLDOWN_UNTIL_FILE
+#   - Exports LOGS_DIR, STATE_DIR, LOCKFILE, LOG_FILE, RESTART_COUNT_FILE (in STATE_DIR)
 setup_test_environment() {
 	local state_dir="${1:-${TEST_DIR}}"
 	local logs_dir="${2:-${state_dir}/logs}"
@@ -2138,7 +2256,6 @@ setup_test_environment() {
 	export LOCKFILE="${state_dir}/vpn-monitor.lock"
 	export LOG_FILE="${logs_dir}/vpn-monitor.log"
 	export RESTART_COUNT_FILE="${state_dir}/restart_count"
-	export COOLDOWN_UNTIL_FILE="${state_dir}/cooldown_until"
 }
 
 # Common detection test setup
@@ -3481,8 +3598,6 @@ source_function() {
 					export LOG_FILE
 					RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
 					export RESTART_COUNT_FILE
-					COOLDOWN_UNTIL_FILE="${COOLDOWN_UNTIL_FILE:-${STATE_DIR}/cooldown_until}"
-					export COOLDOWN_UNTIL_FILE
 					CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
 					export CONFIG_FILE
 					DEBUG="${DEBUG:-0}"
@@ -3547,8 +3662,6 @@ source_function() {
 					export LOG_FILE
 					RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
 					export RESTART_COUNT_FILE
-					COOLDOWN_UNTIL_FILE="${COOLDOWN_UNTIL_FILE:-${STATE_DIR}/cooldown_until}"
-					export COOLDOWN_UNTIL_FILE
 					CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
 					export CONFIG_FILE
 					DEBUG="${DEBUG:-0}"
@@ -3613,8 +3726,6 @@ source_function() {
 					export LOG_FILE
 					RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
 					export RESTART_COUNT_FILE
-					COOLDOWN_UNTIL_FILE="${COOLDOWN_UNTIL_FILE:-${STATE_DIR}/cooldown_until}"
-					export COOLDOWN_UNTIL_FILE
 					CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
 					export CONFIG_FILE
 					DEBUG="${DEBUG:-0}"
@@ -3663,8 +3774,6 @@ source_function() {
 				export LOG_FILE
 				RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
 				export RESTART_COUNT_FILE
-				COOLDOWN_UNTIL_FILE="${COOLDOWN_UNTIL_FILE:-${STATE_DIR}/cooldown_until}"
-				export COOLDOWN_UNTIL_FILE
 				CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
 				export CONFIG_FILE
 				DEBUG="${DEBUG:-0}"

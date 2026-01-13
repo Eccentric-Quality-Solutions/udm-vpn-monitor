@@ -9,6 +9,8 @@
 # - Concurrent recovery actions for multiple locations
 
 load test_helper
+load helpers/config
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 
@@ -24,26 +26,23 @@ load fixtures/vpn_down
 	setup_test_environment "${TEST_DIR}"
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_LOC1_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_LOC1_INTERNAL="${TEST_PEER_IP}"
-LOCATION_LOC2_EXTERNAL="192.168.1.2"
-LOCATION_LOC2_INTERNAL="192.168.1.2"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_LOC1_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_LOC1_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'LOCATION_LOC2_EXTERNAL="192.168.1.2"' \
+		'LOCATION_LOC2_INTERNAL="192.168.1.2"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Set up state: LOC1 has failures, LOC2 is healthy
-	export STATE_DIR="$state_dir"
+	# STATE_DIR is already set by setup_test_environment
 	export LOGS_DIR="${TEST_DIR}/logs"
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
@@ -93,7 +92,7 @@ EOF
 
 	# Script should handle partial recovery
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	# LOC1 should continue failing (failure count increments)
 	# LOC2 should recover (failure count resets)
@@ -110,27 +109,24 @@ EOF
 	setup_test_environment "${TEST_DIR}"
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_LOC1_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_LOC1_INTERNAL="${TEST_PEER_IP}"
-LOCATION_LOC2_EXTERNAL="192.168.1.2"
-LOCATION_LOC2_INTERNAL="192.168.1.2"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-ENABLE_XFRM_RECOVERY=0
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_LOC1_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_LOC1_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'LOCATION_LOC2_EXTERNAL="192.168.1.2"' \
+		'LOCATION_LOC2_INTERNAL="192.168.1.2"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"ENABLE_XFRM_RECOVERY=0" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Set up state: Both locations have failures (Tier 2 threshold)
-	export STATE_DIR="$state_dir"
+	# STATE_DIR is already set by setup_test_environment
 	export LOGS_DIR="${TEST_DIR}/logs"
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
@@ -179,7 +175,7 @@ EOF
 
 	# Script should handle partial recovery
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	# LOC1 should recover (failure count resets)
 	# LOC2 should continue failing (failure count increments)
@@ -196,28 +192,25 @@ EOF
 	setup_test_environment "${TEST_DIR}"
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_LOC1_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_LOC1_INTERNAL="${TEST_PEER_IP}"
-LOCATION_LOC2_EXTERNAL="192.168.1.2"
-LOCATION_LOC2_INTERNAL="192.168.1.2"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-ENABLE_XFRM_RECOVERY=0
-ENABLE_NETWORK_PARTITION_CHECK=0
-LOCKFILE_TIMEOUT=60
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_LOC1_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_LOC1_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'LOCATION_LOC2_EXTERNAL="192.168.1.2"' \
+		'LOCATION_LOC2_INTERNAL="192.168.1.2"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"ENABLE_XFRM_RECOVERY=0" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0" \
+		"LOCKFILE_TIMEOUT=60"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Set up state: Both locations have failures (Tier 2 threshold)
-	export STATE_DIR="$state_dir"
+	# STATE_DIR is already set by setup_test_environment
 	export LOGS_DIR="${TEST_DIR}/logs"
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
@@ -261,9 +254,9 @@ EOF
 	wait $first_pid || true
 
 	# Verify that lockfile prevented concurrent execution
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Should have lockfile-related messages
-	assert_file_contains "$log_file" "lockfile" || assert_file_contains "$log_file" "already running" || assert_file_contains "$log_file" "stale"
+	assert_log_contains_any "$LOG_FILE" "lockfile" "already running" "stale"
 
 	remove_mock_from_path
 }

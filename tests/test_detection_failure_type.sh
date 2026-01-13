@@ -4,6 +4,7 @@
 # Tests critical paths and error handling scenarios
 
 load test_helper
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -27,7 +28,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Should detect tunnel_down failure type
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Tunnel down" || assert_file_contains "$LOG_FILE" "tunnel_down"
+	assert_log_contains_any "$LOG_FILE" "Tunnel down" "tunnel_down"
 
 	# Verify failure type stored in state file
 	local failure_type_file="${STATE_DIR}/failure_type_TEST_192_168_1_1"
@@ -83,7 +84,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Should detect routing_issue failure type
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Routing issue" || assert_file_contains "$LOG_FILE" "routing_issue"
+	assert_log_contains_any "$LOG_FILE" "Routing issue" "routing_issue"
 
 	# Verify failure type stored in state file
 	local failure_type_file="${STATE_DIR}/failure_type_TEST_192_168_1_1"
@@ -125,7 +126,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Should detect routing_issue failure type
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Routing issue" || assert_file_contains "$LOG_FILE" "routing_issue"
+	assert_log_contains_any "$LOG_FILE" "Routing issue" "routing_issue"
 
 	remove_mock_from_path
 }
@@ -184,7 +185,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Should detect routing_issue (threshold not met: 0/3 < 30%)
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Routing issue" || assert_file_contains "$LOG_FILE" "routing_issue"
+	assert_log_contains_any "$LOG_FILE" "Routing issue" "routing_issue"
 
 	remove_mock_from_path
 }
@@ -200,7 +201,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should detect rekey (not a failure)
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "rekey" || assert_file_contains "$LOG_FILE" "SA rekey detected"
+	assert_log_contains_any "$LOG_FILE" "rekey" "SA rekey detected"
 
 	# Verify failure type stored (rekey is logged but VPN is OK)
 	local failure_type_file="${STATE_DIR}/failure_type_TEST_192_168_1_1"
@@ -249,7 +250,7 @@ EOF
 
 	# Should detect unknown failure type
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Unknown" || assert_file_contains "$LOG_FILE" "unknown"
+	assert_log_contains_any "$LOG_FILE" "Unknown" "unknown"
 
 	# Verify failure type stored in state file
 	local failure_type_file="${STATE_DIR}/failure_type_TEST_192_168_1_1"
@@ -334,7 +335,7 @@ EOF
 	# Should detect failure type using fallback
 	assert_file_exist "$LOG_FILE"
 	# Should contain failure type detection (may be unknown or tunnel_down)
-	assert_file_contains "$LOG_FILE" "tunnel_down" || assert_file_contains "$LOG_FILE" "unknown" || assert_file_contains "$LOG_FILE" "VPN check failed"
+	assert_log_contains_any "$LOG_FILE" "tunnel_down" "unknown" "VPN check failed"
 
 	remove_mock_from_path
 }

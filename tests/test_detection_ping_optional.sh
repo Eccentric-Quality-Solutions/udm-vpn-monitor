@@ -6,6 +6,7 @@
 
 load test_helper
 load helpers/detection
+load helpers/assertions
 
 # Source the detection library functions
 # shellcheck source=../lib/detection.sh
@@ -39,8 +40,17 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 	local location_name="TEST"
 
 	# Mock ip command to return SA exists (for check_ipsec_phase2)
+	# Note: execute_xfrm_state_command calls "ip -s xfrm state", so we need to handle the -s flag
 	cat >"${TEST_DIR}/ip" <<'EOF'
 #!/bin/bash
+# Handle "ip -s xfrm state" (with -s flag)
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+	# Return SA exists for external_peer_ip
+	echo "src 203.0.113.1 dst 203.0.113.1"
+	echo "	proto esp spi 0x12345678 reqid 1 mode tunnel"
+	exit 0
+fi
+# Handle "ip xfrm state" (without -s flag, for backward compatibility)
 if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
 	# Return SA exists for external_peer_ip
 	echo "src 203.0.113.1 dst 203.0.113.1"
@@ -90,7 +100,7 @@ EOF
 
 	# Should log that SA exists (not "no SA found")
 	# The message format is "VPN SA exists but ping check failed" or "VPN connectivity verified"
-	assert_file_contains "$LOG_FILE" "VPN SA exists" || assert_file_contains "$LOG_FILE" "VPN connectivity verified"
+	assert_log_contains_any "$LOG_FILE" "VPN SA exists" "VPN connectivity verified"
 	assert_file_contains "$LOG_FILE" "ping check"
 
 	# Should NOT log contradictory "no SA found" message
@@ -112,8 +122,15 @@ EOF
 	local location_name="TEST"
 
 	# Mock ip command to return no SA (for check_ipsec_phase2)
+	# Note: execute_xfrm_state_command calls "ip -s xfrm state", so we need to handle the -s flag
 	cat >"${TEST_DIR}/ip" <<'EOF'
 #!/bin/bash
+# Handle "ip -s xfrm state" (with -s flag)
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+	# Return empty (no SA)
+	exit 0
+fi
+# Handle "ip xfrm state" (without -s flag, for backward compatibility)
 if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
 	# Return empty (no SA)
 	exit 0
@@ -178,8 +195,16 @@ EOF
 	local location_name="TEST"
 
 	# Mock ip command to return SA exists
+	# Note: execute_xfrm_state_command calls "ip -s xfrm state", so we need to handle the -s flag
 	cat >"${TEST_DIR}/ip" <<'EOF'
 #!/bin/bash
+# Handle "ip -s xfrm state" (with -s flag)
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+	echo "src 203.0.113.1 dst 203.0.113.1"
+	echo "	proto esp spi 0x12345678 reqid 1 mode tunnel"
+	exit 0
+fi
+# Handle "ip xfrm state" (without -s flag, for backward compatibility)
 if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
 	echo "src 203.0.113.1 dst 203.0.113.1"
 	echo "	proto esp spi 0x12345678 reqid 1 mode tunnel"

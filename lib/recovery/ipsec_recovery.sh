@@ -6,23 +6,14 @@
 # Version: 0.6.0
 #
 
-# Source recovery constants for magic numbers
 # shellcheck source=lib/recovery/constants.sh
-# Determine recovery directory (where this file is located)
 RECOVERY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Note: safe_source_lib not available here since constants.sh is sourced before common.sh
-# Source recovery-specific constants
 if ! source "${RECOVERY_DIR}/constants.sh" 2>/dev/null; then
-	# Fallback if recovery constants not found (shouldn't happen in normal operation)
-	# Only set if not already set (to avoid readonly variable errors)
 	[[ -z "${XFRM_RECOVERY_SLEEP_SECONDS:-}" ]] && readonly XFRM_RECOVERY_SLEEP_SECONDS=3
 fi
 
-# Source recovery verification functions
 # shellcheck source=lib/recovery/recovery_verification.sh
-# RECOVERY_DIR already defined above
 source "${RECOVERY_DIR}/recovery_verification.sh" 2>/dev/null || {
-	# Fallback stubs if recovery_verification.sh not available
 	# Verify IPsec connections are active (fallback stub)
 	#
 	# Fallback stub function when recovery_verification.sh cannot be sourced.
@@ -54,10 +45,8 @@ source "${RECOVERY_DIR}/recovery_verification.sh" 2>/dev/null || {
 	verify_byte_counters_resume() { return 1; }
 }
 
-# Source recovery state functions
 # shellcheck source=lib/recovery/recovery_state.sh
 source "${RECOVERY_DIR}/recovery_state.sh" 2>/dev/null || {
-	# Fallback stubs if recovery_state.sh not available
 	# Store recovery method used for a location (fallback stub)
 	#
 	# Fallback stub function when recovery_state.sh cannot be sourced.
@@ -117,22 +106,23 @@ execute_ipsec_reload() {
 	local recovery_method_used="ipsec_reload"
 	store_recovery_method "$location_name" "$peer_ip" "$recovery_method_used"
 
-	log_message "INFO" "$location_name" "Attempting ipsec reload for $location_name ($peer_ip) (affects all tunnels)"
+	# Note: execute_ipsec_reload doesn't have access to internal_peer_ip, so we only show external IP
+	log_message "INFO" "$location_name" "Attempting ipsec reload for ($peer_ip) (affects all tunnels)"
 	if "$ipsec_cmd" reload >/dev/null 2>&1; then
 		command_succeeded=1
-		log_message "INFO" "$location_name" "Successfully reloaded IPsec connections via ipsec reload for $location_name ($peer_ip)"
+		log_message "INFO" "$location_name" "Successfully reloaded IPsec connections via ipsec reload for ($peer_ip)"
 	else
 		reload_exit_code=$?
-		handle_error "WARNING" "$location_name" "ipsec reload failed for $location_name ($peer_ip) (exit code: ${reload_exit_code}), attempting ipsec restart"
+		handle_error "WARNING" "$location_name" "ipsec reload failed for ($peer_ip) (exit code: ${reload_exit_code}), attempting ipsec restart"
 		# Update recovery method if fallback to restart
 		recovery_method_used="ipsec_restart"
 		store_recovery_method "$location_name" "$peer_ip" "$recovery_method_used"
 		if "$ipsec_cmd" restart >/dev/null 2>&1; then
 			command_succeeded=1
-			log_message "INFO" "$location_name" "Successfully restarted IPsec service via ipsec restart for $location_name ($peer_ip)"
+			log_message "INFO" "$location_name" "Successfully restarted IPsec service via ipsec restart for ($peer_ip)"
 		else
 			restart_exit_code=$?
-			handle_error "ERROR" "$location_name" "ipsec restart also failed for $location_name ($peer_ip) (exit code: ${restart_exit_code})" 0
+			handle_error "ERROR" "$location_name" "ipsec restart also failed for ($peer_ip) (exit code: ${restart_exit_code})" 0
 			command_succeeded=0
 		fi
 	fi
@@ -151,7 +141,8 @@ execute_ipsec_reload() {
 			if [[ $reload_duration -lt 0 ]]; then
 				reload_duration=0
 			fi
-			log_message "INFO" "$location_name" "Recovery completed for $location_name ($peer_ip) (via ipsec fallback, verification: connections active, duration: ${reload_duration}s)"
+			# Note: execute_ipsec_reload doesn't have access to internal_peer_ip, so we only show external IP
+			log_message "INFO" "$location_name" "Recovery completed for ($peer_ip) (via ipsec fallback, verification: connections active, duration: ${reload_duration}s)"
 			return 0
 		else
 			local current_time
@@ -161,11 +152,11 @@ execute_ipsec_reload() {
 			if [[ $reload_duration -lt 0 ]]; then
 				reload_duration=0
 			fi
-			handle_error "WARNING" "$location_name" "Recovery completed for $location_name ($peer_ip) (via ipsec fallback, verification: some connections not active, duration: ${reload_duration}s)"
+			handle_error "WARNING" "$location_name" "Recovery completed for ($peer_ip) (via ipsec fallback, verification: some connections not active, duration: ${reload_duration}s)"
 			return 1
 		fi
 	else
-		handle_error "WARNING" "$location_name" "Surgical cleanup failed for $location_name ($peer_ip) (ipsec commands failed, exit codes: reload=${reload_exit_code:-unknown}, restart=${restart_exit_code:-unknown})"
+		handle_error "WARNING" "$location_name" "Surgical cleanup failed for ($peer_ip) (ipsec commands failed, exit codes: reload=${reload_exit_code:-unknown}, restart=${restart_exit_code:-unknown})"
 		return 1
 	fi
 }
@@ -206,7 +197,8 @@ execute_ipsec_restart() {
 		store_recovery_method "$location_name" "$peer_ip" "ipsec_restart"
 	fi
 
-	log_message "INFO" "$location_name" "Executing ipsec restart for $location_name (affects all tunnels)"
+	# Note: execute_ipsec_restart doesn't have access to internal_peer_ip, and location_name is already in log prefix
+	log_message "INFO" "$location_name" "Executing ipsec restart (affects all tunnels)"
 	local restart_start_time
 	restart_start_time=$(get_unix_timestamp)
 	# Use full path to ipsec if available, otherwise rely on PATH
@@ -216,7 +208,8 @@ execute_ipsec_restart() {
 	"$ipsec_cmd" restart 2>&1 | tee -a "$LOG_FILE"
 	local ipsec_exit_code=${PIPESTATUS[0]}
 	if [[ $ipsec_exit_code -ne 0 ]]; then
-		handle_error "ERROR" "$location_name" "Failed to restart IPsec service for $location_name (exit code: $ipsec_exit_code)" 0
+		# Note: execute_ipsec_restart doesn't have access to internal_peer_ip, and location_name is already in log prefix
+		handle_error "ERROR" "$location_name" "Failed to restart IPsec service (exit code: $ipsec_exit_code)" 0
 		return 1
 	fi
 
@@ -233,7 +226,8 @@ execute_ipsec_restart() {
 	if verify_ipsec_connections_active; then
 		connections_verified=1
 	else
-		handle_error "WARNING" "$location_name" "Tier 3: Some connections not active after ipsec restart for $location_name"
+		# Note: execute_ipsec_restart doesn't have access to internal_peer_ip, and location_name is already in log prefix
+		handle_error "WARNING" "$location_name" "Tier 3: Some connections not active after ipsec restart"
 	fi
 
 	# Verify byte counters resume for all configured locations
@@ -302,6 +296,7 @@ execute_ipsec_restart() {
 	if [[ $verify_duration -lt 0 ]]; then
 		verify_duration=0
 	fi
-	log_message "INFO" "$location_name" "Tier 3: Full IPsec restart completed for $location_name (duration: ${restart_duration}s, verification: ${verify_duration}s, connections: ${connections_verified}, byte counters: ${byte_counters_verified})"
+	# Note: execute_ipsec_restart doesn't have access to internal_peer_ip, and location_name is already in log prefix
+	log_message "INFO" "$location_name" "Tier 3: Full IPsec restart completed (duration: ${restart_duration}s, verification: ${verify_duration}s, connections: ${connections_verified}, byte counters: ${byte_counters_verified})"
 	return 0
 }

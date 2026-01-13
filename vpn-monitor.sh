@@ -140,18 +140,14 @@ RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 if ! touch "$LOG_FILE" 2>/dev/null; then
 	# Log file write failed - output to stderr and continue
 	# log_message() will handle subsequent write failures gracefully
-	echo "[$(get_formatted_timestamp)] [WARNING] Cannot write to log file: $LOG_FILE (check permissions on directory: $(dirname "$LOG_FILE"))" >&2
-	echo "[$(get_formatted_timestamp)] [WARNING] Continuing execution - log messages will be output to stderr" >&2
+	log_message "WARNING" "SYSTEM" "Cannot write to log file: $LOG_FILE (check permissions on directory: $(dirname "$LOG_FILE"))"
+	log_message "WARNING" "SYSTEM" "Continuing execution - log messages will be output to stderr"
 fi
 
 # Verify logging works by writing a test message
 # This ensures log_message function will work before we proceed
 # If this fails, log_message() will handle it gracefully by outputting to stderr
-if ! echo "[$(get_formatted_timestamp)] [INFO] Log file initialized" >>"$LOG_FILE" 2>/dev/null; then
-	# Log file write failed - output to stderr and continue
-	echo "[$(get_formatted_timestamp)] [WARNING] Cannot write to log file after touch test: $LOG_FILE" >&2
-	echo "[$(get_formatted_timestamp)] [WARNING] Continuing execution - log messages will be output to stderr" >&2
-fi
+log_message "INFO" "SYSTEM" "Log file initialized"
 
 # Load configuration
 # Note: Path recalculation (log paths and state paths) is now handled inside load_config()
@@ -316,7 +312,7 @@ validate_args() {
 #   # Processes arguments, sets flags
 #
 # Note:
-#   --help and --version are handled early (lines 43-64) and exit before this function is called.
+#   --help and --version are handled early and exit before this function is called.
 #   Requires validate_args, log_message, and SCRIPT_VERSION to be set.
 #   Unknown arguments are handled by validate_args (warnings logged).
 parse_args() {

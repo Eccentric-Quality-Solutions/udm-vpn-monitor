@@ -4,6 +4,7 @@
 # Tests critical paths and error handling scenarios
 
 load test_helper
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -28,7 +29,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should detect idle tunnel (ping succeeds)
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "idle but healthy" || assert_file_contains "$LOG_FILE" "ping check passed"
+	assert_log_contains_any "$LOG_FILE" "idle but healthy" "ping check passed"
 
 	# Idle state should be stored (use get_peer_state_file_path to get correct path)
 	local idle_file
@@ -91,7 +92,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should log keepalive suggestion
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "ENABLE_KEEPALIVE" || assert_file_contains "$LOG_FILE" "keepalive"
+	assert_log_contains_any "$LOG_FILE" "ENABLE_KEEPALIVE" "keepalive"
 
 	remove_mock_from_path
 }
@@ -125,7 +126,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_success
 	assert_file_exist "$LOG_FILE"
 	# Should log message about keepalive daemon (may suggest starting it)
-	assert_file_contains "$LOG_FILE" "keepalive" || assert_file_contains "$LOG_FILE" "daemon"
+	assert_log_contains_any "$LOG_FILE" "keepalive" "daemon"
 
 	remove_mock_from_path
 }
@@ -160,7 +161,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should clear idle state (traffic is flowing)
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "traffic flowing" || assert_file_contains "$LOG_FILE" "VPN OK"
+	assert_log_contains_any "$LOG_FILE" "traffic flowing" "VPN OK"
 
 	# Idle state file should be deleted or cleared
 	if [[ -f "$idle_file" ]]; then
@@ -197,7 +198,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_success
 	assert_file_exist "$LOG_FILE"
 	# Should mark as suspect/failed (bytes not increasing, ping disabled)
-	assert_file_contains "$LOG_FILE" "suspect" || assert_file_contains "$LOG_FILE" "bytes not increasing"
+	assert_log_contains_any "$LOG_FILE" "suspect" "bytes not increasing"
 
 	# Idle state should not be set
 	# setup_location_vpn_monitor creates location "TEST" from LOCATION_TEST_EXTERNAL

@@ -6,14 +6,12 @@
 # Version: 0.6.0
 #
 
-# Source constants for magic numbers
 # shellcheck source=lib/constants.sh
 # Determine lib directory (parent directory of detection/)
 # If LIB_DIR is already set (from parent), use it; otherwise determine from this file's location
 if [[ -z "${LIB_DIR:-}" ]]; then
 	LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
-# Note: safe_source_lib not available here since constants.sh is sourced before common.sh
 if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	# Fallback if constants.sh not found (shouldn't happen in normal operation)
 	# Only set if not already set (to avoid readonly variable errors)
@@ -30,29 +28,22 @@ if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	[[ -z "${IPSEC_STATUS_TIMEOUT:-}" ]] && readonly IPSEC_STATUS_TIMEOUT=5
 fi
 
-# Source common utility functions
 # shellcheck source=lib/common.sh
 source "${LIB_DIR}/common.sh"
 
 # Source logging functions (required for log_message and handle_error)
 # shellcheck source=lib/logging.sh
-# Note: logging.sh may require LOG_FILE to be set, but log_message will work
-# without it (outputs to stderr only). Source conditionally with fallback.
 if ! source "${LIB_DIR}/logging.sh" 2>/dev/null; then
-	# Fallback if logging.sh not found - use centralized fallbacks
 	# shellcheck source=lib/fallbacks.sh
 	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
 		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_logging_fallbacks
 	fi
 fi
 
-# Source network validation functions
 # shellcheck source=lib/detection/network_validation.sh
 source "${LIB_DIR}/detection/network_validation.sh"
-# Source xfrm detection functions
 # shellcheck source=lib/detection/xfrm_detection.sh
 source "${LIB_DIR}/detection/xfrm_detection.sh"
-# Source ping detection functions
 # shellcheck source=lib/detection/ping_detection.sh
 source "${LIB_DIR}/detection/ping_detection.sh"
 
@@ -119,7 +110,9 @@ detect_failure_type() {
 	# Check if ip command is available (required for Phase 2 SA detection)
 	# If ip command is unavailable, we cannot determine failure type
 	if ! check_command_or_warn "ip" "Detecting failure type"; then
-		log_message "WARNING" "$location_name" "Failure type detection: 'ip' command unavailable, cannot determine failure type for $location_name ($external_peer_ip)"
+		local ip_display
+		ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ip")
+		log_message "WARNING" "$location_name" "Failure type detection: 'ip' command unavailable, cannot determine failure type for $ip_display"
 		echo "unknown"
 		return 1
 	fi
@@ -128,10 +121,8 @@ detect_failure_type() {
 	# This optimization eliminates duplicate SA checks by reusing state from check_xfrm_status()
 	local ipsec_phase2_up=0
 	if [[ -n "$sa_exists" ]]; then
-		# Use provided SA existence state
 		ipsec_phase2_up=$sa_exists
 	else
-		# Fallback: check SA existence if not provided (for backward compatibility)
 		if check_ipsec_phase2 "$external_peer_ip"; then
 			ipsec_phase2_up=1
 		fi
@@ -144,11 +135,9 @@ detect_failure_type() {
 		return 0
 	elif [[ $ipsec_phase2_up -eq 1 ]]; then
 		# Phase 2 SA exists - tunnel is established
-		# Use provided xfrm_output if available, otherwise fetch it (for backward compatibility)
 		local current_spi=""
 		local current_bytes=""
 		if [[ -z "$xfrm_output" ]] && [[ -n "$external_peer_ip" ]]; then
-			# Fallback: fetch xfrm output if not provided (for backward compatibility)
 			# Use fixed-string matching to prevent regex pattern injection
 			# Match on "dst $external_peer_ip" pattern which appears at the start of each SA entry
 			# This ensures we capture the complete SA block including SPI and lifetime information
@@ -177,8 +166,6 @@ detect_failure_type() {
 
 		# Check byte counters using abstraction layer (peer IP is available)
 		if [[ -n "$current_bytes" ]] && [[ "$current_bytes" =~ ^[0-9]+$ ]]; then
-			# Successfully extracted byte counter - check if bytes are not increasing
-			# Use abstraction layer to get last bytes
 			local last_bytes
 			last_bytes=$(get_peer_state "$location_name" "$external_peer_ip" "last_bytes" "0")
 
@@ -194,7 +181,6 @@ detect_failure_type() {
 		# Check ping if enabled and internal IP provided
 		# Only check ping if we haven't already detected a routing issue from byte counters
 		if [[ $has_routing_issue -eq 0 ]] && [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
-			# Get local UDM IP for ping source (if configured)
 			local local_ip
 			local_ip=$(get_local_ip_for_ping)
 			if ! check_ping_connectivity "$internal_peer_ip" "$local_ip" 2>/dev/null; then
@@ -214,12 +200,8 @@ detect_failure_type() {
 		# In this case, we return "unknown" since we can't definitively determine the failure type
 		# without additional diagnostic information
 
-		# Build diagnostic message explaining why we couldn't determine the type
 		local diagnostic_parts=()
 		diagnostic_parts+=("Phase 2 SA exists")
-
-		# Check what detection methods were attempted and why they couldn't determine the type
-		# Reuse xfrm_output, current_bytes already fetched above
 		if [[ -z "$xfrm_output" ]]; then
 			diagnostic_parts+=("xfrm output unavailable")
 		elif [[ -z "$current_bytes" ]] || [[ ! "$current_bytes" =~ ^[0-9]+$ ]]; then
@@ -237,14 +219,11 @@ detect_failure_type() {
 		if [[ "${ENABLE_PING_CHECK:-0}" -ne 1 ]]; then
 			diagnostic_parts+=("ping check disabled")
 		elif [[ -n "$internal_peer_ip" ]]; then
-			# Ping check is enabled and internal IP provided, but we didn't detect routing issue
-			# This means ping check either passed or wasn't performed
 			local local_ip
 			local_ip=$(get_local_ip_for_ping)
 			diagnostic_parts+=("ping check enabled but routing issue not confirmed")
 		fi
 
-		# Join diagnostic parts with comma and space
 		local diagnostic_msg=""
 		local first=1
 		for part in "${diagnostic_parts[@]}"; do
@@ -259,7 +238,9 @@ detect_failure_type() {
 		# When VPN is healthy (vpn_ok=1), returning "unknown" is expected behavior
 		# and should not generate warnings to avoid false positives
 		if [[ $vpn_ok -eq 0 ]]; then
-			log_message "WARNING" "$location_name" "Failure type detection: Unable to determine specific failure type for $location_name ($external_peer_ip) - Detection method: Phase 2 SA check (SA exists), Reasons: $diagnostic_msg"
+			local ip_display
+			ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ip")
+			log_message "WARNING" "$location_name" "Failure type detection: Unable to determine specific failure type for $ip_display - Detection method: Phase 2 SA check (SA exists), Reasons: $diagnostic_msg"
 		fi
 	fi
 
@@ -413,17 +394,23 @@ determine_vpn_status() {
 		"rekey")
 			# Rekey detected - not a failure, but log for monitoring
 			# Rekey is already logged in detect_sa_rekey, but we mark VPN as OK
-			log_message "INFO" "$location_name" "SA rekey detected for $location_name ($external_peer_ip) (not a failure)"
+			local ip_display
+			ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ip")
+			log_message "INFO" "$location_name" "SA rekey detected for $ip_display (not a failure)"
 			vpn_ok=1
 			;;
 		"tunnel_down")
-			handle_error "WARNING" "$location_name" "VPN failure type: Tunnel down (no Phase 2 SA found) for $location_name ($external_peer_ip)"
+			local ip_display
+			ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ip")
+			handle_error "WARNING" "$location_name" "VPN failure type: Tunnel down (no Phase 2 SA found) for $ip_display"
 			;;
 		"routing_issue")
 			# Only log warning if VPN check actually failed (vpn_ok=0)
 			# When vpn_ok=1, ping check failure is supplementary diagnostic and doesn't indicate a real problem
 			if [[ $vpn_ok -eq 0 ]]; then
-				handle_error "WARNING" "$location_name" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $location_name ($external_peer_ip)"
+				local ip_display
+				ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ip")
+				handle_error "WARNING" "$location_name" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $ip_display"
 			fi
 			# Note: If vpn_ok was 1 (VPN appeared OK), we keep it as 1 since ping is supplementary
 			# The routing_issue is detected for diagnostic purposes but doesn't change VPN status or generate warnings
@@ -435,7 +422,9 @@ determine_vpn_status() {
 			# Only log "unknown" if VPN check actually failed (vpn_ok was 0)
 			if [[ $vpn_ok -eq 0 ]]; then
 				# Detailed diagnostic information was already logged by detect_failure_type()
-				handle_error "WARNING" "$location_name" "VPN failure type: Unknown (unable to determine specific failure type) for $location_name ($external_peer_ip) - see previous diagnostic messages for detection method details"
+				local ip_display
+				ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ip")
+				handle_error "WARNING" "$location_name" "VPN failure type: Unknown (unable to determine specific failure type) for $ip_display - see previous diagnostic messages for detection method details"
 			fi
 			# If vpn_ok was 1, silently ignore "unknown" since VPN is healthy
 			;;
@@ -566,10 +555,14 @@ check_vpn_status() {
 						diagnostic_msg="$diagnostic_msg; $diag"
 					fi
 				done
-				handle_error "WARNING" "$location_name" "VPN suspect for $location_name ($external_peer_ip) - $diagnostic_msg"
+				local ip_display
+				ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ips")
+				handle_error "WARNING" "$location_name" "VPN suspect for $ip_display - $diagnostic_msg"
 			else
 				# Fallback if diagnostics weren't collected (shouldn't happen)
-				handle_error "WARNING" "$location_name" "VPN suspect: Both xfrm and ipsec status checks failed for $location_name ($external_peer_ip)"
+				local ip_display
+				ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ips")
+				handle_error "WARNING" "$location_name" "VPN suspect: Both xfrm and ipsec status checks failed for $ip_display"
 			fi
 			# If both methods failed and sa_exists is not set, assume no SA exists
 			if [[ -z "$sa_exists" ]]; then

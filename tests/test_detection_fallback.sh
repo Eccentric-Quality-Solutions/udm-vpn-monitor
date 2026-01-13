@@ -4,6 +4,7 @@
 # Tests critical paths and error handling scenarios
 
 load test_helper
+load helpers/config
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -47,17 +48,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script falls back to alternative detection methods or fails gracefully when command -v fails.
 	# Importance: Tool availability detection can fail due to system issues; script must handle this without crashing.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock command to fail (simulates command -v failure)
 	local mock_command="${TEST_DIR}/command"
@@ -81,7 +79,7 @@ EOF
 	assert_success
 
 	# Should handle missing ip command gracefully (should fall back to ipsec or fail gracefully)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	# Restore
 	mv "${TEST_DIR}/ip_backup" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -198,7 +196,9 @@ EOF
 	# Run with timeout to prevent test from hanging
 	# Test timeout should be longer than IPSEC_STATUS_TIMEOUT to allow script to complete
 	# Allow extra time for script initialization and other operations
-	run timeout 10 bash "$TEST_SCRIPT" --fake
+	# Note: In VPN down scenarios, ipsec status may be called multiple times (via xfrm fallbacks),
+	# each taking IPSEC_STATUS_TIMEOUT (5s) to timeout, so we need sufficient buffer
+	run timeout 20 bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should handle ipsec status hang gracefully (should timeout and continue)

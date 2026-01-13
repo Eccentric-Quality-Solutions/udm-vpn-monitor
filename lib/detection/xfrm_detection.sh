@@ -8,15 +8,10 @@
 
 # Source constants for magic numbers
 # shellcheck source=lib/constants.sh
-# Determine lib directory (parent directory of detection/)
-# If LIB_DIR is already set (from parent), use it; otherwise determine from this file's location
 if [[ -z "${LIB_DIR:-}" ]]; then
 	LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
-# Note: safe_source_lib not available here since constants.sh is sourced before common.sh
 if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
-	# Fallback if constants.sh not found (shouldn't happen in normal operation)
-	# Only set if not already set (to avoid readonly variable errors)
 	[[ -z "${MAX_IPV6_SEGMENTS:-}" ]] && readonly MAX_IPV6_SEGMENTS=8
 	[[ -z "${MIN_IPV6_SEGMENT_HEX_DIGITS:-}" ]] && readonly MIN_IPV6_SEGMENT_HEX_DIGITS=1
 	[[ -z "${MAX_IPV6_SEGMENT_HEX_DIGITS:-}" ]] && readonly MAX_IPV6_SEGMENT_HEX_DIGITS=4
@@ -30,23 +25,17 @@ if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	[[ -z "${IPSEC_STATUS_TIMEOUT:-}" ]] && readonly IPSEC_STATUS_TIMEOUT=5
 fi
 
-# Source common utility functions
 # shellcheck source=lib/common.sh
 source "${LIB_DIR}/common.sh"
 
-# Source logging functions (required for log_message and handle_error)
 # shellcheck source=lib/logging.sh
-# Note: logging.sh may require LOG_FILE to be set, but log_message will work
-# without it (outputs to stderr only). Source conditionally with fallback.
 if ! source "${LIB_DIR}/logging.sh" 2>/dev/null; then
-	# Fallback if logging.sh not found - use centralized fallbacks
 	# shellcheck source=lib/fallbacks.sh
 	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
 		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_logging_fallbacks
 	fi
 fi
 
-# Source network validation functions
 # shellcheck source=lib/detection/network_validation.sh
 source "${LIB_DIR}/detection/network_validation.sh"
 
@@ -240,7 +229,6 @@ execute_xfrm_state_command() {
 	if [[ $xfrm_exit_code -eq 0 ]]; then
 		# Command succeeded - check if output contains error messages in stderr
 		if echo "$full_xfrm_output" | grep -qE "(error|Error|ERROR|failed|Failed|FAILED|No such|Permission denied)"; then
-			# Command executed but returned error message - this is a command failure
 			return 2
 		fi
 		# Check if we have actual output (not just empty/whitespace)
@@ -248,8 +236,6 @@ execute_xfrm_state_command() {
 			echo "$full_xfrm_output"
 			return 0
 		fi
-		# Empty output - no SAs found in kernel, but command succeeded
-		# Fall through to try without -s flag
 	elif [[ $xfrm_exit_code -ne 0 ]]; then
 		# Command failed with non-zero exit code - this is a command failure
 		return 2
@@ -260,9 +246,7 @@ execute_xfrm_state_command() {
 	xfrm_exit_code=$?
 
 	if [[ $xfrm_exit_code -eq 0 ]]; then
-		# Check if output contains error messages
 		if echo "$full_xfrm_output" | grep -qE "(error|Error|ERROR|failed|Failed|FAILED|No such|Permission denied)"; then
-			# Command executed but returned error - this is a command failure
 			return 2
 		fi
 		# Check if we have actual output
@@ -270,14 +254,11 @@ execute_xfrm_state_command() {
 			echo "$full_xfrm_output"
 			return 0
 		fi
-		# Empty output - no SAs found in kernel (tunnel may be down)
 		return 1
 	elif [[ $xfrm_exit_code -ne 0 ]]; then
-		# Command failed with non-zero exit code - this is a command failure
 		return 2
 	fi
 
-	# Empty output - no SAs found in kernel (tunnel may be down)
 	return 1
 }
 
@@ -697,7 +678,8 @@ detect_sa_rekey() {
 	# Compare SPI values
 	if [[ "$current_spi" != "$last_spi" ]]; then
 		# SPI changed - rekey detected
-		log_message "INFO" "$location_name" "SA rekey detected for $location_name ($peer_ip): SPI changed from $last_spi to $current_spi"
+		# Note: detect_sa_rekey doesn't have access to internal_peer_ip, so we only show external IP
+		log_message "INFO" "$location_name" "SA rekey detected for ($peer_ip): SPI changed from $last_spi to $current_spi"
 
 		# Reset byte counter baseline to 0 (allows new baseline after rekey)
 		set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "0"
@@ -778,11 +760,13 @@ check_byte_counters() {
 			last_bytes=$(get_peer_state "$location_name" "$peer_ip" "last_bytes" "0")
 			if [[ "$current_bytes" -gt 0 ]]; then
 				# Bytes are non-zero after rekey - update baseline
+				local ip_display
+				ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
 				if set_peer_state "$location_name" "$peer_ip" "last_bytes" "$current_bytes"; then
-					log_message "INFO" "$location_name" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset) for $location_name ($peer_ip)"
+					log_message "INFO" "$location_name" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset) for $ip_display"
 					return 0
 				else
-					log_message "INFO" "$location_name" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset, state update failed) for $location_name ($peer_ip)"
+					log_message "INFO" "$location_name" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset, state update failed) for $ip_display"
 					return 0
 				fi
 			fi
@@ -809,35 +793,41 @@ check_byte_counters() {
 					# Ping succeeds - VPN is healthy but idle (newly established or idle)
 					set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "$current_bytes"
 					set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
-					log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=0 (first check, idle but healthy, ping check passed) for $location_name ($peer_ip)"
+					local ip_display
+					ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
+					log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=0 (first check, idle but healthy, ping check passed) for $ip_display"
 					return 0
 				else
 					# Ping fails - VPN is likely broken
 					local failure_reason="bytes=0 (first check, ping check failed)"
+					local ip_display
+					ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
 					if [[ -n "$diagnostic_var" ]]; then
 						printf -v "$diagnostic_var" "%s" "$failure_reason"
 					else
-						handle_error "WARNING" "$location_name" "VPN suspect: SA exists but $failure_reason for $location_name ($peer_ip)"
+						handle_error "WARNING" "$location_name" "VPN suspect: SA exists but $failure_reason for $ip_display"
 					fi
 					return 1
 				fi
 			else
 				# Ping check disabled or internal_peer_ip not provided - fail-safe behavior
 				local failure_reason="bytes=0 (first check, may be idle, ping check disabled)"
+				# Note: Only external IP available when ping check disabled or internal IP not provided
 				if [[ -n "$diagnostic_var" ]]; then
 					printf -v "$diagnostic_var" "%s" "$failure_reason"
 				else
-					handle_error "WARNING" "$location_name" "VPN suspect: SA exists but $failure_reason for $location_name ($peer_ip)"
+					handle_error "WARNING" "$location_name" "VPN suspect: SA exists but $failure_reason for ($peer_ip)"
 				fi
 				return 1
 			fi
 		else
 			# Bytes dropped to zero after previously having traffic - likely broken
 			local failure_reason="bytes dropped to 0 (was $last_bytes)"
+			# Note: Only external IP available here (internal_peer_ip may not be set)
 			if [[ -n "$diagnostic_var" ]]; then
 				printf -v "$diagnostic_var" "%s" "$failure_reason"
 			else
-				handle_error "WARNING" "$location_name" "VPN suspect: SA exists but $failure_reason for $location_name ($peer_ip)"
+				handle_error "WARNING" "$location_name" "VPN suspect: SA exists but $failure_reason for ($peer_ip)"
 			fi
 			return 1
 		fi
@@ -855,22 +845,26 @@ check_byte_counters() {
 			if ! check_ping_connectivity "$internal_peer_ip" "$local_ip"; then
 				# Ping fails even though bytes are increasing - routing issue
 				local failure_reason="bytes increasing ($current_bytes, was $last_bytes) but ping check failed"
+				local ip_display
+				ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
 				if [[ -n "$diagnostic_var" ]]; then
 					printf -v "$diagnostic_var" "%s" "$failure_reason"
 				else
-					handle_error "WARNING" "$location_name" "VPN suspect: SA exists, $failure_reason for $location_name ($peer_ip)"
+					handle_error "WARNING" "$location_name" "VPN suspect: SA exists, $failure_reason for $ip_display"
 				fi
 				return 1
 			fi
 		fi
 		# Bytes are increasing and ping check passed (or disabled) - definitely healthy
+		local ip_display
+		ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
 		if set_peer_state "$location_name" "$peer_ip" "last_bytes" "$current_bytes"; then
 			# Clear idle state if set (traffic is flowing again)
 			delete_peer_state "$location_name" "$peer_ip" "idle_detected" || true
-			log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, traffic flowing) for $location_name ($peer_ip)"
+			log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, traffic flowing) for $ip_display"
 			return 0
 		else
-			log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, state update failed) for $location_name ($peer_ip)"
+			log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, state update failed) for $ip_display"
 			return 0
 		fi
 	fi
@@ -882,7 +876,8 @@ check_byte_counters() {
 		# Note: This is logged separately from the final failure message below
 		# We still need to check ping to determine if it's actually broken
 		if [[ -z "$diagnostic_var" ]]; then
-			handle_error "WARNING" "$location_name" "VPN suspect: SA exists but bytes decreased (current=$current_bytes, last=$last_bytes) - bytes not increasing for $location_name ($peer_ip)"
+			# Note: Only external IP available here (internal_peer_ip may not be set)
+			handle_error "WARNING" "$location_name" "VPN suspect: SA exists but bytes decreased (current=$current_bytes, last=$last_bytes) - bytes not increasing for ($peer_ip)"
 		fi
 	fi
 
@@ -895,15 +890,19 @@ check_byte_counters() {
 			# Ping succeeds - tunnel is idle but healthy
 			set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "$current_bytes"
 			set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
-			log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (idle but healthy, ping check passed) for $location_name ($peer_ip)"
+			local ip_display
+			ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
+			log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (idle but healthy, ping check passed) for $ip_display"
 			# Check keepalive status and suggest action if needed
 			if [[ "${ENABLE_KEEPALIVE:-0}" -ne 1 ]]; then
-				log_message "INFO" "$location_name" "Consider enabling ENABLE_KEEPALIVE=1 in config to prevent idle tunnel timeouts for $location_name"
+				# Note: Only external IP available for keepalive suggestion
+				log_message "INFO" "$location_name" "Consider enabling ENABLE_KEEPALIVE=1 in config to prevent idle tunnel timeouts for ($peer_ip)"
 			else
 				# Keepalive is enabled - check if daemon is running
 				local keepalive_pidfile="${STATE_DIR:-/data/vpn-monitor}/vpn-keepalive.pid"
 				if [[ ! -f "$keepalive_pidfile" ]] || ! file_exists_and_readable "$keepalive_pidfile" || ! kill -0 "$(cat "$keepalive_pidfile" 2>/dev/null)" 2>/dev/null; then
-					log_message "INFO" "$location_name" "Keepalive is enabled but daemon is not running - consider starting: vpn-keepalive.sh start (for $location_name)"
+					# Note: location_name is already in log prefix, so we remove redundant location name
+					log_message "INFO" "$location_name" "Keepalive is enabled but daemon is not running - consider starting: vpn-keepalive.sh start"
 				fi
 			fi
 			return 0
@@ -922,7 +921,8 @@ check_byte_counters() {
 	if [[ -n "$diagnostic_var" ]]; then
 		printf -v "$diagnostic_var" "%s" "$failure_reason"
 	else
-		handle_error "WARNING" "$location_name" "VPN suspect: SA exists but $failure_reason for $location_name ($peer_ip)"
+		# Note: Only external IP available here (internal_peer_ip may not be set)
+		handle_error "WARNING" "$location_name" "VPN suspect: SA exists but $failure_reason for ($peer_ip)"
 	fi
 	return 1
 }
@@ -996,7 +996,9 @@ check_xfrm_status() {
 		if [[ -n "$diagnostic_var" ]]; then
 			printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
 		else
-			handle_error "WARNING" "$location_name" "VPN suspect: No SA found for $location_name ($peer_ip) in xfrm state"
+			local ip_display
+			ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
+			handle_error "WARNING" "$location_name" "VPN suspect: No SA found for $ip_display in xfrm state"
 		fi
 		return 1
 	fi
@@ -1051,7 +1053,9 @@ check_xfrm_status() {
 				# Ping succeeds - VPN is likely healthy but byte counters unavailable
 				# Treat as "idle but healthy" similar to check_byte_counters logic
 				set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
-				log_message "INFO" "$location_name" "VPN OK: SA exists for $location_name ($peer_ip), byte counters unavailable but ping check passed (treating as idle but healthy)"
+				local ip_display
+				ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
+				log_message "INFO" "$location_name" "VPN OK: SA exists for $ip_display, byte counters unavailable but ping check passed (treating as idle but healthy)"
 				return 0
 			else
 				# Ping fails - cannot verify VPN health
@@ -1059,7 +1063,9 @@ check_xfrm_status() {
 				if [[ -n "$diagnostic_var" ]]; then
 					printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
 				else
-					handle_error "WARNING" "$location_name" "VPN suspect: SA exists for $location_name ($peer_ip) but byte counter info unavailable and ping check failed"
+					local ip_display
+					ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
+					handle_error "WARNING" "$location_name" "VPN suspect: SA exists for $ip_display but byte counter info unavailable and ping check failed"
 				fi
 				return 1
 			fi
@@ -1067,7 +1073,8 @@ check_xfrm_status() {
 			# Ping check disabled or internal IP not provided - cannot verify VPN health
 			# Log debug info about why byte counter extraction failed
 			if [[ "${DEBUG:-0}" -eq 1 ]]; then
-				log_message "DEBUG" "$location_name" "Byte counter extraction failed for $location_name ($peer_ip) - xfrm output format may differ. Consider enabling ENABLE_PING_CHECK=1 for fallback verification."
+				# Note: Only external IP available for debug message
+				log_message "DEBUG" "$location_name" "Byte counter extraction failed for ($peer_ip) - xfrm output format may differ. Consider enabling ENABLE_PING_CHECK=1 for fallback verification."
 			fi
 			local reason="ping check disabled"
 			if [[ -z "$internal_peer_ip" ]]; then
@@ -1077,7 +1084,8 @@ check_xfrm_status() {
 			if [[ -n "$diagnostic_var" ]]; then
 				printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
 			else
-				handle_error "WARNING" "$location_name" "VPN suspect: SA exists for $location_name ($peer_ip) but byte counter info unavailable (ping check disabled or internal IP not provided)"
+				# Note: Only external IP available when ping check disabled or internal IP not provided
+				handle_error "WARNING" "$location_name" "VPN suspect: SA exists for ($peer_ip) but byte counter info unavailable (ping check disabled or internal IP not provided)"
 			fi
 			return 1
 		fi
@@ -1124,14 +1132,16 @@ check_ipsec_status() {
 	ipsec_output=$(get_ipsec_status_for_peer "$peer_ip" || true)
 
 	if [[ -n "$ipsec_output" ]]; then
-		log_message "INFO" "$location_name" "VPN OK: Connection found via ipsec status for $location_name ($peer_ip)"
+		# Note: check_ipsec_status doesn't have access to internal_peer_ip, so we only show external IP
+		log_message "INFO" "$location_name" "VPN OK: Connection found via ipsec status for ($peer_ip)"
 		return 0
 	else
 		local diagnostic_msg="Detection method: ipsec status - No connection found via ipsec status for $peer_ip"
 		if [[ -n "$diagnostic_var" ]]; then
 			printf -v "$diagnostic_var" "%s" "$diagnostic_msg"
 		else
-			handle_error "WARNING" "$location_name" "VPN suspect: No connection found via ipsec status for $location_name ($peer_ip)"
+			# Note: check_ipsec_status doesn't have access to internal_peer_ip, so we only show external IP
+			handle_error "WARNING" "$location_name" "VPN suspect: No connection found via ipsec status for ($peer_ip)"
 		fi
 		return 1
 	fi

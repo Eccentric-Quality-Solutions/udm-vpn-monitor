@@ -48,9 +48,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Set all locations to failed state (failure_count >= 1)
 	ensure_state_functions_loaded
@@ -118,9 +116,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Set 4 out of 5 locations to failed state (80% = 4/5)
 	ensure_state_functions_loaded
@@ -181,9 +177,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Set only 1 location to failed state (1/3 = 33% < 100% threshold)
 	ensure_state_functions_loaded
@@ -241,9 +235,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Set system-wide failure state (from previous detection)
 	set_system_wide_failure_state 1
@@ -315,9 +307,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Set all locations to failed state (at tier 2 threshold to trigger recovery)
 	ensure_state_functions_loaded
@@ -387,9 +377,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Set all locations to failed state (at tier 2 threshold to trigger recovery)
 	ensure_state_functions_loaded
@@ -452,9 +440,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Set system-wide failure state (from previous detection)
 	set_system_wide_failure_state 1
@@ -518,9 +504,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# First run: All locations fail → system-wide failure detected
 	ensure_state_functions_loaded
@@ -580,9 +564,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create corrupted state file (invalid value)
 	local state_file="${STATE_DIR}/system_wide_failure_state"
@@ -634,9 +616,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Set all locations to failed state
 	ensure_state_functions_loaded
@@ -718,9 +698,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Set all locations to failed state
 	ensure_state_functions_loaded
@@ -778,9 +756,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Set 2 out of 4 locations to failed state (50% = 2/4)
 	ensure_state_functions_loaded
@@ -820,9 +796,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Set 3 out of 4 locations to failed state (75% < 80%)
 	# Explicitly set TEST4 to healthy (0) to ensure clean state
@@ -873,9 +847,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Set all locations to failed state (at tier 2 threshold to trigger recovery)
 	ensure_state_functions_loaded

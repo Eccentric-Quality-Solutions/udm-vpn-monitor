@@ -4,6 +4,7 @@
 # Tests complete recovery workflows from failure detection to recovery
 
 load test_helper
+load helpers/state
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -63,10 +64,10 @@ load fixtures/vpn_failing
 	setup_detection_test "${TEST_PEER_IP}" 1000 2000
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
-	# Use get_peer_state_file_path to get correct path dynamically
+	# Get state file path using helper
 	# setup_detection_test() uses setup_vpn_active_fixture() which creates location "TEST"
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	# Failure counter should be reset
 	if [[ -f "$failure_counter" ]]; then
 		local count
@@ -89,11 +90,10 @@ load fixtures/vpn_failing
 	run bash "$TEST_SCRIPT" --fake
 	assert_file_contains "$LOG_FILE" "Tier 1"
 
-	# Use get_peer_state_file_path to get correct path dynamically
-	ensure_state_functions_loaded
+	# Get state file path using helper
 	# setup_vpn_down_fixture creates location "TEST"
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	# Verify failure counter was incremented
 	assert_file_exist "$failure_counter"
 	local count
@@ -142,13 +142,12 @@ load fixtures/vpn_failing
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
-	# Use get_peer_state_file_path to get correct paths dynamically
-	ensure_state_functions_loaded
+	# Get state file paths using helper
 	# setup_test_vpn_monitor creates locations "TEST1" and "TEST2" for multiple peers
 	local failure_counter1
-	failure_counter1=$(get_peer_state_file_path "TEST1" "${TEST_PEER_IP}" "failure_count")
+	failure_counter1=$(get_state_file_path "TEST1" "${TEST_PEER_IP}" "failure_count")
 	local failure_counter2
-	failure_counter2=$(get_peer_state_file_path "TEST2" "${TEST_PEER_IP2}" "failure_count")
+	failure_counter2=$(get_state_file_path "TEST2" "${TEST_PEER_IP2}" "failure_count")
 	# Both peers should have failure counters
 	if [[ -f "$failure_counter1" ]]; then
 		local count1
@@ -211,11 +210,10 @@ load fixtures/vpn_failing
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
-	# Use get_peer_state_file_path to get correct path dynamically
-	ensure_state_functions_loaded
+	# Get state file path using helper
 	# setup_vpn_down_fixture creates location "TEST"
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	# Failure counter should continue incrementing
 	if [[ -f "$failure_counter" ]]; then
 		local count
@@ -250,11 +248,10 @@ load fixtures/vpn_failing
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
-	# Use get_peer_state_file_path to get correct path dynamically
-	ensure_state_functions_loaded
+	# Get state file path using helper
 	# setup_vpn_down_fixture creates location "TEST"
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	# Failure counter should continue incrementing
 	if [[ -f "$failure_counter" ]]; then
 		local count
@@ -292,10 +289,9 @@ load fixtures/vpn_failing
 
 	# Set failure count to 4 so that after increment it becomes 5 (TIER3_THRESHOLD)
 	# This ensures Tier 3 is triggered when VPN is detected as down
-	ensure_state_functions_loaded
 	mkdir -p "$LOGS_DIR"
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	echo "4" >"$failure_counter"
 
 	# Create restart file with 3 recent restarts (at limit)

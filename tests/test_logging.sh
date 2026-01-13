@@ -4,6 +4,7 @@
 # Tests critical paths and error handling scenarios
 
 load test_helper
+load helpers/config
 load fixtures/vpn_active
 
 # Path to the VPN monitor script
@@ -19,20 +20,17 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script handles directory instead of log file gracefully, outputs to stderr and does not crash
 	# Importance: Directory paths can occur from misconfiguration or symlink issues; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create log file as a directory
-	rm -rf "$log_file" 2>/dev/null || true
-	mkdir -p "$log_file"
+	rm -rf "$LOG_FILE" 2>/dev/null || true
+	mkdir -p "$LOG_FILE"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -52,26 +50,25 @@ EOF
 	# Expected: Script handles read-only log file gracefully, outputs to stderr and does not crash
 	# Importance: Permission issues can occur from incorrect file ownership or chmod operations; script must handle gracefully
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create log file and make it read-only (prevents write)
-	touch "$log_file"
+	touch "$LOG_FILE"
 	local original_perms
-	original_perms=$(stat -c %a "$log_file")
-	chmod 444 "$log_file"
+	original_perms=$(stat -c %a "$LOG_FILE")
+	chmod 444 "$LOG_FILE"
 	# Verify permissions were set correctly
-	assert_file_permission 444 "$log_file"
+	assert_file_permission 444 "$LOG_FILE"
 	# Use trap to ensure cleanup even on errors
-	trap "chmod $original_perms \"\$log_file\" 2>/dev/null || true" EXIT
+	# Use actual path value, not variable, since trap executes after function returns
+	# shellcheck disable=SC2064 # We want variable expansion at trap definition time
+	trap "chmod $original_perms \"$LOG_FILE\" 2>/dev/null || true" EXIT
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -84,7 +81,7 @@ EOF
 	# Note: We can't easily verify stderr output in this test, but script should continue
 
 	# Restore permissions for cleanup
-	chmod 644 "$log_file" 2>/dev/null || true
+	chmod "$original_perms" "$LOG_FILE" 2>/dev/null || true
 	# Clear trap after successful restore
 	trap - EXIT
 	remove_mock_from_path
@@ -96,16 +93,13 @@ EOF
 	# Expected: Script handles read-only log directory gracefully, outputs to stderr and does not crash
 	# Importance: Directory permissions can change during execution; script must handle this gracefully
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -132,13 +126,11 @@ EOF
 	# Expected: Script handles read-only log file gracefully, outputs to stderr and does not crash
 	# Importance: File permissions can change during execution; script must handle this gracefully
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Create log file and make it read-only
 	touch "$log_file"
@@ -148,10 +140,12 @@ EOF
 	# Verify permissions were set correctly
 	assert_file_permission 444 "$log_file"
 	# Use trap to ensure cleanup even on errors
-	trap "chmod $original_perms \"\$log_file\" 2>/dev/null || true" EXIT
+	# Use actual path value, not variable, since trap executes after function returns
+	# shellcheck disable=SC2064 # We want variable expansion at trap definition time
+	trap "chmod $original_perms \"$log_file\" 2>/dev/null || true" EXIT
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$log_file")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -163,7 +157,7 @@ EOF
 	# Script should not crash even if log writes fail
 
 	# Restore permissions for cleanup
-	chmod 644 "$log_file" 2>/dev/null || true
+	chmod "$original_perms" "$log_file" 2>/dev/null || true
 	# Clear trap after successful restore
 	trap - EXIT
 	remove_mock_from_path
@@ -175,16 +169,13 @@ EOF
 	# Expected: Script handles deleted log directory gracefully, recreates directory or outputs to stderr and does not crash
 	# Importance: Directories can be deleted during execution; script must handle this gracefully
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -212,21 +203,27 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local symlink_log_dir="${TEST_DIR}/symlink-logs"
 	local real_log_dir="${TEST_DIR}/real-logs"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-LOG_FILE="${symlink_log_dir}/vpn-monitor.log"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOG_FILE=\"${symlink_log_dir}/vpn-monitor.log\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create real log directory and symlink to it
+	# Remove any existing symlink or directory first
+	rm -rf "$symlink_log_dir" 2>/dev/null || true
 	mkdir -p "$real_log_dir"
 	ln -sf "$real_log_dir" "$symlink_log_dir"
 
+	# Verify symlink was created correctly
+	[[ -L "$symlink_log_dir" ]] || fail "Failed to create symlink: $symlink_log_dir"
+
+	local expected_log_file="${symlink_log_dir}/vpn-monitor.log"
+	# Verify expected_log_file path is set correctly
+	[[ -n "$expected_log_file" ]] || fail "expected_log_file is empty"
+
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$expected_log_file")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -234,14 +231,14 @@ EOF
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
 
 	# Should handle symlink path gracefully (should write to real directory)
-	assert_file_exist "$log_file"
+	assert_file_exist "$expected_log_file"
 	# Verify log file was created in real directory (via symlink)
 	if [[ -L "$symlink_log_dir" ]]; then
 		# Verify symlink points to correct target
 		assert_symlink_to "$real_log_dir" "$symlink_log_dir"
 		local real_log_file="${real_log_dir}/vpn-monitor.log"
 		# Log file should exist in real directory
-		[[ -f "$real_log_file" ]] || [[ -f "$log_file" ]]
+		[[ -f "$real_log_file" ]] || [[ -f "$expected_log_file" ]]
 	fi
 
 	# Cleanup
@@ -256,20 +253,18 @@ EOF
 	# Importance: File paths may contain special characters; script must handle them correctly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local special_log_dir="${TEST_DIR}/logs-with-special-chars"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-LOG_FILE="${special_log_dir}/vpn-monitor.log"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOG_FILE=\"${special_log_dir}/vpn-monitor.log\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create log directory with special characters in path
 	mkdir -p "$special_log_dir"
 
+	local expected_log_file="${special_log_dir}/vpn-monitor.log"
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$expected_log_file")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -277,7 +272,7 @@ EOF
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
 
 	# Should handle special characters in path gracefully
-	assert_file_exist "$log_file"
+	assert_file_exist "$expected_log_file"
 
 	# Cleanup
 	rm -rf "$special_log_dir" 2>/dev/null || true
@@ -290,13 +285,11 @@ EOF
 	# Expected: Script handles disk full scenario gracefully, outputs to stderr and does not crash
 	# Importance: Disk space can run out during execution; script must handle this gracefully without crashing
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Create log file initially (simulates some writes succeeded)
 	touch "$log_file"
@@ -311,7 +304,7 @@ EOF
 	assert_file_permission 555 "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$log_file")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path

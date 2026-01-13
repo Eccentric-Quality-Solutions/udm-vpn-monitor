@@ -4,6 +4,8 @@
 # Tests critical paths and error handling scenarios for Tier 3 recovery
 
 load test_helper
+load helpers/config
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -39,7 +41,7 @@ EOF
 
 	# Should call ipsec restart
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "full IPsec restart" || assert_file_contains "$LOG_FILE" "Tier 3"
+	assert_log_contains_any "$LOG_FILE" "full IPsec restart" "Tier 3"
 	if [[ -f /tmp/ipsec_called.txt ]]; then
 		assert_file_exist /tmp/ipsec_called.txt
 		rm -f /tmp/ipsec_called.txt
@@ -67,7 +69,7 @@ EOF
 
 	# Should handle error gracefully
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Failed to restart" || assert_file_contains "$LOG_FILE" "ERROR"
+	assert_log_contains_any "$LOG_FILE" "Failed to restart" "ERROR"
 
 	remove_mock_from_path
 }
@@ -90,7 +92,7 @@ EOF
 
 	# Should handle unavailable commands gracefully
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "not available" || assert_file_contains "$LOG_FILE" "ERROR"
+	assert_log_contains_any "$LOG_FILE" "not available" "ERROR"
 
 	remove_mock_from_path
 }
@@ -112,14 +114,10 @@ EOF
 		'ENABLE_XFRM_RECOVERY=0' \
 		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	export STATE_DIR="$state_dir"
-	export LOGS_DIR="${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	local failure_counter
 	failure_counter=$(get_failure_counter_path_for_location_var "LOCATION_TEST_EXTERNAL" "${TEST_PEER_IP}")
-	local restart_file="${state_dir}/restart_count"
+	local restart_file="${STATE_DIR}/restart_count"
 
 	# Set failure count to Tier 3 threshold
 	echo "5" >"$failure_counter"
@@ -133,7 +131,7 @@ EOF
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Run script (not in fake mode, so restart will actually execute)
 	run bash "$test_script"
@@ -150,7 +148,7 @@ EOF
 	else
 		# If restart file doesn't exist, check if restart was actually called
 		# This might happen if rate limiting prevented restart
-		assert_file_contains "$log_file" "restart" || assert_file_contains "$log_file" "Tier 3"
+		assert_log_contains_any "$log_file" "restart" "Tier 3"
 	fi
 
 	remove_mock_from_path
@@ -187,7 +185,7 @@ EOF
 	# Error message format: "Failed to restart IPsec service for $location_name (exit code: $ipsec_exit_code)"
 	# Note: Error message check uses OR - if either pattern is found, test passes
 	# The key assertion is that restart is recorded even when it fails (checked below)
-	assert_file_contains "$LOG_FILE" "Failed to restart" || assert_file_contains "$LOG_FILE" "ERROR"
+	assert_log_contains_any "$LOG_FILE" "Failed to restart" "ERROR"
 
 	# Restart IS recorded even when restart fails (recorded before execution)
 	# This behavior means failed attempts count toward rate limit, preventing retry loops
@@ -218,11 +216,7 @@ EOF
 		'ENABLE_XFRM_RECOVERY=0' \
 		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	export STATE_DIR="$state_dir"
-	export LOGS_DIR="${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	local failure_counter
 	failure_counter=$(get_failure_counter_path_for_location_var "LOCATION_TEST_EXTERNAL" "${TEST_PEER_IP}")
 
@@ -239,7 +233,7 @@ EOF
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	run bash "$test_script"
 	# Allow exit code 0 (success) or 1 (warnings) - PIPESTATUS failure causes warnings
@@ -250,7 +244,7 @@ EOF
 	# Should detect failure via PIPESTATUS (not tee exit code)
 	# The error message should be logged when restart fails
 	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "Failed to restart" || assert_file_contains "$log_file" "ERROR"
+	assert_log_contains_any "$log_file" "Failed to restart" "ERROR"
 
 	remove_mock_from_path
 }
@@ -261,24 +255,19 @@ EOF
 	# Expected: Script detects rate limit exceeded and prevents restart command from being executed
 	# Importance: Rate limiting prevents restart loops and allows VPN time to stabilize after recovery attempts
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_WINDOW=3
-RATE_LIMIT_WINDOW_MINUTES=60
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"MAX_RESTARTS_PER_WINDOW=3" \
+		"RATE_LIMIT_WINDOW_MINUTES=60"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	export STATE_DIR="$state_dir"
-	export LOGS_DIR="${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	local failure_counter
 	failure_counter=$(get_failure_counter_path_for_location_var "LOCATION_TEST_EXTERNAL" "${TEST_PEER_IP}")
-	local restart_file="${state_dir}/restart_count"
+	local restart_file="${STATE_DIR}/restart_count"
 	export RESTART_COUNT_FILE="$restart_file"
 
 	# Set failure count to Tier 3 threshold
@@ -308,7 +297,7 @@ EOF
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	run bash "$test_script"
 	# Allow exit code 0 (success) or 1 (warnings) - Rate limiting causes warnings but script should still run
@@ -319,7 +308,7 @@ EOF
 	# Should prevent restart due to rate limiting, no recovery action should be triggered
 	assert_file_exist "$log_file"
 	# Check for rate limit message (check both the WARNING from check_rate_limit and ERROR from full_restart)
-	assert_file_contains "$log_file" "Rate limit exceeded" || assert_file_contains "$log_file" "rate limit" || assert_file_contains "$log_file" "Rate limit exceeded, skipping Tier 3"
+	assert_log_contains_any "$log_file" "Rate limit exceeded" "rate limit" "Rate limit exceeded, skipping Tier 3"
 	# ipsec restart should not be called (rate limiting prevents it)
 	refute_file_contains "$log_file" "ERROR: Restart should not be called when rate limited"
 
@@ -342,21 +331,16 @@ EOF
 	# Note: This test documents that timeout handling is not currently implemented
 	# The script will hang if restart command hangs - this is a known limitation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_WINDOW=10
-RATE_LIMIT_WINDOW_MINUTES=60
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"MAX_RESTARTS_PER_WINDOW=10" \
+		"RATE_LIMIT_WINDOW_MINUTES=60"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	export STATE_DIR="$state_dir"
-	export LOGS_DIR="${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	local failure_counter
 	failure_counter=$(get_failure_counter_path_for_location_var "LOCATION_TEST_EXTERNAL" "${TEST_PEER_IP}")
 
@@ -382,7 +366,7 @@ EOF
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Run with timeout to prevent test from hanging forever
 	# This documents that the script would hang without timeout handling
@@ -413,23 +397,18 @@ EOF
 	# Expected: Failure counter is reset to 0 when VPN recovers naturally, even after restart command failed
 	# Importance: Natural recovery detection prevents false escalation after VPN recovers without recovery action success
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_WINDOW=10
-RATE_LIMIT_WINDOW_MINUTES=60
-ENABLE_XFRM_RECOVERY=0
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"MAX_RESTARTS_PER_WINDOW=10" \
+		"RATE_LIMIT_WINDOW_MINUTES=60" \
+		"ENABLE_XFRM_RECOVERY=0" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	export STATE_DIR="$state_dir"
-	export LOGS_DIR="${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	local failure_counter
 	failure_counter=$(get_failure_counter_path_for_location_var "LOCATION_TEST_EXTERNAL" "${TEST_PEER_IP}")
 	local restart_file="${TEST_DIR}/state/restart_count"
@@ -438,7 +417,7 @@ EOF
 	echo "5" >"$failure_counter"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN is down initially (no SA)
 	# Create mock that returns empty output (no SA found)
@@ -475,7 +454,7 @@ EOF
 		# File doesn't exist - reset_failure_count may delete the file when resetting to 0
 		# This is also valid behavior (file not existing means count is 0)
 		# But verify that reset actually happened by checking the log
-		assert_file_contains "$log_file" "recovered" || assert_file_contains "$log_file" "reset"
+		assert_log_contains_any "$log_file" "recovered" "reset"
 	fi
 
 	remove_mock_from_path
@@ -487,19 +466,14 @@ EOF
 	# Expected: Script handles case where VPN SA exists but traffic hasn't resumed yet after recovery
 	# Importance: Tests edge case where VPN appears recovered but traffic hasn't resumed, preventing false failure detection
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	export STATE_DIR="$state_dir"
-	export LOGS_DIR="${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	# Ensure get_peer_state_file_path is available for last_bytes_file
 	source_function "get_peer_state_file_path"
 	local last_bytes_file
@@ -514,7 +488,7 @@ EOF
 	echo "1000" >"$last_bytes_file"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN is up (SA exists) but byte counters haven't increased yet
 	# Return same byte count as last_bytes (simulates no new traffic after recovery)

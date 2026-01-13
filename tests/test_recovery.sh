@@ -11,6 +11,7 @@
 
 load test_helper
 load helpers/test_data
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -637,8 +638,8 @@ EOF
 	# Importance: Timeout warnings help diagnose slow SA re-establishment and enable fallback recovery
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/timeout_warn_attempts"
@@ -1653,7 +1654,7 @@ EOF
 	fi
 	assert_file_exist "$LOG_FILE"
 	# Should log fallback message
-	assert_file_contains "$LOG_FILE" "ipsec restart" || assert_file_contains "$LOG_FILE" "reload failed" || assert_file_contains "$LOG_FILE" "attempting ipsec restart"
+	assert_log_contains_any "$LOG_FILE" "ipsec restart" "reload failed" "attempting ipsec restart"
 
 	remove_mock_from_path
 }
@@ -1681,7 +1682,7 @@ EOF
 	fi
 	assert_file_exist "$LOG_FILE"
 	# Should contain fallback-related messages
-	assert_file_contains "$LOG_FILE" "xfrm" || assert_file_contains "$LOG_FILE" "ipsec" || assert_file_contains "$LOG_FILE" "falling back" || assert_file_contains "$LOG_FILE" "reload"
+	assert_log_contains_any "$LOG_FILE" "xfrm" "ipsec" "falling back" "reload"
 
 	remove_mock_from_path
 }
@@ -1730,7 +1731,7 @@ EOF
 	fi
 	assert_file_exist "$LOG_FILE"
 	# Should contain verification-related messages
-	assert_file_contains "$LOG_FILE" "verification" || assert_file_contains "$LOG_FILE" "connections active" || assert_file_contains "$LOG_FILE" "completed"
+	assert_log_contains_any "$LOG_FILE" "verification" "connections active" "completed"
 
 	remove_mock_from_path
 }
@@ -1892,8 +1893,8 @@ EOF
 	# Importance: Edge case where SA re-establishes but byte counter verification fails, then timeout occurs
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/timeout_byte_counter_attempts"
@@ -1998,8 +1999,8 @@ EOF
 	# Importance: Edge case where multiple SAs exist but only some re-establish within timeout
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/timeout_partial_attempts"
@@ -2122,8 +2123,8 @@ EOF
 	# Importance: Ensures graceful handling when ipsec status command fails during recovery verification
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ipsec command that fails
 	mock_ipsec_status 1 "ipsec status failed" >/dev/null
@@ -2150,8 +2151,8 @@ EOF
 	# Importance: Ensures graceful handling when ipsec status command hangs during recovery verification
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'IPSEC_STATUS_TIMEOUT=1'
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ipsec command that hangs (simulated by timeout)
 	mock_ipsec_timeout 2 "Connections:
@@ -2203,8 +2204,8 @@ EOF
 	# Importance: Ensures graceful handling when only some connections are active after recovery
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ipsec command that returns only one connection
 	mock_ipsec_status 0 "Connections:
@@ -2233,8 +2234,8 @@ EOF
 	# Importance: Ensures verification works in cron/systemd environments where PATH may not include /usr/sbin
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Save original PATH
 	local original_path="$PATH"
@@ -2348,8 +2349,8 @@ EOF
 	# Importance: Ensures graceful handling when xfrm state query fails during byte counter verification
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ip command that fails for xfrm state
 	local mock_ip="${TEST_DIR}/ip"
@@ -2385,8 +2386,8 @@ EOF
 	# Importance: Ensures graceful handling when byte counter extraction fails but SA is present
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ip command that returns xfrm state without byte counter format
 	local mock_ip="${TEST_DIR}/ip"
@@ -2435,8 +2436,8 @@ EOF
 	# Importance: Ensures detection of tunnels that are established but not passing traffic
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ip command that returns xfrm state with zero byte counters
 	local mock_ip="${TEST_DIR}/ip"
@@ -2485,8 +2486,8 @@ EOF
 	# Importance: Ensures graceful handling when peer IP has no SAs in xfrm state
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ip command that returns empty xfrm state
 	local mock_ip="${TEST_DIR}/ip"
@@ -2598,8 +2599,8 @@ EOF
 	# Importance: Edge case where check_ipsec_phase2 fails during verification, causing timeout
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/timeout_check_phase2_attempts"
@@ -2692,8 +2693,8 @@ EOF
 	# Importance: Ensures graceful handling when verification fails during Tier 3 recovery
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ipsec command that returns status without the expected peer IP
 	mock_ipsec_status 0 "Connections:
@@ -2722,8 +2723,8 @@ EOF
 	# Importance: Ensures graceful handling when byte counter verification fails during Tier 3 recovery
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ip command that returns xfrm state with zero byte counters
 	local mock_ip="${TEST_DIR}/ip"

@@ -5,6 +5,7 @@
 # location name generation, and config validation after migration
 
 load test_helper
+load helpers/config
 
 # Path to the migration script
 MIGRATION_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/migrate-config-to-locations.sh"
@@ -258,10 +259,9 @@ EOF
 	# Importance: Prevents unnecessary migration attempts
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Create config without old format
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="203.0.113.1"
-TIER1_THRESHOLD=1
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"TIER1_THRESHOLD=1"
 
 	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 	assert_failure

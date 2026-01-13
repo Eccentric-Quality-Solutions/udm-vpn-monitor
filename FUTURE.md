@@ -154,3 +154,13 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Medium priority: Provides visibility into critical system checks
     - Note: Pattern established 2026-01-15 with network partition statistics tracking
     - See: `docs/working/STATISTICS_TRACKING_CANDIDATES.md` for detailed analysis
+
+- Review and fix ip xfrm state mock patterns in tests
+    - Issue: Many test mocks only handle `ip xfrm state` but not `ip -s xfrm state` (with -s flag)
+    - `execute_xfrm_state_command` calls `ip -s xfrm state` first, then falls back to `ip xfrm state`
+    - Tests that mock `ip` command need to handle both formats to work correctly
+    - Found 43+ instances of old pattern `if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]` that may need updating
+    - Helper functions like `mock_ip_xfrm_state()` already handle both formats correctly
+    - Low priority: Tests may still work if they don't call `check_ipsec_phase2` or if fallback path is used
+    - Action: Review tests that use inline `ip xfrm state` mocks and update to handle `-s` flag or use helper functions
+    - Note: Fixed in `test_detection_ping_optional.sh` 2026-01-28

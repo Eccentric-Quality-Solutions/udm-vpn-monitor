@@ -4,6 +4,8 @@
 # Tests critical paths and error handling scenarios for rate limiting
 
 load test_helper
+load helpers/config
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -41,7 +43,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		# Check if exit was due to warnings (expected) vs actual errors
 		assert_file_exist "$LOG_FILE"
 		# Should have handled corrupted file (recovered it)
-		assert_file_contains "$LOG_FILE" "corrupted" || assert_file_contains "$LOG_FILE" "recovering"
+		assert_log_contains_any "$LOG_FILE" "corrupted" "recovering"
 	fi
 
 	# Should handle corrupted file gracefully
@@ -57,19 +59,16 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script treats empty file as no previous restarts and allows recovery actions
 	# Importance: Prevents script failures from empty rate limit files, ensuring recovery can proceed
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_WINDOW=3
-RATE_LIMIT_WINDOW_MINUTES=60
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"MAX_RESTARTS_PER_WINDOW=3" \
+		"RATE_LIMIT_WINDOW_MINUTES=60"
 
-	mkdir -p "${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/state"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}/state"
+	setup_test_environment "$state_dir" "${TEST_DIR}/logs"
 	local restart_file="${TEST_DIR}/state/restart_count"
 
 	# Set LOGS_DIR and STATE_DIR for state functions
@@ -95,13 +94,13 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$LOG_FILE")
 
 	run bash "$test_script"
 	assert_success
 
 	# Should handle empty file gracefully
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -112,19 +111,16 @@ EOF
 	# Expected: Script detects directory instead of file and handles error without crashing
 	# Importance: Prevents script failures from misconfigured rate limit file paths
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_WINDOW=3
-RATE_LIMIT_WINDOW_MINUTES=60
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"MAX_RESTARTS_PER_WINDOW=3" \
+		"RATE_LIMIT_WINDOW_MINUTES=60"
 
-	mkdir -p "${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/state"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}/state"
+	setup_test_environment "$state_dir" "${TEST_DIR}/logs"
 	local restart_file="${TEST_DIR}/state/restart_count"
 
 	# Set LOGS_DIR and STATE_DIR for state functions
@@ -151,13 +147,13 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$LOG_FILE")
 
 	run bash "$test_script"
 	assert_success
 
 	# Should handle directory gracefully
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -168,21 +164,18 @@ EOF
 	# Expected: Old restart timestamps (>24 hours) are removed from restart count file, recent entries remain
 	# Importance: Cleanup prevents restart count file from growing indefinitely and ensures accurate rate limiting
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_WINDOW=10
-RATE_LIMIT_WINDOW_MINUTES=60
-ENABLE_XFRM_RECOVERY=0
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"MAX_RESTARTS_PER_WINDOW=10" \
+		"RATE_LIMIT_WINDOW_MINUTES=60" \
+		"ENABLE_XFRM_RECOVERY=0" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/state"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}/state"
+	setup_test_environment "$state_dir" "${TEST_DIR}/logs"
 	local restart_file="${TEST_DIR}/state/restart_count"
 
 	# Set LOGS_DIR and STATE_DIR for state functions
@@ -221,7 +214,7 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$LOG_FILE")
 
 	run bash "$test_script" --fake
 	# Allow exit code 0 (success) or 1 (warnings) - VPN verification failures cause warnings but script should still run
@@ -231,7 +224,7 @@ EOF
 
 	# After restart is recorded, old entries (>24 hours) should be cleaned up
 	# File should contain recent timestamp and new restart timestamp, but not old ones
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	if [[ -f "$restart_file" ]]; then
 		# Verify old entries are gone (two_days_ago and one_day_ago should be removed)
 		# Recent entry and new restart should remain
@@ -380,22 +373,19 @@ EOF
 
 	# Create config with minimum interval
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_WINDOW=10
-RATE_LIMIT_WINDOW_MINUTES=60
-MIN_RESTART_INTERVAL_SECONDS=${min_interval}
-ENABLE_XFRM_RECOVERY=0
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"MAX_RESTARTS_PER_WINDOW=10" \
+		"RATE_LIMIT_WINDOW_MINUTES=60" \
+		"MIN_RESTART_INTERVAL_SECONDS=${min_interval}" \
+		"ENABLE_XFRM_RECOVERY=0" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/state"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}/state"
+	setup_test_environment "$state_dir" "${TEST_DIR}/logs"
 	local restart_file="${TEST_DIR}/state/restart_count"
 
 	# Set LOGS_DIR and STATE_DIR for state functions
@@ -421,7 +411,7 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$LOG_FILE")
 
 	run bash "$test_script" --fake
 	# Allow exit code 0 (success) or 1 (warnings) - minimum interval blocking is expected
@@ -430,8 +420,8 @@ EOF
 	fi
 
 	# Should block restart due to minimum interval
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "Minimum restart interval not met"
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "Minimum restart interval not met"
 
 	# Verify restart was not recorded (file should still have 1 entry)
 	if [[ -f "$restart_file" ]]; then
@@ -462,22 +452,19 @@ EOF
 
 	# Create config with minimum interval
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_WINDOW=10
-RATE_LIMIT_WINDOW_MINUTES=60
-MIN_RESTART_INTERVAL_SECONDS=${min_interval}
-ENABLE_XFRM_RECOVERY=0
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"MAX_RESTARTS_PER_WINDOW=10" \
+		"RATE_LIMIT_WINDOW_MINUTES=60" \
+		"MIN_RESTART_INTERVAL_SECONDS=${min_interval}" \
+		"ENABLE_XFRM_RECOVERY=0" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/state"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}/state"
+	setup_test_environment "$state_dir" "${TEST_DIR}/logs"
 	local restart_file="${TEST_DIR}/state/restart_count"
 
 	# Set LOGS_DIR and STATE_DIR for state functions
@@ -503,7 +490,7 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$LOG_FILE")
 
 	run bash "$test_script" --fake
 	# Allow exit code 0 (success) or 1 (warnings) - restart should be allowed
@@ -512,9 +499,9 @@ EOF
 	fi
 
 	# Should allow restart (not blocked by minimum interval)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Should not contain minimum interval message
-	refute_file_contains "$log_file" "Minimum restart interval not met"
+	refute_file_contains "$LOG_FILE" "Minimum restart interval not met"
 
 	# Verify restart was recorded (file should have 2 entries now: 1 old + 1 new)
 	if [[ -f "$restart_file" ]]; then
@@ -545,22 +532,19 @@ EOF
 
 	# Create config with minimum interval disabled
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_WINDOW=10
-RATE_LIMIT_WINDOW_MINUTES=60
-MIN_RESTART_INTERVAL_SECONDS=${min_interval}
-ENABLE_XFRM_RECOVERY=0
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"MAX_RESTARTS_PER_WINDOW=10" \
+		"RATE_LIMIT_WINDOW_MINUTES=60" \
+		"MIN_RESTART_INTERVAL_SECONDS=${min_interval}" \
+		"ENABLE_XFRM_RECOVERY=0" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/state"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}/state"
+	setup_test_environment "$state_dir" "${TEST_DIR}/logs"
 	local restart_file="${TEST_DIR}/state/restart_count"
 
 	# Set LOGS_DIR and STATE_DIR for state functions
@@ -586,7 +570,7 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$LOG_FILE")
 
 	run bash "$test_script" --fake
 	# Allow exit code 0 (success) or 1 (warnings) - restart should be allowed
@@ -595,9 +579,9 @@ EOF
 	fi
 
 	# Should allow restart (minimum interval check is disabled)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Should not contain minimum interval message
-	refute_file_contains "$log_file" "Minimum restart interval not met"
+	refute_file_contains "$LOG_FILE" "Minimum restart interval not met"
 
 	# Verify restart was recorded (file should have 2 entries now: 1 old + 1 new)
 	if [[ -f "$restart_file" ]]; then
@@ -630,22 +614,19 @@ EOF
 
 	# Create config with minimum interval
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_WINDOW=10
-RATE_LIMIT_WINDOW_MINUTES=60
-MIN_RESTART_INTERVAL_SECONDS=${min_interval}
-ENABLE_XFRM_RECOVERY=0
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"MAX_RESTARTS_PER_WINDOW=10" \
+		"RATE_LIMIT_WINDOW_MINUTES=60" \
+		"MIN_RESTART_INTERVAL_SECONDS=${min_interval}" \
+		"ENABLE_XFRM_RECOVERY=0" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/state"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}/state"
+	setup_test_environment "$state_dir" "${TEST_DIR}/logs"
 	local restart_file="${TEST_DIR}/state/restart_count"
 
 	# Set LOGS_DIR and STATE_DIR for state functions
@@ -673,7 +654,7 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$LOG_FILE")
 
 	run bash "$test_script" --fake
 	# Allow exit code 0 (success) or 1 (warnings) - minimum interval should block (15s < 30s)
@@ -682,8 +663,8 @@ EOF
 	fi
 
 	# Should block restart due to minimum interval (most recent restart was 15s ago, less than 30s)
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "Minimum restart interval not met"
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "Minimum restart interval not met"
 
 	# Verify restart was not recorded (file should still have 3 entries)
 	if [[ -f "$restart_file" ]]; then
@@ -717,22 +698,19 @@ EOF
 
 	# Test with 15-minute window (should allow restart - old restarts are outside window)
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_WINDOW=3
-RATE_LIMIT_WINDOW_MINUTES=15
-MIN_RESTART_INTERVAL_SECONDS=0
-ENABLE_XFRM_RECOVERY=0
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"MAX_RESTARTS_PER_WINDOW=3" \
+		"RATE_LIMIT_WINDOW_MINUTES=15" \
+		"MIN_RESTART_INTERVAL_SECONDS=0" \
+		"ENABLE_XFRM_RECOVERY=0" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/state"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}/state"
+	setup_test_environment "$state_dir" "${TEST_DIR}/logs"
 	local restart_file="${TEST_DIR}/state/restart_count"
 
 	# Set LOGS_DIR and STATE_DIR for state functions
@@ -760,7 +738,7 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$LOG_FILE")
 
 	run bash "$test_script" --fake
 	# Allow exit code 0 (success) or 1 (warnings) - restart should be allowed (old restarts outside 15-min window)
@@ -769,28 +747,27 @@ EOF
 	fi
 
 	# Should allow restart (old restarts are outside 15-minute window)
-	assert_file_exist "$log_file"
-	refute_file_contains "$log_file" "Rate limit exceeded"
+	assert_file_exist "$LOG_FILE"
+	refute_file_contains "$LOG_FILE" "Rate limit exceeded"
 
 	# Now test with 60-minute window (should block restart - old restarts are inside window)
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_WINDOW=3
-RATE_LIMIT_WINDOW_MINUTES=60
-MIN_RESTART_INTERVAL_SECONDS=0
-ENABLE_XFRM_RECOVERY=0
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"MAX_RESTARTS_PER_WINDOW=3" \
+		"RATE_LIMIT_WINDOW_MINUTES=60" \
+		"MIN_RESTART_INTERVAL_SECONDS=0" \
+		"ENABLE_XFRM_RECOVERY=0" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
 	# Reset restart file (remove new restart from previous test)
 	echo "$restart_time" >"$restart_file"
 	echo "$restart_time" >>"$restart_file"
 	echo "$restart_time" >>"$restart_file"
 
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$LOG_FILE")
 
 	run bash "$test_script" --fake
 	# Allow exit code 0 (success) or 1 (warnings) - rate limit should block
@@ -799,8 +776,8 @@ EOF
 	fi
 
 	# Should block restart (old restarts are inside 60-minute window)
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "Rate limit exceeded"
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "Rate limit exceeded"
 
 	remove_mock_from_path
 }
@@ -827,22 +804,19 @@ EOF
 
 	# Create config with 30-minute window
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_WINDOW=3
-RATE_LIMIT_WINDOW_MINUTES=${window_minutes}
-MIN_RESTART_INTERVAL_SECONDS=0
-ENABLE_XFRM_RECOVERY=0
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"MAX_RESTARTS_PER_WINDOW=3" \
+		"RATE_LIMIT_WINDOW_MINUTES=${window_minutes}" \
+		"MIN_RESTART_INTERVAL_SECONDS=0" \
+		"ENABLE_XFRM_RECOVERY=0" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/state"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}/state"
+	setup_test_environment "$state_dir" "${TEST_DIR}/logs"
 	local restart_file="${TEST_DIR}/state/restart_count"
 
 	# Set LOGS_DIR and STATE_DIR for state functions
@@ -871,7 +845,7 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$LOG_FILE")
 
 	run bash "$test_script" --fake
 	# Allow exit code 0 (success) or 1 (warnings) - should block (3 restarts in window = limit)
@@ -880,8 +854,8 @@ EOF
 	fi
 
 	# Should block restart (3 restarts within window = limit, old restart is ignored)
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "Rate limit exceeded"
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "Rate limit exceeded"
 
 	# Verify restart was not recorded (file should still have 4 entries)
 	if [[ -f "$restart_file" ]]; then
@@ -918,22 +892,19 @@ EOF
 
 	# Create config with 60-minute window
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_WINDOW=3
-RATE_LIMIT_WINDOW_MINUTES=${window_minutes}
-MIN_RESTART_INTERVAL_SECONDS=0
-ENABLE_XFRM_RECOVERY=0
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"MAX_RESTARTS_PER_WINDOW=3" \
+		"RATE_LIMIT_WINDOW_MINUTES=${window_minutes}" \
+		"MIN_RESTART_INTERVAL_SECONDS=0" \
+		"ENABLE_XFRM_RECOVERY=0" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/state"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}/state"
+	setup_test_environment "$state_dir" "${TEST_DIR}/logs"
 	local restart_file="${TEST_DIR}/state/restart_count"
 
 	# Set LOGS_DIR and STATE_DIR for state functions
@@ -961,7 +932,7 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$LOG_FILE")
 
 	run bash "$test_script" --fake
 	# Allow exit code 0 (success) or 1 (warnings) - should block (at limit)
@@ -970,8 +941,8 @@ EOF
 	fi
 
 	# Should block restart (at limit)
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "Rate limit exceeded"
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "Rate limit exceeded"
 
 	# Verify reset calculation: reset should be in approximately 30 minutes (1800 seconds)
 	# The log should contain countdown information
@@ -979,7 +950,7 @@ EOF
 	# Countdown = 1800 seconds = 30 minutes (expected format: "30m 0s" where minutes and seconds are separated by space)
 	# Check that log contains countdown (formatted as "30m 0s") or "Reset at:" which indicates reset calculation is present
 	# Note: "30m" will match "30m 0s" format used in the log message
-	assert_file_contains "$log_file" "30m" || assert_file_contains "$log_file" "Reset at:"
+	assert_log_contains_any "$LOG_FILE" "30m" "Reset at:"
 
 	remove_mock_from_path
 }

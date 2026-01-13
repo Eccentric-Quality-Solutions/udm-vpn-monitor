@@ -6,22 +6,17 @@
 # Version: 0.6.0
 #
 
-# Source common utility functions
 # shellcheck source=lib/common.sh
-# Determine lib directory (where this file is located)
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${LIB_DIR}/common.sh" 2>/dev/null || {
-	# Fallback if common.sh not found - use centralized fallbacks
 	# shellcheck source=lib/fallbacks.sh
 	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
 		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
 	fi
 }
 
-# Source logging functions to ensure get_formatted_timestamp() is available
 # shellcheck source=lib/logging.sh
 source "${LIB_DIR}/logging.sh" 2>/dev/null || {
-	# Fallback if logging.sh not found - use centralized fallbacks
 	# shellcheck source=lib/fallbacks.sh
 	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
 		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_logging_timestamp_fallback
@@ -231,7 +226,7 @@ remove_stale_lockfile_if_needed() {
 	local stale_pid
 	stale_pid=$(extract_lockfile_pid "$LOCKFILE" || echo "unknown")
 	rm -f "$LOCKFILE"
-	echo "WARNING: Removed stale lockfile (timeout exceeded, PID was: $stale_pid)" >&2
+	log_message "WARNING" "SYSTEM" "Removed stale lockfile (timeout exceeded, PID was: $stale_pid)"
 	return 0
 }
 
@@ -258,14 +253,13 @@ remove_stale_lockfile_if_needed() {
 #   log_and_exit_lockfile_conflict "" "Custom conflict message"
 #
 # Note:
-#   Requires LOG_FILE and get_formatted_timestamp to be set (from config.sh and logging.sh)
-#   Log file write errors are silently ignored (|| true)
+#   Requires log_message() function to be available (from logging.sh)
+#   log_message() handles timestamp formatting and log file writes internally
+#   Log file write errors are handled gracefully by log_message() (outputs to stderr if file write fails)
 #   Always exits with code 0 to prevent cron job failures
 log_and_exit_lockfile_conflict() {
 	local pid="${1:-}"
 	local custom_message="${2:-}"
-	local timestamp
-	timestamp=$(get_formatted_timestamp)
 
 	# Build message
 	local message
@@ -277,19 +271,9 @@ log_and_exit_lockfile_conflict() {
 		message="Another instance is already running, exiting"
 	fi
 
-	# Ensure log file directory exists before trying to write
-	if [[ -n "${LOG_FILE:-}" ]]; then
-		local log_dir
-		log_dir=$(dirname "$LOG_FILE" 2>/dev/null || echo "")
-		if [[ -n "$log_dir" ]] && [[ ! -d "$log_dir" ]]; then
-			mkdir -p "$log_dir" 2>/dev/null || true
-		fi
-		# Try to log to file (may fail if lockfile issue prevents access)
-		echo "[$timestamp] [WARNING] $message" >>"$LOG_FILE" 2>/dev/null || true
-	fi
-
-	# Always output to stderr (this is what tests check)
-	echo "WARNING: $message" >&2
+	# Use log_message() for consistent logging (handles file write failures gracefully)
+	# log_message() will output to stderr for WARNING level messages
+	log_message "WARNING" "SYSTEM" "$message"
 
 	exit "${EXIT_SUCCESS:-0}"
 }
@@ -509,7 +493,7 @@ acquire_lockfile_fallback() {
 			else
 				# PID is not running - stale lockfile, remove it and try again
 				rm -f "$LOCKFILE"
-				echo "WARNING: Removed stale lockfile (PID $lock_pid not running), retrying" >&2
+				log_message "WARNING" "SYSTEM" "Removed stale lockfile (PID $lock_pid not running), retrying"
 				# Retry lockfile creation once
 				if create_lockfile_atomically "$LOCKFILE"; then
 					lock_acquired=1
@@ -638,7 +622,12 @@ check_directory_writable_for_lockfile() {
 		if type die >/dev/null 2>&1; then
 			die "$error_msg" "${EXIT_PERMISSION_ERROR:-4}"
 		else
-			echo "ERROR: $error_msg" >&2
+			# Fallback if die() is not available - use log_message() if available, otherwise echo
+			if type log_message >/dev/null 2>&1; then
+				log_message "ERROR" "SYSTEM" "$error_msg"
+			else
+				echo "ERROR: $error_msg" >&2
+			fi
 			exit "${EXIT_PERMISSION_ERROR:-4}"
 		fi
 	fi

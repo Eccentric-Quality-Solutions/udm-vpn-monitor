@@ -8,24 +8,14 @@
 
 # Source recovery constants for magic numbers
 # shellcheck source=lib/recovery/constants.sh
-# Determine recovery directory (where this file is located)
 RECOVERY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Note: safe_source_lib not available here since constants.sh is sourced before common.sh
-# Source recovery-specific constants
 if ! source "${RECOVERY_DIR}/constants.sh" 2>/dev/null; then
-	# Fallback if recovery constants not found (shouldn't happen in normal operation)
-	# Only set if not already set (to avoid readonly variable errors)
 	[[ -z "${IPSEC_STATUS_TIMEOUT:-}" ]] && readonly IPSEC_STATUS_TIMEOUT=5
 fi
 
-# Source detection functions for byte counter and SA checks
 # shellcheck source=lib/detection.sh
-# Determine lib directory (where detection.sh is located)
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# Note: safe_source_lib not available here since common.sh hasn't been sourced yet
-# Using direct source pattern since detection.sh is sourced before common.sh
 source "${LIB_DIR}/detection.sh" 2>/dev/null || {
-	# Fallback if detection.sh not found
 	# Extract byte counter from xfrm output (fallback stub)
 	#
 	# Fallback stub function when detection.sh cannot be sourced.
@@ -152,7 +142,8 @@ count_sas_for_peer() {
 			fi
 		done <<<"$sa_headers"
 		if [[ -n "$sa_details" ]]; then
-			log_message "INFO" "$location_name" "xfrm recovery: SA count diagnostic for $location_name ($peer_ip): count=$sa_count, details: ${sa_details% }"
+			# Note: count_sas_for_peer doesn't have access to internal_peer_ip, so we only show external IP
+			log_message "INFO" "$location_name" "xfrm recovery: SA count diagnostic for ($peer_ip): count=$sa_count, details: ${sa_details% }"
 		fi
 	fi
 
@@ -212,15 +203,17 @@ verify_byte_counters_resume() {
 	local current_bytes
 	if current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null); then
 		if [[ "$current_bytes" -gt 0 ]]; then
-			log_message "INFO" "$location_name" "Recovery verification: Byte counters resumed for $location_name ($peer_ip) (bytes=$current_bytes)"
+			# Note: verify_byte_counters_resume doesn't have access to internal_peer_ip, so we only show external IP
+			log_message "INFO" "$location_name" "Recovery verification: Byte counters resumed for ($peer_ip) (bytes=$current_bytes)"
 			return 0
 		else
-			handle_error "WARNING" "$location_name" "Recovery verification: Byte counters are zero for $location_name ($peer_ip) (tunnel may not be passing traffic)"
+			handle_error "WARNING" "$location_name" "Recovery verification: Byte counters are zero for ($peer_ip) (tunnel may not be passing traffic)"
 			return 1
 		fi
 	else
 		# Byte counters not available, but SA exists - log and return success
-		log_message "INFO" "$location_name" "Recovery verification: Byte counters not available for $location_name ($peer_ip) (SA exists, verification limited)"
+		# Note: verify_byte_counters_resume doesn't have access to internal_peer_ip, so we only show external IP
+		log_message "INFO" "$location_name" "Recovery verification: Byte counters not available for ($peer_ip) (SA exists, verification limited)"
 		return 0
 	fi
 }
@@ -280,29 +273,31 @@ verify_byte_counters_increment() {
 		fi
 		# Validate current_bytes is numeric
 		if [[ ! "$current_bytes" =~ ^[0-9]+$ ]]; then
-			handle_error "WARNING" "$location_name" "Recovery verification: Invalid byte counter value for $location_name ($peer_ip) (current=$current_bytes)"
+			# Note: verify_byte_counters_increment doesn't have access to internal_peer_ip, so we only show external IP
+			handle_error "WARNING" "$location_name" "Recovery verification: Invalid byte counter value for ($peer_ip) (current=$current_bytes)"
 			return 1
 		fi
 		# Check if counters have increased from initial value
 		if [[ "$current_bytes" -gt "$initial_bytes" ]]; then
 			local increment=$((current_bytes - initial_bytes))
-			log_message "INFO" "$location_name" "Recovery verification: Byte counters incrementing for $location_name ($peer_ip) (initial=$initial_bytes, current=$current_bytes, increment=$increment)"
+			log_message "INFO" "$location_name" "Recovery verification: Byte counters incrementing for ($peer_ip) (initial=$initial_bytes, current=$current_bytes, increment=$increment)"
 			return 0
 		else
 			# Counters haven't increased yet - log status but don't fail immediately
 			# This allows the verification loop to continue waiting
 			if [[ "$current_bytes" -eq 0 ]] && [[ "$initial_bytes" -eq 0 ]]; then
 				# Both are zero - counters reset but haven't started incrementing yet
-				handle_error "WARNING" "$location_name" "Recovery verification: Byte counters are zero for $location_name ($peer_ip) (waiting for traffic to resume)"
+				handle_error "WARNING" "$location_name" "Recovery verification: Byte counters are zero for ($peer_ip) (waiting for traffic to resume)"
 			else
 				# Counters haven't increased (may have decreased or stayed same)
-				handle_error "WARNING" "$location_name" "Recovery verification: Byte counters not incrementing for $location_name ($peer_ip) (initial=$initial_bytes, current=$current_bytes)"
+				handle_error "WARNING" "$location_name" "Recovery verification: Byte counters not incrementing for ($peer_ip) (initial=$initial_bytes, current=$current_bytes)"
 			fi
 			return 1
 		fi
 	else
 		# Byte counters not available, but SA exists - log and return success
-		log_message "INFO" "$location_name" "Recovery verification: Byte counters not available for $location_name ($peer_ip) (SA exists, verification limited)"
+		# Note: verify_byte_counters_increment doesn't have access to internal_peer_ip, so we only show external IP
+		log_message "INFO" "$location_name" "Recovery verification: Byte counters not available for ($peer_ip) (SA exists, verification limited)"
 		return 0
 	fi
 }

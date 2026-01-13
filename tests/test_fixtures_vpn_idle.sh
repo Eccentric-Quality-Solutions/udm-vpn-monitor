@@ -4,6 +4,7 @@
 # Verifies that the fixture correctly sets up idle tunnel scenarios
 
 load test_helper
+load helpers/assertions
 load fixtures/vpn_idle
 
 # Path to the VPN monitor script (defined for consistency with other test files)
@@ -50,7 +51,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_success
 	assert_file_exist "$LOG_FILE"
 	# Should detect idle tunnel or ping check passed
-	assert_file_contains "$LOG_FILE" "idle" || assert_file_contains "$LOG_FILE" "ping check passed" || assert_file_contains "$LOG_FILE" "healthy"
+	assert_log_contains_any "$LOG_FILE" "idle" "ping check passed" "healthy"
 
 	remove_mock_from_path
 }

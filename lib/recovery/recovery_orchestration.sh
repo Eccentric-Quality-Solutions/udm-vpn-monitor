@@ -6,7 +6,6 @@
 # Version: 0.6.0
 #
 
-# Source recovery modules
 # shellcheck source=lib/recovery/recovery_verification.sh
 # shellcheck source=lib/recovery/recovery_state.sh
 # shellcheck source=lib/recovery/xfrm_recovery.sh
@@ -16,6 +15,7 @@ source "${RECOVERY_DIR}/recovery_verification.sh" 2>/dev/null || true
 source "${RECOVERY_DIR}/recovery_state.sh" 2>/dev/null || true
 source "${RECOVERY_DIR}/xfrm_recovery.sh" 2>/dev/null || true
 source "${RECOVERY_DIR}/ipsec_recovery.sh" 2>/dev/null || true
+
 # Check availability of recovery commands
 #
 # Checks which recovery commands are available and stores results in global variables.
@@ -337,14 +337,15 @@ surgical_cleanup() {
 	local location_name="$2"
 	local peer_display
 	peer_display=$(format_peer_display "$peer_ip")
-	log_message "INFO" "$location_name" "Attempting surgical SA cleanup for $location_name ($peer_display)"
+	# Note: surgical_cleanup doesn't have access to internal_peer_ip, so we only show external IP
+	log_message "INFO" "$location_name" "Attempting surgical SA cleanup for ($peer_display)"
 
 	# Select recovery strategy
 	if ! select_recovery_strategy "$peer_ip" 2; then
 		# No recovery strategy available
 		warn_if_missing "ip"
 		warn_if_missing "ipsec"
-		handle_error "WARNING" "${location_name:-SYSTEM}" "No recovery strategy available for Tier 2 recovery${location_name:+ for $location_name}"
+		handle_error "WARNING" "${location_name:-SYSTEM}" "No recovery strategy available for Tier 2 recovery"
 		return 1
 	fi
 
@@ -354,20 +355,21 @@ surgical_cleanup() {
 	while [[ $strategy_executed -eq 0 ]]; do
 		case "$RECOVERY_STRATEGY" in
 		"xfrm")
-			log_message "INFO" "$location_name" "Attempting xfrm-based per-connection recovery for $location_name ($peer_ip)"
+			# Note: surgical_cleanup doesn't have access to internal_peer_ip, so we only show external IP
+			log_message "INFO" "$location_name" "Attempting xfrm-based per-connection recovery for ($peer_ip)"
 			# Store recovery method before attempting recovery
 			store_recovery_method "$location_name" "$peer_ip" "xfrm"
 			if attempt_xfrm_recovery "$peer_ip" "$location_name"; then
-				log_message "INFO" "$location_name" "xfrm-based recovery completed successfully for $location_name ($peer_ip)"
-				log_message "INFO" "$location_name" "Surgical cleanup completed for $location_name ($peer_ip) (via xfrm)"
+				log_message "INFO" "$location_name" "xfrm-based recovery completed successfully for ($peer_ip)"
+				log_message "INFO" "$location_name" "Surgical cleanup completed for ($peer_ip) (via xfrm)"
 				return 0
 			else
 				# xfrm recovery failed - fall back to ipsec reload
-				handle_error "WARNING" "$location_name" "xfrm-based recovery failed for $location_name ($peer_ip), falling back to ipsec reload (affects all tunnels)"
+				handle_error "WARNING" "$location_name" "xfrm-based recovery failed for ($peer_ip), falling back to ipsec reload (affects all tunnels)"
 				# Re-select strategy for fallback (without peer IP to force ipsec reload)
 				if ! select_recovery_strategy "" 2; then
 					# Fallback strategy not available
-					handle_error "ERROR" "$location_name" "xfrm recovery failed and no fallback strategy available for $location_name ($peer_ip)" 0
+					handle_error "ERROR" "$location_name" "xfrm recovery failed and no fallback strategy available for ($peer_ip)" 0
 					return 1
 				fi
 				# Continue loop to execute fallback strategy
@@ -383,7 +385,8 @@ surgical_cleanup() {
 			strategy_executed=1
 			;;
 		*)
-			handle_error "ERROR" "$location_name" "Unknown recovery strategy: $RECOVERY_STRATEGY for $location_name ($peer_ip)" 0
+			# Note: surgical_cleanup doesn't have access to internal_peer_ip, so we only show external IP
+			handle_error "ERROR" "$location_name" "Unknown recovery strategy: $RECOVERY_STRATEGY for ($peer_ip)" 0
 			return 1
 			;;
 		esac
@@ -452,7 +455,8 @@ full_restart() {
 
 	if ! check_rate_limit "$location_name"; then
 		# check_rate_limit() already logs detailed warning with reset time, countdown, and restart list
-		handle_error "ERROR" "$location_name" "Rate limit exceeded, skipping Tier 3 recovery for $location_name (see previous warning for reset time and details)" 0
+		# Note: full_restart doesn't have access to internal_peer_ip, and location_name is already in log prefix
+		handle_error "ERROR" "$location_name" "Rate limit exceeded, skipping Tier 3 recovery (see previous warning for reset time and details)" 0
 		return 1
 	fi
 
@@ -469,22 +473,23 @@ full_restart() {
 	while [[ $strategy_executed -eq 0 ]]; do
 		case "$RECOVERY_STRATEGY" in
 		"xfrm")
-			log_message "INFO" "$location_name" "Tier 3: Attempting xfrm-based per-connection recovery for $location_name ($peer_ip)"
+			# Note: full_restart doesn't have access to internal_peer_ip, so we only show external IP
+			log_message "INFO" "$location_name" "Tier 3: Attempting xfrm-based per-connection recovery for ($peer_ip)"
 			# Store recovery method before attempting recovery
 			if [[ -n "$peer_ip" ]]; then
 				store_recovery_method "$location_name" "$peer_ip" "xfrm"
 			fi
 			if attempt_xfrm_recovery "$peer_ip" "$location_name"; then
-				log_message "INFO" "$location_name" "Tier 3: xfrm-based per-connection recovery successful for $location_name ($peer_ip)"
+				log_message "INFO" "$location_name" "Tier 3: xfrm-based per-connection recovery successful for ($peer_ip)"
 				# Record restart for rate limiting (even though it's per-connection)
 				record_restart
 				return 0
 			else
-				handle_error "WARNING" "$location_name" "Tier 3: xfrm-based recovery failed for $location_name ($peer_ip), falling back to full restart"
+				handle_error "WARNING" "$location_name" "Tier 3: xfrm-based recovery failed for ($peer_ip), falling back to full restart"
 				# Re-select strategy for fallback (without peer IP to force ipsec restart)
 				if ! select_recovery_strategy "" 3; then
 					# Fallback strategy not available
-					handle_error "ERROR" "$location_name" "Tier 3: xfrm recovery failed and no fallback strategy available for $location_name ($peer_ip)" 0
+					handle_error "ERROR" "$location_name" "Tier 3: xfrm recovery failed and no fallback strategy available for ($peer_ip)" 0
 					return 1
 				fi
 				# Continue loop to execute fallback strategy
@@ -501,13 +506,15 @@ full_restart() {
 			fi
 			;;
 		*)
-			handle_error "ERROR" "$location_name" "Unknown recovery strategy: $RECOVERY_STRATEGY for $location_name ($peer_ip)" 0
+			# Note: full_restart doesn't have access to internal_peer_ip, so we only show external IP
+			handle_error "ERROR" "$location_name" "Unknown recovery strategy: $RECOVERY_STRATEGY for ($peer_ip)" 0
 			return 1
 			;;
 		esac
 	done
 
-	log_message "INFO" "$location_name" "Full IPsec restart completed for $location_name"
+	# Note: full_restart doesn't have access to internal_peer_ip, and location_name is already in log prefix
+	log_message "INFO" "$location_name" "Full IPsec restart completed"
 	return 0
 }
 
@@ -550,14 +557,18 @@ check_vpn_status_for_location() {
 			if ! check_network_partition "$dns_server" "$dns_hostname" "$dns_timeout" "$interfaces"; then
 				# Network is still partitioned - skip VPN checks entirely
 				# This is a performance optimization: VPN checks would fail anyway without network connectivity
-				log_message "INFO" "$location_name" "Skipping VPN checks for $location_name ($external_peer_ip) - network partition detected"
+				local ip_display
+				ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ips")
+				log_message "INFO" "$location_name" "Skipping VPN checks for $ip_display - network partition detected"
 				# Log summary if hour has elapsed (tracks statistics for all three checks)
 				log_network_partition_summary_if_due
 				return 2
 			else
 				# Network partition cleared - update state and continue with VPN checks
 				# We know partition_state was 1 (from line 540), so we can use that directly
-				log_message "INFO" "$location_name" "Network connectivity restored - resuming VPN monitoring for $location_name ($external_peer_ip)"
+				local ip_display
+				ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ips")
+				log_message "INFO" "$location_name" "Network connectivity restored - resuming VPN monitoring for $ip_display"
 				set_network_partition_state 0
 				# Continue with VPN checks below
 				# Log summary if hour has elapsed (tracks statistics for all three checks)
@@ -627,10 +638,11 @@ update_location_state() {
 			fi
 
 			# Log recovery success with method if available
+			# Note: update_location_state doesn't have access to internal_peer_ip, so we only show external IP
 			if [[ -n "$recovery_method_display" ]]; then
-				log_message "INFO" "$location_name" "${VPN_NAME:-VPN} restored for $location_name ($external_peer_ip) after $failure_count failures (recovery method: $recovery_method_display)"
+				log_message "INFO" "$location_name" "${VPN_NAME:-VPN} restored for ($external_peer_ip) after $failure_count failures (recovery method: $recovery_method_display)"
 			else
-				log_message "INFO" "$location_name" "${VPN_NAME:-VPN} recovered for $location_name ($external_peer_ip) after $failure_count failures"
+				log_message "INFO" "$location_name" "${VPN_NAME:-VPN} recovered for ($external_peer_ip) after $failure_count failures"
 			fi
 			reset_failure_count "$location_name" "$external_peer_ip"
 
@@ -668,7 +680,8 @@ update_location_state() {
 						time_diff=0
 					fi
 					if [[ $time_diff -ge $status_log_interval ]] || [[ "$last_status_log" -eq 0 ]]; then
-						log_message "INFO" "$location_name" "${VPN_NAME:-VPN} check OK for $location_name ($external_peer_ip)"
+						# Note: update_location_state doesn't have access to internal_peer_ip, so we only show external IP
+						log_message "INFO" "$location_name" "${VPN_NAME:-VPN} check OK for ($external_peer_ip)"
 						set_peer_state_non_critical "$location_name" "$external_peer_ip" "last_status_log" "$current_time"
 					fi
 				fi
@@ -693,10 +706,11 @@ update_location_state() {
 				local prev_partition_state
 				prev_partition_state=$(get_network_partition_state)
 				set_network_partition_state 1
+				# Note: update_location_state doesn't have access to internal_peer_ip, so we only show external IP
 				if [[ "$prev_partition_state" -eq 0 ]]; then
-					log_message "WARNING" "$location_name" "Network partition detected - skipping VPN recovery for $location_name ($external_peer_ip) until connectivity restored"
+					log_message "WARNING" "$location_name" "Network partition detected - skipping VPN recovery for ($external_peer_ip) until connectivity restored"
 				else
-					log_message "INFO" "$location_name" "Skipping VPN recovery for $location_name ($external_peer_ip) - network is still partitioned (failure count: $failure_count)"
+					log_message "INFO" "$location_name" "Skipping VPN recovery for ($external_peer_ip) - network is still partitioned (failure count: $failure_count)"
 				fi
 				# Return special code to indicate partition detected (after failure count increment)
 				return 2
@@ -705,7 +719,8 @@ update_location_state() {
 				local prev_partition_state
 				prev_partition_state=$(get_network_partition_state)
 				if [[ "$prev_partition_state" -eq 1 ]]; then
-					log_message "INFO" "$location_name" "Network connectivity restored - resuming VPN monitoring for $location_name ($external_peer_ip)"
+					# Note: update_location_state doesn't have access to internal_peer_ip, so we only show external IP
+					log_message "INFO" "$location_name" "Network connectivity restored - resuming VPN monitoring for ($external_peer_ip)"
 					set_network_partition_state 0
 				fi
 			fi
@@ -721,7 +736,8 @@ update_location_state() {
 		"tunnel_down") failure_type_display=" (tunnel down)" ;;
 		"routing_issue") failure_type_display=" (routing issue)" ;;
 		esac
-		handle_error "WARNING" "$location_name" "${VPN_NAME:-VPN} check failed for $location_name ($external_peer_ip) (failure count: $failure_count)$failure_type_display"
+		# Note: update_location_state doesn't have access to internal_peer_ip, so we only show external IP
+		handle_error "WARNING" "$location_name" "${VPN_NAME:-VPN} check failed for ($external_peer_ip) (failure count: $failure_count)$failure_type_display"
 	fi
 	return 0
 }
@@ -777,10 +793,11 @@ determine_recovery_action() {
 
 		# If neither tool is available, detection is unreliable - don't escalate recovery
 		if [[ $ip_available -eq 0 ]] && [[ $ipsec_available -eq 0 ]]; then
-			handle_error "ERROR" "$location_name" "Detection unreliable: Both 'ip' and 'ipsec' commands unavailable - skipping recovery escalation for $location_name ($external_peer_ip) to prevent false recovery actions" 0
+			# Note: determine_recovery_action doesn't have access to internal_peer_ip, so we only show external IP
+			handle_error "ERROR" "$location_name" "Detection unreliable: Both 'ip' and 'ipsec' commands unavailable - skipping recovery escalation for ($external_peer_ip) to prevent false recovery actions" 0
 			# Still log the failure but don't escalate recovery
 			if [[ "$failure_count" -ge "$TIER1_THRESHOLD" ]]; then
-				log_message "INFO" "$location_name" "Tier 1: Logging ${VPN_NAME:-VPN} failure for $location_name ($external_peer_ip)$failure_type_display (recovery skipped - detection unreliable)"
+				log_message "INFO" "$location_name" "Tier 1: Logging ${VPN_NAME:-VPN} failure for ($external_peer_ip)$failure_type_display (recovery skipped - detection unreliable)"
 			fi
 			return 0
 		fi
@@ -788,7 +805,8 @@ determine_recovery_action() {
 
 	# Tier 1: Logging
 	if [[ "$failure_count" -ge "$TIER1_THRESHOLD" ]]; then
-		log_message "INFO" "$location_name" "Tier 1: Logging ${VPN_NAME:-VPN} failure for $location_name ($external_peer_ip)$failure_type_display"
+		# Note: determine_recovery_action doesn't have access to internal_peer_ip, so we only show external IP
+		log_message "INFO" "$location_name" "Tier 1: Logging ${VPN_NAME:-VPN} failure for ($external_peer_ip)$failure_type_display"
 	fi
 
 	# Check if recovery should be coordinated (system-wide failure mode)
@@ -798,6 +816,7 @@ determine_recovery_action() {
 			# System-wide failure detected and another location is coordinating recovery
 			# Log that this location is skipping recovery to avoid cascades
 			if [[ "$failure_count" -ge "$TIER2_THRESHOLD" ]]; then
+				# Note: determine_recovery_action doesn't have access to internal_peer_ip, so we only show external IP
 				log_message "INFO" "$location_name" "Skipping recovery for $location_name ($external_peer_ip) - recovery coordinated by another location during system-wide failure"
 			fi
 			return 0
@@ -812,14 +831,17 @@ determine_recovery_action() {
 			if ! select_recovery_strategy "$external_peer_ip" 2; then
 				:
 			elif [[ "$RECOVERY_STRATEGY" == "xfrm" ]]; then
-				log_message "INFO" "$location_name" "Tier 2: Would attempt xfrm-based per-connection recovery for $location_name ($external_peer_ip) (skipped in fake mode)"
+				# Note: determine_recovery_action doesn't have access to internal_peer_ip, so we only show external IP
+				log_message "INFO" "$location_name" "Tier 2: Would attempt xfrm-based per-connection recovery for ($external_peer_ip) (skipped in fake mode)"
 			else
 				# Log the specific command that would be executed
 				local command_display="${RECOVERY_COMMAND:-ipsec reload}"
-				log_message "INFO" "$location_name" "Tier 2: Would attempt surgical SA cleanup for $location_name ($external_peer_ip) via $command_display (skipped in fake mode)"
+				# Note: determine_recovery_action doesn't have access to internal_peer_ip, so we only show external IP
+				log_message "INFO" "$location_name" "Tier 2: Would attempt surgical SA cleanup for ($external_peer_ip) via $command_display (skipped in fake mode)"
 			fi
 		else
-			handle_error "WARNING" "$location_name" "Tier 2: Attempting surgical SA cleanup for $location_name ($external_peer_ip)"
+			# Note: determine_recovery_action doesn't have access to internal_peer_ip, so we only show external IP
+			handle_error "WARNING" "$location_name" "Tier 2: Attempting surgical SA cleanup for ($external_peer_ip)"
 			surgical_cleanup "$external_peer_ip" "$location_name"
 		fi
 	fi
@@ -831,22 +853,25 @@ determine_recovery_action() {
 			if ! check_rate_limit "$location_name"; then
 				# check_rate_limit() already logs "Rate limit exceeded" via handle_error
 				# location_name should always be provided in production code
-				log_message "INFO" "${location_name:-SYSTEM}" "Tier 3: Would attempt IPsec restart${location_name:+ for $location_name} (skipped in fake mode, rate limit would prevent)"
+				log_message "INFO" "${location_name:-SYSTEM}" "Tier 3: Would attempt IPsec restart (skipped in fake mode, rate limit would prevent)"
 			else
 				# In fake mode, still record restart for cleanup purposes (prevents restart count file from growing)
 				# but skip the actual restart command
 				record_restart
 				if ! select_recovery_strategy "$external_peer_ip" 3; then
 					# No recovery strategy available - log Tier 3 reached but no strategy available
-					log_message "WARNING" "$location_name" "Tier 3: Recovery threshold reached for $location_name ($external_peer_ip) but no recovery strategy available (skipped in fake mode)"
+					# Note: determine_recovery_action doesn't have access to internal_peer_ip, so we only show external IP
+					log_message "WARNING" "$location_name" "Tier 3: Recovery threshold reached for ($external_peer_ip) but no recovery strategy available (skipped in fake mode)"
 				elif [[ "$RECOVERY_STRATEGY" == "xfrm" ]]; then
-					log_message "INFO" "$location_name" "Tier 3: Would attempt xfrm-based per-connection recovery for $location_name ($external_peer_ip) (skipped in fake mode)"
+					# Note: determine_recovery_action doesn't have access to internal_peer_ip, so we only show external IP
+					log_message "INFO" "$location_name" "Tier 3: Would attempt xfrm-based per-connection recovery for ($external_peer_ip) (skipped in fake mode)"
 				else
 					log_message "INFO" "$location_name" "Tier 3: Would attempt full IPsec restart (affects all tunnels, skipped in fake mode)"
 				fi
 			fi
 		else
-			handle_error "ERROR" "$location_name" "Tier 3: Attempting IPsec restart for $location_name ($external_peer_ip)" 0
+			# Note: determine_recovery_action doesn't have access to internal_peer_ip, so we only show external IP
+			handle_error "ERROR" "$location_name" "Tier 3: Attempting IPsec restart for ($external_peer_ip)" 0
 			if full_restart "$external_peer_ip" "$location_name"; then
 				reset_failure_count "$location_name" "$external_peer_ip"
 			fi

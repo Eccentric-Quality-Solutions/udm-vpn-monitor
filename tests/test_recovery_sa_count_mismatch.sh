@@ -9,6 +9,7 @@
 # - Timing issues where second SA appears after initial re-establishment
 
 load test_helper
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -99,14 +100,14 @@ EOF
 	assert_file_exist "$LOG_FILE"
 
 	# Should log that 2 SAs were found/deleted
-	assert_file_contains "$LOG_FILE" "Found 2 SA(s) to delete" || assert_file_contains "$LOG_FILE" "2 SA(s)" || assert_file_contains "$LOG_FILE" "Deletion summary"
+	assert_log_contains_any "$LOG_FILE" "Found 2 SA(s) to delete" "2 SA(s)" "Deletion summary"
 
 	# Should log SA re-establishment
-	assert_file_contains "$LOG_FILE" "SA re-established" || assert_file_contains "$LOG_FILE" "re-established" || assert_file_contains "$LOG_FILE" "Waiting for SA re-establishment"
+	assert_log_contains_any "$LOG_FILE" "SA re-established" "re-established" "Waiting for SA re-establishment"
 
 	# Should log SA count mismatch warning (deleted=2, final_count=1)
 	# Note: The mismatch warning may not appear if the verification timeout is too short
-	assert_file_contains "$LOG_FILE" "SA count mismatch" || assert_file_contains "$LOG_FILE" "deleted=2" || assert_file_contains "$LOG_FILE" "final_count=1" || assert_file_contains "$LOG_FILE" "SA count diagnostic"
+	assert_log_contains_any "$LOG_FILE" "SA count mismatch" "deleted=2" "final_count=1" "SA count diagnostic"
 
 	remove_mock_from_path
 }
@@ -175,13 +176,13 @@ EOF
 	assert_file_exist "$LOG_FILE"
 
 	# Should log that only 1 SA was found (asymmetric state)
-	assert_file_contains "$LOG_FILE" "Found 1 SA(s) to delete" || assert_file_contains "$LOG_FILE" "1 SA(s)" || assert_file_contains "$LOG_FILE" "Deletion summary"
+	assert_log_contains_any "$LOG_FILE" "Found 1 SA(s) to delete" "1 SA(s)" "Deletion summary"
 
 	# Should log bidirectional state diagnostic (forward=1, reverse=0)
-	assert_file_contains "$LOG_FILE" "bidirectional state diagnostic" || assert_file_contains "$LOG_FILE" "forward=1" || assert_file_contains "$LOG_FILE" "reverse=0"
+	assert_log_contains_any "$LOG_FILE" "bidirectional state diagnostic" "forward=1" "reverse=0"
 
 	# Should log SA direction information (forward vs reverse)
-	assert_file_contains "$LOG_FILE" "forward (local→peer)" || assert_file_contains "$LOG_FILE" "direction" || assert_file_contains "$LOG_FILE" "SA summary"
+	assert_log_contains_any "$LOG_FILE" "forward (local→peer)" "direction" "SA summary"
 
 	remove_mock_from_path
 }
@@ -250,13 +251,13 @@ EOF
 	assert_file_exist "$LOG_FILE"
 
 	# Should log that only 1 SA was found (asymmetric state)
-	assert_file_contains "$LOG_FILE" "Found 1 SA(s) to delete" || assert_file_contains "$LOG_FILE" "1 SA(s)" || assert_file_contains "$LOG_FILE" "Deletion summary"
+	assert_log_contains_any "$LOG_FILE" "Found 1 SA(s) to delete" "1 SA(s)" "Deletion summary"
 
 	# Should log bidirectional state diagnostic (forward=0, reverse=1)
-	assert_file_contains "$LOG_FILE" "bidirectional state diagnostic" || assert_file_contains "$LOG_FILE" "forward=0" || assert_file_contains "$LOG_FILE" "reverse=1"
+	assert_log_contains_any "$LOG_FILE" "bidirectional state diagnostic" "forward=0" "reverse=1"
 
 	# Should log SA direction information (reverse vs forward)
-	assert_file_contains "$LOG_FILE" "reverse (peer→local)" || assert_file_contains "$LOG_FILE" "direction" || assert_file_contains "$LOG_FILE" "SA summary"
+	assert_log_contains_any "$LOG_FILE" "reverse (peer→local)" "direction" "SA summary"
 
 	remove_mock_from_path
 }
@@ -397,16 +398,16 @@ EOF
 	assert_file_exist "$LOG_FILE"
 
 	# Should log that 2 SAs were found/deleted initially
-	assert_file_contains "$LOG_FILE" "Found 2 SA(s) to delete" || assert_file_contains "$LOG_FILE" "2 SA(s)"
+	assert_log_contains_any "$LOG_FILE" "Found 2 SA(s) to delete" "2 SA(s)"
 
 	# Should log SA re-establishment with initial count of 1
-	assert_file_contains "$LOG_FILE" "SA re-established" || assert_file_contains "$LOG_FILE" "re-established"
-	assert_file_contains "$LOG_FILE" "SA count: 1" || assert_file_contains "$LOG_FILE" "count=1"
+	assert_log_contains_any "$LOG_FILE" "SA re-established" "re-established"
+	assert_log_contains_any "$LOG_FILE" "SA count: 1" "count=1"
 
 	# Should log that second SA eventually appears (count increases to 2)
 	# The verification logic continues checking, so it should detect the second SA
 	# Note: The exact log message may vary, but should show count progression or final count of 2
-	assert_file_contains "$LOG_FILE" "SA count: 2" || assert_file_contains "$LOG_FILE" "count=2" || assert_file_contains "$LOG_FILE" "final_count=2"
+	assert_log_contains_any "$LOG_FILE" "SA count: 2" "count=2" "final_count=2"
 
 	remove_mock_from_path
 }

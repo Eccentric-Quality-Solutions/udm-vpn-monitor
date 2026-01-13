@@ -5,6 +5,7 @@
 # missing external IP validation, and empty internal IPs handling
 
 load test_helper
+load helpers/config
 
 # Source the config library functions
 # shellcheck source=../lib/config.sh
@@ -28,12 +29,11 @@ declare -gA LOCATIONS
 	# Expected: parse_location_config succeeds and LOCATIONS array contains the location
 	# Importance: Basic functionality - most common use case
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="203.0.113.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	# Set up environment and load config
 	setup_location_config_and_load "$config_file"
@@ -62,13 +62,12 @@ EOF
 	# Expected: parse_location_config succeeds and both IPs are stored correctly
 	# Importance: Common use case with internal IPs for ping checks
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="203.0.113.1"
-LOCATION_NYC_INTERNAL="${TEST_PEER_IP} 192.168.1.88"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP} 192.168.1.88\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	setup_location_config_and_load "$config_file"
 
@@ -90,16 +89,16 @@ EOF
 	# Expected: All locations are parsed and stored correctly
 	# Importance: Multi-location deployments are common
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="203.0.113.1"
-LOCATION_NYC_INTERNAL="${TEST_PEER_IP}"
-LOCATION_LA_EXTERNAL="198.51.100.1"
-LOCATION_LA_INTERNAL="192.168.2.1 192.168.2.2"
-LOCATION_CHI_EXTERNAL="192.0.2.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'LOCATION_LA_EXTERNAL="198.51.100.1"' \
+		'LOCATION_LA_INTERNAL="192.168.2.1 192.168.2.2"' \
+		'LOCATION_CHI_EXTERNAL="192.0.2.1"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
+	EOF
 
 	setup_location_config_and_load "$config_file"
 
@@ -137,13 +136,12 @@ EOF
 	# Location names are extracted from between LOCATION_ and _EXTERNAL, then sanitized
 	# (sanitization is a no-op for already-valid names, but is tested separately)
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_Office_EXTERNAL="203.0.113.1"
-LOCATION_LA_Office_EXTERNAL="198.51.100.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_Office_EXTERNAL="203.0.113.1"' \
+		'LOCATION_LA_Office_EXTERNAL="198.51.100.1"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	setup_location_config_and_load "$config_file"
 
@@ -167,13 +165,12 @@ EOF
 	# Expected: parse_location_config fails with error about duplicate location name
 	# Importance: Duplicate names would cause state file conflicts
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="203.0.113.1"
-LOCATION_NYC_EXTERNAL="198.51.100.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		'LOCATION_NYC_EXTERNAL="198.51.100.1"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	setup_location_config_and_load "$config_file"
 
@@ -195,13 +192,12 @@ EOF
 	# Importance: Prevents state file conflicts from duplicate location names
 	# Note: Variable names must be valid bash identifiers (alphanumeric + underscore only)
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_Office_EXTERNAL="203.0.113.1"
-LOCATION_NYC_Office_EXTERNAL="198.51.100.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_Office_EXTERNAL="203.0.113.1"' \
+		'LOCATION_NYC_Office_EXTERNAL="198.51.100.1"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	setup_location_config_and_load "$config_file"
 
@@ -220,13 +216,12 @@ EOF
 	# Expected: parse_location_config skips empty external IP with warning, fails if no valid locations remain
 	# Importance: Empty external IPs should be handled gracefully, but config must have at least one valid location
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL=""
-LOCATION_NYC_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL=""' \
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	setup_location_config_and_load "$config_file"
 
@@ -247,13 +242,12 @@ EOF
 	# Expected: parse_location_config succeeds and internal IPs are empty string
 	# Importance: Internal IPs are optional
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="203.0.113.1"
-LOCATION_NYC_INTERNAL=""
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		'LOCATION_NYC_INTERNAL=""' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	setup_location_config_and_load "$config_file"
 
@@ -270,11 +264,10 @@ EOF
 	# Expected: parse_location_config fails with error about no locations found
 	# Importance: At least one location is required
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	setup_location_config_and_load "$config_file"
 
@@ -296,13 +289,12 @@ EOF
 	# This test focuses on location variables that pass schema validation but have invalid location name extraction
 	# We test with variables that have empty location names (LOCATION__EXTERNAL) which extract_location_name rejects
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="203.0.113.1"
-LOCATION_LA_EXTERNAL="203.0.113.4"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		'LOCATION_LA_EXTERNAL="203.0.113.4"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	setup_location_config_and_load "$config_file"
 
@@ -323,13 +315,12 @@ EOF
 	# Expected: Underscores are preserved in location names
 	# Importance: Underscores are valid characters in identifiers
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_Office_EXTERNAL="203.0.113.1"
-LOCATION_LA_Main_Office_EXTERNAL="198.51.100.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_Office_EXTERNAL="203.0.113.1"' \
+		'LOCATION_LA_Main_Office_EXTERNAL="198.51.100.1"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	setup_location_config_and_load "$config_file"
 
@@ -346,13 +337,12 @@ EOF
 	# Expected: Numbers are preserved in location names
 	# Importance: Numbers are valid characters in identifiers
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_Office1_EXTERNAL="203.0.113.1"
-LOCATION_Building2A_EXTERNAL="198.51.100.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_Office1_EXTERNAL="203.0.113.1"' \
+		'LOCATION_Building2A_EXTERNAL="198.51.100.1"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	setup_location_config_and_load "$config_file"
 
@@ -471,12 +461,11 @@ EOF
 	# Expected: External IP is returned correctly
 	# Importance: Core function for accessing location data
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="203.0.113.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	setup_location_config_and_load "$config_file"
 	parse_location_config
@@ -492,12 +481,11 @@ EOF
 	# Expected: Function fails (returns 1)
 	# Importance: Error handling for invalid location names
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="203.0.113.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	setup_location_config_and_load "$config_file"
 	parse_location_config
@@ -512,13 +500,12 @@ EOF
 	# Expected: Internal IPs are returned correctly
 	# Importance: Core function for accessing location data
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="203.0.113.1"
-LOCATION_NYC_INTERNAL="${TEST_PEER_IP} 192.168.1.88"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP} 192.168.1.88\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	setup_location_config_and_load "$config_file"
 	parse_location_config
@@ -534,12 +521,11 @@ EOF
 	# Expected: Empty string is returned
 	# Importance: Internal IPs are optional
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="203.0.113.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	setup_location_config_and_load "$config_file"
 	parse_location_config
@@ -555,12 +541,11 @@ EOF
 	# Expected: Function fails (returns 1)
 	# Importance: Error handling for invalid location names
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="203.0.113.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	setup_location_config_and_load "$config_file"
 	parse_location_config

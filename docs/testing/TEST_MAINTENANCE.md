@@ -326,6 +326,84 @@ setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'TIER1_THRESHOLD=1' 'TIE
 - See [tests/fixtures/README.md](../../tests/fixtures/README.md) for complete fixture reference
 - See [Test Patterns](TEST_PATTERNS.md) for fixture usage patterns
 
+### Common Mock Pattern Issues
+
+**Problem**: Mock `ip` commands that only handle `ip xfrm state` but not `ip -s xfrm state` (with `-s` flag) may fail silently.
+
+**Root Cause**: `execute_xfrm_state_command()` in `lib/detection/xfrm_detection.sh` calls `ip -s xfrm state` first (with statistics flag), then falls back to `ip xfrm state` if the first call fails. Mocks that only check for `$1 == "xfrm"` and `$2 == "state"` won't match when `$1 == "-s"`, `$2 == "xfrm"`, and `$3 == "state"`.
+
+**Common Mistake - Missing `-s` Flag Handling**:
+
+```bash
+# ❌ WRONG: Only handles "ip xfrm state" (without -s flag)
+cat >"${TEST_DIR}/ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "src 203.0.113.1 dst 203.0.113.1"
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+
+# ✅ CORRECT: Handles both "ip -s xfrm state" and "ip xfrm state"
+cat >"${TEST_DIR}/ip" <<'EOF'
+#!/bin/bash
+# Handle "ip -s xfrm state" (with -s flag) - tried first by execute_xfrm_state_command
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    echo "src 203.0.113.1 dst 203.0.113.1"
+    exit 0
+fi
+# Handle "ip xfrm state" (without -s flag) - fallback used by execute_xfrm_state_command
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "src 203.0.113.1 dst 203.0.113.1"
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+```
+
+**How to Identify**:
+- Test fails with unexpected behavior when calling `check_ipsec_phase2()` or functions that use `execute_xfrm_state_command()`
+- Mock appears correct but doesn't match actual command invocation
+- Test passes when using helper functions like `mock_ip_xfrm_state()` but fails with inline mocks
+
+**Best Practices**:
+1. **Use helper functions when possible** - `mock_ip_xfrm_state()`, `mock_ip_vpn_down()`, and `mock_ip_xfrm_empty()` already handle both formats correctly
+2. **Handle both formats in inline mocks** - Always check for both `-s` and non-`-s` formats when mocking `ip xfrm state`
+3. **Test the mock** - Verify that the mock works with actual function calls, not just command syntax
+
+**Example Fix**:
+
+```bash
+# Before (broken - mock doesn't match actual command):
+cat >"${TEST_DIR}/ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "src 203.0.113.1 dst 203.0.113.1"
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+
+# After (fixed - handles both formats):
+cat >"${TEST_DIR}/ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    echo "src 203.0.113.1 dst 203.0.113.1"
+    exit 0
+fi
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "src 203.0.113.1 dst 203.0.113.1"
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+```
+
+**Related Documentation**:
+- See `lib/detection/xfrm_detection.sh:execute_xfrm_state_command()` for implementation details
+- See `tests/test_helper.bash:mock_ip_xfrm_state()` for helper function example
+
 ## Test Performance Optimization
 
 ### Identifying Slow Tests

@@ -4,6 +4,8 @@
 # Tests critical paths and error handling scenarios
 
 load test_helper
+load helpers/config
+load helpers/assertions
 load fixtures/vpn_active
 
 # Path to the VPN monitor script
@@ -22,12 +24,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Create empty config file (no values set)
 	touch "$config_file"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -58,21 +58,18 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Config file values take precedence over defaults
 	# Importance: Ensures config file customization works correctly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-VPN_NAME="Custom VPN Name"
-TIER1_THRESHOLD=5
-TIER2_THRESHOLD=5
-TIER3_THRESHOLD=5
-ENABLE_PING_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		'VPN_NAME="Custom VPN Name"' \
+		"TIER1_THRESHOLD=5" \
+		"TIER2_THRESHOLD=5" \
+		"TIER3_THRESHOLD=5" \
+		"ENABLE_PING_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -80,10 +77,10 @@ EOF
 	run bash "$test_script" --fake
 
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Config file values should override defaults
 	# VPN_NAME should be "Custom VPN Name" not "Site-to-Site VPN"
-	assert_file_contains "$log_file" "Custom VPN Name" || assert_file_contains "$log_file" "VPN_NAME" || assert_file_contains "$log_file" "Configuration loaded"
+	assert_log_contains_any "$log_file" "Custom VPN Name" "VPN_NAME" "Configuration loaded"
 
 	remove_mock_from_path
 }
@@ -95,18 +92,15 @@ EOF
 	# Importance: Ensures validation catches missing required values
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Create config file without location configuration (required, no default in schema)
-	cat >"$config_file" <<'EOF'
-# No LOCATION_*_EXTERNAL variables set (required)
-TIER1_THRESHOLD=1
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"TIER1_THRESHOLD=1" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
+	# No LOCATION_*_EXTERNAL variables set (required)
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -119,8 +113,8 @@ EOF
 	# Should contain error about missing location configuration or validation failure
 	# The error message format is: "No location-based configuration found. At least one LOCATION_*_EXTERNAL variable is required."
 	# or "Configuration validation failed - required variables missing or invalid values"
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "LOCATION" || assert_file_contains "$log_file" "required" || assert_file_contains "$log_file" "ERROR" || assert_file_contains "$log_file" "validation" || assert_file_contains "$log_file" "No location"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$log_file" "LOCATION" "required" "ERROR" "validation" "No location"
 
 	remove_mock_from_path
 }
@@ -132,17 +126,14 @@ EOF
 	# Importance: Ensures optional variables work correctly when not set
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Create config file without LOCATION_TEST_INTERNAL (optional, no default in schema)
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-# LOCATION_TEST_INTERNAL not set (optional variable without default)
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\""
+	# LOCATION_TEST_INTERNAL not set (optional variable without default)
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -151,7 +142,7 @@ EOF
 
 	# Should succeed (optional variable can be empty)
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Script should run without errors (optional variable empty is acceptable)
 
 	remove_mock_from_path
@@ -163,17 +154,14 @@ EOF
 	# Expected: Defaults are set, then config file values override them
 	# Importance: Ensures correct order of operations in load_config
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-VPN_NAME="Override Default"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		'VPN_NAME="Override Default"'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -192,9 +180,7 @@ EOF
 	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
 
 	# Set required environment variables for load_config
-	export STATE_DIR="$state_dir"
-	export LOG_FILE="$log_file"
-	export LOGS_DIR="${state_dir}/logs"
+	# (setup_test_environment already set these, but we keep for clarity)
 	export CONFIG_FILE="$config_file"
 
 	# Unset VPN_NAME to ensure we start clean

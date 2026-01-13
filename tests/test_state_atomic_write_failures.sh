@@ -29,9 +29,7 @@ load test_helper
 	source_function "get_peer_state_file_path"
 
 	# Set initial state
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local state_file
 	state_file=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
@@ -78,9 +76,7 @@ load test_helper
 	source_function "get_peer_state_file_path"
 
 	# Set initial state
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local state_file
 	state_file=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
@@ -124,9 +120,7 @@ load test_helper
 	source_function "check_rate_limit"
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Use RESTART_COUNT_FILE as set by setup_test_environment
 	# Write initial content to the file that record_restart will use
@@ -171,9 +165,7 @@ load test_helper
 	source_function "get_peer_state_file_path"
 
 	# Set initial state
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local state_file
 	state_file=$(get_peer_state_file_path "" "$peer_ip" "last_bytes")
@@ -218,9 +210,7 @@ load test_helper
 	source_function "get_peer_state_file_path"
 
 	# Set initial state
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local state_file
 	state_file=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
@@ -267,9 +257,7 @@ load test_helper
 	source_function "get_peer_state_file_path"
 
 	# Set initial state - create a file to delete
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local state_file
 	state_file=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
@@ -316,9 +304,7 @@ load test_helper
 	source_function "get_peer_state_file_path"
 
 	# Set initial state - create multiple files to clean up
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	run set_peer_state "" "$peer_ip" "failure_count" "5"
 	assert_success
@@ -375,9 +361,7 @@ load test_helper
 	source_function "get_network_partition_state_file"
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Get network partition state file path
 	local partition_state_file
@@ -423,9 +407,7 @@ load test_helper
 	source_function "set_network_partition_state"
 
 	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Get network partition state file path
 	local partition_state_file

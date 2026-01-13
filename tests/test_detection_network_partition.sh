@@ -364,13 +364,12 @@ EOF
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
 		"ENABLE_NETWORK_PARTITION_CHECK=1"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local state_dir="${TEST_DIR}/state"
+	setup_test_environment "$state_dir" "${TEST_DIR}/logs"
 
 	# Create test version of script first (before making directory read-only)
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$LOG_FILE")
 
 	# Make state directory read-only to prevent state file writes
 	mkdir -p "$state_dir"
@@ -389,7 +388,7 @@ EOF
 	chmod 755 "$state_dir" 2>/dev/null || true
 
 	# Should have logged error about state file write failure
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }

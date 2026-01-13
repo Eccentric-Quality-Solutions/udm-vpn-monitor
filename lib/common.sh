@@ -207,7 +207,6 @@ ensure_file_exists() {
 
 	if [[ ! -f "$file" ]]; then
 		if ! echo "$default_content" >"$file" 2>/dev/null; then
-			# Return error code - let caller decide how to handle
 			return 1
 		fi
 	fi
@@ -982,6 +981,51 @@ check_command_or_warn() {
 	fi
 
 	return 0
+}
+
+# Format peer IP display for log messages
+#
+# Formats peer IP addresses for consistent display in log messages.
+# Shows both internal and external IPs when available, otherwise just external IP.
+# For multiple internal IPs (space-separated), uses the first one.
+#
+# Arguments:
+#   $1: External peer IP address (required)
+#   $2: Internal peer IP address(es) (optional, can be single IP or space-separated string)
+#
+# Returns:
+#   Prints formatted IP string to stdout: "($internal_ip $external_ip)" or "($external_ip)"
+#
+# Examples:
+#   ip_display=$(format_peer_ip_display "203.0.113.1" "192.168.1.1")
+#   # Output: "(192.168.1.1 203.0.113.1)"
+#   ip_display=$(format_peer_ip_display "203.0.113.1" "")
+#   # Output: "(203.0.113.1)"
+#
+# Note:
+#   This function is used throughout the codebase to ensure consistent IP display
+#   in log messages. It removes redundant location names and shows both IPs when available.
+format_peer_ip_display() {
+	local external_peer_ip="$1"
+	local internal_peer_ips="${2:-}"
+
+	# Extract first internal IP if multiple provided (space-separated)
+	local internal_peer_ip=""
+	if [[ -n "$internal_peer_ips" ]]; then
+		local IFS=' '
+		local -a ips_array
+		read -ra ips_array <<<"$internal_peer_ips"
+		if [[ ${#ips_array[@]} -gt 0 ]]; then
+			internal_peer_ip="${ips_array[0]}"
+		fi
+	fi
+
+	# Format IPs: include internal IP if available, otherwise just external IP
+	if [[ -n "$internal_peer_ip" ]]; then
+		echo "($internal_peer_ip $external_peer_ip)"
+	else
+		echo "($external_peer_ip)"
+	fi
 }
 
 # Safely source a library file with error suppression

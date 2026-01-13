@@ -4,6 +4,8 @@
 # Tests keepalive daemon functionality: start, stop, status, restart
 
 load test_helper
+load helpers/config
+load helpers/assertions
 
 # Path to the vpn-keepalive script
 KEEPALIVE_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-keepalive.sh"
@@ -77,15 +79,17 @@ setup_keepalive_test() {
 	fi
 
 	# Create config file with location-based format
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP2}"
-ENABLE_KEEPALIVE=1
-KEEPALIVE_INTERVAL=30
-KEEPALIVE_PING_COUNT=1
-PING_TIMEOUT=2
-${config_overrides}
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP2}\"" \
+		"ENABLE_KEEPALIVE=1" \
+		"KEEPALIVE_INTERVAL=30" \
+		"KEEPALIVE_PING_COUNT=1" \
+		"PING_TIMEOUT=2"
+	# Add config overrides if provided
+	if [[ -n "$config_overrides" ]]; then
+		echo "$config_overrides" >>"$config_file"
+	fi
 
 	# Create symlink to script in test directory so it can find lib/
 	ln -sf "$KEEPALIVE_SCRIPT" "${MOCK_INSTALL_DIR}/vpn-keepalive.sh"
@@ -605,7 +609,7 @@ EOF
 	if [[ -f "$keepalive_log" ]]; then
 		# Keepalive log should contain keepalive-specific messages
 		# (e.g., "Starting VPN keepalive daemon" or "Keepalive:")
-		assert_file_contains "$keepalive_log" "keepalive" || assert_file_contains "$keepalive_log" "Keepalive"
+		assert_log_contains_any "$keepalive_log" "keepalive" "Keepalive"
 	fi
 
 	# Verify monitor log file does NOT contain keepalive messages

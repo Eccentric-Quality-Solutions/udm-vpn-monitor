@@ -4,6 +4,7 @@
 # Tests critical paths and error handling scenarios
 
 load test_helper
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -39,7 +40,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should detect rekey and reset baseline
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "SA rekey detected" || assert_file_contains "$LOG_FILE" "rekey"
+	assert_log_contains_any "$LOG_FILE" "SA rekey detected" "rekey"
 
 	source_function "get_peer_state_file_path"
 
@@ -254,7 +255,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
-	assert_file_contains "$LOG_FILE" "SA rekey detected" || assert_file_contains "$LOG_FILE" "rekey"
+	assert_log_contains_any "$LOG_FILE" "SA rekey detected" "rekey"
 
 	# Second rekey (different SPI)
 	mock_ip_xfrm_state "${TEST_PEER_IP}" 3000 "0xABCDEF12" >/dev/null
@@ -262,7 +263,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
-	assert_file_contains "$LOG_FILE" "SA rekey detected" || assert_file_contains "$LOG_FILE" "rekey"
+	assert_log_contains_any "$LOG_FILE" "SA rekey detected" "rekey"
 
 	source_function "get_peer_state_file_path"
 

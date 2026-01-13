@@ -10,6 +10,7 @@
 # - Recovery succeeds but restart record fails
 
 load test_helper
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -65,10 +66,10 @@ EOF
 	assert_file_exist "$LOG_FILE"
 
 	# Should attempt xfrm recovery
-	assert_file_contains "$LOG_FILE" "xfrm" || assert_file_contains "$LOG_FILE" "xfrm-based"
+	assert_log_contains_any "$LOG_FILE" "xfrm" "xfrm-based"
 
 	# Should fall back to ipsec reload
-	assert_file_contains "$LOG_FILE" "reload" || assert_file_contains "$LOG_FILE" "fallback"
+	assert_log_contains_any "$LOG_FILE" "reload" "fallback"
 
 	# Note: Restart may not be attempted if failure count doesn't reach Tier 3 threshold (5)
 	# In this test, failure count starts at 3 (Tier 2), increments to 4 on VPN failure,
@@ -174,7 +175,7 @@ EOF
 		assert_file_exist "$LOG_FILE"
 
 		# Should log recovery success
-		assert_file_contains "$LOG_FILE" "reload" || assert_file_contains "$LOG_FILE" "recovery"
+		assert_log_contains_any "$LOG_FILE" "reload" "recovery"
 
 		# Restore permissions
 		restore_permissions_after_test "$state_file" "$original_perms"
@@ -231,7 +232,7 @@ EOF
 	assert_file_exist "$LOG_FILE"
 
 	# Should log recovery success
-	assert_file_contains "$LOG_FILE" "restart" || assert_file_contains "$LOG_FILE" "recovery"
+	assert_log_contains_any "$LOG_FILE" "restart" "recovery"
 
 	remove_mock_from_path
 }
@@ -282,7 +283,7 @@ EOF
 		assert_file_exist "$LOG_FILE"
 
 		# Should log recovery success
-		assert_file_contains "$LOG_FILE" "restart" || assert_file_contains "$LOG_FILE" "recovery"
+		assert_log_contains_any "$LOG_FILE" "restart" "recovery"
 
 		# Restore permissions
 		restore_permissions_after_test "$restart_count_file" "$original_perms"
@@ -328,10 +329,8 @@ EOF
 
 	# Make failure count file unwritable to simulate increment failure
 	local state_dir="${STATE_DIR:-${TEST_DIR}}"
-	mkdir -p "$state_dir"
+	setup_test_environment "$state_dir" "${TEST_DIR}/logs"
 	export STATE_DIR="$state_dir"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
 
 	# Source state functions to get file path
 	# shellcheck source=../lib/state.sh
@@ -377,9 +376,8 @@ EOF
 
 	# Set failure count to simulate recovery scenario
 	local state_dir="${STATE_DIR:-${TEST_DIR}}"
+	setup_test_environment "$state_dir" "${TEST_DIR}/logs"
 	export STATE_DIR="$state_dir"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
 
 	# Source state functions to get file path
 	# shellcheck source=../lib/state.sh
@@ -404,7 +402,7 @@ EOF
 		assert_file_exist "$LOG_FILE"
 
 		# Should log recovery (VPN is healthy)
-		assert_file_contains "$LOG_FILE" "recovered" || assert_file_contains "$LOG_FILE" "healthy" || assert_file_contains "$LOG_FILE" "OK"
+		assert_log_contains_any "$LOG_FILE" "recovered" "healthy" "OK"
 
 		# Restore permissions
 		restore_permissions_after_test "$failure_count_file" "$original_perms"

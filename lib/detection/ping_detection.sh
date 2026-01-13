@@ -6,17 +6,13 @@
 # Version: 0.6.0
 #
 
-# Source constants for magic numbers
 # shellcheck source=lib/constants.sh
 # Determine lib directory (parent directory of detection/)
 # If LIB_DIR is already set (from parent), use it; otherwise determine from this file's location
 if [[ -z "${LIB_DIR:-}" ]]; then
 	LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
-# Note: safe_source_lib not available here since constants.sh is sourced before common.sh
 if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
-	# Fallback if constants.sh not found (shouldn't happen in normal operation)
-	# Only set if not already set (to avoid readonly variable errors)
 	[[ -z "${MAX_IPV6_SEGMENTS:-}" ]] && readonly MAX_IPV6_SEGMENTS=8
 	[[ -z "${MIN_IPV6_SEGMENT_HEX_DIGITS:-}" ]] && readonly MIN_IPV6_SEGMENT_HEX_DIGITS=1
 	[[ -z "${MAX_IPV6_SEGMENT_HEX_DIGITS:-}" ]] && readonly MAX_IPV6_SEGMENT_HEX_DIGITS=4
@@ -30,23 +26,17 @@ if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	[[ -z "${IPSEC_STATUS_TIMEOUT:-}" ]] && readonly IPSEC_STATUS_TIMEOUT=5
 fi
 
-# Source common utility functions
 # shellcheck source=lib/common.sh
 source "${LIB_DIR}/common.sh"
 
-# Source logging functions (required for log_message and handle_error)
 # shellcheck source=lib/logging.sh
-# Note: logging.sh may require LOG_FILE to be set, but log_message will work
-# without it (outputs to stderr only). Source conditionally with fallback.
 if ! source "${LIB_DIR}/logging.sh" 2>/dev/null; then
-	# Fallback if logging.sh not found - use centralized fallbacks
 	# shellcheck source=lib/fallbacks.sh
 	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
 		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_logging_fallbacks
 	fi
 fi
 
-# Source network validation functions
 # shellcheck source=lib/detection/network_validation.sh
 source "${LIB_DIR}/detection/network_validation.sh"
 
@@ -392,7 +382,7 @@ check_ping_multiple_ips() {
 			log_message "INFO" "${location_name:-SYSTEM}" "Ping check: 1/1 internal IP responded (100% success)"
 			return 0
 		else
-			handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check: 0/1 internal IP responded (0% success)${location_name:+ for $location_name}"
+			handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check: 0/1 internal IP responded (0% success)"
 			return 1
 		fi
 	fi
@@ -424,7 +414,7 @@ check_ping_multiple_ips() {
 		log_message "INFO" "${location_name:-SYSTEM}" "Ping check: $ping_success_count/$ping_total_count internal IPs responded (${success_percent}% >= 30% threshold)"
 		return 0
 	else
-		handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check: $ping_success_count/$ping_total_count internal IPs responded (${success_percent}% < 30% threshold)${location_name:+ for $location_name}"
+		handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check: $ping_success_count/$ping_total_count internal IPs responded (${success_percent}% < 30% threshold)"
 		return 1
 	fi
 }
@@ -507,7 +497,7 @@ handle_ping_multiple_targets() {
 			first_ip=$(echo "$ping_target" | awk '{print $1}')
 			local route_msg
 			route_msg=$(build_route_message "$first_ip" "$local_ip")
-			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN tunnel is down (no SA found), but connectivity exists via alternative route${route_msg}${location_name:+ for $location_name}"
+			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN tunnel is down (no SA found), but connectivity exists via alternative route${route_msg}"
 		fi
 		return
 	fi
@@ -517,7 +507,7 @@ handle_ping_multiple_targets() {
 		return
 	fi
 
-	handle_error "WARNING" "${location_name:-SYSTEM}" "VPN SA exists but ping check failed for multiple internal IPs - tunnel may not be routing traffic${location_name:+ for $location_name}"
+	handle_error "WARNING" "${location_name:-SYSTEM}" "VPN SA exists but ping check failed for multiple internal IPs - tunnel may not be routing traffic"
 }
 
 # Handle ping checks for a single target
@@ -552,7 +542,7 @@ handle_ping_single_target() {
 		if check_ping_connectivity "$ping_target" "$local_ip" "$location_name"; then
 			local route_msg
 			route_msg=$(build_route_message "$ping_target" "$local_ip")
-			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN tunnel is down (no SA found), but connectivity exists via alternative route${route_msg}${location_name:+ for $location_name}"
+			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN tunnel is down (no SA found), but connectivity exists via alternative route${route_msg}"
 		fi
 		return
 	fi
@@ -562,7 +552,7 @@ handle_ping_single_target() {
 		return
 	fi
 
-	handle_error "WARNING" "${location_name:-SYSTEM}" "VPN SA exists but ping check failed for $ping_target - tunnel may not be routing traffic${location_name:+ for $location_name}"
+	handle_error "WARNING" "${location_name:-SYSTEM}" "VPN SA exists but ping check failed for $ping_target - tunnel may not be routing traffic"
 }
 
 # Check ping connectivity if enabled (optional check)

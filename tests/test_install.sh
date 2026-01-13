@@ -283,10 +283,10 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	local test_install
 	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	cat >"${TEST_DIR}/source/vpn-monitor.conf" <<'EOF'
-LOCATION_TEST_EXTERNAL=""
-CRON_SCHEDULE="*/5 * * * *"
-EOF
+	load helpers/config
+	create_test_config "${TEST_DIR}/source/vpn-monitor.conf" \
+		'LOCATION_TEST_EXTERNAL=""' \
+		'CRON_SCHEDULE="*/5 * * * *"'
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
 	# Remove any existing cron entries first
@@ -439,16 +439,16 @@ EOF
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
 	# Create config file with multiple locations and multiple internal IPs
-	cat >"${TEST_DIR}/source/vpn-monitor.conf" <<'EOF'
-LOCATION_NYC_EXTERNAL="203.0.113.1"
-LOCATION_NYC_INTERNAL="192.168.1.1 192.168.1.2"
-LOCATION_DC_EXTERNAL="203.0.113.2"
-LOCATION_DC_INTERNAL="192.168.2.1 192.168.2.2 192.168.2.3"
-ENABLE_PING_CHECK=1
-LOCAL_UDM_IP="10.0.0.1"
-PING_COUNT=3
-PING_TIMEOUT=2
-EOF
+	load helpers/config
+	create_test_config "${TEST_DIR}/source/vpn-monitor.conf" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		'LOCATION_NYC_INTERNAL="192.168.1.1 192.168.1.2"' \
+		'LOCATION_DC_EXTERNAL="203.0.113.2"' \
+		'LOCATION_DC_INTERNAL="192.168.2.1 192.168.2.2 192.168.2.3"' \
+		"ENABLE_PING_CHECK=1" \
+		'LOCAL_UDM_IP="10.0.0.1"' \
+		"PING_COUNT=3" \
+		"PING_TIMEOUT=2"
 
 	# Track which IPs are pinged by logging ping command calls
 	local ping_log="${TEST_DIR}/ping_log"

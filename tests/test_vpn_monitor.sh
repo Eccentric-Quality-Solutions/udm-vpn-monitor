@@ -4,6 +4,8 @@
 # Tests monitoring functionality, tier escalation, and recovery actions
 
 load test_helper
+load helpers/config
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -49,20 +51,18 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Prevents script from running with invalid configuration that would cause runtime errors.
 	# Create temporary config without LOCATION_*_EXTERNAL
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-VPN_NAME="Test VPN"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		'VPN_NAME="Test VPN"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	# Create state directory and ensure log directory exists
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create test version of script with custom paths
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$LOG_FILE")
 
 	run bash "$test_script"
 
@@ -361,15 +361,15 @@ EOF
 
 	# Don't create config file - create test script pointing to non-existent config
 	# Ensure logs directory exists for log file
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$LOG_FILE")
 
 	# Don't create config file - test should handle missing config gracefully
 	run bash "$test_script" --fake
 
 	# Should use defaults and warn
-	assert_file_contains "$log_file" "Configuration file not found"
+	assert_file_contains "$LOG_FILE" "Configuration file not found"
 }
 
 # bats test_tags=category:unit
@@ -533,7 +533,7 @@ EOF
 	assert_file_exist "$LOG_FILE"
 	# Log should contain location processing (check for VPN status check)
 	# Check for location name or external IP in log
-	assert_file_contains "$LOG_FILE" "NYC" || assert_file_contains "$LOG_FILE" "203.0.113.1"
+	assert_log_contains_any "$LOG_FILE" "NYC" "203.0.113.1"
 
 	remove_mock_from_path
 }

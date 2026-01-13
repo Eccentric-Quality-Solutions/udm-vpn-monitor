@@ -9,6 +9,8 @@
 # - Empty peer IP in middle of list - should skip and continue
 
 load test_helper
+load helpers/state
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -24,71 +26,25 @@ load fixtures/vpn_failing
 	# Importance: State file corruption shouldn't stop monitoring of other peers
 	setup_test_vpn_monitor "${TEST_PEER_IP} ${TEST_PEER_IP2} 172.16.0.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
 
-	# Use get_peer_state_file_path to get correct paths dynamically
-	# shellcheck source=../lib/state.sh
-	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	mkdir -p "${TEST_DIR}/logs"
+	# Get state file paths using helper
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create corrupted state file for second peer (10.0.0.1) - location TEST2
 	local corrupted_state_file
-	corrupted_state_file=$(get_peer_state_file_path "TEST2" "${TEST_PEER_IP2}" "failure_count")
+	corrupted_state_file=$(get_state_file_path "TEST2" "${TEST_PEER_IP2}" "failure_count")
 	echo "invalid_data_not_a_number" >"$corrupted_state_file"
 
 	# Create valid state files for other peers
 	local peer1_file
-	peer1_file=$(get_peer_state_file_path "TEST1" "${TEST_PEER_IP}" "failure_count")
+	peer1_file=$(get_state_file_path "TEST1" "${TEST_PEER_IP}" "failure_count")
 	echo "0" >"$peer1_file"
 	local peer3_file
-	peer3_file=$(get_peer_state_file_path "TEST3" "172.16.0.1" "failure_count")
+	peer3_file=$(get_state_file_path "TEST3" "172.16.0.1" "failure_count")
 	echo "0" >"$peer3_file"
 
 	# Mock VPN healthy for all peers - create single mock that handles all three IPs
 	# (setup_mock_vpn_environment overwrites the mock each time, so we need a custom mock)
-	local mock_ip="${TEST_DIR}/ip"
-	local spi="0x12345678"
-	cat >"$mock_ip" <<EOF
-#!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    # Return SA for all configured peers based on grep filter
-    # The detection code uses "grep -F dst \$peer_ip", so we need to output
-    # matching lines for each peer IP when queried
-    # Since we can't know which IP is being queried, output all SAs
-    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-    echo "    proto esp spi ${spi} reqid 1 mode tunnel"
-    echo "    replay-window 0"
-    echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
-    echo "    enc cbc(aes) 0x1234567890abcdef"
-    echo "    lifetime current: 1000 bytes, 10 packets"
-    echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
-    echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
-    echo "    current use: 1"
-    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    echo "src ${TEST_PEER_IP2} dst ${TEST_PEER_IP2}"
-    echo "    proto esp spi ${spi} reqid 2 mode tunnel"
-    echo "    replay-window 0"
-    echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
-    echo "    enc cbc(aes) 0x1234567890abcdef"
-    echo "    lifetime current: 1000 bytes, 10 packets"
-    echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
-    echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
-    echo "    current use: 1"
-    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    echo "src 172.16.0.1 dst 172.16.0.1"
-    echo "    proto esp spi ${spi} reqid 3 mode tunnel"
-    echo "    replay-window 0"
-    echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
-    echo "    enc cbc(aes) 0x1234567890abcdef"
-    echo "    lifetime current: 1000 bytes, 10 packets"
-    echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
-    echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
-    echo "    current use: 1"
-    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    exit 0
-fi
-# Handle other ip commands
-exec /usr/bin/ip "\$@"
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_xfrm_state_multiple_peers "${TEST_PEER_IP} ${TEST_PEER_IP2} 172.16.0.1" 1000 "0x12345678" >/dev/null
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -99,7 +55,7 @@ EOF
 	assert_file_exist "$LOG_FILE"
 	# Should process all peers despite corruption
 	# Verify that all peers were processed (check for peer IPs in log)
-	assert_file_contains "$LOG_FILE" "${TEST_PEER_IP}" || assert_file_contains "$LOG_FILE" "172.16.0.1"
+	assert_log_contains_any "$LOG_FILE" "${TEST_PEER_IP}" "172.16.0.1"
 	# Corrupted state file should be recovered or handled gracefully
 	# State file should be fixed or reset
 	if [[ -f "$corrupted_state_file" ]]; then
@@ -132,7 +88,8 @@ EOF
 	local spi="0x12345678"
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+# Handle both "ip -s xfrm state" and "ip xfrm state"
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     # Count checks to identify which location is being checked
     # Each location calls ip xfrm state once, then greps the output
     check_count=\$(cat "$check_state_file" 2>/dev/null || echo "0")
@@ -176,126 +133,19 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     echo "    current use: 1"
     echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     exit 0
-fi
-exec /usr/bin/ip "\$@"
-EOF
-	chmod +x "$mock_ip"
-	add_mock_to_path
-
-	run bash "$TEST_SCRIPT" --fake
-
-	# Script should handle error gracefully
-	# Use --fake mode so errors are logged but don't cause exit code 1
-	assert_success
-	# Should handle error gracefully and continue with other peers
-	assert_file_exist "$LOG_FILE"
-	# Should process all peers despite error
-	# Verify that all peers were attempted (check for peer IPs in log)
-	assert_file_contains "$LOG_FILE" "${TEST_PEER_IP}" || assert_file_contains "$LOG_FILE" "172.16.0.1"
-	# Error should be logged but shouldn't stop processing
-	# Script should complete successfully (may exit with warnings)
-
-	remove_mock_from_path
-}
-
-# bats test_tags=slow,category:high-risk,priority:high
-@test "multiple peer edge cases: empty peer IP in middle of list - should skip and continue" {
-	# Purpose: Test verifies that empty peer IPs in the middle of the list are skipped gracefully
-	# Expected: Empty peer IPs are skipped with warning, other peers are processed normally
-	# Importance: Malformed configuration shouldn't prevent monitoring of valid peers
-	setup_test_vpn_monitor "${TEST_PEER_IP}  ${TEST_PEER_IP2}" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
-
-	# Mock VPN healthy for valid peers - create single mock that handles both IPs
-	# (setup_mock_vpn_environment overwrites the mock each time, so we need a custom mock)
-	local mock_ip="${TEST_DIR}/ip"
-	local spi="0x12345678"
-	cat >"$mock_ip" <<EOF
-#!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    # Return SA for all configured peers based on grep filter
-    # The detection code uses "grep -F dst \$peer_ip", so we need to output
-    # matching lines for each peer IP when queried
-    # Since we can't know which IP is being queried, output all SAs
-    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
-    echo "    proto esp spi ${spi} reqid 1 mode tunnel"
-    echo "    replay-window 0"
-    echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
-    echo "    enc cbc(aes) 0x1234567890abcdef"
-    echo "    lifetime current: 1000 bytes, 10 packets"
-    echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
-    echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
-    echo "    current use: 1"
-    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    echo "src ${TEST_PEER_IP2} dst ${TEST_PEER_IP2}"
-    echo "    proto esp spi ${spi} reqid 2 mode tunnel"
-    echo "    replay-window 0"
-    echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
-    echo "    enc cbc(aes) 0x1234567890abcdef"
-    echo "    lifetime current: 1000 bytes, 10 packets"
-    echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
-    echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
-    echo "    current use: 1"
-    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
-    exit 0
-fi
-# Handle other ip commands
-exec /usr/bin/ip "\$@"
-EOF
-	chmod +x "$mock_ip"
-	add_mock_to_path
-
-	run bash "$TEST_SCRIPT"
-
-	# Script should handle empty peer IP gracefully
-	assert_success
-	# Should skip empty peer IP and continue with valid peers
-	assert_file_exist "$LOG_FILE"
-	# Should log warning about empty peer IP
-	assert_file_contains "$LOG_FILE" "Skipping empty" || assert_file_contains "$LOG_FILE" "empty peer"
-	# Should process valid peers
-	assert_file_contains "$LOG_FILE" "${TEST_PEER_IP}" || assert_file_contains "$LOG_FILE" "${TEST_PEER_IP2}"
-	# Script should complete successfully
-
-	remove_mock_from_path
-}
-
-# bats test_tags=slow,category:high-risk,priority:high
-@test "multiple peer edge cases: one peer fails catastrophically - other peers continue independently" {
-	# Purpose: Test verifies that catastrophic failure of one peer (e.g., state file unreadable) doesn't prevent monitoring of other peers
-	# Expected: Failed peer is handled gracefully, other peers monitored independently
-	# Importance: Critical for multi-peer deployments where one peer failure shouldn't affect others
-	setup_test_vpn_monitor "${TEST_PEER_IP} ${TEST_PEER_IP2} 172.16.0.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
-
-	# Use get_peer_state_file_path to get correct paths dynamically
-	# shellcheck source=../lib/state.sh
-	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	mkdir -p "${TEST_DIR}/logs"
-
-	# Create unreadable state file for second peer (10.0.0.1) - location TEST2
-	local unreadable_state_file
-	unreadable_state_file=$(get_peer_state_file_path "TEST2" "${TEST_PEER_IP2}" "failure_count")
-	echo "5" >"$unreadable_state_file"
-	chmod 000 "$unreadable_state_file" 2>/dev/null || true
-
-	# Create valid state files for other peers
-	local peer1_file
-	peer1_file=$(get_peer_state_file_path "TEST1" "${TEST_PEER_IP}" "failure_count")
-	echo "0" >"$peer1_file"
-	local peer3_file
-	peer3_file=$(get_peer_state_file_path "TEST3" "172.16.0.1" "failure_count")
-	echo "0" >"$peer3_file"
-
-	# Mock VPN healthy for all peers - create single mock that handles all three IPs
-	# (setup_mock_vpn_environment overwrites the mock each time, so we need a custom mock)
-	local mock_ip="${TEST_DIR}/ip"
-	local spi="0x12345678"
-	cat >"$mock_ip" <<EOF
-#!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    # Return SA for all configured peers based on grep filter
-    # The detection code uses "grep -F dst \$peer_ip", so we need to output
-    # matching lines for each peer IP when queried
-    # Since we can't know which IP is being queried, output all SAs
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Count checks to identify which location is being checked
+    # Each location calls ip xfrm state once, then greps the output
+    check_count=\$(cat "$check_state_file" 2>/dev/null || echo "0")
+    check_count=\$((check_count + 1))
+    echo "\$check_count" >"$check_state_file"
+    if [[ \$check_count -eq 2 ]]; then
+        # Simulate unexpected error for second location check
+        echo "Unexpected error occurred" >&2
+        exit 255
+    fi
+    # Return healthy VPN for other locations - output all SAs
+    # The detection code greps this output for each peer IP
     echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
     echo "    proto esp spi ${spi} reqid 1 mode tunnel"
     echo "    replay-window 0"
@@ -327,11 +177,108 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     echo "    current use: 1"
     echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
     exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Return SA for all configured peers based on grep filter
+    # The detection code uses "grep -F dst \$peer_ip", so we need to output
+    # matching lines for each peer IP when queried
+    # Since we can't know which IP is being queried, output all SAs
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    echo "    proto esp spi ${spi} reqid 1 mode tunnel"
+    echo "    replay-window 0"
+    echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
+    echo "    enc cbc(aes) 0x1234567890abcdef"
+    echo "    lifetime current: 1000 bytes, 10 packets"
+    echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
+    echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
+    echo "    current use: 1"
+    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    echo "src ${TEST_PEER_IP2} dst ${TEST_PEER_IP2}"
+    echo "    proto esp spi ${spi} reqid 2 mode tunnel"
+    echo "    replay-window 0"
+    echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
+    echo "    enc cbc(aes) 0x1234567890abcdef"
+    echo "    lifetime current: 1000 bytes, 10 packets"
+    echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
+    echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
+    echo "    current use: 1"
+    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    exit 0
 fi
-# Handle other ip commands
 exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	run bash "$TEST_SCRIPT" --fake
+
+	# Script should handle error gracefully
+	# Use --fake mode so errors are logged but don't cause exit code 1
+	assert_success
+	# Should handle error gracefully and continue with other peers
+	assert_file_exist "$LOG_FILE"
+	# Should process all peers despite error
+	# Verify that all peers were attempted (check for peer IPs in log)
+	assert_log_contains_any "$LOG_FILE" "${TEST_PEER_IP}" "172.16.0.1"
+	# Error should be logged but shouldn't stop processing
+	# Script should complete successfully (may exit with warnings)
+
+	remove_mock_from_path
+}
+
+# bats test_tags=slow,category:high-risk,priority:high
+@test "multiple peer edge cases: empty peer IP in middle of list - should skip and continue" {
+	# Purpose: Test verifies that empty peer IPs in the middle of the list are skipped gracefully
+	# Expected: Empty peer IPs are skipped with warning, other peers are processed normally
+	# Importance: Malformed configuration shouldn't prevent monitoring of valid peers
+	setup_test_vpn_monitor "${TEST_PEER_IP}  ${TEST_PEER_IP2}" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
+
+	# Mock VPN healthy for valid peers - create single mock that handles both IPs
+	# (setup_mock_vpn_environment overwrites the mock each time, so we need a custom mock)
+	mock_ip_xfrm_state_multiple_peers "${TEST_PEER_IP} ${TEST_PEER_IP2}" 1000 "0x12345678" >/dev/null
+	add_mock_to_path
+
+	run bash "$TEST_SCRIPT"
+
+	# Script should handle empty peer IP gracefully
+	assert_success
+	# Should skip empty peer IP and continue with valid peers
+	assert_file_exist "$LOG_FILE"
+	# Should log warning about empty peer IP
+	assert_log_contains_any "$LOG_FILE" "Skipping empty" "empty peer"
+	# Should process valid peers
+	assert_log_contains_any "$LOG_FILE" "${TEST_PEER_IP}" "${TEST_PEER_IP2}"
+	# Script should complete successfully
+
+	remove_mock_from_path
+}
+
+# bats test_tags=slow,category:high-risk,priority:high
+@test "multiple peer edge cases: one peer fails catastrophically - other peers continue independently" {
+	# Purpose: Test verifies that catastrophic failure of one peer (e.g., state file unreadable) doesn't prevent monitoring of other peers
+	# Expected: Failed peer is handled gracefully, other peers monitored independently
+	# Importance: Critical for multi-peer deployments where one peer failure shouldn't affect others
+	setup_test_vpn_monitor "${TEST_PEER_IP} ${TEST_PEER_IP2} 172.16.0.1" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
+
+	# Get state file paths using helper
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	# Create unreadable state file for second peer (10.0.0.1) - location TEST2
+	local unreadable_state_file
+	unreadable_state_file=$(get_state_file_path "TEST2" "${TEST_PEER_IP2}" "failure_count")
+	echo "5" >"$unreadable_state_file"
+	chmod 000 "$unreadable_state_file" 2>/dev/null || true
+
+	# Create valid state files for other peers
+	local peer1_file
+	peer1_file=$(get_state_file_path "TEST1" "${TEST_PEER_IP}" "failure_count")
+	echo "0" >"$peer1_file"
+	local peer3_file
+	peer3_file=$(get_state_file_path "TEST3" "172.16.0.1" "failure_count")
+	echo "0" >"$peer3_file"
+
+	# Mock VPN healthy for all peers - create single mock that handles all three IPs
+	# (setup_mock_vpn_environment overwrites the mock each time, so we need a custom mock)
+	mock_ip_xfrm_state_multiple_peers "${TEST_PEER_IP} ${TEST_PEER_IP2} 172.16.0.1" 1000 "0x12345678" >/dev/null
 	add_mock_to_path
 
 	# Use timeout to prevent hanging (test is marked as slow)
@@ -352,7 +299,7 @@ EOF
 	assert_file_exist "$LOG_FILE"
 	# Should process all peers despite unreadable file
 	# Verify that all peers were attempted (check for peer IPs in log)
-	assert_file_contains "$LOG_FILE" "${TEST_PEER_IP}" || assert_file_contains "$LOG_FILE" "172.16.0.1"
+	assert_log_contains_any "$LOG_FILE" "${TEST_PEER_IP}" "172.16.0.1"
 	# Error should be logged but shouldn't stop processing
 	# Script should complete successfully (may exit with warnings)
 

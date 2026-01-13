@@ -11,6 +11,7 @@ For additional test documentation, see:
 - **[BATS Guide](BATS_GUIDE.md)** - BATS framework usage, patterns, and advanced features
 - **[Test Strategy](TEST_STRATEGY.md)** - Test strategy, philosophy, and approach
 - **[Test Maintenance](TEST_MAINTENANCE.md)** - Test maintenance procedures and guidelines
+- **[Test Suite Review](TEST_SUITE_REVIEW.md)** - Pragmatic engineering review of the test suite with recommendations
 - **[tests/MOCK_REFACTORING_OPPORTUNITIES.md](../tests/MOCK_REFACTORING_OPPORTUNITIES.md)** - Lists refactoring opportunities for custom mocks
 
 ## Standardized Patterns
@@ -895,6 +896,14 @@ chmod +x "$mock_ip"
 add_mock_to_path
 ```
 
+**Helper Function for Multiple Peers**:
+```bash
+# ✅ RECOMMENDED: Use helper function for multiple peers
+# This handles both formats automatically and reduces code duplication
+mock_ip_xfrm_state_multiple_peers "${TEST_PEER_IP} ${TEST_PEER_IP2} 172.16.0.1" 1000 "0x12345678" >/dev/null
+add_mock_to_path
+```
+
 **❌ INCORRECT: Only handling one format**
 ```bash
 # ❌ WRONG: Only handles ip xfrm state (without -s)
@@ -910,7 +919,8 @@ EOF
 ```
 
 **Helper Functions**: The helper functions in `test_helper.bash` already handle both formats correctly:
-- `mock_ip_xfrm_state()` - handles both formats
+- `mock_ip_xfrm_state()` - handles both formats for a single peer
+- `mock_ip_xfrm_state_multiple_peers()` - handles both formats for multiple peers (recommended for multi-peer tests)
 
 **CRITICAL: Test Mocks Must Match Real Output Format**
 
@@ -2922,6 +2932,33 @@ echo "5" >"$failure_counter"
 **Available Helpers**:
 - `get_location_name_from_config_var()` - Extracts location name from config variable name
 - `get_failure_counter_path_for_location_var()` - Gets failure counter path for a location config variable (handles extraction and sourcing automatically)
+
+### 26. Using STATE_DIR vs state_dir in Tests
+
+**Pattern**: Always use `$STATE_DIR` (uppercase) when referencing the exported environment variable set by `setup_test_environment()`. Use `state_dir` (lowercase) only for local variables.
+
+**When to use**: When referencing the state directory path in tests, especially after calling `setup_test_environment()`.
+
+**Key Insight**: `setup_test_environment()` exports `STATE_DIR` (uppercase) as an environment variable. Using `$state_dir` (lowercase) will reference an undefined variable, which can cause paths to resolve incorrectly (e.g., `/logs` instead of `${TEST_DIR}/logs`).
+
+**Example**:
+```bash
+# ✅ GOOD: Use STATE_DIR (uppercase) for exported environment variable
+setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+export LOGS_DIR="${STATE_DIR}/logs"
+mkdir -p "${STATE_DIR}/logs"
+
+# ✅ GOOD: Use state_dir (lowercase) for local variables
+local state_dir="${TEST_DIR}/custom-state"
+setup_test_environment "$state_dir" "${state_dir}/logs"
+
+# ❌ BAD: Using undefined state_dir variable instead of STATE_DIR
+setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+export LOGS_DIR="${state_dir}/logs"  # state_dir is undefined!
+mkdir -p "${state_dir}/logs"  # This will try to create /logs (fails with permission denied)
+```
+
+**Common Mistake**: After calling `setup_test_environment()`, using `$state_dir` instead of `$STATE_DIR` will cause the variable to be undefined, leading to incorrect path resolution and permission errors.
 
 **Standard**:
 - Use `get_failure_counter_path_for_location_var()` when setting up failure counters

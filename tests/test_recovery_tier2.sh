@@ -4,6 +4,7 @@
 # Tests critical paths and error handling scenarios for Tier 2 recovery
 
 load test_helper
+load helpers/config
 load helpers/test_data
 load fixtures/vpn_active
 load fixtures/vpn_down
@@ -83,13 +84,9 @@ EOF
 		'ENABLE_XFRM_RECOVERY=0' \
 		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Use get_peer_state_file_path to get correct path dynamically
-	export STATE_DIR="$state_dir"
-	export LOGS_DIR="${TEST_DIR}/logs"
 	source_function "get_peer_state_file_path"
 	local failure_counter
 	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
@@ -165,7 +162,7 @@ EOF
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	add_mock_to_path
 	run bash "$test_script"
@@ -175,11 +172,11 @@ EOF
 	# This is acceptable - the important thing is that recovery was attempted and handled correctly
 
 	# Should handle partial success gracefully (fallback to restart)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Verify that reload was attempted and failed (check for either pattern)
-	assert_log_contains_any "$log_file" "ipsec reload failed" "reload failed"
+	assert_log_contains_any "$LOG_FILE" "ipsec reload failed" "reload failed"
 	# Verify that fallback to restart was attempted (check for either pattern)
-	assert_log_contains_any "$log_file" "ipsec restart" "restart"
+	assert_log_contains_any "$LOG_FILE" "ipsec restart" "restart"
 
 	remove_mock_from_path
 }
@@ -199,13 +196,9 @@ EOF
 		'ENABLE_XFRM_RECOVERY=0' \
 		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Use get_peer_state_file_path to get correct path dynamically
-	export STATE_DIR="$state_dir"
-	export LOGS_DIR="${TEST_DIR}/logs"
 	source_function "get_peer_state_file_path"
 	local failure_counter
 	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
@@ -222,15 +215,15 @@ EOF
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	add_mock_to_path
 	run bash "$test_script"
 
 	# Recovery succeeds but VPN still fails - failure counter should continue incrementing
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Verify recovery action was attempted (check for any of the patterns)
-	assert_log_contains_any "$log_file" "Tier 2" "surgical cleanup" "reload"
+	assert_log_contains_any "$LOG_FILE" "Tier 2" "surgical cleanup" "reload"
 	# Failure counter should be incremented (now 4, was 3)
 	if [[ -f "$failure_counter" ]]; then
 		local count
@@ -256,13 +249,9 @@ EOF
 		'ENABLE_XFRM_RECOVERY=0' \
 		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Use get_peer_state_file_path to get correct path dynamically
-	export STATE_DIR="$state_dir"
-	export LOGS_DIR="${TEST_DIR}/logs"
 	source_function "get_peer_state_file_path"
 	local failure_counter
 	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
@@ -279,7 +268,7 @@ EOF
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	add_mock_to_path
 	run bash "$test_script"
@@ -287,11 +276,11 @@ EOF
 	# The test verifies that recovery action failure is handled gracefully and failure counter increments.
 
 	# Recovery fails - failure counter should continue incrementing
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Verify recovery action was attempted (check for any of the patterns)
-	assert_log_contains_any "$log_file" "Tier 2" "surgical cleanup" "reload"
+	assert_log_contains_any "$LOG_FILE" "Tier 2" "surgical cleanup" "reload"
 	# Verify that reload failed (check for either pattern)
-	assert_log_contains_any "$log_file" "reload failed" "failed"
+	assert_log_contains_any "$LOG_FILE" "reload failed" "failed"
 	# Failure counter should be incremented (now 4, was 3)
 	if [[ -f "$failure_counter" ]]; then
 		local count
@@ -321,13 +310,9 @@ EOF
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Use get_peer_state_file_path to get correct paths dynamically
-	export STATE_DIR="$state_dir"
-	export LOGS_DIR="${TEST_DIR}/logs"
 	source_function "get_peer_state_file_path"
 	local failure_counter1
 	failure_counter1=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
@@ -356,15 +341,15 @@ EOF
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	add_mock_to_path
 	run bash "$test_script"
 
 	# Both peers should trigger recovery actions
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Verify both peers triggered Tier 2 actions (check for either pattern)
-	assert_log_contains_any "$log_file" "Tier 2" "surgical cleanup"
+	assert_log_contains_any "$LOG_FILE" "Tier 2" "surgical cleanup"
 	# Multiple reload calls should be made (one per peer at Tier 2)
 	if [[ -f "$reload_count_file" ]]; then
 		local reload_count
@@ -388,13 +373,9 @@ EOF
 		"LOCATION_TEST2_EXTERNAL=\"${TEST_PEER_IP2}\"" \
 		"LOCATION_TEST2_INTERNAL=\"${TEST_PEER_IP2}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Use get_peer_state_file_path to get correct paths dynamically
-	export STATE_DIR="$state_dir"
-	export LOGS_DIR="${TEST_DIR}/logs"
 	source_function "get_peer_state_file_path"
 	local failure_counter1
 	failure_counter1=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
@@ -423,13 +404,13 @@ EOF
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	add_mock_to_path
 	run bash "$test_script"
 
 	# Both peers should trigger cleanup independently
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Both peers should trigger ipsec reload (affects all tunnels)
 	if [[ -f "$reload_log" ]]; then
 		local reload_count
@@ -553,17 +534,16 @@ EOF
 	setup_test_environment "${TEST_DIR}"
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_CHICAGO_EXTERNAL="172.31.23.27"
-LOCATION_CHICAGO_INTERNAL="172.31.23.27"
-LOCATION_LOS_ANGELES_EXTERNAL="172.31.15.215"
-LOCATION_LOS_ANGELES_INTERNAL="172.31.15.215"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-ENABLE_XFRM_RECOVERY=0
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_CHICAGO_EXTERNAL="172.31.23.27"' \
+		'LOCATION_CHICAGO_INTERNAL="172.31.23.27"' \
+		'LOCATION_LOS_ANGELES_EXTERNAL="172.31.15.215"' \
+		'LOCATION_LOS_ANGELES_INTERNAL="172.31.15.215"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"ENABLE_XFRM_RECOVERY=0" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
 	export CONFIG_FILE="$config_file"
 	export STATE_DIR="${TEST_DIR}"
@@ -607,7 +587,7 @@ EOF
 	assert_failure
 
 	# Verify that the completion message uses CHICAGO, not LOS_ANGELES
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# The completion message should contain CHICAGO and the correct IP (172.31.23.27)
 	# Note: With ENABLE_XFRM_RECOVERY=0, this uses ipsec fallback, so message is "Recovery completed" not "Surgical cleanup completed"
 	assert_file_contains "$log_file" "Recovery completed for CHICAGO (172.31.23.27)"

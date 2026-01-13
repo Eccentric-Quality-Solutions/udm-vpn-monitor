@@ -8,6 +8,7 @@
 # is "unknown", preventing false recovery actions.
 
 load test_helper
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -60,7 +61,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_log_not_contains "$LOG_FILE" "Tier 3: Would attempt full IPsec restart"
 
 	# Should still log Tier 1 failure (monitoring continues)
-	assert_file_contains "$LOG_FILE" "Tier 1" || assert_file_contains "$LOG_FILE" "VPN check failed"
+	assert_log_contains_any "$LOG_FILE" "Tier 1" "VPN check failed"
 
 	# Restore PATH
 	export PATH="$original_path"
@@ -91,7 +92,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should proceed with Tier 3 recovery (ip is available, so detection is reliable)
 	assert_file_exist "$LOG_FILE"
 	# Should attempt Tier 3 recovery
-	assert_file_contains "$LOG_FILE" "Tier 3" || assert_file_contains "$LOG_FILE" "Would attempt"
+	assert_log_contains_any "$LOG_FILE" "Tier 3" "Would attempt"
 
 	# Should NOT log detection unreliable error
 	assert_log_not_contains "$LOG_FILE" "Detection unreliable"
@@ -135,7 +136,7 @@ EOF
 	# Should proceed with Tier 3 recovery (ipsec is available, so detection is reliable)
 	assert_file_exist "$LOG_FILE"
 	# Should attempt Tier 3 recovery
-	assert_file_contains "$LOG_FILE" "Tier 3" || assert_file_contains "$LOG_FILE" "Would attempt"
+	assert_log_contains_any "$LOG_FILE" "Tier 3" "Would attempt"
 
 	# Should NOT log detection unreliable error
 	assert_log_not_contains "$LOG_FILE" "Detection unreliable"
@@ -175,7 +176,7 @@ EOF
 	assert_file_contains "$LOG_FILE" "VPN check failed"
 
 	# Should log Tier 1 message (monitoring continues)
-	assert_file_contains "$LOG_FILE" "Tier 1" || assert_file_contains "$LOG_FILE" "Logging.*failure"
+	assert_log_contains_any "$LOG_FILE" "Tier 1" "Logging.*failure"
 
 	# Should log that recovery was skipped
 	assert_file_contains "$LOG_FILE" "recovery skipped - detection unreliable"
@@ -210,7 +211,7 @@ EOF
 	# Should proceed with Tier 3 recovery (failure type is known, not unknown)
 	assert_file_exist "$LOG_FILE"
 	# Should attempt Tier 3 recovery
-	assert_file_contains "$LOG_FILE" "Tier 3" || assert_file_contains "$LOG_FILE" "Would attempt"
+	assert_log_contains_any "$LOG_FILE" "Tier 3" "Would attempt"
 
 	# Should NOT log detection unreliable error (failure type is known)
 	assert_log_not_contains "$LOG_FILE" "Detection unreliable"

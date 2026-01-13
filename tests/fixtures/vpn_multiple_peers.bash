@@ -58,19 +58,8 @@ setup_vpn_multiple_peers_fixture() {
 
 	# Create mock ip command that handles multiple peers
 	# This mock returns SAs for all configured peers
+	mock_ip_xfrm_state_multiple_peers "$peer_ips" "$bytes" "$spi"
 	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<EOF
-#!/bin/bash
-if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    # Return SA for all configured peers
-$(for peer_ip in $peer_ips; do
-		echo "    echo \"src $peer_ip dst $peer_ip\""
-		echo "    echo \"    proto esp spi $spi reqid 1 mode tunnel\""
-		echo "    echo \"    lifetime current: $bytes bytes, 10 packets\""
-	done)
-fi
-EOF
-	chmod +x "$mock_ip"
 
 	# Add mocks to PATH (don't call setup_mock_vpn_environment as it would overwrite our custom mock)
 	add_mock_to_path

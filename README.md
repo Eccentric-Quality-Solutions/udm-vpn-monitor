@@ -660,7 +660,7 @@ For detailed detection flow diagrams, sequence diagrams, ping check behavior sce
 
 ### State Management
 
-For detailed state management documentation including file structure, atomic operations, checksum validation, per-location isolation, and technical implementation details, see the [State Management section in ARCHITECTURE.md](docs/ARCHITECTURE.md#state-management).
+For detailed state management documentation including file structure, atomic operations, per-location isolation, and technical implementation details, see the [State Management section in ARCHITECTURE.md](docs/ARCHITECTURE.md#state-management).
 
 ## License
 

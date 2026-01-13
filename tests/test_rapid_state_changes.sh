@@ -6,6 +6,8 @@
 # These tests address the gap identified in CRITICAL_PATH_TEST_GAPS_REVIEW.md Section 6.1
 
 load test_helper
+load helpers/state
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_rate_limited
@@ -52,9 +54,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_file_contains "$log_file" "Tier 2"
 
 	# Verify failure count is 3 (Tier 2 threshold)
-	ensure_state_functions_loaded
 	local failure_count_file
-	failure_count_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
+	failure_count_file=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	assert_file_exist "$failure_count_file"
 	local failure_count
 	failure_count=$(cat "$failure_count_file")
@@ -115,13 +116,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	run bash "$test_script" --fake
 
 	# Verify each peer's failure count is tracked independently
-	ensure_state_functions_loaded
 	local failure_count_file_1
-	failure_count_file_1=$(get_peer_state_file_path "TEST1" "${TEST_PEER_IP}" "failure_count")
+	failure_count_file_1=$(get_state_file_path "TEST1" "${TEST_PEER_IP}" "failure_count")
 	local failure_count_file_2
-	failure_count_file_2=$(get_peer_state_file_path "TEST2" "192.168.1.2" "failure_count")
+	failure_count_file_2=$(get_state_file_path "TEST2" "192.168.1.2" "failure_count")
 	local failure_count_file_3
-	failure_count_file_3=$(get_peer_state_file_path "TEST3" "192.168.1.3" "failure_count")
+	failure_count_file_3=$(get_state_file_path "TEST3" "192.168.1.3" "failure_count")
 	local failure_count_1
 	failure_count_1=$(cat "$failure_count_file_1" 2>/dev/null || echo "0")
 	local failure_count_2
@@ -196,7 +196,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	run bash "$test_script" --fake
 
 	# Verify rate limit was hit
-	assert_file_contains "$log_file" "rate limit" || assert_file_contains "$log_file" "Rate limit"
+	assert_log_contains_any "$log_file" "rate limit" "Rate limit"
 
 	# Verify no new restart was recorded (rate limited)
 	local restart_count_after
@@ -232,9 +232,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	done
 
 	# Verify failure count is 4
-	ensure_state_functions_loaded
 	local failure_count_file
-	failure_count_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
+	failure_count_file=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	assert_file_exist "$failure_count_file"
 	local failure_count
 	failure_count=$(cat "$failure_count_file")

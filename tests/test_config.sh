@@ -4,6 +4,8 @@
 # Tests critical paths and error handling scenarios
 
 load test_helper
+load helpers/config
+load helpers/assertions
 load fixtures/vpn_active
 load helpers/test_data
 
@@ -27,13 +29,11 @@ LOCATION_NYC_EXTERNAL="192.168.1.1
 VPN_NAME="Test VPN"
 EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Script should handle syntax error gracefully
 	add_mock_to_path
@@ -41,8 +41,8 @@ EOF
 	assert_success
 
 	# Should log error about config file
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "Failed to parse configuration file" || assert_file_contains "$log_file" "Invalid configuration line" || assert_file_contains "$log_file" "ERROR"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Failed to parse configuration file" "Invalid configuration line" "ERROR"
 
 	remove_mock_from_path
 }
@@ -62,13 +62,11 @@ EOF
 	# Verify permissions were set correctly
 	assert_file_permission 000 "$config_file"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Script should handle unreadable config gracefully
 	add_mock_to_path
@@ -76,8 +74,8 @@ EOF
 	assert_success
 
 	# Should log error about config file
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "not readable" || assert_file_contains "$log_file" "ERROR"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "not readable" "ERROR"
 
 	# Restore permissions for cleanup
 	chmod 644 "$config_file" 2>/dev/null || true
@@ -94,13 +92,11 @@ EOF
 	# Create directory instead of file
 	mkdir -p "$config_file"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Script should handle directory instead of file gracefully
 	add_mock_to_path
@@ -108,7 +104,7 @@ EOF
 	assert_success
 
 	# Should log warning or error
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -122,14 +118,12 @@ EOF
 	# Use test data generator to create config with custom log file
 	generate_config_file "custom_log" "$config_file" "${TEST_PEER_IP}" "/tmp/custom-logs/vpn-monitor.log"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	local custom_log_file="/tmp/custom-logs/vpn-monitor.log"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -156,21 +150,18 @@ EOF
 	# Importance: Negative thresholds can occur from manual editing errors; script must handle them without crashing.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=-1
-TIER2_THRESHOLD=-3
-TIER3_THRESHOLD=-5
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=-1" \
+		"TIER2_THRESHOLD=-3" \
+		"TIER3_THRESHOLD=-5"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN down
 	mock_ip_xfrm_empty >/dev/null
@@ -181,7 +172,7 @@ EOF
 	run bash "$test_script" --fake
 
 	# Script should run (may have unexpected tier escalation behavior)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -193,21 +184,18 @@ EOF
 	# Importance: Out-of-order thresholds can occur from manual editing errors; script must handle them without crashing.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=5
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=1
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=5" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=1"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN down
 	mock_ip_vpn_down
@@ -217,7 +205,7 @@ EOF
 	run bash "$test_script" --fake
 
 	# Script should run (may skip tiers or have unexpected behavior)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -233,18 +221,15 @@ EOF
 	# Importance: Invalid cooldown values can cause unexpected recovery behavior; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-COOLDOWN_MINUTES=-1
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"COOLDOWN_MINUTES=-1"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -253,7 +238,7 @@ EOF
 	run bash "$test_script" --fake
 
 	# Script should handle invalid value (either use default or fail gracefully)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -265,18 +250,15 @@ EOF
 	# Importance: Zero cooldown can cause excessive recovery attempts; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-COOLDOWN_MINUTES=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"COOLDOWN_MINUTES=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -284,7 +266,7 @@ EOF
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -296,18 +278,15 @@ EOF
 	# Importance: Invalid restart limits can cause unexpected rate limiting behavior; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-MAX_RESTARTS_PER_HOUR=-1
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"MAX_RESTARTS_PER_HOUR=-1"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -315,7 +294,7 @@ EOF
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -327,18 +306,15 @@ EOF
 	# Importance: Zero restart limit can disable rate limiting; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-MAX_RESTARTS_PER_HOUR=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"MAX_RESTARTS_PER_HOUR=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -346,7 +322,7 @@ EOF
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -358,18 +334,15 @@ EOF
 	# Importance: Invalid lockfile timeout can cause lockfile handling issues; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-LOCKFILE_TIMEOUT=-1
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCKFILE_TIMEOUT=-1"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -377,7 +350,7 @@ EOF
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -389,18 +362,15 @@ EOF
 	# Importance: Zero timeout can cause immediate lockfile failures; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-LOCKFILE_TIMEOUT=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCKFILE_TIMEOUT=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -408,7 +378,7 @@ EOF
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -420,18 +390,15 @@ EOF
 	# Importance: Invalid ping count can cause ping check failures; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-PING_COUNT=-1
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"PING_COUNT=-1"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -439,7 +406,7 @@ EOF
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -451,18 +418,15 @@ EOF
 	# Importance: Zero ping count can disable ping checks; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-PING_COUNT=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"PING_COUNT=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -470,7 +434,7 @@ EOF
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -482,18 +446,15 @@ EOF
 	# Importance: Invalid ping timeout can cause ping check failures; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-PING_TIMEOUT=-1
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"PING_TIMEOUT=-1"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -501,7 +462,7 @@ EOF
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -513,18 +474,15 @@ EOF
 	# Importance: Zero timeout can cause immediate ping failures; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-PING_TIMEOUT=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"PING_TIMEOUT=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -532,7 +490,7 @@ EOF
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -548,18 +506,15 @@ EOF
 	# Importance: Very large cooldown values can cause excessive delays; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-COOLDOWN_MINUTES=999999999
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"COOLDOWN_MINUTES=999999999"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -568,7 +523,7 @@ EOF
 	run bash "$test_script" --fake
 
 	# Script should handle very large value (either use default or fail gracefully)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -580,18 +535,15 @@ EOF
 	# Importance: Very large restart limits can disable rate limiting; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-MAX_RESTARTS_PER_HOUR=999999999
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"MAX_RESTARTS_PER_HOUR=999999999"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -599,7 +551,7 @@ EOF
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -611,18 +563,15 @@ EOF
 	# Importance: Very large ping counts can cause excessive delays; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-PING_COUNT=999999999
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"PING_COUNT=999999999"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -630,7 +579,7 @@ EOF
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -646,21 +595,18 @@ EOF
 	# Test Category: Configuration path handling
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local custom_state_dir="${TEST_DIR}/custom-state-dir"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-STATE_DIR="${custom_state_dir}"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"STATE_DIR=\"${custom_state_dir}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Ensure custom state directory does not exist
 	rm -rf "$custom_state_dir" 2>/dev/null || true
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -670,7 +616,7 @@ EOF
 
 	# Custom state directory should be created
 	assert_dir_exist "$custom_state_dir"
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	# Cleanup
 	rm -rf "$custom_state_dir" 2>/dev/null || true
@@ -693,12 +639,10 @@ LOCATION_TEST2_INTERNAL="10.0.0.1"
 COOLDOWN_MINUTES=30
 EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -708,7 +652,7 @@ EOF
 	LOCATION_TEST2_EXTERNAL="${TEST_PEER_IP}" LOCATION_TEST2_INTERNAL="${TEST_PEER_IP}" run bash "$test_script" --fake
 
 	# Script should use environment variable value (${TEST_PEER_IP}) instead of config (${TEST_PEER_IP2})
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Verify script processed the environment variable IP (check log or behavior)
 	# The mock is set up for 192.168.1.1, so if script uses env var, it should succeed
 
@@ -722,18 +666,15 @@ EOF
 	# Importance: Invalid environment variables can cause unexpected behavior; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-COOLDOWN_MINUTES=15
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"COOLDOWN_MINUTES=15"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -744,7 +685,7 @@ EOF
 	assert_success
 
 	# Script should handle invalid environment variable value gracefully
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -762,12 +703,10 @@ COOLDOWN_MINUTES=30
 MAX_RESTARTS_PER_HOUR=5
 EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -781,7 +720,7 @@ EOF
 		run bash "$test_script" --fake
 
 	# Script should use all environment variable values
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -797,21 +736,18 @@ EOF
 	# Test Category: Configuration path handling
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local custom_state_dir="${TEST_DIR}/custom-state"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-STATE_DIR="${custom_state_dir}"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"STATE_DIR=\"${custom_state_dir}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Ensure custom state directory does not exist initially
 	rm -rf "$custom_state_dir" 2>/dev/null || true
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -831,7 +767,7 @@ EOF
 
 	# Verify that state files are created in the custom directory
 	# (Script may create these files during execution)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	# Cleanup
 	rm -rf "$custom_state_dir" 2>/dev/null || true
@@ -846,22 +782,19 @@ EOF
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local readonly_log_dir="${TEST_DIR}/readonly-logs"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-LOG_FILE="${readonly_log_dir}/vpn-monitor.log"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOG_FILE=\"${readonly_log_dir}/vpn-monitor.log\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create read-only log directory
 	mkdir -p "$readonly_log_dir"
 	chmod 555 "$readonly_log_dir"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -887,22 +820,19 @@ EOF
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local readonly_state_dir="${TEST_DIR}/readonly-state"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-STATE_DIR="${readonly_state_dir}"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"STATE_DIR=\"${readonly_state_dir}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create read-only state directory
 	mkdir -p "$readonly_state_dir"
 	chmod 555 "$readonly_state_dir"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -931,13 +861,11 @@ EOF
 	# Expand TEST_PEER_IP but keep dangerous content literal
 	printf 'LOCATION_TEST_EXTERNAL="%s"\nLOCATION_TEST_INTERNAL="%s"\nVPN_NAME=$(echo "malicious")\n' "${TEST_PEER_IP}" "${TEST_PEER_IP}" >"$config_file"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Script should reject config file with command substitution
 	add_mock_to_path
@@ -945,8 +873,8 @@ EOF
 	assert_success
 
 	# Should log error about dangerous content
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "dangerous content" || assert_file_contains "$log_file" "Failed to parse" || assert_file_contains "$log_file" "ERROR"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "dangerous content" "Failed to parse" "ERROR"
 
 	remove_mock_from_path
 }
@@ -961,13 +889,11 @@ EOF
 	# Expand TEST_PEER_IP but keep dangerous content literal
 	printf 'LOCATION_TEST_EXTERNAL="%s"\nLOCATION_TEST_INTERNAL="%s"\nVPN_NAME=`echo "malicious"`\n' "${TEST_PEER_IP}" "${TEST_PEER_IP}" >"$config_file"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Script should reject config file with backticks
 	add_mock_to_path
@@ -975,8 +901,8 @@ EOF
 	assert_success
 
 	# Should log error about dangerous content
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "dangerous content" || assert_file_contains "$log_file" "Failed to parse" || assert_file_contains "$log_file" "ERROR"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "dangerous content" "Failed to parse" "ERROR"
 
 	remove_mock_from_path
 }
@@ -994,13 +920,11 @@ LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 eval "malicious code"
 EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Script should reject config file with eval
 	add_mock_to_path
@@ -1008,8 +932,8 @@ EOF
 	assert_success
 
 	# Should log error about dangerous content
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "dangerous content" || assert_file_contains "$log_file" "Failed to parse" || assert_file_contains "$log_file" "ERROR"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "dangerous content" "Failed to parse" "ERROR"
 
 	remove_mock_from_path
 }
@@ -1027,13 +951,11 @@ LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 MALICIOUS_VAR="value"
 EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Script should reject config file with unknown variable
 	add_mock_to_path
@@ -1041,8 +963,8 @@ EOF
 	assert_success
 
 	# Should log error about unknown variable
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "Unknown configuration variable" || assert_file_contains "$log_file" "not in schema" || assert_file_contains "$log_file" "Failed to parse" || assert_file_contains "$log_file" "ERROR"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Unknown configuration variable" "not in schema" "Failed to parse" "ERROR"
 
 	remove_mock_from_path
 }
@@ -1054,26 +976,23 @@ EOF
 	# Importance: Ensures legitimate config files continue to work after security fix.
 	# Test Category: Security, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST2_EXTERNAL="192.168.1.2"
-LOCATION_TEST2_INTERNAL="192.168.1.2"
-VPN_NAME="Test VPN"
-TIER1_THRESHOLD=2
-TIER2_THRESHOLD=4
-TIER3_THRESHOLD=6
-ENABLE_PING_CHECK=1
-DEBUG=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'LOCATION_TEST2_EXTERNAL="192.168.1.2"' \
+		'LOCATION_TEST2_INTERNAL="192.168.1.2"' \
+		'VPN_NAME="Test VPN"' \
+		"TIER1_THRESHOLD=2" \
+		"TIER2_THRESHOLD=4" \
+		"TIER3_THRESHOLD=6" \
+		"ENABLE_PING_CHECK=1" \
+		"DEBUG=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -1084,8 +1003,8 @@ EOF
 	assert_success
 
 	# Should log success message
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "Configuration loaded from" || assert_file_contains "$log_file" "INFO"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Configuration loaded from" "INFO"
 
 	remove_mock_from_path
 }
@@ -1103,13 +1022,11 @@ LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 source /etc/passwd
 EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Script should reject config file with source
 	add_mock_to_path
@@ -1117,8 +1034,8 @@ EOF
 	assert_success
 
 	# Should log error about dangerous content
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "dangerous content" || assert_file_contains "$log_file" "Failed to parse" || assert_file_contains "$log_file" "ERROR"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "dangerous content" "Failed to parse" "ERROR"
 
 	remove_mock_from_path
 }
@@ -1136,13 +1053,11 @@ LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 VPN_NAME=$(echo "test") $(echo "test") eval "test"
 EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Script should reject config file with multiple dangerous patterns
 	add_mock_to_path
@@ -1150,8 +1065,8 @@ EOF
 	assert_success
 
 	# Should log error about dangerous content
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "dangerous content" || assert_file_contains "$log_file" "Failed to parse" || assert_file_contains "$log_file" "ERROR"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "dangerous content" "Failed to parse" "ERROR"
 
 	remove_mock_from_path
 }
@@ -1170,13 +1085,11 @@ LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 VPN_NAME="Test VPN"
 EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -1187,9 +1100,9 @@ EOF
 	assert_success
 
 	# Should parse successfully (comments are ignored)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Should not contain error about dangerous content
-	refute_file_contains "$log_file" "dangerous content"
+	refute_file_contains "$LOG_FILE" "dangerous content"
 
 	remove_mock_from_path
 }
@@ -1201,23 +1114,20 @@ EOF
 	# Importance: Ensures legitimate config files without quotes continue to work.
 	# Test Category: Security, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-ENABLE_PING_CHECK=1
-DEBUG=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"ENABLE_PING_CHECK=1" \
+		"DEBUG=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -1228,9 +1138,9 @@ EOF
 	assert_success
 
 	# Should parse successfully
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Should not contain error about dangerous content
-	refute_file_contains "$log_file" "dangerous content"
+	refute_file_contains "$LOG_FILE" "dangerous content"
 
 	remove_mock_from_path
 }
@@ -1246,20 +1156,17 @@ EOF
 	# Importance: Ensures relative validation works correctly regardless of validation order.
 	# Test Category: Configuration validation order
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-# TIER1_THRESHOLD not set - will use default (1)
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
+	# TIER1_THRESHOLD not set - will use default (1)
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -1268,7 +1175,7 @@ EOF
 
 	# Should succeed - TIER2 (3) >= TIER1 default (1)
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -1280,20 +1187,17 @@ EOF
 	# Importance: Ensures relative validation uses validated values when available.
 	# Test Category: Configuration validation order
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=2
-TIER2_THRESHOLD=4
-TIER3_THRESHOLD=6
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=2" \
+		"TIER2_THRESHOLD=4" \
+		"TIER3_THRESHOLD=6"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -1302,7 +1206,7 @@ EOF
 
 	# Should succeed - TIER2 (4) >= TIER1 (2)
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -1314,20 +1218,17 @@ EOF
 	# Importance: Ensures relative validation works correctly for nested dependencies.
 	# Test Category: Configuration validation order
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER3_THRESHOLD=5
-# TIER2_THRESHOLD not set - will use default (3)
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER3_THRESHOLD=5"
+	# TIER2_THRESHOLD not set - will use default (3)
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -1336,7 +1237,7 @@ EOF
 
 	# Should succeed - TIER3 (5) >= TIER2 default (3)
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -1348,20 +1249,17 @@ EOF
 	# Importance: Ensures relative validation gracefully handles missing referenced variables.
 	# Test Category: Configuration validation order
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-TIER2_THRESHOLD=2
-TIER3_THRESHOLD=4
-# TIER1_THRESHOLD not set - will use default (1) for relative validation
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER2_THRESHOLD=2" \
+		"TIER3_THRESHOLD=4"
+	# TIER1_THRESHOLD not set - will use default (1) for relative validation
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -1370,7 +1268,7 @@ EOF
 
 	# Should succeed - TIER2 (2) >= TIER1 default (1), TIER3 (4) >= TIER2 (2)
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -1382,20 +1280,17 @@ EOF
 	# Importance: Ensures complex dependency chains work correctly regardless of validation order.
 	# Test Category: Configuration validation order
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -1406,7 +1301,7 @@ EOF
 	# TIER2 (3) >= TIER1 (1) ✓
 	# TIER3 (5) >= TIER2 (3) ✓
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -1425,12 +1320,10 @@ EOF
 	# Create empty config file (no values set)
 	touch "$config_file"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -1462,22 +1355,19 @@ EOF
 	# Importance: Ensures config file customization works correctly.
 	# Test Category: Configuration schema defaults
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-VPN_NAME="Custom VPN Name"
-TIER1_THRESHOLD=5
-TIER2_THRESHOLD=7
-TIER3_THRESHOLD=9
-ENABLE_PING_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'VPN_NAME="Custom VPN Name"' \
+		"TIER1_THRESHOLD=5" \
+		"TIER2_THRESHOLD=7" \
+		"TIER3_THRESHOLD=9" \
+		"ENABLE_PING_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -1485,10 +1375,10 @@ EOF
 	run bash "$test_script" --fake
 
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Config file values should override defaults
 	# VPN_NAME should be "Custom VPN Name" not "Site-to-Site VPN"
-	assert_file_contains "$log_file" "Custom VPN Name" || assert_file_contains "$log_file" "VPN_NAME" || assert_file_contains "$log_file" "Configuration loaded"
+	assert_log_contains_any "$LOG_FILE" "Custom VPN Name" "VPN_NAME" "Configuration loaded"
 
 	remove_mock_from_path
 }
@@ -1506,12 +1396,10 @@ EOF
 TIER1_THRESHOLD=1
 EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -1524,8 +1412,8 @@ EOF
 	# Should contain error about missing location configuration or validation failure
 	# The error message format is: "No location-based configuration found. At least one LOCATION_*_EXTERNAL variable is required."
 	# or "Failed to parse location-based configuration"
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "LOCATION" || assert_file_contains "$log_file" "required" || assert_file_contains "$log_file" "ERROR" || assert_file_contains "$log_file" "validation" || assert_file_contains "$log_file" "No location" || assert_file_contains "$log_file" "Failed to parse location"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "LOCATION" "required" "ERROR" "validation" "No location" "Failed to parse location"
 
 	remove_mock_from_path
 }
@@ -1544,12 +1432,10 @@ LOCATION_NYC_INTERNAL="192.168.1.1"
 # LOCATION_*_INTERNAL not set (optional variable without default)
 EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -1558,7 +1444,7 @@ EOF
 
 	# Should succeed (optional variable can be empty)
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Script should run without errors (optional variable empty is acceptable)
 
 	remove_mock_from_path
@@ -1571,18 +1457,15 @@ EOF
 	# Importance: Ensures correct order of operations in load_config.
 	# Test Category: Configuration schema defaults
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-VPN_NAME="Override Default"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'VPN_NAME="Override Default"'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -1601,9 +1484,9 @@ EOF
 	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
 
 	# Set required environment variables for load_config
-	export STATE_DIR="$state_dir"
-	export LOG_FILE="$log_file"
-	export LOGS_DIR="${state_dir}/logs"
+	export STATE_DIR="$STATE_DIR"
+	export LOG_FILE="$LOG_FILE"
+	export LOGS_DIR="${STATE_DIR}/logs"
 
 	# Unset VPN_NAME to ensure we start clean
 	unset VPN_NAME
@@ -1636,12 +1519,10 @@ EOF
 TIER1_THRESHOLD=1
 EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	add_mock_to_path
 
@@ -1652,8 +1533,8 @@ EOF
 	assert_output --partial "Failed to parse location-based configuration"
 
 	# Should log error about missing required variable
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "LOCATION" || assert_file_contains "$log_file" "EXTERNAL" || assert_file_contains "$log_file" "required"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "LOCATION" "EXTERNAL" "required"
 
 	remove_mock_from_path
 }
@@ -1671,12 +1552,10 @@ EOF
 TIER1_THRESHOLD=1
 EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	add_mock_to_path
 
@@ -1685,8 +1564,8 @@ EOF
 	assert_failure
 
 	# Should log error about missing required variable
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "LOCATION" || assert_file_contains "$log_file" "EXTERNAL" || assert_file_contains "$log_file" "required"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "LOCATION" "EXTERNAL" "required"
 
 	remove_mock_from_path
 }
@@ -1704,12 +1583,10 @@ LOCATION_NYC_EXTERNAL="192.168.1.1
 VPN_NAME="Test VPN"
 EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	add_mock_to_path
 
@@ -1718,8 +1595,8 @@ EOF
 	assert_success
 
 	# Should log error about config file
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "Failed to parse configuration file" || assert_file_contains "$log_file" "Invalid configuration line" || assert_file_contains "$log_file" "ERROR"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Failed to parse configuration file" "Invalid configuration line" "ERROR"
 
 	remove_mock_from_path
 }
@@ -1737,12 +1614,10 @@ LOCATION_NYC_EXTERNAL="192.168.1.1
 VPN_NAME="Test VPN"
 EOF
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	add_mock_to_path
 
@@ -1751,8 +1626,8 @@ EOF
 	assert_failure
 
 	# Should log error about config file
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "Failed to parse configuration file" || assert_file_contains "$log_file" "Invalid configuration line" || assert_file_contains "$log_file" "ERROR"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Failed to parse configuration file" "Invalid configuration line" "ERROR"
 
 	remove_mock_from_path
 }
@@ -1765,18 +1640,15 @@ EOF
 	# so tests can assert failure (see fake-mode exit behavior guidance in CODE_PATTERNS/TEST_PATTERNS).
 	# Test Category: Error handling, Fake mode vs normal mode
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -1790,8 +1662,8 @@ EOF
 
 	# Should log error about invalid value
 	# TIER1_THRESHOLD is required with min:1, so 0 should fail validation
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "TIER1_THRESHOLD" || assert_file_contains "$log_file" "ERROR" || assert_file_contains "$log_file" "at least"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "TIER1_THRESHOLD" "ERROR" "at least"
 
 	remove_mock_from_path
 }
@@ -1803,18 +1675,15 @@ EOF
 	# Importance: Normal mode should fail fast on configuration errors to prevent incorrect operation.
 	# Test Category: Error handling, Fake mode vs normal mode
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-COOLDOWN_MINUTES=-1
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"COOLDOWN_MINUTES=-1"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -1826,8 +1695,8 @@ EOF
 	assert_failure
 
 	# Should log error about invalid value
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "COOLDOWN_MINUTES" || assert_file_contains "$log_file" "ERROR"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "COOLDOWN_MINUTES" "ERROR"
 
 	remove_mock_from_path
 }
@@ -1839,20 +1708,17 @@ EOF
 	# Importance: Fake mode should not cause test failures, allowing tests to verify error handling.
 	# Test Category: Error handling, Fake mode vs normal mode
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	# Make config file unreadable
 	chmod 000 "$config_file"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	add_mock_to_path
 
@@ -1861,8 +1727,8 @@ EOF
 	assert_success
 
 	# Should log error about config file
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "not readable" || assert_file_contains "$log_file" "ERROR"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "not readable" "ERROR"
 
 	# Restore permissions for cleanup
 	chmod 644 "$config_file" 2>/dev/null || true
@@ -1876,20 +1742,17 @@ EOF
 	# Importance: Normal mode should fail fast on configuration errors to prevent incorrect operation.
 	# Test Category: Error handling, Fake mode vs normal mode
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	# Make config file unreadable
 	chmod 000 "$config_file"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	add_mock_to_path
 
@@ -1898,8 +1761,8 @@ EOF
 	assert_failure
 
 	# Should log error about config file
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "not readable" || assert_file_contains "$log_file" "ERROR"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "not readable" "ERROR"
 
 	# Restore permissions for cleanup
 	chmod 644 "$config_file" 2>/dev/null || true
@@ -1917,16 +1780,13 @@ EOF
 	# Importance: Ensures route setup works in normal execution path where detection.sh is sourced
 	# Test Category: Route setup, detection.sh integration
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-ENABLE_PING_CHECK=1
-LOCAL_UDM_IP="10.0.0.1"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"ENABLE_PING_CHECK=1" \
+		'LOCAL_UDM_IP="10.0.0.1"'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create mock ip command that handles route checks and additions
 	# Generate xfrm state output using test data helper
@@ -1959,7 +1819,7 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Run script - should succeed because detection.sh functions are available (sourced by script)
 	# and route setup succeeds
@@ -1967,7 +1827,7 @@ EOF
 
 	# Should succeed (route setup succeeds when detection.sh functions are available)
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -1987,16 +1847,13 @@ EOF
 	# which has a test that verifies validation fails appropriately when detection.sh functions are missing.
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-ENABLE_PING_CHECK=1
-LOCAL_UDM_IP="10.0.0.1"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"ENABLE_PING_CHECK=1" \
+		'LOCAL_UDM_IP="10.0.0.1"'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create mock ip command that handles route checks and additions
 	local mock_ip="${TEST_DIR}/ip"
@@ -2024,7 +1881,7 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Run script - should succeed because detection.sh functions are available (sourced by script)
 	# and route already exists (no setup needed)
@@ -2032,7 +1889,7 @@ EOF
 
 	# Should succeed (route setup works when detection.sh functions are available)
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }

@@ -9,6 +9,7 @@
 # - Network partition clears during recovery - should continue recovery
 
 load test_helper
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -69,7 +70,7 @@ ADDITIONAL_EOF
 	# Should skip VPN checks due to network partition (optimization: checks skipped before recovery)
 	assert_file_exist "$LOG_FILE"
 	# Should log that VPN checks are skipped (new optimization) or recovery is skipped (fallback)
-	assert_file_contains "$LOG_FILE" "Skipping VPN checks" || assert_file_contains "$LOG_FILE" "Skipping VPN recovery" || assert_file_contains "$LOG_FILE" "network is partitioned" || assert_file_contains "$LOG_FILE" "network partitioned"
+	assert_log_contains_any "$LOG_FILE" "Skipping VPN checks" "Skipping VPN recovery" "network is partitioned" "network partitioned"
 	# Should NOT attempt recovery actions
 	refute_file_contains "$LOG_FILE" "Tier 2" || refute_file_contains "$LOG_FILE" "surgical cleanup" || refute_file_contains "$LOG_FILE" "reload"
 
@@ -140,7 +141,7 @@ EOF
 	# Should detect partition and skip VPN checks (optimization) or recovery
 	assert_file_exist "$LOG_FILE"
 	# Should log that VPN checks are skipped (new optimization) or recovery is skipped (fallback)
-	assert_file_contains "$LOG_FILE" "Skipping VPN checks" || assert_file_contains "$LOG_FILE" "Skipping VPN recovery" || assert_file_contains "$LOG_FILE" "network is partitioned" || assert_file_contains "$LOG_FILE" "network partitioned"
+	assert_log_contains_any "$LOG_FILE" "Skipping VPN checks" "Skipping VPN recovery" "network is partitioned" "network partitioned"
 	# Should NOT attempt recovery actions
 	refute_file_contains "$LOG_FILE" "ipsec reload should not be called"
 
@@ -277,9 +278,9 @@ EOF
 	# Should detect partition cleared and continue recovery
 	assert_file_exist "$LOG_FILE"
 	# Should log that network connectivity restored
-	assert_file_contains "$LOG_FILE" "Network connectivity restored" || assert_file_contains "$LOG_FILE" "resuming VPN monitoring"
+	assert_log_contains_any "$LOG_FILE" "Network connectivity restored" "resuming VPN monitoring"
 	# Should attempt recovery actions after partition clears
-	assert_file_contains "$LOG_FILE" "Tier 2" || assert_file_contains "$LOG_FILE" "surgical cleanup" || assert_file_contains "$LOG_FILE" "reload"
+	assert_log_contains_any "$LOG_FILE" "Tier 2" "surgical cleanup" "reload"
 
 	remove_mock_from_path
 }

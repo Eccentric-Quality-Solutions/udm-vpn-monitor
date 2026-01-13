@@ -2546,12 +2546,12 @@ EOF
 
 	# Create config file with multiple valid lines
 	local config_file="${TEST_DIR:-/tmp}/test-reset.conf"
-	cat >"$config_file" <<'EOF'
-VPN_NAME="Test VPN"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-ENABLE_PING_CHECK=1
-EOF
+	load helpers/config
+	create_test_config "$config_file" \
+		'VPN_NAME="Test VPN"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"ENABLE_PING_CHECK=1"
 
 	# Parse config file (call directly to access global variables)
 	safe_parse_config_file "$config_file"

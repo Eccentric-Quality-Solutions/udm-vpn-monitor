@@ -3,13 +3,15 @@
 # Tests for Detection Error Recovery Paths
 # Tests error handling, edge cases, and state management integration for detection functions
 #
-# These tests address the gaps identified in COVERAGE_GAP_ANALYSIS.md lines 28-49:
+# These tests address error recovery paths, edge cases, and state management integration:
 # - Error Recovery Paths: cascading failures, command failures, timeouts
 # - Edge Cases: multiple peer IPs, byte counter wrap-around, partial failures
 # - State Management Integration: state file corruption, write failures, read failures
 
 load test_helper
 load helpers/test_data
+load helpers/state
+load helpers/assertions
 
 # ============================================================================
 # ERROR RECOVERY PATHS TESTS
@@ -55,7 +57,7 @@ EOF
 	export ENABLE_PING_CHECK=1
 
 	# Should handle cascading failures gracefully
-	run check_vpn_status "$peer_ip" "$internal_ip" ""
+	run check_vpn_status "$peer_ip" "$internal_ip" "TEST"
 	assert_failure
 
 	remove_mock_from_path
@@ -225,8 +227,7 @@ EOF
 
 	# Test with state read failure (simulated by making state file unreadable)
 	local state_file
-	source_function "get_peer_state_file_path"
-	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "spi")
+	state_file=$(get_state_file_path "$location_name" "$peer_ip" "spi")
 	if [[ -f "$state_file" ]]; then
 		local original_perms
 		original_perms=$(save_permissions_for_restore "$state_file")
@@ -257,10 +258,37 @@ EOF
 
 	# Mock ip command - first IP succeeds, second fails
 	# Use call counter to return different results for each call
+	# Note: execute_xfrm_state_command tries "ip -s xfrm state" first, then falls back to "ip xfrm state"
 	local call_count_file="${TEST_DIR}/xfrm_call_count"
+	echo "0" >"$call_count_file"
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by execute_xfrm_state_command
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Track call count to return different results
+    call_count_file="${call_count_file}"
+    if [[ -f "\$call_count_file" ]]; then
+        count=\$(cat "\$call_count_file")
+        count=\$((count + 1))
+    else
+        count=1
+    fi
+    echo "\$count" > "\$call_count_file"
+
+    # First call: return SA for first IP (TEST_PEER_IP)
+    if [[ \$count -le 2 ]]; then
+        # First two calls are for first IP (ip -s xfrm state and possibly fallback)
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+        echo "    lifetime current: 1000 bytes, 10 packets"
+        exit 0
+    else
+        # Subsequent calls are for second IP - return nothing (no SA for second IP)
+        exit 0  # Exit 0 but no output - grep won't find match
+    fi
+fi
+# Handle "ip xfrm state" (without statistics flag) - fallback used by execute_xfrm_state_command
 if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     # Track call count to return different results
     call_count_file="${call_count_file}"
@@ -272,20 +300,25 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     fi
     echo "\$count" > "\$call_count_file"
     
-    # First call: return SA for first IP (192.168.1.1)
-    if [[ \$count -eq 1 ]]; then
+    # First call: return SA for first IP (TEST_PEER_IP)
+    if [[ \$count -le 2 ]]; then
+        # First two calls are for first IP
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    lifetime current: 1000 bytes, 10 packets"
         exit 0
     else
-        # Second call: return nothing (no SA for second IP)
+        # Subsequent calls are for second IP - return nothing (no SA for second IP)
         exit 0  # Exit 0 but no output - grep won't find match
     fi
 fi
 exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# Mock ipsec command - needed for fallback when xfrm fails
+	mock_ipsec_status 1
 	add_mock_to_path
 
 	# Initialize state for both IPs
@@ -297,9 +330,15 @@ EOF
 	# Source required functions
 	source_function "check_vpn_status"
 
+	# Reset call counter before first check
+	echo "0" >"$call_count_file"
+
 	# Check first IP (should succeed)
 	run check_vpn_status "$peer_ip1" "$internal_ip1" "$location_name"
 	assert_success
+
+	# Reset call counter before second check (so second IP gets fresh count)
+	echo "0" >"$call_count_file"
 
 	# Check second IP (should fail)
 	run check_vpn_status "$peer_ip2" "$internal_ip2" "$location_name"
@@ -470,9 +509,8 @@ EOF
 	local location_name="TEST"
 
 	# Create corrupted state file (invalid JSON/format)
-	source_function "get_peer_state_file_path"
 	local state_file
-	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "last_bytes")
+	state_file=$(get_state_file_path "$location_name" "$peer_ip" "last_bytes")
 	mkdir -p "$(dirname "$state_file")"
 	echo "invalid_corrupted_data{{{}}" >"$state_file"
 
@@ -512,9 +550,8 @@ EOF
 
 	# Make state file unwritable to simulate write failure
 	# Note: setup_test_environment already exports STATE_DIR and LOGS_DIR
-	source_function "get_peer_state_file_path"
 	local state_file
-	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "last_bytes")
+	state_file=$(get_state_file_path "$location_name" "$peer_ip" "last_bytes")
 	if [[ -f "$state_file" ]]; then
 		local original_perms
 		original_perms=$(save_permissions_for_restore "$state_file")
@@ -549,9 +586,8 @@ EOF
 
 	# Make state file unreadable to simulate read failure
 	# Note: setup_test_environment already exports STATE_DIR and LOGS_DIR
-	source_function "get_peer_state_file_path"
 	local state_file
-	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "failure_type")
+	state_file=$(get_state_file_path "$location_name" "$peer_ip" "failure_type")
 	mkdir -p "$(dirname "$state_file")"
 	echo "tunnel_down" >"$state_file" 2>/dev/null || true
 
@@ -598,9 +634,10 @@ EOF
 	# Mock ip command - xfrm check finds SA but byte counter extraction fails
 	# This simulates the scenario where SA exists but byte counter info is unavailable
 	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
+	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by execute_xfrm_state_command
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     # Return xfrm output with SA but without byte counter info in lifetime current
     # This simulates byte counter extraction failure
     echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
@@ -609,7 +646,17 @@ if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
     # Note: No "lifetime current:" line, which causes byte counter extraction to fail
     exit 0
 fi
-exec /usr/bin/ip "$@"
+# Handle "ip xfrm state" (without statistics flag) - fallback used by execute_xfrm_state_command
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Return xfrm output with SA but without byte counter info in lifetime current
+    # This simulates byte counter extraction failure
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime config: 1000000 bytes, 1000 packets"
+    # Note: No "lifetime current:" line, which causes byte counter extraction to fail
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
 
@@ -636,8 +683,9 @@ EOF
 	assert_file_exist "$log_file"
 
 	# Verify the combined message format:
-	# 1. Should contain "VPN suspect for" with location name and peer IP
-	assert_log_contains "$log_file" "VPN suspect for $location_name ($peer_ip)"
+	# 1. Should contain "VPN suspect for" with peer IP (location name is in log prefix, not in message)
+	# Note: format_peer_ip_display shows (internal_ip external_ip) when internal IP is provided
+	assert_log_contains "$log_file" "VPN suspect for ($internal_ip $peer_ip)"
 
 	# 2. Should include xfrm detection method name
 	assert_log_contains "$log_file" "Detection method: xfrm (ip xfrm state)"
@@ -685,15 +733,23 @@ EOF
 
 	# Mock ip command - xfrm check finds SA but byte counter extraction fails
 	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
+	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by execute_xfrm_state_command
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
     echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
     echo "    lifetime config: 1000000 bytes, 1000 packets"
     exit 0
 fi
-exec /usr/bin/ip "$@"
+# Handle "ip xfrm state" (without statistics flag) - fallback used by execute_xfrm_state_command
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime config: 1000000 bytes, 1000 packets"
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
 
@@ -720,6 +776,8 @@ EOF
 	assert_file_exist "$log_file"
 
 	# Verify the diagnostic includes "internal IP not provided" context
+	# Note: format_peer_ip_display shows just external IP when internal IP not provided
+	assert_log_contains "$log_file" "VPN suspect for ($peer_ip)"
 	assert_log_contains "$log_file" "internal IP not provided"
 
 	# Verify it does NOT say "ping check disabled" (since ping check is enabled)
@@ -902,7 +960,7 @@ EOF
 	# Verify failure type was detected (confirms detect_failure_type was called)
 	assert_file_exist "$log_file"
 	# Should have detected failure type (not "unknown" - should be "routing_issue" or similar)
-	assert_file_contains "$log_file" "failure type" || assert_file_contains "$log_file" "Failure type"
+	assert_log_contains_any "$log_file" "failure type" "Failure type"
 
 	remove_mock_from_path
 }
@@ -931,17 +989,22 @@ EOF
 	echo "$xfrm_output" >"$xfrm_output_file"
 
 	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
+	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by execute_xfrm_state_command
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     # Return xfrm output with SA and byte counter info
-    cat "MOCK_XFRM_OUTPUT"
+    cat "${xfrm_output_file}"
     exit 0
 fi
-exec /usr/bin/ip "$@"
+# Handle "ip xfrm state" (without statistics flag) - fallback used by execute_xfrm_state_command
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Return xfrm output with SA and byte counter info
+    cat "${xfrm_output_file}"
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
 EOF
-	# Replace placeholder with actual file path
-	sed -i "s|MOCK_XFRM_OUTPUT|${xfrm_output_file}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 
 	# Mock ipsec command - ipsec check fails (no connection found)
@@ -986,6 +1049,9 @@ EOF
 
 	# Verify the message is combined (contains semicolon separator)
 	assert_log_contains "$log_file" ";"
+
+	# Verify the message format includes peer IP display (internal_ip external_ip when internal IP provided)
+	assert_log_contains "$log_file" "VPN suspect for ($internal_ip $peer_ip)"
 
 	# Verify we have exactly one combined diagnostic message
 	local suspect_count

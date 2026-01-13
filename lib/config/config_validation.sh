@@ -787,7 +787,8 @@ validate_config() {
 			# Validate LOCAL_UDM_IP is configured when ping checks are enabled with internal IPs
 			if [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
 				if [[ -z "${LOCAL_UDM_IP:-}" ]]; then
-					handle_error "WARNING" "$location_name" "LOCAL_UDM_IP is not configured but ENABLE_PING_CHECK=1 and $location_name has internal IPs"
+					# Note: location_name is already in log prefix, so we remove redundant location name
+					handle_error "WARNING" "$location_name" "LOCAL_UDM_IP is not configured but ENABLE_PING_CHECK=1 and has internal IPs"
 					handle_error "WARNING" "$location_name" "LOCAL_UDM_IP is required for ping checks with internal IPs. Ping checks may fail without it."
 				else
 					# Validate LOCAL_UDM_IP format

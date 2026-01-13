@@ -7,6 +7,7 @@
 
 load test_helper
 load helpers/test_data
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -33,7 +34,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Should detect bytes=0 as suspect (may fail VPN check)
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "bytes=0" || assert_file_contains "$LOG_FILE" "suspect"
+	assert_log_contains_any "$LOG_FILE" "bytes=0" "suspect"
 
 	remove_mock_from_path
 }
@@ -58,7 +59,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Should detect bytes not increasing (may fail VPN check)
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "bytes not increasing" || assert_file_contains "$LOG_FILE" "suspect" || assert_file_contains "$LOG_FILE" "bytes decreased"
+	assert_log_contains_any "$LOG_FILE" "bytes not increasing" "suspect" "bytes decreased"
 
 	remove_mock_from_path
 }
@@ -76,7 +77,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Should detect bytes not increasing
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "bytes not increasing" || assert_file_contains "$LOG_FILE" "suspect"
+	assert_log_contains_any "$LOG_FILE" "bytes not increasing" "suspect"
 
 	remove_mock_from_path
 }
@@ -188,7 +189,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should handle all methods unavailable gracefully
 	# Script may exit early, but if log file exists, it should contain error messages
 	if [[ -f "$LOG_FILE" ]]; then
-		assert_file_contains "$LOG_FILE" "suspect" || assert_file_contains "$LOG_FILE" "failed" || assert_file_contains "$LOG_FILE" "WARNING"
+		assert_log_contains_any "$LOG_FILE" "suspect" "failed" "WARNING"
 	else
 		# If log file doesn't exist, script likely exited very early - this is acceptable
 		# The important thing is it didn't crash
@@ -616,7 +617,9 @@ ADDITIONAL_EOF
 	# Run with timeout to prevent test from hanging
 	# Test timeout should be longer than IPSEC_STATUS_TIMEOUT to allow script to complete
 	# Allow extra time for script initialization and other operations
-	run timeout 10 bash "$TEST_SCRIPT" --fake
+	# Note: In VPN down scenarios, ipsec status may be called multiple times (via xfrm fallbacks),
+	# each taking IPSEC_STATUS_TIMEOUT (5s) to timeout, so we need sufficient buffer
+	run timeout 20 bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should handle ipsec status hang gracefully (should timeout and continue)
@@ -944,7 +947,7 @@ EOF
 	# Should detect rekey and reset baseline
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "SA rekey detected" || assert_file_contains "$LOG_FILE" "rekey"
+	assert_log_contains_any "$LOG_FILE" "SA rekey detected" "rekey"
 
 	source_function "get_peer_state_file_path"
 
@@ -1124,7 +1127,7 @@ EOF
 
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
-	assert_file_contains "$LOG_FILE" "SA rekey detected" || assert_file_contains "$LOG_FILE" "rekey"
+	assert_log_contains_any "$LOG_FILE" "SA rekey detected" "rekey"
 
 	# Second rekey (different SPI)
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "3000" "0xABCDEF12" >/dev/null
@@ -1133,7 +1136,7 @@ EOF
 	# Mock is already in PATH from first add_mock_to_path call
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
-	assert_file_contains "$LOG_FILE" "SA rekey detected" || assert_file_contains "$LOG_FILE" "rekey"
+	assert_log_contains_any "$LOG_FILE" "SA rekey detected" "rekey"
 
 	source_function "get_peer_state_file_path"
 
@@ -1165,7 +1168,7 @@ EOF
 
 	# Should detect tunnel_down failure type
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Tunnel down" || assert_file_contains "$LOG_FILE" "tunnel_down"
+	assert_log_contains_any "$LOG_FILE" "Tunnel down" "tunnel_down"
 
 	source_function "get_peer_state_file_path"
 	# Verify failure type stored in state file
@@ -1193,7 +1196,7 @@ EOF
 
 	# Should detect routing_issue failure type
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Routing issue" || assert_file_contains "$LOG_FILE" "routing_issue"
+	assert_log_contains_any "$LOG_FILE" "Routing issue" "routing_issue"
 
 	source_function "get_peer_state_file_path"
 	# Verify failure type stored in state file
@@ -1224,7 +1227,7 @@ EOF
 
 	# Should detect routing_issue failure type
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Routing issue" || assert_file_contains "$LOG_FILE" "routing_issue"
+	assert_log_contains_any "$LOG_FILE" "Routing issue" "routing_issue"
 
 	remove_mock_from_path
 }
@@ -1244,7 +1247,7 @@ EOF
 	# Should detect rekey (not a failure)
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "rekey" || assert_file_contains "$LOG_FILE" "SA rekey detected"
+	assert_log_contains_any "$LOG_FILE" "rekey" "SA rekey detected"
 
 	source_function "get_peer_state_file_path"
 	# Verify failure type stored (rekey is logged but VPN is OK)
@@ -1301,7 +1304,7 @@ EOF
 
 	# Should detect unknown failure type
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Unknown" || assert_file_contains "$LOG_FILE" "unknown"
+	assert_log_contains_any "$LOG_FILE" "Unknown" "unknown"
 
 	source_function "get_peer_state_file_path"
 	# Verify failure type stored in state file
@@ -1395,7 +1398,7 @@ EOF
 	# Should detect failure type using fallback
 	assert_file_exist "$LOG_FILE"
 	# Should contain failure type detection (may be unknown or tunnel_down)
-	assert_file_contains "$LOG_FILE" "tunnel_down" || assert_file_contains "$LOG_FILE" "unknown" || assert_file_contains "$LOG_FILE" "VPN check failed"
+	assert_log_contains_any "$LOG_FILE" "tunnel_down" "unknown" "VPN check failed"
 
 	remove_mock_from_path
 }
@@ -1416,7 +1419,7 @@ EOF
 	# Should detect idle tunnel (ping succeeds)
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "idle but healthy" || assert_file_contains "$LOG_FILE" "ping check passed"
+	assert_log_contains_any "$LOG_FILE" "idle but healthy" "ping check passed"
 
 	# Idle state should be stored
 	local idle_file
@@ -1461,7 +1464,7 @@ EOF
 	# Should log keepalive suggestion
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "ENABLE_KEEPALIVE" || assert_file_contains "$LOG_FILE" "keepalive"
+	assert_log_contains_any "$LOG_FILE" "ENABLE_KEEPALIVE" "keepalive"
 
 	remove_mock_from_path
 }
@@ -1480,7 +1483,7 @@ EOF
 	assert_success
 	assert_file_exist "$LOG_FILE"
 	# Should log message about keepalive daemon (may suggest starting it)
-	assert_file_contains "$LOG_FILE" "keepalive" || assert_file_contains "$LOG_FILE" "daemon"
+	assert_log_contains_any "$LOG_FILE" "keepalive" "daemon"
 
 	remove_mock_from_path
 }
@@ -1508,7 +1511,7 @@ EOF
 	# Should clear idle state (traffic is flowing)
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "traffic flowing" || assert_file_contains "$LOG_FILE" "VPN OK"
+	assert_log_contains_any "$LOG_FILE" "traffic flowing" "VPN OK"
 
 	# Idle state file should be deleted or cleared
 	if [[ -f "$idle_file" ]]; then
@@ -1533,7 +1536,7 @@ EOF
 	assert_success
 	assert_file_exist "$LOG_FILE"
 	# Should mark as suspect/failed (bytes not increasing, ping disabled)
-	assert_file_contains "$LOG_FILE" "suspect" || assert_file_contains "$LOG_FILE" "bytes not increasing"
+	assert_log_contains_any "$LOG_FILE" "suspect" "bytes not increasing"
 
 	# Idle state should not be set
 	local idle_file

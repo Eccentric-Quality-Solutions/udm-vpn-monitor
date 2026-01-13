@@ -727,17 +727,7 @@ Some state files are intentionally **not** managed by `get_peer_state_file_path(
      - Even though xfrm recovery is per-connection, it's tracked globally for rate limiting
    - **Usage**: Use `RESTART_COUNT_FILE` variable directly
 
-2. **`COOLDOWN_UNTIL_FILE`** (`${STATE_DIR}/cooldown_until`)
-   - **Purpose**: Prevents immediate re-restarts after a recovery action
-   - **Scope**: Set after Tier 3 recovery actions
-   - **Why Outside**: 
-     - Cooldown applies to the entire monitoring system
-     - Full restarts (`ipsec restart`) affect all tunnels, so the entire system needs stabilization time
-     - Even if triggered by one location, the entire system needs cooldown
-     - Prevents cascading recovery attempts across locations
-   - **Usage**: Use `COOLDOWN_UNTIL_FILE` variable directly
-
-3. **`NETWORK_PARTITION_STATE_FILE`** (`${STATE_DIR}/network_partition_state`)
+2. **`NETWORK_PARTITION_STATE_FILE`** (`${STATE_DIR}/network_partition_state`)
    - **Purpose**: Tracks network connectivity status (0 = healthy, 1 = partitioned)
    - **Scope**: System-wide network condition
    - **Why Outside**: 
@@ -1551,6 +1541,45 @@ log_message "ERROR" "NYC" "Failed to restart VPN for NYC"
 - DEBUG messages only output if DEBUG=1
 - INFO messages output to stderr when running interactively (TTY attached)
 
+### Pattern: Logging Errors During Early Initialization
+
+**When to Use:** Error handling when sourcing modules fails during early initialization, before logging infrastructure is fully available
+
+**Pattern:**
+```bash
+# Helper function to log errors when sourcing modules fails
+# Uses log_message if available (from logging.sh), otherwise falls back to echo
+# This ensures errors are logged consistently when possible
+log_state_error() {
+    local message="$1"
+    if type log_message >/dev/null 2>&1; then
+        # log_message is available - use it (it will handle LOG_FILE not being set)
+        log_message "ERROR" "SYSTEM" "$message"
+    else
+        # Fallback to echo if log_message not available
+        echo "Error: $message" >&2
+    fi
+}
+
+# Use the helper when sourcing modules
+source "${MODULE_DIR}/module.sh" 2>/dev/null || {
+    log_state_error "Failed to source module.sh"
+    exit 1
+}
+```
+
+**Key Points:**
+- Check if `log_message` is available using `type log_message`
+- Use `log_message` if available (even if `LOG_FILE` isn't set yet - it will output to stderr)
+- Fall back to `echo` if `log_message` isn't available (e.g., during very early initialization)
+- This pattern is useful for library files that are sourced early in the initialization sequence
+- Ensures errors are logged through centralized logging when possible, but still work if logging isn't available
+
+**Example:**
+- `lib/state.sh` uses this pattern when sourcing state module files fails
+- When `vpn-monitor.sh` sources `state.sh` (after `logging.sh`), errors are logged via `log_message`
+- If `state.sh` is sourced independently (e.g., in tests), it falls back to `echo`
+
 ### Pattern: Don't Log Success When Operations Fail
 
 **When to Use:** Functions that check operation success but log success messages
@@ -1558,27 +1587,25 @@ log_message "ERROR" "NYC" "Failed to restart VPN for NYC"
 **Pattern:**
 ```bash
 # ✅ GOOD: Return early on error, only log success when operation succeeds
-set_cooldown() {
-    local minutes="$1"
-    local cooldown_until
-    cooldown_until=$(get_timestamp_plus_minutes "$minutes")
-    if ! atomic_write_file "$COOLDOWN_UNTIL_FILE" "$cooldown_until"; then
-        handle_error "ERROR" "SYSTEM" "Failed to set cooldown period (file: $COOLDOWN_UNTIL_FILE)" 0
+record_restart() {
+    local timestamp
+    timestamp=$(get_unix_timestamp)
+    if ! atomic_write_file "$RESTART_COUNT_FILE" "$timestamp" "append"; then
+        handle_error "ERROR" "SYSTEM" "Failed to record restart (file: $RESTART_COUNT_FILE)" 0
         return 0  # Return early - don't log success
     fi
-    log_message "INFO" "SYSTEM" "Cooldown period set for $minutes minutes"  # Only logs on success
+    log_message "INFO" "SYSTEM" "Restart recorded at $timestamp"  # Only logs on success
 }
 
 # ❌ BAD: Logs success even when write fails
-set_cooldown() {
-    local minutes="$1"
-    local cooldown_until
-    cooldown_until=$(get_timestamp_plus_minutes "$minutes")
-    if ! atomic_write_file "$COOLDOWN_UNTIL_FILE" "$cooldown_until"; then
-        handle_error "ERROR" "SYSTEM" "Failed to set cooldown period" 0
+record_restart() {
+    local timestamp
+    timestamp=$(get_unix_timestamp)
+    if ! atomic_write_file "$RESTART_COUNT_FILE" "$timestamp" "append"; then
+        handle_error "ERROR" "SYSTEM" "Failed to record restart" 0
         # Bug: Function continues and logs success below!
     fi
-    log_message "INFO" "SYSTEM" "Cooldown period set for $minutes minutes"  # Wrong! Logs even on failure
+    log_message "INFO" "SYSTEM" "Restart recorded at $timestamp"  # Wrong! Logs even on failure
 }
 ```
 
@@ -3580,6 +3607,107 @@ read -r -p "Location name: " name  # Prompt text may be read as input
 
 **Why This Matters:**
 - When stdin is redirected (e.g., `script.sh <<EOF\ninput\nEOF`), any output to stdout before `read` can be consumed as input
+
+---
+
+## Comment Patterns
+
+### Pattern: Remove Useless Comments
+
+**When to Use:** When reviewing code for cleanup and maintainability
+
+**Pattern:**
+```bash
+# ❌ BAD: Comment just restates what the code does
+local variable=""
+# Set variable to empty string
+
+# ❌ BAD: Obvious comment
+if [[ $value -eq 0 ]]; then
+    # Return 0 if value is zero
+    return 0
+fi
+
+# ❌ BAD: Comment that's obvious from code structure
+# Extract first internal IP if multiple provided (space-separated)
+local internal_peer_ip=""
+if [[ -n "$internal_peer_ips" ]]; then
+    # ... code that extracts first IP
+fi
+
+# ✅ GOOD: Comment explains WHY, not WHAT
+# Use provided SA existence state if available, otherwise check SA existence
+# This optimization eliminates duplicate SA checks by reusing state from check_xfrm_status()
+local ipsec_phase2_up=0
+if [[ -n "$sa_exists" ]]; then
+    ipsec_phase2_up=$sa_exists
+fi
+
+# ✅ GOOD: Comment provides context about non-obvious behavior
+# Note: ip xfrm state returns exit code 0 even when no SAs exist (just empty output)
+# So we need to check stderr for actual command errors
+full_xfrm_output=$(ip -s xfrm state 2>&1)
+
+# ✅ GOOD: Comment explains edge case or important detail
+# Use fixed-string matching to prevent regex pattern injection
+# Match on "dst $external_peer_ip" pattern which appears at the start of each SA entry
+xfrm_output=$(get_xfrm_state_for_peer "$external_peer_ip")
+```
+
+**Key Points:**
+- **Remove comments that just restate the code** - They add noise without value
+- **Keep comments that explain WHY** - They provide context and reasoning
+- **Keep comments about non-obvious behavior** - Edge cases, platform-specific behavior, etc.
+- **Keep function documentation blocks** - Per ADR-0007, comprehensive function documentation is valuable
+- **Keep shellcheck source comments** - They're necessary for linting
+- **Remove obvious comments** - Comments like "# Set variable", "# Return 0", "# Check if X" that just describe what the code does
+
+**What to Remove:**
+- Comments that just restate variable assignments
+- Comments that describe obvious control flow
+- Comments that repeat function names or obvious operations
+- Redundant comments before shellcheck directives (the shellcheck comment already identifies what's being sourced)
+
+**What to Keep:**
+- Comments explaining optimization decisions
+- Comments about non-obvious platform behavior
+- Comments explaining why a particular approach was chosen
+- Function documentation blocks (per ADR-0007)
+- Shellcheck source comments (required for linting)
+- Comments that provide context about edge cases or important details
+
+**Examples of Useless Comments to Remove:**
+```bash
+# ❌ Remove: Just restates the code
+local diagnostic_parts=()
+# Build diagnostic message explaining why we couldn't determine the type
+
+# ❌ Remove: Obvious from code structure
+# Extract first internal IP if multiple provided (space-separated)
+local internal_peer_ip=""
+
+# ❌ Remove: Just describes what the code does
+# Check if we have actual output (not just empty/whitespace)
+if [[ -n "${full_xfrm_output//[[:space:]]/}" ]]; then
+
+# ❌ Remove: Redundant with shellcheck comment
+# Source common utility functions
+# shellcheck source=lib/common.sh
+source "${LIB_DIR}/common.sh"
+```
+
+**Examples of Useful Comments to Keep:**
+```bash
+# ✅ Keep: Explains optimization
+# Use provided SA existence state if available, otherwise check SA existence
+# This optimization eliminates duplicate SA checks by reusing state from check_xfrm_status()
+
+# ✅ Keep: Explains non-obvious behavior
+# Note: ip xfrm state returns exit code 0 even when no SAs exist (just empty output)
+# So we need to check stderr for actual command errors
+
+# ✅ Keep: Explains security consideration
+# Use fixed-string matching to prevent regex pattern injection
 - Redirecting prompts to stderr keeps them visible to users while preventing them from interfering with input redirection
 - This is critical for testability - tests can provide input via heredoc without the prompt text being read as input
 
@@ -3607,11 +3735,12 @@ This document consolidates code patterns used throughout the UDM VPN Monitor cod
 16. **Loops**: Read files line by line properly, iterate over arrays correctly
 17. **Associative Arrays**: Use namerefs to pass arrays by reference, initialize properly
 18. **Variable Initialization**: Use conditional readonly for multi-source modules, provide default parameter values, pre-declare arrays (use `declare -gA` for global arrays to avoid scoping issues)
-19. **Bash Strict Mode**: Use `set -euo pipefail` in main scripts, handle errors explicitly in library modules
+19. **Comment Patterns**: Remove useless comments that just restate code, keep comments that explain why or provide context
+20. **Bash Strict Mode**: Use `set -euo pipefail` in main scripts, handle errors explicitly in library modules
     - **Deletion Safety**: Validate paths before deletion operations, protect against symlink attacks, use defense-in-depth
-20. **Quoting**: Always quote variable expansions, use `$()` for command substitution, quote heredoc delimiters appropriately
-21. **UDM Constraints**: Target UDM OS 4.3+, use `/data` for persistent storage, check command availability, provide fallbacks
-22. **Interactive Input**: Redirect prompts to stderr (`>&2`) before `read` to prevent interference with stdin redirection in tests
+21. **Quoting**: Always quote variable expansions, use `$()` for command substitution, quote heredoc delimiters appropriately
+22. **UDM Constraints**: Target UDM OS 4.3+, use `/data` for persistent storage, check command availability, provide fallbacks
+23. **Interactive Input**: Redirect prompts to stderr (`>&2`) before `read` to prevent interference with stdin redirection in tests
 
 For more detailed information about specific patterns, see:
 - `CODE_REVIEW_LESSONS_LEARNED.md` - Historical lessons learned from code reviews (includes bug context and how patterns were discovered)

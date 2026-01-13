@@ -6,6 +6,7 @@
 
 load test_helper
 load helpers/test_data
+load helpers/state
 load fixtures/vpn_active
 load fixtures/vpn_down
 
@@ -236,9 +237,8 @@ EOF
 	assert_success
 
 	# Failure counter should be reset
-	ensure_state_functions_loaded
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "NYC" "203.0.113.1" "failure_count")
+	failure_counter=$(get_state_file_path "NYC" "203.0.113.1" "failure_count")
 	assert_file_exist "$failure_counter"
 	local count
 	count=$(cat "$failure_counter")
@@ -292,15 +292,15 @@ EOF
 	# Expected: Invalid characters in location names are replaced in filenames
 	# Importance: Ensures safe filenames even with special characters
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_Office_EXTERNAL="203.0.113.1"
-LOCATION_NYC_Office_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
-STATE_DIR="${TEST_DIR}"
-EOF
+	load helpers/config
+	create_test_config "$config_file" \
+		'LOCATION_NYC_Office_EXTERNAL="203.0.113.1"' \
+		"LOCATION_NYC_Office_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"LOG_FILE=\"${TEST_DIR}/logs/vpn-monitor.log\"" \
+		"STATE_DIR=\"${TEST_DIR}\""
 
 	setup_location_test_vpn_monitor
 
@@ -330,15 +330,15 @@ EOF
 	# Expected: Ping check uses external IP when internal IPs are not configured
 	# Importance: Validates fallback to external IP
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="203.0.113.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-ENABLE_PING_CHECK=1
-LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
-STATE_DIR="${TEST_DIR}"
-EOF
+	load helpers/config
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"ENABLE_PING_CHECK=1" \
+		"LOG_FILE=\"${TEST_DIR}/logs/vpn-monitor.log\"" \
+		"STATE_DIR=\"${TEST_DIR}\""
 
 	setup_location_test_vpn_monitor
 
