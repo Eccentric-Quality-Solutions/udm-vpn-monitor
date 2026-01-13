@@ -59,10 +59,15 @@ jobs:
           fi
 
   test-coverage:
-    name: Test Coverage
+    name: Test Coverage (Group ${{ matrix.group }}/${{ matrix.total_groups }})
     runs-on: ubuntu-latest
     needs: lint
-    timeout-minutes: 60
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3, 4]
+        total_groups: [4]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -72,52 +77,192 @@ jobs:
         with:
           install_kcov_deps: true
 
-      - name: Cache kcov build
-        id: cache-kcov
-        uses: actions/cache@v4
-        with:
-          path: /tmp/kcov/build
-          key: kcov-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
-          restore-keys: |
-            kcov-${{ runner.os }}-
+      - name: Setup kcov
+        uses: ./.github/actions/setup-kcov
 
-      - name: Build and install kcov
+      - name: Get test files for this group
+        id: test_files
         run: |
-          # Clone kcov repository if not cached
-          if [ ! -d /tmp/kcov ]; then
-            git clone https://github.com/SimonKagstrom/kcov.git /tmp/kcov
+          mapfile -t TEST_FILES < <(./scripts/split-tests-for-ci.sh ${{ matrix.group }} ${{ matrix.total_groups }})
+          if [ ${#TEST_FILES[@]} -eq 0 ]; then
+            echo "No test files for group ${{ matrix.group }}/${{ matrix.total_groups }}"
+            echo "test_count=0" >> $GITHUB_OUTPUT
+            exit 0
           fi
-          
-          cd /tmp/kcov
-          
-          # Build kcov (use cached build directory if available)
-          mkdir -p build
-          cd build
-          
-          # Only run cmake if CMakeCache.txt doesn't exist (build not cached)
-          if [ ! -f CMakeCache.txt ]; then
-            cmake ..
-          fi
-          
-          # Build kcov (will be faster if build artifacts are cached)
-          make -j$(nproc)
-          sudo make install
-          
-          # Verify installation
-          kcov --version
+          echo "test_count=${#TEST_FILES[@]}" >> $GITHUB_OUTPUT
+          printf '%s\n' "${TEST_FILES[@]}" > /tmp/test_files.txt
+          echo "Test files for group ${{ matrix.group }}/${{ matrix.total_groups }}:"
+          cat /tmp/test_files.txt
 
       - name: Run tests with coverage
+        if: steps.test_files.outputs.test_count > 0
         env:
           RUN_SLOW_TESTS: 1
-          PARALLEL_JOBS: 6
+          PARALLEL_JOBS: 2
         run: |
-          ./tests/run_tests.sh --coverage --monitor-processes
+          set -euo pipefail
+          
+          # Read test files for this group
+          mapfile -t TEST_FILES < <(cat /tmp/test_files.txt)
+          
+          # Set up coverage directory for this group
+          COVERAGE_DIR="coverage/group_${{ matrix.group }}"
+          mkdir -p "$COVERAGE_DIR"
+          
+          # Get kcov arguments (same as test runner uses)
+          KCOV_ARGS=(
+            --include-path="$PWD/lib"
+            --include-path="$PWD/scripts"
+            --include-path="$PWD"
+            --exclude-path="$PWD/tests"
+            --exclude-path="$PWD/coverage"
+            --exclude-path="$PWD/.git"
+            --exclude-path="$PWD/logs"
+            --exclude-path="$PWD/state"
+            --exclude-path="$PWD/reports"
+            --exclude-path="$PWD/analyze"
+            --exclude-path="/usr"
+            --exclude-path="/tmp"
+          )
+          
+          # Track test failures
+          FAILED_TESTS=()
+          TIMED_OUT_TESTS=()
+          
+          # Run each test file with kcov
+          # kcov automatically merges coverage when multiple runs output to the same directory
+          for test_file in "${TEST_FILES[@]}"; do
+            echo "Running with coverage: $(basename "$test_file")"
+            # Use timeout to prevent hanging tests (120 seconds per test file)
+            if timeout 120 kcov "${KCOV_ARGS[@]}" "$COVERAGE_DIR" bats --timing "$test_file"; then
+              echo "✓ $(basename "$test_file") passed"
+            else
+              EXIT_CODE=$?
+              if [ $EXIT_CODE -eq 124 ]; then
+                echo "✗ $(basename "$test_file") timed out after 120 seconds"
+                TIMED_OUT_TESTS+=("$(basename "$test_file")")
+              else
+                echo "✗ $(basename "$test_file") failed with exit code $EXIT_CODE"
+                FAILED_TESTS+=("$(basename "$test_file")")
+              fi
+            fi
+          done
+          
+          # Report results
+          echo ""
+          echo "=== Test Results for Group ${{ matrix.group }}/${{ matrix.total_groups }} ==="
+          echo "Total test files: ${#TEST_FILES[@]}"
+          echo "Failed: ${#FAILED_TESTS[@]}"
+          echo "Timed out: ${#TIMED_OUT_TESTS[@]}"
+          
+          if [ ${#FAILED_TESTS[@]} -gt 0 ]; then
+            echo ""
+            echo "Failed test files:"
+            printf '  - %s\n' "${FAILED_TESTS[@]}"
+          fi
+          
+          if [ ${#TIMED_OUT_TESTS[@]} -gt 0 ]; then
+            echo ""
+            echo "Timed out test files:"
+            printf '  - %s\n' "${TIMED_OUT_TESTS[@]}"
+          fi
+          
+          echo ""
+          echo "Coverage directory: $COVERAGE_DIR"
+          if [ -d "$COVERAGE_DIR" ]; then
+            echo "Coverage files: $(find "$COVERAGE_DIR" -type f | wc -l)"
+          fi
+          
+          # Fail the job if any tests failed or timed out
+          if [ ${#FAILED_TESTS[@]} -gt 0 ] || [ ${#TIMED_OUT_TESTS[@]} -gt 0 ]; then
+            echo "::error::Some tests failed or timed out in group ${{ matrix.group }}"
+            exit 1
+          fi
+
+      - name: Upload coverage reports
+        if: always() && steps.test_files.outputs.test_count > 0
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-group-${{ matrix.group }}
+          path: |
+            coverage/group_${{ matrix.group }}/
+          retention-days: 30
+          if-no-files-found: ignore
+
+  merge-coverage:
+    name: Merge Coverage Reports
+    runs-on: ubuntu-latest
+    needs: [lint, test-coverage]
+    timeout-minutes: 10
+    if: always()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          install_kcov_deps: true
+
+      - name: Setup kcov
+        uses: ./.github/actions/setup-kcov
+
+      - name: Download all coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-group-*
+          path: coverage-parts/
+          merge-multiple: false
+
+      - name: Merge coverage reports
+        run: |
+          set -euo pipefail
+          
+          # Find all coverage directories from each group
+          COVERAGE_DIRS=()
+          for artifact_dir in coverage-parts/coverage-group-*; do
+            if [ -d "$artifact_dir" ]; then
+              # Look for coverage/group_* directories inside the artifact
+              for group_dir in "$artifact_dir"/coverage/group_*; do
+                if [ -d "$group_dir" ]; then
+                  COVERAGE_DIRS+=("$group_dir")
+                fi
+              done
+            fi
+          done
+          
+          if [ ${#COVERAGE_DIRS[@]} -eq 0 ]; then
+            echo "Warning: No coverage directories found to merge"
+            echo "Artifact structure:"
+            find coverage-parts -type d 2>/dev/null | head -20 || true
+            exit 0
+          fi
+          
+          echo "Found ${#COVERAGE_DIRS[@]} coverage directory(ies) to merge:"
+          printf '  %s\n' "${COVERAGE_DIRS[@]}"
+          
+          # Use kcov's built-in merge functionality
+          echo "Merging coverage reports using kcov --merge..."
+          kcov --merge coverage "${COVERAGE_DIRS[@]}"
+          
+          # Verify merged coverage
+          if [ -d coverage ]; then
+            echo "Coverage merged successfully"
+            if [ -f coverage/index.html ] || [ -f coverage/index.js ] || [ -f coverage/index.json ]; then
+              echo "Coverage report files found"
+            else
+              echo "Warning: Coverage report index files not found"
+            fi
+          else
+            echo "Error: Coverage directory not created"
+            exit 1
+          fi
 
       - name: Generate coverage report
         run: |
           ./tests/generate_coverage_report.sh || true
 
-      - name: Upload coverage reports
+      - name: Upload merged coverage reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -125,6 +270,7 @@ jobs:
           path: |
             coverage/
           retention-days: 30
+          if-no-files-found: ignore
 
       - name: Extract coverage percentage
         id: coverage

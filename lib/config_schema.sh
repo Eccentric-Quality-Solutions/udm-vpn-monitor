@@ -82,8 +82,13 @@ declare -gA CONFIG_SCHEMA=(
 	# NOTE: TIER3_THRESHOLD has relative validation (depends on TIER2_THRESHOLD)
 	# Validation order is handled safely - see validate_config_schema() documentation
 	["TIER3_THRESHOLD"]="required|integer|min:TIER2_THRESHOLD|default:5"
-	["COOLDOWN_MINUTES"]="required|integer|min:1|max:1440|default:15"
-	["MAX_RESTARTS_PER_HOUR"]="required|integer|min:1|max:60|default:3"
+	# Rate limiting configuration (replaces MAX_RESTARTS_PER_HOUR and COOLDOWN_MINUTES)
+	# Backward compatibility: If MAX_RESTARTS_PER_HOUR is set, it will be migrated to MAX_RESTARTS_PER_WINDOW with RATE_LIMIT_WINDOW_MINUTES=60
+	["MAX_RESTARTS_PER_WINDOW"]="required|integer|min:1|max:20|default:3"
+	["RATE_LIMIT_WINDOW_MINUTES"]="required|integer|min:5|max:1440|default:60"
+	["MIN_RESTART_INTERVAL_SECONDS"]="required|integer|min:0|max:300|default:30"
+	# Backward compatibility: MAX_RESTARTS_PER_HOUR is deprecated but still supported
+	["MAX_RESTARTS_PER_HOUR"]="optional|integer|min:1|max:60|default:"
 
 	# Optional configuration with defaults
 	["VPN_NAME"]="optional|string||default:Site-to-Site VPN"

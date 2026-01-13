@@ -168,19 +168,21 @@ set_cooldown() {
 
 # Check rate limiting
 #
-# Verifies if the maximum number of restarts per hour has been exceeded.
-# Prevents restart loops by limiting how frequently full restarts can occur.
-# Counts restart timestamps in RESTART_COUNT_FILE within the last hour.
+# Verifies if the maximum number of Tier 3 restarts within the configured window has been exceeded,
+# and checks if minimum restart interval has elapsed since the last restart.
+# Prevents restart loops by limiting how frequently Tier 3 recovery actions (full IPsec restarts)
+# can occur. Uses a sliding window to count restart timestamps in RESTART_COUNT_FILE.
 #
 # Arguments:
 #   None
 #
 # Returns:
 #   0: Within rate limit (restart allowed)
-#   1: Rate limit exceeded (restart blocked)
+#   1: Rate limit exceeded or minimum interval not met (restart blocked)
 #
 # Side effects:
 #   - Logs warning if rate limit exceeded (includes reset time, countdown, and restart list)
+#   - Logs warning if minimum interval not met
 #   - Reads RESTART_COUNT_FILE to count recent restarts
 #
 # Examples:
@@ -190,10 +192,11 @@ set_cooldown() {
 #   fi
 #
 # Note:
-#   Checks RESTART_COUNT_FILE for timestamps within the last hour
-#   Requires RESTART_COUNT_FILE, MAX_RESTARTS_PER_HOUR, SECONDS_PER_HOUR, get_formatted_timestamp,
+#   Checks RESTART_COUNT_FILE for timestamps within the configured window
+#   Requires RESTART_COUNT_FILE, MAX_RESTARTS_PER_WINDOW, RATE_LIMIT_WINDOW_MINUTES,
+#   MIN_RESTART_INTERVAL_SECONDS, SECONDS_PER_MINUTE, get_formatted_timestamp,
 #   safe_timestamp_add, safe_timestamp_diff, and handle_error to be set
-#   Uses awk to filter timestamps > (now - SECONDS_PER_HOUR)
+#   Uses awk to filter timestamps > (now - window_seconds)
 #   Counts filtered lines with wc -l
 #   When rate limit is exceeded, logs detailed information including:
 #   - Reset timestamp (when oldest restart will expire)
@@ -202,8 +205,38 @@ set_cooldown() {
 check_rate_limit() {
 	local now
 	now=$(get_unix_timestamp)
-	local one_hour_ago
-	one_hour_ago=$(safe_timestamp_subtract "$now" "$SECONDS_PER_HOUR" 2>/dev/null || echo "0")
+
+	# Get configured window size in seconds
+	local window_minutes="${RATE_LIMIT_WINDOW_MINUTES:-60}"
+	# Validate window size (defensive check)
+	if [[ ! "$window_minutes" =~ ^[0-9]+$ ]] || [[ "$window_minutes" -lt 5 ]] || [[ "$window_minutes" -gt 1440 ]]; then
+		handle_error "WARNING" "SYSTEM" "Invalid RATE_LIMIT_WINDOW_MINUTES=$window_minutes (range: 5-1440), using default 60"
+		window_minutes=60
+	fi
+	local window_seconds=$((window_minutes * SECONDS_PER_MINUTE))
+	local window_start
+	window_start=$(safe_timestamp_subtract "$now" "$window_seconds" 2>/dev/null || echo "0")
+
+	# Check minimum restart interval first (simpler check, clearer error message)
+	local min_interval="${MIN_RESTART_INTERVAL_SECONDS:-30}"
+	if [[ $min_interval -gt 0 ]]; then
+		# Get restart count file (format: timestamp per line)
+		if [[ -f "$RESTART_COUNT_FILE" ]] && file_exists_and_readable "$RESTART_COUNT_FILE"; then
+			# Get most recent restart timestamp (maximum timestamp, handles unsorted files)
+			# Sort numerically and take the last (highest) value to handle unsorted timestamps
+			local last_restart
+			last_restart=$(grep -E '^[0-9]+$' "$RESTART_COUNT_FILE" 2>/dev/null | sort -n | tail -n 1 || echo "0")
+			if [[ "$last_restart" != "0" ]] && [[ "$last_restart" =~ ^[0-9]+$ ]]; then
+				local time_since_last
+				time_since_last=$(safe_timestamp_diff "$now" "$last_restart" 2>/dev/null || echo "0")
+				if [[ "$time_since_last" -lt "$min_interval" ]]; then
+					local remaining=$((min_interval - time_since_last))
+					handle_error "WARNING" "SYSTEM" "Minimum restart interval not met: ${remaining} seconds remaining (minimum: ${min_interval}s, last restart: $(date -d "@$last_restart" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$last_restart"))"
+					return 1 # Blocked by minimum interval
+				fi
+			fi
+		fi
+	fi
 
 	# Get restart count file (format: timestamp per line)
 	if [[ ! -f "$RESTART_COUNT_FILE" ]]; then
@@ -216,23 +249,29 @@ check_rate_limit() {
 		return 0 # Allow restart (file unreadable, treat as no previous restarts)
 	fi
 
-	# Get all restart timestamps within the last hour (sorted)
-	# awk filters timestamps > one_hour_ago, sort -n sorts numerically
+	# Get all restart timestamps within the configured window (sorted)
+	# awk filters timestamps > window_start, sort -n sorts numerically
 	local recent_timestamps
-	recent_timestamps=$(awk -v cutoff="$one_hour_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | sort -n)
+	recent_timestamps=$(awk -v cutoff="$window_start" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | sort -n)
 
 	# Count recent restarts
 	local recent_restarts
 	recent_restarts=$(echo "$recent_timestamps" | grep -c . || echo "0")
 
-	if [[ "$recent_restarts" -ge "$MAX_RESTARTS_PER_HOUR" ]]; then
+	local max_restarts="${MAX_RESTARTS_PER_WINDOW:-3}"
+	if [[ "$recent_restarts" -ge "$max_restarts" ]]; then
 		# Find oldest restart timestamp (first in sorted list)
 		local oldest_restart
 		oldest_restart=$(echo "$recent_timestamps" | head -n 1)
+		# Defensive check: if oldest_restart is empty or invalid, allow restart
+		if [[ -z "$oldest_restart" ]] || [[ ! "$oldest_restart" =~ ^[0-9]+$ ]]; then
+			handle_error "WARNING" "SYSTEM" "Cannot determine oldest restart timestamp, allowing restart"
+			return 0
+		fi
 
-		# Calculate when rate limit will reset (oldest restart + 1 hour)
+		# Calculate when rate limit will reset (oldest restart + window duration)
 		local reset_timestamp
-		reset_timestamp=$(safe_timestamp_add "$oldest_restart" "$SECONDS_PER_HOUR" 2>/dev/null || echo "0")
+		reset_timestamp=$(safe_timestamp_add "$oldest_restart" "$window_seconds" 2>/dev/null || echo "0")
 
 		# Calculate countdown (time remaining until reset)
 		local countdown_seconds
@@ -287,7 +326,7 @@ check_rate_limit() {
 		fi
 
 		# Build detailed error message
-		local error_msg="Rate limit exceeded: $recent_restarts restarts in last hour (max: $MAX_RESTARTS_PER_HOUR)"
+		local error_msg="Rate limit exceeded: $recent_restarts restarts in last ${window_minutes} minute(s) (max: $max_restarts)"
 		error_msg="${error_msg}. Reset at: $reset_formatted (in $countdown_formatted)"
 		if [[ -n "$restart_list" ]]; then
 			error_msg="${error_msg}. Recent restarts: $restart_list"
@@ -763,7 +802,7 @@ validate_state_files_by_pattern() {
 #   None
 #
 # Note:
-#   Requires RESTART_COUNT_FILE, COOLDOWN_UNTIL_FILE, LOGS_DIR, STATE_DIR, and log_message
+#   Requires RESTART_COUNT_FILE, LOGS_DIR, STATE_DIR, and log_message
 validate_state() {
 	local validation_failed=0
 
@@ -776,14 +815,7 @@ validate_state() {
 		fi
 	fi
 
-	# Validate cooldown file (single timestamp)
-	if file_exists_and_readable "$COOLDOWN_UNTIL_FILE"; then
-		if ! validate_state_file "$COOLDOWN_UNTIL_FILE" "timestamp"; then
-			handle_error "WARNING" "SYSTEM" "Cooldown file corrupted, recovering: $COOLDOWN_UNTIL_FILE" 0
-			recover_corrupted_state_file "$COOLDOWN_UNTIL_FILE" "" "timestamp"
-			validation_failed=1
-		fi
-	fi
+	# Cooldown file validation removed - cooldown functionality replaced by MIN_RESTART_INTERVAL_SECONDS
 
 	# Validate network partition state file
 	local network_partition_file

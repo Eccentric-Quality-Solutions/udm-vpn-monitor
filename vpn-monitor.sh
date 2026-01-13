@@ -102,7 +102,7 @@ fi
 # Note: Failure counters are per-peer: ${STATE_DIR}/failure_counter_<location>_<peer_ip_sanitized>
 RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 # LAST_BYTES_FILE will be per-peer: ${STATE_DIR}/last_bytes_<peer_ip_sanitized>
-COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
+# COOLDOWN_UNTIL_FILE removed - cooldown functionality replaced by MIN_RESTART_INTERVAL_SECONDS
 
 # Test log file write capability early (before config loading)
 #
@@ -417,7 +417,7 @@ initialize_monitor() {
 #   # Validates state, checks partition, checks cooldown, may exit if partitioned or in cooldown
 #
 # Note:
-#   Requires validate_state, check_cooldown, check_cron_persistence, check_network_partition,
+#   Requires validate_state, check_cron_persistence, check_network_partition,
 #   get_network_partition_state, set_network_partition_state, log_message, STATE_DIR, DEBUG to be set
 #   Cron check is performed once per run to avoid log spam
 #   Network partition check runs before cooldown check to ensure partition detection works during cooldown
@@ -475,14 +475,7 @@ validate_monitor_state() {
 		fi
 	fi
 
-	# Check cooldown
-	debug_log "Checking cooldown"
-	if check_cooldown; then
-		debug_log "In cooldown, exiting"
-		log_message "INFO" "SYSTEM" "Script exiting: in cooldown period"
-		exit "${EXIT_SUCCESS:-0}"
-	fi
-	debug_log "Not in cooldown, continuing"
+	# Cooldown removed - rate limiting now handles restart spacing via MIN_RESTART_INTERVAL_SECONDS
 
 	# Check cron persistence (first run only, to avoid log spam)
 	if [[ ! -f "${STATE_DIR}/.cron_checked" ]]; then

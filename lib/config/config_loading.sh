@@ -692,7 +692,7 @@ handle_fatal_config_error() {
 #   - Sets global configuration variables from config file
 #   - Applies schema defaults for unset variables
 #   - Creates LOGS_DIR and STATE_DIR directories if needed
-#   - Updates LOCKFILE, COOLDOWN_UNTIL_FILE, PIDFILE paths based on STATE_DIR
+#   - Updates LOCKFILE, PIDFILE paths based on STATE_DIR
 #   - Logs configuration loading status
 load_config() {
 	local config_file="$1"
@@ -793,7 +793,6 @@ load_config() {
 	# Update paths that depend on STATE_DIR (STATE_DIR is already set correctly from config)
 	# Always update these paths to ensure they match STATE_DIR after config loading
 	LOCKFILE="${STATE_DIR}/vpn-monitor.lock"
-	COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
 	if [[ -n "${PIDFILE:-}" ]]; then
 		PIDFILE="${STATE_DIR}/vpn-keepalive.pid"
 	fi
@@ -827,5 +826,16 @@ load_config() {
 		if is_fake_mode; then
 			handle_error "WARNING" "SYSTEM" "Failed to create state directory: $STATE_DIR (continuing in fake mode)"
 		fi
+	fi
+
+	# Backward compatibility: Migrate MAX_RESTARTS_PER_HOUR to new parameters
+	# If MAX_RESTARTS_PER_HOUR is set but MAX_RESTARTS_PER_WINDOW is not, migrate it
+	if [[ -n "${MAX_RESTARTS_PER_HOUR:-}" ]] && [[ "${MAX_RESTARTS_PER_HOUR}" =~ ^[0-9]+$ ]] && [[ -z "${MAX_RESTARTS_PER_WINDOW:-}" ]]; then
+		MAX_RESTARTS_PER_WINDOW="$MAX_RESTARTS_PER_HOUR"
+		# Set RATE_LIMIT_WINDOW_MINUTES to 60 if not already set (maintains "per hour" behavior)
+		if [[ -z "${RATE_LIMIT_WINDOW_MINUTES:-}" ]]; then
+			RATE_LIMIT_WINDOW_MINUTES=60
+		fi
+		handle_error "INFO" "SYSTEM" "Migrated MAX_RESTARTS_PER_HOUR=$MAX_RESTARTS_PER_HOUR to MAX_RESTARTS_PER_WINDOW=$MAX_RESTARTS_PER_WINDOW with RATE_LIMIT_WINDOW_MINUTES=$RATE_LIMIT_WINDOW_MINUTES (deprecated parameter, please update config)"
 	fi
 }

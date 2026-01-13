@@ -637,21 +637,22 @@ Each peer's monitoring and recovery actions operate completely independently.
 
 ### System-Wide State Files
 
-**Cooldown Period** (`cooldown_until`):
-- **Purpose**: Prevents immediate re-restarts after a recovery action
-- **Mechanism**: After Tier 3 recovery (full restart), a cooldown period is set
-- **Duration**: Configurable via `COOLDOWN_MINUTES` (default: 15 minutes)
-- **Behavior**: During cooldown, monitoring continues but recovery actions are skipped
-
 **Rate Limiting** (`state/restart_count`):
-- **Purpose**: Prevents restart loops if VPN has persistent issues
+- **Purpose**: Prevents restart loops and excessive restarts if VPN has persistent issues
 - **Mechanism**: Tracks Unix timestamps (one per line) of Tier 3 recovery actions only
   - Records full IPsec restarts (`ipsec restart`) that affect all tunnels
   - Also records successful xfrm-based per-connection recovery (when enabled)
   - Does NOT record Tier 1 (logging) or Tier 2 (surgical cleanup) actions
   - Automatically cleans up entries older than 24 hours
-- **Limit**: Configurable via `MAX_RESTARTS_PER_HOUR` (default: 3 restarts per hour)
-- **Behavior**: If limit exceeded, Tier 3 recovery actions are skipped until rate limit window expires
+- **Configuration**: Three parameters work together:
+  - `MAX_RESTARTS_PER_WINDOW`: Maximum number of restarts allowed (default: 3, range: 1-20)
+  - `RATE_LIMIT_WINDOW_MINUTES`: Time window for rate limit (default: 60, range: 5-1440)
+  - `MIN_RESTART_INTERVAL_SECONDS`: Minimum time between restarts (default: 30, range: 0-300)
+- **Behavior**: 
+  - Uses sliding window: counts restarts in last N minutes from current time
+  - Checks minimum interval first (prevents rapid-fire restarts)
+  - If limit exceeded, Tier 3 recovery actions are skipped until rate limit window expires
+  - Backward compatibility: `MAX_RESTARTS_PER_HOUR` is automatically migrated to new parameters
 
 **Network Partition State** (`network_partition_state`):
 - **Purpose**: Tracks network connectivity status to distinguish VPN failures from network partition issues

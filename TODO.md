@@ -15,6 +15,34 @@ This file tracks planned improvements and tasks for the UDM VPN Monitor project.
     - Seems to get stuck when given invalid IP
 - It seems like if it loads config again it starts over from the top for the networks it is testing
 
+## High Priority
+
+### Rate Limiting Refactoring - Test Updates
+**Source:** Rate Limiting Refactoring (2026-01-12)
+**Status:** Pending
+**Action:** Update or remove tests that reference cooldown functionality
+**Files Affected:**
+- `tests/test_recovery_cooldown_rate_limit_interaction.sh` - Entire file needs update
+- `tests/test_integration.sh` - Test "Cooldown period prevents immediate restart" needs update
+- `tests/test_rapid_state_changes.sh` - Test "VPN flapping - cooldown expires but rate limit still active" needs update
+- `tests/test_helper_functions.sh` - `check_cooldown` tests need update or removal
+- `tests/fixtures/vpn_cooldown.bash` - Fixture may need update
+**Effort:** MEDIUM (update multiple test files)
+**Benefit:** Tests will pass after cooldown removal
+
+### Rate Limiting Refactoring - New Test Coverage
+**Source:** Rate Limiting Refactoring (2026-01-12)
+**Status:** Pending
+**Action:** Add tests for new rate limiting parameters
+**Test Cases Needed:**
+- Minimum restart interval blocks restart when too soon
+- Minimum restart interval allows restart when enough time has passed
+- Minimum interval of 0 disables the check
+- Configurable window (15 min vs 60 min) allows different restart counts
+- Backward compatibility: `MAX_RESTARTS_PER_HOUR` migration
+**Effort:** MEDIUM (add comprehensive test coverage)
+**Benefit:** Ensures new functionality works correctly
+
 ## Medium Priority
 
 ### 5. Add Explicit File Permissions

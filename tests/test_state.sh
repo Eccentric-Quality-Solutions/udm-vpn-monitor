@@ -1246,3 +1246,195 @@ EOF
 }
 
 # ============================================================================
+# 6.3 STATE FILE PATTERN VALIDATION WITH UNREADABLE FILES
+# ============================================================================
+
+# bats test_tags=category:high-risk,priority:high,slow
+@test "validate_state_files_by_pattern with unreadable files - should skip unreadable files without hanging" {
+	# Purpose: Test verifies that validate_state_files_by_pattern handles unreadable files gracefully without hanging.
+	# Expected: Function skips unreadable files, logs warnings, and continues processing readable files.
+	# Importance: The fix prevents hangs when glob expansion encounters unreadable files (000 permissions).
+	# This test specifically covers the pattern-based validation fix from commit 77c34c7.
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
+
+	# Source state functions to test directly
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" || true
+
+	# Set up state directory
+	export STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR="${TEST_DIR}/logs"
+	mkdir -p "${TEST_DIR}/logs"
+
+	# Create multiple failure counter files matching the pattern "failure_counter_*"
+	local file1="${STATE_DIR}/failure_counter_LOCATION_192_168_1_1"
+	local file2="${STATE_DIR}/failure_counter_LOCATION_192_168_1_2"
+	local file3="${STATE_DIR}/failure_counter_LOCATION_192_168_1_3"
+
+	# Create readable files with valid content
+	echo "5" >"$file1"
+	echo "3" >"$file2"
+	echo "7" >"$file3"
+
+	# Make one file unreadable (000 permissions) - this is the scenario that caused hangs
+	local original_perms
+	original_perms=$(stat -c %a "$file2" 2>/dev/null || echo "644")
+	chmod 000 "$file2"
+	# Use trap to ensure cleanup even on errors
+	trap "chmod $original_perms \"\$file2\" 2>/dev/null || true" EXIT
+
+	# Verify permissions were set correctly
+	assert_file_permission 000 "$file2"
+
+	# Call validate_state_files_by_pattern with timeout to prevent hangs
+	# This function should skip the unreadable file and continue processing others
+	run timeout 30 bash -c "
+		source '${BATS_TEST_DIRNAME}/../lib/state.sh' || true
+		export STATE_DIR='${STATE_DIR}'
+		export LOGS_DIR='${LOGS_DIR}'
+		validate_state_files_by_pattern 'failure_counter_*' 'integer' '0' 'Failure counter file'
+	"
+	assert_success
+
+	# Verify readable files were validated (not corrupted, so should still exist with same content)
+	assert_file_exist "$file1"
+	local content1
+	content1=$(cat "$file1")
+	assert_equal "$content1" "5"
+
+	assert_file_exist "$file3"
+	local content3
+	content3=$(cat "$file3")
+	assert_equal "$content3" "7"
+
+	# Verify unreadable file still exists (was skipped, not processed)
+	assert_file_exist "$file2"
+
+	# Restore permissions for cleanup
+	chmod "$original_perms" "$file2" 2>/dev/null || true
+	trap - EXIT
+}
+
+# bats test_tags=category:high-risk,priority:high,slow
+@test "validate_state_files_by_pattern with multiple unreadable files - should skip all unreadable files without hanging" {
+	# Purpose: Test verifies that validate_state_files_by_pattern handles multiple unreadable files gracefully.
+	# Expected: Function skips all unreadable files, logs warnings, and doesn't hang.
+	# Importance: Ensures the fix works even when multiple files are unreadable.
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
+
+	# Source state functions to test directly
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" || true
+
+	# Set up state directory
+	export STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR="${TEST_DIR}/logs"
+	mkdir -p "${TEST_DIR}/logs"
+
+	# Create multiple byte counter files matching the pattern "last_bytes_*"
+	local file1="${STATE_DIR}/last_bytes_LOCATION_192_168_1_1"
+	local file2="${STATE_DIR}/last_bytes_LOCATION_192_168_1_2"
+	local file3="${STATE_DIR}/last_bytes_LOCATION_192_168_1_3"
+
+	# Create files with valid content
+	echo "1000" >"$file1"
+	echo "2000" >"$file2"
+	echo "3000" >"$file3"
+
+	# Make two files unreadable (000 permissions)
+	local original_perms1
+	original_perms1=$(stat -c %a "$file1" 2>/dev/null || echo "644")
+	local original_perms2
+	original_perms2=$(stat -c %a "$file2" 2>/dev/null || echo "644")
+	chmod 000 "$file1"
+	chmod 000 "$file2"
+	# Use trap to ensure cleanup even on errors
+	trap "chmod $original_perms1 \"\$file1\" 2>/dev/null || true; chmod $original_perms2 \"\$file2\" 2>/dev/null || true" EXIT
+
+	# Verify permissions were set correctly
+	assert_file_permission 000 "$file1"
+	assert_file_permission 000 "$file2"
+
+	# Call validate_state_files_by_pattern with timeout to prevent hangs
+	# This function should skip unreadable files and continue processing readable ones
+	run timeout 30 bash -c "
+		source '${BATS_TEST_DIRNAME}/../lib/state.sh' || true
+		export STATE_DIR='${STATE_DIR}'
+		export LOGS_DIR='${LOGS_DIR}'
+		validate_state_files_by_pattern 'last_bytes_*' 'integer' '0' 'Byte counter file'
+	"
+	assert_success
+
+	# Verify readable file was validated (not corrupted, so should still exist with same content)
+	assert_file_exist "$file3"
+	local content3
+	content3=$(cat "$file3")
+	assert_equal "$content3" "3000"
+
+	# Verify unreadable files still exist (were skipped, not processed)
+	assert_file_exist "$file1"
+	assert_file_exist "$file2"
+
+	# Restore permissions for cleanup
+	chmod "$original_perms1" "$file1" 2>/dev/null || true
+	chmod "$original_perms2" "$file2" 2>/dev/null || true
+	trap - EXIT
+}
+
+# bats test_tags=category:high-risk,priority:high,slow
+@test "validate_state with unreadable pattern-matched files - should handle gracefully through validate_state" {
+	# Purpose: Test verifies that validate_state() handles unreadable pattern-matched files gracefully.
+	# Expected: validate_state calls validate_state_files_by_pattern which skips unreadable files without hanging.
+	# Importance: Ensures the fix works when called through the main validate_state() function.
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
+
+	# Source state functions to test directly
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" || true
+
+	# Set up state directory
+	export STATE_DIR="${TEST_DIR}"
+	export LOGS_DIR="${TEST_DIR}/logs"
+	mkdir -p "${TEST_DIR}/logs"
+
+	# Create failure counter files matching the pattern
+	local file1="${STATE_DIR}/failure_counter_LOCATION_192_168_1_1"
+	local file2="${STATE_DIR}/failure_counter_LOCATION_192_168_1_2"
+
+	# Create files with valid content
+	echo "5" >"$file1"
+	echo "3" >"$file2"
+
+	# Make one file unreadable
+	local original_perms
+	original_perms=$(stat -c %a "$file2" 2>/dev/null || echo "644")
+	chmod 000 "$file2"
+	# Use trap to ensure cleanup even on errors
+	trap "chmod $original_perms \"\$file2\" 2>/dev/null || true" EXIT
+
+	# Call validate_state with timeout to prevent hangs
+	# This should call validate_state_files_by_pattern internally
+	run timeout 30 bash -c "
+		source '${BATS_TEST_DIRNAME}/../lib/state.sh' || true
+		export STATE_DIR='${STATE_DIR}'
+		export LOGS_DIR='${LOGS_DIR}'
+		export RESTART_COUNT_FILE='${STATE_DIR}/restart_count'
+		validate_state
+	"
+	assert_success
+
+	# Verify readable file still exists with same content
+	assert_file_exist "$file1"
+	local content1
+	content1=$(cat "$file1")
+	assert_equal "$content1" "5"
+
+	# Verify unreadable file still exists (was skipped)
+	assert_file_exist "$file2"
+
+	# Restore permissions for cleanup
+	chmod "$original_perms" "$file2" 2>/dev/null || true
+	trap - EXIT
+}
+
+# ============================================================================

@@ -1561,6 +1561,60 @@ set_cooldown() {
 
 ---
 
+## 17. Always Sort Timestamps When Finding Min/Max Values
+
+**Impact Level:** Important  
+**Applicability:** Domain-Specific  
+**Actionability:** High
+
+### Problem
+During rate limiting refactoring (2026-01-12), we found that `check_rate_limit()` used `tail -n 1` to get the "most recent" restart timestamp, assuming the last line in the file was the most recent. However, `record_restart()` doesn't sort timestamps - it just appends them. If timestamps are added out of order (e.g., due to clock skew, file corruption recovery, or concurrent writes), the last line might not be the most recent timestamp.
+
+**Original Buggy Code:**
+```bash
+# Assumed last line = most recent (WRONG if timestamps unsorted)
+last_restart=$(tail -n 1 "$RESTART_COUNT_FILE" 2>/dev/null | grep -E '^[0-9]+$' || echo "0")
+```
+
+### Impact
+- Incorrect rate limiting decisions (allowing or blocking restarts based on wrong timestamp)
+- Minimum restart interval check could fail incorrectly
+- Could allow rapid restarts when they should be blocked, or block restarts when they should be allowed
+
+### Lesson
+**Never assume data files are sorted. Always sort before finding min/max values.** When reading timestamps or other ordered data from files:
+- Don't assume the last line is the maximum
+- Don't assume the first line is the minimum
+- Always sort before extracting min/max values
+
+### Pattern to Follow
+```bash
+# ✅ GOOD: Sort before finding max/min
+last_restart=$(grep -E '^[0-9]+$' "$RESTART_COUNT_FILE" 2>/dev/null | sort -n | tail -n 1 || echo "0")
+oldest_restart=$(grep -E '^[0-9]+$' "$RESTART_COUNT_FILE" 2>/dev/null | sort -n | head -n 1 || echo "0")
+
+# ❌ BAD: Assume last line = most recent
+last_restart=$(tail -n 1 "$RESTART_COUNT_FILE" 2>/dev/null | grep -E '^[0-9]+$' || echo "0")
+```
+
+### Systematic Application
+- When finding maximum timestamp: `grep | sort -n | tail -n 1`
+- When finding minimum timestamp: `grep | sort -n | head -n 1`
+- When counting items in a window: Sort first, then filter
+- Always validate that extracted values are numeric before using them
+
+### Related Patterns
+- See Lesson 18 for timestamp arithmetic validation
+- See Lesson 12 for file readability checks before operations
+
+**References:**
+- Rate limiting refactoring (2026-01-12)
+- `lib/state/global_state.sh:check_rate_limit()` - Fixed to sort timestamps
+
+**Recommendation:** ✅ **Keep** - Critical for correct rate limiting behavior.
+
+---
+
 ## 18. Always Validate Timestamp Arithmetic to Prevent Overflow/Underflow
 
 **Impact Level:** Important  
@@ -2869,3 +2923,7 @@ These lessons should be applied systematically in future development and code re
 33. **Error handling functions should be defensive with invalid input** - When error handling functions receive invalid input (e.g., invalid severity levels, non-numeric exit codes), they should be conservative and not cause unexpected script termination. Invalid input should not trigger exits unless an exit code was explicitly provided. This prevents accidental exits when typos or incorrect parameters are passed. Example: `handle_error()` now defaults invalid severity to ERROR but sets exit_code to 0 (no exit) unless an exit code was explicitly provided. Similarly, non-numeric last arguments are treated as part of the message with exit_code set to 0 to prevent accidental exits.
 
 34. **Extract core test infrastructure into reusable standard functions** - When standardizing test setup/teardown patterns, extract core logic into `standard_setup()` and `standard_teardown()` functions that can be called from custom implementations. Keep default `setup()` and `teardown()` calling the standard functions to maintain backward compatibility. This pattern allows tests with custom setup/teardown to extend standard functions while ensuring consistent test isolation. Benefits: reduces duplication, ensures consistency, maintains backward compatibility, and provides clear extension points. Example: Extracted `standard_setup()` and `standard_teardown()` from `setup()` and `teardown()` in `test_helper.bash`, allowing `test_vpn_keepalive.sh` to extend standard teardown with keepalive-specific cleanup.
+
+35. **Process cleanup in parallel test execution requires defensive programming** - When running tests in parallel with coverage tools (e.g., kcov), orphan processes can accumulate if cleanup is not handled properly. The `timeout` command with `--kill-after` helps, but additional defensive cleanup is needed. Use process group cleanup (`kill -TERM -pgid` followed by `kill -KILL -pgid`) to ensure all child processes are terminated. Add cleanup traps in parallel runner functions and explicit cleanup calls after timeout execution. This prevents resource leaks and ensures CI stability. Example: Added `cleanup_test_processes()` function that kills process groups, integrated into `run_single_test_with_timeout()` and `parallel_test_runner_with_coverage()` with cleanup traps to handle interruptions and timeouts.
+
+36. **Signal handlers can be triggered by cleanup code, not just user interrupts** - When cleanup functions send signals (e.g., `kill -TERM`), those signals can trigger signal handlers (traps) that were set up to handle user interrupts. This causes false "interrupted" messages even when no user interruption occurred. **Always temporarily disable signal traps before calling cleanup functions that send signals**, then re-enable them immediately after. Only call cleanup functions when actually needed (e.g., on timeout), not after every operation. Example: Fixed `run_single_test_with_timeout()` to only call `cleanup_test_processes()` on timeout (exit codes 124 or 143), and to temporarily disable TERM/INT traps before cleanup to prevent false "Interrupted by user (Ctrl+C)" messages.

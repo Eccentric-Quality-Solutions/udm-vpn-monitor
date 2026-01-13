@@ -48,6 +48,12 @@ Considerations for the future, but want to avoid overarchitecting and premature 
       - "xfrm recovery - Mixed SAs with and without marks" - migrated static outputs (including mark handling via sed post-processing)
     - Remaining: ~110 embedded instances in `test_recovery.sh` (mostly complex dynamic cases with calculated counters, marks, or state transitions), can be migrated gradually
 
+- Rate limiting enhancements
+  - Consider per-location rate limiting (currently global)
+  - Add rate limit metrics tracking (track rate limit hits for monitoring)
+  - Dynamic rate limiting (adjust limits based on failure patterns)
+  - Note: Basic rate limiting refactored 2026-01-12 to remove cooldown and add configurable window + minimum interval
+
 - Migrate more tests to use test data helpers
     - Many test files still have embedded test data (xfrm state, ipsec status, config templates)
     - Gradual migration as tests are updated or refactored

@@ -418,7 +418,7 @@ surgical_cleanup() {
 #   2. If peer IP provided and xfrm enabled: attempts per-connection recovery
 #   3. If xfrm fails or disabled: records restart timestamp (record_restart)
 #   4. Executes 'ipsec restart' to restart all IPsec tunnels (if xfrm not used)
-#   5. Sets cooldown period to allow VPN to stabilize (set_cooldown)
+#   5. Records restart timestamp for rate limiting (record_restart)
 #
 # Side effects:
 #   - If xfrm recovery succeeds: Only affects the specified peer's tunnel
@@ -442,8 +442,8 @@ surgical_cleanup() {
 #   if this triggers too frequently. Full restart affects all VPN tunnels.
 #
 # Note:
-#   Requires check_rate_limit, record_restart, set_cooldown, log_message, LOG_FILE,
-#   COOLDOWN_MINUTES, warn_if_missing, die, attempt_xfrm_recovery to be set
+#   Requires check_rate_limit, record_restart, log_message, LOG_FILE,
+#   warn_if_missing, die, attempt_xfrm_recovery to be set
 #   Uses PIPESTATUS to capture command exit code (not tee exit code)
 #   Command output is both displayed and appended to log file (for full restart)
 full_restart() {
@@ -478,7 +478,6 @@ full_restart() {
 				log_message "INFO" "$location_name" "Tier 3: xfrm-based per-connection recovery successful for $location_name ($peer_ip)"
 				# Record restart for rate limiting (even though it's per-connection)
 				record_restart
-				set_cooldown "$COOLDOWN_MINUTES"
 				return 0
 			else
 				handle_error "WARNING" "$location_name" "Tier 3: xfrm-based recovery failed for $location_name ($peer_ip), falling back to full restart"
@@ -496,7 +495,6 @@ full_restart() {
 			# Record restart before executing
 			record_restart
 			if execute_ipsec_restart "$peer_ip" "$location_name"; then
-				set_cooldown "$COOLDOWN_MINUTES"
 				strategy_executed=1
 			else
 				return 1
@@ -510,7 +508,6 @@ full_restart() {
 	done
 
 	log_message "INFO" "$location_name" "Full IPsec restart completed for $location_name"
-	set_cooldown "$COOLDOWN_MINUTES"
 	return 0
 }
 
