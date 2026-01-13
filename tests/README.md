@@ -43,7 +43,7 @@ bats tests/test_install.sh
 
 **Detection Tests**: `test_detection.sh`, `test_detection_status.sh`, `test_detection_fallback.sh`, `test_detection_network_partition.sh`, `test_detection_rekey.sh`, `test_detection_failure_type.sh`, `test_detection_idle.sh`, `test_detection_xfrm_edge_cases.sh`, `test_detection_ping_multiple.sh`, `test_multiple_peer_edge_cases.sh`
 
-**Recovery Tests**: `test_recovery.sh`, `test_recovery_tier1.sh`, `test_recovery_tier2.sh`, `test_recovery_tier3.sh`, `test_recovery_rate_limiting.sh`, `test_recovery_cooldown_rate_limit_interaction.sh`, `test_recovery_network_partition.sh`, `test_recovery_partial_failures.sh`
+**Recovery Tests**: `test_recovery.sh`, `test_recovery_tier1.sh`, `test_recovery_tier2.sh`, `test_recovery_tier3.sh`, `test_recovery_rate_limiting.sh`, `test_recovery_network_partition.sh`, `test_recovery_partial_failures.sh`
 
 **Other High-Risk Tests**: `test_lockfile.sh`, `test_state.sh`, `test_state_concurrent_updates.sh`, `test_state_location.sh`, `test_logging.sh`, `test_connection.sh`, `test_errors.sh`, `test_main.sh`, `test_rapid_state_changes.sh`, `test_resources.sh`
 
@@ -140,7 +140,6 @@ load fixtures/vpn_active
 - `vpn_active.bash` - VPN is active and healthy
 - `vpn_down.bash` - VPN is down, no SA found
 - `vpn_failing.bash` - VPN has recorded failures
-- `vpn_cooldown.bash` - VPN is in cooldown period
 - `vpn_rekey.bash` - VPN has undergone a rekey
 - `vpn_flapping.bash` - VPN can transition between up/down states
 - `vpn_multiple_peers.bash` - Multiple VPN peers scenario

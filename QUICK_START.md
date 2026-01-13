@@ -121,7 +121,7 @@ Once installed, the monitor will:
    See the [Recovery Behavior section in README.md](README.md#-important-recovery-behavior) for complete details on recovery behavior, including which actions affect all tunnels vs per-connection recovery options. For technical implementation details, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 4. **Track failures per location** independently (multiple VPNs supported)
-5. **Rate limit restarts** to prevent loops (max 3 per hour)
+5. **Rate limit restarts** to prevent loops (max 20 per hour)
 6. **Cooldown period** after restart (15 minutes default)
 
 All actions are logged to `/data/vpn-monitor/logs/vpn-monitor.log`.

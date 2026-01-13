@@ -65,3 +65,13 @@ source "${STATE_MODULE_DIR}/state_init.sh" 2>/dev/null || {
 	echo "Error: Failed to source state_init.sh" >&2
 	exit 1
 }
+# shellcheck source=lib/state/network_partition_stats.sh
+source "${STATE_MODULE_DIR}/network_partition_stats.sh" 2>/dev/null || {
+	echo "Error: Failed to source network_partition_stats.sh" >&2
+	exit 1
+}
+# shellcheck source=lib/state/resource_monitoring_stats.sh
+source "${STATE_MODULE_DIR}/resource_monitoring_stats.sh" 2>/dev/null || {
+	echo "Error: Failed to source resource_monitoring_stats.sh" >&2
+	exit 1
+}

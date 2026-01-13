@@ -6,7 +6,6 @@
 # These tests address the gap identified in COVERAGE_GAP_ANALYSIS.md:
 # - Atomic write fails during increment
 # - Atomic write fails during reset
-# - Atomic write fails during cooldown set
 # - Atomic write fails during restart record
 # - State file cleanup failures (cleanup_peer_state, delete_peer_state)
 # - Network partition state failures (set_network_partition_state, get_network_partition_state)
@@ -105,46 +104,6 @@ load test_helper
 		local preserved_count
 		preserved_count=$(get_peer_state "" "$peer_ip" "failure_count" "0")
 		assert_equal "$preserved_count" 3
-
-		# Restore permissions
-		restore_permissions_after_test "$state_dir" "$original_perms"
-	else
-		# Can't test unwritable directory on this system - skip
-		skip "Cannot make directory unwritable on this system"
-	fi
-}
-
-# bats test_tags=category:high-risk,priority:high,slow
-@test "state atomic write failures: set_cooldown fails due to atomic write failure" {
-	# Purpose: Test verifies that set_cooldown handles atomic write failures gracefully
-	# Expected: Function detects write failure, logs error, preserves current state
-	# Importance: Cooldown failures can cause rapid re-restarts; must be handled gracefully
-	setup_test_environment "${TEST_DIR}"
-
-	source_function "set_cooldown"
-	source_function "check_cooldown"
-	source_function "get_network_partition_state_file"
-
-	# Set up state directory
-	export STATE_DIR="${TEST_DIR}"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
-
-	# Get cooldown file path (uses get_network_partition_state_file pattern)
-	local cooldown_file="${STATE_DIR}/cooldown_until"
-	mkdir -p "$(dirname "$cooldown_file")"
-
-	# Make directory unwritable to simulate atomic write failure
-	local state_dir="${STATE_DIR}"
-	local original_perms
-	original_perms=$(save_permissions_for_restore "$state_dir")
-
-	# Try to make unwritable (may fail on some systems)
-	if chmod 555 "$state_dir" 2>/dev/null; then
-		# Try to set cooldown (should fail gracefully)
-		run set_cooldown 5
-		# Function should handle failure gracefully
-		# May return error or succeed with logging
 
 		# Restore permissions
 		restore_permissions_after_test "$state_dir" "$original_perms"

@@ -20,7 +20,7 @@
 #   - Sets TEST_CONFIG_FILE, TEST_SCRIPT, STATE_DIR, LOGS_DIR variables
 #
 # Example:
-#   # Use default: 3 restarts within last hour
+#   # Use default: 20 restarts within last hour
 #   setup_vpn_rate_limited_fixture "${TEST_PEER_IP}"
 #
 #   # Provide specific timestamps
@@ -35,7 +35,7 @@
 #       $((now - 100)) \
 #       $((now - 200)) \
 #       $((now - 300)) \
-#       'MAX_RESTARTS_PER_HOUR=5'
+#       'MAX_RESTARTS_PER_WINDOW=5'
 setup_vpn_rate_limited_fixture() {
 	local peer_ip="${1:-${TEST_PEER_IP}}"
 	local restart_count="${2:-3}"
@@ -71,7 +71,8 @@ setup_vpn_rate_limited_fixture() {
 	# Set up test VPN monitor with default rate limit config
 	# Allow override via extra_config
 	local default_config=(
-		'MAX_RESTARTS_PER_HOUR=3'
+		'MAX_RESTARTS_PER_WINDOW=3'
+		'RATE_LIMIT_WINDOW_MINUTES=60'
 		'TIER3_THRESHOLD=5'
 	)
 	setup_test_vpn_monitor "$peer_ip" "${TEST_DIR}" "${default_config[@]}" "${extra_config[@]}"

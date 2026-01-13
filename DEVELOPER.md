@@ -569,7 +569,7 @@ The `handle_error_or_exit_fake_mode()` function provides consistent error handli
 
 This function should be used instead of manually checking `is_fake_mode()` for fatal errors. It standardizes the pattern of handling errors differently based on fake mode.
 
-**Exit Behavior in Fake Mode**: The caller must decide whether to exit with error code or code 0 based on whether the error is execution-blocking. See `docs/FAKE_MODE_EXIT_BEHAVIOR.md` for detailed guidance on categorizing errors and determining appropriate exit behavior.
+**Exit Behavior in Fake Mode**: The caller must decide whether to exit with error code or code 0 based on whether the error is execution-blocking. See the fake-mode exit behavior guidance in `docs/CODE_PATTERNS.md` and `docs/testing/TEST_PATTERNS.md` for when to fail vs. succeed in fake mode and how to assert in tests.
 
 **Error Code Constants**:
 Standard exit codes are defined in `lib/constants.sh` for consistent error handling:

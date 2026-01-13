@@ -838,4 +838,21 @@ load_config() {
 		fi
 		handle_error "INFO" "SYSTEM" "Migrated MAX_RESTARTS_PER_HOUR=$MAX_RESTARTS_PER_HOUR to MAX_RESTARTS_PER_WINDOW=$MAX_RESTARTS_PER_WINDOW with RATE_LIMIT_WINDOW_MINUTES=$RATE_LIMIT_WINDOW_MINUTES (deprecated parameter, please update config)"
 	fi
+
+	# Backward compatibility: Migrate COOLDOWN_MINUTES to MIN_RESTART_INTERVAL_SECONDS
+	# If COOLDOWN_MINUTES is set, migrate it to MIN_RESTART_INTERVAL_SECONDS
+	# Conversion: 1 minute = 60 seconds
+	# Note: MIN_RESTART_INTERVAL_SECONDS max is 300 seconds (5 minutes), so values > 5 minutes are capped
+	# This ensures backward compatibility - old configs with COOLDOWN_MINUTES will work
+	if [[ -n "${COOLDOWN_MINUTES:-}" ]] && [[ "${COOLDOWN_MINUTES}" =~ ^[0-9]+$ ]]; then
+		local migrated_interval=$((COOLDOWN_MINUTES * 60))
+		local max_interval=300
+		# Cap migrated value at max (300 seconds = 5 minutes)
+		if [[ $migrated_interval -gt $max_interval ]]; then
+			handle_error "WARNING" "SYSTEM" "COOLDOWN_MINUTES=$COOLDOWN_MINUTES converts to ${migrated_interval}s, but MIN_RESTART_INTERVAL_SECONDS max is ${max_interval}s. Capping at ${max_interval}s."
+			migrated_interval=$max_interval
+		fi
+		MIN_RESTART_INTERVAL_SECONDS=$migrated_interval
+		handle_error "INFO" "SYSTEM" "Migrated COOLDOWN_MINUTES=$COOLDOWN_MINUTES to MIN_RESTART_INTERVAL_SECONDS=$MIN_RESTART_INTERVAL_SECONDS (deprecated parameter, please update config)"
+	fi
 }

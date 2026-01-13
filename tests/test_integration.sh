@@ -8,7 +8,6 @@ load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
 load fixtures/vpn_at_tier
-load fixtures/vpn_cooldown
 
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
@@ -224,7 +223,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that rate limiting mechanism prevents excessive IPsec restarts when limit is reached
 	# Expected: Script detects restart limit exceeded and skips restart action, preventing system overload
 	# Importance: Rate limiting protects against restart loops that could destabilize the system
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=3' 'COOLDOWN_MINUTES=1'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=3' 'RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	# Set up controllable time for testing
 	local base_time=1609459200 # Fixed timestamp for reproducible tests
@@ -232,11 +231,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	add_mock_to_path
 
 	# Create restart file with 3 recent restarts (at limit)
+	# Use timestamps within the 60-minute window (30 minutes ago)
 	local now=$base_time
+	local recent=$((now - 1800)) # 30 minutes ago (within 60-minute window)
 	{
-		echo "$now"
-		echo "$now"
-		echo "$now"
+		echo "$recent"
+		echo "$recent"
+		echo "$recent"
 	} >>"$RESTART_COUNT_FILE"
 
 	# Mock ipsec
@@ -251,20 +252,6 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_file_contains "$LOG_FILE" "Rate limit exceeded"
 
 	remove_mock_from_path
-}
-
-# bats test_tags=category:integration
-@test "integration: Cooldown period prevents immediate restart" {
-	# Purpose: Test verifies that cooldown mechanism prevents immediate restart attempts after recovery actions
-	# Expected: Script exits early when cooldown period is active, preventing excessive recovery actions
-	# Importance: Cooldown prevents restart loops and allows time for VPN to stabilize after recovery
-	setup_vpn_cooldown_fixture "${TEST_PEER_IP}" 0 900 'COOLDOWN_MINUTES=15'
-
-	run bash "$TEST_SCRIPT" --fake
-
-	assert_success
-	# Should exit early due to cooldown
-	assert_file_contains "$LOG_FILE" "cooldown period"
 }
 
 # However, per-connection recovery IS available via xfrm (experimental, opt-in via ENABLE_XFRM_RECOVERY=1).

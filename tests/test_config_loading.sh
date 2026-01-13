@@ -439,7 +439,7 @@ EOF
 	# Run script - should fail validation after successful load
 	add_mock_to_path
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
-	# Should exit with error code (validation errors exit with error even in fake mode per FAKE_MODE_EXIT_BEHAVIOR.md)
+	# Should exit with error code (validation errors are execution-blocking and fail even in fake mode; see fake-mode guidance in CODE_PATTERNS/TEST_PATTERNS)
 	assert_failure
 	# Exit code should be EXIT_VALIDATION_ERROR (3)
 	assert_equal "$status" 3

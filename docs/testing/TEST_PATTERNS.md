@@ -75,6 +75,18 @@ run parse_location_config
 run bash "$TEST_SCRIPT" --fake
 ```
 
+#### Assertion guidance for fake mode
+
+- Use `assert_failure` when the test is about detecting execution-blocking errors (validation failures, required route setup failures, permission issues). Fake mode should still fail so tests prove the error blocks execution.
+- Use `assert_success` plus log assertions when the test is about error logging/formatting for parsing or setup errors that we only need to observe (e.g., config parse errors, directory creation failures). Fake mode should exit `0` so the test can inspect logs.
+
+| Error under test | Fake mode assertion | Why |
+|------------------|---------------------|-----|
+| Validation or route setup failure | `assert_failure` | Prove we fail fast even in fake mode |
+| Permission/state file errors | `assert_failure` | Blocking condition must fail the run |
+| Config parse / malformed input | `assert_success` + log check | Focus on log format/content |
+| Directory creation/log path issues | `assert_success` + log check | Need to inspect logged error formatting |
+
 ### 2. CONFIG_FILE Environment Variable
 
 **Pattern**: Always export CONFIG_FILE explicitly when setting it manually
@@ -252,33 +264,6 @@ load fixtures/vpn_failing
     # VPN has 3 failures, bytes stuck at 1000
     run bash "$TEST_SCRIPT" --fake
     # Should escalate to next tier
-    remove_mock_from_path
-}
-```
-
-##### `vpn_cooldown.bash` - VPN in Cooldown Period
-
-Sets up a test environment where the VPN is in a cooldown period. During cooldown, the monitor should not take action even if VPN fails.
-
-**Function**: `setup_vpn_cooldown_fixture`
-
-**Arguments**:
-- `$1`: Peer IP address (default: "192.168.1.1")
-- `$2`: Failure count (default: 5, typically high enough to trigger cooldown)
-- `$3`: Cooldown duration in seconds (default: 900 = 15 minutes)
-- `$4+`: Additional config variables as KEY="VALUE" pairs
-
-**Example**:
-```bash
-load test_helper
-load fixtures/vpn_cooldown
-
-@test "VPN in cooldown - should not take action" {
-    setup_vpn_cooldown_fixture "192.168.1.1"
-    # VPN in cooldown for 15 minutes
-    run bash "$TEST_SCRIPT" --fake
-    # Should skip action due to cooldown
-    assert_file_contains "$LOG_FILE" "cooldown"
     remove_mock_from_path
 }
 ```
@@ -461,7 +446,7 @@ load test_helper
 load fixtures/vpn_rate_limited
 
 @test "rate limit prevents restart" {
-    # Use default: 3 restarts within last hour
+    # Use default: 20 restarts within last hour
     setup_vpn_rate_limited_fixture "192.168.1.1"
     run bash "$TEST_SCRIPT" --fake
     assert_file_contains "$LOG_FILE" "Rate limit exceeded"
@@ -2112,7 +2097,7 @@ EOF
 
 **Related Patterns**:
 - See `tests/test_recovery_cascading_failures.sh` for examples of complete mocking
-- See `tests/test_recovery_cooldown_rate_limit_interaction.sh` for realistic ipsec status output format
+- See `tests/test_recovery_tier2.sh` for realistic ipsec status output format
 - See `lib/recovery.sh:verify_ipsec_connections_active()` for verification requirements
 
 ### 19. Schema Validation Order Affects Test Expectations
@@ -2744,7 +2729,7 @@ Tests configuration file error handling, security, validation, location-based co
 Tests VPN detection edge cases, byte counter handling, fallback mechanisms, network partitions, rekey detection, and XFRM edge cases.
 
 **4. Recovery Actions** (`test_recovery.sh` and split files - 51 tests total)
-Tests recovery action execution, error handling, tier-based recovery, rate limiting, cooldown interactions, and partial failures.
+Tests recovery action execution, error handling, tier-based recovery, rate limiting, and partial failures.
 
 **5. State and File Management** (`test_state.sh`, `test_state_concurrent_updates.sh`, and `test_state_location.sh` - 56 tests total)
 Tests state file handling, permissions, corruption, concurrent updates, location-based state management, and edge cases.
@@ -3005,6 +2990,35 @@ xfrm_state="${xfrm_state//reqid 1/reqid 2}"
 - Easier updates: When xfrm output format changes, update helpers instead of many test files
 
 **Related**: See `tests/data/README.md` and `tests/helpers/test_data.bash` for available helpers and templates.
+
+### 26. Disabling System-Wide Failure Detection in Tests
+
+**Pattern**: Disable system-wide failure detection when testing multiple peers triggering recovery independently.
+
+**When to use**: When writing tests that verify multiple peers or locations can trigger recovery actions simultaneously. System-wide failure detection (enabled by default) coordinates recovery so only one location attempts recovery when multiple peers fail, which can interfere with tests that expect independent recovery actions.
+
+**Example**:
+```bash
+@test "multiple peers trigger recovery independently" {
+    setup_test_location_config "$config_file" \
+        "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+        "LOCATION_TEST2_EXTERNAL=\"${TEST_PEER_IP2}\"" \
+        'ENABLE_SYSTEM_WIDE_FAILURE_DETECTION=0' \
+        'ENABLE_XFRM_RECOVERY=0'
+    # ... test expects both peers to trigger recovery ...
+}
+```
+
+**Why**: When multiple peers fail simultaneously, system-wide failure detection (default threshold: 100% of locations) detects a system-wide failure and designates only one location as the coordinator. Non-coordinator locations skip recovery actions, which can cause tests expecting multiple recovery actions to fail.
+
+**Configuration Options**:
+- `ENABLE_SYSTEM_WIDE_FAILURE_DETECTION=0` - Disables system-wide failure detection entirely
+- `COORDINATE_SYSTEM_WIDE_RECOVERY=0` - Disables recovery coordination but keeps detection (less common)
+
+**Standard**:
+- Use `ENABLE_SYSTEM_WIDE_FAILURE_DETECTION=0` when testing multiple peers triggering recovery independently
+- Keep system-wide failure detection enabled when testing the coordination mechanism itself
+- Consider whether your test needs independent recovery or coordinated recovery when deciding
 
 ## Migration Notes
 

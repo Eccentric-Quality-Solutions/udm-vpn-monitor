@@ -7,7 +7,6 @@ load test_helper
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
-load fixtures/vpn_cooldown
 load fixtures/vpn_at_tier
 
 # Path to the VPN monitor script
@@ -22,7 +21,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that Tier 3 recovery action triggers full IPsec restart when failure count reaches threshold
 	# Expected: Script executes "ipsec restart" command when failure count reaches Tier 3 threshold
 	# Importance: Full restart is the most aggressive recovery action and should only trigger after multiple failures
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60'
 
 	# Mock ipsec - restart succeeds, track restart call
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -54,7 +53,7 @@ EOF
 	# Purpose: Test verifies that Tier 3 recovery handles errors gracefully when ipsec restart command fails
 	# Expected: Script logs error message and continues execution when restart command fails
 	# Importance: Error handling prevents script crashes and ensures monitoring continues after recovery failures
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60'
 
 	# Mock ipsec - restart fails
 	mock_ipsec_reload_restart 1 0
@@ -78,7 +77,7 @@ EOF
 	# Purpose: Test verifies that Tier 3 recovery handles gracefully when ipsec command is unavailable
 	# Expected: Script logs error message indicating ipsec is not available and continues execution
 	# Importance: Graceful handling prevents script failures when required recovery tools are missing
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60'
 
 	# Don't create ipsec mock (unavailable)
 
@@ -97,10 +96,10 @@ EOF
 }
 
 # bats test_tags=slow,category:high-risk,priority:high
-@test "tier 3: restart succeeds but VPN doesn't recover (cooldown still set)" {
-	# Purpose: Test verifies that cooldown period is set even when restart succeeds but VPN doesn't recover immediately
-	# Expected: Cooldown file is created after restart attempt, preventing immediate subsequent restart attempts
-	# Importance: Cooldown prevents restart loops when VPN takes time to recover after restart command succeeds
+@test "tier 3: restart succeeds but VPN doesn't recover (restart recorded)" {
+	# Purpose: Test verifies that restart is recorded in restart_count file even when restart succeeds but VPN doesn't recover immediately
+	# Expected: Restart timestamp is recorded in restart_count file after restart attempt, enabling rate limiting
+	# Importance: Rate limiting prevents restart loops when VPN takes time to recover after restart command succeeds
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
@@ -108,8 +107,8 @@ EOF
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'MAX_RESTARTS_PER_HOUR=10' \
-		'COOLDOWN_MINUTES=1' \
+		'MAX_RESTARTS_PER_WINDOW=10' \
+		'RATE_LIMIT_WINDOW_MINUTES=60' \
 		'ENABLE_XFRM_RECOVERY=0' \
 		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
@@ -120,7 +119,7 @@ EOF
 	export LOGS_DIR="${TEST_DIR}/logs"
 	local failure_counter
 	failure_counter=$(get_failure_counter_path_for_location_var "LOCATION_TEST_EXTERNAL" "${TEST_PEER_IP}")
-	local cooldown_file="${TEST_DIR}/cooldown_until"
+	local restart_file="${state_dir}/restart_count"
 
 	# Set failure count to Tier 3 threshold
 	echo "5" >"$failure_counter"
@@ -139,14 +138,17 @@ EOF
 	# Run script (not in fake mode, so restart will actually execute)
 	run bash "$test_script"
 
-	# Restart should succeed, cooldown should be set
+	# Restart should succeed, restart should be recorded
 	assert_file_exist "$log_file"
-	# Cooldown file should exist after restart (if restart was triggered)
-	# Note: Cooldown is set by full_restart() function, so it should exist
-	if [[ -f "$cooldown_file" ]]; then
-		assert_file_exist "$cooldown_file"
+	# Restart timestamp should be recorded in restart_count file (if restart was triggered)
+	# Note: Restart is recorded by full_restart() function for rate limiting
+	if [[ -f "$restart_file" ]]; then
+		# File should contain at least one timestamp (the restart we just triggered)
+		local file_lines
+		file_lines=$(wc -l <"$restart_file" 2>/dev/null | tr -d ' ' || echo "0")
+		assert [ "$file_lines" -ge 1 ]
 	else
-		# If cooldown file doesn't exist, check if restart was actually called
+		# If restart file doesn't exist, check if restart was actually called
 		# This might happen if rate limiting prevented restart
 		assert_file_contains "$log_file" "restart" || assert_file_contains "$log_file" "Tier 3"
 	fi
@@ -155,51 +157,46 @@ EOF
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "tier 3: restart fails but cooldown is still set (should it be?)" {
-	# Purpose: Test verifies behavior when restart command fails but cooldown period is still set
-	# Expected: Cooldown may or may not be set depending on implementation when restart fails
-	# Importance: Tests edge case behavior to understand cooldown handling during failed recovery attempts
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_HOUR=10
-COOLDOWN_MINUTES=1
-EOF
+@test "tier 3: restart fails but restart is still recorded" {
+	# Purpose: Test verifies behavior when restart command fails - restart is still recorded for rate limiting
+	# Expected: When restart fails, restart timestamp IS recorded in restart_count file (recorded before execution)
+	# Importance: Documents current behavior where restart attempts are recorded before execution, even if they fail
+	# Note: This behavior means failed restart attempts count toward rate limit, which prevents retry loops
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_XFRM_RECOVERY=0'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	export STATE_DIR="$state_dir"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	local failure_counter
-	failure_counter=$(get_failure_counter_path_for_location_var "LOCATION_TEST_EXTERNAL" "${TEST_PEER_IP}")
-	local cooldown_file="${TEST_DIR}/cooldown_until"
+	local restart_file="${STATE_DIR}/restart_count"
 
-	# Set failure count to Tier 3 threshold
-	echo "5" >"$failure_counter"
+	# Record initial restart count (if file exists)
+	local initial_restart_count=0
+	if [[ -f "$restart_file" ]]; then
+		initial_restart_count=$(wc -l <"$restart_file" 2>/dev/null | tr -d ' ' || echo "0")
+	fi
 
-	# Mock ip command - VPN down
-	mock_ip_vpn_down
-
-	# Mock ipsec - restart fails
-	mock_ipsec_reload_restart 1 0
+	# Mock ipsec - restart fails (second parameter 1 = restart fails)
+	mock_ipsec_reload_restart 0 1
 	add_mock_to_path
 
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	run bash "$test_script"
-	assert_success
+	run bash "$TEST_SCRIPT"
+	# Allow exit code 0 (success) or 1 (warnings) - Restart failure causes warnings
+	if [[ $status -ne 0 ]] && [[ $status -ne 1 ]]; then
+		fail "Script exited with unexpected status: $status"
+	fi
 
 	# Should handle restart failure
-	assert_file_exist "$log_file"
-	# Check if cooldown was set despite failure (current behavior)
-	# This tests the current implementation behavior
+	assert_file_exist "$LOG_FILE"
+	# Error message format: "Failed to restart IPsec service for $location_name (exit code: $ipsec_exit_code)"
+	# Note: Error message check uses OR - if either pattern is found, test passes
+	# The key assertion is that restart is recorded even when it fails (checked below)
+	assert_file_contains "$LOG_FILE" "Failed to restart" || assert_file_contains "$LOG_FILE" "ERROR"
+
+	# Restart IS recorded even when restart fails (recorded before execution)
+	# This behavior means failed attempts count toward rate limit, preventing retry loops
+	if [[ -f "$restart_file" ]]; then
+		local final_restart_count
+		final_restart_count=$(wc -l <"$restart_file" 2>/dev/null | tr -d ' ' || echo "0")
+		# Restart count should have increased (restart recorded before execution)
+		assert [ "$final_restart_count" -gt "$initial_restart_count" ]
+	fi
 
 	remove_mock_from_path
 }
@@ -216,8 +213,8 @@ EOF
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'MAX_RESTARTS_PER_HOUR=10' \
-		'COOLDOWN_MINUTES=1' \
+		'MAX_RESTARTS_PER_WINDOW=10' \
+		'RATE_LIMIT_WINDOW_MINUTES=60' \
 		'ENABLE_XFRM_RECOVERY=0' \
 		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
@@ -259,10 +256,10 @@ EOF
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "tier 3: recovery action during cooldown period (should be prevented)" {
-	# Purpose: Test verifies that Tier 3 recovery actions are prevented during cooldown period
-	# Expected: Script exits early when cooldown is active, preventing restart command from being executed
-	# Importance: Cooldown prevention avoids restart loops and allows VPN time to stabilize after recovery attempts
+@test "tier 3: recovery action prevented by rate limiting" {
+	# Purpose: Test verifies that Tier 3 recovery actions are prevented when rate limit is exceeded
+	# Expected: Script detects rate limit exceeded and prevents restart command from being executed
+	# Importance: Rate limiting prevents restart loops and allows VPN time to stabilize after recovery attempts
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<EOF
 LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
@@ -270,7 +267,8 @@ LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
-COOLDOWN_MINUTES=15
+MAX_RESTARTS_PER_WINDOW=3
+RATE_LIMIT_WINDOW_MINUTES=60
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -280,25 +278,28 @@ EOF
 	export LOGS_DIR="${TEST_DIR}/logs"
 	local failure_counter
 	failure_counter=$(get_failure_counter_path_for_location_var "LOCATION_TEST_EXTERNAL" "${TEST_PEER_IP}")
-	# Use STATE_DIR for cooldown file path (matches script's COOLDOWN_UNTIL_FILE)
-	local cooldown_file="${state_dir}/cooldown_until"
+	local restart_file="${state_dir}/restart_count"
+	export RESTART_COUNT_FILE="$restart_file"
 
 	# Set failure count to Tier 3 threshold
 	echo "5" >"$failure_counter"
 
-	# Set cooldown to future time (in cooldown period)
-	local future_time=$(($(date +%s) + 900)) # 15 minutes in future
-	echo "$future_time" >"$cooldown_file"
+	# Set up rate limiting: create restart_count file with MAX_RESTARTS_PER_WINDOW (3) recent restarts
+	local base_time=$(date +%s)
+	local recent=$((base_time - 1800)) # 30 minutes ago (within 60 minute window)
+	echo "$recent" >"$restart_file"
+	echo "$recent" >>"$restart_file"
+	echo "$recent" >>"$restart_file"
 
 	# Mock ip command - VPN down
 	mock_ip_vpn_down
 
-	# Mock ipsec - should not be called during cooldown (but if it is, it fails)
+	# Mock ipsec - should not be called when rate limited (but if it is, it fails)
 	local mock_ipsec="${TEST_DIR}/ipsec"
 	cat >"$mock_ipsec" <<'EOF'
 #!/bin/bash
 if [[ "$1" == "restart" ]]; then
-    echo "ERROR: Restart should not be called during cooldown" >&2
+    echo "ERROR: Restart should not be called when rate limited" >&2
     exit 1
 fi
 EOF
@@ -310,13 +311,25 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
 
 	run bash "$test_script"
+	# Allow exit code 0 (success) or 1 (warnings) - Rate limiting causes warnings but script should still run
+	if [[ $status -ne 0 ]] && [[ $status -ne 1 ]]; then
+		fail "Script exited with unexpected status: $status"
+	fi
 
-	# Should exit early due to cooldown, no recovery action should be triggered
+	# Should prevent restart due to rate limiting, no recovery action should be triggered
 	assert_file_exist "$log_file"
-	# Check for cooldown message - script logs "Script exiting: in cooldown period" or "In cooldown period"
-	assert_file_contains "$log_file" "cooldown period" || assert_file_contains "$log_file" "Cooldown period" || assert_file_contains "$log_file" "cooldown" || assert_file_contains "$log_file" "Cooldown"
-	# ipsec restart should not be called (script exits early)
-	refute_file_contains "$log_file" "ERROR: Restart should not be called during cooldown"
+	# Check for rate limit message (check both the WARNING from check_rate_limit and ERROR from full_restart)
+	assert_file_contains "$log_file" "Rate limit exceeded" || assert_file_contains "$log_file" "rate limit" || assert_file_contains "$log_file" "Rate limit exceeded, skipping Tier 3"
+	# ipsec restart should not be called (rate limiting prevents it)
+	refute_file_contains "$log_file" "ERROR: Restart should not be called when rate limited"
+
+	# Verify restart was not recorded (file should still have 3 entries)
+	if [[ -f "$restart_file" ]]; then
+		local file_lines
+		file_lines=$(wc -l <"$restart_file" 2>/dev/null | tr -d ' ' || echo "0")
+		# Should still have exactly 3 entries (no new restart recorded)
+		assert_equal "$file_lines" "3"
+	fi
 
 	remove_mock_from_path
 }
@@ -335,8 +348,8 @@ LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_HOUR=10
-COOLDOWN_MINUTES=1
+MAX_RESTARTS_PER_WINDOW=10
+RATE_LIMIT_WINDOW_MINUTES=60
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -406,8 +419,8 @@ LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_HOUR=10
-COOLDOWN_MINUTES=1
+MAX_RESTARTS_PER_WINDOW=10
+RATE_LIMIT_WINDOW_MINUTES=60
 ENABLE_XFRM_RECOVERY=0
 ENABLE_NETWORK_PARTITION_CHECK=0
 EOF

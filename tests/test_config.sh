@@ -1626,8 +1626,8 @@ EOF
 @test "Missing required variable in fake mode - should exit with code 3" {
 	# Purpose: Test verifies that missing required variables cause script to exit with error code 3 in fake mode.
 	# Expected: Script detects missing required variable and exits with error code 3 (EXIT_VALIDATION_ERROR) in fake mode.
-	# Importance: Validation errors are execution-blocking (Category 1 errors per FAKE_MODE_EXIT_BEHAVIOR.md),
-	# so they should exit with error code even in fake mode to allow tests to assert failure.
+	# Importance: Validation errors are execution-blocking; they should exit with error code even in fake mode
+	# so tests can assert failure (see fake-mode exit behavior guidance in CODE_PATTERNS/TEST_PATTERNS).
 	# Test Category: Error handling, Fake mode vs normal mode
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Create config file without LOCATION_*_EXTERNAL (required, no default in schema)
@@ -1761,14 +1761,14 @@ EOF
 @test "Invalid variable value in fake mode - should exit with code 3" {
 	# Purpose: Test verifies that invalid variable values cause script to exit with error code 3 in fake mode.
 	# Expected: Script detects invalid value and exits with error code 3 (EXIT_VALIDATION_ERROR) in fake mode.
-	# Importance: Validation errors are execution-blocking (Category 1 errors per FAKE_MODE_EXIT_BEHAVIOR.md),
-	# so they should exit with error code even in fake mode to allow tests to assert failure.
+	# Importance: Validation errors are execution-blocking; they should exit with error code even in fake mode
+	# so tests can assert failure (see fake-mode exit behavior guidance in CODE_PATTERNS/TEST_PATTERNS).
 	# Test Category: Error handling, Fake mode vs normal mode
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	cat >"$config_file" <<EOF
 LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-COOLDOWN_MINUTES=-1
+TIER1_THRESHOLD=0
 EOF
 
 	mkdir -p "${TEST_DIR}/logs"
@@ -1785,13 +1785,13 @@ EOF
 	# Run in fake mode - should exit with error code 3 (validation errors are Category 1)
 	run bash "$test_script" --fake
 	assert_failure
-	assert_output --partial "COOLDOWN_MINUTES must be an integer"
+	assert_output --partial "TIER1_THRESHOLD must be at least 1"
 	assert_output --partial "Configuration validation failed"
 
 	# Should log error about invalid value
-	# COOLDOWN_MINUTES is required with min:1, so -1 should fail validation
+	# TIER1_THRESHOLD is required with min:1, so 0 should fail validation
 	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "COOLDOWN_MINUTES" || assert_file_contains "$log_file" "ERROR" || assert_file_contains "$log_file" "at least"
+	assert_file_contains "$log_file" "TIER1_THRESHOLD" || assert_file_contains "$log_file" "ERROR" || assert_file_contains "$log_file" "at least"
 
 	remove_mock_from_path
 }

@@ -94,6 +94,23 @@ The `run` command:
 - Captures exit status to `$status`
 - Splits output into lines in `$lines` array
 
+**Important**: Because `run` executes in a subshell, global variables set with `declare -g` inside the function will not persist to the parent shell. If you need to check global variables set by a function, call the function directly (not with `run`) and use `set +e` / `set -e` to handle non-zero exit codes:
+
+```bash
+# ❌ Wrong: Global variables won't persist
+run select_recovery_strategy "${TEST_PEER_IP}" 2
+assert_failure
+assert_equal "$RECOVERY_STRATEGY" "unavailable"  # This will be empty!
+
+# ✅ Correct: Call directly to preserve global variables
+set +e
+select_recovery_strategy "${TEST_PEER_IP}" 2
+local exit_code=$?
+set -e
+assert_equal "$exit_code" 1
+assert_equal "$RECOVERY_STRATEGY" "unavailable"  # This will work
+```
+
 ## BATS Helper Libraries
 
 ### bats-support
@@ -382,7 +399,6 @@ load fixtures/vpn_failing
 - `fixtures/vpn_active.bash` - VPN is active and healthy (`setup_vpn_active_fixture`)
 - `fixtures/vpn_down.bash` - VPN is down, no SA found (`setup_vpn_down_fixture`)
 - `fixtures/vpn_failing.bash` - VPN has recorded failures (`setup_vpn_failing_fixture`)
-- `fixtures/vpn_cooldown.bash` - VPN is in cooldown period (`setup_vpn_cooldown_fixture`)
 - `fixtures/vpn_rekey.bash` - VPN has undergone a rekey (`setup_vpn_rekey_fixture`)
 - `fixtures/vpn_multiple_peers.bash` - Multiple VPN peers scenario (`setup_vpn_multiple_peers_fixture`)
 - `fixtures/vpn_mixed_peers.bash` - Multiple peers with mixed states (`setup_vpn_mixed_peers_fixture`)
@@ -1684,7 +1700,7 @@ This runs all test files except the slow test files listed below. Fast tests inc
 - Script-specific tests: `test_analyze_logs.sh`, `test_check_config.sh`, `test_check_utilities.sh`, `test_helper_functions.sh`, `test_install.sh`, `test_uninstall.sh`, `test_vpn_monitor.sh`, `test_prepare_install_package.sh`, `test_vpn_keepalive.sh`, `test_migration.sh`
 - Configuration tests (split files): `test_config_loading.sh`, `test_config_validation.sh`, `test_config_large_values.sh`, `test_config_overrides.sh`, `test_config_security.sh`, `test_config_order.sh`, `test_config_schema.sh`, `test_config_location.sh`
 - Detection tests (split files): `test_detection_status.sh`, `test_detection_fallback.sh`, `test_detection_network_partition.sh`, `test_detection_rekey.sh`, `test_detection_failure_type.sh`, `test_detection_idle.sh`, `test_detection_xfrm_edge_cases.sh`, `test_detection_ping_multiple.sh`, `test_multiple_peer_edge_cases.sh`
-- Recovery tests (split files): `test_recovery_tier1.sh`, `test_recovery_tier2.sh`, `test_recovery_tier3.sh`, `test_recovery_rate_limiting.sh`, `test_recovery_cooldown_rate_limit_interaction.sh`, `test_recovery_network_partition.sh`, `test_recovery_partial_failures.sh`
+- Recovery tests (split files): `test_recovery_tier1.sh`, `test_recovery_tier2.sh`, `test_recovery_tier3.sh`, `test_recovery_rate_limiting.sh`, `test_recovery_network_partition.sh`, `test_recovery_partial_failures.sh`
 - Integration tests: `test_integration_e2e_recovery.sh`, `test_integration_location.sh`
 - Other tests: `test_state_concurrent_updates.sh`, `test_state_location.sh`, `test_rapid_state_changes.sh`, `test_resources.sh`
 
@@ -1879,7 +1895,6 @@ bats tests/test_detection_xfrm_edge_cases.sh
 # Recovery tests
 bats tests/test_recovery.sh
 bats tests/test_recovery_tier1.sh
-bats tests/test_recovery_cooldown_rate_limit_interaction.sh
 bats tests/test_recovery_network_partition.sh
 bats tests/test_recovery_partial_failures.sh
 # ... or run all recovery tests: bats tests/test_recovery*.sh
@@ -2001,7 +2016,7 @@ Fast tests include all test files except the slow test files listed below. This 
 - Script-specific tests: `test_analyze_logs.sh`, `test_check_config.sh`, `test_check_utilities.sh`, `test_helper_functions.sh`, `test_install.sh`, `test_uninstall.sh`, `test_vpn_monitor.sh`, `test_prepare_install_package.sh`, `test_vpn_keepalive.sh`, `test_migration.sh`
 - Configuration tests (split files): `test_config_loading.sh`, `test_config_validation.sh`, `test_config_large_values.sh`, `test_config_overrides.sh`, `test_config_security.sh`, `test_config_order.sh`, `test_config_schema.sh`, `test_config_location.sh`
 - Detection tests (split files): `test_detection_status.sh`, `test_detection_fallback.sh`, `test_detection_network_partition.sh`, `test_detection_rekey.sh`, `test_detection_failure_type.sh`, `test_detection_idle.sh`, `test_detection_xfrm_edge_cases.sh`, `test_detection_ping_multiple.sh`, `test_multiple_peer_edge_cases.sh`
-- Recovery tests (split files): `test_recovery_tier1.sh`, `test_recovery_tier2.sh`, `test_recovery_tier3.sh`, `test_recovery_rate_limiting.sh`, `test_recovery_cooldown_rate_limit_interaction.sh`, `test_recovery_network_partition.sh`, `test_recovery_partial_failures.sh`
+- Recovery tests (split files): `test_recovery_tier1.sh`, `test_recovery_tier2.sh`, `test_recovery_tier3.sh`, `test_recovery_rate_limiting.sh`, `test_recovery_network_partition.sh`, `test_recovery_partial_failures.sh`
 - Integration tests: `test_integration_e2e_recovery.sh`, `test_integration_location.sh`
 - Other tests: `test_state_concurrent_updates.sh`, `test_state_location.sh`, `test_rapid_state_changes.sh`, `test_resources.sh`
 

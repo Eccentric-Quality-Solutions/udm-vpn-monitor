@@ -1329,7 +1329,7 @@ EOF
 
 	# Test 2: Script that fails with validation error (execution-blocking error that fails even in fake mode)
 	# Use invalid IP format which causes validation to fail after lock acquisition
-	# Validation errors exit with error code even in fake mode (see docs/FAKE_MODE_EXIT_BEHAVIOR.md)
+	# Validation errors exit with error code even in fake mode (execution-blocking; see fake-mode guidance in CODE_PATTERNS/TEST_PATTERNS)
 	cat >"$config_file" <<EOF
 LOCATION_TEST_EXTERNAL="invalid-ip-format"
 LOCATION_TEST_INTERNAL="invalid-ip-format"

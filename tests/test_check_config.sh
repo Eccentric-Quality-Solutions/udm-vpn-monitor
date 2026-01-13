@@ -95,8 +95,9 @@ CHECK_CONFIG_SCRIPT="${BATS_TEST_DIRNAME}/../check-config.sh"
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3'
+		'MAX_RESTARTS_PER_WINDOW=3' \
+		'RATE_LIMIT_WINDOW_MINUTES=60' \
+		'MIN_RESTART_INTERVAL_SECONDS=30'
 
 	run bash "$CHECK_CONFIG_SCRIPT" --config "$config_file"
 
@@ -153,8 +154,9 @@ CHECK_CONFIG_SCRIPT="${BATS_TEST_DIRNAME}/../check-config.sh"
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3' \
+		'MAX_RESTARTS_PER_WINDOW=3' \
+		'RATE_LIMIT_WINDOW_MINUTES=60' \
+		'MIN_RESTART_INTERVAL_SECONDS=30' \
 		'VPN_NAME="Test VPN"' \
 		'NO_ESCALATE=0' \
 		'RECOVERY_VERIFY_TIMEOUT=30' \
@@ -272,6 +274,7 @@ EOF
 		'COOLDOWN_MINUTES=15' \
 		'MAX_RESTARTS_PER_HOUR=3' \
 		'DEPRECATED_SETTING="old"'
+	# Note: Missing required settings like MAX_RESTARTS_PER_WINDOW, RATE_LIMIT_WINDOW_MINUTES, MIN_RESTART_INTERVAL_SECONDS
 
 	run bash "$CHECK_CONFIG_SCRIPT" --config "$config_file"
 
@@ -298,8 +301,9 @@ EOF
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3'
+		'MAX_RESTARTS_PER_WINDOW=3' \
+		'RATE_LIMIT_WINDOW_MINUTES=60' \
+		'MIN_RESTART_INTERVAL_SECONDS=30'
 
 	run bash "$CHECK_CONFIG_SCRIPT" --config "$config_file"
 
@@ -322,8 +326,9 @@ EOF
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3' \
+		'MAX_RESTARTS_PER_WINDOW=3' \
+		'RATE_LIMIT_WINDOW_MINUTES=60' \
+		'MIN_RESTART_INTERVAL_SECONDS=30' \
 		'NO_ESCALATE=0' \
 		'RECOVERY_VERIFY_TIMEOUT=30'
 
@@ -349,8 +354,9 @@ LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"  # External IP
 TIER1_THRESHOLD=1  # Tier 1 threshold
 TIER2_THRESHOLD=3  # Tier 2 threshold
 TIER3_THRESHOLD=5  # Tier 3 threshold
-COOLDOWN_MINUTES=15  # Cooldown period
-MAX_RESTARTS_PER_HOUR=3  # Max restarts
+MAX_RESTARTS_PER_WINDOW=3  # Max restarts per window
+RATE_LIMIT_WINDOW_MINUTES=60  # Rate limit window
+MIN_RESTART_INTERVAL_SECONDS=30  # Min restart interval
 EOF
 
 	run bash "$CHECK_CONFIG_SCRIPT" --config "$config_file"
@@ -391,14 +397,13 @@ EOF
 	create_test_config "$config_file" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
-		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15'
-	# Missing MAX_RESTARTS_PER_HOUR (required) and optional settings
+		'TIER3_THRESHOLD=5'
+	# Missing MAX_RESTARTS_PER_WINDOW, RATE_LIMIT_WINDOW_MINUTES, MIN_RESTART_INTERVAL_SECONDS (required) and optional settings
 
 	run bash "$CHECK_CONFIG_SCRIPT" --config "$config_file"
 
 	assert_failure
 	# Should indicate required settings are marked differently
-	assert_output --partial "MAX_RESTARTS_PER_HOUR"
+	assert_output --partial "MAX_RESTARTS_PER_WINDOW"
 	assert_output --partial "REQUIRED" || assert_output --partial "required"
 }

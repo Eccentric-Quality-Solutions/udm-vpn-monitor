@@ -461,59 +461,108 @@ check_ping_if_enabled() {
 		return 0
 	fi
 
-	# Get local UDM IP for ping source (if configured)
-	local local_ip
-	if [[ -n "$local_ip_param" ]]; then
-		local_ip="$local_ip_param"
-	else
-		local_ip=$(get_local_ip_for_ping)
-	fi
+	local local_ip="${local_ip_param:-$(get_local_ip_for_ping)}"
 
-	# Check if ping_target contains multiple IPs (has spaces)
 	if [[ "$ping_target" =~ [[:space:]] ]]; then
-		# Multiple IPs - use check_ping_multiple_ips
-		if [[ $sa_exists -eq 1 ]]; then
-			# SA exists, verify connectivity with ping check
-			if ! check_ping_multiple_ips "$ping_target" "$local_ip" "$location_name"; then
-				# SA exists but ping failed - tunnel may be broken
-				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN SA exists but ping check failed for multiple internal IPs - tunnel may not be routing traffic${location_name:+ for $location_name}"
-			else
-				log_message "INFO" "${location_name:-SYSTEM}" "VPN connectivity verified: ping check passed for multiple internal IPs"
-			fi
-		else
-			# SA doesn't exist, but try ping anyway to see if there's any connectivity
-			if check_ping_multiple_ips "$ping_target" "$local_ip" "$location_name"; then
-				# VPN tunnel is down (no SA), but ping succeeded - connectivity exists via alternative route
-				# Get route info for first IP to identify the alternative route
-				local first_ip
-				first_ip=$(echo "$ping_target" | awk '{print $1}')
-				local route_msg
-				route_msg=$(build_route_message "$first_ip" "$local_ip")
-				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN tunnel is down (no SA found), but connectivity exists via alternative route${route_msg}${location_name:+ for $location_name}"
-			fi
-		fi
-	else
-		# Single IP - use existing logic
-		if [[ $sa_exists -eq 1 ]]; then
-			# SA exists, verify connectivity with ping check
-			if ! check_ping_connectivity "$ping_target" "$local_ip" "$location_name"; then
-				# SA exists but ping failed - tunnel may be broken
-				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN SA exists but ping check failed for $ping_target - tunnel may not be routing traffic${location_name:+ for $location_name}"
-			else
-				log_message "INFO" "${location_name:-SYSTEM}" "VPN connectivity verified: ping check passed for $ping_target"
-			fi
-		else
-			# SA doesn't exist, but try ping anyway to see if there's any connectivity
-			if check_ping_connectivity "$ping_target" "$local_ip" "$location_name"; then
-				# VPN tunnel is down (no SA), but ping succeeded - connectivity exists via alternative route
-				local route_msg
-				route_msg=$(build_route_message "$ping_target" "$local_ip")
-				handle_error "WARNING" "${location_name:-SYSTEM}" "VPN tunnel is down (no SA found), but connectivity exists via alternative route${route_msg}${location_name:+ for $location_name}"
-			fi
-		fi
+		handle_ping_multiple_targets "$sa_exists" "$ping_target" "$local_ip" "$location_name"
+		return 0
 	fi
 
+	handle_ping_single_target "$sa_exists" "$ping_target" "$local_ip" "$location_name"
 	return 0
+}
+
+# Handle ping checks when multiple targets are supplied (space-delimited list)
+#
+# Processes ping checks for multiple target IPs (space-delimited string).
+# Handles both cases where SA exists and where it doesn't, logging appropriate
+# messages based on connectivity results.
+#
+# Arguments:
+#   $1: SA existence status (1 = SA exists, 0 = SA does not exist)
+#   $2: Space-delimited list of ping target IP addresses
+#   $3: Local IP address (for source IP, optional)
+#   $4: Location name (optional, used for logging)
+#
+# Returns:
+#   0: Always succeeds (function logs results but doesn't affect return code)
+#
+# Side effects:
+#   - Logs INFO messages when ping succeeds and SA exists
+#   - Logs WARNING messages when connectivity issues are detected
+#
+# Note:
+#   This function is called by check_ping_if_enabled() when multiple targets
+#   are detected (space-delimited string). Uses check_ping_multiple_ips() for
+#   actual ping execution.
+handle_ping_multiple_targets() {
+	local sa_exists="$1"
+	local ping_target="$2"
+	local local_ip="$3"
+	local location_name="$4"
+
+	if [[ $sa_exists -ne 1 ]]; then
+		if check_ping_multiple_ips "$ping_target" "$local_ip" "$location_name"; then
+			local first_ip
+			first_ip=$(echo "$ping_target" | awk '{print $1}')
+			local route_msg
+			route_msg=$(build_route_message "$first_ip" "$local_ip")
+			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN tunnel is down (no SA found), but connectivity exists via alternative route${route_msg}${location_name:+ for $location_name}"
+		fi
+		return
+	fi
+
+	if check_ping_multiple_ips "$ping_target" "$local_ip" "$location_name"; then
+		log_message "INFO" "${location_name:-SYSTEM}" "VPN connectivity verified: ping check passed for multiple internal IPs"
+		return
+	fi
+
+	handle_error "WARNING" "${location_name:-SYSTEM}" "VPN SA exists but ping check failed for multiple internal IPs - tunnel may not be routing traffic${location_name:+ for $location_name}"
+}
+
+# Handle ping checks for a single target
+#
+# Processes ping check for a single target IP address.
+# Handles both cases where SA exists and where it doesn't, logging appropriate
+# messages based on connectivity results.
+#
+# Arguments:
+#   $1: SA existence status (1 = SA exists, 0 = SA does not exist)
+#   $2: Ping target IP address
+#   $3: Local IP address (for source IP, optional)
+#   $4: Location name (optional, used for logging)
+#
+# Returns:
+#   0: Always succeeds (function logs results but doesn't affect return code)
+#
+# Side effects:
+#   - Logs INFO messages when ping succeeds and SA exists
+#   - Logs WARNING messages when connectivity issues are detected
+#
+# Note:
+#   This function is called by check_ping_if_enabled() when a single target
+#   is detected. Uses check_ping_connectivity() for actual ping execution.
+handle_ping_single_target() {
+	local sa_exists="$1"
+	local ping_target="$2"
+	local local_ip="$3"
+	local location_name="$4"
+
+	if [[ $sa_exists -ne 1 ]]; then
+		if check_ping_connectivity "$ping_target" "$local_ip" "$location_name"; then
+			local route_msg
+			route_msg=$(build_route_message "$ping_target" "$local_ip")
+			handle_error "WARNING" "${location_name:-SYSTEM}" "VPN tunnel is down (no SA found), but connectivity exists via alternative route${route_msg}${location_name:+ for $location_name}"
+		fi
+		return
+	fi
+
+	if check_ping_connectivity "$ping_target" "$local_ip" "$location_name"; then
+		log_message "INFO" "${location_name:-SYSTEM}" "VPN connectivity verified: ping check passed for $ping_target"
+		return
+	fi
+
+	handle_error "WARNING" "${location_name:-SYSTEM}" "VPN SA exists but ping check failed for $ping_target - tunnel may not be routing traffic${location_name:+ for $location_name}"
 }
 
 # Check ping connectivity if enabled (optional check)

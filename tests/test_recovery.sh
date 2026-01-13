@@ -14,7 +14,6 @@ load helpers/test_data
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
-load fixtures/vpn_cooldown
 load fixtures/vpn_at_tier
 load fixtures/vpn_recovery_test
 
@@ -115,31 +114,46 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Ensures graceful handling when recovery tools are unavailable
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
 
-	# Save original PATH and create a minimal PATH that excludes ip/ipsec
-	# Use a simple approach: /bin typically has essential commands but not ip/ipsec
-	# Note: This test may need adjustment if ip/ipsec are found in /bin (unlikely)
-	local original_path="${PATH}"
-	# Create minimal PATH - start with /bin, add /usr/bin only if it doesn't contain ip/ipsec
-	local test_path="/bin"
-	# Check if /usr/bin has ip or ipsec before adding it
-	if [[ ! -x "/usr/bin/ip" ]] && [[ ! -x "/usr/bin/ipsec" ]]; then
-		test_path="/usr/bin:${test_path}"
-	fi
-	export PATH="${TEST_DIR}:${test_path}"
-
-	# Verify ip/ipsec are not available in the restricted PATH
-	if command -v ip >/dev/null 2>&1 || command -v ipsec >/dev/null 2>&1; then
-		skip "ip or ipsec found in restricted PATH - cannot test 'no commands available' scenario"
-	fi
-
-	# Don't create any mocks (no ip or ipsec available)
-	# PATH is restricted to exclude ip/ipsec, so commands won't be found
-
-	# Source dependencies first (recovery.sh needs logging.sh)
+	# Source dependencies first (recovery.sh needs logging.sh and common.sh for check_command_available)
 	# shellcheck source=../lib/logging.sh
 	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" || true
 	# shellcheck source=../lib/recovery.sh
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
+
+	# Mock check_command_available to return false for ip and ipsec
+	# This simulates the scenario where commands are truly unavailable
+	# (check_command_available has fallback mechanisms that check system directories,
+	# so we need to mock it to properly test the "unavailable" scenario)
+	if command -v check_command_available >/dev/null 2>&1; then
+		local func_def
+		func_def=$(declare -f check_command_available 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			eval "${func_def/check_command_available/check_command_available.original}" 2>/dev/null || true
+		fi
+	fi
+
+	# Check if command is available (test helper)
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
+	check_command_available() {
+		local cmd="$1"
+		if [[ "$cmd" == "ip" ]] || [[ "$cmd" == "ipsec" ]]; then
+			return 1
+		fi
+		# For other commands, use original if available
+		if command -v check_command_available.original >/dev/null 2>&1; then
+			check_command_available.original "$@"
+		else
+			command -v "$cmd" >/dev/null 2>&1
+		fi
+	}
 
 	# Test select_recovery_strategy function (call directly, not with run, to preserve global variables)
 	# Use set +e to allow function to return error code without failing test
@@ -153,8 +167,17 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_equal "$RECOVERY_IMPACT" ""
 	assert_equal "$RECOVERY_AVAILABLE" 0
 
-	# Restore original PATH
-	export PATH="${original_path}"
+	# Restore original check_command_available if it was saved
+	# Note: Each BATS test runs in a fresh shell, so cleanup isn't strictly necessary,
+	# but we do it for completeness and to avoid potential issues if tests are run differently
+	if declare -f check_command_available.original >/dev/null 2>&1; then
+		local restore_func
+		restore_func=$(declare -f check_command_available.original 2>/dev/null || true)
+		if [[ -n "$restore_func" ]]; then
+			eval "${restore_func/check_command_available.original/check_command_available}" 2>/dev/null || true
+		fi
+	fi
+
 	remove_mock_from_path
 }
 
@@ -1723,40 +1746,70 @@ EOF
 	# Importance: Ensures graceful handling when all recovery tools are unavailable
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=0'
 
-	# Save original PATH and create a minimal PATH that excludes ip/ipsec
-	# Use a simple approach: /bin typically has essential commands but not ip/ipsec
-	# Note: This test may need adjustment if ip/ipsec are found in /bin (unlikely)
-	local original_path="${PATH}"
-	# Create minimal PATH - start with /bin, add /usr/bin only if it doesn't contain ip/ipsec
-	local test_path="/bin"
-	# Check if /usr/bin has ip or ipsec before adding it
-	if [[ ! -x "/usr/bin/ip" ]] && [[ ! -x "/usr/bin/ipsec" ]]; then
-		test_path="/usr/bin:${test_path}"
-	fi
-	export PATH="${TEST_DIR}:${test_path}"
-
-	# Verify ip/ipsec are not available in the restricted PATH
-	if command -v ip >/dev/null 2>&1 || command -v ipsec >/dev/null 2>&1; then
-		skip "ip or ipsec found in restricted PATH - cannot test 'no commands available' scenario"
-	fi
-
-	# Don't create any mocks (no ip or ipsec available)
-	# PATH is restricted to exclude ip/ipsec, so commands won't be found
-
-	# Source recovery functions to test directly
+	# Source dependencies first (recovery.sh needs logging.sh and common.sh for check_command_available)
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" || true
 	# shellcheck source=../lib/recovery.sh
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
+	# Mock check_command_available to return false for ip and ipsec
+	# This simulates the scenario where commands are truly unavailable
+	# (check_command_available has fallback mechanisms that check system directories,
+	# so we need to mock it to properly test the "unavailable" scenario)
+	if command -v check_command_available >/dev/null 2>&1; then
+		local func_def
+		func_def=$(declare -f check_command_available 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			eval "${func_def/check_command_available/check_command_available.original}" 2>/dev/null || true
+		fi
+	fi
+
+	# Check if command is available (test helper)
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
+	check_command_available() {
+		local cmd="$1"
+		if [[ "$cmd" == "ip" ]] || [[ "$cmd" == "ipsec" ]]; then
+			return 1
+		fi
+		# For other commands, use original if available
+		if command -v check_command_available.original >/dev/null 2>&1; then
+			check_command_available.original "$@"
+		else
+			command -v "$cmd" >/dev/null 2>&1
+		fi
+	}
+
 	# Test select_recovery_strategy function (xfrm disabled, no ipsec)
-	run select_recovery_strategy "${TEST_PEER_IP}" 2
-	assert_failure
+	# Call directly (not with run) to preserve global variables set by declare -g
+	# Use set +e to allow function to return error code without failing test
+	set +e
+	select_recovery_strategy "${TEST_PEER_IP}" 2
+	local exit_code=$?
+	set -e
+	assert_equal "$exit_code" 1
 	assert_equal "$RECOVERY_STRATEGY" "unavailable"
 	assert_equal "$RECOVERY_COMMAND" ""
 	assert_equal "$RECOVERY_IMPACT" ""
 	assert_equal "$RECOVERY_AVAILABLE" 0
 
-	# Restore original PATH
-	export PATH="${original_path}"
+	# Restore original check_command_available if it was saved
+	# Note: Each BATS test runs in a fresh shell, so cleanup isn't strictly necessary,
+	# but we do it for completeness and to avoid potential issues if tests are run differently
+	if declare -f check_command_available.original >/dev/null 2>&1; then
+		local restore_func
+		restore_func=$(declare -f check_command_available.original 2>/dev/null || true)
+		if [[ -n "$restore_func" ]]; then
+			eval "${restore_func/check_command_available.original/check_command_available}" 2>/dev/null || true
+		fi
+	fi
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -1766,40 +1819,70 @@ EOF
 	# Importance: Ensures graceful handling when all recovery tools are unavailable for Tier 3
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
 
-	# Save original PATH and create a minimal PATH that excludes ip/ipsec
-	# Use a simple approach: /bin typically has essential commands but not ip/ipsec
-	# Note: This test may need adjustment if ip/ipsec are found in /bin (unlikely)
-	local original_path="${PATH}"
-	# Create minimal PATH - start with /bin, add /usr/bin only if it doesn't contain ip/ipsec
-	local test_path="/bin"
-	# Check if /usr/bin has ip or ipsec before adding it
-	if [[ ! -x "/usr/bin/ip" ]] && [[ ! -x "/usr/bin/ipsec" ]]; then
-		test_path="/usr/bin:${test_path}"
-	fi
-	export PATH="${TEST_DIR}:${test_path}"
-
-	# Verify ip/ipsec are not available in the restricted PATH
-	if command -v ip >/dev/null 2>&1 || command -v ipsec >/dev/null 2>&1; then
-		skip "ip or ipsec found in restricted PATH - cannot test 'no commands available' scenario"
-	fi
-
-	# Don't create any mocks (no ip or ipsec available)
-	# PATH is restricted to exclude ip/ipsec, so commands won't be found
-
-	# Source recovery functions to test directly
+	# Source dependencies first (recovery.sh needs logging.sh and common.sh for check_command_available)
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" || true
 	# shellcheck source=../lib/recovery.sh
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
+	# Mock check_command_available to return false for ip and ipsec
+	# This simulates the scenario where commands are truly unavailable
+	# (check_command_available has fallback mechanisms that check system directories,
+	# so we need to mock it to properly test the "unavailable" scenario)
+	if command -v check_command_available >/dev/null 2>&1; then
+		local func_def
+		func_def=$(declare -f check_command_available 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			eval "${func_def/check_command_available/check_command_available.original}" 2>/dev/null || true
+		fi
+	fi
+
+	# Check if command is available (test helper)
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
+	check_command_available() {
+		local cmd="$1"
+		if [[ "$cmd" == "ip" ]] || [[ "$cmd" == "ipsec" ]]; then
+			return 1
+		fi
+		# For other commands, use original if available
+		if command -v check_command_available.original >/dev/null 2>&1; then
+			check_command_available.original "$@"
+		else
+			command -v "$cmd" >/dev/null 2>&1
+		fi
+	}
+
 	# Test select_recovery_strategy function for Tier 3
-	run select_recovery_strategy "${TEST_PEER_IP}" 3
-	assert_failure
+	# Call directly (not with run) to preserve global variables set by declare -g
+	# Use set +e to allow function to return error code without failing test
+	set +e
+	select_recovery_strategy "${TEST_PEER_IP}" 3
+	local exit_code=$?
+	set -e
+	assert_equal "$exit_code" 1
 	assert_equal "$RECOVERY_STRATEGY" "unavailable"
 	assert_equal "$RECOVERY_COMMAND" ""
 	assert_equal "$RECOVERY_IMPACT" ""
 	assert_equal "$RECOVERY_AVAILABLE" 0
 
-	# Restore original PATH
-	export PATH="${original_path}"
+	# Restore original check_command_available if it was saved
+	# Note: Each BATS test runs in a fresh shell, so cleanup isn't strictly necessary,
+	# but we do it for completeness and to avoid potential issues if tests are run differently
+	if declare -f check_command_available.original >/dev/null 2>&1; then
+		local restore_func
+		restore_func=$(declare -f check_command_available.original 2>/dev/null || true)
+		if [[ -n "$restore_func" ]]; then
+			eval "${restore_func/check_command_available.original/check_command_available}" 2>/dev/null || true
+		fi
+	fi
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -2444,19 +2527,6 @@ EOF
 	# Importance: Ensures recovery functions handle unavailable strategies gracefully
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
 
-	# Save original PATH and create a minimal PATH that excludes ip/ipsec
-	local original_path="${PATH}"
-	local test_path="/bin"
-	if [[ ! -x "/usr/bin/ip" ]] && [[ ! -x "/usr/bin/ipsec" ]]; then
-		test_path="/usr/bin:${test_path}"
-	fi
-	export PATH="${TEST_DIR}:${test_path}"
-
-	# Verify ip/ipsec are not available in the restricted PATH
-	if command -v ip >/dev/null 2>&1 || command -v ipsec >/dev/null 2>&1; then
-		skip "ip or ipsec found in restricted PATH - cannot test 'no commands available' scenario"
-	fi
-
 	# Source recovery functions to test directly
 	source_recovery_module
 
@@ -2465,14 +2535,60 @@ EOF
 	LOGS_DIR="${TEST_DIR}/logs"
 	mkdir -p "${LOGS_DIR}"
 
+	# Mock check_command_available to return false for ip and ipsec
+	# This simulates the scenario where commands are truly unavailable
+	# (check_command_available has fallback mechanisms that check system directories,
+	# so we need to mock it to properly test the "unavailable" scenario)
+	if command -v check_command_available >/dev/null 2>&1; then
+		local func_def
+		func_def=$(declare -f check_command_available 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			eval "${func_def/check_command_available/check_command_available.original}" 2>/dev/null || true
+		fi
+	fi
+
+	# Check if command is available (test helper)
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
+	check_command_available() {
+		local cmd="$1"
+		if [[ "$cmd" == "ip" ]] || [[ "$cmd" == "ipsec" ]]; then
+			return 1
+		fi
+		# For other commands, use original if available
+		if command -v check_command_available.original >/dev/null 2>&1; then
+			check_command_available.original "$@"
+		else
+			command -v "$cmd" >/dev/null 2>&1
+		fi
+	}
+
 	# Test select_recovery_strategy directly (simulating call from surgical_cleanup)
-	run select_recovery_strategy "${TEST_PEER_IP}" 2
-	assert_failure
+	# Call directly (not with run) to preserve global variables set by declare -g
+	# Use set +e to allow function to return error code without failing test
+	set +e
+	select_recovery_strategy "${TEST_PEER_IP}" 2
+	local exit_code=$?
+	set -e
+	assert_equal "$exit_code" 1
 	assert_equal "$RECOVERY_STRATEGY" "unavailable"
 	assert_equal "$RECOVERY_AVAILABLE" 0
 
-	# Restore original PATH
-	export PATH="${original_path}"
+	# Restore original check_command_available if it was saved
+	# Note: Each BATS test runs in a fresh shell, so cleanup isn't strictly necessary,
+	# but we do it for completeness and to avoid potential issues if tests are run differently
+	if declare -f check_command_available.original >/dev/null 2>&1; then
+		local restore_func
+		restore_func=$(declare -f check_command_available.original 2>/dev/null || true)
+		if [[ -n "$restore_func" ]]; then
+			eval "${restore_func/check_command_available.original/check_command_available}" 2>/dev/null || true
+		fi
+	fi
 }
 
 # bats test_tags=category:high-risk,priority:high

@@ -147,27 +147,6 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 }
 
 # bats test_tags=category:unit
-@test "get_timestamp_plus_minutes adds minutes correctly" {
-	# Purpose: Test verifies that get_timestamp_plus_minutes function correctly calculates future timestamps
-	# Expected: Function adds specified minutes to current timestamp and returns Unix timestamp
-	# Importance: Timestamp calculation is used for cooldown periods and rate limiting calculations
-	# Source the function
-	# shellcheck source=/dev/null
-	source_function "get_timestamp_plus_minutes"
-
-	local now=$(date +%s)
-	run get_timestamp_plus_minutes 5
-
-	assert_success
-	local future=$(cat <<<"$output")
-	local expected=$((now + 300)) # 5 minutes = 300 seconds
-
-	# Allow 5 second tolerance for execution time
-	assert [ $((future - expected)) -ge -5 ]
-	assert [ $((future - expected)) -le 5 ]
-}
-
-# bats test_tags=category:unit
 @test "get_file_mtime returns modification time" {
 	# Purpose: Test verifies that get_file_mtime function correctly retrieves file modification timestamp
 	# Expected: Function returns Unix timestamp representing file's last modification time
@@ -755,142 +734,6 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	local temp_file="${counter_file}.tmp"
 	assert_file_not_exist "$temp_file"
 	assert_file_exist "$counter_file"
-}
-
-# bats test_tags=category:unit
-@test "check_cooldown returns false when cooldown file missing" {
-	# Purpose: Test verifies that check_cooldown function returns false when cooldown file doesn't exist
-	# Expected: Function returns failure (not in cooldown) when cooldown file is missing
-	# Importance: Missing cooldown file indicates no cooldown period is active, allowing recovery actions
-	local state_dir="${TEST_DIR}"
-
-	cat >"${TEST_DIR}/test_script.sh" <<'SCRIPT'
-#!/bin/bash
-STATE_DIR="$1"
-
-# Get file modification time
-#
-# Arguments:
-#   $1: File path
-#
-# Returns:
-#   Prints Unix timestamp of file modification time, or "0" on error
-get_file_mtime() {
-	local file="$1"
-	stat -c %Y "$file" 2>/dev/null || echo "0"
-}
-
-# Check if system is in cooldown period
-#
-# Arguments:
-#   None (uses STATE_DIR environment variable)
-#
-# Returns:
-#   0: In cooldown period
-#   1: Not in cooldown period
-check_cooldown() {
-	local COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
-	if [[ ! -f "$COOLDOWN_UNTIL_FILE" ]]; then
-		return 1 # Not in cooldown
-	fi
-
-	local cooldown_until
-	cooldown_until=$(cat "$COOLDOWN_UNTIL_FILE")
-	local now
-	now=$(date +%s)
-
-	if [[ $now -lt $cooldown_until ]]; then
-		return 0 # In cooldown
-	else
-		rm -f "$COOLDOWN_UNTIL_FILE"
-		return 1 # Not in cooldown
-	fi
-}
-
-check_cooldown
-SCRIPT
-
-	chmod +x "${TEST_DIR}/test_script.sh"
-
-	run bash "${TEST_DIR}/test_script.sh" "$state_dir"
-	assert_failure # Not in cooldown
-}
-
-# bats test_tags=category:unit
-@test "check_cooldown returns true when in cooldown period" {
-	# Purpose: Test verifies that check_cooldown function returns true when cooldown period is active
-	# Expected: Function returns success (in cooldown) when current time is before cooldown expiration time
-	# Importance: Cooldown checking prevents recovery actions from being executed too frequently
-	local state_dir="${TEST_DIR}"
-	local cooldown_file="${state_dir}/cooldown_until"
-	local future_time=$(($(date +%s) + 900)) # 15 minutes in future
-	echo "$future_time" >"$cooldown_file"
-
-	cat >"${TEST_DIR}/test_script.sh" <<'SCRIPT'
-#!/bin/bash
-STATE_DIR="$1"
-
-# Check if system is in cooldown period
-#
-# Arguments:
-#   None (uses STATE_DIR environment variable)
-#
-# Returns:
-#   0: In cooldown period
-#   1: Not in cooldown period
-check_cooldown() {
-	local COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
-	if [[ ! -f "$COOLDOWN_UNTIL_FILE" ]]; then
-		return 1 # Not in cooldown
-	fi
-
-	local cooldown_until
-	cooldown_until=$(cat "$COOLDOWN_UNTIL_FILE")
-	local now
-	now=$(date +%s)
-
-	if [[ $now -lt $cooldown_until ]]; then
-		return 0 # In cooldown
-	else
-		rm -f "$COOLDOWN_UNTIL_FILE"
-		return 1 # Not in cooldown
-	fi
-}
-
-check_cooldown
-SCRIPT
-
-	chmod +x "${TEST_DIR}/test_script.sh"
-
-	run bash "${TEST_DIR}/test_script.sh" "$state_dir"
-	assert_success # In cooldown
-}
-
-# bats test_tags=category:unit
-@test "check_cooldown handles corrupted file" {
-	# Purpose: Test verifies that check_cooldown function handles corrupted cooldown files gracefully
-	# Expected: Function handles invalid timestamp gracefully, treating corrupted file as expired cooldown
-	# Importance: Corrupted timestamps can cause arithmetic errors; script must handle them robustly
-	setup_test_environment "${TEST_DIR}"
-
-	source_function "check_cooldown"
-	source_function "get_unix_timestamp"
-	source_function "file_exists_and_readable"
-
-	# Create corrupted cooldown file with invalid timestamp
-	local cooldown_file="${STATE_DIR}/cooldown_until"
-	echo "invalid-timestamp-value" >"$cooldown_file"
-
-	# check_cooldown reads the file and tries to compare timestamps
-	# In bash, when comparing a number to a non-numeric string with -lt,
-	# bash treats the string as 0, so the comparison will be false
-	# This causes the function to treat it as expired and return 1 (not in cooldown)
-	run check_cooldown
-	# Function should return 1 (not in cooldown) since invalid timestamp is treated as 0
-	# and current time is greater than 0
-	assert_failure
-	# Corrupted file should be removed
-	assert_file_not_exist "$cooldown_file"
 }
 
 # bats test_tags=category:unit
@@ -1537,8 +1380,8 @@ EOF
 	assert_equal "$TIER1_THRESHOLD" "1"
 	assert_equal "$TIER2_THRESHOLD" "3"
 	assert_equal "$TIER3_THRESHOLD" "5"
-	assert_equal "$COOLDOWN_MINUTES" "15"
-	assert_equal "$MAX_RESTARTS_PER_HOUR" "3"
+	# Note: COOLDOWN_MINUTES and MAX_RESTARTS_PER_HOUR are deprecated (optional with empty defaults)
+	# They are migrated to MIN_RESTART_INTERVAL_SECONDS and MAX_RESTARTS_PER_WINDOW respectively
 }
 
 # ============================================================================

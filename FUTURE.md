@@ -35,12 +35,20 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Low priority: current code works correctly, this is a style consistency improvement
     - See `lib/config.sh` lines 1108, 1154, 1179, 1212, 1405 for examples that could be refactored
 
+- System-wide failure detection enhancements
+  - Consider making coordinator selection more robust (e.g., use location order instead of first-check-wins)
+  - Consider adding metrics/statistics for system-wide failures (e.g., count, duration, frequency)
+  - Consider alerting integration for system-wide failures (e.g., email, webhook, syslog)
+  - Consider different recovery strategies for system-wide failures (e.g., infrastructure-level recovery like restarting IPsec daemon, checking kernel state)
+  - Consider rate limiting exceptions for system-wide failures (allow more restarts during system-wide failures)
+  - Note: Basic system-wide failure detection implemented 2026-01-12
+
 - Continue migrating test data to use test data helpers
     - Many test files still have embedded xfrm state output, ipsec status output, and config files
     - Files with significant embedded data include: `test_recovery.sh`, `test_detection.sh`, `test_integration_location.sh`, and others
     - Pattern is established: use `generate_xfrm_state_output()`, `generate_config_file()`, etc. from `helpers/test_data`
     - Benefits: Centralized maintenance, consistency, easier to update test data formats
-    - Note: Migration started 2026-01-11 with `test_recovery_partial_failures.sh`, `test_recovery_cooldown_rate_limit_interaction.sh`, and `test_config.sh`
+    - Note: Migration started 2026-01-11 with `test_recovery_partial_failures.sh` and `test_config.sh`
     - Note: Key instances migrated 2026-01-27 in `test_recovery.sh`, `test_detection.sh`, and `test_integration_location.sh`
     - Pattern for mock scripts: Generate output using helpers, store in file, use placeholders in mock script, replace with sed after creation
     - Note: Additional migrations completed 2026-01-28: Migrated 2 more test cases in `test_recovery.sh`:
@@ -130,3 +138,19 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Low priority: Current test still verifies that script doesn't crash, which is the important behavior
     - Note: Test includes comment acknowledging limitation - "Note: This may not work on all systems, but tests the error handling path"
     - See: `tests/test_lockfile.sh:1031-1063` for current implementation
+
+- Make network partition summary interval configurable
+    - Currently fixed at 1 hour (3600 seconds)
+    - Could be made configurable similar to `PING_SUMMARY_INTERVAL_MINUTES` if users want different intervals
+    - Example: `NETWORK_PARTITION_SUMMARY_INTERVAL_MINUTES=60` (default: 60, range: 1-1440)
+    - Low priority: Current 1-hour interval meets requirements
+    - Note: Pattern established 2026-01-15 with network partition statistics tracking
+
+- Add statistics tracking for resource monitoring
+    - Currently no visibility into whether resource monitoring checks (CPU, RAM, disk) are running successfully
+    - Similar issue to network partition checks - only logs when resources are constrained, no visibility into successful checks
+    - Would track: CPU/RAM/disk check successes/failures, and constraint events
+    - Hourly summary: "Resource monitoring summary: CPU checks succeeded X times, failed Y times; RAM checks succeeded X times, failed Y times; Disk checks succeeded X times, failed Y times; CPU constrained Z times; RAM constrained Z times; Disk critical Z times"
+    - Medium priority: Provides visibility into critical system checks
+    - Note: Pattern established 2026-01-15 with network partition statistics tracking
+    - See: `docs/working/STATISTICS_TRACKING_CANDIDATES.md` for detailed analysis

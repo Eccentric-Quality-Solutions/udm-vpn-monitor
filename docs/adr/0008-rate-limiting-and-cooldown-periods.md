@@ -44,6 +44,7 @@ We will implement a three-parameter rate limiting system:
 - **Per-System Limits**: Rate limiting applies globally (not per-peer) to prevent system-wide disruption
 - **Sliding Window**: More accurate than fixed windows - counts restarts in last N minutes from current time
 - **Backward Compatible**: `MAX_RESTARTS_PER_HOUR` automatically migrated to new parameters
+- **Coordinator Bypass**: During system-wide failures, coordinator bypasses window limit (but keeps minimum interval) to allow necessary recovery attempts during infrastructure outages
 
 ### Negative
 - **Complexity**: Requires tracking restart timestamps and window calculations
@@ -57,7 +58,7 @@ We will implement a three-parameter rate limiting system:
 **1. Maximum Restarts Per Window** (`MAX_RESTARTS_PER_WINDOW`):
 - **Type**: Integer
 - **Range**: 1-20
-- **Default**: 3
+- **Default**: 20
 - **Description**: Maximum number of Tier 3 restarts allowed within the time window
 - **Backward Compatibility**: `MAX_RESTARTS_PER_HOUR` automatically migrated to `MAX_RESTARTS_PER_WINDOW` with `RATE_LIMIT_WINDOW_MINUTES=60`
 
@@ -74,11 +75,12 @@ We will implement a three-parameter rate limiting system:
 **3. Minimum Restart Interval** (`MIN_RESTART_INTERVAL_SECONDS`):
 - **Type**: Integer
 - **Range**: 0-300 (0 = disabled, 5 minutes max)
-- **Default**: 30
+- **Default**: 40
 - **Description**: Minimum time (in seconds) that must pass between consecutive Tier 3 restarts. Prevents rapid-fire restarts even if within rate limit window.
 - **Examples**:
   - `0` = No minimum spacing (allows all restarts to occur immediately if within window)
-  - `30` = 30-second minimum (default, allows rapid recovery but prevents thrashing)
+  - `30` = 30-second minimum (allows rapid recovery but prevents thrashing)
+  - `40` = 40-second minimum (default, allows rapid recovery but prevents thrashing)
   - `60` = 1-minute minimum (more conservative, gives tunnels more time to stabilize)
 
 ### Rate Limit Check Logic
@@ -87,15 +89,24 @@ We will implement a three-parameter rate limiting system:
    - If `MIN_RESTART_INTERVAL_SECONDS > 0`, checks time since last restart
    - Blocks restart if less than minimum interval has elapsed
    - Provides clear error message with remaining time
+   - **Always enforced** (even for coordinator during system-wide failures)
 
-2. **Sliding Window Check**:
+2. **Coordinator Bypass Check** (during system-wide failures):
+   - If location name is provided and system-wide failure is detected:
+     - Checks if this location is the recovery coordinator
+     - If coordinator: bypasses window limit (but still enforces minimum interval)
+     - Logs info message when bypass is used
+   - **Purpose**: Allows necessary recovery attempts during infrastructure outages while preventing cascades
+
+3. **Sliding Window Check**:
    - Calculates window start time: `now - RATE_LIMIT_WINDOW_MINUTES`
    - Filters restart timestamps in `RESTART_COUNT_FILE` to only those within window
    - Counts filtered timestamps
    - Blocks restart if count >= `MAX_RESTARTS_PER_WINDOW`
    - Provides detailed error message with reset time, countdown, and restart list
+   - **Skipped** for coordinator during system-wide failures (bypass active)
 
-3. **Restart Recording**:
+4. **Restart Recording**:
    - Records current timestamp to `RESTART_COUNT_FILE` after successful restart
    - Automatically cleans up entries older than 24 hours to prevent file growth
    - Uses atomic file operations to prevent corruption
@@ -112,7 +123,7 @@ We will implement a three-parameter rate limiting system:
 
 ### Cooldown Status
 
-**Deprecated (v0.6.0+)**: Cooldown mechanism has been replaced by the minimum restart interval system. Cooldown functions (`check_cooldown()`, `set_cooldown()`) remain in code for backward compatibility but are no longer called by the main script or recovery modules.
+**Removed (v0.6.0+)**: Cooldown mechanism has been replaced by the minimum restart interval system. Cooldown functions (`check_cooldown()`, `set_cooldown()`, `get_timestamp_plus_minutes()`) have been removed from the codebase.
 
 **Why Cooldown Was Removed:**
 - Cooldown prevented all monitoring for 15 minutes (problematic - delayed failure detection)
@@ -131,12 +142,15 @@ We will implement a three-parameter rate limiting system:
   - Reset timestamp (when oldest restart will expire)
   - Countdown (time remaining until reset)
   - List of restart timestamps that count toward the limit
+- If coordinator bypasses window limit during system-wide failure, info message is logged:
+  - "Coordinator <location> bypassing rate limit window during system-wide failure (minimum interval still enforced)"
 - The restart command only executes if rate limiting allows it
 
 ## Related ADRs
 - ADR-0003: Tiered Recovery System
 - ADR-0004: Per-Peer State Tracking
 - ADR-0012: Atomic File Operations
+- ADR-0031: System-Wide Failure Detection and Coordination (coordinator bypass integrates with system-wide failure detection)
 
 ## Change History
 - **2026-01-12**: Refactored rate limiting system:
@@ -145,6 +159,17 @@ We will implement a three-parameter rate limiting system:
   - Added `MIN_RESTART_INTERVAL_SECONDS` to prevent rapid-fire restarts
   - Deprecated cooldown mechanism (replaced by minimum interval)
   - Maintained backward compatibility with automatic migration from old parameters
+- **2026-01-12**: Added `COOLDOWN_MINUTES` backward compatibility:
+  - Added `COOLDOWN_MINUTES` to schema as optional deprecated variable (max: 1440 minutes)
+  - Migration converts `COOLDOWN_MINUTES` to `MIN_RESTART_INTERVAL_SECONDS` (1 minute = 60 seconds)
+  - Migration caps converted value at 300 seconds (5 minutes) if `COOLDOWN_MINUTES` > 5 minutes
+  - Logs warning when capping occurs to inform users of the limitation
+- **2026-01-13**: Added coordinator bypass during system-wide failures:
+  - Modified `check_rate_limit()` to accept optional location name parameter
+  - Coordinator bypasses window limit (but keeps minimum interval) during system-wide failures
+  - Prevents extended outages (38+ minutes) when coordinator is rate-limited during infrastructure issues
+  - Maintains system stability by still enforcing minimum restart interval
+  - Logs info message when bypass is used for visibility
 
 ## References
 - ARCHITECTURE.md: "Key Design Decisions #8: Rate Limiting"

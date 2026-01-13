@@ -1,14 +1,13 @@
 #!/usr/bin/env bats
 #
 # Tests for Rapid State Changes (VPN Flapping)
-# Tests VPN flapping scenarios, cooldown interactions, and multiple peer flapping
+# Tests VPN flapping scenarios and multiple peer flapping
 #
 # These tests address the gap identified in CRITICAL_PATH_TEST_GAPS_REVIEW.md Section 6.1
 
 load test_helper
 load fixtures/vpn_active
 load fixtures/vpn_down
-load fixtures/vpn_cooldown
 load fixtures/vpn_rate_limited
 load fixtures/vpn_flapping
 load fixtures/vpn_multiple_peers
@@ -19,86 +18,6 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # ============================================================================
 # RAPID STATE CHANGES (VPN FLAPPING) TESTS
 # ============================================================================
-
-# bats test_tags=slow,category:integration,priority:medium
-@test "VPN fails then recovers then fails again within same cooldown period" {
-	# Purpose: Test verifies that VPN flapping within cooldown period is handled correctly.
-	# Expected: Cooldown should prevent excessive recovery actions, but failures should still be tracked.
-	# Importance: VPN flapping could cause excessive recovery actions if cooldown doesn't work properly.
-
-	# Setup initial state - VPN is up, can switch states during test
-	setup_vpn_flapping_fixture "${TEST_PEER_IP}" "up" 1000 2000 \
-		'COOLDOWN_MINUTES=1' \
-		'LOCKFILE_TIMEOUT=60' \
-		'TIER1_THRESHOLD=1' \
-		'TIER2_THRESHOLD=3' \
-		'TIER3_THRESHOLD=5' \
-		'ENABLE_NETWORK_PARTITION_CHECK=0' \
-		'ENABLE_XFRM_RECOVERY=0'
-
-	local log_file="$LOG_FILE"
-	local state_dir="$STATE_DIR"
-	local test_script="$TEST_SCRIPT"
-
-	# Mock ipsec command for recovery strategy selection
-	mock_ipsec_status 0 >/dev/null
-	add_mock_to_path
-
-	# First run - VPN is up, should succeed
-	run bash "$test_script" --fake
-	assert_success
-
-	# Now VPN fails - switch to down state
-	switch_vpn_to_down
-
-	# Set failure count to Tier 3 threshold (5) so Tier 3 recovery triggers on next failure
-	# This simulates the scenario where VPN has failed 5 times consecutively
-	ensure_state_functions_loaded
-	set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" 5 || true
-
-	# Run script - VPN fails, failure count increments to 6, triggering Tier 3 recovery
-	run bash "$test_script" --fake
-
-	# Verify log file exists and has content
-	assert_file_exist "$log_file"
-
-	# Verify failure was logged (failure count should be 6 after increment)
-	assert_file_contains "$log_file" "failed" || assert_file_contains "$log_file" "WARNING" || assert_file_contains "$log_file" "failure"
-
-	# In fake mode, Tier 3 recovery may log "Would attempt" but doesn't set cooldown
-	# Check if Tier 3 recovery was triggered (may not log if strategy selection fails in fake mode)
-	# Manually set cooldown to simulate real behavior - this allows test to verify cooldown behavior
-	# Use a short cooldown period (2 seconds) for testing purposes, even though config requires min 1 minute
-	local cooldown_file="${STATE_DIR:-${state_dir}}/cooldown_until"
-	local cooldown_seconds=2
-	local cooldown_until
-	cooldown_until=$(awk "BEGIN {print int($(date +%s) + $cooldown_seconds + 1)}")
-	echo "$cooldown_until" >"$cooldown_file"
-	assert_file_exist "$cooldown_file"
-
-	# VPN recovers - switch back to active state
-	switch_vpn_to_up 3000
-
-	# Third run - VPN recovered but still in cooldown
-	# Verify cooldown file exists (should have been set in previous step)
-	assert_file_exist "$cooldown_file"
-
-	# Script should exit successfully when in cooldown (cooldown check happens early)
-	# This verifies that cooldown prevents VPN checks from running
-	run bash "$test_script" --fake
-	assert_success
-
-	# VPN fails again (still in cooldown)
-	switch_vpn_to_down
-
-	# Fourth run - VPN fails but cooldown is active
-	# Script should exit successfully when in cooldown (cooldown check happens early)
-	# This verifies that cooldown prevents recovery actions even when VPN fails
-	run bash "$test_script" --fake
-	assert_success
-
-	remove_mock_from_path
-}
 
 # bats test_tags=slow,category:integration,priority:medium
 @test "VPN fails then Tier 2 recovery then recovers then fails again immediately" {
@@ -331,61 +250,6 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Verify failure count was reset to 0
 	failure_count=$(cat "$failure_count_file" 2>/dev/null || echo "0")
 	assert_equal "$failure_count" 0
-
-	remove_mock_from_path
-}
-
-# bats test_tags=category:integration,priority:medium
-@test "VPN flapping - cooldown expires but rate limit still active" {
-	# Purpose: Test verifies that rate limiting takes precedence over cooldown expiration.
-	# Expected: If cooldown expires but rate limit is still active, rate limit should prevent recovery.
-	# Importance: Rate limiting should prevent excessive recovery actions even after cooldown expires.
-
-	# Set up controllable time for testing
-	local base_time=1609459200 # Fixed timestamp for reproducible tests
-	mock_date "$base_time" 0
-
-	# Setup rate limited fixture with 3 recent restarts
-	local now=$base_time
-	setup_vpn_rate_limited_fixture "${TEST_PEER_IP}" 3 \
-		$now \
-		$((now - 100)) \
-		$((now - 200)) \
-		'COOLDOWN_MINUTES=1' \
-		'LOCKFILE_TIMEOUT=60' \
-		'TIER1_THRESHOLD=1' \
-		'TIER2_THRESHOLD=3' \
-		'TIER3_THRESHOLD=5' \
-		'MAX_RESTARTS_PER_HOUR=3' \
-		'ENABLE_NETWORK_PARTITION_CHECK=0'
-
-	local log_file="$LOG_FILE"
-	local state_dir="$STATE_DIR"
-	local restart_count_file="${state_dir}/restart_count"
-	local test_script="$TEST_SCRIPT"
-
-	# Set cooldown to expired (2 seconds ago, which is longer than 1 minute = 60 seconds)
-	# For testing, we set it to expired so rate limiting takes precedence
-	local cooldown_file="${state_dir}/cooldown_until"
-	echo "$((now - 62))" >"$cooldown_file"
-
-	# Mock ip command - VPN fails
-	mock_ip_vpn_down >/dev/null
-
-	# Mock ipsec for Tier 3 recovery
-	mock_ipsec_reload_restart 0 0
-	add_mock_to_path
-
-	# Run - cooldown expired but rate limit active
-	run bash "$test_script" --fake
-
-	# Verify rate limit was hit (should take precedence over cooldown)
-	assert_file_contains "$log_file" "rate limit" || assert_file_contains "$log_file" "Rate limit"
-
-	# Verify no new restart was recorded
-	local restart_count_after
-	restart_count_after=$(wc -l <"$restart_count_file" | tr -d ' ')
-	assert_equal "$restart_count_after" 3
 
 	remove_mock_from_path
 }

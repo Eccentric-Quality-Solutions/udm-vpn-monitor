@@ -26,3 +26,6 @@ source "${LIB_DIR}/detection/ping_detection.sh"
 
 # shellcheck source=lib/detection/failure_analysis.sh
 source "${LIB_DIR}/detection/failure_analysis.sh"
+
+# shellcheck source=lib/detection/system_wide_failure.sh
+source "${LIB_DIR}/detection/system_wide_failure.sh"

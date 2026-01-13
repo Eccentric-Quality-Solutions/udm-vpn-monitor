@@ -1216,7 +1216,7 @@ fi
 **All fatal error paths must respect fake mode.** When a function needs to exit on error, it should use `handle_error_or_exit_fake_mode()` instead of `die()` directly. This ensures:
 - Fake mode (`NO_ESCALATE=1`) logs error and returns 1 (allows caller to decide exit behavior)
 - Normal mode exits with the appropriate error code
-- Tests can verify error handling appropriately (see `docs/FAKE_MODE_EXIT_BEHAVIOR.md` for guidance on when to exit with error code vs. code 0 in fake mode)
+- Tests can verify error handling appropriately (see fake-mode exit behavior guidance in `docs/CODE_PATTERNS.md` and `docs/testing/TEST_PATTERNS.md` for when to exit with error code vs. code 0 in fake mode)
 
 ### Pattern to Follow
 ```bash

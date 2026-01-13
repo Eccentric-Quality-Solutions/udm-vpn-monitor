@@ -228,21 +228,56 @@ execute_xfrm_state_command() {
 
 	# Try with statistics first (ip -s xfrm state) which may show more detail
 	local full_xfrm_output
-	if full_xfrm_output=$(ip -s xfrm state 2>/dev/null); then
-		if [[ -n "$full_xfrm_output" ]]; then
+	local xfrm_stderr
+	local xfrm_exit_code
+
+	# Capture both stdout and stderr to distinguish command failure from empty output
+	# Note: ip xfrm state returns exit code 0 even when no SAs exist (just empty output)
+	# So we need to check stderr for actual command errors
+	full_xfrm_output=$(ip -s xfrm state 2>&1)
+	xfrm_exit_code=$?
+
+	if [[ $xfrm_exit_code -eq 0 ]]; then
+		# Command succeeded - check if output contains error messages in stderr
+		if echo "$full_xfrm_output" | grep -qE "(error|Error|ERROR|failed|Failed|FAILED|No such|Permission denied)"; then
+			# Command executed but returned error message - this is a command failure
+			return 2
+		fi
+		# Check if we have actual output (not just empty/whitespace)
+		if [[ -n "${full_xfrm_output//[[:space:]]/}" ]]; then
 			echo "$full_xfrm_output"
 			return 0
 		fi
+		# Empty output - no SAs found in kernel, but command succeeded
+		# Fall through to try without -s flag
+	elif [[ $xfrm_exit_code -ne 0 ]]; then
+		# Command failed with non-zero exit code - this is a command failure
+		return 2
 	fi
 
 	# Fall back to regular ip xfrm state (without -s)
-	if full_xfrm_output=$(ip xfrm state 2>/dev/null); then
-		if [[ -n "$full_xfrm_output" ]]; then
+	full_xfrm_output=$(ip xfrm state 2>&1)
+	xfrm_exit_code=$?
+
+	if [[ $xfrm_exit_code -eq 0 ]]; then
+		# Check if output contains error messages
+		if echo "$full_xfrm_output" | grep -qE "(error|Error|ERROR|failed|Failed|FAILED|No such|Permission denied)"; then
+			# Command executed but returned error - this is a command failure
+			return 2
+		fi
+		# Check if we have actual output
+		if [[ -n "${full_xfrm_output//[[:space:]]/}" ]]; then
 			echo "$full_xfrm_output"
 			return 0
 		fi
+		# Empty output - no SAs found in kernel (tunnel may be down)
+		return 1
+	elif [[ $xfrm_exit_code -ne 0 ]]; then
+		# Command failed with non-zero exit code - this is a command failure
+		return 2
 	fi
 
+	# Empty output - no SAs found in kernel (tunnel may be down)
 	return 1
 }
 
@@ -321,6 +356,8 @@ deduplicate_sa_blocks() {
 # Uses fixed-string matching for forward SAs and anchored regex for reverse SAs (safe due to IP validation).
 # IP address is validated before use to prevent regex injection attacks.
 #
+# When xfrm query fails, attempts alternative query method using ipsec status to confirm tunnel state.
+#
 # Deduplication Logic:
 #   When both forward and reverse outputs exist, deduplicates SA blocks using a composite key
 #   of header (src ... dst ...) + SPI value. This handles the edge case where multiple SAs
@@ -331,13 +368,16 @@ deduplicate_sa_blocks() {
 # Arguments:
 #   $1: Peer IP address to filter for (must be valid IPv4 or IPv6)
 #   $2: Optional number of context lines to include after match (default: XFRM_OUTPUT_CONTEXT_LINES)
+#   $3: Optional error message variable name (if provided, stores detailed error information)
 #
 # Returns:
 #   0: Success (output printed to stdout)
-#   1: Failed to query xfrm state or invalid peer IP
+#   1: No SAs found for peer IP (tunnel may be down)
+#   2: xfrm command failed (command error)
 #
 # Output:
 #   Prints filtered xfrm state output to stdout
+#   If error variable name provided, stores error message in that variable
 #
 # Security:
 #   - Validates peer IP format before use to prevent regex injection
@@ -346,21 +386,81 @@ deduplicate_sa_blocks() {
 get_xfrm_state_for_peer() {
 	local peer_ip="$1"
 	local context_lines="${2:-${XFRM_OUTPUT_CONTEXT_LINES:-10}}"
+	local error_msg_var="${3:-}"
 
 	# Validate peer IP format to prevent regex injection and ensure safe matching
 	# This is a defense-in-depth measure - IPs should be validated at configuration load time,
 	# but we validate here to prevent regex injection if invalid IPs reach this function
 	if [[ -z "$peer_ip" ]] || ! validate_ip_address "$peer_ip"; then
+		if [[ -n "$error_msg_var" ]]; then
+			printf -v "$error_msg_var" "%s" "Invalid peer IP address: ${peer_ip:-<empty>}"
+		fi
 		return 1
 	fi
 
 	# Get full xfrm state output
 	local full_xfrm_output
-	if ! full_xfrm_output=$(execute_xfrm_state_command); then
-		return 1
+	local xfrm_result
+	full_xfrm_output=$(execute_xfrm_state_command)
+	xfrm_result=$?
+
+	# Handle different failure types
+	if [[ $xfrm_result -eq 2 ]]; then
+		# Command failed - try alternative method (ipsec status) to confirm tunnel state
+		local ipsec_status_output
+		local ipsec_status_result
+		ipsec_status_output=$(get_ipsec_status_for_peer "$peer_ip" 2>/dev/null || true)
+		ipsec_status_result=$?
+
+		if [[ -n "$ipsec_status_output" ]]; then
+			# ipsec status shows connection exists - xfrm query failed but tunnel may be up
+			if [[ -n "$error_msg_var" ]]; then
+				printf -v "$error_msg_var" "%s" "xfrm command failed (command error), but ipsec status shows connection exists for $peer_ip - xfrm query may be unavailable"
+			fi
+			return 2
+		else
+			# Both xfrm and ipsec status failed - tunnel is likely down
+			if [[ -n "$error_msg_var" ]]; then
+				printf -v "$error_msg_var" "%s" "xfrm command failed (command error) and ipsec status shows no connection for $peer_ip - tunnel appears to be down"
+			fi
+			return 2
+		fi
+	elif [[ $xfrm_result -ne 0 ]]; then
+		# Empty output - no SAs found in kernel, try ipsec status to confirm
+		local ipsec_status_output
+		ipsec_status_output=$(get_ipsec_status_for_peer "$peer_ip" 2>/dev/null || true)
+
+		if [[ -n "$ipsec_status_output" ]]; then
+			# ipsec status shows connection exists - SAs may exist but not in xfrm state
+			if [[ -n "$error_msg_var" ]]; then
+				printf -v "$error_msg_var" "%s" "No SAs found in xfrm state for $peer_ip, but ipsec status shows connection exists - SAs may not be in kernel state"
+			fi
+			return 1
+		else
+			# Both show no connection - tunnel is down
+			if [[ -n "$error_msg_var" ]]; then
+				printf -v "$error_msg_var" "%s" "No SAs found in xfrm state for $peer_ip and ipsec status shows no connection - tunnel is down"
+			fi
+			return 1
+		fi
 	fi
+
 	if [[ -z "$full_xfrm_output" ]]; then
-		return 1
+		# Empty output after successful command - try ipsec status to confirm
+		local ipsec_status_output
+		ipsec_status_output=$(get_ipsec_status_for_peer "$peer_ip" 2>/dev/null || true)
+
+		if [[ -n "$ipsec_status_output" ]]; then
+			if [[ -n "$error_msg_var" ]]; then
+				printf -v "$error_msg_var" "%s" "xfrm state query returned empty output for $peer_ip, but ipsec status shows connection exists"
+			fi
+			return 1
+		else
+			if [[ -n "$error_msg_var" ]]; then
+				printf -v "$error_msg_var" "%s" "No SAs found in xfrm state for $peer_ip and ipsec status shows no connection - tunnel is down"
+			fi
+			return 1
+		fi
 	fi
 
 	# Increase context lines to ensure we capture lifetime current section which may appear after lifetime config
@@ -397,8 +497,23 @@ get_xfrm_state_for_peer() {
 		return 0
 	fi
 
-	# No output found
-	return 1
+	# No SAs found for this peer IP - try ipsec status to confirm
+	local ipsec_status_output
+	ipsec_status_output=$(get_ipsec_status_for_peer "$peer_ip" 2>/dev/null || true)
+
+	if [[ -n "$ipsec_status_output" ]]; then
+		# ipsec status shows connection exists but xfrm doesn't - SAs may exist but not match our query
+		if [[ -n "$error_msg_var" ]]; then
+			printf -v "$error_msg_var" "%s" "No SAs found in xfrm state for $peer_ip (no matching src/dst), but ipsec status shows connection exists - SAs may exist with different addresses"
+		fi
+		return 1
+	else
+		# Both show no connection - tunnel is down
+		if [[ -n "$error_msg_var" ]]; then
+			printf -v "$error_msg_var" "%s" "No SAs found in xfrm state for $peer_ip and ipsec status shows no connection - tunnel is down"
+		fi
+		return 1
+	fi
 }
 
 # Get ipsec status output for a peer IP

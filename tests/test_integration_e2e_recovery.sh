@@ -277,40 +277,35 @@ load fixtures/vpn_failing
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'MAX_RESTARTS_PER_HOUR=3' \
-		'COOLDOWN_MINUTES=1' \
-		'ENABLE_XFRM_RECOVERY=0'
+		'MAX_RESTARTS_PER_WINDOW=3' \
+		'RATE_LIMIT_WINDOW_MINUTES=60' \
+		'ENABLE_XFRM_RECOVERY=0' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	# Mock ipsec
 	mock_ipsec_reload_restart 0 0
 	add_mock_to_path
 
 	# Mock VPN as down (no SA)
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
-    exit 1
-fi
-exit 1
-EOF
-	chmod +x "$mock_ip"
+	mock_ip_vpn_down
 	add_mock_to_path
 
-	# Set failure count to Tier 3 threshold for location-based state file
+	# Set failure count to 4 so that after increment it becomes 5 (TIER3_THRESHOLD)
+	# This ensures Tier 3 is triggered when VPN is detected as down
 	ensure_state_functions_loaded
 	mkdir -p "$LOGS_DIR"
 	local failure_counter
 	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
-	echo "5" >"$failure_counter"
+	echo "4" >"$failure_counter"
 
 	# Create restart file with 3 recent restarts (at limit)
 	local now
 	now=$(date +%s)
+	local recent=$((now - 1800)) # 30 minutes ago (within 1 hour window)
 	{
-		echo "$now"
-		echo "$now"
-		echo "$now"
+		echo "$recent"
+		echo "$recent"
+		echo "$recent"
 	} >"$RESTART_COUNT_FILE"
 
 	# First check - rate limit blocks recovery
@@ -320,8 +315,9 @@ EOF
 	assert_file_contains "$LOG_FILE" "Rate limit exceeded"
 
 	# Wait a bit and add old restart entries (simulate time passing)
+	# Set timestamps to more than 1 hour ago (outside the rate limit window)
 	local old_time
-	old_time=$((now - 3700)) # More than 1 hour ago
+	old_time=$((now - 3700)) # More than 1 hour ago (outside 60-minute window)
 	{
 		echo "$old_time"
 		echo "$old_time"

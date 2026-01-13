@@ -11,7 +11,6 @@
 
 # Strict error handling: exit on error, undefined vars, pipe failures
 set -euo pipefail
-
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/vpn-monitor.conf"
@@ -26,19 +25,40 @@ SCRIPT_VERSION="0.6.0"
 
 # Source library modules
 # shellcheck source=lib/logging.sh
-source "${SCRIPT_DIR}/lib/logging.sh"
+source "${SCRIPT_DIR}/lib/logging.sh" || {
+	echo "ERROR: Failed to source logging.sh" >&2
+	exit 2
+}
 # shellcheck source=lib/config.sh
-source "${SCRIPT_DIR}/lib/config.sh"
+source "${SCRIPT_DIR}/lib/config.sh" || {
+	echo "ERROR: Failed to source config.sh" >&2
+	exit 2
+}
 # shellcheck source=lib/state.sh
-source "${SCRIPT_DIR}/lib/state.sh"
+source "${SCRIPT_DIR}/lib/state.sh" || {
+	echo "ERROR: Failed to source state.sh" >&2
+	exit 2
+}
 # shellcheck source=lib/detection.sh
-source "${SCRIPT_DIR}/lib/detection.sh"
+source "${SCRIPT_DIR}/lib/detection.sh" || {
+	echo "ERROR: Failed to source detection.sh" >&2
+	exit 2
+}
 # shellcheck source=lib/recovery.sh
-source "${SCRIPT_DIR}/lib/recovery.sh"
+source "${SCRIPT_DIR}/lib/recovery.sh" || {
+	echo "ERROR: Failed to source recovery.sh" >&2
+	exit 2
+}
 # shellcheck source=lib/lockfile.sh
-source "${SCRIPT_DIR}/lib/lockfile.sh"
+source "${SCRIPT_DIR}/lib/lockfile.sh" || {
+	echo "ERROR: Failed to source lockfile.sh" >&2
+	exit 2
+}
 # shellcheck source=lib/resources.sh
-source "${SCRIPT_DIR}/lib/resources.sh"
+source "${SCRIPT_DIR}/lib/resources.sh" || {
+	echo "ERROR: Failed to source resources.sh" >&2
+	exit 2
+}
 
 # Parse help flags early (before directory creation)
 # This allows --help/-h to work even if directories don't exist
@@ -155,8 +175,8 @@ if ! validate_config; then
 	# validate_config calls handle_error_or_exit_fake_mode which exits in normal mode
 	# or returns 1 in fake mode
 	# In fake mode, handle_error_or_exit_fake_mode logs the error and returns 1
-	# Validation errors are execution-blocking (Category 1 errors per FAKE_MODE_EXIT_BEHAVIOR.md)
-	# so they should exit with error code even in fake mode to allow tests to assert failure
+	# Validation errors are execution-blocking, so they should exit with error code even in fake mode
+	# to allow tests to assert failure (see fake-mode exit behavior in CODE_PATTERNS/TEST_PATTERNS)
 	# In normal mode, validate_config should have already exited via handle_error_or_exit_fake_mode
 	# But if we get here, exit with error code
 	exit "${EXIT_VALIDATION_ERROR:-3}"
@@ -325,7 +345,7 @@ parse_args() {
 # Main execution
 #
 # Main entry point for the VPN monitor script.
-# Initializes state, checks cooldown, validates configuration, and monitors all configured peers.
+# Initializes state, validates configuration, and monitors all configured peers.
 #
 # Arguments:
 #   $@: Command-line arguments (passed to parse_args)
@@ -442,6 +462,8 @@ validate_monitor_state() {
 		log_message "INFO" "SYSTEM" "Script exiting: system resources constrained"
 		exit "${EXIT_SUCCESS:-0}"
 	fi
+	# Log summary if hour has elapsed (tracks statistics for CPU, RAM, and disk checks)
+	log_resource_monitoring_summary_if_due
 
 	# Check for network partition before cooldown check
 	# Partition check should happen first because if network is partitioned,
@@ -473,6 +495,8 @@ validate_monitor_state() {
 				set_network_partition_state 0
 			fi
 		fi
+		# Log summary if hour has elapsed (tracks statistics for all three checks)
+		log_network_partition_summary_if_due
 	fi
 
 	# Cooldown removed - rate limiting now handles restart spacing via MIN_RESTART_INTERVAL_SECONDS
@@ -544,13 +568,85 @@ process_locations() {
 	done
 	log_message "INFO" "SYSTEM" "Found ${#LOCATIONS[@]} location(s): $location_list"
 
-	# Process each location
+	# Step 1: Check existing failure counts from previous cycle
+	# This allows us to detect system-wide failures before attempting recovery
+	# Uses existing state (failure counts) rather than re-checking VPNs, avoiding double work
+	declare -A location_failure_status
 	for location_name in "${!LOCATIONS[@]}"; do
 		# Get external IP for this location
 		local external_ip
 		if ! external_ip=$(get_location_external_ip "$location_name"); then
 			handle_error "WARNING" "$location_name" "Failed to get external IP (skipping)"
 			all_ok=1
+			location_failure_status["$location_name"]=1
+			continue
+		fi
+
+		# Check existing failure count from previous cycle
+		# If failure count > 0, location was failing in the previous cycle
+		# This is more efficient than re-checking VPNs and still provides immediate detection
+		local failure_count
+		failure_count=$(get_failure_count "$location_name" "$external_ip")
+		if [[ "$failure_count" -gt 0 ]]; then
+			location_failure_status["$location_name"]=1
+		else
+			location_failure_status["$location_name"]=0
+		fi
+	done
+
+	# Step 2: Detect system-wide failure based on current status
+	# This happens before recovery attempts to coordinate recovery
+	local now
+	now=$(get_unix_timestamp)
+	# Create arrays for detection function (it expects associative array references)
+	# Both arrays use location names as keys
+	declare -A location_names_for_detection
+	declare -A failure_statuses_for_detection
+	for loc in "${!LOCATIONS[@]}"; do
+		# location_names_for_detection: key = location name, value = 1 (just a marker)
+		location_names_for_detection["$loc"]=1
+		# failure_statuses_for_detection: key = location name, value = failure status (0 or 1)
+		failure_statuses_for_detection["$loc"]="${location_failure_status[$loc]:-0}"
+	done
+	if detect_system_wide_failure "location_names_for_detection" "failure_statuses_for_detection" 2>/dev/null; then
+		local prev_failure_state
+		prev_failure_state=$(get_system_wide_failure_state)
+
+		if [[ "$prev_failure_state" -ne 1 ]]; then
+			# System-wide failure just detected
+			set_system_wide_failure_state 1
+			set_system_wide_failure_timestamp "$now"
+			log_message "WARNING" "SYSTEM" "System-wide failure detected: ${FAILED_LOCATION_COUNT:-0} of ${TOTAL_LOCATION_COUNT:-0} locations failing (threshold: ${SYSTEM_WIDE_FAILURE_THRESHOLD:-100}%)"
+			log_message "INFO" "SYSTEM" "Recovery will be coordinated to prevent cascades and rate limiting"
+		fi
+	else
+		# No system-wide failure detected
+		local prev_failure_state
+		prev_failure_state=$(get_system_wide_failure_state)
+		if [[ "$prev_failure_state" -eq 1 ]]; then
+			# System-wide failure was previously detected but is now resolved
+			set_system_wide_failure_state 0
+			clear_system_wide_failure_coordinator
+			local timestamp
+			timestamp=$(get_system_wide_failure_timestamp)
+			if [[ "$timestamp" -gt 0 ]]; then
+				local duration
+				duration=$(safe_timestamp_diff "$now" "$timestamp" 2>/dev/null || echo "0")
+				log_message "INFO" "SYSTEM" "System-wide failure resolved after ${duration} seconds"
+			else
+				log_message "INFO" "SYSTEM" "System-wide failure resolved"
+			fi
+		fi
+	fi
+
+	# Step 3: Process each location with recovery coordination
+	# monitor_location() will check should_location_attempt_recovery() internally
+	# to coordinate recovery during system-wide failures
+	for location_name in "${!LOCATIONS[@]}"; do
+		# Get external IP for this location
+		local external_ip
+		if ! external_ip=$(get_location_external_ip "$location_name"); then
+			# Already handled above, skip
 			continue
 		fi
 
@@ -559,6 +655,7 @@ process_locations() {
 		internal_ips=$(get_location_internal_ips "$location_name")
 
 		# Monitor location with external IP and internal IPs
+		# Recovery coordination is handled in determine_recovery_action()
 		if ! monitor_location "$location_name" "$external_ip" "$internal_ips"; then
 			all_ok=1
 		fi
@@ -586,7 +683,6 @@ process_locations() {
 #   1: One or more peers failed checks or configuration error
 #
 # Side effects:
-#   - May exit script if in cooldown (via validate_monitor_state)
 #   - Creates state files and directories
 #   - Writes to log file
 #   - May execute recovery actions (if not in fake mode)

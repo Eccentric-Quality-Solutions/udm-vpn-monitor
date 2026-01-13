@@ -44,6 +44,7 @@ Architecture Decision Records are documents that capture important architectural
 | [ADR-0028](0028-state-passing-pattern-for-detection-functions.md) | State Passing Pattern for Detection Functions | Accepted |
 | [ADR-0029](0029-recovery-type-distinction.md) | Recovery Type Distinction | Accepted |
 | [ADR-0030](0030-centralized-fallback-functions.md) | Centralized Fallback Functions | Accepted |
+| [ADR-0031](0031-system-wide-failure-detection-and-coordination.md) | System-Wide Failure Detection and Coordination | Accepted |
 
 ## ADR Format
 

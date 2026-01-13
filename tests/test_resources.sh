@@ -2,12 +2,55 @@
 #
 # Tests for lib/resources.sh
 # Tests resource monitoring functionality: CPU, RAM, disk usage and throttling
+# and integration with resource statistics tracking.
 
 load test_helper
 load helpers/resources
+load helpers/detection
 
 # Path to resources library
 RESOURCES_LIB="${BATS_TEST_DIRNAME}/../lib/resources.sh"
+
+# Shared setup for resource tracking integration tests
+#
+# Sets up test environment for resource tracking integration tests.
+# Initializes state and log directories, sources required libraries,
+# and prepares the environment for testing resource monitoring statistics.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Creates TEST_DIR/state and TEST_DIR/logs directories
+#   - Sources state.sh, logging.sh, and resources.sh libraries
+#   - Sets STATE_DIR, LOGS_DIR, and LOG_FILE environment variables
+#
+# Note:
+#   This is a test helper function. Requires setup_resources_test() and
+#   standard_setup() to be available from test helpers.
+setup_resource_tracking_integration() {
+	setup_resources_test
+	standard_setup
+
+	export STATE_DIR="${TEST_DIR}/state"
+	mkdir -p "$STATE_DIR"
+
+	export LOGS_DIR="${TEST_DIR}/logs"
+	mkdir -p "$LOGS_DIR"
+	export LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
+
+	# Source state and logging (provides tracking + summary functions)
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh"
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
+
+	# Source resources library after helpers are ready
+	source_resources_lib
+}
 
 # bats test_tags=category:unit
 @test "resources.sh library file exists" {
@@ -445,6 +488,241 @@ EOF
 
 	# Test path checking
 	# Note: Actual test depends on function implementation
+}
+
+# bats test_tags=category:unit
+@test "check_system_resources tracks successful checks" {
+	setup_resource_tracking_integration
+
+	# Mock healthy usage values
+	# Mock function for get_cpu_usage
+	#
+	# Returns mock CPU usage value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "10" (mock CPU usage percentage)
+	get_cpu_usage() {
+		echo "10"
+		return 0
+	}
+	# Mock function for get_memory_usage
+	#
+	# Returns mock memory usage value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "20" (mock memory usage percentage)
+	get_memory_usage() {
+		echo "20"
+		return 0
+	}
+	# Mock function for get_free_disk_space
+	#
+	# Returns mock free disk space value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "50" (mock free disk space percentage)
+	get_free_disk_space() {
+		echo "50"
+		return 0
+	}
+
+	run check_system_resources "$STATE_DIR"
+	assert_success
+
+	local cpu_success
+	cpu_success=$(cat "${STATE_DIR}/resource_cpu_check_success_count" 2>/dev/null || echo "0")
+	assert_equal "$cpu_success" "1"
+
+	local ram_success
+	ram_success=$(cat "${STATE_DIR}/resource_ram_check_success_count" 2>/dev/null || echo "0")
+	assert_equal "$ram_success" "1"
+
+	local disk_success
+	disk_success=$(cat "${STATE_DIR}/resource_disk_check_success_count" 2>/dev/null || echo "0")
+	assert_equal "$disk_success" "1"
+}
+
+# bats test_tags=category:unit
+@test "check_system_resources tracks CPU constraint and constraint event" {
+	setup_resource_tracking_integration
+
+	# Simulate sustained high CPU (state file indicates constrained for > duration)
+	echo "0" >"${STATE_DIR}/resource_cpu_constrained"
+	# Mock function for get_cpu_usage
+	#
+	# Returns mock high CPU usage value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "95" (mock CPU usage percentage)
+	get_cpu_usage() {
+		echo "95"
+		return 0
+	}
+	# Mock function for get_memory_usage
+	#
+	# Returns mock memory usage value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "20" (mock memory usage percentage)
+	get_memory_usage() {
+		echo "20"
+		return 0
+	}
+	# Mock function for get_free_disk_space
+	#
+	# Returns mock free disk space value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "50" (mock free disk space percentage)
+	get_free_disk_space() {
+		echo "50"
+		return 0
+	}
+
+	run check_system_resources "$STATE_DIR"
+	assert_failure
+
+	local cpu_constraint
+	cpu_constraint=$(cat "${STATE_DIR}/resource_cpu_constrained_count" 2>/dev/null || echo "0")
+	assert_equal "$cpu_constraint" "1"
+}
+
+# bats test_tags=category:unit
+@test "check_system_resources tracks CPU check failures" {
+	setup_resource_tracking_integration
+
+	# CPU check fails, others succeed
+	# Mock function for get_cpu_usage
+	#
+	# Returns failure to simulate CPU check error.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   1: Always fails (simulates CPU check error)
+	get_cpu_usage() { return 1; }
+	# Mock function for get_memory_usage
+	#
+	# Returns mock memory usage value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "30" (mock memory usage percentage)
+	get_memory_usage() {
+		echo "30"
+		return 0
+	}
+	# Mock function for get_free_disk_space
+	#
+	# Returns mock free disk space value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "60" (mock free disk space percentage)
+	get_free_disk_space() {
+		echo "60"
+		return 0
+	}
+
+	run check_system_resources "$STATE_DIR"
+	assert_success
+
+	local cpu_fail
+	cpu_fail=$(cat "${STATE_DIR}/resource_cpu_check_fail_count" 2>/dev/null || echo "0")
+	assert_equal "$cpu_fail" "1"
+}
+
+# bats test_tags=category:unit
+@test "check_system_resources with stats logs hourly summary via tracking" {
+	setup_resource_tracking_integration
+
+	# Healthy run populates success counters
+	# Mock function for get_cpu_usage
+	#
+	# Returns mock CPU usage value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "15" (mock CPU usage percentage)
+	get_cpu_usage() {
+		echo "15"
+		return 0
+	}
+	# Mock function for get_memory_usage
+	#
+	# Returns mock memory usage value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "25" (mock memory usage percentage)
+	get_memory_usage() {
+		echo "25"
+		return 0
+	}
+	# Mock function for get_free_disk_space
+	#
+	# Returns mock free disk space value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "70" (mock free disk space percentage)
+	get_free_disk_space() {
+		echo "70"
+		return 0
+	}
+
+	# Initialize last summary time to force hourly window
+	echo "1000" >"${STATE_DIR}/resource_monitoring_summary_last_time"
+	setup_mock_timestamp 4600
+
+	run check_system_resources "$STATE_DIR"
+	assert_success
+
+	# Log summary and verify message
+	log_resource_monitoring_summary_if_due
+	assert_file_contains "$LOG_FILE" "Resource monitoring summary (past hour)"
+	assert_file_contains "$LOG_FILE" "CPU checks succeeded 1 times"
+	assert_file_contains "$LOG_FILE" "Disk checks succeeded 1 times"
 }
 
 # bats test_tags=category:unit

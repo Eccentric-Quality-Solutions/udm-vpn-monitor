@@ -239,12 +239,12 @@ service cron status
 - Check system logs: `dmesg | tail -50`
 
 **If rate limited**:
-- Too many Tier 3 restarts in configured window (default: max 3 per 60 minutes)
+- Too many Tier 3 restarts in configured window (default: max 20 per 60 minutes)
 - Wait for rate limit to expire (window duration from oldest restart)
 - Or adjust rate limiting configuration:
-  - `MAX_RESTARTS_PER_WINDOW` (default: 3, range: 1-20)
+  - `MAX_RESTARTS_PER_WINDOW` (default: 20, range: 1-20)
   - `RATE_LIMIT_WINDOW_MINUTES` (default: 60, range: 5-1440)
-  - `MIN_RESTART_INTERVAL_SECONDS` (default: 30, range: 0-300)
+  - `MIN_RESTART_INTERVAL_SECONDS` (default: 40, range: 0-300)
 - **Note**: If you see "Tier 3: Attempting..." messages but no actual restart, rate limiting is working as designed. The log message appears before the rate limit check, but the restart only executes if allowed.
 
 **If minimum restart interval not met**:

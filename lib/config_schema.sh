@@ -84,11 +84,13 @@ declare -gA CONFIG_SCHEMA=(
 	["TIER3_THRESHOLD"]="required|integer|min:TIER2_THRESHOLD|default:5"
 	# Rate limiting configuration (replaces MAX_RESTARTS_PER_HOUR and COOLDOWN_MINUTES)
 	# Backward compatibility: If MAX_RESTARTS_PER_HOUR is set, it will be migrated to MAX_RESTARTS_PER_WINDOW with RATE_LIMIT_WINDOW_MINUTES=60
-	["MAX_RESTARTS_PER_WINDOW"]="required|integer|min:1|max:20|default:3"
+	["MAX_RESTARTS_PER_WINDOW"]="required|integer|min:1|max:20|default:20"
 	["RATE_LIMIT_WINDOW_MINUTES"]="required|integer|min:5|max:1440|default:60"
-	["MIN_RESTART_INTERVAL_SECONDS"]="required|integer|min:0|max:300|default:30"
+	["MIN_RESTART_INTERVAL_SECONDS"]="required|integer|min:0|max:300|default:40"
 	# Backward compatibility: MAX_RESTARTS_PER_HOUR is deprecated but still supported
 	["MAX_RESTARTS_PER_HOUR"]="optional|integer|min:1|max:60|default:"
+	# Backward compatibility: COOLDOWN_MINUTES is deprecated but still supported (migrated to MIN_RESTART_INTERVAL_SECONDS)
+	["COOLDOWN_MINUTES"]="optional|integer|min:1|max:1440|default:"
 
 	# Optional configuration with defaults
 	["VPN_NAME"]="optional|string||default:Site-to-Site VPN"
@@ -102,6 +104,9 @@ declare -gA CONFIG_SCHEMA=(
 	["KEEPALIVE_PING_COUNT"]="optional|integer|min:1|max:5|default:1"
 	["DEBUG"]="optional|integer|values:0,1|default:0"
 	["NO_ESCALATE"]="optional|integer|values:0,1|default:0"
+	["ENABLE_SYSTEM_WIDE_FAILURE_DETECTION"]="optional|integer|values:0,1|default:1"
+	["SYSTEM_WIDE_FAILURE_THRESHOLD"]="optional|integer|min:0|max:100|default:100"
+	["COORDINATE_SYSTEM_WIDE_RECOVERY"]="optional|integer|values:0,1|default:1"
 	# xfrm-based per-connection recovery (enabled by default for UDM OS 4.3+)
 	["ENABLE_XFRM_RECOVERY"]="optional|integer|values:0,1|default:1"
 	# Recovery verification timeout (seconds) - maximum time to wait for recovery verification

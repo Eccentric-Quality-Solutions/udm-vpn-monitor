@@ -101,27 +101,6 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high
-@test "cooldown file corrupted (invalid timestamp) - should handle gracefully" {
-	# Purpose: Test verifies that the script handles corrupted cooldown files with invalid timestamps.
-	# Expected: Script handles invalid timestamp gracefully, preventing arithmetic errors and continuing execution.
-	# Importance: Corrupted timestamps can cause arithmetic errors; script must handle them robustly.
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
-
-	# Create corrupted cooldown file with invalid timestamp
-	local cooldown_file="${STATE_DIR}/cooldown_until"
-	echo "invalid-timestamp-value" >"$cooldown_file"
-
-	add_mock_to_path
-	run bash "$TEST_SCRIPT" --fake
-	assert_success
-
-	# Should handle corrupted cooldown file gracefully (arithmetic error would occur)
-	assert_file_exist "$LOG_FILE"
-
-	remove_mock_from_path
-}
-
 # ============================================================================
 # 6.2 CONCURRENT STATE ACCESS - PERMISSIONS
 # ============================================================================

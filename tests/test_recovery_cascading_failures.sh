@@ -221,10 +221,8 @@ EOF
 	# 2. Making just the file unwritable doesn't work (atomic_write_file removes it first)
 	# 3. Making file immutable requires root privileges
 	#
-	# The fix ensures set_cooldown returns early on error instead of logging success.
-	# The unit test in test_state_atomic_write_failures.sh verifies set_cooldown handles
-	# atomic write failures correctly. This integration test verifies the script succeeds
-	# when recovery works, demonstrating that cooldown failures don't crash the script.
+	# This integration test verifies the script succeeds when recovery works,
+	# demonstrating that state file write failures don't crash the script.
 
 	run bash "$TEST_SCRIPT"
 
@@ -234,11 +232,6 @@ EOF
 
 	# Should log recovery success
 	assert_file_contains "$LOG_FILE" "restart" || assert_file_contains "$LOG_FILE" "recovery"
-
-	# Note: The specific cooldown failure case is tested in test_state_atomic_write_failures.sh
-	# which tests set_cooldown directly with an unwritable directory. This test verifies
-	# the integration: script completes successfully when recovery succeeds, even if cooldown
-	# would fail (the fix ensures set_cooldown doesn't log success on failure).
 
 	remove_mock_from_path
 }

@@ -201,9 +201,9 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `TIER1_THRESHOLD` | Failures before logging starts | 1 |
 | `TIER2_THRESHOLD` | Failures before surgical cleanup | 3 |
 | `TIER3_THRESHOLD` | Failures before full restart | 5 |
-| `MAX_RESTARTS_PER_WINDOW` | Maximum Tier 3 restarts per window (rate limiting) | 3 |
+| `MAX_RESTARTS_PER_WINDOW` | Maximum Tier 3 restarts per window (rate limiting) | 20 |
 | `RATE_LIMIT_WINDOW_MINUTES` | Time window for rate limit (sliding window) | 60 |
-| `MIN_RESTART_INTERVAL_SECONDS` | Minimum time between Tier 3 restarts | 30 |
+| `MIN_RESTART_INTERVAL_SECONDS` | Minimum time between Tier 3 restarts | 40 |
 | `CRON_SCHEDULE` | Cron schedule for check frequency (cron format) | "*/1 * * * *" |
 | `LOCKFILE_TIMEOUT` | Lockfile timeout in seconds (detects hung processes) | 300 |
 | `ENABLE_PING_CHECK` | Enable ping connectivity verification (0 or 1) | 1 |

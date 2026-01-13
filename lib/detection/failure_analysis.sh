@@ -420,9 +420,13 @@ determine_vpn_status() {
 			handle_error "WARNING" "$location_name" "VPN failure type: Tunnel down (no Phase 2 SA found) for $location_name ($external_peer_ip)"
 			;;
 		"routing_issue")
-			handle_error "WARNING" "$location_name" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $location_name ($external_peer_ip)"
+			# Only log warning if VPN check actually failed (vpn_ok=0)
+			# When vpn_ok=1, ping check failure is supplementary diagnostic and doesn't indicate a real problem
+			if [[ $vpn_ok -eq 0 ]]; then
+				handle_error "WARNING" "$location_name" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $location_name ($external_peer_ip)"
+			fi
 			# Note: If vpn_ok was 1 (VPN appeared OK), we keep it as 1 since ping is supplementary
-			# The routing_issue is logged for diagnostic purposes but doesn't change VPN status
+			# The routing_issue is detected for diagnostic purposes but doesn't change VPN status or generate warnings
 			;;
 		*)
 			# "unknown" failure type
@@ -625,8 +629,12 @@ check_network_partition() {
 		route_check_result=1
 		handle_error "WARNING" "SYSTEM" "Network partition detected: default route not found" 0
 		partition_detected=1
+		# Track statistics: route check failed
+		track_network_partition_check "route" 0
 	else
 		route_check_result=0
+		# Track statistics: route check succeeded
+		track_network_partition_check "route" 1
 	fi
 
 	# Check DNS resolution
@@ -635,8 +643,12 @@ check_network_partition() {
 		dns_check_result=1
 		handle_error "WARNING" "SYSTEM" "Network partition detected: DNS resolution failed (server: $dns_server, hostname: $hostname)" 0
 		partition_detected=1
+		# Track statistics: DNS check failed
+		track_network_partition_check "dns" 0
 	else
 		dns_check_result=0
+		# Track statistics: DNS check succeeded
+		track_network_partition_check "dns" 1
 	fi
 
 	# Check interface state
@@ -645,8 +657,12 @@ check_network_partition() {
 		interface_check_result=1
 		handle_error "WARNING" "SYSTEM" "Network partition detected: one or more critical interfaces are DOWN (checked: $interfaces)" 0
 		partition_detected=1
+		# Track statistics: interface check failed
+		track_network_partition_check "interface" 0
 	else
 		interface_check_result=0
+		# Track statistics: interface check succeeded
+		track_network_partition_check "interface" 1
 	fi
 
 	# If all checks passed, network is healthy

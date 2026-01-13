@@ -424,7 +424,7 @@ surgical_cleanup() {
 #   - If xfrm recovery succeeds: Only affects the specified peer's tunnel
 #   - If xfrm recovery fails or disabled: Affects ALL IPsec tunnels
 #   - Temporarily disrupts VPN tunnels (scope depends on recovery method)
-#   - Sets cooldown period (COOLDOWN_MINUTES) to prevent immediate re-restarts
+#   - Records restart timestamp for rate limiting (prevents restart loops via MIN_RESTART_INTERVAL_SECONDS)
 #   - Stores recovery method used for later inclusion in "VPN restored" message
 #   - Appends command output to LOG_FILE (for full restart only)
 #   - Logs all actions and results
@@ -450,7 +450,7 @@ full_restart() {
 	local peer_ip="${1:-}"
 	local location_name="$2"
 
-	if ! check_rate_limit; then
+	if ! check_rate_limit "$location_name"; then
 		# check_rate_limit() already logs detailed warning with reset time, countdown, and restart list
 		handle_error "ERROR" "$location_name" "Rate limit exceeded, skipping Tier 3 recovery for $location_name (see previous warning for reset time and details)" 0
 		return 1
@@ -551,6 +551,8 @@ check_vpn_status_for_location() {
 				# Network is still partitioned - skip VPN checks entirely
 				# This is a performance optimization: VPN checks would fail anyway without network connectivity
 				log_message "INFO" "$location_name" "Skipping VPN checks for $location_name ($external_peer_ip) - network partition detected"
+				# Log summary if hour has elapsed (tracks statistics for all three checks)
+				log_network_partition_summary_if_due
 				return 2
 			else
 				# Network partition cleared - update state and continue with VPN checks
@@ -558,6 +560,8 @@ check_vpn_status_for_location() {
 				log_message "INFO" "$location_name" "Network connectivity restored - resuming VPN monitoring for $location_name ($external_peer_ip)"
 				set_network_partition_state 0
 				# Continue with VPN checks below
+				# Log summary if hour has elapsed (tracks statistics for all three checks)
+				log_network_partition_summary_if_due
 			fi
 		fi
 	fi
@@ -787,19 +791,32 @@ determine_recovery_action() {
 		log_message "INFO" "$location_name" "Tier 1: Logging ${VPN_NAME:-VPN} failure for $location_name ($external_peer_ip)$failure_type_display"
 	fi
 
+	# Check if recovery should be coordinated (system-wide failure mode)
+	# During system-wide failures, only the coordinator location should attempt recovery
+	if command -v should_location_attempt_recovery >/dev/null 2>&1; then
+		if ! should_location_attempt_recovery "$location_name"; then
+			# System-wide failure detected and another location is coordinating recovery
+			# Log that this location is skipping recovery to avoid cascades
+			if [[ "$failure_count" -ge "$TIER2_THRESHOLD" ]]; then
+				log_message "INFO" "$location_name" "Skipping recovery for $location_name ($external_peer_ip) - recovery coordinated by another location during system-wide failure"
+			fi
+			return 0
+		fi
+	fi
+
 	# Tier 2: Surgical cleanup
 	local recovery_attempted=0
 	if [[ "$failure_count" -ge "$TIER2_THRESHOLD" ]] && [[ "$failure_count" -lt "$TIER3_THRESHOLD" ]]; then
 		recovery_attempted=1
 		if [[ "${NO_ESCALATE:-0}" -eq 1 ]]; then
-			if select_recovery_strategy "$external_peer_ip" 2; then
-				if [[ "$RECOVERY_STRATEGY" == "xfrm" ]]; then
-					log_message "INFO" "$location_name" "Tier 2: Would attempt xfrm-based per-connection recovery for $location_name ($external_peer_ip) (skipped in fake mode)"
-				else
-					# Log the specific command that would be executed
-					local command_display="${RECOVERY_COMMAND:-ipsec reload}"
-					log_message "INFO" "$location_name" "Tier 2: Would attempt surgical SA cleanup for $location_name ($external_peer_ip) via $command_display (skipped in fake mode)"
-				fi
+			if ! select_recovery_strategy "$external_peer_ip" 2; then
+				:
+			elif [[ "$RECOVERY_STRATEGY" == "xfrm" ]]; then
+				log_message "INFO" "$location_name" "Tier 2: Would attempt xfrm-based per-connection recovery for $location_name ($external_peer_ip) (skipped in fake mode)"
+			else
+				# Log the specific command that would be executed
+				local command_display="${RECOVERY_COMMAND:-ipsec reload}"
+				log_message "INFO" "$location_name" "Tier 2: Would attempt surgical SA cleanup for $location_name ($external_peer_ip) via $command_display (skipped in fake mode)"
 			fi
 		else
 			handle_error "WARNING" "$location_name" "Tier 2: Attempting surgical SA cleanup for $location_name ($external_peer_ip)"
@@ -811,7 +828,7 @@ determine_recovery_action() {
 	if [[ "$failure_count" -ge "$TIER3_THRESHOLD" ]]; then
 		recovery_attempted=1
 		if [[ "${NO_ESCALATE:-0}" -eq 1 ]]; then
-			if ! check_rate_limit; then
+			if ! check_rate_limit "$location_name"; then
 				# check_rate_limit() already logs "Rate limit exceeded" via handle_error
 				# location_name should always be provided in production code
 				log_message "INFO" "${location_name:-SYSTEM}" "Tier 3: Would attempt IPsec restart${location_name:+ for $location_name} (skipped in fake mode, rate limit would prevent)"
@@ -819,15 +836,13 @@ determine_recovery_action() {
 				# In fake mode, still record restart for cleanup purposes (prevents restart count file from growing)
 				# but skip the actual restart command
 				record_restart
-				if select_recovery_strategy "$external_peer_ip" 3; then
-					if [[ "$RECOVERY_STRATEGY" == "xfrm" ]]; then
-						log_message "INFO" "$location_name" "Tier 3: Would attempt xfrm-based per-connection recovery for $location_name ($external_peer_ip) (skipped in fake mode)"
-					else
-						log_message "INFO" "$location_name" "Tier 3: Would attempt full IPsec restart (affects all tunnels, skipped in fake mode)"
-					fi
-				else
+				if ! select_recovery_strategy "$external_peer_ip" 3; then
 					# No recovery strategy available - log Tier 3 reached but no strategy available
 					log_message "WARNING" "$location_name" "Tier 3: Recovery threshold reached for $location_name ($external_peer_ip) but no recovery strategy available (skipped in fake mode)"
+				elif [[ "$RECOVERY_STRATEGY" == "xfrm" ]]; then
+					log_message "INFO" "$location_name" "Tier 3: Would attempt xfrm-based per-connection recovery for $location_name ($external_peer_ip) (skipped in fake mode)"
+				else
+					log_message "INFO" "$location_name" "Tier 3: Would attempt full IPsec restart (affects all tunnels, skipped in fake mode)"
 				fi
 			fi
 		else
@@ -902,6 +917,7 @@ monitor_location() {
 		# Continue with recovery
 		failure_count=$(get_failure_count "$location_name" "$external_peer_ip")
 		determine_recovery_action "$location_name" "$external_peer_ip" "$failure_count"
-		return $?
+		local recovery_rc=$?
+		return $recovery_rc
 	fi
 }

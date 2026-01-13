@@ -7,7 +7,6 @@ load test_helper
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
-load fixtures/vpn_cooldown
 load fixtures/vpn_at_tier
 
 # Path to the VPN monitor script

@@ -467,6 +467,145 @@ EOF
 }
 
 # bats test_tags=category:detection,priority:medium
+@test "get_xfrm_state_for_peer handles xfrm command failure and uses ipsec status for diagnostics" {
+	# Purpose: When xfrm command errors, function should return failure with diagnostic, and still consult ipsec status.
+	# Expected: Exit code 2 (command failure), no stdout, diagnostic mentions command failure and ipsec status result.
+	setup_test_environment "${TEST_DIR}"
+	local peer_ip="${TEST_PEER_IP}"
+
+	# Mock ip command to emit error to stderr and fail for both variants
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    echo "RTNETLINK answers: Permission denied" >&2
+    exit 1
+fi
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "RTNETLINK answers: Permission denied" >&2
+    exit 1
+fi
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# ipsec status shows the connection exists
+	mock_ipsec_status 0 "${peer_ip}: ESTABLISHED"
+	add_mock_to_path
+
+	# Source function
+	source_function "get_xfrm_state_for_peer"
+
+	local error_msg=""
+	local output_file="${TEST_DIR}/out1"
+	set +e
+	get_xfrm_state_for_peer "$peer_ip" "" "error_msg" >"$output_file"
+	local rc=$?
+	set -e
+	local output
+	output=$(cat "$output_file" 2>/dev/null)
+
+	[[ $rc -eq 2 ]] || fail "Expected exit 2 for command failure, got $rc"
+	[[ -z "$output" ]] || fail "Expected no stdout, got: $output"
+	[[ "$error_msg" == *"xfrm command failed (command error)"* ]] || fail "Diagnostic should mention command failure"
+	[[ "$error_msg" == *"ipsec status shows connection exists"* ]] || fail "Diagnostic should mention ipsec status fallback"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:detection,priority:medium
+@test "get_xfrm_state_for_peer handles empty xfrm output when ipsec status shows a connection" {
+	# Purpose: When xfrm returns empty output but ipsec status shows the tunnel, function should signal no SAs with diagnostic.
+	# Expected: Exit code 1 (no SAs), no stdout, diagnostic mentions ipsec status saw connection.
+	setup_test_environment "${TEST_DIR}"
+	local peer_ip="${TEST_PEER_IP}"
+
+	# Mock ip command to return success with empty output
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    exit 0
+fi
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# ipsec status shows connection exists
+	mock_ipsec_status 0 "${peer_ip}: ESTABLISHED"
+	add_mock_to_path
+
+	source_function "get_xfrm_state_for_peer"
+
+	local error_msg=""
+	local output_file="${TEST_DIR}/out2"
+	set +e
+	get_xfrm_state_for_peer "$peer_ip" "" "error_msg" >"$output_file"
+	local rc=$?
+	set -e
+	local output
+	output=$(cat "$output_file" 2>/dev/null)
+
+	[[ $rc -eq 1 ]] || fail "Expected exit 1 for no SAs, got $rc"
+	[[ -z "$output" ]] || fail "Expected no stdout, got: $output"
+	[[ "$error_msg" == *"No SAs found in xfrm state"* ]] || fail "Diagnostic should mention no SAs"
+	[[ "$error_msg" == *"ipsec status shows connection exists"* ]] || fail "Diagnostic should mention ipsec status fallback"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:detection,priority:medium
+@test "get_xfrm_state_for_peer handles command failure when both xfrm and ipsec status are empty" {
+	# Purpose: When xfrm errors and ipsec status shows nothing, function should report command failure and tunnel down.
+	# Expected: Exit code 2 (command failure), no stdout, diagnostic mentions both failures.
+	setup_test_environment "${TEST_DIR}"
+	local peer_ip="${TEST_PEER_IP}"
+
+	# Mock ip command to emit error to stderr and fail
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    echo "xfrm: No such file or directory" >&2
+    exit 1
+fi
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "xfrm: No such file or directory" >&2
+    exit 1
+fi
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# ipsec status returns no output
+	mock_ipsec_status 0 ""
+	add_mock_to_path
+
+	source_function "get_xfrm_state_for_peer"
+
+	local error_msg=""
+	local output_file="${TEST_DIR}/out3"
+	set +e
+	get_xfrm_state_for_peer "$peer_ip" "" "error_msg" >"$output_file"
+	local rc=$?
+	set -e
+	local output
+	output=$(cat "$output_file" 2>/dev/null)
+
+	[[ $rc -eq 2 ]] || fail "Expected exit 2 for command failure, got $rc"
+	[[ -z "$output" ]] || fail "Expected no stdout, got: $output"
+	[[ "$error_msg" == *"xfrm command failed (command error) and ipsec status shows no connection"* ]] || fail "Diagnostic should mention xfrm failure and empty ipsec status"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:detection,priority:medium
 @test "get_xfrm_state_for_peer handles overlapping outputs from forward and reverse searches" {
 	# Purpose: Test verifies that get_xfrm_state_for_peer correctly handles overlapping outputs when both forward and reverse searches match
 	# Expected: Function combines outputs correctly without duplicating SA blocks when grep -A context overlaps

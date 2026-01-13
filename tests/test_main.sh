@@ -289,46 +289,6 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high
-@test "Network partition check during cooldown - Should still check partition before skipping VPN checks" {
-	# Purpose: Test verifies that network partition check runs even during cooldown period
-	# Expected: Partition check runs before skipping VPN checks, even if in cooldown
-	# Importance: Ensures partition detection works correctly during cooldown
-	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1' 'COOLDOWN_MINUTES=15'
-
-	# Set cooldown state using controllable time
-	local base_time=1609459200 # Fixed timestamp for reproducible tests
-	mock_date "$base_time" 0
-	add_mock_to_path
-
-	local cooldown_file="${STATE_DIR}/cooldown_until"
-	local future_time=$((base_time + 1200)) # 20 minutes in future
-	echo "$future_time" >"$cooldown_file"
-
-	# Mock ip command - network partitioned
-	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
-#!/bin/bash
-if [[ "$1" == "route" ]] && [[ "$2" == "show" ]] && [[ "$3" == "default" ]]; then
-    exit 1
-fi
-exec /usr/bin/ip "$@"
-EOF
-	chmod +x "$mock_ip"
-
-	mock_dig 0
-	add_mock_to_path
-
-	run bash "$TEST_SCRIPT" --fake
-
-	# Should check partition and skip VPN checks (even during cooldown)
-	assert_success
-	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Network partition detected" || assert_file_contains "$LOG_FILE" "skipping VPN checks"
-
-	remove_mock_from_path
-}
-
 # ============================================================================
 # 1.2 COMMAND-LINE ARGUMENT VALIDATION
 # ============================================================================

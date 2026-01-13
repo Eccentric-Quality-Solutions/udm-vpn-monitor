@@ -17,18 +17,50 @@ This file tracks planned improvements and tasks for the UDM VPN Monitor project.
 
 ## High Priority
 
-### Rate Limiting Refactoring - Test Updates
-**Source:** Rate Limiting Refactoring (2026-01-12)
+### System-Wide Failure Detection - Test Coverage
+**Source:** System-Wide Failure Detection Implementation (2026-01-12)
 **Status:** Pending
-**Action:** Update or remove tests that reference cooldown functionality
-**Files Affected:**
-- `tests/test_recovery_cooldown_rate_limit_interaction.sh` - Entire file needs update
-- `tests/test_integration.sh` - Test "Cooldown period prevents immediate restart" needs update
-- `tests/test_rapid_state_changes.sh` - Test "VPN flapping - cooldown expires but rate limit still active" needs update
-- `tests/test_helper_functions.sh` - `check_cooldown` tests need update or removal
-- `tests/fixtures/vpn_cooldown.bash` - Fixture may need update
-**Effort:** MEDIUM (update multiple test files)
-**Benefit:** Tests will pass after cooldown removal
+**Action:** Add tests for system-wide failure detection and recovery coordination
+**Test Cases Needed:**
+- All locations fail simultaneously → system-wide failure detected
+- Majority of locations fail → system-wide failure detected (if threshold < 100)
+- Individual failures → no system-wide failure detected
+- System-wide failure resolved when failures drop below threshold
+- Only coordinator location attempts recovery during system-wide failure
+- Non-coordinator locations skip recovery during system-wide failure
+- Coordinator cleared when system-wide failure resolved
+- System-wide failure state persists across script runs
+- Corrupted state files are recovered
+- Detection can be disabled via `ENABLE_SYSTEM_WIDE_FAILURE_DETECTION=0`
+- Threshold configuration works (50%, 80%, 100%)
+- Coordination can be disabled via `COORDINATE_SYSTEM_WIDE_RECOVERY=0`
+**Effort:** MEDIUM (add comprehensive test coverage)
+**Benefit:** Ensures critical new functionality works correctly
+
+### System-Wide Failure Detection - Fix Failing Test
+**Source:** Optimization - Removing Double VPN Checking (2026-01-12)
+**Status:** Pending
+**Action:** Debug and fix failing test: `system-wide failure detection: all locations fail simultaneously → system-wide failure detected`
+**Issue:** Test sets failure counts manually but detection isn't working
+**Investigation Needed:**
+- Verify location names match between test setup and detection code
+- Verify IP addresses match between test setup and detection code
+- Verify detection function is being called with correct data
+- Check if failure counts are being read correctly
+**Effort:** LOW-MEDIUM (debug test, fix if needed)
+**Benefit:** Ensures optimization works correctly
+
+### System-Wide Failure Detection - Documentation Updates
+**Source:** System-Wide Failure Detection Implementation (2026-01-12)
+**Status:** Pending
+**Action:** Update architecture documentation to document system-wide failure detection
+**Tasks:**
+- Update `docs/ARCHITECTURE.md` to document system-wide failure detection mechanism
+- Document state files in system-wide state section
+- Document coordination mechanism
+- Consider creating ADR for system-wide failure detection decision
+**Effort:** LOW (documentation updates)
+**Benefit:** Improves maintainability and understanding
 
 ### Rate Limiting Refactoring - New Test Coverage
 **Source:** Rate Limiting Refactoring (2026-01-12)

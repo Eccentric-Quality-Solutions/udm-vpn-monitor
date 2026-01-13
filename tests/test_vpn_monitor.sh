@@ -7,7 +7,6 @@ load test_helper
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
-load fixtures/vpn_cooldown
 
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
@@ -299,19 +298,6 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh respects cooldown period - should exit early when active" {
-	# Purpose: Test verifies that the script exits early when a cooldown period is active after recovery actions.
-	# Expected: Script detects cooldown period and exits without performing checks or actions.
-	# Importance: Cooldown prevents excessive recovery actions and allows time for VPN to stabilize.
-	setup_vpn_cooldown_fixture "${TEST_PEER_IP}" 0 900 'COOLDOWN_MINUTES=15'
-
-	run bash "$TEST_SCRIPT" --fake
-
-	# Should exit early due to cooldown
-	assert_file_contains "$LOG_FILE" "cooldown period"
-}
-
-# bats test_tags=category:unit
 @test "vpn-monitor.sh handles lockfile timeout - should handle stale lockfile" {
 	# Purpose: Test verifies that the script handles stale lockfiles that exceed the timeout period.
 	# Expected: Script detects stale lockfile (older than LOCKFILE_TIMEOUT) and handles it appropriately.
@@ -491,45 +477,6 @@ EOF
 	assert_success
 	# State files should be initialized
 	assert_file_exist "${STATE_DIR}/restart_count"
-
-	remove_mock_from_path
-}
-
-# bats test_tags=category:unit
-@test "vpn-monitor.sh validate_monitor_state exits when in cooldown period - should exit early" {
-	# Purpose: Test verifies that validate_monitor_state function detects active cooldown and exits early.
-	# Expected: Script exits early with success status and logs cooldown period message.
-	# Importance: Cooldown mechanism prevents excessive recovery actions and allows VPN stabilization time.
-	setup_vpn_cooldown_fixture "${TEST_PEER_IP}" 0 900 'COOLDOWN_MINUTES=15'
-
-	run bash "$TEST_SCRIPT" --fake
-
-	assert_success
-	# Should exit early due to cooldown
-	assert_file_contains "$LOG_FILE" "in cooldown period"
-	assert_file_contains "$LOG_FILE" "Script exiting"
-}
-
-# bats test_tags=category:unit
-@test "vpn-monitor.sh validate_monitor_state continues when not in cooldown - should continue execution" {
-	# Purpose: Test verifies that validate_monitor_state function allows script execution when cooldown period has expired.
-	# Expected: Script continues normal execution without cooldown-related exit messages.
-	# Importance: Ensures script resumes normal monitoring after cooldown period expires.
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'COOLDOWN_MINUTES=15'
-
-	# Set expired cooldown timestamp using location-based state functions
-	# shellcheck source=../lib/state.sh
-	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "" "${TEST_PEER_IP}" "last_bytes" "1000" || true
-	local cooldown_file="${STATE_DIR}/cooldown_until"
-	echo $(($(date +%s) - 900)) >"$cooldown_file"
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
-
-	assert_success
-	# Should continue execution (not exit early)
-	refute_output --partial "in cooldown period"
-	refute_output --partial "Script exiting: in cooldown"
 
 	remove_mock_from_path
 }

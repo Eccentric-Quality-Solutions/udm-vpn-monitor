@@ -372,7 +372,6 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
   - `test_integration_e2e_recovery.sh` - End-to-end recovery integration tests
   - `test_multiple_peer_edge_cases.sh` - Tests for multiple peer scenarios
   - `test_rapid_state_changes.sh` - Tests for rapid state change handling
-  - `test_recovery_cooldown_rate_limit_interaction.sh` - Tests for cooldown and rate limit interactions
   - `test_recovery_network_partition.sh` - Tests for recovery during network partitions
   - `test_recovery_partial_failures.sh` - Tests for partial recovery failures
   - `test_recovery_rate_limiting.sh` - Tests for recovery rate limiting
@@ -452,7 +451,7 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
   - `lib/lockfile.sh` - Lockfile management with flock and fallback mechanisms
   - `lib/logging.sh` - Centralized logging functionality with timestamp and level support
   - `lib/recovery.sh` - Tiered recovery actions (logging → surgical cleanup → full restart)
-  - `lib/state.sh` - State file management (failure counters, cooldown, rate limiting)
+  - `lib/state.sh` - State file management (failure counters, rate limiting)
 - **Comprehensive Test Suite**: 
   - `test_integration.sh` - Integration tests for end-to-end scenarios
   - `test_high_risk.sh` - Tests for critical recovery actions and edge cases
@@ -546,7 +545,7 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 - Tiered recovery system (logging → surgical cleanup → full restart)
 - Per-peer failure tracking and independent recovery actions
 - Connection name auto-discovery for targeted recovery
-- Safety controls: lockfiles, cooldown periods, rate limiting
+- Safety controls: lockfiles, rate limiting
 - Comprehensive logging and state management
 - Installation and uninstallation scripts
 - Interactive and silent installation modes
@@ -561,7 +560,7 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 - **Detection**: Uses `ip xfrm state` byte counters to detect actual VPN traffic flow
 - **Connectivity Verification**: Optional ping checks verify end-to-end tunnel connectivity
 - **Tiered Recovery**: Escalates from logging → surgical SA cleanup → full restart
-- **Safety Controls**: Lockfiles with timeout detection, cooldown timers, and rate limiting
+- **Safety Controls**: Lockfiles with timeout detection and rate limiting
 - **Per-Peer Tracking**: Monitors multiple VPN peers independently
 - **Connection Name Support**: Auto-discovers or manually configures connection names for targeted recovery
 - **Persistent Logging**: Logs stored in `/data/` survive reboots

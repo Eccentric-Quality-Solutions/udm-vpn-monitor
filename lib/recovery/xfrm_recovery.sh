@@ -299,6 +299,39 @@ delete_stale_sas() {
 	# Track if we've logged raw xfrm output (to avoid excessive logging on multiple failures)
 	local raw_xfrm_output_logged=0
 
+	# Check if SA block has all required selectors
+	#
+	# Determines if a Security Association block has all required selectors (src, dst, proto, spi)
+	# for a complete SA entry. Used to validate SA completeness before saving to the list.
+	#
+	# Arguments:
+	#   $1: in_sa_block flag (0 or 1)
+	#   $2: current_src value
+	#   $3: current_dst value
+	#   $4: current_proto value
+	#   $5: current_spi value
+	#
+	# Returns:
+	#   0: SA is complete (all selectors present)
+	#   1: SA is incomplete (missing one or more selectors)
+	#
+	# Note:
+	#   This function extracts the duplicate 5-condition boolean check to improve readability
+	#   and maintainability. The check appears in two places: before starting a new SA block
+	#   and when finalizing the last SA block.
+	is_sa_complete() {
+		local in_block="$1"
+		local src="$2"
+		local dst="$3"
+		local proto="$4"
+		local spi="$5"
+
+		if [[ $in_block -eq 1 ]] && [[ -n "$src" ]] && [[ -n "$dst" ]] && [[ -n "$proto" ]] && [[ -n "$spi" ]]; then
+			return 0
+		fi
+		return 1
+	}
+
 	# Parse loop: Process each line of xfrm output
 	# State machine transitions:
 	#   1. New SA block detected (line starts with "src ... dst ..."):
@@ -339,7 +372,7 @@ delete_stale_sas() {
 			# Before starting new SA, save previous SA if it's complete
 			# Complete SA requires: src, dst, proto, and spi all present
 			# This handles the case where we've finished parsing one SA and found the next
-			if [[ $in_sa_block -eq 1 ]] && [[ -n "$current_src" ]] && [[ -n "$current_dst" ]] && [[ -n "$current_proto" ]] && [[ -n "$current_spi" ]]; then
+			if is_sa_complete "$in_sa_block" "$current_src" "$current_dst" "$current_proto" "$current_spi"; then
 				# CRITICAL: Verify that the SA matches the target peer IP (forward SA: dst=$peer_ip, reverse SA: src=$peer_ip)
 				# This prevents deleting SAs for wrong locations when grep -A includes subsequent SA blocks
 				# Accept both forward SAs (dst=$peer_ip) and reverse SAs (src=$peer_ip) to handle asymmetric SA state
@@ -424,7 +457,7 @@ delete_stale_sas() {
 	# Finalization: Process the last SA block if parsing ended mid-block
 	# This handles the case where the last SA in the output doesn't have a following "src ... dst ..." line
 	# to trigger the save logic in the main loop
-	if [[ $in_sa_block -eq 1 ]] && [[ -n "$current_src" ]] && [[ -n "$current_dst" ]] && [[ -n "$current_proto" ]] && [[ -n "$current_spi" ]]; then
+	if is_sa_complete "$in_sa_block" "$current_src" "$current_dst" "$current_proto" "$current_spi"; then
 		# CRITICAL: Verify that the SA matches the target peer IP (forward SA: dst=$peer_ip, reverse SA: src=$peer_ip)
 		# This prevents deleting SAs for wrong locations when grep -A includes subsequent SA blocks
 		# Accept both forward SAs (dst=$peer_ip) and reverse SAs (src=$peer_ip) to handle asymmetric SA state
@@ -1206,31 +1239,39 @@ attempt_xfrm_recovery() {
 	# (e.g., "dst 192.168.1.1" won't match "dst 192.168.1.10" due to exact string matching)
 	local xfrm_output
 	local xfrm_result
-	xfrm_output=$(get_xfrm_state_for_peer "$peer_ip")
+	local xfrm_error_msg=""
+	xfrm_output=$(get_xfrm_state_for_peer "$peer_ip" "" "xfrm_error_msg")
 	xfrm_result=$?
 
-	# Check if helper function failed (ip command not available - should not happen since we check above)
-	if [[ $xfrm_result -ne 0 ]]; then
-		handle_error "WARNING" "$location_name" "xfrm recovery: Failed to query xfrm state for $location_name ($peer_ip)"
+	# Check if helper function failed - distinguish between different failure types
+	if [[ $xfrm_result -eq 2 ]]; then
+		# Command failed (xfrm query error)
+		if [[ -n "$xfrm_error_msg" ]]; then
+			handle_error "WARNING" "$location_name" "xfrm recovery: $xfrm_error_msg"
+		else
+			handle_error "WARNING" "$location_name" "xfrm recovery: xfrm command failed (command error) for $location_name ($peer_ip)"
+		fi
+		return 1
+	elif [[ $xfrm_result -ne 0 ]]; then
+		# No SAs found (tunnel down or SAs not in xfrm state)
+		if [[ -n "$xfrm_error_msg" ]]; then
+			handle_error "WARNING" "$location_name" "xfrm recovery: $xfrm_error_msg"
+		else
+			handle_error "WARNING" "$location_name" "xfrm recovery: No SAs found in xfrm state for $location_name ($peer_ip) - tunnel may be down"
+		fi
 		return 1
 	fi
 
+	# Note: get_xfrm_state_for_peer() now handles empty output and provides detailed error messages
+	# including alternative query methods (ipsec status). If we get here with empty output,
+	# it means the function succeeded but returned empty (shouldn't happen with new implementation,
+	# but kept for safety). The error message above should have already been logged.
 	if [[ -z "$xfrm_output" ]]; then
-		log_message "INFO" "$location_name" "xfrm recovery: No SAs found for $location_name ($peer_ip) in xfrm state (may already be down)"
-		# If no SAs exist, verify they're actually gone (not a parsing issue)
-		if command -v check_ipsec_phase2 >/dev/null 2>&1; then
-			if ! check_ipsec_phase2 "$peer_ip"; then
-				log_message "INFO" "$location_name" "xfrm recovery: Confirmed no SAs exist for $location_name ($peer_ip)"
-				# No SAs exist - while we've successfully confirmed the state, xfrm recovery cannot
-				# accomplish the recovery goal (bringing the VPN back up) since there's nothing to
-				# delete/re-establish. Return failure to trigger fallback to ipsec reload/restart.
-				return 1
-			else
-				handle_error "WARNING" "$location_name" "xfrm recovery: SAs exist but parsing failed for $location_name ($peer_ip)"
-				return 1
-			fi
-		fi
-		# No SAs exist and no check_ipsec_phase2 available - xfrm recovery cannot help, return failure to trigger fallback
+		# This case should be rare now since get_xfrm_state_for_peer() handles empty output
+		# But kept as a safety check
+		log_message "INFO" "$location_name" "xfrm recovery: No SAs found for $location_name ($peer_ip) in xfrm state (tunnel appears to be down)"
+		# No SAs exist - xfrm recovery cannot accomplish the recovery goal (bringing the VPN back up)
+		# since there's nothing to delete/re-establish. Return failure to trigger fallback to ipsec reload/restart.
 		return 1
 	fi
 

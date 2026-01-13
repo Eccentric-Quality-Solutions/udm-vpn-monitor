@@ -9,7 +9,6 @@ Reusable test fixtures for common VPN monitoring scenarios. These fixtures combi
 - `vpn_active.bash` - VPN is active and healthy (`setup_vpn_active_fixture`)
 - `vpn_down.bash` - VPN is down, no SA found (`setup_vpn_down_fixture`)
 - `vpn_failing.bash` - VPN has recorded failures (`setup_vpn_failing_fixture`)
-- `vpn_cooldown.bash` - VPN is in cooldown period (`setup_vpn_cooldown_fixture`)
 - `vpn_rekey.bash` - VPN has undergone a rekey (`setup_vpn_rekey_fixture`)
 - `vpn_flapping.bash` - VPN can transition between up/down states (`setup_vpn_flapping_fixture`)
 - `vpn_multiple_peers.bash` - Multiple VPN peers scenario (`setup_vpn_multiple_peers_fixture`)

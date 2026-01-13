@@ -101,14 +101,19 @@ standard_setup() {
 		NO_ESCALATE DEBUG BASE_TIME \
 		TEST_CONFIG_FILE TEST_SCRIPT \
 		MOCK_DATA_DIR MOCK_INSTALL_DIR; do
+		local original_var="ORIGINAL_${var_name}"
+		# Determine value: use actual value if variable was set, otherwise use sentinel
+		local value_to_save
 		if [[ -v "$var_name" ]]; then
 			# Variable was set (even if empty), save its value
-			printf -v "ORIGINAL_${var_name}" '%s' "${!var_name}"
+			value_to_save="${!var_name}"
 		else
 			# Variable was not set, use sentinel value
-			printf -v "ORIGINAL_${var_name}" '%s' "__UNSET__"
+			value_to_save="__UNSET__"
 		fi
-		export "ORIGINAL_${var_name}"
+		# Use declare -gx to declare and export, then printf -v for safe assignment
+		declare -gx "$original_var"
+		printf -v "$original_var" '%s' "$value_to_save"
 	done
 
 	# Export saved values so they're available in teardown even if test fails
@@ -817,7 +822,23 @@ mock_ip_xfrm_state() {
 		src_ip="$peer_ip"
 	fi
 
-	cat >"$mock_ip" <<EOF
+	# If peer_ip is empty, return empty output (no SA exists)
+	if [[ -z "$peer_ip" ]]; then
+		cat >"$mock_ip" <<EOF
+#!/bin/bash
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    exit 0
+fi
+# Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    exit 0
+fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
+EOF
+	else
+		cat >"$mock_ip" <<EOF
 #!/bin/bash
 # Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
 if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
@@ -836,6 +857,7 @@ fi
 # Handle other ip commands
 exec /usr/bin/ip "\$@"
 EOF
+	fi
 	chmod +x "$mock_ip"
 	echo "$mock_ip"
 }
@@ -2321,8 +2343,9 @@ VPN_NAME="Test VPN"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
-COOLDOWN_MINUTES=15
-MAX_RESTARTS_PER_HOUR=3
+MIN_RESTART_INTERVAL_SECONDS=30
+MAX_RESTARTS_PER_WINDOW=3
+RATE_LIMIT_WINDOW_MINUTES=60
 LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
 STATE_DIR="${TEST_DIR}"
 CRON_SCHEDULE="*/1 * * * *"
@@ -3079,7 +3102,7 @@ EOF
 # Create mock date command with controllable time
 #
 # Creates a mock 'date' command that returns a controllable timestamp.
-# Used for time-based testing of cooldowns, rate limiting, and time-sensitive operations.
+# Used for time-based testing of rate limiting and time-sensitive operations.
 # Allows tests to simulate time passing by calling this function multiple times with
 # different increment values.
 #
@@ -3316,7 +3339,6 @@ run_with_mocks() {
 #   - fixtures/vpn_active.bash: VPN is active and healthy
 #   - fixtures/vpn_down.bash: VPN is down (no SA found)
 #   - fixtures/vpn_failing.bash: VPN has recorded failures
-#   - fixtures/vpn_cooldown.bash: VPN is in cooldown period
 #   - fixtures/vpn_rekey.bash: VPN has undergone a rekey (SPI change)
 #   - fixtures/vpn_multiple_peers.bash: Multiple VPN peers scenario
 #   - fixtures/vpn_recovery_disabled.bash: VPN with recovery actions disabled

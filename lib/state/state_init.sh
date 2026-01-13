@@ -56,5 +56,13 @@ init_state() {
 	if ! ensure_file_exists "$network_partition_file" "0"; then
 		handle_error "WARNING" "SYSTEM" "Failed to create network partition state file"
 	fi
+	# Initialize system-wide failure state file (0 = no failure, 1 = system-wide failure detected)
+	if command -v get_system_wide_failure_state_file >/dev/null 2>&1; then
+		local system_wide_failure_file
+		system_wide_failure_file=$(get_system_wide_failure_state_file)
+		if ! ensure_file_exists "$system_wide_failure_file" "0"; then
+			handle_error "WARNING" "SYSTEM" "Failed to create system-wide failure state file"
+		fi
+	fi
 	# Per-peer failure counters and byte counters are created on-demand
 }

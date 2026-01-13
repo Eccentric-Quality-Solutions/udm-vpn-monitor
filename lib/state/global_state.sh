@@ -1,42 +1,10 @@
 #!/bin/bash
 #
 # Global state operations
-# Handles cooldown periods, rate limiting, restart tracking, and state validation
+# Handles rate limiting, restart tracking, and state validation
 #
 # Version: 0.6.0
 #
-
-# Get timestamp plus N minutes
-#
-# Returns a Unix timestamp (seconds since epoch) that is N minutes in the future.
-# Used for calculating cooldown expiration times.
-#
-# Arguments:
-#   $1: Number of minutes to add (integer)
-#
-# Returns:
-#   0: Always succeeds
-#
-# Output:
-#   Prints the future timestamp (integer) to stdout
-#
-# Examples:
-#   future_time=$(get_timestamp_plus_minutes 15)
-#   echo "Cooldown expires at: $future_time"
-#
-# Note:
-#   Uses Linux date format (-d "+N minutes")
-#   Falls back to manual calculation if date fails: $(get_unix_timestamp) + minutes * SECONDS_PER_MINUTE
-get_timestamp_plus_minutes() {
-	local minutes="$1"
-	local seconds_to_add=$((minutes * SECONDS_PER_MINUTE))
-	# Use Linux date format, fallback to manual calculation
-	# +%s: output as seconds since epoch
-	date -d "+${minutes} minutes" +%s 2>/dev/null || safe_timestamp_add "$(get_unix_timestamp)" "$seconds_to_add" 2>/dev/null || {
-		handle_error "ERROR" "SYSTEM" "Failed to calculate future timestamp (overflow or invalid input)" 0
-		get_unix_timestamp # Fallback to current time
-	}
-}
 
 # Get file modification time as timestamp
 #
@@ -68,104 +36,6 @@ get_file_mtime() {
 	stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null || echo "0"
 }
 
-# Check if we're in cooldown period
-#
-# Verifies if the script is currently in a cooldown period after a restart.
-# Cooldown periods prevent immediate re-restarts and allow VPN to stabilize.
-# Compares current time to cooldown expiration timestamp.
-#
-# Arguments:
-#   None
-#
-# Returns:
-#   0: Currently in cooldown period (should exit script)
-#   1: Not in cooldown (cooldown expired or doesn't exist)
-#
-# Side effects:
-#   - Removes cooldown file if it has expired
-#   - Logs remaining cooldown time if still active
-#
-# Examples:
-#   if check_cooldown; then
-#       echo "In cooldown, exiting"
-#       exit 0
-#   fi
-#
-# Note:
-#   Requires COOLDOWN_UNTIL_FILE and log_message to be set (from config.sh and logging.sh)
-#   Cooldown file contains Unix timestamp of expiration time
-#   Calculates remaining time and logs it if in cooldown
-check_cooldown() {
-	if [[ ! -f "$COOLDOWN_UNTIL_FILE" ]]; then
-		return 1 # Not in cooldown
-	fi
-
-	# Check if file is readable before attempting to read
-	if ! file_exists_and_readable "$COOLDOWN_UNTIL_FILE"; then
-		handle_error "WARNING" "SYSTEM" "Cooldown file is not readable, removing: $COOLDOWN_UNTIL_FILE" 0
-		rm -f "$COOLDOWN_UNTIL_FILE" 2>/dev/null || true
-		return 1 # Not in cooldown (file unreadable, treat as no cooldown)
-	fi
-
-	local cooldown_until
-	cooldown_until=$(cat "$COOLDOWN_UNTIL_FILE" 2>/dev/null || echo "0")
-	local now
-	now=$(get_unix_timestamp)
-
-	if [[ "$now" -lt "$cooldown_until" ]]; then
-		local remaining
-		remaining=$(safe_timestamp_diff "$cooldown_until" "$now" 2>/dev/null || echo "0")
-		# Ensure remaining is non-negative (should be if now < cooldown_until, but validate)
-		if [[ $remaining -lt 0 ]]; then
-			remaining=0
-		fi
-		log_message "INFO" "SYSTEM" "In cooldown period, $remaining seconds remaining"
-		return 0 # In cooldown
-	else
-		# Cooldown expired, remove file
-		rm -f "$COOLDOWN_UNTIL_FILE"
-		return 1 # Not in cooldown
-	fi
-}
-
-# Set cooldown period
-#
-# Sets a cooldown period to prevent immediate re-restarts after a full restart.
-# The cooldown period is stored as a Unix timestamp in COOLDOWN_UNTIL_FILE.
-# Calculates expiration time as current time + duration minutes.
-#
-# Arguments:
-#   $1: Cooldown duration in minutes (integer)
-#
-# Returns:
-#   0: Always succeeds
-#
-# Side effects:
-#   - Creates/updates COOLDOWN_UNTIL_FILE with expiration timestamp (atomic write)
-#   - Logs cooldown period setting
-#
-# Examples:
-#   set_cooldown 15
-#   # Sets cooldown for 15 minutes from now
-#
-# Note:
-#   Requires COOLDOWN_UNTIL_FILE, get_timestamp_plus_minutes, and log_message to be set
-#   Cooldown file contains single Unix timestamp (seconds since epoch)
-#   Uses temporary file and mv for atomic write to prevent corruption on interruption
-set_cooldown() {
-	local minutes="$1"
-	local cooldown_until
-	cooldown_until=$(get_timestamp_plus_minutes "$minutes")
-	# Atomic write: write to temp file first, then rename
-	if ! atomic_write_file "$COOLDOWN_UNTIL_FILE" "$cooldown_until"; then
-		handle_error "ERROR" "SYSTEM" "Failed to set cooldown period (file: $COOLDOWN_UNTIL_FILE)" 0
-		# Continue execution but log the error
-		return 0
-	fi
-
-	log_message "INFO" "SYSTEM" "Cooldown period set for $minutes minutes"
-}
-
 # Check rate limiting
 #
 # Verifies if the maximum number of Tier 3 restarts within the configured window has been exceeded,
@@ -173,8 +43,11 @@ set_cooldown() {
 # Prevents restart loops by limiting how frequently Tier 3 recovery actions (full IPsec restarts)
 # can occur. Uses a sliding window to count restart timestamps in RESTART_COUNT_FILE.
 #
+# During system-wide failures, the coordinator location bypasses the window limit (but still
+# enforces minimum interval) to allow necessary recovery attempts during infrastructure outages.
+#
 # Arguments:
-#   None
+#   $1: Optional location name (used to check if this location is the coordinator during system-wide failures)
 #
 # Returns:
 #   0: Within rate limit (restart allowed)
@@ -183,11 +56,16 @@ set_cooldown() {
 # Side effects:
 #   - Logs warning if rate limit exceeded (includes reset time, countdown, and restart list)
 #   - Logs warning if minimum interval not met
+#   - Logs info if coordinator bypasses window limit during system-wide failure
 #   - Reads RESTART_COUNT_FILE to count recent restarts
 #
 # Examples:
 #   if ! check_rate_limit; then
 #       echo "Rate limit exceeded, skipping restart"
+#       return 1
+#   fi
+#   if ! check_rate_limit "NYC"; then
+#       echo "Rate limit exceeded for NYC"
 #       return 1
 #   fi
 #
@@ -202,7 +80,10 @@ set_cooldown() {
 #   - Reset timestamp (when oldest restart will expire)
 #   - Countdown (time remaining until reset)
 #   - List of restart timestamps that count toward the limit
+#   Coordinator bypass: If location is coordinator during system-wide failure, window limit is bypassed
+#   but minimum interval is still enforced to protect system stability
 check_rate_limit() {
+	local location_name="${1:-}"
 	local now
 	now=$(get_unix_timestamp)
 
@@ -247,6 +128,32 @@ check_rate_limit() {
 	if ! file_exists_and_readable "$RESTART_COUNT_FILE"; then
 		handle_error "WARNING" "SYSTEM" "Restart count file is not readable, treating as empty: $RESTART_COUNT_FILE" 0
 		return 0 # Allow restart (file unreadable, treat as no previous restarts)
+	fi
+
+	# Check if coordinator should bypass window limit during system-wide failure
+	# Coordinator bypasses window limit but still enforces minimum interval to protect system stability
+	local bypass_window_limit=0
+	if [[ -n "$location_name" ]]; then
+		# Check if system-wide failure is detected and this location is the coordinator
+		if command -v get_system_wide_failure_state >/dev/null 2>&1 &&
+			command -v should_location_attempt_recovery >/dev/null 2>&1; then
+			local failure_state
+			failure_state=$(get_system_wide_failure_state 2>/dev/null || echo "0")
+			if [[ "$failure_state" -eq 1 ]]; then
+				# System-wide failure detected, check if this location is the coordinator
+				if should_location_attempt_recovery "$location_name" 2>/dev/null; then
+					# This location is the coordinator during system-wide failure
+					# Bypass window limit but keep minimum interval enforcement
+					bypass_window_limit=1
+					log_message "INFO" "SYSTEM" "Coordinator $location_name bypassing rate limit window during system-wide failure (minimum interval still enforced)"
+				fi
+			fi
+		fi
+	fi
+
+	# If coordinator bypass is active, skip window limit check
+	if [[ $bypass_window_limit -eq 1 ]]; then
+		return 0 # Allow restart (window limit bypassed, minimum interval already checked)
 	fi
 
 	# Get all restart timestamps within the configured window (sorted)
@@ -786,7 +693,7 @@ validate_state_files_by_pattern() {
 # Validate all state files
 #
 # Validates all state files used by the VPN monitor for readability and format.
-# Checks restart count file, cooldown file, network partition state file, and per-peer failure counters.
+# Checks restart count file, network partition state file, and per-peer failure counters.
 # Automatically recovers corrupted files by backing them up and resetting to defaults.
 #
 # Returns:

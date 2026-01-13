@@ -434,24 +434,54 @@ check_system_resources() {
 	# Check CPU usage
 	local cpu_usage
 	if cpu_usage=$(get_cpu_usage 2>/dev/null); then
+		# Track successful CPU check
+		if command -v track_resource_check >/dev/null 2>&1; then
+			track_resource_check "cpu" 1
+		fi
 		if check_resource_constrained "cpu" "$cpu_usage" "$cpu_threshold" "$cpu_duration" "$state_dir"; then
+			# Track CPU constraint event
+			if command -v track_resource_constraint >/dev/null 2>&1; then
+				track_resource_constraint "cpu_constrained"
+			fi
 			handle_error "WARNING" "SYSTEM" "CPU usage has been at ${cpu_threshold}%+ (currently ${cpu_usage}%) for ${cpu_duration}s - throttling execution" 0
 			return 1
+		fi
+	else
+		# Track failed CPU check
+		if command -v track_resource_check >/dev/null 2>&1; then
+			track_resource_check "cpu" 0
 		fi
 	fi
 
 	# Check RAM usage
 	local ram_usage
 	if ram_usage=$(get_memory_usage 2>/dev/null); then
+		# Track successful RAM check
+		if command -v track_resource_check >/dev/null 2>&1; then
+			track_resource_check "ram" 1
+		fi
 		if check_resource_constrained "ram" "$ram_usage" "$ram_threshold" "$ram_duration" "$state_dir"; then
+			# Track RAM constraint event
+			if command -v track_resource_constraint >/dev/null 2>&1; then
+				track_resource_constraint "ram_constrained"
+			fi
 			handle_error "WARNING" "SYSTEM" "RAM usage has been at ${ram_threshold}%+ (currently ${ram_usage}%) for ${ram_duration}s - throttling execution" 0
 			return 1
+		fi
+	else
+		# Track failed RAM check
+		if command -v track_resource_check >/dev/null 2>&1; then
+			track_resource_check "ram" 0
 		fi
 	fi
 
 	# Check disk space
 	local free_space
 	if free_space=$(get_free_disk_space "$check_path" 2>/dev/null); then
+		# Track successful disk check
+		if command -v track_resource_check >/dev/null 2>&1; then
+			track_resource_check "disk" 1
+		fi
 		# Log warning at warning threshold (only once, track state to avoid log spam)
 		if [[ $free_space -lt $disk_warning ]] && [[ $free_space -ge $disk_critical ]]; then
 			local disk_warning_state_file="${state_dir}/resource_disk_warning_logged"
@@ -472,6 +502,10 @@ check_system_resources() {
 
 		# Take action at critical threshold
 		if [[ $free_space -lt $disk_critical ]]; then
+			# Track disk critical event
+			if command -v track_resource_constraint >/dev/null 2>&1; then
+				track_resource_constraint "disk_critical"
+			fi
 			local filesystem
 			filesystem=$(df -P "$check_path" 2>/dev/null | tail -n1 | awk '{print $1}')
 			handle_error "WARNING" "SYSTEM" "Free disk space is critical: ${free_space}% free on ${filesystem}" 0
@@ -497,6 +531,11 @@ check_system_resources() {
 			# Still critical - throttle execution
 			handle_error "WARNING" "SYSTEM" "Disk space still critical after cleanup - throttling execution" 0
 			return 1
+		fi
+	else
+		# Track failed disk check
+		if command -v track_resource_check >/dev/null 2>&1; then
+			track_resource_check "disk" 0
 		fi
 	fi
 

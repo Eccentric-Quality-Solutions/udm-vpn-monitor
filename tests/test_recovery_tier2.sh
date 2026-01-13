@@ -8,7 +8,6 @@ load helpers/test_data
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
-load fixtures/vpn_cooldown
 load fixtures/vpn_at_tier
 
 # Path to the VPN monitor script
@@ -317,6 +316,7 @@ EOF
 		"LOCATION_TEST2_INTERNAL=\"${TEST_PEER_IP2}\"" \
 		'ENABLE_XFRM_RECOVERY=0' \
 		'ENABLE_NETWORK_PARTITION_CHECK=0' \
+		'ENABLE_SYSTEM_WIDE_FAILURE_DETECTION=0' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5'

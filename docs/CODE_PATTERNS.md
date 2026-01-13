@@ -166,7 +166,28 @@ fi
 - Standardizes fake mode handling across codebase
 - Fake mode (NO_ESCALATE=1): Logs error and returns 1 (allows caller to decide exit behavior)
 - Normal mode: Logs error and exits with specified exit code
-- **See `docs/FAKE_MODE_EXIT_BEHAVIOR.md` for detailed guidance on when to exit with error code vs. code 0 in fake mode**
+
+#### Fake Mode Exit Behavior (when to fail vs succeed)
+
+- Execution-blocking and failure-focused (validation failures, route setup failures, permission errors): exit with the appropriate error code in both normal and fake mode so tests can `assert_failure`.
+- Logging-focused (config parse errors, directory creation failures when testing log format): exit with the error code in normal mode but exit `0` in fake mode so tests can `assert_success` and check log output.
+- Both categories are functionally blocking; the difference is what the test asserts. Document the intent in code comments when the choice is non-obvious.
+
+**Patterns**
+```bash
+# Execution-blocking: fail in fake mode too
+if ! validate_config; then
+    exit "${EXIT_VALIDATION_ERROR:-3}"
+fi
+
+# Logging-focused: succeed in fake mode to inspect logs
+if ! load_config "$CONFIG_FILE"; then
+    if is_fake_mode; then
+        exit "${EXIT_SUCCESS:-0}"
+    fi
+    exit "${EXIT_VALIDATION_ERROR:-3}"
+fi
+```
 
 **Pattern: Checking Return Value in Functions**
 
@@ -845,6 +866,13 @@ These files are intentionally outside the abstraction layer because they represe
 - `${STATE_DIR}/cooldown_until` - Cooldown expiration timestamp
 - `${STATE_DIR}/restart_count` - Unix timestamps of Tier 3 recovery actions
 - `${STATE_DIR}/network_partition_state` - Network partition status (0=healthy, 1=partitioned)
+- `${STATE_DIR}/network_partition_dns_success_count` - DNS check success counter
+- `${STATE_DIR}/network_partition_dns_fail_count` - DNS check failure counter
+- `${STATE_DIR}/network_partition_route_success_count` - Route check success counter
+- `${STATE_DIR}/network_partition_route_fail_count` - Route check failure counter
+- `${STATE_DIR}/network_partition_interface_success_count` - Interface check success counter
+- `${STATE_DIR}/network_partition_interface_fail_count` - Interface check failure counter
+- `${STATE_DIR}/network_partition_summary_last_time` - Timestamp of last statistics summary
 - `${STATE_DIR}/vpn-monitor.lock` - Lockfile for execution control
 - `${STATE_DIR}/vpn-keepalive.pid` - PID file for VPN keepalive daemon
 - `${STATE_DIR}/.cron_checked` - Flag file for cron check
@@ -890,6 +918,57 @@ state_file="${STATE_DIR}/failure_counter_${location}_${ip}"
 **Key Points:**
 - All per-peer/per-location state files use the abstraction layer
 - Sanitization ensures safe filenames across different location names and IP formats
+
+### Pattern: Statistics Tracking with Periodic Summary Logging
+
+**When to Use:** Operations that run frequently and need visibility into success/failure rates without cluttering logs
+
+**Pattern:**
+```bash
+# Track individual check result
+track_network_partition_check "dns" 1    # success
+track_network_partition_check "dns" 0    # failure
+
+# Log summary if interval elapsed (called periodically)
+log_network_partition_summary_if_due
+```
+
+**Implementation Pattern:**
+1. **Tracking Function**: Increments appropriate counter in state file
+   - Uses atomic writes (ADR-0012) for state file integrity
+   - Handles missing STATE_DIR gracefully
+   - Validates input (check type, success flag)
+
+2. **Summary Function**: Logs aggregated statistics when interval elapses
+   - Checks if configured interval has elapsed since last summary
+   - Reads all counters and validates they're numeric
+   - Logs summary message with success/failure counts
+   - Resets counters to 0 after logging
+
+**State Files:**
+- Success/failure counters: `${STATE_DIR}/<check_type>_success_count`, `${STATE_DIR}/<check_type>_fail_count`
+- Last summary timestamp: `${STATE_DIR}/<check_type>_summary_last_time`
+- Resource monitoring counters: `${STATE_DIR}/resource_<cpu|ram|disk>_check_success_count`, `${STATE_DIR}/resource_<cpu|ram|disk>_check_fail_count`, `${STATE_DIR}/resource_<cpu_constrained|ram_constrained|disk_critical>_count`
+- Resource monitoring summary timestamp: `${STATE_DIR}/resource_monitoring_summary_last_time`
+
+**Examples:**
+- Ping check summary: `log_ping_summary_if_due()` (7-minute interval, configurable)
+- Network partition check summary: `log_network_partition_summary_if_due()` (1-hour interval, fixed)
+- Resource monitoring summary: `log_resource_monitoring_summary_if_due()` (1-hour interval, fixed)
+
+**Key Points:**
+- Use atomic writes for all state file operations (per ADR-0012)
+- Handle missing STATE_DIR gracefully (return early, don't fail)
+- Validate numeric values to handle corruption
+- Only log summary when interval has elapsed (prevents log spam)
+- Reset counters after logging (start fresh for next interval)
+- Track both successes and failures for complete visibility
+- Similar pattern can be reused for other frequent checks
+
+**Related Patterns:**
+- Atomic File Operations (ADR-0012)
+- State File Management
+- Periodic Status Logging
 - Global state files use constants, not the abstraction layer
 - Naming conventions are enforced by `get_peer_state_file_path()`
 - Never construct state file paths directly - always use the abstraction layer
@@ -1252,6 +1331,7 @@ fi
 **XFRM Output Format Handling:**
 - UDM OS uses `ip -s xfrm state` format where byte counters appear as `  39492(bytes)` on a separate line
 - Always try `ip -s xfrm state` first (provides more detail), fall back to `ip xfrm state` if needed
+- If xfrm command errors or returns empty but `ipsec status` shows a connection, log the diagnostic and continue; do not assume recovery until SAs appear in xfrm state
 - Increase context lines when parsing to ensure `lifetime current:` section is captured (appears after `lifetime config:`)
 - Handle both formats:
   - Single-line: `lifetime current: 123456 bytes, 789 packets`
