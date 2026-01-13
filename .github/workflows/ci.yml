@@ -133,13 +133,13 @@ jobs:
           # kcov automatically merges coverage when multiple runs output to the same directory
           for test_file in "${TEST_FILES[@]}"; do
             echo "Running with coverage: $(basename "$test_file")"
-            # Use timeout to prevent hanging tests (120 seconds per test file)
-            if timeout 120 kcov "${KCOV_ARGS[@]}" "$COVERAGE_DIR" bats --timing "$test_file"; then
+            # Use timeout to prevent hanging tests (180 seconds per test file - increased for kcov overhead)
+            if timeout 180 kcov "${KCOV_ARGS[@]}" "$COVERAGE_DIR" bats --timing "$test_file"; then
               echo "✓ $(basename "$test_file") passed"
             else
               EXIT_CODE=$?
               if [ $EXIT_CODE -eq 124 ]; then
-                echo "✗ $(basename "$test_file") timed out after 120 seconds"
+                echo "✗ $(basename "$test_file") timed out after 180 seconds"
                 TIMED_OUT_TESTS+=("$(basename "$test_file")")
               else
                 echo "✗ $(basename "$test_file") failed with exit code $EXIT_CODE"
