@@ -32,7 +32,8 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 #
 # Side effects:
 #   - Creates TEST_DIR/state and TEST_DIR/logs directories
-#   - Sets STATE_DIR, LOGS_DIR, LOG_FILE, and SECONDS_PER_HOUR environment variables
+#   - Sets STATE_DIR, LOGS_DIR, and LOG_FILE environment variables
+#   - SECONDS_PER_HOUR is available from lib/constants.sh (sourced via lib/state.sh)
 #
 # Note:
 #   This is a test helper function. Requires standard_setup() to be available
@@ -49,8 +50,9 @@ setup_network_partition_stats_test() {
 	mkdir -p "${LOGS_DIR}"
 	export LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
 
-	# Set constants
-	export SECONDS_PER_HOUR=3600
+	# Set constants (only if not already set as readonly)
+	# SECONDS_PER_HOUR is already defined as readonly in lib/constants.sh and lib/state.sh
+	# so we don't need to export it here - it will be available from the sourced libraries
 }
 
 # ============================================================================

@@ -69,6 +69,13 @@ setup_keepalive_test() {
 		cp "${BATS_TEST_DIRNAME}/../lib/detection.sh" "${lib_dir}/detection.sh"
 	fi
 
+	# Copy config subdirectory files (required by config.sh)
+	local config_subdir="${lib_dir}/config"
+	mkdir -p "${config_subdir}"
+	if [[ -d "${BATS_TEST_DIRNAME}/../lib/config" ]]; then
+		cp -r "${BATS_TEST_DIRNAME}/../lib/config/"* "${config_subdir}/" 2>/dev/null || true
+	fi
+
 	# Create config file with location-based format
 	cat >"$config_file" <<EOF
 LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
@@ -153,7 +160,7 @@ cleanup_keepalive_daemon() {
 
 	assert_success
 	assert_output --partial "UDM VPN Keepalive"
-	assert_output --partial "0.5.0"
+	assert_output --partial "0.6.0"
 }
 
 # bats test_tags=category:unit
