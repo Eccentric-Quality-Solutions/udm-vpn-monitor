@@ -62,12 +62,12 @@ jobs:
     name: Test Coverage (Group ${{ matrix.group }}/${{ matrix.total_groups }})
     runs-on: ubuntu-latest
     needs: lint
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        group: [1, 2, 3, 4]
-        total_groups: [4]
+        group: [1, 2, 3, 4, 5, 6, 7, 8]
+        total_groups: [8]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -360,7 +360,7 @@ jobs:
     # Run on schedule (nightly) and on pull requests
     # Skip on push to avoid running on every commit (too expensive)
     if: github.event_name == 'pull_request' || github.event_name == 'schedule'
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
