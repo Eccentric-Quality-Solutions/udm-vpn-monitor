@@ -95,10 +95,11 @@ read_old_config() {
 		[[ -z "$key" ]] && continue
 
 		# Trim whitespace from key
-		key=$(echo "$key" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+		key=$(trim "$key")
 
 		# Remove quotes from value and trim whitespace
-		value=$(echo "$value" | sed "s/^[\"']//" | sed "s/[\"']$//" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+		value=$(echo "$value" | sed "s/^[\"']//" | sed "s/[\"']$//")
+		value=$(trim "$value")
 
 		case "$key" in
 		EXTERNAL_PEER_IPS)
@@ -244,6 +245,12 @@ migrate_config() {
 	# Create backup
 	local backup_file
 	backup_file="${config_file}.backup.$(date +%Y%m%d_%H%M%S)"
+	# Check source file readability before copy operation (prevents hangs on unreadable files)
+	# Function is available via lib/config.sh which sources lib/common.sh
+	if ! file_exists_and_readable "$config_file"; then
+		echo "Error: Config file not readable: $config_file" >&2
+		return 1
+	fi
 	cp "$config_file" "$backup_file"
 	echo "Backup created: $backup_file"
 
@@ -342,6 +349,12 @@ migrate_config() {
 	done
 
 	# Replace config file
+	# If target file exists but is unreadable or unwritable, remove it first to avoid potential hangs
+	# This can happen if file permissions were changed (e.g., chmod 000 or chmod 444)
+	# Removing unwritable files prevents mv from hanging when trying to overwrite them
+	if [[ -f "$config_file" ]] && (! file_exists_and_readable "$config_file" || ! [[ -w "$config_file" ]]); then
+		rm -f "$config_file" 2>/dev/null || true
+	fi
 	mv "$temp_file" "$config_file"
 	# Clear trap since file was successfully moved (no cleanup needed)
 	trap - EXIT

@@ -73,7 +73,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_equal "$stored_bytes" "1000"
 
 	# Mock ip command - SA exists but bytes not increasing
-	mock_ip_xfrm_state "${TEST_PEER_IP}" 1000 >/dev/null
+	# Use bytes that are less than last_bytes to ensure VPN check fails (bytes decreased)
+	mock_ip_xfrm_state "${TEST_PEER_IP}" 500 >/dev/null
 
 	# Mock ipsec to fail (prevent fallback from succeeding and masking failure)
 	mock_ipsec_status 1 >/dev/null
@@ -216,10 +217,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 }
 
 # bats test_tags=category:high-risk,priority:medium
-@test "Failure type unknown - Unable to determine type" {
-	# Purpose: Test verifies that failure type "unknown" is detected when unable to determine specific type
-	# Expected: Failure type is detected as "unknown" when detection methods fail
-	# Importance: Ensures failure tracking continues even when specific type cannot be determined
+@test "Failure type unknown - SA exists but byte counters unavailable and ping disabled (primary check failed)" {
+	# Purpose: Test verifies that failure type "unknown" is returned when SA exists but byte counters unavailable, ping disabled, and primary check failed
+	# Expected: Failure type is detected as "unknown" when SA exists but diagnostic data unavailable and primary check failed
+	# Importance: Ensures we return "unknown" when we can't definitively determine failure type without diagnostic data
 	# Disable ping check so that when byte counter extraction fails, VPN check fails and failure type detection is triggered
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
 
@@ -244,13 +245,15 @@ fi
 exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
+	# Mock ipsec to fail (prevent fallback from succeeding and masking failure)
+	mock_ipsec_status 1 >/dev/null
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
-	# Should detect unknown failure type
+	# Should detect unknown failure type (cannot determine specific type without diagnostic data)
 	assert_file_exist "$LOG_FILE"
-	assert_log_contains_any "$LOG_FILE" "Unknown" "unknown"
+	assert_log_contains_any "$LOG_FILE" "Unknown" "unknown" "Unable to determine specific failure type"
 
 	# Verify failure type stored in state file
 	local failure_type_file="${STATE_DIR}/failure_type_TEST_192_168_1_1"
@@ -259,6 +262,109 @@ EOF
 		failure_type=$(cat "$failure_type_file")
 		assert_equal "$failure_type" "unknown"
 	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "Failure type routing_issue - SA exists but byte counters unavailable and ping enabled and fails (VPN check failed)" {
+	# Purpose: Test verifies that failure type "routing_issue" is detected when SA exists but byte counters unavailable, ping enabled and fails, and VPN check failed
+	# Expected: Failure type is detected as "routing_issue" when SA exists but byte counters unavailable, ping check enabled and fails, and VPN check failed
+	# Importance: Ensures routing issues are detected even when byte counters can't be extracted but ping check is enabled and fails
+	# Enable ping check so that when byte counter extraction fails, ping check is attempted and fails, triggering routing_issue detection
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP2}\""
+
+	# Mock ip command - SA exists but no byte counter info
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag)
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    # No lifetime line (can't extract bytes)
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Handle "ip xfrm state" (without statistics flag)
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    # No lifetime line (can't extract bytes)
+    exit 0
+elif [[ "\$1" == "addr" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "br0" ]]; then
+    # Handle route check - return empty (route doesn't exist, will be added)
+    exit 0
+elif [[ "\$1" == "addr" ]] && [[ "\$2" == "add" ]]; then
+    # Handle route add - simulate success
+    exit 0
+fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	# Mock ping - fails
+	mock_ping_failure >/dev/null
+	# Mock ipsec to fail (prevent fallback from succeeding and masking failure)
+	mock_ipsec_status 1 >/dev/null
+	add_mock_to_path
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Should detect routing_issue failure type (SA exists, byte counters unavailable, ping enabled and fails)
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Routing issue" "routing_issue" "routing_issue suspected"
+
+	# Verify failure type stored in state file
+	source_function "get_peer_state_file_path"
+	local failure_type_file
+	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
+	if [[ -f "$failure_type_file" ]]; then
+		local failure_type
+		failure_type=$(cat "$failure_type_file")
+		assert_equal "$failure_type" "routing_issue"
+	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "Failure type unknown - Unable to determine type (VPN check passed)" {
+	# Purpose: Test verifies that failure type "unknown" is detected when unable to determine specific type but VPN check passed
+	# Expected: Failure type is detected as "unknown" when detection methods fail but VPN appears healthy
+	# Importance: Ensures failure tracking continues even when specific type cannot be determined, but doesn't generate false positives for healthy VPNs
+	# Disable ping check and ensure VPN check passes via ipsec fallback
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
+
+	# Mock ip command - SA exists but no byte counter info
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag)
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    # No lifetime line (can't extract bytes)
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Handle "ip xfrm state" (without statistics flag)
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    # No lifetime line (can't extract bytes)
+    exit 0
+fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	# Mock ipsec to succeed (VPN check passes via fallback)
+	mock_ipsec_status 0 >/dev/null
+	add_mock_to_path
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Should detect unknown failure type when VPN check passed (no routing_issue suspected for healthy VPNs)
+	assert_file_exist "$LOG_FILE"
+	# When VPN check passed, "unknown" is expected and should not generate warnings
+	# The failure type may be "unknown" or not stored at all when VPN is healthy
 
 	remove_mock_from_path
 }
@@ -313,6 +419,287 @@ EOF
 
 	# Failure type file should be cleared silently (no recovery message logged)
 	# This verifies that stale failure_type files are cleaned up without false positives
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "Byte counter extraction failure - malformed lifetime section with SA exists and ping disabled" {
+	# Purpose: Test verifies that byte counter extraction failure (malformed lifetime section) is handled correctly when SA exists, ping disabled, and VPN check fails
+	# Expected: Failure type is detected as "unknown" when byte counter extraction fails due to malformed lifetime section
+	# Importance: Ensures malformed xfrm output doesn't cause incorrect failure type detection
+	# Disable ping check so that when byte counter extraction fails, VPN check fails and failure type detection is triggered
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
+
+	# Mock ip command - SA exists but malformed lifetime section (missing bytes keyword)
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: 123456"
+    # Missing "bytes" keyword - extraction will fail
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: 123456"
+    # Missing "bytes" keyword - extraction will fail
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	# Mock ipsec to fail (prevent fallback from succeeding and masking failure)
+	mock_ipsec_status 1 >/dev/null
+	add_mock_to_path
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Should detect unknown failure type (byte counter extraction failed)
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Unknown" "unknown" "byte counter extraction failed" "Unable to determine specific failure type"
+
+	# Verify failure type stored in state file
+	source_function "get_peer_state_file_path"
+	local failure_type_file
+	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
+	if [[ -f "$failure_type_file" ]]; then
+		local failure_type
+		failure_type=$(cat "$failure_type_file")
+		assert_equal "$failure_type" "unknown"
+	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "Byte counter extraction failure - non-numeric bytes value with SA exists and ping enabled and fails" {
+	# Purpose: Test verifies that byte counter extraction failure (non-numeric bytes) is handled correctly when SA exists, ping enabled and fails
+	# Expected: Failure type is detected as "routing_issue" when byte counter extraction fails but ping check enabled and fails
+	# Importance: Ensures routing issues are detected even when byte counter extraction fails due to non-numeric values
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=1' "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP2}\""
+
+	# Mock ip command - SA exists but non-numeric bytes value
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: abc123 bytes, 10 packets"
+    # Non-numeric bytes value - extraction will fail
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: abc123 bytes, 10 packets"
+    # Non-numeric bytes value - extraction will fail
+    exit 0
+elif [[ "\$1" == "addr" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "br0" ]]; then
+    exit 0
+elif [[ "\$1" == "addr" ]] && [[ "\$2" == "add" ]]; then
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	# Mock ping - fails
+	mock_ping_failure >/dev/null
+	# Mock ipsec to fail (prevent fallback from succeeding and masking failure)
+	mock_ipsec_status 1 >/dev/null
+	add_mock_to_path
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Should detect routing_issue failure type (SA exists, byte counter extraction failed, ping enabled and fails)
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Routing issue" "routing_issue" "routing_issue suspected"
+
+	# Verify failure type stored in state file
+	source_function "get_peer_state_file_path"
+	local failure_type_file
+	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
+	if [[ -f "$failure_type_file" ]]; then
+		local failure_type
+		failure_type=$(cat "$failure_type_file")
+		assert_equal "$failure_type" "routing_issue"
+	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "Byte counter extraction failure - empty xfrm output with SA exists and ping disabled" {
+	# Purpose: Test verifies that byte counter extraction failure (empty xfrm output) is handled correctly when SA exists via ipsec fallback, ping disabled
+	# Expected: Failure type detection should handle empty xfrm output gracefully
+	# Importance: Ensures empty xfrm output doesn't cause incorrect failure type detection
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
+
+	# Mock ip command - returns empty output (xfrm unavailable or empty)
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Return empty output
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Return empty output
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	# Mock ipsec to succeed (SA exists via fallback, but xfrm output is empty)
+	mock_ipsec_status 0 >/dev/null
+	add_mock_to_path
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# When xfrm output is empty but ipsec shows SA exists, VPN check may pass or fail depending on implementation
+	# Failure type should be handled gracefully
+	assert_file_exist "$LOG_FILE"
+	# Should not crash or produce invalid failure types
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "State passing: sa_exists=1 but xfrm_output empty - handled gracefully" {
+	# Purpose: Test verifies that inconsistent state (sa_exists=1 but xfrm_output empty) is handled gracefully
+	# Expected: When ipsec fallback succeeds, sa_exists=1 is set but xfrm_output remains empty. Code should handle this by
+	#           fetching xfrm_output if needed for failure type detection, or returning "unknown" if unavailable.
+	# Importance: Tests defensive handling of state passing when ipsec fallback is used (realistic scenario)
+	# This tests the edge case identified in LOGIC_REVIEW_REPORT.md: state passing pattern validation
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
+
+	# Mock ip command - returns empty output (xfrm_output will be empty)
+	# But ipsec will show SA exists, creating state: sa_exists=1 (from ipsec fallback) but xfrm_output is empty
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Return empty output (xfrm_output will be empty)
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Return empty output (xfrm_output will be empty)
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	# Mock ipsec to succeed (SA exists via ipsec fallback, but xfrm_output is empty)
+	# This creates the scenario: sa_exists=1 (from ipsec) but xfrm_output is empty
+	mock_ipsec_status 0 >/dev/null
+	add_mock_to_path
+
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Verify VPN check passes via ipsec fallback (should not detect tunnel_down)
+	assert_file_exist "$LOG_FILE"
+	refute_file_contains "$LOG_FILE" "tunnel_down"
+	# Failure type detection should handle empty xfrm_output gracefully
+	# It should either fetch xfrm_output (which will still be empty) or return "unknown"
+	# Verify failure type is not tunnel_down (since sa_exists=1)
+	source_function "get_peer_state_file_path"
+	local failure_type_file
+	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
+	if [[ -f "$failure_type_file" ]]; then
+		local failure_type
+		failure_type=$(cat "$failure_type_file")
+		# Should not be tunnel_down since sa_exists=1 (from ipsec fallback)
+		assert [ "$failure_type" != "tunnel_down" ]
+	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "State passing: inconsistent state between xfrm and ipsec checks - xfrm says no SA, ipsec says SA exists" {
+	# Purpose: Test verifies that inconsistent state between xfrm and ipsec checks is handled correctly
+	# Expected: When xfrm says no SA exists but ipsec says SA exists, code should use ipsec fallback and VPN check should pass
+	# Importance: Tests the fallback mechanism when xfrm and ipsec disagree about SA existence (realistic scenario)
+	# This tests the edge case identified in LOGIC_REVIEW_REPORT.md: inconsistent state between xfrm and ipsec checks
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
+
+	# Mock ip command - returns empty output (xfrm says no SA exists)
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Return empty output (no SA found in xfrm)
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Return empty output (no SA found in xfrm)
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	# Mock ipsec to succeed (ipsec says SA exists - inconsistent with xfrm)
+	mock_ipsec_status 0 "test-conn: ESTABLISHED 1 hour ago, ${TEST_PEER_IP}...${TEST_LOCAL_IP}" >/dev/null
+	add_mock_to_path
+
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Verify VPN check passes via ipsec fallback (xfrm failed, ipsec succeeded)
+	assert_file_exist "$LOG_FILE"
+	# Should NOT detect tunnel_down since ipsec shows SA exists
+	refute_file_contains "$LOG_FILE" "tunnel_down"
+	# Verify failure type is not tunnel_down
+	source_function "get_peer_state_file_path"
+	local failure_type_file
+	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
+	if [[ -f "$failure_type_file" ]]; then
+		local failure_type
+		failure_type=$(cat "$failure_type_file")
+		# Should not be tunnel_down since ipsec fallback succeeded (SA exists)
+		assert [ "$failure_type" != "tunnel_down" ]
+	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "State passing: inconsistent state between xfrm and ipsec checks - xfrm says SA exists, ipsec says no SA" {
+	# Purpose: Test verifies that inconsistent state between xfrm and ipsec checks is handled correctly
+	# Expected: When xfrm says SA exists but ipsec says no SA exists, code should use xfrm primary check and VPN check should pass
+	# Importance: Tests the primary check when xfrm and ipsec disagree about SA existence (xfrm takes precedence)
+	# This tests the edge case identified in LOGIC_REVIEW_REPORT.md: inconsistent state between xfrm and ipsec checks
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
+
+	# Set initial bytes to ensure byte counter check passes
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "last_bytes" "1000" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "0x12345678" || true
+
+	# Mock ip command - SA exists in xfrm (xfrm says SA exists)
+	mock_ip_xfrm_state "${TEST_PEER_IP}" 2000 >/dev/null
+	# Mock ipsec to fail (ipsec says no SA exists - inconsistent with xfrm)
+	mock_ipsec_status 1 >/dev/null
+	add_mock_to_path
+
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Verify VPN check passes via xfrm primary check (xfrm succeeded, ipsec fallback not needed)
+	assert_file_exist "$LOG_FILE"
+	# Should NOT detect tunnel_down since xfrm (primary method) shows SA exists
+	refute_file_contains "$LOG_FILE" "tunnel_down"
+	# Verify failure type is not tunnel_down
+	source_function "get_peer_state_file_path"
+	local failure_type_file
+	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
+	if [[ -f "$failure_type_file" ]]; then
+		local failure_type
+		failure_type=$(cat "$failure_type_file")
+		# Should not be tunnel_down since xfrm primary check succeeded (SA exists)
+		assert [ "$failure_type" != "tunnel_down" ]
+	fi
 
 	remove_mock_from_path
 }

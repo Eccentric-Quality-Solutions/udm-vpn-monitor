@@ -380,20 +380,30 @@ setup_network_partition_stats_test() {
 	local start_time=1000
 	local later_time=4600
 
-	# Create corrupted state files (non-numeric values)
+	# Set last_time to start_time
 	echo "$start_time" >"${STATE_DIR}/network_partition_summary_last_time"
+
+	# Track some checks first (so there are non-zero counts to log)
+	track_network_partition_check "dns" 1
+	track_network_partition_check "route" 1
+
+	# Now corrupt some state files (non-numeric values)
+	# The function should treat these as 0 when reading
 	echo "invalid" >"${STATE_DIR}/network_partition_dns_success_count"
 	echo "corrupted" >"${STATE_DIR}/network_partition_dns_fail_count"
 
-	# Mock timestamp to later time
+	# Mock timestamp to later time (1 hour later)
 	setup_mock_timestamp "$later_time"
 
-	# Should handle corruption gracefully and log summary with 0 counts
+	# Should handle corruption gracefully - corrupted values treated as 0,
+	# but other valid counts (route) should still be logged
 	run log_network_partition_summary_if_due
 	assert_success
 
-	# Verify summary was logged (with 0 counts for corrupted values)
+	# Verify summary was logged (corrupted DNS counts treated as 0, route counts logged)
 	assert_file_contains "$LOG_FILE" "Network partition check summary (past hour)"
+	assert_file_contains "$LOG_FILE" "DNS resolution succeeded 0 times"
+	assert_file_contains "$LOG_FILE" "Default route check succeeded 1 times"
 }
 
 # bats test_tags=category:unit

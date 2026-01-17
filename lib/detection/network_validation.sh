@@ -725,9 +725,8 @@ check_interface_state() {
 
 	# Check each interface
 	for interface in "${interface_array[@]}"; do
-		# Trim whitespace using parameter expansion (consistent with codebase style)
-		interface="${interface#"${interface%%[![:space:]]*}"}"
-		interface="${interface%"${interface##*[![:space:]]}"}"
+		# Trim whitespace
+		interface=$(trim "$interface")
 		if [[ -z "$interface" ]]; then
 			continue
 		fi

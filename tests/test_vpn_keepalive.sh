@@ -78,6 +78,13 @@ setup_keepalive_test() {
 		cp -r "${BATS_TEST_DIRNAME}/../lib/config/"* "${config_subdir}/" 2>/dev/null || true
 	fi
 
+	# Copy detection subdirectory files (required by detection.sh)
+	local detection_subdir="${lib_dir}/detection"
+	mkdir -p "${detection_subdir}"
+	if [[ -d "${BATS_TEST_DIRNAME}/../lib/detection" ]]; then
+		cp -r "${BATS_TEST_DIRNAME}/../lib/detection/"* "${detection_subdir}/" 2>/dev/null || true
+	fi
+
 	# Create config file with location-based format
 	create_test_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \

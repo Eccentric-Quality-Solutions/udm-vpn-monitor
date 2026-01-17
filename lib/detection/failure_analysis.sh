@@ -59,13 +59,15 @@ source "${LIB_DIR}/detection/ping_detection.sh"
 # Note:
 #   If Phase 2 SA doesn't exist, the tunnel is down (could be Phase 1 or Phase 2 issue, but we can't distinguish).
 #   SA rekey is detected by SPI changes and is not treated as a failure.
+#   When byte counters are unavailable and ping check is disabled, if primary check failed (primary_check_passed=0),
+#   the function returns "unknown" since SA exists but diagnostic data is unavailable.
 #
 # Arguments:
 #   $1: External peer IP address (used for SA checks)
 #   $2: Internal peer IP address (optional, used for ping checks)
 #   $3: Location name (required, used for state file naming)
 #   $4: SA existence state (optional, 0 = no SA, 1 = SA exists, if not provided will check SA existence)
-#   $5: VPN status (optional, 0 = VPN check failed, 1 = VPN check passed, defaults to 0 for backward compatibility)
+#   $5: Primary check status (required, 0 = primary check failed, 1 = primary check passed)
 #   $6: XFRM output (optional, xfrm state output for reuse, if not provided will fetch if needed)
 #
 # Returns:
@@ -77,7 +79,7 @@ source "${LIB_DIR}/detection/ping_detection.sh"
 #
 # Side effects:
 #   - Logs debug messages about failure type detection
-#   - Only logs warnings when VPN check failed (vpn_ok=0) to avoid false positives for healthy VPNs
+#   - Only logs warnings when primary check failed (primary_check_passed=0) to avoid false positives for healthy VPNs
 #
 # Examples:
 #   failure_type=$(detect_failure_type "203.0.113.1" "192.168.1.1" "NYC" "1" "0" "$xfrm_output")
@@ -90,14 +92,14 @@ source "${LIB_DIR}/detection/ping_detection.sh"
 # Note:
 #   Requires check_ipsec_phase2, check_byte_counters, check_ping_connectivity, detect_sa_rekey
 #   External IP is used for SA checks, internal IP is used for ping checks
-#   When vpn_ok=1 (VPN is healthy), warnings are suppressed to avoid false positives
+#   When primary_check_passed=1 (primary check passed), warnings are suppressed to avoid false positives
 #   When xfrm_output is provided, reuses it to avoid duplicate ip xfrm state calls (optimization)
 detect_failure_type() {
 	local external_peer_ip="$1"
 	local internal_peer_ip="${2:-}"
 	local location_name="$3"
 	local sa_exists="${4:-}"
-	local vpn_ok="${5:-0}"
+	local primary_check_passed="$5"
 	local xfrm_output="${6:-}"
 
 	# Validate location_name is provided
@@ -119,10 +121,18 @@ detect_failure_type() {
 
 	# Use provided SA existence state if available, otherwise check SA existence
 	# This optimization eliminates duplicate SA checks by reusing state from check_xfrm_status()
+	# CRITICAL: If primary_check_passed=1, SA MUST exist (fundamental invariant)
+	# This is true whether SA was detected via xfrm or ipsec fallback
 	local ipsec_phase2_up=0
-	if [[ -n "$sa_exists" ]]; then
+	# Explicitly check primary_check_passed first - this is the source of truth
+	if [[ "$primary_check_passed" == "1" ]] || [[ $primary_check_passed -eq 1 ]]; then
+		# Primary check passed - SA exists (either from xfrm or ipsec fallback)
+		# Trust the primary check result - this is a fundamental invariant
+		ipsec_phase2_up=1
+	elif [[ -n "$sa_exists" ]] && [[ "$sa_exists" != "0" ]]; then
 		ipsec_phase2_up=$sa_exists
 	else
+		# sa_exists is empty or "0" and primary_check_passed=0 - check SA existence
 		if check_ipsec_phase2 "$external_peer_ip"; then
 			ipsec_phase2_up=1
 		fi
@@ -163,9 +173,13 @@ detect_failure_type() {
 		# Phase 2 SA exists and no rekey detected - check for routing issues
 		# Check byte counters if available
 		local has_routing_issue=0
+		local byte_counters_available=0
+		local ping_checked=0
+		local ping_failed=0
 
 		# Check byte counters using abstraction layer (peer IP is available)
 		if [[ -n "$current_bytes" ]] && [[ "$current_bytes" =~ ^[0-9]+$ ]]; then
+			byte_counters_available=1
 			local last_bytes
 			last_bytes=$(get_peer_state "$location_name" "$external_peer_ip" "last_bytes" "0")
 
@@ -179,11 +193,14 @@ detect_failure_type() {
 		fi
 
 		# Check ping if enabled and internal IP provided
-		# Only check ping if we haven't already detected a routing issue from byte counters
+		# Check ping even if byte counters are unavailable to help diagnose routing issues
+		# If byte counters unavailable and ping check enabled and fails: definitely routing_issue
 		if [[ $has_routing_issue -eq 0 ]] && [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
+			ping_checked=1
 			local local_ip
 			local_ip=$(get_local_ip_for_ping)
 			if ! check_ping_connectivity "$internal_peer_ip" "$local_ip" 2>/dev/null; then
+				ping_failed=1
 				has_routing_issue=1
 			fi
 		fi
@@ -192,10 +209,48 @@ detect_failure_type() {
 			echo "routing_issue"
 			return 0
 		fi
+
+		# If byte counters unavailable and ping check disabled, cannot determine failure type
+		# This handles the case where SA exists but we can't determine failure type definitively
+		# Return "unknown" since we lack diagnostic data to determine specific failure type
+		if [[ $byte_counters_available -eq 0 ]] && [[ $ping_checked -eq 0 ]] && [[ $primary_check_passed -eq 0 ]]; then
+			# SA exists, byte counters unavailable, ping check disabled, but VPN check failed
+			# Cannot determine specific failure type without diagnostic data
+			local diagnostic_parts=()
+			diagnostic_parts+=("Phase 2 SA exists")
+			if [[ -z "$xfrm_output" ]]; then
+				diagnostic_parts+=("xfrm output unavailable")
+			else
+				diagnostic_parts+=("byte counter extraction failed")
+			fi
+			if [[ -z "$internal_peer_ip" ]]; then
+				diagnostic_parts+=("internal IP not provided")
+			fi
+			if [[ "${ENABLE_PING_CHECK:-0}" -ne 1 ]]; then
+				diagnostic_parts+=("ping check disabled")
+			fi
+			diagnostic_parts+=("VPN check failed - unable to determine specific failure type without diagnostic data")
+
+			local diagnostic_msg=""
+			local first=1
+			for part in "${diagnostic_parts[@]}"; do
+				if [[ $first -eq 1 ]]; then
+					diagnostic_msg="$part"
+					first=0
+				else
+					diagnostic_msg="$diagnostic_msg, $part"
+				fi
+			done
+			local ip_display
+			ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ip")
+			log_message "WARNING" "$location_name" "Failure type detection: Unable to determine specific failure type for $ip_display - $diagnostic_msg"
+			echo "unknown"
+			return 0
+		fi
 		# Phase 2 SA exists but no routing issue detected
 		# This can happen when:
-		#   - Byte counters are not available (extraction failed)
-		#   - Ping check is disabled or internal IP not provided
+		#   - Byte counters are available and show traffic is flowing
+		#   - Ping check is enabled and succeeds
 		#   - VPN check failed for another reason (e.g., byte counter validation in check_xfrm_status)
 		# In this case, we return "unknown" since we can't definitively determine the failure type
 		# without additional diagnostic information
@@ -204,24 +259,27 @@ detect_failure_type() {
 		diagnostic_parts+=("Phase 2 SA exists")
 		if [[ -z "$xfrm_output" ]]; then
 			diagnostic_parts+=("xfrm output unavailable")
-		elif [[ -z "$current_bytes" ]] || [[ ! "$current_bytes" =~ ^[0-9]+$ ]]; then
-			diagnostic_parts+=("byte counter extraction failed")
-		else
+		elif [[ $byte_counters_available -eq 1 ]]; then
 			local last_bytes
 			last_bytes=$(get_peer_state "$location_name" "$external_peer_ip" "last_bytes" "0")
 			diagnostic_parts+=("byte counters available (current=$current_bytes, last=$last_bytes) but no routing issue detected")
+		else
+			diagnostic_parts+=("byte counter extraction failed")
 		fi
 
 		if [[ -z "$internal_peer_ip" ]]; then
 			diagnostic_parts+=("internal IP not provided")
 		fi
 
-		if [[ "${ENABLE_PING_CHECK:-0}" -ne 1 ]]; then
+		if [[ $ping_checked -eq 1 ]]; then
+			if [[ $ping_failed -eq 0 ]]; then
+				diagnostic_parts+=("ping check enabled and succeeded")
+			else
+				# This shouldn't happen here since ping failure should set has_routing_issue=1
+				diagnostic_parts+=("ping check enabled but result unclear")
+			fi
+		elif [[ "${ENABLE_PING_CHECK:-0}" -ne 1 ]]; then
 			diagnostic_parts+=("ping check disabled")
-		elif [[ -n "$internal_peer_ip" ]]; then
-			local local_ip
-			local_ip=$(get_local_ip_for_ping)
-			diagnostic_parts+=("ping check enabled but routing issue not confirmed")
 		fi
 
 		local diagnostic_msg=""
@@ -234,10 +292,10 @@ detect_failure_type() {
 				diagnostic_msg="$diagnostic_msg, $part"
 			fi
 		done
-		# Only log warning if VPN check failed (vpn_ok=0)
-		# When VPN is healthy (vpn_ok=1), returning "unknown" is expected behavior
+		# Only log warning if primary check failed (primary_check_passed=0)
+		# When primary check passed (primary_check_passed=1), returning "unknown" is expected behavior
 		# and should not generate warnings to avoid false positives
-		if [[ $vpn_ok -eq 0 ]]; then
+		if [[ $primary_check_passed -eq 0 ]]; then
 			local ip_display
 			ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ip")
 			log_message "WARNING" "$location_name" "Failure type detection: Unable to determine specific failure type for $ip_display - Detection method: Phase 2 SA check (SA exists), Reasons: $diagnostic_msg"
@@ -289,7 +347,14 @@ get_failure_type() {
 
 	if file_exists_and_readable "$failure_type_file"; then
 		local failure_type
-		failure_type=$(cat "$failure_type_file" 2>/dev/null | head -1 | tr -d '\n\r ' || echo "unknown")
+		# Defensive timeout wrapper: file_exists_and_readable should prevent hangs, but this adds
+		# extra protection for edge cases (race conditions, test suite timing issues, etc.)
+		if command -v timeout >/dev/null 2>&1; then
+			failure_type=$(timeout 1 cat "$failure_type_file" 2>/dev/null | head -1 | tr -d '\n\r ' || echo "unknown")
+		else
+			# Fallback without timeout (shouldn't hang if file_exists_and_readable worked correctly)
+			failure_type=$(cat "$failure_type_file" 2>/dev/null | head -1 | tr -d '\n\r ' || echo "unknown")
+		fi
 		if [[ -n "$failure_type" ]]; then
 			echo "$failure_type"
 			return 0
@@ -323,7 +388,7 @@ get_failure_type() {
 #   - Creates/updates per-peer failure_type state file
 #   - Logs failure type and status messages
 determine_vpn_status() {
-	local vpn_ok="$1"
+	local primary_check_passed="$1"
 	local external_peer_ip="$2"
 	local internal_peer_ip="${3:-}"
 	local peer_sanitized="$4"
@@ -338,24 +403,21 @@ determine_vpn_status() {
 		return 1
 	fi
 
-	# If VPN check failed, detect and log the failure type
+	# If primary check failed, detect and log the failure type
 	# Also check for rekey events (which are not failures but should be logged)
-	# Additionally, if VPN appears OK, check for rekey events and routing issues via ping (if enabled)
+	# Additionally, if primary check passed, check for rekey events and routing issues via ping (if enabled)
 	local check_failure_type=0
-	if [[ $vpn_ok -eq 0 ]]; then
+	if [[ $primary_check_passed -eq 0 ]]; then
 		check_failure_type=1
-	elif [[ $vpn_ok -eq 1 ]]; then
-		# VPN appears OK, but we should still check for:
+	elif [[ $primary_check_passed -eq 1 ]]; then
+		# Primary check passed, but we should still check for:
 		# 1. Rekey events (SPI changes) - always check
 		# 2. Routing issues via ping - only if ping check is enabled and internal IP provided
-		# Use provided SA existence state if available, otherwise check SA existence
-		if [[ -z "$sa_exists" ]]; then
-			# Fallback: check SA existence if not provided (for backward compatibility)
-			sa_exists=0
-			if check_ipsec_phase2 "$external_peer_ip" 2>/dev/null; then
-				sa_exists=1
-			fi
-		fi
+		# Note: If primary_check_passed=1, SA MUST exist (either from xfrm or ipsec fallback)
+		# This is a fundamental invariant - if primary check passed, SA exists
+		# Trust primary_check_passed and set sa_exists=1 regardless of what was passed in
+		# (sa_exists may be "0" if xfrm check failed but ipsec fallback succeeded)
+		sa_exists=1
 		if [[ $sa_exists -eq 1 ]]; then
 			# Always check for rekey events when VPN is OK
 			# Also check for routing issues via ping if ping check is enabled
@@ -376,9 +438,9 @@ determine_vpn_status() {
 		# Capture output and return code separately to avoid duplicate "unknown"
 		# Note: stderr is not redirected so diagnostic log messages from detect_failure_type are visible
 		# Pass SA existence state to detect_failure_type to avoid duplicate check
-		# Pass vpn_ok status so detect_failure_type can suppress warnings for healthy VPNs
+		# Pass primary_check_passed status so detect_failure_type can suppress warnings for healthy VPNs
 		# Pass xfrm_output to detect_failure_type to avoid duplicate ip xfrm state call (optimization)
-		failure_type=$(detect_failure_type "$external_peer_ip" "$internal_peer_ip" "$location_name" "$sa_exists" "$vpn_ok" "$xfrm_output")
+		failure_type=$(detect_failure_type "$external_peer_ip" "$internal_peer_ip" "$location_name" "$sa_exists" "$primary_check_passed" "$xfrm_output")
 		# If detect_failure_type failed or returned empty, use "unknown"
 		if [[ -z "$failure_type" ]]; then
 			failure_type="unknown"
@@ -393,11 +455,11 @@ determine_vpn_status() {
 		case "$failure_type" in
 		"rekey")
 			# Rekey detected - not a failure, but log for monitoring
-			# Rekey is already logged in detect_sa_rekey, but we mark VPN as OK
+			# Rekey is already logged in detect_sa_rekey, but we mark primary check as passed
 			local ip_display
 			ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ip")
 			log_message "INFO" "$location_name" "SA rekey detected for $ip_display (not a failure)"
-			vpn_ok=1
+			primary_check_passed=1
 			;;
 		"tunnel_down")
 			local ip_display
@@ -405,34 +467,39 @@ determine_vpn_status() {
 			handle_error "WARNING" "$location_name" "VPN failure type: Tunnel down (no Phase 2 SA found) for $ip_display"
 			;;
 		"routing_issue")
-			# Only log warning if VPN check actually failed (vpn_ok=0)
-			# When vpn_ok=1, ping check failure is supplementary diagnostic and doesn't indicate a real problem
-			if [[ $vpn_ok -eq 0 ]]; then
-				local ip_display
-				ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ip")
+			# Log routing issue warning regardless of primary_check_passed status
+			# When primary_check_passed=0: Primary check failed, routing issue is the cause
+			# When primary_check_passed=1: Primary check passed but routing issue detected from byte counters (e.g., bytes static with ping disabled)
+			#   In this case, log for diagnostic purposes but don't change primary check status
+			local ip_display
+			ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ip")
+			if [[ $primary_check_passed -eq 0 ]]; then
 				handle_error "WARNING" "$location_name" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $ip_display"
+			else
+				# primary_check_passed=1 but routing issue detected - diagnostic-only, primary check status remains passed
+				# Use "Routing issue" (capital R) to match test expectations and maintain consistency
+				handle_error "WARNING" "$location_name" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $ip_display - monitoring for potential issues (primary check passed)"
 			fi
-			# Note: If vpn_ok was 1 (VPN appeared OK), we keep it as 1 since ping is supplementary
-			# The routing_issue is detected for diagnostic purposes but doesn't change VPN status or generate warnings
+			# Note: If primary_check_passed was 1, we keep it as 1 since the routing_issue detection is for diagnostic purposes
 			;;
 		*)
 			# "unknown" failure type
-			# If vpn_ok was 1, this means VPN check passed but we couldn't determine a specific failure type
+			# If primary_check_passed was 1, this means primary check passed but we couldn't determine a specific failure type
 			# This is normal when VPN is healthy (e.g., bytes increasing, no rekey, ping check disabled)
-			# Only log "unknown" if VPN check actually failed (vpn_ok was 0)
-			if [[ $vpn_ok -eq 0 ]]; then
+			# Only log "unknown" if primary check actually failed (primary_check_passed was 0)
+			if [[ $primary_check_passed -eq 0 ]]; then
 				# Detailed diagnostic information was already logged by detect_failure_type()
 				local ip_display
 				ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ip")
 				handle_error "WARNING" "$location_name" "VPN failure type: Unknown (unable to determine specific failure type) for $ip_display - see previous diagnostic messages for detection method details"
 			fi
-			# If vpn_ok was 1, silently ignore "unknown" since VPN is healthy
+			# If primary_check_passed was 1, silently ignore "unknown" since primary check passed
 			;;
 		esac
 	fi
 
-	# Output the final VPN status
-	echo "$vpn_ok"
+	# Output the final primary check status
+	echo "$primary_check_passed"
 	return 0
 }
 
@@ -472,7 +539,7 @@ check_vpn_status() {
 	local external_peer_ip="$1"
 	local internal_peer_ips="${2:-}"
 	local location_name="$3"
-	local vpn_ok=0
+	local primary_check_passed=0
 
 	# Validate external peer IP format using proper validation function
 	if ! validate_ip_address "$external_peer_ip"; then
@@ -522,17 +589,17 @@ check_vpn_status() {
 	local xfrm_output=""
 
 	if check_xfrm_primary "$external_peer_ip" "$first_internal_ip" "$location_name" "xfrm_diagnostic" "sa_exists" "xfrm_output"; then
-		vpn_ok=1
+		primary_check_passed=1
 	else
 		# xfrm check failed - try ipsec fallback
 		# Note: If xfrm check failed, sa_exists may still be set (SA exists but validation failed)
 		# If sa_exists is empty, we'll fall back to checking SA existence in downstream functions
 		if check_ipsec_fallback "$external_peer_ip" "$location_name" "ipsec_diagnostic"; then
-			vpn_ok=1
-			# If ipsec fallback succeeded, SA exists (set sa_exists if not already set)
-			if [[ -z "$sa_exists" ]]; then
-				sa_exists=1
-			fi
+			primary_check_passed=1
+			# If ipsec fallback succeeded, SA exists (set sa_exists=1 since ipsec confirmed SA exists)
+			# Note: sa_exists may have been set to 0 by check_xfrm_status when xfrm_output was empty,
+			# but ipsec fallback succeeding means SA actually exists, so we override it
+			sa_exists=1
 		else
 			# Both methods failed - log combined diagnostic message
 			local combined_diagnostics=()
@@ -573,14 +640,14 @@ check_vpn_status() {
 
 	# Perform optional ping check if enabled (pass all internal IPs for multiple IP support)
 	# Pass SA existence state to eliminate duplicate check
-	check_ping_optional "$vpn_ok" "$external_peer_ip" "$internal_peer_ips" "$location_name" "$sa_exists"
+	check_ping_optional "$primary_check_passed" "$external_peer_ip" "$internal_peer_ips" "$location_name" "$sa_exists"
 
-	# Determine final VPN status based on failure type detection
+	# Determine final primary check status based on failure type detection
 	# Pass location_name, first internal IP, peer_sanitized, SA existence state, and xfrm_output for failure type detection
-	vpn_ok=$(determine_vpn_status "$vpn_ok" "$external_peer_ip" "$first_internal_ip" "$peer_sanitized" "$location_name" "$sa_exists" "$xfrm_output")
+	primary_check_passed=$(determine_vpn_status "$primary_check_passed" "$external_peer_ip" "$first_internal_ip" "$peer_sanitized" "$location_name" "$sa_exists" "$xfrm_output")
 
-	# Return 0 if OK, 1 if failed (invert vpn_ok: 1 becomes 0, 0 becomes 1)
-	return $((1 - vpn_ok))
+	# Return 0 if OK, 1 if failed (invert primary_check_passed: 1 becomes 0, 0 becomes 1)
+	return $((1 - primary_check_passed))
 }
 
 # Check for network partition

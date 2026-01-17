@@ -95,8 +95,8 @@ check_vpn_status() {
     
     # ... check logic ...
     
-    if [[ $vpn_ok -eq 0 ]]; then
-        return 1  # VPN check failed
+    if [[ $primary_check_passed -eq 0 ]]; then
+        return 1  # Primary check failed
     fi
     
     return 0  # VPN is healthy
@@ -1158,14 +1158,14 @@ validate_config_var() {
 ```bash
 # ✅ GOOD: Pass state explicitly when needed for accurate behavior
 check_ping_optional() {
-    local vpn_ok="$1"
+    local primary_check_passed="$1"
     local external_peer_ip="$2"
     local internal_peer_ip="${3:-}"
     local location_name="${4:-}"
 
     # Check SA existence directly to ensure accurate messages
-    # DESIGN NOTE: We check SA existence here rather than reusing vpn_ok because:
-    # 1. vpn_ok=0 can mean "no SA" OR "SA exists but validation failed"
+    # DESIGN NOTE: We check SA existence here rather than reusing primary_check_passed because:
+    # 1. primary_check_passed=0 can mean "no SA" OR "SA exists but validation failed"
     # 2. We need accurate SA status for logging messages to avoid contradictions
     # 3. This ensures messages reflect actual SA state, not inferred state
     # Performance: This adds one additional SA check per cycle (~5-10ms on UDM),
@@ -1189,14 +1189,14 @@ check_ping_if_enabled() {
 
 # ❌ BAD: Infer state from ambiguous return value
 check_ping_if_enabled() {
-    local vpn_ok="$1"  # Ambiguous: could mean "no SA" or "SA exists but failed validation"
+    local primary_check_passed="$1"  # Ambiguous: could mean "no SA" or "SA exists but failed validation"
     # ... incorrect assumption leads to contradictory log messages ...
 }
 ```
 
 **When to Pass State Explicitly:**
 - **When state is needed for accurate behavior:** If the function's behavior (especially logging) depends on accurate state information
-- **When return values are ambiguous:** If a return value can mean multiple things (e.g., `vpn_ok=0` could mean "no SA" or "SA exists but validation failed")
+- **When return values are ambiguous:** If a return value can mean multiple things (e.g., `primary_check_passed=0` could mean "no SA" or "SA exists but validation failed")
 - **When state is expensive to check:** If checking state is expensive and you already have the information
 - **When state changes are unlikely:** If state is unlikely to change between function calls in the same execution cycle
 
@@ -1418,16 +1418,14 @@ check_vpn_status() {
 
 **Pattern:**
 ```bash
-# ✅ GOOD: Use helper function with fallback
-local external_ip=""
-if command -v get_location_external_ip >/dev/null 2>&1; then
-    external_ip=$(get_location_external_ip "$location_name" 2>/dev/null || echo "")
+# ✅ GOOD: Use helper function directly
+local external_ip
+if external_ip=$(get_location_external_ip "$location_name" 2>/dev/null); then
+    # Use external_ip
 else
-    # Fallback: extract from LOCATIONS format directly
-    local location_data="${LOCATIONS[$location_name]:-}"
-    if [[ "$location_data" =~ external:([^|]+) ]]; then
-        external_ip="${BASH_REMATCH[1]}"
-    fi
+    # Handle error: location not found or extraction failed
+    handle_error "WARNING" "$location_name" "Failed to get external IP"
+    continue  # or return, depending on context
 fi
 
 # ❌ BAD: Direct array access (gets full delimited string)
@@ -1437,9 +1435,9 @@ local external_ip="${LOCATIONS[$location_name]}"
 **Key Points:**
 - The `LOCATIONS` array stores values in format: `"external:IP|internal:IPs"` (not just the IP)
 - Always use `get_location_external_ip()` helper function to extract external IP from `LOCATIONS` array
-- If helper function unavailable, use regex fallback: `external:([^|]+)`
+- The helper function is always available when `parse_location_config()` is available (they're in the same module)
 - Never assume `LOCATIONS[$name]` contains just the IP address
-- Always validate extracted IP is non-empty before use
+- Always check the return value of `get_location_external_ip()` and handle errors appropriately
 - Direct array access returns the full delimited string, which will cause validation failures
 
 **Related Patterns:**
@@ -1757,6 +1755,12 @@ lib/
 - Provide fallback handling for missing modules
 - Use centralized fallback functions from `lib/fallbacks.sh` instead of inline fallback definitions
 - Document module structure in ARCHITECTURE.md
+
+**Note on Standalone Scripts:**
+- Scripts in the `scripts/` subdirectory are generally **standalone utility scripts** and do not need the full module sourcing infrastructure
+- They should be able to run independently without sourcing `lib/config.sh`, `lib/detection.sh`, etc., unless they specifically need that functionality
+- Keep scripts in `scripts/` as standalone as possible - only source what's actually needed
+- See "Command Availability Patterns" section for guidance on command checking in standalone scripts
 
 ### Pattern: Centralized Fallback Functions
 
@@ -2370,6 +2374,20 @@ fi
 # Functions are always in the same shell context, so PATH restrictions don't apply
 if command -v parse_location_config >/dev/null 2>&1; then
     config=$(parse_location_config "$location")
+    # If parse_location_config is available, other functions from the same module are also available
+    external_ip=$(get_location_external_ip "$location_name" 2>/dev/null || echo "")
+fi
+
+# ✅ GOOD: Only check one function from a module (others in same module are also available)
+# parse_location_config, get_location_external_ip, and get_location_internal_ips are all in location_parsing.sh
+if command -v parse_location_config >/dev/null 2>&1; then
+    external_ip=$(get_location_external_ip "$location_name" 2>/dev/null || echo "")
+    internal_ips=$(get_location_internal_ips "$location_name" 2>/dev/null || echo "")
+fi
+
+# ❌ BAD: Redundant checks for functions from the same module
+if command -v get_location_external_ip >/dev/null 2>&1 && command -v parse_location_config >/dev/null 2>&1; then
+    # Unnecessary: if parse_location_config is available, get_location_external_ip is also available
 fi
 
 # ❌ BAD: Direct command -v for binary commands in cron/systemd contexts
@@ -2385,6 +2403,9 @@ ipsec_output=$(ipsec status 2>/dev/null)  # May fail if ipsec not available
 - Always check command availability before executing optional commands
 - **For binary commands in cron/systemd contexts: Use helper functions (`check_command_available()` or `check_command_or_warn()`)**
 - **For function availability checks: Direct `command -v` is acceptable** (functions are in same shell context, PATH restrictions don't apply)
+- **When checking functions from the same module: Only check one representative function** (if one function from a module is available, all functions from that module are available)
+  - Example: `parse_location_config`, `get_location_external_ip`, and `get_location_internal_ips` are all in `lib/config/location_parsing.sh`
+  - If `parse_location_config` is available, the other functions are also available - no need to check each one
 - Use `check_command_available()` helper for silent checks
 - Use `check_command_or_warn()` for optional commands that should log warnings
 - Provide fallback mechanisms when commands are unavailable
@@ -2424,6 +2445,16 @@ ipsec_output=$(ipsec status 2>/dev/null)  # May fail if ipsec not available
 - **Function availability (parse_location_config, get_location_external_ip, etc.)**: Direct `command -v` is acceptable
 - **Required commands**: Use `check_command_available()` and return early if unavailable
 - **Optional commands**: Use `check_command_or_warn()` and handle gracefully if unavailable
+
+**Standalone Scripts in `scripts/` Subdirectory:**
+- Scripts in the `scripts/` subdirectory are generally **standalone utility scripts** that should be able to run independently
+- They **do not need** the full sourcing infrastructure (sourcing `lib/config.sh`, `lib/detection.sh`, etc.) unless they specifically need that functionality
+- They can use simpler patterns:
+  - Direct `command -v` for binary commands is acceptable (scripts run in normal shell context, not cron/systemd)
+  - Direct `command -v` for function availability checks is acceptable
+  - No need for `check_command_available()` helper unless the script specifically runs in PATH-restricted environments
+- **Exception**: If a script in `scripts/` is called by the main program or needs library functionality, it should source the appropriate modules
+- **Guideline**: Keep scripts in `scripts/` as standalone as possible - only source what's actually needed
 
 ### Pattern: Fallback Command Execution
 

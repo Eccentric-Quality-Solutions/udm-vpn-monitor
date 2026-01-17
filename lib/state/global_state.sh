@@ -105,8 +105,14 @@ check_rate_limit() {
 		if [[ -f "$RESTART_COUNT_FILE" ]] && file_exists_and_readable "$RESTART_COUNT_FILE"; then
 			# Get most recent restart timestamp (maximum timestamp, handles unsorted files)
 			# Sort numerically and take the last (highest) value to handle unsorted timestamps
+			# Defensive timeout wrapper: file_exists_and_readable should prevent hangs, but this adds
+			# extra protection for edge cases (race conditions, test suite timing issues, etc.)
 			local last_restart
-			last_restart=$(grep -E '^[0-9]+$' "$RESTART_COUNT_FILE" 2>/dev/null | sort -n | tail -n 1 || echo "0")
+			if command -v timeout >/dev/null 2>&1; then
+				last_restart=$(timeout 1 grep -E '^[0-9]+$' "$RESTART_COUNT_FILE" 2>/dev/null | sort -n | tail -n 1 || echo "0")
+			else
+				last_restart=$(grep -E '^[0-9]+$' "$RESTART_COUNT_FILE" 2>/dev/null | sort -n | tail -n 1 || echo "0")
+			fi
 			if [[ "$last_restart" != "0" ]] && [[ "$last_restart" =~ ^[0-9]+$ ]]; then
 				local time_since_last
 				time_since_last=$(safe_timestamp_diff "$now" "$last_restart" 2>/dev/null || echo "0")
@@ -599,17 +605,41 @@ validate_state_file() {
 	fi
 
 	# Validate format based on expected type
+	# Defensive timeout wrappers: file_exists_and_readable should prevent hangs, but this adds
+	# extra protection for edge cases (race conditions, test suite timing issues, etc.)
+	# Note: This is specific to this high-risk path - other similar code paths rely on
+	# file_exists_and_readable checks alone.
+	local use_timeout=0
+	if command -v timeout >/dev/null 2>&1; then
+		use_timeout=1
+	fi
+
 	case "$expected_format" in
 	integer)
 		# Should contain only digits (0-9), possibly with newlines
-		if ! grep -qE '^[0-9]+$' "$file" 2>/dev/null; then
+		local grep_result=1
+		if [[ $use_timeout -eq 1 ]]; then
+			timeout 1 grep -qE '^[0-9]+$' "$file" 2>/dev/null && grep_result=0 || grep_result=1
+		else
+			grep -qE '^[0-9]+$' "$file" 2>/dev/null && grep_result=0 || grep_result=1
+		fi
+		if [[ $grep_result -ne 0 ]]; then
 			handle_error "WARNING" "SYSTEM" "State file corrupted (expected integer): $file"
 			return 1
 		fi
 		;;
 	timestamp)
 		# Should contain a single Unix timestamp (digits only)
-		if ! grep -qE '^[0-9]+$' "$file" 2>/dev/null || [[ $(wc -l <"$file" 2>/dev/null || echo "0") -ne 1 ]]; then
+		local grep_result=1
+		local line_count=0
+		if [[ $use_timeout -eq 1 ]]; then
+			timeout 1 grep -qE '^[0-9]+$' "$file" 2>/dev/null && grep_result=0 || grep_result=1
+			line_count=$(timeout 1 wc -l <"$file" 2>/dev/null || echo "0")
+		else
+			grep -qE '^[0-9]+$' "$file" 2>/dev/null && grep_result=0 || grep_result=1
+			line_count=$(wc -l <"$file" 2>/dev/null || echo "0")
+		fi
+		if [[ $grep_result -ne 0 ]] || [[ "$line_count" -ne 1 ]]; then
 			handle_error "WARNING" "SYSTEM" "State file corrupted (expected single timestamp): $file"
 			return 1
 		fi
@@ -617,9 +647,17 @@ validate_state_file() {
 	timestamp_list)
 		# Should contain one or more Unix timestamps (one per line)
 		# Empty file is valid (no restarts recorded)
-		if [[ -s "$file" ]] && ! grep -qE '^[0-9]+$' "$file" 2>/dev/null; then
-			handle_error "WARNING" "SYSTEM" "State file corrupted (expected timestamp list): $file"
-			return 1
+		if [[ -s "$file" ]]; then
+			local grep_result=1
+			if [[ $use_timeout -eq 1 ]]; then
+				timeout 1 grep -qE '^[0-9]+$' "$file" 2>/dev/null && grep_result=0 || grep_result=1
+			else
+				grep -qE '^[0-9]+$' "$file" 2>/dev/null && grep_result=0 || grep_result=1
+			fi
+			if [[ $grep_result -ne 0 ]]; then
+				handle_error "WARNING" "SYSTEM" "State file corrupted (expected timestamp list): $file"
+				return 1
+			fi
 		fi
 		;;
 	*)
@@ -657,6 +695,10 @@ validate_state_file() {
 #
 # Note:
 #   Requires STATE_DIR, validate_state_file, recover_corrupted_state_file, and handle_error
+#   Uses a temporary file with timeout wrapper to prevent hangs when find encounters unreadable files
+#   Sets an EXIT trap for temp file cleanup and clears it before returning (intentional behavior)
+#   The trap ensures cleanup even on error, but is removed before function return to avoid interfering
+#   with caller's traps
 validate_state_files_by_pattern() {
 	local pattern="$1"
 	local expected_format="$2"
@@ -670,22 +712,66 @@ validate_state_files_by_pattern() {
 
 	# Use find to safely enumerate files matching the pattern
 	# This avoids glob expansion issues with unreadable files
-	# find will list files even if they're unreadable, but we check readability before processing
+	# Use -readable to skip unreadable files entirely, preventing hangs when find tries to stat files with 000 permissions
+	# This is more efficient and prevents hangs on some filesystems where find can block on unreadable files
+	# Add timeout wrapper as additional protection (defensive programming)
 	local state_file
-	while IFS= read -r -d '' state_file; do
-		# Check if file is readable before attempting validation
-		# Skip unreadable files (they will be handled by recovery code if needed)
-		if ! file_exists_and_readable "$state_file"; then
-			handle_error "WARNING" "SYSTEM" "$description is unreadable (skipping validation): $state_file" 0
-			continue
-		fi
+	# Use timeout wrapper around find to prevent hangs (5 seconds should be more than enough)
+	# Use a temporary file to store find output to avoid process substitution issues with timeout
+	# This ensures timeout is properly applied and prevents hangs
+	local find_temp_file
+	find_temp_file=$(mktemp 2>/dev/null || echo "/tmp/find_output_$$")
+	# Set up cleanup trap for temp file and file descriptor
+	# This trap ensures cleanup even if function exits early due to error
+	# Closes file descriptor 3 if opened, then removes temp file
+	# Note: We clear this trap before returning (see line 756) to avoid interfering with caller's traps
+	# shellcheck disable=SC2064 # We want variable expansion at trap definition time
+	trap "exec 3<&- 2>/dev/null || true; rm -f \"$find_temp_file\" 2>/dev/null || true" EXIT
+	if command -v timeout >/dev/null 2>&1; then
+		# Use timeout with --kill-after to ensure find is killed if it hangs
+		# Use -readable to skip unreadable files entirely (prevents hangs on files with 000 permissions)
+		# Redirect output to temp file to avoid process substitution issues
+		timeout --kill-after=1 5 find "$STATE_DIR" -maxdepth 1 -type f -readable -name "$pattern" -print0 >"$find_temp_file" 2>/dev/null || true
+		# Read from temp file using null delimiter
+		# Open file descriptor 3 for reading to avoid issues with stdin
+		exec 3<"$find_temp_file"
+		while IFS= read -r -d '' state_file <&3 || [[ -n "$state_file" ]]; do
+			[[ -z "$state_file" ]] && continue
+			# File is already known to be readable (from find -readable), but double-check for safety
+			if ! file_exists_and_readable "$state_file"; then
+				handle_error "WARNING" "SYSTEM" "$description is unreadable (skipping validation): $state_file" 0
+				continue
+			fi
 
-		if ! validate_state_file "$state_file" "$expected_format"; then
-			handle_error "WARNING" "SYSTEM" "$description corrupted, recovering: $state_file" 0
-			recover_corrupted_state_file "$state_file" "$default_value" "$expected_format"
-			validation_failed=1
-		fi
-	done < <(find "$STATE_DIR" -maxdepth 1 -type f -name "$pattern" -print0 2>/dev/null)
+			if ! validate_state_file "$state_file" "$expected_format"; then
+				handle_error "WARNING" "SYSTEM" "$description corrupted, recovering: $state_file" 0
+				recover_corrupted_state_file "$state_file" "$default_value" "$expected_format"
+				validation_failed=1
+			fi
+		done
+		exec 3<&-
+		# Clean up temp file and remove trap
+		# Explicit cleanup ensures temp file is removed even if trap wasn't set
+		# Clearing trap prevents interference with caller's EXIT trap handlers
+		rm -f "$find_temp_file" 2>/dev/null || true
+		trap - EXIT
+	else
+		# Fallback without timeout (shouldn't hang if find works correctly)
+		# Use -readable to skip unreadable files entirely (prevents hangs on files with 000 permissions)
+		while IFS= read -r -d '' state_file; do
+			# File is already known to be readable (from find -readable), but double-check for safety
+			if ! file_exists_and_readable "$state_file"; then
+				handle_error "WARNING" "SYSTEM" "$description is unreadable (skipping validation): $state_file" 0
+				continue
+			fi
+
+			if ! validate_state_file "$state_file" "$expected_format"; then
+				handle_error "WARNING" "SYSTEM" "$description corrupted, recovering: $state_file" 0
+				recover_corrupted_state_file "$state_file" "$default_value" "$expected_format"
+				validation_failed=1
+			fi
+		done < <(find "$STATE_DIR" -maxdepth 1 -type f -readable -name "$pattern" -print0 2>/dev/null)
+	fi
 
 	return $validation_failed
 }

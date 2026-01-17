@@ -61,8 +61,13 @@ track_network_partition_check() {
 	ensure_file_exists "$counter_file" "0" 2>/dev/null || return 0
 
 	# Read current count
+	# Check readability before reading to prevent hangs on unreadable files
 	local current_count
-	current_count=$(cat "$counter_file" 2>/dev/null || echo "0")
+	if file_exists_and_readable "$counter_file"; then
+		current_count=$(cat "$counter_file" 2>/dev/null || echo "0")
+	else
+		current_count="0"
+	fi
 
 	# Validate count is numeric (handle corruption)
 	if ! [[ "$current_count" =~ ^[0-9]+$ ]]; then
@@ -137,8 +142,13 @@ log_network_partition_summary_if_due() {
 	ensure_file_exists "$interface_fail_file" "0" 2>/dev/null || return 0
 
 	# Read last summary time
+	# Check readability before reading to prevent hangs on unreadable files
 	local last_time
-	last_time=$(cat "$last_time_file" 2>/dev/null || echo "0")
+	if file_exists_and_readable "$last_time_file"; then
+		last_time=$(cat "$last_time_file" 2>/dev/null || echo "0")
+	else
+		last_time="0"
+	fi
 
 	# Validate last_time is numeric (handle corruption)
 	if ! [[ "$last_time" =~ ^[0-9]+$ ]]; then
@@ -150,18 +160,43 @@ log_network_partition_summary_if_due() {
 
 	if [[ $time_since_last -ge $summary_interval_seconds ]] || [[ $last_time -eq 0 ]]; then
 		# Time to log summary - read all counters
+		# Check readability before reading to prevent hangs on unreadable files
 		local dns_success
-		dns_success=$(cat "$dns_success_file" 2>/dev/null || echo "0")
+		if file_exists_and_readable "$dns_success_file"; then
+			dns_success=$(cat "$dns_success_file" 2>/dev/null || echo "0")
+		else
+			dns_success="0"
+		fi
 		local dns_fail
-		dns_fail=$(cat "$dns_fail_file" 2>/dev/null || echo "0")
+		if file_exists_and_readable "$dns_fail_file"; then
+			dns_fail=$(cat "$dns_fail_file" 2>/dev/null || echo "0")
+		else
+			dns_fail="0"
+		fi
 		local route_success
-		route_success=$(cat "$route_success_file" 2>/dev/null || echo "0")
+		if file_exists_and_readable "$route_success_file"; then
+			route_success=$(cat "$route_success_file" 2>/dev/null || echo "0")
+		else
+			route_success="0"
+		fi
 		local route_fail
-		route_fail=$(cat "$route_fail_file" 2>/dev/null || echo "0")
+		if file_exists_and_readable "$route_fail_file"; then
+			route_fail=$(cat "$route_fail_file" 2>/dev/null || echo "0")
+		else
+			route_fail="0"
+		fi
 		local interface_success
-		interface_success=$(cat "$interface_success_file" 2>/dev/null || echo "0")
+		if file_exists_and_readable "$interface_success_file"; then
+			interface_success=$(cat "$interface_success_file" 2>/dev/null || echo "0")
+		else
+			interface_success="0"
+		fi
 		local interface_fail
-		interface_fail=$(cat "$interface_fail_file" 2>/dev/null || echo "0")
+		if file_exists_and_readable "$interface_fail_file"; then
+			interface_fail=$(cat "$interface_fail_file" 2>/dev/null || echo "0")
+		else
+			interface_fail="0"
+		fi
 
 		# Validate all counts are numeric (handle corruption)
 		[[ "$dns_success" =~ ^[0-9]+$ ]] || dns_success=0

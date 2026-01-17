@@ -3057,6 +3057,100 @@ xfrm_state="${xfrm_state//reqid 1/reqid 2}"
 - Keep system-wide failure detection enabled when testing the coordination mechanism itself
 - Consider whether your test needs independent recovery or coordinated recovery when deciding
 
+### 27. Disabling Network Partition Check in Recovery Tests
+
+**Pattern**: Disable network partition check when testing recovery actions that need VPN checks to run.
+
+**When to use**: When writing tests that verify recovery actions (Tier 1, Tier 2, or Tier 3), rate limiting, or any functionality that requires VPN checks to execute. Network partition detection (enabled by default) skips VPN checks when network interfaces are down, which can prevent recovery actions from being tested.
+
+**Key Insight**: The test environment may not have network interfaces properly set up, causing network partition detection to trigger and skip VPN checks entirely. This prevents recovery actions from running, making it impossible to test recovery behavior.
+
+**Example**:
+```bash
+@test "tier 3: recovery action prevented by rate limiting" {
+    create_test_config "$config_file" \
+        "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+        "ENABLE_NETWORK_PARTITION_CHECK=0" \
+        # ... other config ...
+    # ... test expects recovery to be attempted ...
+}
+```
+
+**Why**: Network partition detection runs before VPN checks. If the test environment doesn't have network interfaces properly configured (common in CI/test environments), the partition check will detect a partition and skip all VPN checks, preventing recovery actions from being tested.
+
+**Configuration Options**:
+- `ENABLE_NETWORK_PARTITION_CHECK=0` - Disables network partition detection entirely
+- `ENABLE_NETWORK_PARTITION_CHECK=1` - Enables network partition detection (default)
+
+**Standard**:
+- Use `ENABLE_NETWORK_PARTITION_CHECK=0` when testing recovery actions, rate limiting, or any functionality that requires VPN checks to execute
+- Keep network partition check enabled when testing the partition detection mechanism itself
+- Note: `setup_test_location_config()` and `setup_vpn_at_tier_fixture()` already disable network partition check by default, but `create_test_config()` does not set defaults - you must explicitly disable it
+
+**Related**: See tests that use `create_test_config()` directly - they must explicitly set `ENABLE_NETWORK_PARTITION_CHECK=0` if they test recovery actions.
+
+### 28. Complex XFRM State Mock Helpers
+
+**Pattern**: Use helper functions from `helpers/mocks.bash` for complex xfrm state scenarios instead of inline mock scripts.
+
+**When to use**: When testing SA count mismatches, asymmetric SA states, timing delays, or bidirectional SA scenarios. These helpers simplify complex mock logic with state tracking, file-based flags, and conditional behavior.
+
+**Available Helpers**:
+- `mock_ip_xfrm_bidirectional_sa()` - Bidirectional SAs (forward and reverse)
+- `mock_ip_xfrm_sa_count_mismatch()` - SA count mismatch (deleted 2, only 1 re-established)
+- `mock_ip_xfrm_asymmetric_sa()` - Asymmetric SA states (only forward or only reverse)
+- `mock_ip_xfrm_timing_delay()` - Timing issues where SAs appear after delays
+
+**Example - SA Count Mismatch**:
+```bash
+load helpers/mocks
+
+@test "SA count mismatch scenario" {
+    setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1'
+    
+    # Mock: deleted 2 SAs, only forward re-establishes
+    mock_ip_xfrm_sa_count_mismatch "${TEST_LOCAL_IP}" "${TEST_PEER_IP}" "forward" \
+        "0x12345678" "0x87654321" "${TEST_DIR}/sas_deleted" 0 1000
+    add_mock_to_path
+    
+    # ... test assertions ...
+    
+    remove_mock_from_path
+}
+```
+
+**Example - Asymmetric SA State**:
+```bash
+# Only forward SA present
+mock_ip_xfrm_asymmetric_sa "${TEST_LOCAL_IP}" "${TEST_PEER_IP}" "forward" \
+    "0x12345678" "${TEST_DIR}/sas_deleted" 0 1000
+add_mock_to_path
+```
+
+**Example - Timing Delay**:
+```bash
+# Second SA appears after 3 verification attempts
+mock_ip_xfrm_timing_delay "${TEST_LOCAL_IP}" "${TEST_PEER_IP}" 3 \
+    "0x12345678" "0x87654321" "${TEST_DIR}/sas_deleted" "${TEST_DIR}/check_count" 0 1000
+add_mock_to_path
+```
+
+**Benefits**:
+- **Simplified tests**: 1-2 line helper calls vs 50+ line inline mock scripts
+- **Maintainability**: Complex mock logic centralized in one place
+- **Consistency**: Standardized patterns across tests
+- **Documentation**: Well-documented behavior and examples
+- **State tracking**: Handles file-based flags and call counters automatically
+
+**Why**: Complex inline mocks with state tracking, file-based flags, and conditional logic are hard to maintain and understand. Helper functions encapsulate this complexity, making tests more readable and maintainable.
+
+**Standard**:
+- Use helper functions for complex xfrm state scenarios (SA count mismatch, asymmetric, timing)
+- Use `mock_ip_xfrm_state()` for simple static xfrm state scenarios
+- Prefer helpers over inline mock scripts for any scenario with state tracking or conditional behavior
+
+**Related**: See `tests/helpers/mocks.bash` for complete documentation and all available helpers.
+
 ## Migration Notes
 
 - Old pattern `NO_ESCALATE=1; export NO_ESCALATE` → Use `enable_fake_mode()`

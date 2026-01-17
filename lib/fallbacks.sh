@@ -234,9 +234,23 @@ define_common_fallbacks() {
 	atomic_write_file() {
 		local file="$1"
 		local content="$2"
+
+		# If target file exists but is unreadable or unwritable, remove it first to avoid potential hangs
+		# This can happen if file permissions were changed (e.g., chmod 000 or chmod 444)
+		# Removing unwritable files prevents mv from hanging when trying to overwrite them
+		# Note: This is a fallback implementation, so we use basic checks instead of file_exists_and_readable
+		if [[ -f "$file" ]] && (! [[ -r "$file" ]] || ! [[ -w "$file" ]]); then
+			rm -f "$file" 2>/dev/null || true
+		fi
+
 		if ! (echo "$content" >"${file}.tmp" && mv "${file}.tmp" "$file"); then
 			return 1
 		fi
+
+		# Set explicit permissions for state files (security best practice)
+		# chmod 600 ensures only owner can read/write, preventing information leakage
+		chmod 600 "$file" 2>/dev/null || true
+
 		return 0
 	}
 }

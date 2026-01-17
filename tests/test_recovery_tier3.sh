@@ -137,7 +137,7 @@ EOF
 	run bash "$test_script"
 
 	# Restart should succeed, restart should be recorded
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Restart timestamp should be recorded in restart_count file (if restart was triggered)
 	# Note: Restart is recorded by full_restart() function for rate limiting
 	if [[ -f "$restart_file" ]]; then
@@ -148,7 +148,7 @@ EOF
 	else
 		# If restart file doesn't exist, check if restart was actually called
 		# This might happen if rate limiting prevented restart
-		assert_log_contains_any "$log_file" "restart" "Tier 3"
+		assert_log_contains_any "$LOG_FILE" "restart" "Tier 3"
 	fi
 
 	remove_mock_from_path
@@ -243,8 +243,8 @@ EOF
 
 	# Should detect failure via PIPESTATUS (not tee exit code)
 	# The error message should be logged when restart fails
-	assert_file_exist "$log_file"
-	assert_log_contains_any "$log_file" "Failed to restart" "ERROR"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Failed to restart" "ERROR"
 
 	remove_mock_from_path
 }
@@ -262,7 +262,8 @@ EOF
 		"TIER2_THRESHOLD=3" \
 		"TIER3_THRESHOLD=5" \
 		"MAX_RESTARTS_PER_WINDOW=3" \
-		"RATE_LIMIT_WINDOW_MINUTES=60"
+		"RATE_LIMIT_WINDOW_MINUTES=60" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	local failure_counter
@@ -306,11 +307,11 @@ EOF
 	fi
 
 	# Should prevent restart due to rate limiting, no recovery action should be triggered
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Check for rate limit message (check both the WARNING from check_rate_limit and ERROR from full_restart)
-	assert_log_contains_any "$log_file" "Rate limit exceeded" "rate limit" "Rate limit exceeded, skipping Tier 3"
+	assert_log_contains_any "$LOG_FILE" "Rate limit exceeded" "rate limit" "Rate limit exceeded, skipping Tier 3"
 	# ipsec restart should not be called (rate limiting prevents it)
-	refute_file_contains "$log_file" "ERROR: Restart should not be called when rate limited"
+	refute_file_contains "$LOG_FILE" "ERROR: Restart should not be called when rate limited"
 
 	# Verify restart was not recorded (file should still have 3 entries)
 	if [[ -f "$restart_file" ]]; then
@@ -372,7 +373,8 @@ EOF
 	# This documents that the script would hang without timeout handling
 	# Use timeout with --kill-after to ensure all child processes are killed
 	# Give script 0.5s to start and create log file, then timeout kills it
-	PATH="${TEST_DIR}:${PATH}" timeout --kill-after=0.1 --preserve-status=0 0.5 bash "$test_script" 2>/dev/null || true
+	# Don't use --preserve-status so timeout returns 124 on timeout (we ignore exit code with || true)
+	PATH="${TEST_DIR}:${PATH}" timeout --kill-after=0.1 0.5 bash "$test_script" 2>/dev/null || true
 
 	# Clean up any remaining mock ipsec processes that might have escaped
 	pkill -f "${TEST_DIR}/ipsec.*restart" 2>/dev/null || true
@@ -383,10 +385,10 @@ EOF
 	# The test succeeds if timeout kills the process (expected behavior)
 	# Skip condition: Log file must be created by script before timeout kills it for test verification
 	# Log file should exist (created before timeout kills the script)
-	if [[ ! -f "$log_file" ]]; then
-		skip "Log file not created (script may have been killed before initialization at ${log_file}, test requires log file to verify timeout behavior)"
+	if [[ ! -f "$LOG_FILE" ]]; then
+		skip "Log file not created (script may have been killed before initialization at ${LOG_FILE}, test requires log file to verify timeout behavior)"
 	fi
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -435,7 +437,7 @@ EOF
 	fi
 
 	# Verify restart was attempted and failed
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	# Now simulate natural recovery: VPN comes back up (SA exists)
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -454,7 +456,7 @@ EOF
 		# File doesn't exist - reset_failure_count may delete the file when resetting to 0
 		# This is also valid behavior (file not existing means count is 0)
 		# But verify that reset actually happened by checking the log
-		assert_log_contains_any "$log_file" "recovered" "reset"
+		assert_log_contains_any "$LOG_FILE" "recovered" "reset"
 	fi
 
 	remove_mock_from_path
@@ -499,7 +501,7 @@ EOF
 
 	# Should handle case where VPN recovers (SA exists) but byte counters don't increase immediately
 	# Script should log warning about bytes not increasing but continue execution
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }

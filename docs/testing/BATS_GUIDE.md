@@ -724,11 +724,13 @@ bats --pretty tests/
 # Set timeout per test via environment variable
 TEST_TIMEOUT=120 ./tests/run_tests.sh  # 120 seconds (default)
 
-# Or use timeout in test directly
+# Or use timeout in test directly (for tests that might hang)
 @test "slow test" {
     timeout 30 slow_command
 }
 ```
+
+**Important**: When using `timeout` with BATS's `run` command, only use `--kill-after` when child processes might hang (e.g., when testing unreadable files). For simple cases, do NOT use `--kill-after` as it can cause BATS to kill the test process itself. When using `--kill-after`, do NOT use `--preserve-status` - without it, timeout returns 124 on timeout (with `--preserve-status`, it returns the signal exit code like 143). See the "Debugging Test Hangs (Unreadable Files)" section below for the complete pattern.
 
 **BATS Built-in**: ([BATS Timing](https://bats-core.readthedocs.io/en/stable/command-line.html#timing))
 ```bash
@@ -1214,19 +1216,101 @@ If tests hang indefinitely, check for unreadable file issues:
    find "${TEST_DIR}" -type f ! -perm 644 ! -perm 755
    ```
 
-2. **Use timeout wrapper**:
+2. **Use timeout wrapper with proper exit code handling**:
+   
+   When using `timeout` in BATS tests, choose the appropriate pattern based on whether child processes might hang:
+   
+   **Pattern 1: Using BATS's `run` command (simple cases, no hanging child processes)**
    ```bash
-   run timeout 15 bash "$TEST_SCRIPT"
-   if [[ "$status" -eq 124 ]]; then
-       echo "ERROR: Test script hung (timeout after 15 seconds)" >&2
-       false
+   # Check if timeout command is available
+   if ! command -v timeout >/dev/null 2>&1; then
+       skip "timeout command not available"
+   fi
+   
+   # Use timeout WITHOUT --kill-after for simple cases
+   # timeout returns 124 if command times out
+   local timeout_duration=20
+   
+   run timeout $timeout_duration bash "$TEST_SCRIPT" --fake 2>&1
+   local exit_status=$status
+   
+   # Handle timeout exit code (only 124, not 143)
+   if [[ $exit_status -eq 124 ]]; then
+       fail "Script hung (timeout after ${timeout_duration}s, exit code: $exit_status)"
+   fi
+   
+   # Handle other exit codes as needed
+   if [[ $exit_status -ne 0 ]] && [[ $exit_status -ne 1 ]]; then
+       fail "Script exited with unexpected status: $exit_status"
    fi
    ```
+   
+   **Pattern 1b: Using BATS's `run` command (when child processes might hang)**
+   ```bash
+   # Check if timeout command is available
+   if ! command -v timeout >/dev/null 2>&1; then
+       skip "timeout command not available"
+   fi
+   
+   # Use timeout WITH --kill-after when child processes might hang
+   # --kill-after=1 ensures child processes are killed 1 second after main process
+   # For tests that may hang under system load (e.g., when running large test suites),
+   # consider increasing both timeout_duration (e.g., 30 seconds) and --kill-after (e.g., 2 seconds)
+   # to allow more time for normal completion while still failing fast if the script hangs
+   # Do NOT use --preserve-status - without it, timeout returns 124 on timeout
+   # (with --preserve-status, it returns signal exit codes like 143)
+   local timeout_duration=20
+   # Increase timeout_duration to 30 seconds for tests that may hang under system load
+   # Increase --kill-after to 2 seconds if child processes are slow to respond under load
+   
+   run timeout --kill-after=1 $timeout_duration bash "$TEST_SCRIPT" --fake 2>&1
+   local exit_status=$status
+   
+   # Handle timeout/kill exit codes:
+   # 124 = timeout (default behavior without --preserve-status)
+   # 143 = SIGTERM (process killed - defensive check in case process is killed by other means)
+   # 137 = SIGKILL (process force-killed - defensive check)
+   # >128 = other signals (defensive check)
+   if [[ $exit_status -eq 124 ]] || [[ $exit_status -eq 143 ]] || [[ $exit_status -eq 137 ]] || [[ $exit_status -gt 128 ]]; then
+       fail "Script hung when trying to read unreadable state file (timeout/killed after ${timeout_duration}s, exit code: $exit_status)"
+   fi
+   
+   # Handle other exit codes as needed
+   if [[ $exit_status -ne 0 ]] && [[ $exit_status -ne 1 ]]; then
+       fail "Script exited with unexpected status: $exit_status"
+   fi
+   ```
+   
+   **Pattern 2: Using `timeout` directly (without `run`)**
+   ```bash
+   # Use timeout with --kill-after when NOT using BATS's run command
+   # timeout returns:
+   #   124 = command timed out
+   #   143 = command was killed by SIGTERM (timeout --kill-after)
+   local timeout_duration=15
+   local kill_after=3
+   
+   timeout --kill-after=$kill_after $timeout_duration bash "$test_script" 2>/dev/null || true
+   ```
+   
+   **Key Points**:
+   - **When using BATS's `run` command (simple cases)**: Do NOT use `--kill-after` - it can cause BATS to kill the test process itself. Use `run timeout $timeout_duration bash "$TEST_SCRIPT" --fake 2>&1` and only check for exit code 124 (timeout).
+   - **When using BATS's `run` command (child processes might hang)**: Use `--kill-after=1` WITHOUT `--preserve-status` to ensure child processes are killed and timeout returns 124 on timeout. This is necessary when scripts spawn child processes that might hang (e.g., when reading unreadable files). Check for exit codes 124 (timeout), 143 (SIGTERM), 137 (SIGKILL), and >128 (other signals) as defensive checks.
+   - **Adjusting timeout for system load**: For tests that may hang under system load (e.g., when running large test suites), consider increasing both the timeout duration (e.g., from 20 to 30 seconds) and `--kill-after` (e.g., from 1 to 2 seconds). This allows more time for normal completion while still failing fast if the script actually hangs. The script should complete quickly (< 5 seconds typically), so a 30-second timeout provides a good safety margin without being excessive.
+   - **When using `timeout` directly (not with `run`)**: Use `--kill-after=N` to ensure hung processes and their children are killed, and check for both exit codes 124 (timeout) and 143 (killed by SIGTERM).
+   - Use `run timeout` directly - BATS handles signal propagation correctly
+   - **Never wrap `timeout` in `bash -c`** - The extra shell layer interferes with signal handling and can cause tests to hang or be killed unexpectedly. Use `run timeout $timeout_duration bash "$TEST_SCRIPT" --fake 2>&1` directly, not `run bash -c "timeout ..."`
+   - Don't use `|| true` with `run timeout` - you want to capture the actual exit status
+   - Restore any modified permissions/files immediately after timeout to prevent test isolation issues
+   - **Signal handling for cleanup**: When tests might be killed externally (e.g., by test runners or CI systems), trap additional signals (QUIT, HUP) in addition to EXIT, INT, and TERM to ensure cleanup happens even if the test is terminated unexpectedly.
+   
+   **Example from test suite**: See `tests/test_state.sh` test "state file permissions prevent read - should handle gracefully" for a complete implementation using `run timeout` with `--kill-after=2` and a 30-second timeout (increased for system load) when child processes might hang.
 
 3. **Check for file operations without readability checks**:
-   - Search for `cat`, `grep`, `wc`, `cp`, `mv` operations
-   - Verify each has `file_exists_and_readable` check before use
+   - Search for `cat`, `grep`, `wc`, `cp`, `mv`, `stat` operations
+   - Verify each has `file_exists_and_readable` check before use (or use `timeout` wrapper for `stat` on potentially unreadable files)
    - Remember: `2>/dev/null` does NOT prevent hangs
+   - **Important**: `stat` can hang on files with 000 permissions, even though it only reads metadata. Always use `timeout` when calling `stat` on files that might be unreadable, or save permissions BEFORE making files unreadable.
 
 4. **Debug with strace**:
    ```bash
@@ -1243,6 +1327,7 @@ If tests hang indefinitely, check for unreadable file issues:
 - Unreadable files (`chmod 000`) without readability checks
 - Missing `file_exists_and_readable` before file operations
 - Using `2>/dev/null` instead of readability checks
+- `stat` commands on files with 000 permissions (even though stat only reads metadata, it can hang)
 - Functions that should output values but only return exit codes
 - Race conditions with file permissions
 

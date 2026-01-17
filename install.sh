@@ -772,7 +772,7 @@ install_scripts() {
 #
 # Returns:
 #   0: Valid cron schedule found and parsed
-#   1: No valid cron schedule found (use default)
+#   1: No valid cron schedule found, config file not found, or config file unreadable (use default)
 #
 # Output:
 #   Prints the validated cron schedule to stdout (if valid)
@@ -782,6 +782,11 @@ parse_cron_schedule() {
 
 	# Check if config file exists
 	if [[ ! -f "$config_file" ]]; then
+		return 1
+	fi
+
+	# Check file readability before grep operation (prevents hangs on unreadable files)
+	if ! file_exists_and_readable "$config_file"; then
 		return 1
 	fi
 
@@ -798,7 +803,7 @@ parse_cron_schedule() {
 
 	# Remove surrounding quotes (handles both single and double quotes)
 	# Trim leading/trailing whitespace first
-	schedule=$(echo "$schedule" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+	schedule=$(trim "$schedule")
 
 	# Remove quotes if present
 	if [[ "$schedule" =~ ^\".*\"$ ]]; then
@@ -810,7 +815,7 @@ parse_cron_schedule() {
 	fi
 
 	# Trim whitespace again after quote removal
-	schedule=$(echo "$schedule" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+	schedule=$(trim "$schedule")
 
 	# Validate: must be non-empty
 	if [[ -z "$schedule" ]]; then
@@ -1320,7 +1325,8 @@ check_and_setup_routes() {
 			# Check for LOCATION_*_INTERNAL pattern
 			if [[ "$key" =~ ^LOCATION_.+_INTERNAL$ ]]; then
 				# Remove quotes and trim whitespace
-				value=$(echo "$value" | sed "s/^[\"']//" | sed "s/[\"']$//" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+				value=$(echo "$value" | sed "s/^[\"']//" | sed "s/[\"']$//")
+				value=$(trim "$value")
 				if [[ -n "$value" ]]; then
 					has_internal_ips=1
 					break
@@ -1417,7 +1423,8 @@ check_and_setup_routes() {
 				location_name="${BASH_REMATCH[1]}"
 
 				# Remove quotes and trim whitespace
-				value=$(echo "$value" | sed "s/^[\"']//" | sed "s/[\"']$//" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+				value=$(echo "$value" | sed "s/^[\"']//" | sed "s/[\"']$//")
+				value=$(trim "$value")
 				if [[ -n "$value" ]]; then
 					# Split space-separated IPs into array
 					# Use inline IFS to avoid affecting while loop (critical: while loop uses IFS='=')
@@ -1490,7 +1497,8 @@ validate_config_after_install() {
 		# Check for LOCATION_*_EXTERNAL pattern
 		if [[ "$key" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
 			# Remove quotes and trim whitespace
-			value=$(echo "$value" | sed "s/^[\"']//" | sed "s/[\"']$//" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+			value=$(echo "$value" | sed "s/^[\"']//" | sed "s/[\"']$//")
+			value=$(trim "$value")
 			if [[ -n "$value" ]]; then
 				location_found=1
 				break

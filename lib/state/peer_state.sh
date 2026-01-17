@@ -30,6 +30,11 @@
 # Note:
 #   Requires get_peer_state_file_path to be set
 #   Validates numeric values and returns default if corrupted
+#   Uses timeout wrapper around cat as a defensive measure for this high-risk path
+#   (file_exists_and_readable should prevent hangs, but this adds extra protection for edge cases
+#    such as race conditions where file becomes unreadable between check and cat, or test suite
+#    timing issues. This is specific to this function and not necessarily a pattern to follow
+#    everywhere - other similar code paths rely on file_exists_and_readable checks alone.)
 get_peer_state() {
 	local location_name="$1"
 	local peer_ip="$2"
@@ -46,7 +51,17 @@ get_peer_state() {
 
 	if file_exists_and_readable "$state_file"; then
 		local value
-		value=$(cat "$state_file" 2>/dev/null || echo "$default_value")
+		# Defensive timeout wrapper: file_exists_and_readable should prevent hangs, but this adds
+		# extra protection for edge cases (race conditions, test suite timing issues, etc.)
+		# Note: This is specific to this high-risk path - other similar code paths rely on
+		# file_exists_and_readable checks alone. If test suite timing issues persist, investigate
+		# test execution environment separately rather than adding timeouts everywhere.
+		if command -v timeout >/dev/null 2>&1; then
+			value=$(timeout 1 cat "$state_file" 2>/dev/null || echo "$default_value")
+		else
+			# Fallback without timeout (shouldn't hang if file_exists_and_readable worked correctly)
+			value=$(cat "$state_file" 2>/dev/null || echo "$default_value")
+		fi
 		# Validate numeric keys
 		case "$key" in
 		failure_count | last_bytes | last_status_log)

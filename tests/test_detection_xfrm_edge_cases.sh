@@ -6,6 +6,7 @@
 # These tests address the gap identified in CRITICAL_PATH_TEST_GAPS_REVIEW.md Section 2.1
 
 load test_helper
+load helpers/logging
 
 # ============================================================================
 # XFRM OUTPUT PARSING EDGE CASES TESTS
@@ -14,8 +15,11 @@ load test_helper
 # bats test_tags=category:detection,priority:medium
 @test "extract_byte_counter handles malformed byte counter line - missing bytes keyword" {
 	# Purpose: Test verifies that extract_byte_counter handles malformed xfrm output gracefully.
-	# Expected: Function returns failure (exit code 1) when byte counter line is malformed.
+	# Expected: Function returns failure (exit code 1) when byte counter line is malformed and logs warning.
 	# Importance: Malformed xfrm output could cause false positives/negatives if not handled properly.
+	source_logging_functions
+	export LOG_FILE="${TEST_DIR}/test.log"
+	mkdir -p "$(dirname "$LOG_FILE")"
 	source_function "extract_byte_counter"
 
 	local xfrm_output="src ${TEST_PEER_IP} dst ${TEST_PEER_IP}
@@ -25,14 +29,22 @@ load test_helper
 
 	run extract_byte_counter "$xfrm_output"
 	assert_failure
-	assert_output ""
+	# Function should output warning to stderr (captured by run)
+	assert_output --regexp "WARNING.*extract_byte_counter.*lifetime current.*failed to extract byte counter"
+	# Also verify warning is in log file
+	assert_file_exist "$LOG_FILE"
+	run grep -q "WARNING.*extract_byte_counter.*lifetime current.*failed to extract byte counter" "$LOG_FILE"
+	assert_success
 }
 
 # bats test_tags=category:detection,priority:medium
 @test "extract_byte_counter handles malformed byte counter line - non-numeric bytes value" {
 	# Purpose: Test verifies that extract_byte_counter rejects non-numeric byte counter values.
-	# Expected: Function returns failure when bytes value is not numeric.
+	# Expected: Function returns failure when bytes value is not numeric and logs warning.
 	# Importance: Invalid byte counter values could cause false positives/negatives.
+	source_logging_functions
+	export LOG_FILE="${TEST_DIR}/test.log"
+	mkdir -p "$(dirname "$LOG_FILE")"
 	source_function "extract_byte_counter"
 
 	local xfrm_output="src ${TEST_PEER_IP} dst ${TEST_PEER_IP}
@@ -41,14 +53,22 @@ load test_helper
 
 	run extract_byte_counter "$xfrm_output"
 	assert_failure
-	assert_output ""
+	# Function should output warning to stderr (captured by run)
+	assert_output --regexp "WARNING.*extract_byte_counter.*lifetime current.*failed to extract byte counter"
+	# Also verify warning is in log file
+	assert_file_exist "$LOG_FILE"
+	run grep -q "WARNING.*extract_byte_counter.*lifetime current.*failed to extract byte counter" "$LOG_FILE"
+	assert_success
 }
 
 # bats test_tags=category:detection,priority:medium
 @test "extract_byte_counter handles malformed byte counter line - negative bytes value" {
 	# Purpose: Test verifies that extract_byte_counter rejects negative byte counter values.
-	# Expected: Function returns failure when bytes value is negative.
+	# Expected: Function returns failure when bytes value is negative and logs warning.
 	# Importance: Negative byte counters are invalid and should be rejected.
+	source_logging_functions
+	export LOG_FILE="${TEST_DIR}/test.log"
+	mkdir -p "$(dirname "$LOG_FILE")"
 	source_function "extract_byte_counter"
 
 	local xfrm_output="src ${TEST_PEER_IP} dst ${TEST_PEER_IP}
@@ -57,7 +77,12 @@ load test_helper
 
 	run extract_byte_counter "$xfrm_output"
 	assert_failure
-	assert_output ""
+	# Function should output warning to stderr (captured by run)
+	assert_output --regexp "WARNING.*extract_byte_counter.*lifetime current.*failed to extract byte counter"
+	# Also verify warning is in log file
+	assert_file_exist "$LOG_FILE"
+	run grep -q "WARNING.*extract_byte_counter.*lifetime current.*failed to extract byte counter" "$LOG_FILE"
+	assert_success
 }
 
 # bats test_tags=category:detection,priority:medium

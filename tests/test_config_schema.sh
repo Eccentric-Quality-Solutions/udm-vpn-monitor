@@ -80,7 +80,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_file_exist "$LOG_FILE"
 	# Config file values should override defaults
 	# VPN_NAME should be "Custom VPN Name" not "Site-to-Site VPN"
-	assert_log_contains_any "$log_file" "Custom VPN Name" "VPN_NAME" "Configuration loaded"
+	assert_log_contains_any "$LOG_FILE" "Custom VPN Name" "VPN_NAME" "Configuration loaded"
 
 	remove_mock_from_path
 }
@@ -114,7 +114,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# The error message format is: "No location-based configuration found. At least one LOCATION_*_EXTERNAL variable is required."
 	# or "Configuration validation failed - required variables missing or invalid values"
 	assert_file_exist "$LOG_FILE"
-	assert_log_contains_any "$log_file" "LOCATION" "required" "ERROR" "validation" "No location"
+	assert_log_contains_any "$LOG_FILE" "LOCATION" "required" "ERROR" "validation" "No location"
 
 	remove_mock_from_path
 }

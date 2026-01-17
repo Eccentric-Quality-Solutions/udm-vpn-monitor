@@ -61,8 +61,13 @@ track_resource_check() {
 	ensure_file_exists "$counter_file" "0" 2>/dev/null || return 0
 
 	# Read current count
+	# Check readability before reading to prevent hangs on unreadable files
 	local current_count
-	current_count=$(cat "$counter_file" 2>/dev/null || echo "0")
+	if file_exists_and_readable "$counter_file"; then
+		current_count=$(cat "$counter_file" 2>/dev/null || echo "0")
+	else
+		current_count="0"
+	fi
 
 	# Validate count is numeric (handle corruption)
 	if ! [[ "$current_count" =~ ^[0-9]+$ ]]; then
@@ -126,8 +131,13 @@ track_resource_constraint() {
 	ensure_file_exists "$counter_file" "0" 2>/dev/null || return 0
 
 	# Read current count
+	# Check readability before reading to prevent hangs on unreadable files
 	local current_count
-	current_count=$(cat "$counter_file" 2>/dev/null || echo "0")
+	if file_exists_and_readable "$counter_file"; then
+		current_count=$(cat "$counter_file" 2>/dev/null || echo "0")
+	else
+		current_count="0"
+	fi
 
 	# Validate count is numeric (handle corruption)
 	if ! [[ "$current_count" =~ ^[0-9]+$ ]]; then
@@ -208,8 +218,13 @@ log_resource_monitoring_summary_if_due() {
 	ensure_file_exists "$disk_critical_file" "0" 2>/dev/null || return 0
 
 	# Read last summary time
+	# Check readability before reading to prevent hangs on unreadable files
 	local last_time
-	last_time=$(cat "$last_time_file" 2>/dev/null || echo "0")
+	if file_exists_and_readable "$last_time_file"; then
+		last_time=$(cat "$last_time_file" 2>/dev/null || echo "0")
+	else
+		last_time="0"
+	fi
 
 	# Validate last_time is numeric (handle corruption)
 	if ! [[ "$last_time" =~ ^[0-9]+$ ]]; then
@@ -221,24 +236,61 @@ log_resource_monitoring_summary_if_due() {
 
 	if [[ $time_since_last -ge $summary_interval_seconds ]] || [[ $last_time -eq 0 ]]; then
 		# Time to log summary - read all counters
+		# Check readability before reading to prevent hangs on unreadable files
 		local cpu_success
-		cpu_success=$(cat "$cpu_success_file" 2>/dev/null || echo "0")
+		if file_exists_and_readable "$cpu_success_file"; then
+			cpu_success=$(cat "$cpu_success_file" 2>/dev/null || echo "0")
+		else
+			cpu_success="0"
+		fi
 		local cpu_fail
-		cpu_fail=$(cat "$cpu_fail_file" 2>/dev/null || echo "0")
+		if file_exists_and_readable "$cpu_fail_file"; then
+			cpu_fail=$(cat "$cpu_fail_file" 2>/dev/null || echo "0")
+		else
+			cpu_fail="0"
+		fi
 		local ram_success
-		ram_success=$(cat "$ram_success_file" 2>/dev/null || echo "0")
+		if file_exists_and_readable "$ram_success_file"; then
+			ram_success=$(cat "$ram_success_file" 2>/dev/null || echo "0")
+		else
+			ram_success="0"
+		fi
 		local ram_fail
-		ram_fail=$(cat "$ram_fail_file" 2>/dev/null || echo "0")
+		if file_exists_and_readable "$ram_fail_file"; then
+			ram_fail=$(cat "$ram_fail_file" 2>/dev/null || echo "0")
+		else
+			ram_fail="0"
+		fi
 		local disk_success
-		disk_success=$(cat "$disk_success_file" 2>/dev/null || echo "0")
+		if file_exists_and_readable "$disk_success_file"; then
+			disk_success=$(cat "$disk_success_file" 2>/dev/null || echo "0")
+		else
+			disk_success="0"
+		fi
 		local disk_fail
-		disk_fail=$(cat "$disk_fail_file" 2>/dev/null || echo "0")
+		if file_exists_and_readable "$disk_fail_file"; then
+			disk_fail=$(cat "$disk_fail_file" 2>/dev/null || echo "0")
+		else
+			disk_fail="0"
+		fi
 		local cpu_constrained
-		cpu_constrained=$(cat "$cpu_constrained_file" 2>/dev/null || echo "0")
+		if file_exists_and_readable "$cpu_constrained_file"; then
+			cpu_constrained=$(cat "$cpu_constrained_file" 2>/dev/null || echo "0")
+		else
+			cpu_constrained="0"
+		fi
 		local ram_constrained
-		ram_constrained=$(cat "$ram_constrained_file" 2>/dev/null || echo "0")
+		if file_exists_and_readable "$ram_constrained_file"; then
+			ram_constrained=$(cat "$ram_constrained_file" 2>/dev/null || echo "0")
+		else
+			ram_constrained="0"
+		fi
 		local disk_critical
-		disk_critical=$(cat "$disk_critical_file" 2>/dev/null || echo "0")
+		if file_exists_and_readable "$disk_critical_file"; then
+			disk_critical=$(cat "$disk_critical_file" 2>/dev/null || echo "0")
+		else
+			disk_critical="0"
+		fi
 
 		# Validate all counts are numeric (handle corruption)
 		[[ "$cpu_success" =~ ^[0-9]+$ ]] || cpu_success=0

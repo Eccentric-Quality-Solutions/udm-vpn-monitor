@@ -16,6 +16,13 @@
 
 set -euo pipefail
 
+# Source common functions for file_exists_and_readable
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
+	source "${SCRIPT_DIR}/lib/common.sh"
+fi
+
 # Parse arguments
 USE_TAR=0
 for arg in "$@"; do
@@ -83,13 +90,25 @@ copy_files_with_validation() {
 	local files=("$@")
 
 	for file in "${files[@]}"; do
-		if [[ -f "${source_dir}/${file}" ]]; then
+		local source_file="${source_dir}/${file}"
+		if [[ -f "$source_file" ]]; then
+			# Check source file readability before copy operation (prevents hangs on unreadable files)
+			if command -v file_exists_and_readable >/dev/null 2>&1; then
+				if ! file_exists_and_readable "$source_file"; then
+					echo "Warning: Source file not readable, skipping: ${file}" >&2
+					continue
+				fi
+			elif [[ ! -r "$source_file" ]]; then
+				# Fallback: basic check (may hang on some systems, but function not available)
+				echo "Warning: Source file not readable, skipping: ${file}" >&2
+				continue
+			fi
 			# Create destination directory if needed
 			local dest_file_dir
 			dest_file_dir=$(dirname "${dest_dir}/${file}")
 			mkdir -p "$dest_file_dir"
 
-			cp "${source_dir}/${file}" "${dest_dir}/${file}"
+			cp "$source_file" "${dest_dir}/${file}"
 			echo "  Added: ${file}"
 		else
 			echo "Warning: ${file} not found, skipping" >&2

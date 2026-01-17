@@ -116,10 +116,16 @@ fi
 #
 # Returns:
 #   0: Daemon is running
-#   1: Daemon is not running
+#   1: Daemon is not running (PID file doesn't exist, is unreadable, or process is not running)
 #
 is_running() {
 	if [[ ! -f "$PIDFILE" ]]; then
+		return 1
+	fi
+
+	# Check file readability before cat operation (prevents hangs on unreadable files)
+	# Function is available via lib/config.sh which sources lib/common.sh
+	if ! file_exists_and_readable "$PIDFILE"; then
 		return 1
 	fi
 
@@ -154,8 +160,17 @@ is_running() {
 start_daemon() {
 	if is_running; then
 		local pid
-		pid=$(cat "$PIDFILE")
-		log_message "INFO" "SYSTEM" "VPN keepalive daemon is already running (PID: $pid)"
+		# Check file readability before cat operation (prevents hangs on unreadable files)
+		if file_exists_and_readable "$PIDFILE"; then
+			pid=$(cat "$PIDFILE" 2>/dev/null || echo "")
+		else
+			pid=""
+		fi
+		if [[ -n "$pid" ]]; then
+			log_message "INFO" "SYSTEM" "VPN keepalive daemon is already running (PID: $pid)"
+		else
+			log_message "INFO" "SYSTEM" "VPN keepalive daemon is already running"
+		fi
 		return 0
 	fi
 
@@ -232,9 +247,10 @@ start_daemon() {
 				return
 			fi
 
-			# Copy LOCATIONS to local locations array (for daemon scope)
+			# Copy location names to local locations array (for daemon scope)
+			# We only need the keys for iteration; values are read from global LOCATIONS via helper functions
 			for loc_name in "${!LOCATIONS[@]}"; do
-				locations["$loc_name"]="${LOCATIONS[$loc_name]}"
+				locations["$loc_name"]=1
 			done
 		}
 
@@ -496,7 +512,16 @@ stop_daemon() {
 	fi
 
 	local pid
-	pid=$(cat "$PIDFILE")
+	# Check file readability before cat operation (prevents hangs on unreadable files)
+	if file_exists_and_readable "$PIDFILE"; then
+		pid=$(cat "$PIDFILE" 2>/dev/null || echo "")
+	else
+		pid=""
+	fi
+	if [[ -z "$pid" ]]; then
+		log_message "ERROR" "SYSTEM" "Failed to read PID file: $PIDFILE"
+		return 1
+	fi
 
 	log_message "INFO" "SYSTEM" "Stopping VPN keepalive daemon (PID: $pid)..."
 
@@ -551,8 +576,17 @@ stop_daemon() {
 check_status() {
 	if is_running; then
 		local pid
-		pid=$(cat "$PIDFILE")
-		echo "VPN keepalive daemon is running (PID: $pid)"
+		# Check file readability before cat operation (prevents hangs on unreadable files)
+		if file_exists_and_readable "$PIDFILE"; then
+			pid=$(cat "$PIDFILE" 2>/dev/null || echo "")
+		else
+			pid=""
+		fi
+		if [[ -n "$pid" ]]; then
+			echo "VPN keepalive daemon is running (PID: $pid)"
+		else
+			echo "VPN keepalive daemon is running"
+		fi
 		return 0
 	else
 		echo "VPN keepalive daemon is not running"

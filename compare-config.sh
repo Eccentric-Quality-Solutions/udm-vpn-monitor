@@ -14,6 +14,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_CONFIG=""
 EXISTING_CONFIG=""
 
+# Source common functions for trim() helper
+# shellcheck source=lib/common.sh
+if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
+	source "${SCRIPT_DIR}/lib/common.sh"
+fi
+
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -102,7 +108,8 @@ parse_config_variables() {
 	local line
 	local var_name
 
-	if [[ ! -f "$config_file" ]] || [[ ! -r "$config_file" ]]; then
+	# Check file readability before read operation (prevents hangs on unreadable files)
+	if ! file_exists_and_readable "$config_file"; then
 		return 1
 	fi
 
@@ -148,7 +155,7 @@ parse_config_variables() {
 #
 # Returns:
 #   0: Variable found
-#   1: Variable not found
+#   1: Variable not found, config file not found, or config file unreadable
 #
 # Output:
 #   Prints the value (with quotes removed) to stdout
@@ -158,7 +165,8 @@ get_config_value() {
 	local line
 	local value
 
-	if [[ ! -f "$config_file" ]] || [[ ! -r "$config_file" ]]; then
+	# Check file readability before grep operation (prevents hangs on unreadable files)
+	if ! file_exists_and_readable "$config_file"; then
 		return 1
 	fi
 
@@ -174,7 +182,7 @@ get_config_value() {
 
 	# Remove surrounding quotes (handles both single and double quotes)
 	# Trim leading/trailing whitespace first
-	value=$(echo "$value" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+	value=$(trim "$value")
 
 	# Remove quotes if present
 	if [[ "$value" =~ ^\".*\"$ ]]; then
@@ -186,7 +194,7 @@ get_config_value() {
 	fi
 
 	# Trim whitespace again after quote removal
-	value=$(echo "$value" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+	value=$(trim "$value")
 
 	echo "$value"
 	return 0
@@ -205,6 +213,9 @@ get_config_value() {
 #   customer-specific LOCATION variables (e.g., LOCATION_CUSTOMER1_EXTERNAL) are
 #   considered valid even if they don't exactly match template variables (e.g., LOCATION_NYC_EXTERNAL).
 #   This allows customers to use their own location names without false deprecation warnings.
+#
+# Arguments:
+#   None (uses global variables TEMPLATE_CONFIG and EXISTING_CONFIG)
 #
 # Returns:
 #   0: Comparison completed successfully

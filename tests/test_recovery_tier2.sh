@@ -588,11 +588,12 @@ EOF
 
 	# Verify that the completion message uses CHICAGO, not LOS_ANGELES
 	assert_file_exist "$LOG_FILE"
-	# The completion message should contain CHICAGO and the correct IP (172.31.23.27)
+	# The completion message should contain CHICAGO in the prefix and the correct IP (172.31.23.27) in the message
 	# Note: With ENABLE_XFRM_RECOVERY=0, this uses ipsec fallback, so message is "Recovery completed" not "Surgical cleanup completed"
-	assert_file_contains "$log_file" "Recovery completed for CHICAGO (172.31.23.27)"
+	# Log format: [timestamp] [LEVEL] CHICAGO: Recovery completed for (172.31.23.27) ...
+	assert_file_contains "$log_file" "CHICAGO: Recovery completed for (172.31.23.27)"
 	# Verify it does NOT contain LOS_ANGELES with CHICAGO's IP (the bug we're fixing)
-	if grep -q "Recovery completed for LOS_ANGELES (172.31.23.27)" "$log_file" 2>/dev/null; then
+	if grep -q "LOS_ANGELES: Recovery completed for (172.31.23.27)" "$log_file" 2>/dev/null; then
 		echo "ERROR: Found incorrect location name LOS_ANGELES with CHICAGO's IP in log"
 		return 1
 	fi

@@ -113,10 +113,19 @@ log_ping_summary_if_due() {
 	ensure_file_exists "$count_file" "0" 2>/dev/null || return 0
 
 	# Read last summary time and current count
+	# Check readability before reading to prevent hangs on unreadable files
 	local last_time
-	last_time=$(cat "$last_time_file" 2>/dev/null || echo "0")
+	if file_exists_and_readable "$last_time_file"; then
+		last_time=$(cat "$last_time_file" 2>/dev/null || echo "0")
+	else
+		last_time="0"
+	fi
 	local ping_count
-	ping_count=$(cat "$count_file" 2>/dev/null || echo "0")
+	if file_exists_and_readable "$count_file"; then
+		ping_count=$(cat "$count_file" 2>/dev/null || echo "0")
+	else
+		ping_count="0"
+	fi
 
 	# Increment ping count
 	ping_count=$((ping_count + 1))
@@ -286,12 +295,10 @@ check_ping_connectivity() {
 
 		if [[ "$packet_loss" -lt $PING_PACKET_LOSS_THRESHOLD ]]; then
 			# Log successful ping at DEBUG level
-			if [[ "${DEBUG:-0}" -eq 1 ]]; then
-				if [[ -n "$local_ip" ]]; then
-					log_message "DEBUG" "${location_name:-SYSTEM}" "Ping check OK: $target_ip from $local_ip (${packet_loss}% packet loss)"
-				else
-					log_message "DEBUG" "${location_name:-SYSTEM}" "Ping check OK: $target_ip (${packet_loss}% packet loss)"
-				fi
+			if [[ -n "$local_ip" ]]; then
+				log_message "DEBUG" "${location_name:-SYSTEM}" "Ping check OK: $target_ip from $local_ip (${packet_loss}% packet loss)"
+			else
+				log_message "DEBUG" "${location_name:-SYSTEM}" "Ping check OK: $target_ip (${packet_loss}% packet loss)"
 			fi
 			# Log periodic summary at configured interval at INFO level
 			log_ping_summary_if_due "$target_ip" "$local_ip"
@@ -575,7 +582,7 @@ handle_ping_single_target() {
 #   - Logs ping check results
 #   - Uses provided SA existence state to ensure accurate messages (or checks SA existence if not provided)
 check_ping_optional() {
-	local vpn_ok="$1"
+	local primary_check_passed="$1"
 	local external_peer_ip="$2"
 	local internal_peer_ip="${3:-}"
 	local location_name="${4:-}"
@@ -595,7 +602,7 @@ check_ping_optional() {
 		fi
 	fi
 
-	# Perform ping check if enabled (informational, doesn't affect vpn_ok)
+	# Perform ping check if enabled (informational, doesn't affect primary_check_passed)
 	# Use internal IP if provided, otherwise fall back to external IP
 	local ping_ip="${internal_peer_ip:-$external_peer_ip}"
 	# Pass SA existence status to check_ping_if_enabled for accurate messaging

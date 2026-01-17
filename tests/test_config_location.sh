@@ -98,7 +98,6 @@ declare -gA LOCATIONS
 		"TIER1_THRESHOLD=1" \
 		"TIER2_THRESHOLD=3" \
 		"TIER3_THRESHOLD=5"
-	EOF
 
 	setup_location_config_and_load "$config_file"
 

@@ -203,6 +203,8 @@ RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 #   This check is performed once per script run (tracked via .cron_checked file)
 #   to avoid log spam on every execution.
 #   Uses crontab -l and grep to check for vpn-monitor.sh entry
+#   Note: The grep operation operates on command output (crontab -l), not a file,
+#   so no file_exists_and_readable() check is needed here.
 #   Requires log_message function to be available
 #
 # Arguments:
@@ -564,6 +566,24 @@ process_locations() {
 	done
 	log_message "INFO" "SYSTEM" "Found ${#LOCATIONS[@]} location(s): $location_list"
 
+	# DESIGN DECISION: System-wide failure detection uses failure counts from the previous cycle
+	# rather than checking VPN status in the current cycle. This is an intentional trade-off:
+	#
+	# Benefits:
+	#   - Efficiency: Avoids double-checking VPNs (once for system-wide detection, once for monitoring)
+	#   - Conservative: Better to coordinate recovery unnecessarily than miss a real system-wide failure
+	#   - Acceptable staleness: One-cycle delay (30-60 seconds) is negligible for coordination purposes
+	#
+	# Trade-offs:
+	#   - If a VPN recovers naturally between cycles, it may still be counted as "failing" for one cycle
+	#   - This can cause unnecessary recovery coordination, but this is safer than missing failures
+	#   - The impact is minimal: one location (coordinator) still attempts recovery, others just skip
+	#
+	# Alternative (not implemented):
+	#   - Check VPN status before system-wide detection for immediate accuracy
+	#   - Cost: Performance hit (double-checking), more complex code
+	#   - Benefit: Slightly more accurate (one cycle earlier), but benefit is minimal
+	#
 	# Step 1: Check existing failure counts from previous cycle
 	# This allows us to detect system-wide failures before attempting recovery
 	# Uses existing state (failure counts) rather than re-checking VPNs, avoiding double work

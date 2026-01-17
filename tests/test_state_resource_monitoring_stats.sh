@@ -247,20 +247,38 @@ setup_resource_monitoring_stats_test() {
 
 # bats test_tags=category:unit
 @test "log_resource_monitoring_summary_if_due - handles corrupted state files gracefully" {
+	# Purpose: Test that function handles corrupted (non-numeric) state files
+	# Expected: Function treats corrupted values as 0, continues normally
+	# Importance: Validates error recovery
 	setup_resource_monitoring_stats_test
 
 	local start_time=1000
 	local later_time=4600
 
+	# Set last_time to start_time
 	echo "$start_time" >"${STATE_DIR}/resource_monitoring_summary_last_time"
+
+	# Track some checks first (so there are non-zero counts to log)
+	track_resource_check "cpu" 1
+	track_resource_check "ram" 1
+
+	# Now corrupt some state files (non-numeric values)
+	# The function should treat these as 0 when reading
 	echo "invalid" >"${STATE_DIR}/resource_cpu_check_success_count"
 	echo "corrupted" >"${STATE_DIR}/resource_ram_check_fail_count"
 
+	# Mock timestamp to later time (1 hour later)
 	setup_mock_timestamp "$later_time"
 
+	# Should handle corruption gracefully - corrupted values treated as 0,
+	# but other valid counts (ram success) should still be logged
 	run log_resource_monitoring_summary_if_due
 	assert_success
+
+	# Verify summary was logged (corrupted CPU counts treated as 0, RAM counts logged)
 	assert_file_contains "$LOG_FILE" "Resource monitoring summary (past hour)"
+	assert_file_contains "$LOG_FILE" "CPU checks succeeded 0 times"
+	assert_file_contains "$LOG_FILE" "RAM checks succeeded 1 times"
 }
 
 # bats test_tags=category:unit

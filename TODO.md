@@ -14,6 +14,8 @@ This file tracks planned improvements and tasks for the UDM VPN Monitor project.
 - Should we support DNS names for pinging (e.g. DDNS)
     - Seems to get stuck when given invalid IP
 - It seems like if it loads config again it starts over from the top for the networks it is testing
+- Need to make sure that after code changes Cursor updates any related tests.
+- Need Cursor to be better at grepping and replacing things, it often only fixes one or a few tests.
 
 ## High Priority
 

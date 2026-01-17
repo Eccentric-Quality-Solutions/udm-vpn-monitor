@@ -43,10 +43,11 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 # Note:
 #   Requires /proc/stat to be readable
 #   Uses 1-second sampling interval for accuracy
-#   Returns 0 if calculation fails (graceful degradation)
+#   Returns 1 if /proc/stat is unreadable or calculation fails (graceful degradation)
 get_cpu_usage() {
 	local cpu_stat_file="/proc/stat"
-	if [[ ! -r "$cpu_stat_file" ]]; then
+	# Check file readability before grep operation (prevents hangs on unreadable files)
+	if ! file_exists_and_readable "$cpu_stat_file"; then
 		return 1
 	fi
 

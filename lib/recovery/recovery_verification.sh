@@ -142,8 +142,9 @@ count_sas_for_peer() {
 			fi
 		done <<<"$sa_headers"
 		if [[ -n "$sa_details" ]]; then
-			# Note: count_sas_for_peer doesn't have access to internal_peer_ip, so we only show external IP
-			log_message "INFO" "$location_name" "xfrm recovery: SA count diagnostic for ($peer_ip): count=$sa_count, details: ${sa_details% }"
+			local ip_display
+			ip_display=$(format_peer_ip_display "$peer_ip" "")
+			log_message "INFO" "$location_name" "xfrm recovery: SA count diagnostic for $ip_display: count=$sa_count, details: ${sa_details% }"
 		fi
 	fi
 
@@ -203,17 +204,21 @@ verify_byte_counters_resume() {
 	local current_bytes
 	if current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null); then
 		if [[ "$current_bytes" -gt 0 ]]; then
-			# Note: verify_byte_counters_resume doesn't have access to internal_peer_ip, so we only show external IP
-			log_message "INFO" "$location_name" "Recovery verification: Byte counters resumed for ($peer_ip) (bytes=$current_bytes)"
+			local ip_display
+			ip_display=$(format_peer_ip_display "$peer_ip" "")
+			log_message "INFO" "$location_name" "Recovery verification: Byte counters resumed for $ip_display (bytes=$current_bytes)"
 			return 0
 		else
-			handle_error "WARNING" "$location_name" "Recovery verification: Byte counters are zero for ($peer_ip) (tunnel may not be passing traffic)"
+			local ip_display
+			ip_display=$(format_peer_ip_display "$peer_ip" "")
+			handle_error "WARNING" "$location_name" "Recovery verification: Byte counters are zero for $ip_display (tunnel may not be passing traffic)"
 			return 1
 		fi
 	else
 		# Byte counters not available, but SA exists - log and return success
-		# Note: verify_byte_counters_resume doesn't have access to internal_peer_ip, so we only show external IP
-		log_message "INFO" "$location_name" "Recovery verification: Byte counters not available for ($peer_ip) (SA exists, verification limited)"
+		local ip_display
+		ip_display=$(format_peer_ip_display "$peer_ip" "")
+		log_message "INFO" "$location_name" "Recovery verification: Byte counters not available for $ip_display (SA exists, verification limited)"
 		return 0
 	fi
 }
@@ -273,31 +278,39 @@ verify_byte_counters_increment() {
 		fi
 		# Validate current_bytes is numeric
 		if [[ ! "$current_bytes" =~ ^[0-9]+$ ]]; then
-			# Note: verify_byte_counters_increment doesn't have access to internal_peer_ip, so we only show external IP
-			handle_error "WARNING" "$location_name" "Recovery verification: Invalid byte counter value for ($peer_ip) (current=$current_bytes)"
+			local ip_display
+			ip_display=$(format_peer_ip_display "$peer_ip" "")
+			handle_error "WARNING" "$location_name" "Recovery verification: Invalid byte counter value for $ip_display (current=$current_bytes)"
 			return 1
 		fi
 		# Check if counters have increased from initial value
 		if [[ "$current_bytes" -gt "$initial_bytes" ]]; then
 			local increment=$((current_bytes - initial_bytes))
-			log_message "INFO" "$location_name" "Recovery verification: Byte counters incrementing for ($peer_ip) (initial=$initial_bytes, current=$current_bytes, increment=$increment)"
+			local ip_display
+			ip_display=$(format_peer_ip_display "$peer_ip" "")
+			log_message "INFO" "$location_name" "Recovery verification: Byte counters incrementing for $ip_display (initial=$initial_bytes, current=$current_bytes, increment=$increment)"
 			return 0
 		else
 			# Counters haven't increased yet - log status but don't fail immediately
 			# This allows the verification loop to continue waiting
 			if [[ "$current_bytes" -eq 0 ]] && [[ "$initial_bytes" -eq 0 ]]; then
 				# Both are zero - counters reset but haven't started incrementing yet
-				handle_error "WARNING" "$location_name" "Recovery verification: Byte counters are zero for ($peer_ip) (waiting for traffic to resume)"
+				local ip_display
+				ip_display=$(format_peer_ip_display "$peer_ip" "")
+				handle_error "WARNING" "$location_name" "Recovery verification: Byte counters are zero for $ip_display (waiting for traffic to resume)"
 			else
 				# Counters haven't increased (may have decreased or stayed same)
-				handle_error "WARNING" "$location_name" "Recovery verification: Byte counters not incrementing for ($peer_ip) (initial=$initial_bytes, current=$current_bytes)"
+				local ip_display
+				ip_display=$(format_peer_ip_display "$peer_ip" "")
+				handle_error "WARNING" "$location_name" "Recovery verification: Byte counters not incrementing for $ip_display (initial=$initial_bytes, current=$current_bytes)"
 			fi
 			return 1
 		fi
 	else
 		# Byte counters not available, but SA exists - log and return success
-		# Note: verify_byte_counters_increment doesn't have access to internal_peer_ip, so we only show external IP
-		log_message "INFO" "$location_name" "Recovery verification: Byte counters not available for ($peer_ip) (SA exists, verification limited)"
+		local ip_display
+		ip_display=$(format_peer_ip_display "$peer_ip" "")
+		log_message "INFO" "$location_name" "Recovery verification: Byte counters not available for $ip_display (SA exists, verification limited)"
 		return 0
 	fi
 }
@@ -339,20 +352,12 @@ verify_ipsec_connections_active() {
 		declare -A LOCATIONS
 		if parse_location_config; then
 			local external_ips=()
-			local location_name
-			for location_name in "${!LOCATIONS[@]}"; do
-				# Extract external IP from location data format: "external:IP|internal:IPs"
-				local external_ip=""
-				if command -v get_location_external_ip >/dev/null 2>&1; then
-					external_ip=$(get_location_external_ip "$location_name" 2>/dev/null || echo "")
-				else
-					# Fallback: extract from LOCATIONS format directly
-					local location_data="${LOCATIONS[$location_name]:-}"
-					if [[ "$location_data" =~ external:([^|]+) ]]; then
-						external_ip="${BASH_REMATCH[1]:-}"
-					fi
-				fi
-				if [[ -n "$external_ip" ]]; then
+			# Use iter_location_name to avoid overwriting location_name from parent scope
+			local iter_location_name
+			for iter_location_name in "${!LOCATIONS[@]}"; do
+				# Extract external IP using helper function
+				local external_ip
+				if external_ip=$(get_location_external_ip "$iter_location_name" 2>/dev/null); then
 					external_ips+=("$external_ip")
 				fi
 			done

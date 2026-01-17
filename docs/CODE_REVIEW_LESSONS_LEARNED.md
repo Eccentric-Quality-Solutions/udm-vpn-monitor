@@ -2089,20 +2089,18 @@ During code review, found bug in `full_restart()` where external IP was incorrec
 - Recovery verification wouldn't work correctly for multiple locations
 
 ### Lesson
-**Always use `get_location_external_ip()` helper function to extract external IP from LOCATIONS array.** The `LOCATIONS` array stores delimited strings, not just IPs. Always use the helper function with fallback regex pattern for consistency.
+**Always use `get_location_external_ip()` helper function to extract external IP from LOCATIONS array.** The `LOCATIONS` array stores delimited strings, not just IPs. Always use the helper function for consistency and proper parsing.
 
 ### Pattern to Follow
 ```bash
-# ✅ GOOD: Use helper function with fallback
-local external_ip=""
-if command -v get_location_external_ip >/dev/null 2>&1; then
-    external_ip=$(get_location_external_ip "$location_name" 2>/dev/null || echo "")
+# ✅ GOOD: Use helper function directly
+local external_ip
+if external_ip=$(get_location_external_ip "$location_name" 2>/dev/null); then
+    # Use external_ip
 else
-    # Fallback: extract from LOCATIONS format directly
-    local location_data="${LOCATIONS[$location_name]:-}"
-    if [[ "$location_data" =~ external:([^|]+) ]]; then
-        external_ip="${BASH_REMATCH[1]}"
-    fi
+    # Handle error: location not found or extraction failed
+    handle_error "WARNING" "$location_name" "Failed to get external IP"
+    continue  # or return, depending on context
 fi
 
 # ❌ BAD: Direct array access (gets full delimited string)
@@ -2111,7 +2109,8 @@ local external_ip="${LOCATIONS[$location_name]}"
 
 ### Systematic Application
 - When iterating over `LOCATIONS` array, always extract external IP using `get_location_external_ip()`
-- If helper function unavailable, use regex fallback: `external:([^|]+)`
+- The helper function is always available when `parse_location_config()` is available (they're in the same module)
+- Always check the return value of `get_location_external_ip()` and handle errors appropriately
 - Never assume `LOCATIONS[$name]` contains just the IP address
 - Check existing code patterns (like `verify_ipsec_connections_active()`) for reference
 

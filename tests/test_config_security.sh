@@ -103,7 +103,6 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	create_test_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"STATE_DIR=\"${readonly_state_dir}\""
-	EOF
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -346,7 +345,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should parse successfully (comments are ignored)
 	assert_file_exist "$LOG_FILE"
 	# Should not contain error about dangerous content
-	refute_file_contains "$log_file" "dangerous content"
+	refute_file_contains "$LOG_FILE" "dangerous content"
 
 	remove_mock_from_path
 }
@@ -383,7 +382,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should parse successfully
 	assert_file_exist "$LOG_FILE"
 	# Should not contain error about dangerous content
-	refute_file_contains "$log_file" "dangerous content"
+	refute_file_contains "$LOG_FILE" "dangerous content"
 
 	remove_mock_from_path
 }

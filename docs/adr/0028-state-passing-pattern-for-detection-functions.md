@@ -14,7 +14,7 @@ The VPN detection system requires checking Security Association (SA) existence a
   - **Duplicate system calls**: `ip xfrm state` executed 3 times per VPN check cycle
   - **Performance overhead**: 66-75% more system calls than necessary
   - **Inconsistent state**: Temporal inconsistencies when SA state changes between checks
-  - **Contradictory log messages**: Functions inferred SA state from `vpn_ok` return code, leading to incorrect assumptions (e.g., `vpn_ok=0` could mean "no SA" OR "SA exists but validation failed")
+  - **Contradictory log messages**: Functions inferred SA state from `primary_check_passed` return code, leading to incorrect assumptions (e.g., `primary_check_passed=0` could mean "no SA" OR "SA exists but validation failed")
 
 **Alternative Approaches Considered:**
 1. **Re-checking at each function** (original approach) - Simple but inefficient and error-prone
@@ -80,25 +80,26 @@ check_xfrm_status() {
 ```bash
 check_vpn_status() {
   local sa_exists=""
+  local primary_check_passed=0
 
   # Capture SA existence state from xfrm check
-  if check_xfrm_primary "$external_peer_ip" "$first_internal_ip" "$location_name" "xfrm_diagnostic" "sa_exists"; then
-    vpn_ok=1
+  if check_xfrm_primary "$external_peer_ip" "$first_internal_ip" "$location_name" "xfrm_diagnostic" "sa_exists" "xfrm_output"; then
+    primary_check_passed=1
   else
     # xfrm check failed, but sa_exists may still be set (SA exists but validation failed)
     # ... fallback logic ...
   fi
 
   # Pass known state downstream
-  check_ping_optional "$vpn_ok" "$external_peer_ip" "$internal_peer_ips" "$location_name" "$sa_exists"
-  determine_vpn_status "$vpn_ok" "$external_peer_ip" "$first_internal_ip" "$peer_sanitized" "$location_name" "$sa_exists"
+  check_ping_optional "$primary_check_passed" "$external_peer_ip" "$internal_peer_ips" "$location_name" "$sa_exists"
+  primary_check_passed=$(determine_vpn_status "$primary_check_passed" "$external_peer_ip" "$first_internal_ip" "$peer_sanitized" "$location_name" "$sa_exists" "$xfrm_output")
 }
 ```
 
 **Downstream Function (State Consumer):**
 ```bash
 check_ping_optional() {
-  local vpn_ok="$1"
+  local primary_check_passed="$1"
   local external_peer_ip="$2"
   local internal_peer_ips="$3"
   local location_name="$4"

@@ -1,0 +1,51 @@
+- Evaluate the entire codebase against all patterns documented in `docs/CODE_PATTERNS.md` and lessons learned in `docs/CODE_REVIEW_LESSONS_LEARNED.md`.
+- Generate a comprehensive evaluation report similar to `CODE_PATTERNS_EVALUATION.md` but using AI analysis instead of pattern matching.
+- Focus on non-test shell files (exclude `tests/`, `coverage/`, `.git/` directories).
+- For each file evaluated, check compliance with all relevant patterns from CODE_PATTERNS.md including:
+  - Error handling patterns (fatal errors, non-fatal errors, fake mode support)
+  - File operation patterns (readability checks, atomic writes)
+  - State management patterns (abstraction layers, state file paths)
+  - Validation patterns (validation functions vs inline regex)
+  - Function documentation patterns
+  - Configuration patterns
+  - Logging patterns
+  - Module organization patterns
+  - Variable and naming patterns
+  - Arithmetic and calculation patterns
+  - Process management patterns
+  - Network command timeout patterns
+  - Command availability patterns
+  - String parsing and manipulation patterns
+  - Loop and iteration patterns
+  - Associative array patterns
+  - Variable initialization patterns
+  - Bash strict mode and safety patterns
+  - Quoting and variable expansion patterns
+  - UDM-specific constraints
+- Also check compliance with lessons learned from CODE_REVIEW_LESSONS_LEARNED.md including:
+  - Abstraction layer usage
+  - Validation function usage
+  - Function signature verification
+  - Debug code removal
+  - File readability checks
+  - Fake mode support
+  - Error state tracking
+  - Timestamp arithmetic safety
+  - Command availability checks
+  - Network timeouts
+  - And all other documented lessons
+- For each issue found:
+  - Categorize by priority: 🔴 HIGH (critical bugs, hangs, data corruption, silent failures), 🟡 MEDIUM (best practices, maintainability, testing), 🟢 LOW (code quality, style, informational)
+  - Provide specific file path and line number references when possible
+  - Explain why the pattern violation is an issue
+  - Suggest how to fix it
+- Generate a summary report with:
+  - Total files evaluated
+  - Files with issues
+  - Total issues found
+  - Priority breakdown (HIGH/MEDIUM/LOW counts)
+  - Detailed findings per file
+  - Recommendations prioritized by impact
+- Save the report to `CODE_PATTERNS_EVALUATION.md` in the repository root.
+- Be thorough but pragmatic - focus on issues that actually matter and could cause problems, not theoretical edge cases that are already handled or extremely unlikely.
+- When in doubt about whether something is an issue, consider the context and whether it would actually cause problems in practice.

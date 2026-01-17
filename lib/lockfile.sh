@@ -642,13 +642,15 @@ check_directory_writable_for_lockfile() {
 #   $@: Arguments to pass to the function
 #
 # Returns:
-#   Never returns directly (exits via log_and_exit_lockfile_conflict, early error exit, or executes function)
+#   In fake mode: May return with exit code from main function if lockfile directory cannot be created
+#   Otherwise: Never returns directly (exits via log_and_exit_lockfile_conflict, early error exit, or executes function)
 #
 # Side effects:
 #   - Creates lockfile with timestamp:pid
 #   - Executes provided function with arguments
 #   - Removes lockfile on exit
 #   - Exits early with error if STATE_DIR is not writable
+#   - In fake mode: May skip lockfile acquisition if directory cannot be created
 acquire_lockfile() {
 	local main_func="$1"
 	shift
@@ -662,6 +664,23 @@ acquire_lockfile() {
 	if [[ -z "$lockfile_dir" ]] || [[ "$lockfile_dir" == "." ]]; then
 		# Fallback to STATE_DIR if we can't determine lockfile directory
 		lockfile_dir="${STATE_DIR:-}"
+	fi
+
+	# In fake mode, if the lockfile directory doesn't exist and can't be created,
+	# skip lockfile acquisition and just run the main function directly
+	# This allows the script to continue in fake mode even when STATE_DIR can't be created
+	if is_fake_mode && [[ -n "$lockfile_dir" ]] && [[ ! -d "$lockfile_dir" ]]; then
+		# Check if we can create the directory using the standard utility function
+		if ! try_ensure_directory_exists "$lockfile_dir"; then
+			# Directory doesn't exist and can't be created - skip lockfile in fake mode
+			# Log a warning but continue execution
+			if type handle_error >/dev/null 2>&1; then
+				handle_error "WARNING" "SYSTEM" "Lockfile directory does not exist and cannot be created: $lockfile_dir (skipping lockfile in fake mode)"
+			fi
+			# Just run the main function directly without lockfile protection
+			"$main_func" "$@"
+			return $?
+		fi
 	fi
 
 	# Always check STATE_DIR writability if it's set and exists

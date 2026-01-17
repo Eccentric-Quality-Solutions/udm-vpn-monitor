@@ -106,23 +106,24 @@ execute_ipsec_reload() {
 	local recovery_method_used="ipsec_reload"
 	store_recovery_method "$location_name" "$peer_ip" "$recovery_method_used"
 
-	# Note: execute_ipsec_reload doesn't have access to internal_peer_ip, so we only show external IP
-	log_message "INFO" "$location_name" "Attempting ipsec reload for ($peer_ip) (affects all tunnels)"
+	local ip_display
+	ip_display=$(format_peer_ip_display "$peer_ip" "")
+	log_message "INFO" "$location_name" "Attempting ipsec reload for $ip_display (affects all tunnels)"
 	if "$ipsec_cmd" reload >/dev/null 2>&1; then
 		command_succeeded=1
-		log_message "INFO" "$location_name" "Successfully reloaded IPsec connections via ipsec reload for ($peer_ip)"
+		log_message "INFO" "$location_name" "Successfully reloaded IPsec connections via ipsec reload for $ip_display"
 	else
 		reload_exit_code=$?
-		handle_error "WARNING" "$location_name" "ipsec reload failed for ($peer_ip) (exit code: ${reload_exit_code}), attempting ipsec restart"
+		handle_error "WARNING" "$location_name" "ipsec reload failed for $ip_display (exit code: ${reload_exit_code}), attempting ipsec restart"
 		# Update recovery method if fallback to restart
 		recovery_method_used="ipsec_restart"
 		store_recovery_method "$location_name" "$peer_ip" "$recovery_method_used"
 		if "$ipsec_cmd" restart >/dev/null 2>&1; then
 			command_succeeded=1
-			log_message "INFO" "$location_name" "Successfully restarted IPsec service via ipsec restart for ($peer_ip)"
+			log_message "INFO" "$location_name" "Successfully restarted IPsec service via ipsec restart for $ip_display"
 		else
 			restart_exit_code=$?
-			handle_error "ERROR" "$location_name" "ipsec restart also failed for ($peer_ip) (exit code: ${restart_exit_code})" 0
+			handle_error "ERROR" "$location_name" "ipsec restart also failed for $ip_display (exit code: ${restart_exit_code})" 0
 			command_succeeded=0
 		fi
 	fi
@@ -141,8 +142,9 @@ execute_ipsec_reload() {
 			if [[ $reload_duration -lt 0 ]]; then
 				reload_duration=0
 			fi
-			# Note: execute_ipsec_reload doesn't have access to internal_peer_ip, so we only show external IP
-			log_message "INFO" "$location_name" "Recovery completed for ($peer_ip) (via ipsec fallback, verification: connections active, duration: ${reload_duration}s)"
+			local ip_display
+			ip_display=$(format_peer_ip_display "$peer_ip" "")
+			log_message "INFO" "$location_name" "Recovery completed for $ip_display (via ipsec fallback, verification: connections active, duration: ${reload_duration}s)"
 			return 0
 		else
 			local current_time
@@ -152,11 +154,23 @@ execute_ipsec_reload() {
 			if [[ $reload_duration -lt 0 ]]; then
 				reload_duration=0
 			fi
-			handle_error "WARNING" "$location_name" "Recovery completed for ($peer_ip) (via ipsec fallback, verification: some connections not active, duration: ${reload_duration}s)"
+			local ip_display
+			ip_display=$(format_peer_ip_display "$peer_ip" "")
+			handle_error "WARNING" "$location_name" "Recovery completed for $ip_display (via ipsec fallback, verification: some connections not active, duration: ${reload_duration}s)"
+			# Clear recovery method since verification failed (prevents stale recovery method from being logged if VPN recovers naturally later)
+			if command -v clear_recovery_method >/dev/null 2>&1; then
+				clear_recovery_method "$location_name" "$peer_ip"
+			fi
 			return 1
 		fi
 	else
-		handle_error "WARNING" "$location_name" "Surgical cleanup failed for ($peer_ip) (ipsec commands failed, exit codes: reload=${reload_exit_code:-unknown}, restart=${restart_exit_code:-unknown})"
+		local ip_display
+		ip_display=$(format_peer_ip_display "$peer_ip" "")
+		handle_error "WARNING" "$location_name" "Surgical cleanup failed for $ip_display (ipsec commands failed, exit codes: reload=${reload_exit_code:-unknown}, restart=${restart_exit_code:-unknown})"
+		# Clear recovery method since recovery failed (prevents stale recovery method from being logged if VPN recovers naturally later)
+		if command -v clear_recovery_method >/dev/null 2>&1; then
+			clear_recovery_method "$location_name" "$peer_ip"
+		fi
 		return 1
 	fi
 }
@@ -242,18 +256,9 @@ execute_ipsec_restart() {
 			# Use a different variable name to avoid overwriting the function parameter
 			local iter_location_name
 			for iter_location_name in "${!LOCATIONS[@]}"; do
-				# Extract external IP from location data format: "external:IP|internal:IPs"
-				local external_ip=""
-				if command -v get_location_external_ip >/dev/null 2>&1; then
-					external_ip=$(get_location_external_ip "$iter_location_name" 2>/dev/null || echo "")
-				else
-					# Fallback: extract from LOCATIONS format directly
-					local location_data="${LOCATIONS[$iter_location_name]:-}"
-					if [[ "$location_data" =~ external:([^|]+) ]]; then
-						external_ip="${BASH_REMATCH[1]:-}"
-					fi
-				fi
-				if [[ -n "$external_ip" ]]; then
+				# Extract external IP using helper function
+				local external_ip
+				if external_ip=$(get_location_external_ip "$iter_location_name" 2>/dev/null); then
 					((total_peers++))
 					if verify_byte_counters_resume "$external_ip" "$iter_location_name" 2>/dev/null; then
 						((peers_with_bytes++))

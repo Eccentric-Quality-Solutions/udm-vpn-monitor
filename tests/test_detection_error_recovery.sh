@@ -812,18 +812,19 @@ EOF
 	# Source required functions
 	source_function "check_byte_counters"
 
-	# Test 1: Bytes not increasing (static) - should populate diagnostic with specific reason
+	# Test 1: Bytes static (current == last) with ping check disabled - should succeed but populate diagnostic with warning
 	# Note: Call function directly (not with 'run') so diagnostic variable is set in current shell
+	# This is the edge case fix: static bytes with ping disabled should not fail (to avoid false positives on healthy idle VPNs)
 	local diagnostic=""
-	if check_byte_counters "$location_name" "1000" "$peer_ip" "" "$internal_peer_ip" "diagnostic"; then
-		fail "check_byte_counters should fail when bytes are not increasing"
+	if ! check_byte_counters "$location_name" "1000" "$peer_ip" "" "$internal_peer_ip" "diagnostic"; then
+		fail "check_byte_counters should succeed when bytes are static and ping check is disabled (edge case fix)"
 	fi
-	# Verify diagnostic was populated with detailed reason
+	# Verify diagnostic was populated with warning message (not failure reason)
 	[[ -n "$diagnostic" ]] || fail "Diagnostic variable should be populated"
 	[[ "$diagnostic" == *"bytes not increasing"* ]] || fail "Diagnostic should mention 'bytes not increasing'"
 	[[ "$diagnostic" == *"current=1000"* ]] || fail "Diagnostic should include current byte count"
 	[[ "$diagnostic" == *"last=1000"* ]] || fail "Diagnostic should include last byte count"
-	[[ "$diagnostic" == *"ping check: disabled"* ]] || fail "Diagnostic should include ping check status"
+	[[ "$diagnostic" == *"ping check disabled"* ]] || fail "Diagnostic should include ping check status"
 
 	# Test 2: Bytes decreased - should populate diagnostic with decreased reason
 	set_peer_state "$location_name" "$peer_ip" "last_bytes" "2000"
@@ -861,6 +862,68 @@ EOF
 	[[ "$diagnostic" == *"ping check disabled"* ]] || fail "Diagnostic should mention ping check status"
 }
 
+# bats test_tags=category:detection,priority:medium
+@test "check_byte_counters handles static bytes (current == last) with ping enabled" {
+	# Purpose: Test verifies that check_byte_counters handles static bytes (current == last) correctly when ping check is enabled
+	# Expected: When bytes are static and ping check is enabled, function should use ping to determine if VPN is healthy
+	# Importance: Tests edge case where bytes are not increasing but ping check can verify VPN health
+	setup_test_environment "${TEST_DIR}"
+	local peer_ip="${TEST_PEER_IP}"
+	local location_name="TEST"
+	local internal_peer_ip="${TEST_PEER_IP2}"
+
+	# Set up environment
+	STATE_DIR="${TEST_DIR}"
+	LOGS_DIR="${STATE_DIR}/logs"
+	mkdir -p "${STATE_DIR}"
+	mkdir -p "${LOGS_DIR}"
+	export STATE_DIR LOGS_DIR
+	export ENABLE_PING_CHECK=1
+	export PING_COUNT=3
+	export PING_TIMEOUT=2
+	export LOCAL_UDM_IP="192.168.1.100"
+
+	# Initialize state with last_bytes to simulate bytes not increasing
+	source_function "set_peer_state"
+	set_peer_state "$location_name" "$peer_ip" "last_bytes" "1000"
+
+	# Source required functions
+	source_function "check_byte_counters"
+	source_function "get_local_ip_for_ping"
+
+	# Test 1: Bytes static (current == last) with ping check enabled and ping succeeds - should succeed
+	mock_ping_success >/dev/null
+	add_mock_to_path
+
+	local diagnostic=""
+	if ! check_byte_counters "$location_name" "1000" "$peer_ip" "" "$internal_peer_ip" "diagnostic"; then
+		fail "check_byte_counters should succeed when bytes are static and ping check succeeds"
+	fi
+	# Verify diagnostic was populated with warning message (not failure reason)
+	[[ -n "$diagnostic" ]] || fail "Diagnostic variable should be populated"
+	[[ "$diagnostic" == *"bytes not increasing"* ]] || fail "Diagnostic should mention 'bytes not increasing'"
+	[[ "$diagnostic" == *"current=1000"* ]] || fail "Diagnostic should include current byte count"
+	[[ "$diagnostic" == *"last=1000"* ]] || fail "Diagnostic should include last byte count"
+	[[ "$diagnostic" == *"ping check"* ]] || fail "Diagnostic should mention ping check"
+
+	remove_mock_from_path
+
+	# Test 2: Bytes static (current == last) with ping check enabled and ping fails - should fail
+	mock_ping_failure >/dev/null
+	add_mock_to_path
+
+	diagnostic=""
+	if check_byte_counters "$location_name" "1000" "$peer_ip" "" "$internal_peer_ip" "diagnostic"; then
+		fail "check_byte_counters should fail when bytes are static and ping check fails"
+	fi
+	# Verify diagnostic was populated with failure reason
+	[[ -n "$diagnostic" ]] || fail "Diagnostic variable should be populated"
+	[[ "$diagnostic" == *"bytes not increasing"* ]] || fail "Diagnostic should mention 'bytes not increasing'"
+	[[ "$diagnostic" == *"ping check failed"* ]] || fail "Diagnostic should mention 'ping check failed'"
+
+	remove_mock_from_path
+}
+
 # bats test_tags=category:high-risk,priority:medium
 @test "XFRM output reuse optimization - ip xfrm state called once per VPN check cycle" {
 	# Purpose: Test verifies that ip xfrm state is only called once per VPN check cycle when
@@ -895,7 +958,7 @@ if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     count=\$(cat "$call_count_file" 2>/dev/null || echo "0")
     count=\$((count + 1))
     echo "\$count" > "$call_count_file"
-    # Return SA with byte counter info (same value as last_bytes to trigger "bytes not increasing")
+    # Return SA with byte counter info (lower value than last_bytes to trigger "bytes decreased")
     echo "src ${peer_ip} dst ${peer_ip}"
     echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
     echo "    lifetime current: 1000 bytes, 10 packets"
@@ -908,7 +971,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     count=\$(cat "$call_count_file" 2>/dev/null || echo "0")
     count=\$((count + 1))
     echo "\$count" > "$call_count_file"
-    # Return SA with byte counter info
+    # Return SA with byte counter info (lower value than last_bytes to trigger "bytes decreased")
     echo "src ${peer_ip} dst ${peer_ip}"
     echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
     echo "    lifetime current: 1000 bytes, 10 packets"
@@ -924,12 +987,12 @@ EOF
 	mock_ipsec_status 1
 	add_mock_to_path
 
-	# Initialize state with last_bytes set to same value (bytes not increasing)
-	# This will cause xfrm check to find SA but validation fails (bytes not increasing)
+	# Initialize state with last_bytes set higher than current bytes (bytes decreased)
+	# This will cause xfrm check to find SA but validation fails (bytes decreased)
 	# xfrm_output will be captured, but VPN check will fail, triggering failure type detection
 	source_function "set_peer_state"
 	set_peer_state "$location_name" "$peer_ip" "failure_count" "0"
-	set_peer_state "$location_name" "$peer_ip" "last_bytes" "1000"
+	set_peer_state "$location_name" "$peer_ip" "last_bytes" "2000"
 
 	# Disable ping check to ensure we test the xfrm path (not ping path)
 	# When bytes not increasing and ping disabled, xfrm check fails and triggers failure type detection
@@ -1011,34 +1074,31 @@ EOF
 	mock_ipsec_status 1
 	add_mock_to_path
 
-	# Initialize state with last_bytes set to same value (simulating bytes not increasing)
+	# Initialize state with last_bytes set higher than current (simulating bytes decreased)
+	# This scenario still causes failure, so we can test the combined diagnostic message format
 	source_function "set_peer_state"
 	set_peer_state "$location_name" "$peer_ip" "failure_count" "0"
-	set_peer_state "$location_name" "$peer_ip" "last_bytes" "1000"
+	set_peer_state "$location_name" "$peer_ip" "last_bytes" "2000"
 
 	# Source required functions
 	source_function "check_vpn_status"
 
-	# Disable ping check to ensure we get the "bytes not increasing" diagnostic
+	# Disable ping check to ensure we get the "bytes decreased" diagnostic
 	export ENABLE_PING_CHECK=0
 
-	# Call check_vpn_status - both methods should fail
+	# Call check_vpn_status - should fail (bytes decreased)
 	run check_vpn_status "$peer_ip" "$internal_ip" "$location_name"
 	assert_failure
 
 	# Verify combined diagnostic message was logged
 	assert_file_exist "$log_file"
 
-	# Verify the combined message includes detailed byte counter validation reason
-	# Should NOT contain generic "byte counter validation failed"
-	assert_log_not_contains "$log_file" "byte counter validation failed"
-
-	# Should contain detailed reason about bytes not increasing
-	assert_log_contains "$log_file" "bytes not increasing"
+	# Should contain detailed reason about bytes decreased (not generic message)
+	assert_log_contains "$log_file" "bytes decreased"
 
 	# Should include specific byte counter values
 	assert_log_contains "$log_file" "current=1000"
-	assert_log_contains "$log_file" "last=1000"
+	assert_log_contains "$log_file" "last=2000"
 
 	# Should include ping check status
 	assert_log_contains "$log_file" "ping check: disabled"

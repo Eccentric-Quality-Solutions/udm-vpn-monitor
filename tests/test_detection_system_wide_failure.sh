@@ -879,3 +879,272 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	remove_mock_from_path
 }
+
+# bats test_tags=category:high-risk,priority:medium
+@test "system-wide failure detection: stale state from previous cycle (VPN recovers in same cycle)" {
+	# Purpose: Test verifies that system-wide failure detection uses stale state from previous cycle before current cycle completes
+	# Expected: System-wide failure detection checks failure counts from previous cycle, so if VPN was failing but recovers
+	#           in current cycle, detection still sees it as failing until current cycle completes (one cycle behind)
+	# Importance: Tests the documented design trade-off where efficiency (avoiding double work) is prioritized over immediate accuracy
+	# This is the edge case identified in LOGIC_REVIEW_REPORT.md: system-wide failure detection may be one cycle behind
+	local ip1="192.168.1.1"
+	local ip2="192.168.1.2"
+	local ip3="192.168.1.3"
+	local peer_ips="${ip1} ${ip2} ${ip3}"
+
+	# Set up test with 3 locations
+	setup_test_vpn_monitor "$peer_ips" "${TEST_DIR}" \
+		'ENABLE_SYSTEM_WIDE_FAILURE_DETECTION=1' \
+		'SYSTEM_WIDE_FAILURE_THRESHOLD=100'
+
+	# Source required functions
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" || true
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" || true
+	# shellcheck source=../lib/detection.sh
+	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+
+	# Set up state directory
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	# Step 1: Previous cycle - All locations were failing (set failure counts from previous cycle)
+	ensure_state_functions_loaded
+	set_peer_state "TEST1" "$ip1" "failure_count" "5" || true
+	set_peer_state "TEST2" "$ip2" "failure_count" "5" || true
+	set_peer_state "TEST3" "$ip3" "failure_count" "5" || true
+
+	# Step 2: Current cycle - VPNs have recovered (all healthy now)
+	# Mock ip command - all SAs exist (VPNs are healthy)
+	mock_ip_xfrm_state_multiple_peers "$peer_ips" 2000 >/dev/null
+	mock_ipsec_status 0 >/dev/null
+	add_mock_to_path
+
+	# Run script - system-wide failure detection should see stale state (failure counts from previous cycle)
+	# even though VPNs are now healthy in current cycle
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Verify system-wide failure was detected based on stale state (failure counts from previous cycle)
+	# This demonstrates the one-cycle-behind behavior documented in LOGIC_REVIEW_REPORT.md
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "System-wide failure detected"
+	assert_file_contains "$LOG_FILE" "3 of 3 locations failing"
+
+	# Verify system-wide failure state was set
+	local state_file="${STATE_DIR}/system_wide_failure_state"
+	assert_file_exist "$state_file"
+	local state_value
+	state_value=$(cat "$state_file")
+	assert_equal "$state_value" "1"
+
+	# Step 3: Next cycle - Failure counts should be reset (VPNs recovered in previous cycle)
+	# Clear log file to check for resolution message
+	rm -f "$LOG_FILE"
+	mkdir -p "$(dirname "$LOG_FILE")"
+
+	# Mock still healthy
+	mock_ip_xfrm_state_multiple_peers "$peer_ips" 3000 >/dev/null
+	mock_ipsec_status 0 >/dev/null
+	add_mock_to_path
+
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Verify system-wide failure was resolved (failure counts reset in previous cycle)
+	assert_file_contains "$LOG_FILE" "System-wide failure resolved"
+
+	# Verify system-wide failure state was cleared
+	if [[ -f "$state_file" ]]; then
+		state_value=$(cat "$state_file")
+		assert_equal "$state_value" "0"
+	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "system-wide failure detection: stale state with partial recovery and threshold edge case" {
+	# Purpose: Test verifies that system-wide failure detection handles stale state correctly when some locations recover
+	# Expected: System-wide failure detection uses stale state from previous cycle, so partial recovery may not be detected immediately
+	# Importance: Tests edge case where threshold is met with stale state but some locations have actually recovered
+	# This tests the one-cycle-behind behavior with threshold edge cases
+	local ip1="192.168.1.1"
+	local ip2="192.168.1.2"
+	local ip3="192.168.1.3"
+	local ip4="192.168.1.4"
+	local peer_ips="${ip1} ${ip2} ${ip3} ${ip4}"
+
+	# Set up test with 4 locations, threshold 75% (3 out of 4 must fail)
+	setup_test_vpn_monitor "$peer_ips" "${TEST_DIR}" \
+		'ENABLE_SYSTEM_WIDE_FAILURE_DETECTION=1' \
+		'SYSTEM_WIDE_FAILURE_THRESHOLD=75'
+
+	# Source required functions
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" || true
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" || true
+	# shellcheck source=../lib/detection.sh
+	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+
+	# Set up state directory
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	# Step 1: Previous cycle - 3 out of 4 locations were failing (75% threshold met)
+	# Set stale failure counts from previous cycle
+	ensure_state_functions_loaded
+	set_peer_state "TEST1" "$ip1" "failure_count" "5" || true
+	set_peer_state "TEST2" "$ip2" "failure_count" "5" || true
+	set_peer_state "TEST3" "$ip3" "failure_count" "5" || true
+	# TEST4 was healthy (no failure_count)
+
+	# Step 2: Current cycle - 2 locations have recovered (TEST1 and TEST2), but stale state shows 3 failing
+	# Mock ip command - TEST1 and TEST2 are healthy, TEST3 is still failing, TEST4 is healthy
+	mock_ip_xfrm_state "$ip1" "2000" >/dev/null
+	mock_ip_xfrm_state "$ip2" "2000" >/dev/null
+	# TEST3 has no SA (still failing)
+	mock_ip_xfrm_state "" "" >/dev/null
+	mock_ipsec_status 1 >/dev/null
+	add_mock_to_path
+
+	# Run script - system-wide failure detection should see stale state (3/4 failing = 75% >= 75%)
+	# even though only 1 location is actually failing in current cycle
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Verify system-wide failure was detected based on stale state (3/4 = 75% >= 75% threshold)
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "System-wide failure detected"
+	assert_file_contains "$LOG_FILE" "3 of 4 locations failing"
+
+	# Verify system-wide failure state was set
+	local state_file="${STATE_DIR}/system_wide_failure_state"
+	assert_file_exist "$state_file"
+	local state_value
+	state_value=$(cat "$state_file")
+	assert_equal "$state_value" "1"
+
+	# Step 3: Next cycle - Failure counts should be updated (TEST1 and TEST2 recovered, only TEST3 failing)
+	# Clear log file to check for resolution message
+	rm -f "$LOG_FILE"
+	mkdir -p "$(dirname "$LOG_FILE")"
+
+	# Mock - TEST1 and TEST2 still healthy, TEST3 still failing
+	mock_ip_xfrm_state "$ip1" "3000" >/dev/null
+	mock_ip_xfrm_state "$ip2" "3000" >/dev/null
+	mock_ip_xfrm_state "" "" >/dev/null
+	mock_ipsec_status 1 >/dev/null
+	add_mock_to_path
+
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Verify system-wide failure was resolved (only 1/4 = 25% < 75% threshold)
+	assert_file_contains "$LOG_FILE" "System-wide failure resolved"
+
+	# Verify system-wide failure state was cleared
+	if [[ -f "$state_file" ]]; then
+		state_value=$(cat "$state_file")
+		assert_equal "$state_value" "0"
+	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "system-wide failure detection: stale state with coordination during recovery" {
+	# Purpose: Test verifies that recovery coordination works correctly with stale state during system-wide failure
+	# Expected: Coordinator is set based on stale state detection, and recovery is coordinated even when some locations have recovered
+	# Importance: Tests that coordination mechanism works correctly with the one-cycle-behind behavior
+	local ip1="192.168.1.1"
+	local ip2="192.168.1.2"
+	local ip3="192.168.1.3"
+	local peer_ips="${ip1} ${ip2} ${ip3}"
+
+	# Set up test with 3 locations, coordination enabled
+	setup_test_vpn_monitor "$peer_ips" "${TEST_DIR}" \
+		'ENABLE_SYSTEM_WIDE_FAILURE_DETECTION=1' \
+		'SYSTEM_WIDE_FAILURE_THRESHOLD=100' \
+		'COORDINATE_SYSTEM_WIDE_RECOVERY=1'
+
+	# Source required functions
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" || true
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" || true
+	# shellcheck source=../lib/detection.sh
+	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+
+	# Set up state directory
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	# Step 1: Previous cycle - All locations were failing (set stale failure counts)
+	ensure_state_functions_loaded
+	set_peer_state "TEST1" "$ip1" "failure_count" "5" || true
+	set_peer_state "TEST2" "$ip2" "failure_count" "5" || true
+	set_peer_state "TEST3" "$ip3" "failure_count" "5" || true
+
+	# Step 2: Current cycle - All locations have recovered (all healthy now), but stale state shows all failing
+	# Mock ip command - all SAs exist (VPNs are healthy)
+	mock_ip_xfrm_state_multiple_peers "$peer_ips" 2000 >/dev/null
+	mock_ipsec_status 0 >/dev/null
+	add_mock_to_path
+
+	# Run script - system-wide failure detection should see stale state and set coordinator
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Verify system-wide failure was detected based on stale state
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "System-wide failure detected"
+	assert_file_contains "$LOG_FILE" "3 of 3 locations failing"
+
+	# Verify coordinator was set (first location to check becomes coordinator)
+	local coordinator_file="${STATE_DIR}/system_wide_failure_coordinator"
+	assert_file_exist "$coordinator_file"
+	local coordinator
+	coordinator=$(cat "$coordinator_file")
+	# Coordinator should be one of the locations
+	assert [ "$coordinator" == "TEST1" ] || [ "$coordinator" == "TEST2" ] || [ "$coordinator" == "TEST3" ]
+
+	# Verify system-wide failure state was set
+	local state_file="${STATE_DIR}/system_wide_failure_state"
+	assert_file_exist "$state_file"
+	local state_value
+	state_value=$(cat "$state_file")
+	assert_equal "$state_value" "1"
+
+	# Step 3: Next cycle - Failure counts should be reset (VPNs recovered in previous cycle)
+	# Clear log file to check for resolution message
+	rm -f "$LOG_FILE"
+	mkdir -p "$(dirname "$LOG_FILE")"
+
+	# Mock still healthy
+	mock_ip_xfrm_state_multiple_peers "$peer_ips" 3000 >/dev/null
+	mock_ipsec_status 0 >/dev/null
+	add_mock_to_path
+
+	run bash "$TEST_SCRIPT" --fake
+	assert_success
+
+	# Verify system-wide failure was resolved (failure counts reset in previous cycle)
+	assert_file_contains "$LOG_FILE" "System-wide failure resolved"
+
+	# Verify system-wide failure state was cleared
+	if [[ -f "$state_file" ]]; then
+		state_value=$(cat "$state_file")
+		assert_equal "$state_value" "0"
+	fi
+
+	# Verify coordinator was cleared
+	assert_file_not_exist "$coordinator_file"
+
+	remove_mock_from_path
+}

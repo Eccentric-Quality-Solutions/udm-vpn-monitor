@@ -11,6 +11,7 @@
 # - Timestamp operations: get_unix_timestamp(), validate_timestamp(), safe_timestamp_subtract(), safe_timestamp_add(), safe_timestamp_diff()
 # - String escaping: escape_sed_replacement(), escape_sed_regex()
 # - String sanitization: sanitize_location_name()
+# - String trimming: trim()
 # - Config file operations: update_config_value()
 # - Logging: log_info(), log_warn(), log_error()
 # - System checks: check_root()
@@ -158,6 +159,8 @@ check_root() {
 #
 # Verifies that a file exists and is readable. This is a common pattern
 # used throughout the codebase to check file accessibility before operations.
+# Uses timeout wrapper to prevent hangs when checking files with restrictive
+# permissions (e.g., 000) on some systems.
 #
 # Arguments:
 #   $1: File path to check
@@ -170,8 +173,31 @@ check_root() {
 #   if file_exists_and_readable "$config_file"; then
 #       safe_parse_config_file "$config_file"  # Use safe parser, not source
 #   fi
+#
+# Note:
+#   Uses timeout wrapper (if available) to prevent hangs on unreadable files.
+#   On systems without timeout command, falls back to standard test (may hang
+#   on some filesystems with restrictive permissions).
 file_exists_and_readable() {
-	[[ -f "$1" ]] && [[ -r "$1" ]]
+	local file="$1"
+	# Check file exists first (fast check)
+	if [[ ! -f "$file" ]]; then
+		return 1
+	fi
+	# Check readability with timeout wrapper to prevent hangs on unreadable files
+	# This is especially important for files with 000 permissions on some systems
+	# where the readability check might hang due to filesystem or NFS issues
+	# Use --kill-after with timeout to ensure the process is killed if it hangs
+	# This is more reliable than timeout alone on some systems
+	if command -v timeout >/dev/null 2>&1; then
+		# Use timeout with --kill-after to ensure test -r is killed if it hangs
+		# --kill-after=0.5 sends SIGKILL 0.5 seconds after SIGTERM if process doesn't exit
+		# This ensures the check completes quickly even if test -r hangs
+		timeout --kill-after=0.5 1 test -r "$file" 2>/dev/null && return 0 || return 1
+	else
+		# Fallback without timeout (may hang on some systems with restrictive permissions)
+		[[ -r "$file" ]]
+	fi
 }
 
 # Ensure file exists with optional default content
@@ -551,6 +577,7 @@ try_ensure_directory_exists() {
 # Note:
 #   Uses pattern: echo "$content" >"${file}.tmp" && mv "${file}.tmp" "$file"
 #   This ensures atomic operation - either full write succeeds or file remains unchanged
+#   Sets explicit permissions (chmod 600) after successful write for security
 atomic_write_file() {
 	local file="$1"
 	local content="$2"
@@ -574,6 +601,11 @@ atomic_write_file() {
 	if ! (echo "$content" >"${file}.tmp" && mv "${file}.tmp" "$file"); then
 		return 1
 	fi
+
+	# Set explicit permissions for state files (security best practice)
+	# chmod 600 ensures only owner can read/write, preventing information leakage
+	chmod 600 "$file" 2>/dev/null || true
+
 	return 0
 }
 
@@ -692,6 +724,50 @@ sanitize_location_name() {
 	return 0
 }
 
+# Trim leading and trailing whitespace from a string
+#
+# Removes all leading and trailing whitespace characters (spaces, tabs, newlines)
+# from the input string using efficient bash parameter expansion.
+#
+# Arguments:
+#   $1: String to trim
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints trimmed string to stdout
+#
+# Examples:
+#   trimmed=$(trim "  hello world  ")
+#   # Returns: "hello world"
+#
+#   value=$(trim "$input_value")
+#   if [[ -z "$value" ]]; then
+#       echo "Empty after trimming"
+#   fi
+#
+# Note:
+#   - Uses bash parameter expansion for performance (faster than sed)
+#   - Handles all POSIX whitespace characters: space, tab, newline, etc.
+#   - Returns empty string if input is all whitespace
+trim() {
+	local str="$1"
+
+	# Remove leading whitespace: ${str#"${str%%[![:space:]]*}"}
+	#   ${str%%[![:space:]]*} - removes everything from first non-space to end
+	#   ${str#...} - removes that leading whitespace prefix
+	str="${str#"${str%%[![:space:]]*}"}"
+
+	# Remove trailing whitespace: ${str%"${str##*[![:space:]]}"}
+	#   ${str##*[![:space:]]} - removes everything up to last non-space
+	#   ${str%...} - removes that trailing whitespace suffix
+	str="${str%"${str##*[![:space:]]}"}"
+
+	echo "$str"
+	return 0
+}
+
 # Update or add a configuration variable in config file
 #
 # Updates an existing configuration variable or adds it if it doesn't exist.
@@ -707,7 +783,7 @@ sanitize_location_name() {
 #
 # Returns:
 #   0: Success
-#   1: Failed to update config file (file doesn't exist or write failed)
+#   1: Failed to update config file (file doesn't exist, unreadable, or write failed)
 #
 # Examples:
 #   update_config_value "$config_file" "LOCAL_UDM_IP" "$local_udm_ip"
@@ -725,6 +801,11 @@ update_config_value() {
 
 	# Validate config file exists
 	if [[ ! -f "$config_file" ]]; then
+		return 1
+	fi
+
+	# Check file readability before grep operation (prevents hangs on unreadable files)
+	if ! file_exists_and_readable "$config_file"; then
 		return 1
 	fi
 

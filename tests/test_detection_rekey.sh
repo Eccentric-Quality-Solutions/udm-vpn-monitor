@@ -279,3 +279,53 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	remove_mock_from_path
 }
+
+# bats test_tags=category:high-risk,priority:medium
+@test "SA rekey detected - Rekey with zero bytes (baseline reset allows zero bytes)" {
+	# Purpose: Test verifies that SA rekey detection handles rekey events when byte counters are zero
+	# Expected: When rekey occurs with zero bytes, baseline is reset to 0 and VPN is treated as healthy
+	# Importance: Tests edge case where rekey occurs immediately after SA establishment (zero bytes)
+	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
+
+	# Set initial SPI and byte counter using location-based state functions
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+	# setup_location_vpn_monitor creates location "TEST" from LOCATION_TEST_EXTERNAL
+	set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "0x12345678" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "last_bytes" "5000" || true
+
+	# Mock ip command - new SPI (rekey occurred) with zero bytes
+	mock_ip_xfrm_state "${TEST_PEER_IP}" 0 "0x87654321" >/dev/null
+	add_mock_to_path
+
+	run bash "$TEST_SCRIPT" --fake
+
+	# Should detect rekey and reset baseline
+	assert_success
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "SA rekey detected" "rekey"
+
+	source_function "get_peer_state_file_path"
+
+	# Verify byte counter baseline was reset to 0 - use location-based path
+	# setup_location_vpn_monitor creates location "TEST" from LOCATION_TEST_EXTERNAL
+	local bytes_file
+	bytes_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
+	if [[ -f "$bytes_file" ]]; then
+		local bytes
+		bytes=$(cat "$bytes_file")
+		# After rekey with zero bytes, baseline should be reset to 0
+		assert_equal "$bytes" 0
+	fi
+
+	# Verify SPI was updated
+	local spi_file
+	spi_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "spi")
+	if [[ -f "$spi_file" ]]; then
+		local spi
+		spi=$(cat "$spi_file")
+		assert_equal "$spi" "0x87654321"
+	fi
+
+	remove_mock_from_path
+}
