@@ -200,6 +200,99 @@ file_exists_and_readable() {
 	fi
 }
 
+# Run command with timeout wrapper
+#
+# Executes a command with timeout protection if the timeout command is available.
+# Falls back to executing without timeout if timeout is not available.
+# This consolidates the common pattern of checking for timeout availability
+# before executing commands that might hang.
+#
+# Arguments:
+#   $1: Timeout duration in seconds (default: 1)
+#   $2-$N: Command and arguments to execute (or command string if using -c flag)
+#
+# Returns:
+#   Exit code of the executed command (or timeout exit code if command times out)
+#
+# Output:
+#   Captures and returns stdout/stderr of the command (for use in command substitution)
+#
+# Examples:
+#   # Simple command
+#   if run_with_timeout 1 grep -qE '^[0-9]+$' "$file"; then
+#       echo "File contains only digits"
+#   fi
+#
+#   # Command with pipes (wrap in sh -c)
+#   result=$(run_with_timeout 1 sh -c "grep -E '^[0-9]+$' \"$file\" | sort -n | tail -n 1")
+#
+#   # Capture output
+#   output=$(run_with_timeout 1 cat "$file")
+#
+# Note:
+#   For commands with pipes or complex redirections, wrap in sh -c.
+#   Timeout exit code is 124 if command times out.
+#   Stderr is redirected to /dev/null to match existing patterns.
+run_with_timeout() {
+	local timeout_duration="${1:-1}"
+	shift # Remove timeout_duration from arguments, leaving command
+
+	# Check if timeout command is available
+	if command -v timeout >/dev/null 2>&1; then
+		# Execute with timeout
+		timeout "$timeout_duration" "$@" 2>/dev/null
+		return $?
+	else
+		# Fallback without timeout
+		"$@" 2>/dev/null
+		return $?
+	fi
+}
+
+# Run command with timeout wrapper and kill-after option
+#
+# Executes a command with timeout protection and --kill-after option if the timeout command is available.
+# Falls back to executing without timeout if timeout is not available.
+# This consolidates the common pattern of checking for timeout availability before executing
+# commands that might hang and need aggressive termination (e.g., find on unreadable files).
+#
+# Arguments:
+#   $1: Timeout duration in seconds (default: 1)
+#   $2: Kill-after duration in seconds (default: 0.5)
+#   $3-$N: Command and arguments to execute
+#
+# Returns:
+#   Exit code of the executed command (or timeout exit code if command times out)
+#
+# Output:
+#   Captures and returns stdout/stderr of the command (for use in command substitution)
+#
+# Examples:
+#   # Find command with kill-after
+#   run_with_timeout_kill_after 5 1 find "$dir" -name "*.txt" -print0 >"$output_file" 2>/dev/null || true
+#
+# Note:
+#   For commands with pipes or complex redirections, wrap in sh -c.
+#   Timeout exit code is 124 if command times out.
+#   Stderr is redirected to /dev/null to match existing patterns.
+#   Use this helper for commands that need aggressive termination (e.g., find on unreadable files).
+run_with_timeout_kill_after() {
+	local timeout_duration="${1:-1}"
+	local kill_after="${2:-0.5}"
+	shift 2 # Remove timeout_duration and kill_after from arguments, leaving command
+
+	# Check if timeout command is available
+	if command -v timeout >/dev/null 2>&1; then
+		# Execute with timeout and --kill-after
+		timeout --kill-after="$kill_after" "$timeout_duration" "$@" 2>/dev/null
+		return $?
+	else
+		# Fallback without timeout
+		"$@" 2>/dev/null
+		return $?
+	fi
+}
+
 # Ensure file exists with optional default content
 #
 # Creates a file if it doesn't exist, optionally writing default content.

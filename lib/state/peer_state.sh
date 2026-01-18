@@ -56,12 +56,8 @@ get_peer_state() {
 		# Note: This is specific to this high-risk path - other similar code paths rely on
 		# file_exists_and_readable checks alone. If test suite timing issues persist, investigate
 		# test execution environment separately rather than adding timeouts everywhere.
-		if command -v timeout >/dev/null 2>&1; then
-			value=$(timeout 1 cat "$state_file" 2>/dev/null || echo "$default_value")
-		else
-			# Fallback without timeout (shouldn't hang if file_exists_and_readable worked correctly)
-			value=$(cat "$state_file" 2>/dev/null || echo "$default_value")
-		fi
+		# Use helper function to standardize timeout command availability check
+		value=$(run_with_timeout 1 cat "$state_file" 2>/dev/null || echo "$default_value")
 		# Validate numeric keys
 		case "$key" in
 		failure_count | last_bytes | last_status_log)

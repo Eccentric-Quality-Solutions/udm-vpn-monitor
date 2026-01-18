@@ -349,12 +349,9 @@ get_failure_type() {
 		local failure_type
 		# Defensive timeout wrapper: file_exists_and_readable should prevent hangs, but this adds
 		# extra protection for edge cases (race conditions, test suite timing issues, etc.)
-		if command -v timeout >/dev/null 2>&1; then
-			failure_type=$(timeout 1 cat "$failure_type_file" 2>/dev/null | head -1 | tr -d '\n\r ' || echo "unknown")
-		else
-			# Fallback without timeout (shouldn't hang if file_exists_and_readable worked correctly)
-			failure_type=$(cat "$failure_type_file" 2>/dev/null | head -1 | tr -d '\n\r ' || echo "unknown")
-		fi
+		# Use helper function to standardize timeout command availability check
+		# Pipeline needs to be wrapped in sh -c for timeout to apply to entire pipeline
+		failure_type=$(run_with_timeout 1 sh -c "cat \"$failure_type_file\" 2>/dev/null | head -1 | tr -d '\n\r '" || echo "unknown")
 		if [[ -n "$failure_type" ]]; then
 			echo "$failure_type"
 			return 0
