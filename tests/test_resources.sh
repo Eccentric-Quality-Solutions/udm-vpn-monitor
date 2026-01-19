@@ -403,51 +403,199 @@ EOF
 # bats test_tags=category:unit
 @test "manage_log_files_on_low_disk rotates large log files" {
 	# Purpose: Test verifies that manage_log_files_on_low_disk rotates log files when they're large.
-	# Expected: Function rotates log files larger than threshold to free disk space.
+	# Expected: Function rotates ALL log files larger than threshold in LOGS_DIR (not just LOG_FILE).
 	# Importance: Log rotation prevents log files from consuming excessive disk space.
 	setup_resources_test
+	standard_setup
+
+	# Source logging library (required for handle_error and log_message)
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
+
 	source_resources_lib
 
 	local logs_dir="${TEST_DIR}/logs"
 	mkdir -p "$logs_dir"
 
-	# Create large log file (>10MB)
-	local log_file="${logs_dir}/vpn-monitor.log"
-	dd if=/dev/zero of="$log_file" bs=1024 count=10241 2>/dev/null || {
+	export LOGS_DIR="$logs_dir"
+
+	# Create large log files (>10MB) - both monitor and keepalive
+	local monitor_log="${logs_dir}/vpn-monitor.log"
+	local keepalive_log="${logs_dir}/vpn-keepalive.log"
+
+	# Create large monitor log file (>10MB = 10240KB)
+	dd if=/dev/zero of="$monitor_log" bs=1024 count=10241 2>/dev/null || {
 		# Fallback: create file with content
-		for i in {1..1000}; do
-			echo "Log line $i: $(head -c 1024 </dev/zero | tr '\0' 'A')" >>"$log_file"
+		for i in {1..11000}; do
+			echo "Monitor log line $i: $(head -c 1024 </dev/zero | tr '\0' 'A')" >>"$monitor_log" 2>/dev/null || break
 		done
 	}
 
-	# Set LOG_FILE and LOGS_DIR
-	export LOG_FILE="$log_file"
+	# Create large keepalive log file (>10MB)
+	dd if=/dev/zero of="$keepalive_log" bs=1024 count=10241 2>/dev/null || {
+		# Fallback: create file with content
+		for i in {1..11000}; do
+			echo "Keepalive log line $i: $(head -c 1024 </dev/zero | tr '\0' 'A')" >>"$keepalive_log" 2>/dev/null || break
+		done
+	}
+
+	# Create a small log file that should NOT be rotated
+	local small_log="${logs_dir}/small.log"
+	echo "Small log content" >"$small_log"
+
+	# Verify files exist and monitor/keepalive are large
+	[[ -f "$monitor_log" ]]
+	[[ -f "$keepalive_log" ]]
+	[[ -f "$small_log" ]]
+
+	# Call function with non-critical disk space (should only rotate, not remove old files)
+	run manage_log_files_on_low_disk "${TEST_DIR}" 15
+	assert_success
+
+	# Verify both large log files were rotated
+	[[ -f "${monitor_log}.old" ]]
+	[[ -f "${keepalive_log}.old" ]]
+
+	# Verify new empty log files were created
+	[[ -f "$monitor_log" ]]
+	[[ -f "$keepalive_log" ]]
+
+	# Verify small log file was NOT rotated
+	[[ -f "$small_log" ]]
+	[[ ! -f "${small_log}.old" ]]
+
+	# Verify rotated files are not empty (should contain original content)
+	[[ -s "${monitor_log}.old" ]]
+	[[ -s "${keepalive_log}.old" ]]
+}
+
+# bats test_tags=category:unit
+@test "manage_log_files_on_low_disk truncates logs when rotation fails" {
+	# Purpose: Test verifies that manage_log_files_on_low_disk falls back to truncation when rotation fails (disk full).
+	# Expected: Function truncates log files when mv fails, freeing space immediately.
+	# Importance: Ensures log management works even when disk is full and rotation is impossible.
+	setup_resources_test
+	standard_setup
+
+	# Source logging library (required for handle_error and log_message)
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
+
+	source_resources_lib
+
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+
 	export LOGS_DIR="$logs_dir"
 
-	# Test log rotation
-	# Note: Actual test depends on function implementation
+	# Create large log file (>10MB)
+	local monitor_log="${logs_dir}/vpn-monitor.log"
+	dd if=/dev/zero of="$monitor_log" bs=1024 count=10241 2>/dev/null || {
+		# Fallback: create file with content
+		for i in {1..11000}; do
+			echo "Monitor log line $i: $(head -c 1024 </dev/zero | tr '\0' 'A')" >>"$monitor_log" 2>/dev/null || break
+		done
+	}
+
+	# Verify file exists and is large
+	[[ -f "$monitor_log" ]]
+	local original_size
+	original_size=$(stat -c%s "$monitor_log" 2>/dev/null || echo "0")
+	[[ $original_size -gt 10240000 ]] # >10MB
+
+	# Create mock mv command that fails (simulates disk full scenario)
+	local mock_mv="${TEST_DIR}/mv"
+	cat >"$mock_mv" <<'EOF'
+#!/bin/bash
+# Mock mv that fails to simulate disk full
+exit 1
+EOF
+	chmod +x "$mock_mv"
+
+	# Add mock to PATH
+	local original_path="$PATH"
+	export PATH="${TEST_DIR}:${PATH}"
+
+	# Call function - rotation should fail, fallback to truncation
+	run manage_log_files_on_low_disk "${TEST_DIR}" 15
+	assert_success
+
+	# Restore PATH
+	export PATH="$original_path"
+
+	# Verify log file was truncated (not rotated, since rotation failed)
+	# File should exist but be empty or very small
+	[[ -f "$monitor_log" ]]
+	local new_size
+	new_size=$(stat -c%s "$monitor_log" 2>/dev/null || echo "0")
+	[[ $new_size -lt $original_size ]] # File should be smaller (truncated)
+	[[ $new_size -eq 0 ]]              # File should be empty after truncation
+
+	# Verify rotation did NOT happen (since it failed)
+	# The .old file should not exist because mv failed
+	[[ ! -f "${monitor_log}.old" ]]
 }
 
 # bats test_tags=category:unit
 @test "manage_log_files_on_low_disk removes old log files when space critical" {
 	# Purpose: Test verifies that manage_log_files_on_low_disk removes old log files when disk space is critical.
-	# Expected: Function removes .old log files when free space is below 10%.
-	# Importance: Aggressive cleanup prevents disk from filling completely.
+	# Expected: Function removes .old log files when free space is below 10%, keeping 2 most recent.
+	# Importance: Aggressive cleanup prevents disk from filling completely while preserving some history.
 	setup_resources_test
+	standard_setup
+
+	# Source logging library (required for handle_error and log_message)
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
+
 	source_resources_lib
 
 	local logs_dir="${TEST_DIR}/logs"
 	mkdir -p "$logs_dir"
 
-	# Create old log files
-	touch "${logs_dir}/vpn-monitor.log.old"
-	touch "${logs_dir}/vpn-monitor.log.old.1"
-
-	export LOG_FILE="${logs_dir}/vpn-monitor.log"
 	export LOGS_DIR="$logs_dir"
 
-	# Test old file removal
-	# Note: Actual test depends on function implementation
+	# Create multiple old log files with explicit modification times
+	# Use touch -d to set explicit timestamps (more reliable than sleep)
+	# Note: Files must end in .old to match the function's find pattern (*.old)
+	local old1="${logs_dir}/vpn-monitor.log.1.old"
+	local old2="${logs_dir}/vpn-keepalive.log.1.old"
+	local old3="${logs_dir}/vpn-monitor.log.2.old"
+	local old4="${logs_dir}/vpn-keepalive.log.2.old"
+
+	# Create files with explicit timestamps (oldest to newest)
+	local base_time=$(($(date +%s) - 3600)) # 1 hour ago
+	echo "Old log 1" >"$old1"
+	touch -d "@$base_time" "$old1" 2>/dev/null || true
+
+	echo "Old log 2" >"$old2"
+	touch -d "@$((base_time + 60))" "$old2" 2>/dev/null || true
+
+	echo "Old log 3" >"$old3"
+	touch -d "@$((base_time + 120))" "$old3" 2>/dev/null || true
+
+	echo "Old log 4" >"$old4"
+	touch -d "@$((base_time + 180))" "$old4" 2>/dev/null || true
+
+	# Verify all old files exist
+	[[ -f "$old1" ]]
+	[[ -f "$old2" ]]
+	[[ -f "$old3" ]]
+	[[ -f "$old4" ]]
+
+	# Call function with critical disk space (<10%)
+	run manage_log_files_on_low_disk "${TEST_DIR}" 8
+	assert_success
+
+	# Verify that only 2 most recent .old files are kept
+	# (old3 and old4 should be the most recent, old1 and old2 should be removed)
+	# Verify oldest files are removed
+	[[ ! -f "$old1" ]] # Oldest should be removed
+	[[ ! -f "$old2" ]] # Second oldest should be removed
+
+	# Verify newest files are kept
+	[[ -f "$old3" ]] # Third newest should be kept
+	[[ -f "$old4" ]] # Newest should be kept
 }
 
 # bats test_tags=category:unit

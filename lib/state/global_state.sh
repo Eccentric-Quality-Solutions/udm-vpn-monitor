@@ -36,6 +36,109 @@ get_file_mtime() {
 	stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null || echo "0"
 }
 
+# Format rate limit error message
+#
+# Formats a detailed error message when rate limit is exceeded, including:
+# - Reset timestamp (when oldest restart will expire)
+# - Countdown (time remaining until reset)
+# - List of restart timestamps that count toward the limit
+#
+# Arguments:
+#   $1: Recent restart count
+#   $2: Window size in minutes
+#   $3: Maximum restarts allowed per window
+#   $4: Recent restart timestamps (newline-separated)
+#   $5: Current timestamp
+#   $6: Window size in seconds
+#   $7: Oldest restart timestamp (must be valid)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints formatted error message to stdout
+#
+# Side effects:
+#   None (pure function)
+#
+# Examples:
+#   error_msg=$(_format_rate_limit_error "$recent_restarts" "$window_minutes" "$max_restarts" "$recent_timestamps" "$now" "$window_seconds" "$oldest_restart")
+#
+# Note:
+#   This is a helper function for check_rate_limit(). It formats the error message
+#   but does not log it - the caller is responsible for logging.
+#   Limits restart list display to first 10 timestamps to avoid overly long messages.
+_format_rate_limit_error() {
+	local recent_restarts="$1"
+	local window_minutes="$2"
+	local max_restarts="$3"
+	local recent_timestamps="$4"
+	local now="$5"
+	local window_seconds="$6"
+	local oldest_restart="$7"
+
+	# Calculate when rate limit will reset (oldest restart + window duration)
+	local reset_timestamp
+	reset_timestamp=$(safe_timestamp_add "$oldest_restart" "$window_seconds" 2>/dev/null || echo "0")
+
+	# Calculate countdown (time remaining until reset)
+	local countdown_seconds
+	countdown_seconds=$(calculate_duration "$now" "$reset_timestamp" 2>/dev/null || echo "0")
+
+	# Format reset timestamp for human readability
+	local reset_formatted
+	if [[ "$reset_timestamp" != "0" ]] && validate_timestamp "$reset_timestamp"; then
+		reset_formatted=$(date -d "@$reset_timestamp" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")
+	else
+		reset_formatted="unknown"
+	fi
+
+	# Format countdown as minutes:seconds or just seconds
+	local countdown_formatted
+	if [[ "$countdown_seconds" -gt 0 ]]; then
+		local minutes=$((countdown_seconds / 60))
+		local seconds=$((countdown_seconds % 60))
+		if [[ $minutes -gt 0 ]]; then
+			countdown_formatted="${minutes}m ${seconds}s"
+		else
+			countdown_formatted="${seconds}s"
+		fi
+	else
+		countdown_formatted="0s"
+	fi
+
+	# Format restart timestamps for logging (limit to first 10 to avoid overly long messages)
+	local restart_list=""
+	local restart_count=0
+	while IFS= read -r timestamp || [[ -n "$timestamp" ]]; do
+		[[ -z "$timestamp" ]] && continue
+		if [[ $restart_count -lt 10 ]]; then
+			local formatted_ts
+			formatted_ts=$(date -d "@$timestamp" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$timestamp")
+			if [[ -n "$restart_list" ]]; then
+				restart_list="${restart_list}, ${formatted_ts}"
+			else
+				restart_list="${formatted_ts}"
+			fi
+		fi
+		restart_count=$((restart_count + 1))
+	done <<<"$recent_timestamps"
+
+	# Add indicator if there are more restarts
+	if [[ $restart_count -gt 10 ]]; then
+		restart_list="${restart_list} (and $((restart_count - 10)) more)"
+	fi
+
+	# Build detailed error message
+	local error_msg="Rate limit exceeded: $recent_restarts restarts in last ${window_minutes} minute(s) (max: $max_restarts)"
+	error_msg="${error_msg}. Reset at: $reset_formatted (in $countdown_formatted)"
+	if [[ -n "$restart_list" ]]; then
+		error_msg="${error_msg}. Recent restarts: $restart_list"
+	fi
+
+	echo "$error_msg"
+}
+
 # Check rate limiting
 #
 # Verifies if the maximum number of Tier 3 restarts within the configured window has been exceeded,
@@ -179,65 +282,9 @@ check_rate_limit() {
 			return 0
 		fi
 
-		# Calculate when rate limit will reset (oldest restart + window duration)
-		local reset_timestamp
-		reset_timestamp=$(safe_timestamp_add "$oldest_restart" "$window_seconds" 2>/dev/null || echo "0")
-
-		# Calculate countdown (time remaining until reset)
-		local countdown_seconds
-		countdown_seconds=$(calculate_duration "$now" "$reset_timestamp" 2>/dev/null || echo "0")
-
-		# Format reset timestamp for human readability
-		local reset_formatted
-		if [[ "$reset_timestamp" != "0" ]] && validate_timestamp "$reset_timestamp"; then
-			reset_formatted=$(date -d "@$reset_timestamp" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")
-		else
-			reset_formatted="unknown"
-		fi
-
-		# Format countdown as minutes:seconds or just seconds
-		local countdown_formatted
-		if [[ "$countdown_seconds" -gt 0 ]]; then
-			local minutes=$((countdown_seconds / 60))
-			local seconds=$((countdown_seconds % 60))
-			if [[ $minutes -gt 0 ]]; then
-				countdown_formatted="${minutes}m ${seconds}s"
-			else
-				countdown_formatted="${seconds}s"
-			fi
-		else
-			countdown_formatted="0s"
-		fi
-
-		# Format restart timestamps for logging (limit to first 10 to avoid overly long messages)
-		local restart_list=""
-		local restart_count=0
-		while IFS= read -r timestamp || [[ -n "$timestamp" ]]; do
-			[[ -z "$timestamp" ]] && continue
-			if [[ $restart_count -lt 10 ]]; then
-				local formatted_ts
-				formatted_ts=$(date -d "@$timestamp" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$timestamp")
-				if [[ -n "$restart_list" ]]; then
-					restart_list="${restart_list}, ${formatted_ts}"
-				else
-					restart_list="${formatted_ts}"
-				fi
-			fi
-			restart_count=$((restart_count + 1))
-		done <<<"$recent_timestamps"
-
-		# Add indicator if there are more restarts
-		if [[ $restart_count -gt 10 ]]; then
-			restart_list="${restart_list} (and $((restart_count - 10)) more)"
-		fi
-
-		# Build detailed error message
-		local error_msg="Rate limit exceeded: $recent_restarts restarts in last ${window_minutes} minute(s) (max: $max_restarts)"
-		error_msg="${error_msg}. Reset at: $reset_formatted (in $countdown_formatted)"
-		if [[ -n "$restart_list" ]]; then
-			error_msg="${error_msg}. Recent restarts: $restart_list"
-		fi
-
+		# Format and log detailed error message
+		local error_msg
+		error_msg=$(_format_rate_limit_error "$recent_restarts" "$window_minutes" "$max_restarts" "$recent_timestamps" "$now" "$window_seconds" "$oldest_restart")
 		handle_error "WARNING" "SYSTEM" "$error_msg"
 		return 1 # Rate limited
 	fi
@@ -415,6 +462,7 @@ set_network_partition_state() {
 #
 # Arguments:
 #   $1: State file path to backup
+#   $2: Maximum retry attempts (optional, defaults to 3)
 #
 # Returns:
 #   0: Success (backup created or file doesn't exist)
@@ -423,17 +471,28 @@ set_network_partition_state() {
 # Side effects:
 #   - Creates backup file: ${state_file}.corrupted.<timestamp>
 #   - Logs backup creation
+#   - Logs warning if max_attempts is invalid (uses default 3)
 #
 # Examples:
 #   backup_corrupted_state_file "$state_file"
 #   # Creates: state_file.corrupted.1703616000
+#   backup_corrupted_state_file "$state_file" 5
+#   # Retries up to 5 times
 #
 # Note:
 #   Uses get_unix_timestamp() for backup filename timestamp
 #   Backup files can be used for forensic analysis or manual recovery
+#   Validates max_attempts is a positive integer (defaults to 3 if invalid)
 backup_corrupted_state_file() {
 	local state_file="$1"
 	local max_attempts="${2:-3}"
+
+	# Validate max_attempts is a positive integer
+	if [[ ! "$max_attempts" =~ ^[0-9]+$ ]] || [[ "$max_attempts" -lt 1 ]]; then
+		handle_error "WARNING" "SYSTEM" "Invalid max_attempts value: $max_attempts (using default 3)" 0
+		max_attempts=3
+	fi
+
 	local attempt=1
 	local timestamp
 	timestamp=$(get_unix_timestamp)
@@ -649,7 +708,7 @@ validate_state_file() {
 # Automatically recovers corrupted files.
 #
 # Arguments:
-#   $1: Glob pattern to match (e.g., "failure_counter_*")
+#   $1: Glob pattern to match (e.g., "failure_count_*")
 #   $2: Expected format type ("integer", "timestamp", "timestamp_list")
 #   $3: Default value for recovery (optional, defaults to "0")
 #   $4: Description for error messages (e.g., "Failure counter file")
@@ -664,7 +723,7 @@ validate_state_file() {
 #   - Resets corrupted files to safe defaults
 #
 # Examples:
-#   validate_state_files_by_pattern "failure_counter_*" "integer" "0" "Failure counter file"
+#   validate_state_files_by_pattern "failure_count_*" "integer" "0" "Failure counter file"
 #   validate_state_files_by_pattern "last_bytes_*" "integer" "0" "Byte counter file"
 #
 # Note:
@@ -787,7 +846,7 @@ validate_state() {
 	fi
 
 	# Validate per-peer failure counter files (if any exist)
-	validate_state_files_by_pattern "failure_counter_*" "integer" "0" "Failure counter file" || validation_failed=1
+	validate_state_files_by_pattern "failure_count_*" "integer" "0" "Failure counter file" || validation_failed=1
 
 	# Validate per-peer byte counter files (if any exist)
 	validate_state_files_by_pattern "last_bytes_*" "integer" "0" "Byte counter file" || validation_failed=1

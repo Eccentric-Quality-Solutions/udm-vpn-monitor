@@ -2,6 +2,13 @@ Considerations for the future, but want to avoid overarchitecting and premature 
 
 **Note:** Items marked with ✅ COMPLETED have been finished and can be considered resolved.
 
+- Consider additional state keys in cleanup_peer_state()
+  - Currently cleans up: failure_count, last_bytes, spi, idle_detected, connection_name
+  - Missing: last_status_log, failure_type, recovery_method
+  - Note: These keys may be intentionally excluded (cleared on recovery, not peer removal)
+  - Low priority: Only relevant if cleanup_peer_state() is used in production (currently only in tests)
+  - Decision needed: Should these be cleaned up when peers are removed, or are they intentionally location-scoped?
+
 - Optimize detection module sourcing (optional)
   - Currently, modules source dependencies even when already sourced by parent `detection.sh`
   - Could add checks to avoid redundant sourcing: `if ! type validate_ipv4 >/dev/null 2>&1; then source ...; fi`
@@ -30,18 +37,24 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Benefit: More consistent codebase, easier to understand
     - Effort: MEDIUM (requires updating multiple functions)
 
-- Automate mock cleanup verification in CI/CD
-    - Run `scripts/audit_mock_cleanup.sh` as part of CI/CD pipeline to catch missing cleanup calls early
-    - Could be integrated into pre-commit hooks or as a CI check
-    - Prevents regression of mock cleanup issues
-    - Note: Audit script already exists and works well, just needs integration
-
 - Standardize `handle_error_or_exit_fake_mode()` return value checking pattern
     - Some places check return value explicitly: `if ! handle_error_or_exit_fake_mode() ... then return 1`
     - Other places call it and then always `return 1` with a comment (works but inconsistent)
     - Standardize to explicit check pattern for consistency and clarity
     - Low priority: current code works correctly, this is a style consistency improvement
     - See `lib/config.sh` lines 1108, 1154, 1179, 1212, 1405 for examples that could be refactored
+
+- Standardize non-critical state write error handling
+    - Currently 28+ instances of `atomic_write_file ... 2>/dev/null || true` silently ignore errors
+    - Pattern used for non-critical statistics/logging state files (ping summaries, resource monitoring stats, network partition stats, etc.)
+    - Issue: Silent failures can mask real problems (permission errors, disk full conditions)
+    - Proposed: Add DEBUG-level logging for state file write failures in non-critical paths
+    - Pattern: `if ! atomic_write_file "$file" "$value" 2>/dev/null; then log_message "DEBUG" "SYSTEM" "Failed to update state file: $file (non-fatal)"; fi`
+    - Benefit: Better diagnostic visibility without cluttering logs (DEBUG level only visible when DEBUG=1)
+    - Cost: MEDIUM - requires updating 28+ instances across codebase for consistency
+    - Priority: LOW - current pattern works, failures are non-fatal, but diagnostic value would be helpful
+    - Note: Pilot implementation added to `log_ping_summary_if_due()` in `ping_detection.sh` (2026-01-18)
+    - See: `docs/reviews/ping_detection_review.md` issue #7 for detailed analysis
 
 - System-wide failure detection enhancements
   - Consider making coordinator selection more robust (e.g., use location order instead of first-check-wins)
@@ -154,15 +167,6 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Low priority: Current 1-hour interval meets requirements
     - Note: Pattern established 2026-01-15 with network partition statistics tracking
 
-- Add statistics tracking for resource monitoring
-    - Currently no visibility into whether resource monitoring checks (CPU, RAM, disk) are running successfully
-    - Similar issue to network partition checks - only logs when resources are constrained, no visibility into successful checks
-    - Would track: CPU/RAM/disk check successes/failures, and constraint events
-    - Hourly summary: "Resource monitoring summary: CPU checks succeeded X times, failed Y times; RAM checks succeeded X times, failed Y times; Disk checks succeeded X times, failed Y times; CPU constrained Z times; RAM constrained Z times; Disk critical Z times"
-    - Medium priority: Provides visibility into critical system checks
-    - Note: Pattern established 2026-01-15 with network partition statistics tracking
-    - See: `docs/working/STATISTICS_TRACKING_CANDIDATES.md` for detailed analysis
-
 - Review and fix ip xfrm state mock patterns in tests
     - Issue: Many test mocks only handle `ip xfrm state` but not `ip -s xfrm state` (with -s flag)
     - `execute_xfrm_state_command` calls `ip -s xfrm state` first, then falls back to `ip xfrm state`
@@ -173,14 +177,6 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Action: Review tests that use inline `ip xfrm state` mocks and update to handle `-s` flag or use helper functions
     - Note: Fixed in `test_detection_ping_optional.sh` 2026-01-28
 
-- Consider using `read_counter_file()` in `ping_detection.sh` for `ping_count` reading
-    - `ping_detection.sh` lines 123-128 use manual pattern for reading counter file
-    - Could use shared `read_counter_file()` helper for consistency
-    - Low priority: Only one instance, works correctly as-is
-    - Benefit: Consistency with other counter reading patterns
-    - Effort: LOW (replace 6 lines with 1 line)
-    - Note: `read_counter_file()` added to `common.sh` 2025-01-27
-
 - Refactor error handling argument parsing to use explicit argument order
     - Current pattern: `handle_error "ERROR" "SYSTEM" "message" 2` (last arg is optional exit code)
     - Issue: Ambiguous when message ends with a number (e.g., "Retry count: 3" vs exit code "3")
@@ -190,3 +186,26 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Priority: LOW - current pattern works, just has edge case limitations
     - Note: Duplication issue resolved 2026-01-27, but ambiguous design remains
     - See: `docs/reviews/logging_review.md` issue #2 for detailed analysis
+
+- Improve error handling for file sourcing (stderr suppression refactor)
+    - Current pattern: `source "${LIB_DIR}/constants.sh" 2>/dev/null || { fallback }` used in 47+ places
+    - Issue: Suppressing stderr hides syntax errors and other real problems, making debugging harder
+    - Impact: Low probability (files are stable), but medium impact if syntax errors occur silently
+    - Proposed: Add simple error reporting when sourcing fails (echo to stderr directly, or use helper function)
+    - Pattern example: `if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then echo "WARNING: Failed to source constants.sh, using fallback" >&2; fallback; fi`
+    - Benefit: Better error visibility without complex process substitution or dependency on logging infrastructure
+    - Cost: MEDIUM - requires updating 47+ instances across codebase for consistency
+    - Priority: LOW - current pattern works, fallback values are correct, issue is rare
+    - Note: Review identified issue in `config.sh` but pattern is widespread; consider codebase-wide refactor if prioritizing
+    - See: `docs/reviews/config_sh_review.md` issue #2 for detailed analysis
+
+- Remove redundant defensive fallbacks in state.sh and config.sh
+    - Current state: `lib/state.sh` (lines 22-34) and `lib/config.sh` (lines 32-50) have defensive fallback constants
+    - Issue: These fallbacks were needed to avoid "readonly variable already set" errors when constants.sh was sourced multiple times
+    - Status: Now redundant since `lib/constants.sh` was made idempotent (2026-01-27)
+    - Proposed: Remove fallback blocks, simplify to: `source "${LIB_DIR}/constants.sh" 2>/dev/null || { echo "ERROR: Failed to source constants.sh" >&2; exit 1; }`
+    - Benefit: Reduces code duplication, simplifies maintenance, removes ~20 lines of redundant code
+    - Cost: LOW - simple removal, but removes safety net if constants.sh file is missing/corrupted
+    - Priority: LOW - fallbacks don't hurt and provide safety net for edge cases (file not found, syntax errors)
+    - Note: Fallbacks are harmless but redundant. Consider removing if prioritizing code simplification.
+    - See: Code review 2026-01-27 for constants.sh idempotency fix

@@ -1521,10 +1521,10 @@ validate_config_after_install() {
 			echo ""
 			if [[ -z "$REPLY" ]] || [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]] || [[ $REPLY =~ ^[Yy]$ ]]; then
 				local location_name
-				local external_ip
+				local external_peer_ip
 				read -p "Location name (e.g., NYC, DC, OFFICE): " location_name
-				read -p "External/Public IP address: " external_ip
-				if [[ -n "$location_name" ]] && [[ -n "$external_ip" ]]; then
+				read -p "External/Public IP address: " external_peer_ip
+				if [[ -n "$location_name" ]] && [[ -n "$external_peer_ip" ]]; then
 					# Sanitize location name
 					local sanitized_name
 					sanitized_name=$(echo "$location_name" | sed 's/[^A-Za-z0-9_]/_/g' | tr '[:lower:]' '[:upper:]' | sed 's/^_*//')
@@ -1535,7 +1535,7 @@ validate_config_after_install() {
 					# Add location config to file
 					echo "" >>"$config_file"
 					echo "# Location configuration" >>"$config_file"
-					echo "LOCATION_${sanitized_name}_EXTERNAL=\"${external_ip}\"" >>"$config_file"
+					echo "LOCATION_${sanitized_name}_EXTERNAL=\"${external_peer_ip}\"" >>"$config_file"
 					echo "LOCATION_${sanitized_name}_INTERNAL=\"\"" >>"$config_file"
 					log_info "Location configuration added to ${config_file}"
 					log_info "Note: IP addresses will be validated when the monitor runs"

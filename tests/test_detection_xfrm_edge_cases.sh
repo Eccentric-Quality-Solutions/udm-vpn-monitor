@@ -160,7 +160,7 @@ EOF
 
 	# Initialize state using location-aware functions
 	source_function "set_peer_state"
-	set_peer_state "" "$peer_ip" "failure_count" "0"
+	set_peer_state "TEST" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_xfrm_status"
@@ -201,7 +201,7 @@ EOF
 
 	# Initialize state using location-aware functions
 	source_function "set_peer_state"
-	set_peer_state "" "$peer_ip" "failure_count" "0"
+	set_peer_state "TEST" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_xfrm_status"
@@ -240,7 +240,7 @@ EOF
 
 	# Initialize state using location-aware functions
 	source_function "set_peer_state"
-	set_peer_state "" "$peer_ip" "failure_count" "0"
+	set_peer_state "TEST" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_xfrm_status"
@@ -285,7 +285,7 @@ EOF
 
 	# Initialize state using location-aware functions
 	source_function "set_peer_state"
-	set_peer_state "" "$peer_ip" "failure_count" "0"
+	set_peer_state "TEST" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_ipsec_status"

@@ -94,7 +94,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create corrupted byte counter file (non-numeric)
 	local last_bytes_file
-	last_bytes_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "last_bytes")
+	last_bytes_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
 	echo "invalid-value" >"$last_bytes_file"
 
 	add_mock_to_path
@@ -119,7 +119,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create byte counter file with negative number
 	local last_bytes_file
-	last_bytes_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "last_bytes")
+	last_bytes_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
 	echo "-1000" >"$last_bytes_file"
 
 	add_mock_to_path
@@ -144,7 +144,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Clear byte counter file to test empty file handling
 	local last_bytes_file
-	last_bytes_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "last_bytes")
+	last_bytes_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
 	# Remove file if it exists (from fixture setup), then create empty file
 	rm -f "$last_bytes_file"
 	touch "$last_bytes_file"
@@ -957,7 +957,7 @@ EOF
 
 	# Verify byte counter baseline was reset
 	local bytes_file
-	bytes_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "last_bytes")
+	bytes_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
 	if [[ -f "$bytes_file" ]]; then
 		local bytes
 		bytes=$(cat "$bytes_file")
@@ -985,7 +985,7 @@ EOF
 
 	# Verify new baseline was established (2000 bytes)
 	local bytes_file
-	bytes_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "last_bytes")
+	bytes_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
 	if [[ -f "$bytes_file" ]]; then
 		local bytes
 		bytes=$(cat "$bytes_file")
@@ -1146,11 +1146,12 @@ EOF
 
 	# Verify SPI was updated to latest value
 	local spi_file
-	spi_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "spi")
+	spi_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "spi")
 	if [[ -f "$spi_file" ]]; then
 		local spi
 		spi=$(cat "$spi_file")
-		assert_equal "$spi" "0xABCDEF12"
+		# SPI is normalized to lowercase hex format (0xABCDEF12 -> 0xabcdef12)
+		assert_equal "$spi" "0xabcdef12"
 	fi
 
 	remove_mock_from_path
@@ -1177,7 +1178,7 @@ EOF
 	source_function "get_peer_state_file_path"
 	# Verify failure type stored in state file
 	local failure_type_file
-	failure_type_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_type")
+	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
 	if [[ -f "$failure_type_file" ]]; then
 		local failure_type
 		failure_type=$(cat "$failure_type_file")
@@ -1205,7 +1206,7 @@ EOF
 	source_function "get_peer_state_file_path"
 	# Verify failure type stored in state file
 	local failure_type_file
-	failure_type_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_type")
+	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
 	if [[ -f "$failure_type_file" ]]; then
 		local failure_type
 		failure_type=$(cat "$failure_type_file")
@@ -1256,7 +1257,7 @@ EOF
 	source_function "get_peer_state_file_path"
 	# Verify failure type stored (rekey is logged but VPN is OK)
 	local failure_type_file
-	failure_type_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_type")
+	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
 	if [[ -f "$failure_type_file" ]]; then
 		local failure_type
 		failure_type=$(cat "$failure_type_file")
@@ -1313,7 +1314,7 @@ EOF
 	source_function "get_peer_state_file_path"
 	# Verify failure type stored in state file
 	local failure_type_file
-	failure_type_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_type")
+	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
 	if [[ -f "$failure_type_file" ]]; then
 		local failure_type
 		failure_type=$(cat "$failure_type_file")

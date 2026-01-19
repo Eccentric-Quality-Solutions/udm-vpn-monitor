@@ -357,7 +357,7 @@ VPN_NAME="Multi-Site VPN"
 **Key Points:**
 - Each location is monitored independently with its own failure counter
 - Failures in one location don't affect monitoring of other locations
-- State files are created per location (e.g., `failure_counter_NYC_203_0_113_1`, `last_bytes_DC_198_51_100_1`)
+- State files are created per location (e.g., `failure_count_NYC_203_0_113_1`, `last_bytes_DC_198_51_100_1`)
 - Location names are automatically extracted from variable names and sanitized for use in filenames
 
 **Example Log Output:**

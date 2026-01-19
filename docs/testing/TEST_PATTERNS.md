@@ -1,5 +1,11 @@
 # Test Patterns and Standards
 
+**Date**: 2026-01-19  
+**Last Updated**: 2026-01-19  
+**Status**: Active
+
+---
+
 This document describes standardized patterns for writing tests in the UDM VPN Monitor test suite.
 
 ## Related Documentation

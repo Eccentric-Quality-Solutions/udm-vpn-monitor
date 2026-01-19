@@ -63,7 +63,7 @@ This document describes the architecture and design of the UDM VPN Monitor syste
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  State Files (${SCRIPT_DIR}/state/)                       │  │
-│  │  • failure_counter_<location>_<peer_ip>  # Per-location │  │
+│  │  • failure_count_<location>_<peer_ip>  # Per-location │  │
 │  │  • last_bytes_<location>_<peer_ip>  # Per-location     │  │
 │  │  • failure_type_<location>_<peer_ip>  # Per-location   │  │
 │  │  • spi_<location>_<peer_ip>  # Per-location            │  │
@@ -399,7 +399,7 @@ graph LR
     end
 
     subgraph "State Storage"
-        FailureCounter[failure_counter_<location>_<peer_ip>]
+        FailureCounter[failure_count_<location>_<peer_ip>]
         ByteFiles[last_bytes_<location>_<peer_ip>]
         FailureType[failure_type_<location>_<peer_ip>]
         SPI[spi_<location>_<peer_ip>]
@@ -455,7 +455,7 @@ The system uses file-based state management to track VPN health, failure counts,
 State files are organized into two categories:
 
 **Per-Location State Files** (tracked independently for each VPN location):
-- `${STATE_DIR}/failure_counter_<location>_<peer_ip>`: Consecutive failure count per location (sanitized location name and IP in filename).
+- `${STATE_DIR}/failure_count_<location>_<peer_ip>`: Consecutive failure count per location (sanitized location name and IP in filename).
 - `${STATE_DIR}/last_bytes_<location>_<peer_ip>`: Last known byte counter value per location (sanitized location name and IP in filename)
 - `${STATE_DIR}/failure_type_<location>_<peer_ip>`: Tracks failure type for diagnostic purposes (cleared on recovery)
 - `${STATE_DIR}/spi_<location>_<peer_ip>`: Stores SPI (Security Parameter Index) for location connection tracking
@@ -507,12 +507,12 @@ VPNs are configured using location-based variables:
 All per-location state files use sanitized location names and peer IP addresses in their filenames:
 - Location names are sanitized: invalid characters replaced with underscores, max 64 chars
 - IP addresses are sanitized: dots and colons replaced with underscores (e.g., `192.168.1.1` becomes `192_168_1_1`)
-- Format: `<key>_<location>_<peer_ip>` (e.g., `failure_counter_NYC_203_0_113_1`)
+- Format: `<key>_<location>_<peer_ip>` (e.g., `failure_count_NYC_203_0_113_1`)
 - This ensures safe filenames while maintaining uniqueness per location
 
 **Per-Location State Files**:
 
-1. **Failure Counters** (`state/failure_counter_<location>_<peer_ip>`)
+1. **Failure Counters** (`state/failure_count_<location>_<peer_ip>`)
    - **Purpose**: Tracks consecutive failure count for each location independently
    - **Creation**: Created on-demand when a location first fails
    - **Usage**: Used to determine which recovery tier to trigger (Tier 1, 2, or 3)
@@ -543,9 +543,9 @@ All per-location state files use sanitized location names and peer IP addresses 
    - **Purpose**: Stores the SPI value extracted from `ip xfrm state` output for each location
    - **Creation**: Created on-demand when SPI is first extracted from xfrm state
    - **Usage**: Used to detect SA (Security Association) rekeys - when SPI changes, it indicates the SA was rekeyed and byte counters may have been reset
-   - **Format**: Can be stored in hex format (0x12345678) or decimal format (12345678), matching the format from xfrm output
+   - **Format**: Stored in normalized hex format (0x12345678) for consistent comparison. SPI values are normalized from either hex or decimal format to 8-digit lowercase hex (0x...) to prevent false rekey detection when format differs between reads
    - **Independence**: Each location has its own SPI file, allowing independent SA rekey detection
-   - **Update**: Updated when SPI is read from xfrm state
+   - **Update**: Updated when SPI is read from xfrm state (normalized to hex format)
    - **Location**: Stored in `${STATE_DIR}` directory
 
 5. **Idle Detection** (`idle_detected_<location>_<peer_ip>`)
@@ -641,9 +641,9 @@ The classification logic uses a hierarchical pattern matching approach:
 
 **Example Scenario**:
 If monitoring three VPN locations (NYC, DC, Chicago), the monitor creates separate state files for each location:
-- `state/failure_counter_NYC_203_0_113_1` - tracks failures for NYC location
-- `state/failure_counter_DC_198_51_100_1` - tracks failures for DC location
-- `state/failure_counter_CHICAGO_192_0_2_1` - tracks failures for Chicago location
+- `state/failure_count_NYC_203_0_113_1` - tracks failures for NYC location
+- `state/failure_count_DC_198_51_100_1` - tracks failures for DC location
+- `state/failure_count_CHICAGO_192_0_2_1` - tracks failures for Chicago location
 - `state/last_bytes_NYC_203_0_113_1` - tracks byte counters for NYC location
 - `state/last_bytes_DC_198_51_100_1` - tracks byte counters for DC location
 - `state/last_bytes_CHICAGO_192_0_2_1` - tracks byte counters for Chicago location
@@ -777,7 +777,8 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │       ├── location_state.sh      # Per-location state operations
 │       ├── global_state.sh         # Global state operations
 │       ├── state_init.sh           # State initialization and validation
-│       └── network_partition_stats.sh # Network partition check statistics tracking
+│       ├── network_partition_stats.sh # Network partition check statistics tracking
+│       └── resource_monitoring_stats.sh # Resource monitoring statistics tracking
 │
 ├── logs/                       # Logs directory
 │   ├── vpn-monitor.log         # Main monitor log file
@@ -792,8 +793,8 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
     ├── system_wide_failure_coordinator # Recovery coordinator location name
     ├── vpn-monitor.lock        # Lockfile (timestamp:pid format)
     ├── .cron_checked           # Flag file for cron check
-    ├── failure_counter_NYC_203_0_113_1  # Per-location failure counters
-    ├── failure_counter_DC_198_51_100_1   # (sanitized location name and IP in filename)
+    ├── failure_count_NYC_203_0_113_1  # Per-location failure counters
+    ├── failure_count_DC_198_51_100_1   # (sanitized location name and IP in filename)
     ├── last_bytes_NYC_203_0_113_1  # Per-location byte counters
     ├── last_bytes_DC_198_51_100_1  # (sanitized location name and IP in filename)
     ├── failure_type_NYC_203_0_113_1 # Per-location failure type tracking
@@ -1016,6 +1017,7 @@ The system uses a modular library architecture where functionality is organized 
 - **`lib/state/global_state.sh`**: Global state operations (cooldown, restart count, network partition state)
 - **`lib/state/state_init.sh`**: State initialization and validation functions
 - **`lib/state/network_partition_stats.sh`**: Network partition check statistics tracking (success/failure counting, hourly summary logging)
+- **`lib/state/resource_monitoring_stats.sh`**: Resource monitoring statistics tracking (success/failure counting, hourly summary logging for CPU, RAM, and disk checks)
 
 **Key Functions** (distributed across modules):
 - `increment_failure()` - Increments per-location failure counter (in `peer_state.sh`)
@@ -1031,6 +1033,9 @@ The system uses a modular library architecture where functionality is organized 
 - `validate_state_file()` - Validates state file format and detects corruption (in `state_init.sh`)
 - `track_network_partition_check()` - Tracks success/failure statistics for network partition checks (in `network_partition_stats.sh`)
 - `log_network_partition_summary_if_due()` - Logs hourly summary of network partition check statistics (in `network_partition_stats.sh`)
+- `track_resource_check()` - Tracks success/failure statistics for resource monitoring checks (in `resource_monitoring_stats.sh`)
+- `track_resource_constraint()` - Tracks resource constraint events (CPU constrained, RAM constrained, disk critical) (in `resource_monitoring_stats.sh`)
+- `log_resource_monitoring_summary_if_due()` - Logs hourly summary of resource monitoring statistics (in `resource_monitoring_stats.sh`)
 
 **Features**:
 - Atomic file operations (write-tmp-move pattern)
@@ -1045,7 +1050,7 @@ The system uses a modular library architecture where functionality is organized 
 
 **Dependencies**: `lib/logging.sh`, `lib/common.sh`
 
-**Note**: See File Structure section and Design Decision #4 for state file details. The module split (completed 2026-01-11) decomposes the original 1404-line monolithic file into 6 focused modules for better organization and maintainability. Network partition statistics tracking was added as a separate module to handle success/failure counting and hourly summary logging for network partition checks.
+**Note**: See File Structure section and Design Decision #4 for state file details. The module split (completed 2026-01-11) decomposes the original 1404-line monolithic file into 7 focused modules for better organization and maintainability. Network partition statistics tracking and resource monitoring statistics tracking were added as separate modules to handle success/failure counting and hourly summary logging for network partition checks and resource monitoring checks respectively.
 
 ## VPN Keepalive Daemon
 
@@ -1168,7 +1173,7 @@ The following improvements have been implemented to enhance system reliability a
 ### 4. Per-Location State Tracking
 - **Why**: Multiple locations need independent monitoring and recovery
 - **Implementation**: Separate state files per location (sanitized location name and IP)
-  - Per-location failure counters: `state/failure_counter_<location>_<peer_ip>`
+  - Per-location failure counters: `state/failure_count_<location>_<peer_ip>`
   - Per-location byte counters: `last_bytes_<location>_<peer_ip>`
 - **Benefit**: Accurate detection and independent recovery for multi-location setups
 - **Note**: Both failure counters and byte counters are tracked per-location, allowing independent failure tracking and recovery actions. Location names are extracted from configuration variable names and sanitized for use in filenames.

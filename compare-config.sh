@@ -329,10 +329,11 @@ main() {
 	has_template_location_external=0
 	has_template_location_internal=0
 	for var_name in "${!template_vars_map[@]}"; do
-		if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+		# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
+		if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
 			has_template_location_external=1
 		fi
-		if [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+		if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_INTERNAL$ ]]; then
 			has_template_location_internal=1
 		fi
 	done
@@ -343,10 +344,11 @@ main() {
 	has_existing_location_external=0
 	has_existing_location_internal=0
 	for var_name in "${!existing_vars_map[@]}"; do
-		if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+		# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
+		if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
 			has_existing_location_external=1
 		fi
-		if [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+		if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_INTERNAL$ ]]; then
 			has_existing_location_internal=1
 		fi
 	done
@@ -363,12 +365,13 @@ main() {
 		# For LOCATION variables, check if existing config has any matching pattern variable
 		# This allows template example locations (e.g., LOCATION_NYC_EXTERNAL) to be skipped
 		# when existing config already has LOCATION variables matching the pattern (e.g., LOCATION_CUSTOMER1_EXTERNAL)
-		if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+		# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
+		if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
 			# Existing config has LOCATION_*_EXTERNAL pattern, so template example is not needed
 			if [[ $has_existing_location_external -eq 1 ]]; then
 				continue
 			fi
-		elif [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+		elif [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_INTERNAL$ ]]; then
 			# Existing config has LOCATION_*_INTERNAL pattern, so template example is not needed
 			if [[ $has_existing_location_internal -eq 1 ]]; then
 				continue

@@ -49,14 +49,16 @@ sanitize_peer_ip() {
 #   $3: State key name (e.g., "failure_count", "last_bytes", "connection_name")
 #
 # Returns:
-#   0: Always succeeds
+#   0: Success
+#   1: Validation failed (invalid arguments or STATE_DIR unset)
 #
 # Output:
-#   Prints the full file path to stdout
+#   Prints the full file path to stdout on success
+#   Prints empty string on failure
 #
 # Examples:
 #   path=$(get_peer_state_file_path "NYC" "203.0.113.1" "failure_count")
-#   # Returns: ${STATE_DIR}/failure_counter_NYC_203_0_113_1
+#   # Returns: ${STATE_DIR}/failure_count_NYC_203_0_113_1
 #   path=$(get_peer_state_file_path "NYC" "203.0.113.1" "last_bytes")
 #   # Returns: ${STATE_DIR}/last_bytes_NYC_203_0_113_1
 #   path=$(get_peer_state_file_path "" "203.0.113.1" "connection_name")
@@ -65,8 +67,7 @@ sanitize_peer_ip() {
 # Note:
 #   Requires STATE_DIR, sanitize_location_name (from common.sh), and sanitize_peer_ip to be set
 #   STATE_DIR must be set before this function is called (validated during module load and state initialization).
-#   If STATE_DIR is unset, this function will produce invalid absolute paths starting with "/".
-#   The module logs a warning if STATE_DIR is unset when state_paths.sh is sourced.
+#   Validates required arguments and STATE_DIR before generating path.
 #   Used internally by get_peer_state and set_peer_state.
 #   Location name is sanitized before use in filename.
 #   For connection_name key, location name is ignored (per-peer only, no location).
@@ -80,13 +81,40 @@ sanitize_peer_ip() {
 #   See CODE_PATTERNS.md for details on when to use abstraction layer vs. global state files.
 get_peer_state_file_path() {
 	local location_name="$1"
-	local peer_ip="$2"
+	local external_peer_ip="$2"
 	local key="$3"
 	local location_sanitized
 	local peer_sanitized
 
+	# Validate required arguments
+	if [[ -z "$key" ]]; then
+		handle_error "ERROR" "SYSTEM" "get_peer_state_file_path: key is required" 0
+		echo ""
+		return 1
+	fi
+
+	if [[ -z "$external_peer_ip" ]]; then
+		handle_error "ERROR" "SYSTEM" "get_peer_state_file_path: external_peer_ip is required" 0
+		echo ""
+		return 1
+	fi
+
+	# location_name can be empty for connection_name key, but validate for others
+	if [[ "$key" != "connection_name" ]] && [[ -z "$location_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "get_peer_state_file_path: location_name is required for key: $key" 0
+		echo ""
+		return 1
+	fi
+
+	# Validate STATE_DIR is set
+	if [[ -z "${STATE_DIR:-}" ]]; then
+		handle_error "ERROR" "SYSTEM" "get_peer_state_file_path: STATE_DIR is not set" 0
+		echo ""
+		return 1
+	fi
+
 	# Sanitize peer IP
-	peer_sanitized=$(sanitize_peer_ip "$peer_ip")
+	peer_sanitized=$(sanitize_peer_ip "$external_peer_ip")
 
 	# Handle connection_name specially (per-peer only, no location)
 	if [[ "$key" == "connection_name" ]]; then
@@ -99,7 +127,7 @@ get_peer_state_file_path() {
 
 	case "$key" in
 	failure_count)
-		echo "${STATE_DIR}/failure_counter_${location_sanitized}_${peer_sanitized}"
+		echo "${STATE_DIR}/failure_count_${location_sanitized}_${peer_sanitized}"
 		;;
 	last_bytes)
 		echo "${STATE_DIR}/last_bytes_${location_sanitized}_${peer_sanitized}"

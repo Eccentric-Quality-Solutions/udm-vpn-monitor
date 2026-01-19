@@ -339,8 +339,8 @@ start_daemon() {
 			# Ping each configured location
 			for location_name in "${!locations[@]}"; do
 				# Get external IP for this location
-				local external_ip
-				if ! external_ip=$(get_location_external_ip "$location_name"); then
+				local external_peer_ip
+				if ! external_peer_ip=$(get_location_external_ip "$location_name"); then
 					log_message "WARNING" "$location_name" "Keepalive: failed to get external IP (skipping)" || true
 					continue
 				fi
@@ -354,7 +354,7 @@ start_daemon() {
 				if [[ -n "$internal_ips" ]]; then
 					ping_target="$internal_ips"
 				else
-					ping_target="$external_ip"
+					ping_target="$external_peer_ip"
 				fi
 
 				# Skip if ping target is empty
@@ -372,7 +372,7 @@ start_daemon() {
 					# Single IP - use build_ping_command function
 					# Determine if we should use source IP (LOCAL_UDM_IP configured and using internal IP)
 					local source_ip_for_ping=""
-					if [[ -n "$local_udm_ip" ]] && [[ "$ping_target" != "$external_ip" ]]; then
+					if [[ -n "$local_udm_ip" ]] && [[ "$ping_target" != "$external_peer_ip" ]]; then
 						source_ip_for_ping="$local_udm_ip"
 					fi
 
@@ -434,10 +434,10 @@ start_daemon() {
 					if [[ $ping_success -eq 0 ]]; then
 						# Log failure but continue (don't exit daemon)
 						# Errors in log_message are ignored to prevent daemon exit
-						if [[ "$ping_target" == "$external_ip" ]]; then
-							log_message "WARNING" "$location_name" "Keepalive: ping failed for $external_ip" || true
+						if [[ "$ping_target" == "$external_peer_ip" ]]; then
+							log_message "WARNING" "$location_name" "Keepalive: ping failed for $external_peer_ip" || true
 						else
-							log_message "WARNING" "$location_name" "Keepalive: ping failed for $ping_target (external: $external_ip)" || true
+							log_message "WARNING" "$location_name" "Keepalive: ping failed for $ping_target (external: $external_peer_ip)" || true
 						fi
 					fi
 				fi

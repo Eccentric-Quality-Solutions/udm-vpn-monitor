@@ -16,6 +16,7 @@ This file tracks planned improvements and tasks for the UDM VPN Monitor project.
 - It seems like if it loads config again it starts over from the top for the networks it is testing
 - Need to make sure that after code changes Cursor updates any related tests.
 - Need Cursor to be better at grepping and replacing things, it often only fixes one or a few tests.
+- Need to regularly identify and mitigate slow tests
 
 ## High Priority
 

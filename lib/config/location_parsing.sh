@@ -5,6 +5,19 @@
 #
 # Version: 0.6.0
 
+# Validate required dependencies at module load time
+# These functions must be available when this module is sourced
+# Note: handle_error and handle_error_or_exit_fake_mode are expected to be available
+# when functions are called (after logging.sh is sourced), not during module sourcing
+if ! declare -f sanitize_location_name >/dev/null 2>&1; then
+	echo "ERROR: location_parsing.sh requires sanitize_location_name from common.sh" >&2
+	return 1 2>/dev/null || exit 1
+fi
+if ! declare -f parse_assignment >/dev/null 2>&1; then
+	echo "ERROR: location_parsing.sh requires parse_assignment from config_loading.sh" >&2
+	return 1 2>/dev/null || exit 1
+fi
+
 # Extract location name from variable name
 #
 # Extracts the location name from a LOCATION_<NAME>_EXTERNAL or LOCATION_<NAME>_INTERNAL variable name.
@@ -83,8 +96,8 @@ parse_single_location() {
 	local seen_locations_ref="$3"
 	local location_name
 	local sanitized_name
-	local external_ip
-	local internal_ip
+	local external_peer_ip
+	local internal_peer_ip
 	local internal_var_name
 
 	# Step 1: Extract location name from variable name
@@ -120,12 +133,12 @@ parse_single_location() {
 	# Store reference name in temp variable to avoid expansion issues with set -u
 	local loc_vars_ref_name="$location_vars_ref"
 	local -n loc_vars_ref="$loc_vars_ref_name"
-	external_ip="${loc_vars_ref[$var_name]}"
+	external_peer_ip="${loc_vars_ref[$var_name]}"
 
 	# Step 5: Validate external IP is non-empty (required field)
 	# Empty external IP means no peer to monitor, so skip this location
 	# This is a non-critical error: log warning but don't fail entire config
-	if [[ -z "$external_ip" ]]; then
+	if [[ -z "$external_peer_ip" ]]; then
 		handle_error "WARNING" "$sanitized_name" "EXTERNAL IP is empty (skipping empty peer)"
 		return 1
 	fi
@@ -135,12 +148,12 @@ parse_single_location() {
 	# Use empty string if INTERNAL variable doesn't exist (it's optional)
 	# Example: For LOCATION_NYC_EXTERNAL, look up LOCATION_NYC_INTERNAL
 	internal_var_name="LOCATION_${location_name}_INTERNAL"
-	internal_ip="${loc_vars_ref[$internal_var_name]:-}" # Default to empty if not found
+	internal_peer_ip="${loc_vars_ref[$internal_var_name]:-}" # Default to empty if not found
 
 	# Step 7: Store location data in global LOCATIONS array
 	# Format: "external:<ip>|internal:<ips>" (pipe separator avoids IP conflicts)
 	# Example: "external:203.0.113.1|internal:192.168.1.1 192.168.1.2"
-	LOCATIONS["$sanitized_name"]="external:$external_ip|internal:$internal_ip"
+	LOCATIONS["$sanitized_name"]="external:$external_peer_ip|internal:$internal_peer_ip"
 
 	return 0
 }
@@ -407,7 +420,8 @@ parse_location_config() {
 	for var_name in "${!location_vars[@]}"; do
 		# Filter: Only process EXTERNAL variables (they define locations)
 		# INTERNAL variables are looked up later when processing their corresponding EXTERNAL
-		if [[ ! "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+		# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
+		if [[ ! "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
 			continue
 		fi
 

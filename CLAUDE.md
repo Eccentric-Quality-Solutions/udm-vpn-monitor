@@ -65,7 +65,7 @@ lib/
 
 ### State Files
 Per-location state in `state/` directory:
-- `failure_counter_<location>_<peer_ip_sanitized>` - Failure count
+- `failure_count_<location>_<peer_ip_sanitized>` - Failure count
 - `last_bytes_<location>_<peer_ip_sanitized>` - Byte counter tracking
 - `failure_type_<location>_<peer_ip_sanitized>` - tunnel_down/no_traffic/idle/unknown
 

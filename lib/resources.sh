@@ -219,7 +219,7 @@ get_disk_usage() {
 #
 # Returns:
 #   0: Success, prints free disk space percentage (0-100) to stdout
-#   1: Failed to calculate free disk space (fallback to 100)
+#   1: Failed to calculate free disk space (caller should skip check - graceful degradation)
 #
 # Output:
 #   Prints free disk space percentage as integer (0-100) to stdout
@@ -233,7 +233,7 @@ get_disk_usage() {
 # Note:
 #   Requires 'df' command to be available
 #   Returns free space percentage for the filesystem containing the path
-#   Returns 100 if calculation fails (assume space available, graceful degradation)
+#   Returns 1 if calculation fails (caller should skip check - graceful degradation)
 get_free_disk_space() {
 	local path="${1:-/data}"
 	if ! check_command_available "df"; then
@@ -570,8 +570,9 @@ check_system_resources() {
 # Manage log files when disk space is low
 #
 # Checks if log files are consuming excessive disk space and takes action:
-# - Rotates/truncates log files if they're too large
-# - Removes old log files if disk space is still low
+# - Rotates ALL log files in LOGS_DIR if they're too large (not just LOG_FILE)
+# - If rotation fails (disk full), truncates log files instead (frees space immediately)
+# - Removes old log files if disk space is still low (keeps 2 most recent rotated logs)
 # This function helps prevent the monitor from causing disk space issues.
 #
 # Arguments:
@@ -586,6 +587,7 @@ check_system_resources() {
 #   - May rotate/truncate log files
 #   - May remove old log files
 #   - Logs actions taken
+#   - If rotation fails due to disk full, truncates log files as fallback
 #
 # Examples:
 #   if manage_log_files_on_low_disk "/data" 8; then
@@ -593,70 +595,90 @@ check_system_resources() {
 #   fi
 #
 # Note:
-#   Requires LOG_FILE and LOGS_DIR to be set
-#   Requires log_message function to be available
+#   Requires LOGS_DIR to be set
+#   Requires log_message and handle_error functions to be available
+#   Manages all .log files in LOGS_DIR (e.g., vpn-monitor.log, vpn-keepalive.log)
+#   If rotation fails (disk full), truncates log files to free space immediately
+#   log_message() already handles file write failures gracefully (falls back to stderr)
 manage_log_files_on_low_disk() {
 	local check_path="$1"
 	local free_space="$2"
 
-	# Check if we have log file information
-	if [[ -z "${LOG_FILE:-}" ]] || [[ -z "${LOGS_DIR:-}" ]]; then
+	# Check if we have log directory information
+	if [[ -z "${LOGS_DIR:-}" ]] || [[ ! -d "$LOGS_DIR" ]]; then
 		return 1
 	fi
 
-	# Check if log file exists and is large
-	if [[ -f "$LOG_FILE" ]]; then
-		local log_size_kb
-		log_size_kb=$(stat -c%s "$LOG_FILE" 2>/dev/null | awk '{print int($1/1024)}' || echo "0")
+	local max_log_size_kb=10240 # 10MB - reasonable default
 
-		# If log file is larger than 10MB, rotate it
-		if [[ -n "$log_size_kb" ]] && [[ "$log_size_kb" -gt 10240 ]]; then
-			handle_error "WARNING" "SYSTEM" "Log file is large (${log_size_kb}KB), rotating to free disk space" 0
+	# Rotate ALL large log files in LOGS_DIR (not just LOG_FILE)
+	# This ensures both vpn-monitor.log and vpn-keepalive.log are managed
+	while IFS= read -r log_file; do
+		if [[ -f "$log_file" ]] && [[ "$log_file" != *.old ]]; then
+			local log_size_kb
+			log_size_kb=$(stat -c%s "$log_file" 2>/dev/null | awk '{print int($1/1024)}' || echo "0")
 
-			# Create rotated log file name
-			local rotated_log="${LOG_FILE}.old"
+			if [[ -n "$log_size_kb" ]] && [[ "$log_size_kb" -gt $max_log_size_kb ]]; then
+				local rotated_log="${log_file}.old"
 
-			# Move current log to rotated (if rotated exists, remove it first)
-			if [[ -f "$rotated_log" ]]; then
-				rm -f "$rotated_log" 2>/dev/null || true
-			fi
+				# Remove existing rotated log if present (simple rotation, not archival)
+				[[ -f "$rotated_log" ]] && rm -f "$rotated_log" 2>/dev/null || true
 
-			# Move current log to rotated
-			if mv "$LOG_FILE" "$rotated_log" 2>/dev/null; then
-				log_message "INFO" "SYSTEM" "Log file rotated: $LOG_FILE -> $rotated_log"
-				# Create new empty log file
-				touch "$LOG_FILE" 2>/dev/null || true
+				if mv "$log_file" "$rotated_log" 2>/dev/null; then
+					handle_error "WARNING" "SYSTEM" \
+						"Log file is large (${log_size_kb}KB), rotating: $log_file -> $rotated_log" 0
+					touch "$log_file" 2>/dev/null || true
+				else
+					# Rotation failed (likely disk full) - try truncating instead
+					# Truncation frees space immediately without needing to create a new file
+					if : >"$log_file" 2>/dev/null; then
+						handle_error "WARNING" "SYSTEM" \
+							"Log rotation failed (disk may be full), truncated log file: $log_file (was ${log_size_kb}KB)" 0
+					else
+						# Even truncation failed - disk is completely full
+						handle_error "WARNING" "SYSTEM" \
+							"Log rotation and truncation failed for: $log_file (disk may be full, log writes will fallback to stderr)" 0
+					fi
+				fi
 			fi
 		fi
-	fi
+	done < <(find "$LOGS_DIR" -maxdepth 1 -type f -name "*.log" 2>/dev/null)
 
-	# If disk space is still critical (< 10%), remove old log files
+	# If disk space is still critical, remove old log files
+	# Keep at least 2 most recent rotated logs (covers both monitor and keepalive)
 	if [[ $free_space -lt 10 ]]; then
-		# Remove rotated log files
 		local removed_count=0
-		if [[ -d "$LOGS_DIR" ]]; then
-			# Find and remove .old log files, oldest first
-			# Try GNU find with -printf first, fallback to basic find if not available
-			local old_logs
-			if old_logs=$(find "$LOGS_DIR" -name "*.old" -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | awk '{print $2}' 2>/dev/null); then
-				# GNU find with -printf available
-				while IFS= read -r old_log; do
-					if [[ -n "$old_log" ]] && [[ -f "$old_log" ]]; then
-						rm -f "$old_log" 2>/dev/null && ((removed_count++)) || true
-					fi
-				done <<<"$old_logs"
-			else
-				# Fallback: basic find (no sorting by age)
-				while IFS= read -r old_log; do
-					if [[ -n "$old_log" ]] && [[ -f "$old_log" ]]; then
-						rm -f "$old_log" 2>/dev/null && ((removed_count++)) || true
-					fi
-				done < <(find "$LOGS_DIR" -name "*.old" -type f 2>/dev/null)
-			fi
+		# Find all .old log files, sort by modification time (oldest first)
+		local old_logs
+		old_logs=$(find "$LOGS_DIR" -maxdepth 1 -name "*.old" -type f -printf '%T@ %p\n' 2>/dev/null |
+			sort -n | awk '{print $2}' 2>/dev/null)
+
+		if [[ -z "$old_logs" ]]; then
+			# Fallback: basic find (no sorting by age)
+			old_logs=$(find "$LOGS_DIR" -maxdepth 1 -name "*.old" -type f 2>/dev/null)
+		fi
+
+		# Simple strategy: keep the 2 most recent .old files (covers both monitor and keepalive)
+		# Remove all others
+		local total_old_logs=0
+		if [[ -n "$old_logs" ]]; then
+			# Count non-empty lines (actual file paths)
+			# Filter empty lines and count remaining lines
+			total_old_logs=$(printf '%s\n' "$old_logs" | grep -v '^[[:space:]]*$' | wc -l | tr -d ' ' || echo "0")
+		fi
+
+		if [[ $total_old_logs -gt 2 ]]; then
+			local logs_to_remove=$((total_old_logs - 2))
+			while IFS= read -r old_log && [[ $removed_count -lt $logs_to_remove ]]; do
+				if [[ -n "$old_log" ]] && [[ -f "$old_log" ]]; then
+					rm -f "$old_log" 2>/dev/null && ((removed_count++)) || true
+				fi
+			done <<<"$old_logs"
 		fi
 
 		if [[ $removed_count -gt 0 ]]; then
-			log_message "INFO" "SYSTEM" "Removed $removed_count old log file(s) to free disk space"
+			log_message "INFO" "SYSTEM" \
+				"Removed $removed_count old log file(s) to free disk space (kept 2 most recent)"
 		fi
 	fi
 

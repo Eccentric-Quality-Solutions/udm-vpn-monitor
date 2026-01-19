@@ -31,7 +31,7 @@ All persistent state is stored in `${STATE_DIR}` (defaults to `${SCRIPT_DIR}/sta
 
 These files track state for a specific location and peer IP combination. Format: `<key>_<sanitized_location>_<sanitized_peer_ip>`
 
-#### 1. Failure Counter (`failure_counter_<location>_<peer_ip>`)
+#### 1. Failure Counter (`failure_count_<location>_<peer_ip>`)
 
 - **Purpose**: Tracks consecutive failure count for each location independently
 - **Format**: Integer (0 or positive number)
@@ -39,7 +39,7 @@ These files track state for a specific location and peer IP combination. Format:
 - **Usage**: Determines which recovery tier to trigger (Tier 1, 2, or 3)
 - **Independence**: Each location has its own counter tracked independently
 - **Reset**: Counter resets to 0 when VPN check succeeds for that location
-- **Example**: `failure_counter_NYC_203_0_113_1` contains `3` if NYC location has failed 3 times consecutively
+- **Example**: `failure_count_NYC_203_0_113_1` contains `3` if NYC location has failed 3 times consecutively
 
 #### 2. Last Bytes (`last_bytes_<location>_<peer_ip>`)
 
@@ -125,8 +125,8 @@ These files track system-wide state shared across all peers and locations.
 #### 1. Restart Count (`restart_count`)
 
 - **Purpose**: Tracks Tier 3 recovery action timestamps for rate limiting
-- **Format**: One Unix timestamp per line (timestamp list)
-- **Creation**: Created during state initialization
+- **Format**: Integer (defaults to "0" during initialization, then one Unix timestamp per line when timestamps are added)
+- **Creation**: Created during state initialization with default value "0"
 - **Usage**: Rate limiting prevents restart loops by limiting how frequently Tier 3 recovery actions can occur
 - **Update**: New timestamp appended when Tier 3 recovery is executed
 - **Cleanup**: Old entries (older than 24 hours) are automatically cleaned up
@@ -185,10 +185,12 @@ These files track statistics for resource monitoring checks (hourly summaries):
 
 - **Purpose**: Tracks system-wide failure state (affects all peers)
 - **Format**: Integer (0 = no failure, 1 = system-wide failure detected)
-- **Creation**: Created during state initialization (defaults to 0)
+- **Creation**: Created during state initialization (defaults to 0) if `get_system_wide_failure_state_file()` function is available
+- **Path Function**: Path obtained via `get_system_wide_failure_state_file()` from `lib/detection/system_wide_failure.sh`
 - **Usage**: Coordinates recovery actions across multiple locations during system-wide failures
 - **Update**: Set to 1 when system-wide failure is detected, 0 when resolved
 - **Example**: Contains `1` if system-wide failure is detected
+- **Note**: This state file is optional - initialization only creates it if the path function is available
 
 ## Runtime State Variables
 
@@ -302,11 +304,30 @@ The application uses an abstraction layer for state file operations:
 - **`set_peer_state()`**: Unified setter for per-peer state values with atomic writes
 - **`delete_peer_state()`**: Removes per-peer state files
 
+**Supported State Keys**:
+The abstraction layer supports the following state keys:
+- `failure_count`: Failure counter (per-location, per-peer)
+- `last_bytes`: Last byte counter value (per-location, per-peer)
+- `spi`: Security Parameter Index (per-location, per-peer)
+- `idle_detected`: Idle detection flag (per-location, per-peer)
+- `last_status_log`: Last status log timestamp (per-location, per-peer)
+- `failure_type`: Failure type string (per-location, per-peer)
+- `recovery_method`: Recovery method string (per-location, per-peer)
+- `connection_name`: IPsec connection name (per-peer only, no location)
+
+**Files Outside Abstraction Layer**:
+The following global state files are intentionally outside the abstraction layer (they represent global system state, not per-peer/location state):
+- `RESTART_COUNT_FILE`: Global restart tracking
+- `NETWORK_PARTITION_STATE_FILE`: Global network partition state
+- `LOCKFILE`: Global lockfile for execution control
+- `PIDFILE`: Global PID file for keepalive daemon
+
 **Benefits**:
 - Consistent path generation and sanitization
 - Centralized validation and error handling
 - Atomic write operations
 - Easy to extend with new state keys
+- Automatic format validation and corruption recovery
 
 ### State Passing Pattern
 
@@ -343,16 +364,23 @@ State and log directories can be customized via configuration:
 
 ## State Initialization
 
-State initialization occurs at script startup via `init_state()` function:
+State initialization occurs at script startup via `init_state()` function (defined in `lib/state/state_init.sh`):
 
 1. **Directory Creation**: Ensures `STATE_DIR` and `LOGS_DIR` exist
 2. **Global State Files**: Creates required global state files:
-   - `restart_count` (empty file, timestamps added on-demand)
-   - `network_partition_state` (defaults to 0)
-   - `system_wide_failure_state` (defaults to 0)
+   - `restart_count` (defaults to "0", timestamps added on-demand)
+   - `network_partition_state` (defaults to 0, path from `get_network_partition_state_file()`)
+   - `system_wide_failure_state` (defaults to 0, path from `get_system_wide_failure_state_file()` if available)
 3. **Per-Peer Files**: Created on-demand when first accessed
 
-**Note**: Per-peer state files are created automatically when first needed (e.g., when a failure occurs or byte counters are read).
+**Initialization Details**:
+- `init_state()` validates that required variables (`LOGS_DIR`, `STATE_DIR`, `RESTART_COUNT_FILE`) are set before proceeding
+- Network partition state file path is obtained via `get_network_partition_state_file()` from `lib/state/state_paths.sh`
+- System-wide failure state file path is obtained via `get_system_wide_failure_state_file()` from `lib/detection/system_wide_failure.sh` (optional - only created if function is available)
+- File creation failures are logged as warnings but don't cause script exit (non-critical)
+- Validation failures (unset required variables) cause script exit via `handle_error_or_exit_fake_mode()`
+
+**Note**: Per-peer state files are created automatically when first needed (e.g., when a failure occurs or byte counters are read). They are not created during initialization.
 
 ## State Validation and Recovery
 
@@ -399,7 +427,7 @@ When corruption is detected:
 
 ### Examples
 
-- `failure_counter_NYC_203_0_113_1` (per-location, per-peer)
+- `failure_count_NYC_203_0_113_1` (per-location, per-peer)
 - `connection_name_203_0_113_1` (per-peer only)
 - `restart_count` (global)
 
@@ -413,8 +441,8 @@ Each location's state is tracked independently:
 - State files are isolated per location
 
 **Example**: If NYC location fails 3 times and DC location fails 2 times:
-- `failure_counter_NYC_203_0_113_1` = 3
-- `failure_counter_DC_198_51_100_1` = 2
+- `failure_count_NYC_203_0_113_1` = 3
+- `failure_count_DC_198_51_100_1` = 2
 - These are tracked completely independently
 
 ### Global State

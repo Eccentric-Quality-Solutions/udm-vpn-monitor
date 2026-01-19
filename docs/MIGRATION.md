@@ -171,7 +171,7 @@ LOCATION_DC_INTERNAL="192.168.200.1 192.168.200.2 192.168.200.3"
 After migration, state files will use location-based naming:
 
 **Old Format**:
-- `state/failure_counter_203_0_113_1`
+- `state/failure_count_203_0_113_1`
 - `state/last_bytes_203_0_113_1`
 - `state/spi_203_0_113_1`
 - `state/failure_type_203_0_113_1`
@@ -180,7 +180,7 @@ After migration, state files will use location-based naming:
 - `state/recovery_method_203_0_113_1`
 
 **New Format**:
-- `state/failure_counter_NYC_203_0_113_1`
+- `state/failure_count_NYC_203_0_113_1`
 - `state/last_bytes_NYC_203_0_113_1`
 - `state/spi_NYC_203_0_113_1`
 - `state/failure_type_NYC_203_0_113_1`
@@ -217,7 +217,7 @@ After migration, verify the configuration:
 4. **Verify state files**:
    Check that new state files are created with location-based names:
    ```bash
-   ls -la /data/vpn-monitor/state/failure_counter_*
+   ls -la /data/vpn-monitor/state/failure_count_*
    ls -la /data/vpn-monitor/state/last_bytes_*
    ```
 

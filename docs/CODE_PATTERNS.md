@@ -42,7 +42,8 @@ These patterns should be followed consistently when writing or modifying code in
     - [Protect Against Symlink Attacks in Deletion Operations](#pattern-protect-against-symlink-attacks-in-deletion-operations)
     - [Defense-in-Depth for Critical Operations](#pattern-defense-in-depth-for-critical-operations)
 21. [Quoting and Variable Expansion Patterns](#quoting-and-variable-expansion-patterns)
-22. [UDM-Specific Constraints](#udm-specific-constraints)
+22. [Script-Specific Patterns](#script-specific-patterns)
+23. [UDM-Specific Constraints](#udm-specific-constraints)
 
 ---
 
@@ -608,6 +609,33 @@ mv "$file.tmp" "$file"  # Can hang if $file is unreadable (chmod 000) or unwrita
 - Use `rm -f` which can remove unreadable/unwritable files safely
 - **See "Check Readability Before File Operations" pattern** for general guidance on file readability checks
 
+### Pattern: Remove Unwritable Files Before mv Operations
+
+**When to Use:** Before `mv` operations when target file may be unreadable or unwritable
+
+**Pattern:**
+```bash
+# ✅ GOOD: Remove unwritable file before mv operation
+# If target file exists but is unreadable or unwritable, remove it first to avoid potential hangs
+# This can happen if file permissions were changed (e.g., chmod 000 or chmod 444)
+# Removing unwritable files prevents mv from hanging when trying to overwrite them
+if [[ -f "$target_file" ]] && (! file_exists_and_readable "$target_file" || ! [[ -w "$target_file" ]]); then
+    rm -f "$target_file" 2>/dev/null || true
+fi
+mv "$temp_file" "$target_file"
+
+# ❌ BAD: mv can hang on unreadable or unwritable target
+mv "$temp_file" "$target_file"  # Can hang if $target_file is unreadable (chmod 000) or unwritable (chmod 444)!
+```
+
+**Key Points:**
+- Remove unreadable or unwritable target files before `mv` operations
+- Prevents hangs when overwriting unreadable files (chmod 000) or unwritable files (chmod 444)
+- Use `rm -f` which can remove unreadable/unwritable files safely
+- Similar to "Remove Before Atomic Write" pattern but applies to `mv` operations
+- **See "Check Readability Before File Operations" pattern** for general guidance on file readability checks
+- This pattern is especially important for migration scripts and file replacement operations
+
 ### Pattern: Clean Up Leftover .tmp Files
 
 **When to Use:** Before atomic writes to prevent hangs from leftover temp files
@@ -815,7 +843,7 @@ state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "failure_type"
 - All state operations use location name and peer IP
 - State files use sanitized location names and IPs in filenames
 - Each location's state files are completely independent
-- Format: `<key>_<location>_<peer_ip>` (e.g., `failure_counter_NYC_203_0_113_1`)
+- Format: `<key>_<location>_<peer_ip>` (e.g., `failure_count_NYC_203_0_113_1`)
 
 ### Pattern: State File Naming Conventions
 
@@ -830,8 +858,8 @@ All state files managed by the abstraction layer follow consistent naming patter
 These files track state for a specific location and peer IP combination. Format: `<key>_<sanitized_location>_<sanitized_peer_ip>`
 
 **Supported Keys:**
-1. **`failure_count`** → `failure_counter_<location>_<peer_ip>`
-   - Example: `failure_counter_NYC_203_0_113_1`
+1. **`failure_count`** → `failure_count_<location>_<peer_ip>`
+   - Example: `failure_count_NYC_203_0_113_1`
    - Tracks consecutive failure count per location
 
 2. **`last_bytes`** → `last_bytes_<location>_<peer_ip>`
@@ -921,7 +949,7 @@ These files are intentionally outside the abstraction layer because they represe
 ```bash
 # ✅ GOOD: Use abstraction layer
 state_file=$(get_peer_state_file_path "NYC" "203.0.113.1" "failure_count")
-# Returns: ${STATE_DIR}/failure_counter_NYC_203_0_113_1
+# Returns: ${STATE_DIR}/failure_count_NYC_203_0_113_1
 
 # ✅ GOOD: Use state accessor functions
 count=$(get_peer_state "NYC" "203.0.113.1" "failure_count" "0")
@@ -932,7 +960,7 @@ conn_file=$(get_peer_state_file_path "" "203.0.113.1" "connection_name")
 # Returns: ${STATE_DIR}/connection_name_203_0_113_1
 
 # ❌ BAD: Direct path construction
-state_file="${STATE_DIR}/failure_counter_${location}_${ip}"
+state_file="${STATE_DIR}/failure_count_${location}_${ip}"
 # Problems: No sanitization, inconsistent format, breaks if naming changes
 ```
 
@@ -1097,7 +1125,7 @@ get_peer_state() {
 **Pattern:**
 ```bash
 # Validate all state files matching a pattern
-validate_state_files_by_pattern "failure_counter_*" "integer" "0" "Failure counter file" || validation_failed=1
+validate_state_files_by_pattern "failure_count_*" "integer" "0" "Failure counter file" || validation_failed=1
 validate_state_files_by_pattern "last_bytes_*" "integer" "0" "Byte counter file" || validation_failed=1
 ```
 
@@ -1844,9 +1872,9 @@ select_recovery_strategy() {
 **Pattern:**
 ```bash
 # ✅ GOOD: Use helper function directly
-local external_ip
-if external_ip=$(get_location_external_ip "$location_name" 2>/dev/null); then
-    # Use external_ip
+local external_peer_ip
+if external_peer_ip=$(get_location_external_ip "$location_name" 2>/dev/null); then
+    # Use external_peer_ip
 else
     # Handle error: location not found or extraction failed
     handle_error "WARNING" "$location_name" "Failed to get external IP"
@@ -1854,7 +1882,7 @@ else
 fi
 
 # ❌ BAD: Direct array access (gets full delimited string)
-local external_ip="${LOCATIONS[$location_name]}"
+local external_peer_ip="${LOCATIONS[$location_name]}"
 ```
 
 **Key Points:**
@@ -2186,6 +2214,57 @@ lib/
 - Keep scripts in `scripts/` as standalone as possible - only source what's actually needed
 - See "Command Availability Patterns" section for guidance on command checking in standalone scripts
 
+### Pattern: Fallback Function Definitions in Standalone Scripts
+
+**When to Use:** Standalone scripts that source library modules but need to work even if libraries fail to load
+
+**Pattern:**
+```bash
+# ✅ GOOD: Define fallback function if library function not available
+# Source library modules
+source "${PROJECT_ROOT}/lib/common.sh" 2>/dev/null || true
+
+# Fallback function if library failed to load
+if ! command -v sanitize_location_name >/dev/null 2>&1; then
+    # Fallback implementation
+    sanitize_location_name() {
+        local location_name="$1"
+        local sanitized
+        # ... fallback implementation ...
+        echo "$sanitized"
+    }
+fi
+
+# ✅ GOOD: Check function availability before use
+if ! command -v validate_ip_address >/dev/null 2>&1; then
+    echo "ERROR: validate_ip_address function not available. detection.sh library is required." >&2
+    return 1
+fi
+
+# ❌ BAD: Assume library functions are always available
+source "${PROJECT_ROOT}/lib/common.sh" 2>/dev/null || true
+# No check - script fails if function not available
+sanitize_location_name "$name"  # May fail!
+```
+
+**Key Points:**
+- Check function availability with `command -v function_name` before using
+- Define fallback functions when libraries might not be available
+- Fallback functions should match the original function's interface (arguments, return codes, output)
+- Document fallback functions with same documentation format as library functions
+- Use `2>/dev/null || true` when sourcing to prevent errors from breaking script
+- Provide clear error messages when required functions are missing
+- Fallback functions should provide minimal functionality needed for script to work
+
+**When to Use:**
+- Standalone utility scripts that should work even if libraries fail to load
+- Scripts that need to work in environments where libraries might not be available
+- Migration scripts or one-off utilities that need to be self-contained
+
+**When NOT to Use:**
+- Main application scripts (should fail fast if libraries unavailable)
+- Library modules themselves (should not define fallbacks for their own dependencies)
+
 ### Pattern: Module-Level Validation for Critical Dependencies
 
 **When to Use:** When a module has critical dependencies (like `STATE_DIR`, `LOGS_DIR`, etc.) that must be set before functions are called, but the module is sourced early in initialization.
@@ -2435,6 +2514,53 @@ get_peer_state_file_path() { }
 - Use descriptive names: `failure_count` not `fc`
 - Use `readonly` for constants that shouldn't change
 
+### Pattern: Peer IP Variable Naming
+
+**When to Use:** Functions that accept peer IP addresses as parameters
+
+**Standard Naming Convention:**
+- Use `external_peer_ip` for the external/public IP address of the remote VPN gateway (standard for all functions)
+- Use `internal_peer_ip` or `internal_peer_ips` for internal IP addresses (single IP or space-separated string)
+- Both internal and external IPs are technically "peer IPs", so being explicit about which one improves clarity
+
+**Pattern:**
+```bash
+# ✅ GOOD: Use external_peer_ip for external peer IP (standard)
+format_peer_ip_display() {
+    local external_peer_ip="$1"
+    local internal_peer_ips="${2:-}"
+    # ... function logic ...
+}
+
+# ✅ GOOD: Use external_peer_ip when distinguishing between external and internal IPs
+check_vpn_status() {
+    local external_peer_ip="$1"
+    local internal_peer_ips="${2:-}"
+    local location_name="$3"
+    # ... function logic that explicitly uses both external and internal IPs ...
+}
+
+# ✅ GOOD: Recovery functions use external_peer_ip (consistent standard)
+execute_ipsec_reload() {
+    local external_peer_ip="$1"
+    local location_name="$2"
+    # ... function logic ...
+}
+```
+
+**Rationale:**
+- Both internal and external IPs are technically "peer IPs", so using `external_peer_ip` makes it explicit which one is being used
+- This improves clarity and reduces confusion when reading code
+- Consistency across all functions improves readability
+- Display/formatting functions use `external_peer_ip` to match the standard
+
+**Examples from Codebase:**
+- `format_peer_ip_display()` - Uses `external_peer_ip` (standard)
+- `format_peer_display()` - Uses `external_peer_ip` (standard)
+- `check_vpn_status()` - Uses `external_peer_ip` (explicitly handles both external and internal IPs)
+- `detect_failure_type()` - Uses `external_peer_ip` (explicitly handles both external and internal IPs)
+- Recovery functions (`execute_ipsec_reload()`, `delete_stale_sas()`, `surgical_cleanup()`, etc.) - Use `external_peer_ip` (consistent standard)
+
 ### Pattern: Safe Variable Assignment
 
 **When to Use:** Setting global variables from untrusted input (config files)
@@ -2617,6 +2743,39 @@ fi
 - INT signal should exit with 130, TERM signal should exit with 143
 - EXIT trap will run even after explicit cleanup, so idempotency is critical
 
+**Clearing EXIT Traps After Successful Completion:**
+
+When cleanup is only needed on error, you can clear the EXIT trap after successful completion:
+
+```bash
+# ✅ GOOD: Clear trap after successful completion
+temp_file=$(mktemp)
+cleanup_temp_file() {
+    rm -f "${temp_file:-}"
+}
+trap cleanup_temp_file EXIT
+
+# ... perform operations ...
+
+# If successful, clear trap (cleanup not needed)
+trap - EXIT
+
+# ❌ BAD: Cleanup runs even on success (unnecessary)
+temp_file=$(mktemp)
+cleanup_temp_file() {
+    rm -f "${temp_file:-}"
+}
+trap cleanup_temp_file EXIT
+# ... perform operations ...
+# Cleanup always runs, even when not needed
+```
+
+**Key Points for Clearing Traps:**
+- Clear trap with `trap - EXIT` after successful completion when cleanup is only needed on error
+- Useful when temporary files are only needed during processing and should be cleaned up on error
+- If cleanup should always run (e.g., lockfile removal), don't clear the trap
+- Always use `${var:-}` syntax in cleanup functions to handle cases where trap wasn't cleared
+
 **Common Mistakes:**
 ```bash
 # ❌ BAD: Loses exit code from main function
@@ -2747,13 +2906,13 @@ fi
 if command -v parse_location_config >/dev/null 2>&1; then
     config=$(parse_location_config "$location")
     # If parse_location_config is available, other functions from the same module are also available
-    external_ip=$(get_location_external_ip "$location_name" 2>/dev/null || echo "")
+    external_peer_ip=$(get_location_external_ip "$location_name" 2>/dev/null || echo "")
 fi
 
 # ✅ GOOD: Only check one function from a module (others in same module are also available)
 # parse_location_config, get_location_external_ip, and get_location_internal_ips are all in location_parsing.sh
 if command -v parse_location_config >/dev/null 2>&1; then
-    external_ip=$(get_location_external_ip "$location_name" 2>/dev/null || echo "")
+    external_peer_ip=$(get_location_external_ip "$location_name" 2>/dev/null || echo "")
     internal_ips=$(get_location_internal_ips "$location_name" 2>/dev/null || echo "")
 fi
 
@@ -3146,6 +3305,47 @@ done
 - Use `IFS` to split delimited strings within loops
 - Quote array expansions to handle spaces correctly
 
+### Pattern: Process Substitution for Reading Function Output
+
+**When to Use:** Reading function output line by line into arrays or processing with loops
+
+**Pattern:**
+```bash
+# ✅ GOOD: Use process substitution to read function output into array
+local -a location_names
+while IFS= read -r name; do
+    location_names+=("$name")
+done < <(generate_location_names "$count" "$mode" "$csv_file")
+
+# ✅ GOOD: Use process substitution with mapfile for reading into array
+mapfile -t test_files < <(find tests -name "*.sh" -type f | sort)
+
+# ✅ GOOD: Use process substitution with readarray
+readarray -t sorted_locations < <(printf '%s\n' "${!location_map[@]}" | sort)
+
+# ❌ BAD: Using command substitution with echo (loses newlines, harder to process)
+names=$(generate_location_names "$count")
+# Problem: All names in single string, harder to split correctly
+```
+
+**Key Points:**
+- Use `< <(command)` process substitution to read command/function output line by line
+- Process substitution creates a file descriptor that can be read like a file
+- Works well with `while read` loops for line-by-line processing
+- Works well with `mapfile` or `readarray` for reading into arrays
+- Preserves newlines and handles multi-line output correctly
+- More efficient than command substitution (`$(command)`) when processing line by line
+- Process substitution runs in a subshell, so variable modifications won't affect parent shell
+
+**When to Use:**
+- Reading function output that produces multiple lines
+- Processing command output line by line
+- Reading into arrays from commands that output multiple items
+
+**When NOT to Use:**
+- Single-line output: Use command substitution `$(command)` instead
+- When you need to capture exit code: Process substitution doesn't provide exit code directly
+
 ### Pattern: Process Until Condition Met
 
 **When to Use:** Loops that continue until a condition is met (timeouts, retries, state changes)
@@ -3308,22 +3508,22 @@ done
 ```bash
 # ✅ GOOD: Check if variable is set before making it readonly
 # Prevents "readonly variable already set" errors when sourcing multiple times
+# Use this pattern in constants files that may be sourced from multiple modules
 [[ -z "${SECONDS_PER_MINUTE:-}" ]] && readonly SECONDS_PER_MINUTE=60
 [[ -z "${IPSEC_STATUS_TIMEOUT:-}" ]] && readonly IPSEC_STATUS_TIMEOUT=5
-
-# ✅ GOOD: In constants file, set directly (only sourced once)
-readonly EXIT_SUCCESS=0
-readonly SECONDS_PER_MINUTE=60
+[[ -z "${XFRM_RECOVERY_SLEEP_SECONDS:-}" ]] && readonly XFRM_RECOVERY_SLEEP_SECONDS=3
 
 # ❌ BAD: Setting readonly without check (fails if sourced twice)
 readonly SECONDS_PER_MINUTE=60  # Error if already set!
+readonly XFRM_RECOVERY_SLEEP_SECONDS=3  # Error if already set!
 ```
 
 **Key Points:**
 - Use conditional readonly (`[[ -z "${VAR:-}" ]] && readonly VAR=value`) when modules may be sourced multiple times
-- Use direct `readonly` in constants files that are only sourced once
+- **Constants files should be idempotent** - use conditional readonly even in constants files, as they may be sourced from multiple modules
 - Prevents "readonly variable already set" errors
 - Allows modules to have fallback constants if constants.sh isn't available
+- Example: `lib/recovery/constants.sh` uses conditional readonly because it's sourced by multiple recovery modules
 
 ### Pattern: Default Parameter Values
 
@@ -3876,6 +4076,110 @@ EOF
 
 ---
 
+## Script-Specific Patterns
+
+This section covers patterns specific to standalone scripts and script execution. Some related patterns may also appear in other sections (e.g., "Process Substitution" in Loop and Iteration Patterns, "Fallback Function Definitions" in Module Organization Patterns).
+
+### Pattern: Command-Line Argument Parsing
+
+**When to Use:** Scripts that accept command-line arguments with options and flags
+
+**Pattern:**
+```bash
+# ✅ GOOD: Standard argument parsing with while loop and case statement
+parse_args() {
+    local mode="interactive"
+    local csv_file=""
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --interactive | -i)
+            mode="interactive"
+            shift
+            ;;
+        --auto | -a)
+            mode="auto"
+            shift
+            ;;
+        --csv)
+            mode="csv"
+            csv_file="$2"
+            shift 2  # Shift past both option and value
+            ;;
+        --help | -h)
+            show_usage
+            exit 0
+            ;;
+        *)
+            echo "ERROR: Unknown option: $1" >&2
+            show_usage
+            exit 1
+            ;;
+        esac
+    done
+}
+
+# ✅ GOOD: Validate arguments before processing
+parse_args() {
+    # Validate first, then process
+    validate_args "$@"
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --fake)
+            NO_ESCALATE=1
+            shift
+            ;;
+        *)
+            # Unknown arguments already handled by validate_args
+            shift
+            ;;
+        esac
+    done
+}
+
+# ✅ GOOD: Handle both short and long options
+case "$1" in
+-h | --help)
+    show_usage
+    exit 0
+    ;;
+-v | --verbose)
+    VERBOSE=1
+    shift
+    ;;
+*)
+    echo "ERROR: Unknown option: $1" >&2
+    exit 1
+    ;;
+esac
+```
+
+**Key Points:**
+- Use `while [[ $# -gt 0 ]]` to iterate through all arguments
+- Use `case` statement for option matching
+- Support both short (`-h`) and long (`--help`) options in same case
+- Use `shift` to remove processed arguments (use `shift 2` for options with values)
+- Always handle unknown arguments with error message and usage display
+- Redirect error messages to stderr (`>&2`)
+- Exit with appropriate code (0 for help, 1 for errors)
+- Validate arguments before processing when possible
+- Use descriptive variable names for flags and options
+
+**Common Patterns:**
+- **Flags (no value):** `shift` after setting flag
+- **Options with values:** `shift 2` after reading value
+- **Help/Usage:** Display help and `exit 0`
+- **Unknown options:** Display error, show usage, `exit 1`
+
+**Related Patterns:**
+- See "Interactive User Input" in UDM-Specific Constraints for handling user prompts
+- See "Error Handling Patterns" for error handling in argument parsing
+- See "Process Substitution for Reading Function Output" in Loop and Iteration Patterns
+- See "Fallback Function Definitions in Standalone Scripts" in Module Organization Patterns
+
+---
+
 ## UDM-Specific Constraints
 
 ### Pattern: UDM OS Compatibility
@@ -4146,6 +4450,7 @@ This document consolidates code patterns used throughout the UDM VPN Monitor cod
 21. **Quoting**: Always quote variable expansions, use `$()` for command substitution, quote heredoc delimiters appropriately
 22. **UDM Constraints**: Target UDM OS 4.3+, use `/data` for persistent storage, check command availability, provide fallbacks
 23. **Interactive Input**: Redirect prompts to stderr (`>&2`) before `read` to prevent interference with stdin redirection in tests
+24. **Script-Specific**: Parse command-line arguments with while/case pattern, use process substitution for reading function output, define fallback functions in standalone scripts
 
 For more detailed information about specific patterns, see:
 - `CODE_REVIEW_LESSONS_LEARNED.md` - Historical lessons learned from code reviews (includes bug context and how patterns were discovered)

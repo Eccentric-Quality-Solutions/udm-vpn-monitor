@@ -39,7 +39,7 @@ We will use file-based state storage with plain text files in `/data/vpn-monitor
 
 ## Implementation Details
 - **State File Types**:
-  - Per-location, per-peer failure counters: `state/failure_counter_<location>_<peer_ip>`
+  - Per-location, per-peer failure counters: `state/failure_count_<location>_<peer_ip>`
   - Per-location, per-peer byte counters: `state/last_bytes_<location>_<peer_ip>`
   - Per-location, per-peer SPI values: `state/spi_<location>_<peer_ip>`
   - Per-location, per-peer idle detection: `state/idle_detected_<location>_<peer_ip>`

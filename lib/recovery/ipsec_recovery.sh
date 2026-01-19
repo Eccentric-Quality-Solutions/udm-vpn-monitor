@@ -8,9 +8,7 @@
 
 # shellcheck source=lib/recovery/constants.sh
 RECOVERY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if ! source "${RECOVERY_DIR}/constants.sh" 2>/dev/null; then
-	[[ -z "${XFRM_RECOVERY_SLEEP_SECONDS:-}" ]] && readonly XFRM_RECOVERY_SLEEP_SECONDS=3
-fi
+source "${RECOVERY_DIR}/constants.sh"
 
 # shellcheck source=lib/recovery/recovery_verification.sh
 source "${RECOVERY_DIR}/recovery_verification.sh" 2>/dev/null || {
@@ -93,18 +91,18 @@ source "${RECOVERY_DIR}/recovery_state.sh" 2>/dev/null || {
 #   Falls back to 'ipsec' command if _RECOVERY_IPSEC_PATH is unset
 #   Uses verify_ipsec_connections_active for verification
 execute_ipsec_reload() {
-	local peer_ip="$1"
+	local external_peer_ip="$1"
 	local location_name="$2"
 
 	# Validate required parameters
-	if [[ -z "$peer_ip" ]] || [[ -z "$location_name" ]]; then
-		handle_error "ERROR" "SYSTEM" "execute_ipsec_reload: peer_ip and location_name are required" 0
+	if [[ -z "$external_peer_ip" ]] || [[ -z "$location_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "execute_ipsec_reload: external_peer_ip and location_name are required" 0
 		return 1
 	fi
 
 	# Calculate once, reuse throughout
 	local ip_display
-	ip_display=$(format_peer_ip_display "$peer_ip" "")
+	ip_display=$(format_peer_ip_display "$external_peer_ip" "")
 
 	local reload_start_time
 	reload_start_time=$(get_unix_timestamp)
@@ -116,7 +114,7 @@ execute_ipsec_reload() {
 
 	# Store recovery method before attempting recovery
 	local recovery_method_used="ipsec_reload"
-	store_recovery_method "$location_name" "$peer_ip" "$recovery_method_used"
+	store_recovery_method "$location_name" "$external_peer_ip" "$recovery_method_used"
 
 	log_message "INFO" "$location_name" "Attempting ipsec reload for $ip_display (affects all tunnels)"
 	if "$ipsec_cmd" reload >/dev/null 2>&1; then
@@ -127,7 +125,7 @@ execute_ipsec_reload() {
 		handle_error "WARNING" "$location_name" "ipsec reload failed for $ip_display (exit code: ${reload_exit_code}), attempting ipsec restart"
 		# Update recovery method if fallback to restart
 		recovery_method_used="ipsec_restart"
-		store_recovery_method "$location_name" "$peer_ip" "$recovery_method_used"
+		store_recovery_method "$location_name" "$external_peer_ip" "$recovery_method_used"
 		if "$ipsec_cmd" restart >/dev/null 2>&1; then
 			command_succeeded=1
 			log_message "INFO" "$location_name" "Successfully restarted IPsec service via ipsec restart for $ip_display"
@@ -157,7 +155,7 @@ execute_ipsec_reload() {
 			handle_error "WARNING" "$location_name" "Recovery completed for $ip_display (via $recovery_method_used, verification: some connections not active, duration: ${reload_duration}s)"
 			# Clear recovery method since verification failed (prevents stale recovery method from being logged if VPN recovers naturally later)
 			if command -v clear_recovery_method >/dev/null 2>&1; then
-				clear_recovery_method "$location_name" "$peer_ip"
+				clear_recovery_method "$location_name" "$external_peer_ip"
 			fi
 			return 1
 		fi
@@ -165,7 +163,7 @@ execute_ipsec_reload() {
 		handle_error "WARNING" "$location_name" "IPsec recovery failed for $ip_display (ipsec commands failed, exit codes: reload=${reload_exit_code:-unknown}, restart=${restart_exit_code:-unknown})"
 		# Clear recovery method since recovery failed (prevents stale recovery method from being logged if VPN recovers naturally later)
 		if command -v clear_recovery_method >/dev/null 2>&1; then
-			clear_recovery_method "$location_name" "$peer_ip"
+			clear_recovery_method "$location_name" "$external_peer_ip"
 		fi
 		return 1
 	fi
@@ -199,7 +197,7 @@ execute_ipsec_reload() {
 #   Requires _RECOVERY_IPSEC_PATH and LOG_FILE to be set (from recovery orchestration)
 #   Uses verify_ipsec_connections_active and verify_byte_counters_resume for verification
 execute_ipsec_restart() {
-	local peer_ip="${1:-}"
+	local external_peer_ip="${1:-}"
 	local location_name="$2"
 
 	# Validate required parameters
@@ -215,8 +213,8 @@ execute_ipsec_restart() {
 	fi
 
 	# Store recovery method before attempting recovery
-	if [[ -n "$peer_ip" ]]; then
-		store_recovery_method "$location_name" "$peer_ip" "ipsec_restart"
+	if [[ -n "$external_peer_ip" ]]; then
+		store_recovery_method "$location_name" "$external_peer_ip" "ipsec_restart"
 	fi
 
 	# Note: execute_ipsec_restart doesn't have access to internal_peer_ip, and location_name is already in log prefix
@@ -269,10 +267,10 @@ execute_ipsec_restart() {
 			local iter_location_name
 			for iter_location_name in "${!LOCATIONS[@]}"; do
 				# Extract external IP using helper function
-				local external_ip
-				if external_ip=$(get_location_external_ip "$iter_location_name" 2>/dev/null); then
+				local external_peer_ip
+				if external_peer_ip=$(get_location_external_ip "$iter_location_name" 2>/dev/null); then
 					((total_peers++))
-					if verify_byte_counters_resume "$external_ip" "$iter_location_name" 2>/dev/null; then
+					if verify_byte_counters_resume "$external_peer_ip" "$iter_location_name" 2>/dev/null; then
 						((peers_with_bytes++))
 					fi
 				fi
@@ -311,8 +309,8 @@ execute_ipsec_restart() {
 		return 0
 	else
 		# Clear recovery method since verification failed (prevents stale recovery method from being logged if VPN recovers naturally later)
-		if [[ -n "$peer_ip" ]] && command -v clear_recovery_method >/dev/null 2>&1; then
-			clear_recovery_method "$location_name" "$peer_ip"
+		if [[ -n "$external_peer_ip" ]] && command -v clear_recovery_method >/dev/null 2>&1; then
+			clear_recovery_method "$location_name" "$external_peer_ip"
 		fi
 		return 1
 	fi

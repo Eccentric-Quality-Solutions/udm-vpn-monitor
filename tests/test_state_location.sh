@@ -19,15 +19,15 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 # ============================================================================
 
 # bats test_tags=category:high-risk,priority:high
-@test "get_peer_state_file_path - failure_counter with location name" {
+@test "get_peer_state_file_path - failure_count with location name" {
 	# Purpose: Test that failure counter files use location name in filename
-	# Expected: Filename format is failure_counter_<location>_<peer_ip>
+	# Expected: Filename format is failure_count_<location>_<peer_ip>
 	# Importance: State files must be unique per location
 	setup_test_environment
 
 	run get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "failure_count"
 	assert_success
-	assert_output "${STATE_DIR}/failure_counter_NYC_192_168_1_1"
+	assert_output "${STATE_DIR}/failure_count_NYC_192_168_1_1"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -51,7 +51,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 
 	run get_peer_state_file_path "NYC-Office" "${TEST_PEER_IP}" "failure_count"
 	assert_success
-	assert_output "${STATE_DIR}/failure_counter_NYC_Office_192_168_1_1"
+	assert_output "${STATE_DIR}/failure_count_NYC_Office_192_168_1_1"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -63,7 +63,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 
 	run get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "failure_count"
 	assert_success
-	assert_output "${STATE_DIR}/failure_counter_NYC_192_168_1_1"
+	assert_output "${STATE_DIR}/failure_count_NYC_192_168_1_1"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -79,8 +79,8 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	file2=$(get_peer_state_file_path "LA" "${TEST_PEER_IP}" "failure_count")
 
 	assert [ "$file1" != "$file2" ]
-	assert_equal "$file1" "${STATE_DIR}/failure_counter_NYC_192_168_1_1"
-	assert_equal "$file2" "${STATE_DIR}/failure_counter_LA_192_168_1_1"
+	assert_equal "$file1" "${STATE_DIR}/failure_count_NYC_192_168_1_1"
+	assert_equal "$file2" "${STATE_DIR}/failure_count_LA_192_168_1_1"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -216,7 +216,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	run get_peer_state_file_path "NYC-Office" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	# Should use sanitized name (hyphen replaced with underscore)
-	assert_output "${STATE_DIR}/failure_counter_NYC_Office_192_168_1_1"
+	assert_output "${STATE_DIR}/failure_count_NYC_Office_192_168_1_1"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -296,7 +296,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 
 	run get_peer_state_file_path "NYC" "2001:db8::1" "failure_count"
 	assert_success
-	assert_output "${STATE_DIR}/failure_counter_NYC_2001_db8__1"
+	assert_output "${STATE_DIR}/failure_count_NYC_2001_db8__1"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -318,7 +318,7 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 	local filename
 	filename=$(basename "$output")
 	local location_part
-	location_part=$(echo "$filename" | sed 's/failure_counter_\(.*\)_192_168_1_1/\1/')
+	location_part=$(echo "$filename" | sed 's/failure_count_\(.*\)_192_168_1_1/\1/')
 
 	# Location part should be <= 64 chars (after sanitization)
 	assert [ ${#location_part} -le 64 ]

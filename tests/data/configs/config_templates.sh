@@ -17,11 +17,11 @@
 # Output:
 #   Prints configuration content to stdout
 generate_config_minimal() {
-	local external_ip="$1"
-	local internal_ip="${2:-$external_ip}"
+	local external_peer_ip="$1"
+	local internal_ip="${2:-$external_peer_ip}"
 
 	cat <<EOF
-LOCATION_TEST_EXTERNAL="${external_ip}"
+LOCATION_TEST_EXTERNAL="${external_peer_ip}"
 LOCATION_TEST_INTERNAL="${internal_ip}"
 EOF
 }
@@ -39,12 +39,12 @@ EOF
 # Output:
 #   Prints configuration content to stdout
 generate_config_standard() {
-	local external_ip="$1"
-	local internal_ip="${2:-$external_ip}"
+	local external_peer_ip="$1"
+	local internal_ip="${2:-$external_peer_ip}"
 	local vpn_name="${3:-Test VPN}"
 
 	cat <<EOF
-LOCATION_TEST_EXTERNAL="${external_ip}"
+LOCATION_TEST_EXTERNAL="${external_peer_ip}"
 LOCATION_TEST_INTERNAL="${internal_ip}"
 VPN_NAME="${vpn_name}"
 TIER1_THRESHOLD=1
@@ -76,12 +76,12 @@ EOF
 # Output:
 #   Prints configuration content to stdout
 generate_config_custom_log() {
-	local external_ip="$1"
+	local external_peer_ip="$1"
 	local log_file="$2"
-	local internal_ip="${3:-$external_ip}"
+	local internal_ip="${3:-$external_peer_ip}"
 
 	cat <<EOF
-LOCATION_TEST_EXTERNAL="${external_ip}"
+LOCATION_TEST_EXTERNAL="${external_peer_ip}"
 LOCATION_TEST_INTERNAL="${internal_ip}"
 LOG_FILE="${log_file}"
 EOF
@@ -141,12 +141,12 @@ EOF
 # Output:
 #   Prints configuration content to stdout
 generate_config_cooldown_rate_limit() {
-	local external_ip="$1"
+	local external_peer_ip="$1"
 	local cooldown_minutes="${2:-1}"
 	local max_restarts="${3:-3}"
 
 	cat <<EOF
-LOCATION_NYC_EXTERNAL="${external_ip}"
+LOCATION_NYC_EXTERNAL="${external_peer_ip}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5

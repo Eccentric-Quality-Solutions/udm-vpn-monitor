@@ -11,7 +11,6 @@
 # Sourcing:
 #   This file is safe to source multiple times (idempotent).
 #   Constants are only defined if not already set.
-#   Recovery modules source this file with defensive fallback patterns.
 #
 # Version: 0.6.0
 #
@@ -22,18 +21,18 @@
 # Sleep delay (in seconds) after xfrm SA deletion to allow IKE re-establishment
 # Gives strongSwan time to detect SA deletion and initiate re-establishment
 # Used by both xfrm_recovery.sh and ipsec_recovery.sh
-readonly XFRM_RECOVERY_SLEEP_SECONDS=3
+[[ -z "${XFRM_RECOVERY_SLEEP_SECONDS:-}" ]] && readonly XFRM_RECOVERY_SLEEP_SECONDS=3
 
 # Maximum time (in seconds) to wait for SA re-establishment after deletion
 # Verification checks are performed with retries up to this timeout
 # Used by xfrm_recovery.sh
-readonly XFRM_RECOVERY_VERIFY_TIMEOUT=30
+[[ -z "${XFRM_RECOVERY_VERIFY_TIMEOUT:-}" ]] && readonly XFRM_RECOVERY_VERIFY_TIMEOUT=30
 
 # Interval (in seconds) between verification retry attempts
 # Used by xfrm_recovery.sh for exponential backoff during recovery verification
-readonly XFRM_RECOVERY_VERIFY_INTERVAL=2
+[[ -z "${XFRM_RECOVERY_VERIFY_INTERVAL:-}" ]] && readonly XFRM_RECOVERY_VERIFY_INTERVAL=2
 
 # Maximum interval (in seconds) for exponential backoff during recovery verification
 # Used to cap the exponential backoff interval growth
 # Used by xfrm_recovery.sh
-readonly XFRM_RECOVERY_MAX_INTERVAL=16
+[[ -z "${XFRM_RECOVERY_MAX_INTERVAL:-}" ]] && readonly XFRM_RECOVERY_MAX_INTERVAL=16

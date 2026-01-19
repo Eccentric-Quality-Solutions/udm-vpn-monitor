@@ -32,7 +32,7 @@ load test_helper
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local state_file
-	state_file=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
+	state_file=$(get_peer_state_file_path "TEST" "$peer_ip" "failure_count")
 	mkdir -p "$(dirname "$state_file")"
 	echo "5" >"$state_file"
 
@@ -45,14 +45,14 @@ load test_helper
 	# Try to make unwritable (may fail on some systems)
 	if chmod 555 "$state_dir" 2>/dev/null; then
 		# Try to increment (should fail gracefully)
-		run increment_failure "" "$peer_ip"
+		run increment_failure "TEST" "$peer_ip"
 		# Function should handle failure gracefully
 		# May return current count or fail, but shouldn't crash
 		assert_file_exist "$state_file"
 
 		# Verify original state is preserved (should still be 5)
 		local preserved_count
-		preserved_count=$(get_peer_state "" "$peer_ip" "failure_count" "0")
+		preserved_count=$(get_peer_state "TEST" "$peer_ip" "failure_count" "0")
 		assert_equal "$preserved_count" 5
 
 		# Restore permissions
@@ -79,7 +79,7 @@ load test_helper
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local state_file
-	state_file=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
+	state_file=$(get_peer_state_file_path "TEST" "$peer_ip" "failure_count")
 	mkdir -p "$(dirname "$state_file")"
 	echo "3" >"$state_file"
 
@@ -92,13 +92,13 @@ load test_helper
 	# Try to make unwritable (may fail on some systems)
 	if chmod 555 "$state_dir" 2>/dev/null; then
 		# Try to reset (should fail gracefully)
-		run reset_failure_count "" "$peer_ip"
+		run reset_failure_count "TEST" "$peer_ip"
 		# Function should handle failure gracefully
 		assert_file_exist "$state_file"
 
 		# Verify original state is preserved (should still be 3)
 		local preserved_count
-		preserved_count=$(get_peer_state "" "$peer_ip" "failure_count" "0")
+		preserved_count=$(get_peer_state "TEST" "$peer_ip" "failure_count" "0")
 		assert_equal "$preserved_count" 3
 
 		# Restore permissions
@@ -168,7 +168,7 @@ load test_helper
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local state_file
-	state_file=$(get_peer_state_file_path "" "$peer_ip" "last_bytes")
+	state_file=$(get_peer_state_file_path "TEST" "$peer_ip" "last_bytes")
 	mkdir -p "$(dirname "$state_file")"
 	echo "1000" >"$state_file"
 
@@ -181,12 +181,12 @@ load test_helper
 	# Try to make unwritable (may fail on some systems)
 	if chmod 555 "$state_dir" 2>/dev/null; then
 		# Try to update state (should fail gracefully)
-		run set_peer_state "" "$peer_ip" "last_bytes" "2000"
+		run set_peer_state "TEST" "$peer_ip" "last_bytes" "2000"
 		assert_failure
 
 		# Verify original state is preserved (should still be 1000)
 		local preserved_value
-		preserved_value=$(get_peer_state "" "$peer_ip" "last_bytes" "0")
+		preserved_value=$(get_peer_state "TEST" "$peer_ip" "last_bytes" "0")
 		assert_equal "$preserved_value" 1000
 
 		# Restore permissions
@@ -213,7 +213,7 @@ load test_helper
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local state_file
-	state_file=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
+	state_file=$(get_peer_state_file_path "TEST" "$peer_ip" "failure_count")
 	mkdir -p "$(dirname "$state_file")"
 	echo "5" >"$state_file"
 
@@ -227,13 +227,13 @@ load test_helper
 	# Try to make unwritable (simulates disk full)
 	if chmod 555 "$state_dir" 2>/dev/null; then
 		# Try to increment (should fail gracefully)
-		run increment_failure "" "$peer_ip"
+		run increment_failure "TEST" "$peer_ip"
 		# Function should handle failure gracefully
 		assert_file_exist "$state_file"
 
 		# Verify original state is preserved
 		local preserved_count
-		preserved_count=$(get_peer_state "" "$peer_ip" "failure_count" "0")
+		preserved_count=$(get_peer_state "TEST" "$peer_ip" "failure_count" "0")
 		assert_equal "$preserved_count" 5
 
 		# Restore permissions
@@ -260,7 +260,7 @@ load test_helper
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local state_file
-	state_file=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
+	state_file=$(get_peer_state_file_path "TEST" "$peer_ip" "failure_count")
 	mkdir -p "$(dirname "$state_file")"
 	echo "5" >"$state_file"
 
@@ -273,7 +273,7 @@ load test_helper
 	# Try to make directory read-only (may fail on some systems)
 	if chmod 555 "$state_dir" 2>/dev/null; then
 		# Try to delete (should fail gracefully)
-		run delete_peer_state "" "$peer_ip" "failure_count"
+		run delete_peer_state "TEST" "$peer_ip" "failure_count"
 		# Function should detect failure and return error code
 		assert_failure
 
@@ -283,7 +283,7 @@ load test_helper
 		# Restore permissions for cleanup
 		restore_permissions_after_test "$state_dir" "$original_perms"
 		# Now delete should succeed
-		run delete_peer_state "" "$peer_ip" "failure_count"
+		run delete_peer_state "TEST" "$peer_ip" "failure_count"
 		assert_success
 	else
 		# Can't test read-only directory on this system - skip
@@ -306,16 +306,18 @@ load test_helper
 	# Set initial state - create multiple files to clean up
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
-	run set_peer_state "" "$peer_ip" "failure_count" "5"
+	# Use a test location name for location-based keys
+	local test_location="TEST"
+	run set_peer_state "$test_location" "$peer_ip" "failure_count" "5"
 	assert_success
-	run set_peer_state "" "$peer_ip" "last_bytes" "123456"
+	run set_peer_state "$test_location" "$peer_ip" "last_bytes" "123456"
 	assert_success
 
 	# Get file paths
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
+	counter_file=$(get_peer_state_file_path "$test_location" "$peer_ip" "failure_count")
 	local bytes_file
-	bytes_file=$(get_peer_state_file_path "" "$peer_ip" "last_bytes")
+	bytes_file=$(get_peer_state_file_path "$test_location" "$peer_ip" "last_bytes")
 
 	# Make parent directory read-only to simulate partial deletion failure
 	# This will prevent deletion of files in that directory
@@ -327,7 +329,7 @@ load test_helper
 	# Try to make directory read-only (may fail on some systems)
 	if chmod 555 "$state_dir" 2>/dev/null; then
 		# Try to cleanup (should handle partial failure gracefully)
-		run cleanup_peer_state "" "$peer_ip"
+		run cleanup_peer_state "$test_location" "$peer_ip"
 		# Function should continue even if some deletions fail
 		# cleanup_peer_state doesn't check return values, so it always succeeds
 		# but logs warnings for failures
@@ -339,7 +341,7 @@ load test_helper
 		# Restore permissions for cleanup
 		restore_permissions_after_test "$state_dir" "$original_perms"
 		# Now cleanup should succeed completely
-		run cleanup_peer_state "" "$peer_ip"
+		run cleanup_peer_state "$test_location" "$peer_ip"
 		assert_success
 		assert_file_not_exist "$counter_file"
 		assert_file_not_exist "$bytes_file"

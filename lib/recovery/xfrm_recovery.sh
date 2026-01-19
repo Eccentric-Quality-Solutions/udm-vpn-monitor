@@ -9,17 +9,14 @@
 # Source recovery constants for magic numbers
 # shellcheck source=lib/recovery/constants.sh
 RECOVERY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if ! source "${RECOVERY_DIR}/constants.sh" 2>/dev/null; then
-	[[ -z "${XFRM_RECOVERY_SLEEP_SECONDS:-}" ]] && readonly XFRM_RECOVERY_SLEEP_SECONDS=3
-	[[ -z "${XFRM_RECOVERY_VERIFY_TIMEOUT:-}" ]] && readonly XFRM_RECOVERY_VERIFY_TIMEOUT=30
-	[[ -z "${XFRM_RECOVERY_VERIFY_INTERVAL:-}" ]] && readonly XFRM_RECOVERY_VERIFY_INTERVAL=2
-	[[ -z "${XFRM_RECOVERY_MAX_INTERVAL:-}" ]] && readonly XFRM_RECOVERY_MAX_INTERVAL=16
-fi
+source "${RECOVERY_DIR}/constants.sh"
 
 # shellcheck source=lib/constants.sh
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	[[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && readonly XFRM_OUTPUT_CONTEXT_LINES=10
+	[[ -z "${XFRM_PARSE_MAX_SIZE_BYTES:-}" ]] && readonly XFRM_PARSE_MAX_SIZE_BYTES=51200
+	[[ -z "${XFRM_PARSE_MAX_LINES:-}" ]] && readonly XFRM_PARSE_MAX_LINES=5000
 fi
 
 # shellcheck source=lib/recovery/recovery_state.sh
@@ -192,7 +189,7 @@ source "${RECOVERY_DIR}/recovery_verification.sh" 2>/dev/null || {
 #   - Multiple SAs: Processes all matching SAs, deletes each individually
 #
 # Filtering Algorithm:
-#   Uses grep -F (fixed-string matching) with "dst $peer_ip" pattern to:
+#   Uses grep -F (fixed-string matching) with "dst $external_peer_ip" pattern to:
 #   - Prevent regex pattern injection (treats IP as literal string)
 #   - Provide natural word boundaries (exact match prevents partial IP matches)
 #   - Example: "dst 192.168.1.1" won't match "dst 192.168.1.10" due to exact matching
@@ -270,11 +267,11 @@ source "${RECOVERY_DIR}/recovery_verification.sh" 2>/dev/null || {
 #   - Logs parsing progress and errors
 #
 # Note:
-#   Only includes SAs that match the peer IP (forward SA: dst=$peer_ip, reverse SA: src=$peer_ip)
+#   Only includes SAs that match the peer IP (forward SA: dst=$external_peer_ip, reverse SA: src=$external_peer_ip)
 #   Validates proto (esp/ah) and spi (hex/decimal) before adding to list
 parse_xfrm_output_to_sa_list() {
 	local xfrm_output="$1"
-	local peer_ip="$2"
+	local external_peer_ip="$2"
 	local location_name="$3"
 	local -n sa_list_ref="$4"
 
@@ -282,7 +279,16 @@ parse_xfrm_output_to_sa_list() {
 
 	# Format IP display once for reuse
 	local ip_display
-	ip_display=$(format_peer_ip_display "$peer_ip" "")
+	ip_display=$(format_peer_ip_display "$external_peer_ip" "")
+
+	# Input validation: Check size and prevent DoS/excessive processing time
+	# The parsing loop will always terminate, but large input can cause slow processing
+	# and memory issues. These limits prevent DoS while allowing normal operation.
+	local xfrm_output_size=${#xfrm_output}
+	if [[ $xfrm_output_size -gt ${XFRM_PARSE_MAX_SIZE_BYTES:-51200} ]]; then
+		handle_error "WARNING" "$location_name" "xfrm recovery: xfrm output too large ($xfrm_output_size bytes, limit=${XFRM_PARSE_MAX_SIZE_BYTES:-51200}), skipping parse for $ip_display"
+		return 1
+	fi
 
 	# Parse xfrm output to extract SAs
 	# Format: Each SA block starts with "src <ip> dst <ip>" followed by "proto <proto> spi <spi>"
@@ -352,6 +358,12 @@ parse_xfrm_output_to_sa_list() {
 	local line_count=0
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		line_count=$((line_count + 1))
+		# Line count protection: prevent excessive processing time
+		# The loop will always terminate, but this prevents DoS from extremely large input
+		if [[ $line_count -gt ${XFRM_PARSE_MAX_LINES:-5000} ]]; then
+			handle_error "WARNING" "$location_name" "xfrm recovery: xfrm output has too many lines ($line_count, limit=${XFRM_PARSE_MAX_LINES:-5000}), stopping parse for $ip_display"
+			return 1
+		fi
 		# Skip empty lines (don't affect parsing state)
 		[[ -z "$line" ]] && continue
 
@@ -379,10 +391,10 @@ parse_xfrm_output_to_sa_list() {
 			# Complete SA requires: src, dst, proto, and spi all present
 			# This handles the case where we've finished parsing one SA and found the next
 			if is_sa_complete "$in_sa_block" "$current_src" "$current_dst" "$current_proto" "$current_spi"; then
-				# CRITICAL: Verify that the SA matches the target peer IP (forward SA: dst=$peer_ip, reverse SA: src=$peer_ip)
+				# CRITICAL: Verify that the SA matches the target peer IP (forward SA: dst=$external_peer_ip, reverse SA: src=$external_peer_ip)
 				# This prevents deleting SAs for wrong locations when grep -A includes subsequent SA blocks
-				# Accept both forward SAs (dst=$peer_ip) and reverse SAs (src=$peer_ip) to handle asymmetric SA state
-				if [[ "$current_dst" == "$peer_ip" ]] || [[ "$current_src" == "$peer_ip" ]]; then
+				# Accept both forward SAs (dst=$external_peer_ip) and reverse SAs (src=$external_peer_ip) to handle asymmetric SA state
+				if [[ "$current_dst" == "$external_peer_ip" ]] || [[ "$current_src" == "$external_peer_ip" ]]; then
 					# Validate selectors before adding to list
 					# Proto must be "esp" or "ah" (case-insensitive, already normalized)
 					# SPI must be hex (0x...) or decimal format
@@ -400,14 +412,14 @@ parse_xfrm_output_to_sa_list() {
 				else
 					# SA doesn't match target peer IP (neither dst nor src matches) - skip this SA
 					# This can happen when grep -A includes subsequent SA blocks from other locations
-					log_message "DEBUG" "$location_name" "xfrm recovery: Skipping SA with src=$current_src dst=$current_dst (does not match target peer_ip=$ip_display)"
+					log_message "DEBUG" "$location_name" "xfrm recovery: Skipping SA with src=$current_src dst=$current_dst (does not match target external_peer_ip=$ip_display)"
 				fi
 			fi
 
-			# CRITICAL: Only start parsing this SA block if it matches target peer IP (forward SA: dst=$peer_ip, reverse SA: src=$peer_ip)
+			# CRITICAL: Only start parsing this SA block if it matches target peer IP (forward SA: dst=$external_peer_ip, reverse SA: src=$external_peer_ip)
 			# This prevents parsing SAs for wrong locations when grep -A includes subsequent SA blocks
-			# Accept both forward SAs (dst=$peer_ip) and reverse SAs (src=$peer_ip) to handle asymmetric SA state
-			if [[ "$extracted_dst" == "$peer_ip" ]] || [[ "$extracted_src" == "$peer_ip" ]]; then
+			# Accept both forward SAs (dst=$external_peer_ip) and reverse SAs (src=$external_peer_ip) to handle asymmetric SA state
+			if [[ "$extracted_dst" == "$external_peer_ip" ]] || [[ "$extracted_src" == "$external_peer_ip" ]]; then
 				# Start new SA block: extract src and dst from regex match
 				current_src="$extracted_src"
 				current_dst="$extracted_dst"
@@ -424,7 +436,7 @@ parse_xfrm_output_to_sa_list() {
 				current_proto=""
 				current_spi=""
 				current_mark=""
-				log_message "DEBUG" "$location_name" "xfrm recovery: Skipping SA block with src=$extracted_src dst=$extracted_dst (does not match target peer_ip=$ip_display)"
+				log_message "DEBUG" "$location_name" "xfrm recovery: Skipping SA block with src=$extracted_src dst=$extracted_dst (does not match target external_peer_ip=$ip_display)"
 			fi
 
 		# State: Continuation line (within an SA block)
@@ -464,10 +476,10 @@ parse_xfrm_output_to_sa_list() {
 	# This handles the case where the last SA in the output doesn't have a following "src ... dst ..." line
 	# to trigger the save logic in the main loop
 	if is_sa_complete "$in_sa_block" "$current_src" "$current_dst" "$current_proto" "$current_spi"; then
-		# CRITICAL: Verify that the SA matches the target peer IP (forward SA: dst=$peer_ip, reverse SA: src=$peer_ip)
+		# CRITICAL: Verify that the SA matches the target peer IP (forward SA: dst=$external_peer_ip, reverse SA: src=$external_peer_ip)
 		# This prevents deleting SAs for wrong locations when grep -A includes subsequent SA blocks
-		# Accept both forward SAs (dst=$peer_ip) and reverse SAs (src=$peer_ip) to handle asymmetric SA state
-		if [[ "$current_dst" == "$peer_ip" ]] || [[ "$current_src" == "$peer_ip" ]]; then
+		# Accept both forward SAs (dst=$external_peer_ip) and reverse SAs (src=$external_peer_ip) to handle asymmetric SA state
+		if [[ "$current_dst" == "$external_peer_ip" ]] || [[ "$current_src" == "$external_peer_ip" ]]; then
 			# Validate selectors before adding to list (same validation as in main loop)
 			if [[ "$current_proto" =~ ^(esp|ah)$ ]] && [[ "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
 				sa_list_ref+=("$current_src|$current_dst|$current_proto|$current_spi|${current_mark:-}")
@@ -479,7 +491,7 @@ parse_xfrm_output_to_sa_list() {
 		else
 			# SA doesn't match target peer IP (neither dst nor src matches) - skip this SA
 			# This can happen when grep -A includes subsequent SA blocks from other locations
-			log_message "DEBUG" "$location_name" "xfrm recovery: Skipping final SA with src=$current_src dst=$current_dst (does not match target peer_ip=$ip_display)"
+			log_message "DEBUG" "$location_name" "xfrm recovery: Skipping final SA with src=$current_src dst=$current_dst (does not match target external_peer_ip=$ip_display)"
 		fi
 	fi
 
@@ -528,12 +540,12 @@ delete_sas_from_list() {
 	done
 
 	# Extract last 4 arguments using eval for arithmetic in indirect reference
-	local peer_ip_idx=$((arg_count - 3))
+	local external_peer_ip_idx=$((arg_count - 3))
 	local location_name_idx=$((arg_count - 2))
 	local deleted_count_var_idx=$((arg_count - 1))
 	local failed_count_var_idx=$arg_count
 
-	local peer_ip="${!peer_ip_idx}"
+	local external_peer_ip="${!external_peer_ip_idx}"
 	local location_name="${!location_name_idx}"
 	local deleted_count_var_name="${!deleted_count_var_idx}"
 	local failed_count_var_name="${!failed_count_var_idx}"
@@ -550,7 +562,7 @@ delete_sas_from_list() {
 
 	# Format IP display once for reuse
 	local ip_display
-	ip_display=$(format_peer_ip_display "$peer_ip" "")
+	ip_display=$(format_peer_ip_display "$external_peer_ip" "")
 
 	# Enhanced diagnostics: Log summary of all SAs found before attempting deletion
 	# This provides visibility into what we're about to delete and helps identify parsing issues
@@ -566,10 +578,10 @@ delete_sas_from_list() {
 			sa_idx=$((sa_idx + 1))
 			# Determine direction for diagnostic clarity (helps identify asymmetric SA state)
 			local direction="unknown"
-			if [[ "$sa_src" == "$peer_ip" ]]; then
+			if [[ "$sa_src" == "$external_peer_ip" ]]; then
 				direction="reverse (peer→local)"
 				reverse_count=$((reverse_count + 1))
-			elif [[ "$sa_dst" == "$peer_ip" ]]; then
+			elif [[ "$sa_dst" == "$external_peer_ip" ]]; then
 				direction="forward (local→peer)"
 				forward_count=$((forward_count + 1))
 			fi
@@ -667,25 +679,25 @@ delete_sas_from_list() {
 
 		# Build deletion command with all selectors (including mark if present)
 		# Mark is a required selector when present - must be included for successful deletion
-		local delete_cmd="ip xfrm state delete src \"$sa_src\" dst \"$sa_dst\" proto \"$sa_proto\" spi \"$sa_spi\""
+		local delete_cmd_args=("ip" "xfrm" "state" "delete" "src" "$sa_src" "dst" "$sa_dst" "proto" "$sa_proto" "spi" "$sa_spi")
 		if [[ -n "$mark_value" ]] && [[ -n "$mark_mask" ]]; then
-			delete_cmd="$delete_cmd mark \"$mark_value\" mask \"$mark_mask\""
+			delete_cmd_args+=("mark" "$mark_value" "mask" "$mark_mask")
 		fi
 
 		# Try to query the exact SA using ip xfrm state get to see what the kernel expects
 		# This helps identify if we need additional selectors
 		# Note: We capture output with 2>&1 - on success (exit 0), output is stdout (SA details)
 		# On failure (non-zero exit), output is stderr (error message)
-		local get_sa_cmd="ip xfrm state get src \"$sa_src\" dst \"$sa_dst\" proto \"$sa_proto\" spi \"$sa_spi\""
+		local get_sa_cmd_args=("ip" "xfrm" "state" "get" "src" "$sa_src" "dst" "$sa_dst" "proto" "$sa_proto" "spi" "$sa_spi")
 		if [[ -n "$mark_value" ]] && [[ -n "$mark_mask" ]]; then
-			get_sa_cmd="$get_sa_cmd mark \"$mark_value\" mask \"$mark_mask\""
+			get_sa_cmd_args+=("mark" "$mark_value" "mask" "$mark_mask")
 		fi
 		local get_sa_output
 		local get_sa_stderr=""
 		local get_sa_exit_code
 		local get_sa_start_time
 		get_sa_start_time=$(get_unix_timestamp 2>/dev/null || echo "0")
-		get_sa_output=$(eval "$get_sa_cmd" 2>&1)
+		get_sa_output=$("${get_sa_cmd_args[@]}" 2>&1)
 		get_sa_exit_code=$?
 		local get_sa_duration=0
 		if [[ "$get_sa_start_time" != "0" ]]; then
@@ -703,7 +715,7 @@ delete_sas_from_list() {
 		fi
 		# Enhanced diagnostics: Always log the exact commands we're executing (not just DEBUG mode)
 		# This is critical for debugging deletion failures
-		log_message "INFO" "$location_name" "xfrm recovery: Executing delete command: $delete_cmd"
+		log_message "INFO" "$location_name" "xfrm recovery: Executing delete command: ${delete_cmd_args[*]}"
 		if [[ $get_sa_exit_code -eq 0 ]] && [[ -n "$get_sa_output" ]]; then
 			log_message "INFO" "$location_name" "xfrm recovery: Kernel SA get succeeded (${get_sa_duration}s) for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=${sa_mark:-<none>}:\n$get_sa_output"
 			# Enhanced diagnostics: Compare parsed selectors vs what kernel returns
@@ -725,7 +737,7 @@ delete_sas_from_list() {
 		local delete_exit_code
 		local delete_start_time
 		delete_start_time=$(get_unix_timestamp 2>/dev/null || echo "0")
-		delete_stderr=$(eval "$delete_cmd" 2>&1)
+		delete_stderr=$("${delete_cmd_args[@]}" 2>&1)
 		delete_exit_code=$?
 		local delete_duration=0
 		if [[ "$delete_start_time" != "0" ]]; then
@@ -875,7 +887,7 @@ delete_sas_from_list() {
 # Note:
 #   Policies are automatically recreated by strongSwan when SAs re-establish
 delete_xfrm_policies() {
-	local peer_ip="$1"
+	local external_peer_ip="$1"
 	local location_name="$2"
 
 	# Also delete policies for this peer (less critical, but helps cleanup)
@@ -885,7 +897,7 @@ delete_xfrm_policies() {
 	#
 	# Safety: Policy deletion is scoped to ONLY the failing peer IP:
 	#   - Uses fixed-string matching (grep -F) to prevent regex injection
-	#   - Matches exact "dst $peer_ip" pattern (space after "dst " provides natural boundary)
+	#   - Matches exact "dst $external_peer_ip" pattern (space after "dst " provides natural boundary)
 	#   - Only deletes policies for the specific peer IP that triggered recovery
 	#   - Policies are automatically recreated by strongSwan when SAs re-establish
 	#   - Policy deletion failures are non-fatal and don't affect recovery success
@@ -893,12 +905,12 @@ delete_xfrm_policies() {
 	# When policies are deleted:
 	#   - Only during xfrm recovery for a specific failing peer IP
 	#   - Only after SAs for that peer IP have been deleted
-	#   - Only policies matching dst=$peer_ip (exact match, not partial)
+	#   - Only policies matching dst=$external_peer_ip (exact match, not partial)
 	#   - Policies for other peer IPs are never touched
 	#
-	# Note: peer_ip is the external IP of remote locations (from LOCATION_*_EXTERNAL config)
+	# Note: external_peer_ip is the external IP of remote locations (from LOCATION_*_EXTERNAL config)
 	local existing_policies
-	existing_policies=$(ip xfrm policy 2>/dev/null | grep -F "dst $peer_ip" -A 5 2>/dev/null || echo "")
+	existing_policies=$(ip xfrm policy 2>/dev/null | grep -F "dst $external_peer_ip" -A 5 2>/dev/null || echo "")
 
 	local policy_deleted_count=0
 	local policy_failed_count=0
@@ -935,9 +947,9 @@ delete_xfrm_policies() {
 	if [[ ${#policy_directions[@]} -eq 0 ]]; then
 		# Try common directions: fwd (most common for VPN tunnels), out, in
 		policy_directions=("fwd" "out" "in")
-		log_message "INFO" "$location_name" "xfrm recovery: No policy directions parsed for dst=$peer_ip, attempting deletion for common directions (fwd, out, in)"
+		log_message "INFO" "$location_name" "xfrm recovery: No policy directions parsed for dst=$external_peer_ip, attempting deletion for common directions (fwd, out, in)"
 	else
-		log_message "INFO" "$location_name" "xfrm recovery: Found policy directions for dst=$peer_ip: ${policy_directions[*]}"
+		log_message "INFO" "$location_name" "xfrm recovery: Found policy directions for dst=$external_peer_ip: ${policy_directions[*]}"
 	fi
 
 	# Delete policies for each direction found
@@ -946,9 +958,9 @@ delete_xfrm_policies() {
 		local policy_exit_code
 		local policy_start_time
 		policy_start_time=$(get_unix_timestamp 2>/dev/null || echo "0")
-		local policy_cmd="ip xfrm policy delete dst \"$peer_ip\" dir \"$policy_dir\""
-		log_message "INFO" "$location_name" "xfrm recovery: Executing policy deletion command: $policy_cmd"
-		policy_stderr=$(eval "$policy_cmd" 2>&1)
+		local policy_cmd_args=("ip" "xfrm" "policy" "delete" "dst" "$external_peer_ip" "dir" "$policy_dir")
+		log_message "INFO" "$location_name" "xfrm recovery: Executing policy deletion command: ${policy_cmd_args[*]}"
+		policy_stderr=$("${policy_cmd_args[@]}" 2>&1)
 		policy_exit_code=$?
 		local policy_duration=0
 		if [[ "$policy_start_time" != "0" ]]; then
@@ -962,7 +974,7 @@ delete_xfrm_policies() {
 		if [[ $policy_exit_code -eq 0 ]]; then
 			((policy_deleted_count++))
 			# Note: delete_xfrm_policies doesn't have access to internal_peer_ip, so we only show external IP
-			log_message "INFO" "$location_name" "xfrm recovery: Deleted xfrm policy for dst=$peer_ip dir=$policy_dir (duration: ${policy_duration}s)"
+			log_message "INFO" "$location_name" "xfrm recovery: Deleted xfrm policy for dst=$external_peer_ip dir=$policy_dir (duration: ${policy_duration}s)"
 		else
 			# Policy deletion failed - log diagnostic info (non-fatal, so use INFO level)
 			# Enhanced diagnostics: Always log policy deletion failures (not just DEBUG mode)
@@ -972,7 +984,7 @@ delete_xfrm_policies() {
 				policy_diagnostic="$policy_diagnostic, stderr=\"$policy_stderr\""
 			fi
 			# Note: delete_xfrm_policies doesn't have access to internal_peer_ip, so we only show external IP
-			log_message "INFO" "$location_name" "xfrm recovery: Failed to delete xfrm policy for dst=$peer_ip dir=$policy_dir ($policy_diagnostic) - non-fatal, continuing"
+			log_message "INFO" "$location_name" "xfrm recovery: Failed to delete xfrm policy for dst=$external_peer_ip dir=$policy_dir ($policy_diagnostic) - non-fatal, continuing"
 		fi
 	done
 
@@ -980,19 +992,19 @@ delete_xfrm_policies() {
 	if [[ $policy_deleted_count -gt 0 ]] || [[ $policy_failed_count -gt 0 ]]; then
 		if [[ $policy_deleted_count -gt 0 ]] && [[ $policy_failed_count -eq 0 ]]; then
 			# Note: delete_xfrm_policies doesn't have access to internal_peer_ip, so we only show external IP
-			log_message "INFO" "$location_name" "xfrm recovery: Policy deletion summary for dst=$peer_ip: ${policy_deleted_count} succeeded, 0 failed"
+			log_message "INFO" "$location_name" "xfrm recovery: Policy deletion summary for dst=$external_peer_ip: ${policy_deleted_count} succeeded, 0 failed"
 		elif [[ $policy_deleted_count -eq 0 ]] && [[ $policy_failed_count -gt 0 ]]; then
 			# Note: delete_xfrm_policies doesn't have access to internal_peer_ip, so we only show external IP
-			log_message "INFO" "$location_name" "xfrm recovery: Policy deletion summary for dst=$peer_ip: 0 succeeded, ${policy_failed_count} failed (non-fatal)"
+			log_message "INFO" "$location_name" "xfrm recovery: Policy deletion summary for dst=$external_peer_ip: 0 succeeded, ${policy_failed_count} failed (non-fatal)"
 		else
 			# Note: delete_xfrm_policies doesn't have access to internal_peer_ip, so we only show external IP
-			log_message "INFO" "$location_name" "xfrm recovery: Policy deletion summary for dst=$peer_ip: ${policy_deleted_count} succeeded, ${policy_failed_count} failed (non-fatal)"
+			log_message "INFO" "$location_name" "xfrm recovery: Policy deletion summary for dst=$external_peer_ip: ${policy_deleted_count} succeeded, ${policy_failed_count} failed (non-fatal)"
 		fi
 	fi
 
 	# Enhanced diagnostics: Log existing policies if deletion failed for all directions
 	if [[ $policy_deleted_count -eq 0 ]] && [[ -n "$existing_policies" ]]; then
-		log_message "INFO" "$location_name" "xfrm recovery: Existing policies for dst=$peer_ip:\n$existing_policies"
+		log_message "INFO" "$location_name" "xfrm recovery: Existing policies for dst=$external_peer_ip:\n$existing_policies"
 	fi
 
 	return 0
@@ -1020,7 +1032,7 @@ delete_xfrm_policies() {
 #   - Deletes xfrm policies for the peer IP
 #   - Logs all actions and results
 delete_stale_sas() {
-	local peer_ip="$1"
+	local external_peer_ip="$1"
 	local location_name="$2"
 	local xfrm_output="$3"
 	local deleted_count_var="$4"
@@ -1028,11 +1040,11 @@ delete_stale_sas() {
 
 	# Format IP display once for reuse
 	local ip_display
-	ip_display=$(format_peer_ip_display "$peer_ip" "")
+	ip_display=$(format_peer_ip_display "$external_peer_ip" "")
 
 	# Parse xfrm output into SA list
 	local sa_list=()
-	if ! parse_xfrm_output_to_sa_list "$xfrm_output" "$peer_ip" "$location_name" "sa_list"; then
+	if ! parse_xfrm_output_to_sa_list "$xfrm_output" "$external_peer_ip" "$location_name" "sa_list"; then
 		eval "$deleted_count_var=0"
 		eval "$failed_count_var=0"
 		return 1
@@ -1042,7 +1054,7 @@ delete_stale_sas() {
 	# Initialize counters - delete_sas_from_list will update them via nameref
 	local deleted_count=0
 	local failed_count=0
-	delete_sas_from_list "${sa_list[@]}" "$peer_ip" "$location_name" deleted_count failed_count
+	delete_sas_from_list "${sa_list[@]}" "$external_peer_ip" "$location_name" deleted_count failed_count
 	local delete_result=$?
 
 	if [[ $delete_result -ne 0 ]]; then
@@ -1061,7 +1073,7 @@ delete_stale_sas() {
 	fi
 
 	# Delete policies
-	delete_xfrm_policies "$peer_ip" "$location_name"
+	delete_xfrm_policies "$external_peer_ip" "$location_name"
 
 	# Set output variables
 	eval "$deleted_count_var=$deleted_count"
@@ -1102,7 +1114,7 @@ delete_stale_sas() {
 #   - Verifies byte counter increment
 #   - Logs verification progress and results
 retry_xfrm_recovery() {
-	local peer_ip="$1"
+	local external_peer_ip="$1"
 	local location_name="$2"
 	local deleted_count="$3"
 	local initial_byte_counter=""
@@ -1111,7 +1123,7 @@ retry_xfrm_recovery() {
 
 	# Format IP display once for reuse
 	local ip_display
-	ip_display=$(format_peer_ip_display "$peer_ip" "")
+	ip_display=$(format_peer_ip_display "$external_peer_ip" "")
 
 	# Verification Phase: Wait for SA re-establishment with exponential backoff
 	# After deletion, strongSwan needs time to detect SA removal and re-establish new SAs
@@ -1130,11 +1142,21 @@ retry_xfrm_recovery() {
 	local max_interval="${XFRM_RECOVERY_MAX_INTERVAL:-16}"
 	local current_interval=$base_interval
 
+	# Calculate maximum iterations as a safety mechanism in case time calculation fails
+	# Worst case: all iterations use max_interval, add 50% buffer for safety
+	# This provides defense-in-depth if calculate_duration fails or returns incorrect values
+	local max_iterations=$(((verify_timeout / max_interval) + (verify_timeout / max_interval / 2) + 5))
+	# Ensure minimum iterations (at least 10 for very short timeouts)
+	[[ $max_iterations -lt 10 ]] && max_iterations=10
+	# Cap at reasonable maximum (prevent excessive iterations)
+	[[ $max_iterations -gt 200 ]] && max_iterations=200
+
 	log_message "INFO" "$location_name" "xfrm recovery: Waiting for SA re-establishment for $ip_display (timeout: ${verify_timeout}s)"
 	local verify_start_time
 	verify_start_time=$(get_unix_timestamp)
 	local sa_reestablished=0
 	local verify_attempt=0
+	local iteration=0
 	local elapsed_time
 	local sa_count=0
 	local initial_sa_count=0
@@ -1145,7 +1167,15 @@ retry_xfrm_recovery() {
 
 	# Verification loop: Poll until SA re-established or timeout
 	# Timeout check: Compare elapsed time against configured timeout
+	# Iteration check: Secondary safety mechanism if time calculation fails
 	while true; do
+		# Increment iteration counter (safety mechanism)
+		iteration=$((iteration + 1))
+		if [[ $iteration -gt $max_iterations ]]; then
+			handle_error "ERROR" "$location_name" "xfrm recovery: Maximum iterations reached ($max_iterations) for $ip_display - time calculation may have failed (elapsed_time=${elapsed_time:-unknown}, verify_timeout=${verify_timeout}s)"
+			break
+		fi
+
 		# Calculate elapsed time at start of each iteration
 		elapsed_time=$(calculate_duration "$verify_start_time" 2>/dev/null || echo "0")
 
@@ -1159,14 +1189,14 @@ retry_xfrm_recovery() {
 		# Check if SA is re-established using detection function
 		# This checks both xfrm state and ipsec status for comprehensive verification
 		if command -v check_ipsec_phase2 >/dev/null 2>&1; then
-			if check_ipsec_phase2 "$peer_ip"; then
+			if check_ipsec_phase2 "$external_peer_ip"; then
 				# SA re-established - perform additional verification checks
 				sa_reestablished=1
 
 				# Count SAs for logging (may have multiple SAs for one peer)
 				# This provides visibility into how many SAs were re-established
 				# Pass location_name for enhanced diagnostic logging
-				if sa_count=$(count_sas_for_peer "$peer_ip" "$location_name" 2>/dev/null); then
+				if sa_count=$(count_sas_for_peer "$external_peer_ip" "$location_name" 2>/dev/null); then
 					# Track initial SA count when first re-established (helps detect timing issues)
 					if [[ $initial_sa_count_set -eq 0 ]]; then
 						initial_sa_count=$sa_count
@@ -1198,7 +1228,7 @@ retry_xfrm_recovery() {
 				# need to track the baseline and check for increment rather than absolute value
 				if [[ $initial_byte_counter_set -eq 0 ]]; then
 					local xfrm_output
-					xfrm_output=$(get_xfrm_state_for_peer "$peer_ip" 2>/dev/null)
+					xfrm_output=$(get_xfrm_state_for_peer "$external_peer_ip" 2>/dev/null)
 					if [[ -n "$xfrm_output" ]] && command -v extract_byte_counter >/dev/null 2>&1; then
 						if initial_byte_counter=$(extract_byte_counter "$xfrm_output" 2>/dev/null); then
 							# Validate initial_byte_counter is numeric (default to 0 if not)
@@ -1244,7 +1274,7 @@ retry_xfrm_recovery() {
 									local local_ip
 									local_ip=$(get_local_ip_for_ping 2>/dev/null || echo "")
 									local ip_display_with_internal
-									ip_display_with_internal=$(format_peer_ip_display "$peer_ip" "$first_internal_ip")
+									ip_display_with_internal=$(format_peer_ip_display "$external_peer_ip" "$first_internal_ip")
 									log_message "INFO" "$location_name" "xfrm recovery: Byte counters are zero, pinging internal IP $first_internal_ip to generate traffic for $ip_display_with_internal"
 									# Ping to generate traffic (ignore ping result - we only care about byte counter increment)
 									check_ping_connectivity "$first_internal_ip" "$local_ip" "$location_name" >/dev/null 2>&1 || true
@@ -1274,7 +1304,7 @@ retry_xfrm_recovery() {
 				# Verify byte counters increment from initial value (indicates tunnel is passing traffic)
 				# This handles the case where byte counters reset to zero after SA deletion/re-establishment
 				# We check for increment rather than absolute non-zero value to verify traffic is flowing
-				if verify_byte_counters_increment "$peer_ip" "$initial_byte_counter" "$location_name" 2>/dev/null; then
+				if verify_byte_counters_increment "$external_peer_ip" "$initial_byte_counter" "$location_name" 2>/dev/null; then
 					byte_counter_status="resumed"
 					log_message "INFO" "$location_name" "xfrm recovery: Verification complete for $ip_display (duration: ${elapsed_time}s, SA count: ${sa_count}, byte counters: ${byte_counter_status})"
 					break # Exit verification loop on success (SA re-established AND byte counters verified)
@@ -1304,7 +1334,7 @@ retry_xfrm_recovery() {
 	if [[ $sa_reestablished -eq 1 ]] && [[ $deleted_count -gt 1 ]] && [[ $initial_sa_count_set -eq 1 ]]; then
 		# Get final SA count for comparison
 		local final_sa_count
-		if final_sa_count=$(count_sas_for_peer "$peer_ip" "$location_name" 2>/dev/null); then
+		if final_sa_count=$(count_sas_for_peer "$external_peer_ip" "$location_name" 2>/dev/null); then
 			if [[ $final_sa_count -lt $deleted_count ]]; then
 				log_message "INFO" "$location_name" "xfrm recovery: SA count mismatch persists for $ip_display: deleted=$deleted_count, final_count=$final_sa_count (may indicate asymmetric SA state or incomplete re-establishment)"
 			fi
@@ -1313,11 +1343,11 @@ retry_xfrm_recovery() {
 
 	if [[ $sa_reestablished -eq 0 ]]; then
 		elapsed_time=$(calculate_duration "$verify_start_time" 2>/dev/null || echo "0")
-		handle_error "WARNING" "$location_name" "xfrm recovery: SA did not re-establish within ${verify_timeout}s for $ip_display (verification duration: ${elapsed_time}s, attempts: $verify_attempt)"
+		handle_error "WARNING" "$location_name" "xfrm recovery: SA did not re-establish within ${verify_timeout}s for $ip_display (verification duration: ${elapsed_time}s, attempts: $verify_attempt, iterations: $iteration)"
 		handle_error "WARNING" "$location_name" "xfrm recovery: Partial success - deleted SAs but re-establishment timeout for $ip_display, will fall back to alternative recovery"
 		# Clear recovery method since verification failed (prevents stale recovery method from being logged if VPN recovers naturally later)
 		if command -v clear_recovery_method >/dev/null 2>&1; then
-			clear_recovery_method "$location_name" "$peer_ip"
+			clear_recovery_method "$location_name" "$external_peer_ip"
 		fi
 		return 1
 	fi
@@ -1325,11 +1355,11 @@ retry_xfrm_recovery() {
 	# SA was re-established - check if byte counters were verified
 	if [[ "$byte_counter_status" != "resumed" ]]; then
 		elapsed_time=$(calculate_duration "$verify_start_time" 2>/dev/null || echo "0")
-		handle_error "WARNING" "$location_name" "xfrm recovery: SA re-established but byte counter verification failed within ${verify_timeout}s for $ip_display (verification duration: ${elapsed_time}s, attempts: $verify_attempt)"
+		handle_error "WARNING" "$location_name" "xfrm recovery: SA re-established but byte counter verification failed within ${verify_timeout}s for $ip_display (verification duration: ${elapsed_time}s, attempts: $verify_attempt, iterations: $iteration)"
 		# Byte counter verification failed - clear recovery method and return error to trigger fallback recovery
 		# This prevents stale recovery method from being logged if VPN recovers naturally later
 		if command -v clear_recovery_method >/dev/null 2>&1; then
-			clear_recovery_method "$location_name" "$peer_ip"
+			clear_recovery_method "$location_name" "$external_peer_ip"
 		fi
 		return 1
 	fi
@@ -1364,7 +1394,7 @@ retry_xfrm_recovery() {
 #   Uses fixed-string matching to prevent regex pattern injection
 #   Falls back to alternative recovery methods if xfrm recovery fails
 attempt_xfrm_recovery() {
-	local peer_ip="$1"
+	local external_peer_ip="$1"
 	local location_name="$2"
 	local deleted_count=0
 	local failed_count=0
@@ -1374,14 +1404,14 @@ attempt_xfrm_recovery() {
 	fi
 
 	# Validate peer IP before proceeding
-	if [[ -z "$peer_ip" ]]; then
-		handle_error "ERROR" "$location_name" "xfrm recovery: Peer IP not provided" 0
+	if [[ -z "$external_peer_ip" ]]; then
+		handle_error "ERROR" "$location_name" "xfrm recovery: External peer IP not provided" 0
 		return 1
 	fi
 
 	# Format IP display once for reuse
 	local ip_display
-	ip_display=$(format_peer_ip_display "$peer_ip" "")
+	ip_display=$(format_peer_ip_display "$external_peer_ip" "")
 
 	# Enhanced diagnostics: Log system/kernel information that may affect xfrm operations
 	# This helps identify version-specific issues or permission problems
@@ -1395,7 +1425,7 @@ attempt_xfrm_recovery() {
 	fi
 
 	# Get all xfrm state entries for this peer IP
-	# Match on "dst $peer_ip" pattern which appears at the start of each SA entry
+	# Match on "dst $external_peer_ip" pattern which appears at the start of each SA entry
 	# This ensures we capture complete SA blocks for proper deletion
 	# Use fixed-string matching to prevent regex pattern injection
 	# Word boundary protection: The "dst " prefix and space after IP provide natural boundaries
@@ -1403,7 +1433,7 @@ attempt_xfrm_recovery() {
 	local xfrm_output
 	local xfrm_result
 	local xfrm_error_msg=""
-	xfrm_output=$(get_xfrm_state_for_peer "$peer_ip" "" "xfrm_error_msg")
+	xfrm_output=$(get_xfrm_state_for_peer "$external_peer_ip" "" "xfrm_error_msg")
 	xfrm_result=$?
 
 	# Check if helper function failed - distinguish between different failure types
@@ -1441,7 +1471,7 @@ attempt_xfrm_recovery() {
 	# Delete stale SAs using extracted function
 	local deleted_count_var="__deleted_count"
 	local failed_count_var="__failed_count"
-	if ! delete_stale_sas "$peer_ip" "$location_name" "$xfrm_output" "$deleted_count_var" "$failed_count_var"; then
+	if ! delete_stale_sas "$external_peer_ip" "$location_name" "$xfrm_output" "$deleted_count_var" "$failed_count_var"; then
 		# Parsing failed or all deletions failed
 		return 1
 	fi
@@ -1466,7 +1496,7 @@ attempt_xfrm_recovery() {
 
 		# Verify SAs were deleted
 		if command -v check_ipsec_phase2 >/dev/null 2>&1; then
-			if check_ipsec_phase2 "$peer_ip"; then
+			if check_ipsec_phase2 "$external_peer_ip"; then
 				handle_error "WARNING" "$location_name" "xfrm recovery: SAs still exist after deletion attempt for $ip_display"
 				# Continue anyway - may have deleted some but not all
 			fi
@@ -1474,7 +1504,7 @@ attempt_xfrm_recovery() {
 
 		# Retry recovery with exponential backoff
 		# Note: Byte counter capture happens inside retry_xfrm_recovery when SA is first re-established
-		if ! retry_xfrm_recovery "$peer_ip" "$location_name" "$deleted_count"; then
+		if ! retry_xfrm_recovery "$external_peer_ip" "$location_name" "$deleted_count"; then
 			return 1
 		fi
 

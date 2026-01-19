@@ -1819,7 +1819,7 @@ Slow tests include:
 - `test_errors.sh` - Error handling during critical operations tests (3 tests)
 - `test_main.sh` - Main execution edge cases tests (28 tests)
 
-**Total**: ~235 slow tests
+**Total**: ~925 slow tests
 
 ### Run with Coverage
 
@@ -2127,7 +2127,7 @@ Slow tests are high-risk tests and integration tests that take longer to run:
 - `test_errors.sh` - Error handling during critical operations tests (3 tests)
 - `test_main.sh` - Main execution edge cases tests (28 tests)
 
-**Total Test Count**: ~1058 tests across 65 test files (~605 fast, ~235 slow)
+**Total Test Count**: ~1530 tests across 77 test files (~605 fast, ~925 slow)
 
 **Note**: Slow tests are automatically included in CI/CD via the `RUN_SLOW_TESTS=1` environment variable (see `.github/workflows/tests.yml`).
 

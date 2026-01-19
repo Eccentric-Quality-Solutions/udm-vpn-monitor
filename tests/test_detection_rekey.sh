@@ -274,7 +274,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	if [[ -f "$spi_file" ]]; then
 		local spi
 		spi=$(cat "$spi_file")
-		assert_equal "$spi" "0xABCDEF12"
+		# SPI is normalized to lowercase hex format (0xABCDEF12 -> 0xabcdef12)
+		assert_equal "$spi" "0xabcdef12"
 	fi
 
 	remove_mock_from_path

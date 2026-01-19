@@ -747,14 +747,14 @@ validate_config() {
 
 	# Validate location-based configuration: IP address formats
 	local location_name
-	local external_ip
+	local external_peer_ip
 	local internal_ips
 	local IFS=' '
 	local -a internal_ips_array
 
 	for location_name in "${!LOCATIONS[@]}"; do
 		# Get external IP for this location
-		if ! external_ip=$(get_location_external_ip "$location_name"); then
+		if ! external_peer_ip=$(get_location_external_ip "$location_name"); then
 			# Use handle_error_or_exit_fake_mode to respect fake mode
 			# In fake mode, it returns 1; in normal mode it calls die() and never returns
 			if ! handle_error_or_exit_fake_mode "$location_name" "Failed to get external IP" "${EXIT_VALIDATION_ERROR:-3}"; then
@@ -765,10 +765,10 @@ validate_config() {
 		fi
 
 		# Validate external IP format
-		if ! validate_ip_address "$external_ip"; then
+		if ! validate_ip_address "$external_peer_ip"; then
 			# Use handle_error_or_exit_fake_mode to respect fake mode
 			# In fake mode, it returns 1; in normal mode it calls die() and never returns
-			if ! handle_error_or_exit_fake_mode "$location_name" "Invalid external IP format: $external_ip" "${EXIT_VALIDATION_ERROR:-3}"; then
+			if ! handle_error_or_exit_fake_mode "$location_name" "Invalid external IP format: $external_peer_ip" "${EXIT_VALIDATION_ERROR:-3}"; then
 				# In fake mode, handle_error_or_exit_fake_mode returns 1
 				return 1
 			fi
@@ -781,17 +781,17 @@ validate_config() {
 		# Validate internal IPs if set
 		if [[ -n "$internal_ips" ]]; then
 			read -ra internal_ips_array <<<"$internal_ips"
-			for internal_ip in "${internal_ips_array[@]}"; do
+			for internal_peer_ip in "${internal_ips_array[@]}"; do
 				# Skip empty IPs
-				if [[ -z "$internal_ip" ]]; then
+				if [[ -z "$internal_peer_ip" ]]; then
 					continue
 				fi
 
 				# Validate IP address format
-				if ! validate_ip_address "$internal_ip"; then
+				if ! validate_ip_address "$internal_peer_ip"; then
 					# Use handle_error_or_exit_fake_mode to respect fake mode
 					# In fake mode, it returns 1; in normal mode it calls die() and never returns
-					if ! handle_error_or_exit_fake_mode "$location_name" "Invalid internal IP format: $internal_ip" "${EXIT_VALIDATION_ERROR:-3}"; then
+					if ! handle_error_or_exit_fake_mode "$location_name" "Invalid internal IP format: $internal_peer_ip" "${EXIT_VALIDATION_ERROR:-3}"; then
 						# In fake mode, handle_error_or_exit_fake_mode returns 1
 						return 1
 					fi

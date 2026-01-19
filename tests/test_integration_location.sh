@@ -72,7 +72,7 @@ EOF
 	assert_success
 
 	# Should use location-based state file naming
-	local failure_counter="${STATE_DIR}/failure_counter_NYC_203_0_113_1"
+	local failure_counter="${STATE_DIR}/failure_count_NYC_203_0_113_1"
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -104,7 +104,7 @@ EOF
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	# Should increment location-based failure counter
-	local failure_counter="${STATE_DIR}/failure_counter_NYC_203_0_113_1"
+	local failure_counter="${STATE_DIR}/failure_count_NYC_203_0_113_1"
 	assert_file_exist "$failure_counter"
 	local count
 	count=$(cat "$failure_counter")
@@ -140,7 +140,7 @@ EOF
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	# NYC should have failure counter incremented
-	local nyc_counter="${STATE_DIR}/failure_counter_NYC_203_0_113_1"
+	local nyc_counter="${STATE_DIR}/failure_count_NYC_203_0_113_1"
 	if [[ -f "$nyc_counter" ]]; then
 		local nyc_count
 		nyc_count=$(cat "$nyc_counter")
@@ -148,7 +148,7 @@ EOF
 	fi
 
 	# LA should not have failure (or counter reset if it was failing before)
-	local la_counter="${STATE_DIR}/failure_counter_LA_198_51_100_1"
+	local la_counter="${STATE_DIR}/failure_count_LA_198_51_100_1"
 	# LA is up, so counter should be 0 or not exist yet
 
 	remove_mock_from_path
@@ -253,7 +253,7 @@ EOF
 # bats test_tags=category:integration,priority:high
 @test "integration location: Location-based state file naming" {
 	# Purpose: Test that state files use location names in filenames
-	# Expected: State files follow pattern: failure_counter_<location>_<peer_ip>
+	# Expected: State files follow pattern: failure_count_<location>_<peer_ip>
 	# Importance: Ensures state files are unique per location
 	setup_location_test_vpn_monitor
 
@@ -272,15 +272,15 @@ EOF
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	# Verify location-based state file naming
-	local nyc_counter="${STATE_DIR}/failure_counter_NYC_203_0_113_1"
-	local la_counter="${STATE_DIR}/failure_counter_LA_198_51_100_1"
+	local nyc_counter="${STATE_DIR}/failure_count_NYC_203_0_113_1"
+	local la_counter="${STATE_DIR}/failure_count_LA_198_51_100_1"
 
 	# At least one should exist (NYC failed)
 	assert [ -f "$nyc_counter" ] || [ -f "$la_counter" ]
 
 	# Verify filename format includes location name
 	if [[ -f "$nyc_counter" ]]; then
-		assert_equal "$(basename "$nyc_counter")" "failure_counter_NYC_203_0_113_1"
+		assert_equal "$(basename "$nyc_counter")" "failure_count_NYC_203_0_113_1"
 	fi
 
 	remove_mock_from_path
@@ -317,7 +317,7 @@ EOF
 
 	# Verify sanitized location name in state file
 	# Hyphen should be replaced with underscore
-	local counter="${STATE_DIR}/failure_counter_NYC_Office_203_0_113_1"
+	local counter="${STATE_DIR}/failure_count_NYC_Office_203_0_113_1"
 	# File may or may not exist depending on which location failed first
 	# But if it exists, it should use sanitized name
 

@@ -2,6 +2,68 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
+## 0.6.2 - 2026-01-19
+
+### Changed
+- **State File Naming Consistency**: Renamed state file key from `failure_counter` to `failure_count` for consistency across codebase:
+  - Updated all state file path generation to use `failure_count` instead of `failure_counter`
+  - State files now use format: `failure_count_<location>_<peer_ip_sanitized>` instead of `failure_counter_<location>_<peer_ip_sanitized>`
+  - Updated documentation and comments to reflect new naming convention
+  - Improved code consistency and maintainability
+- **Variable Naming Improvements**: Renamed `external_ip` to `external_peer_ip` throughout codebase for clarity:
+  - More descriptive variable name clearly indicates this is the external peer IP address
+  - Updated function parameters, local variables, and documentation
+  - Improved code readability and reduced confusion with other IP variables
+- **SPI Normalization**: SPI (Security Parameter Index) values are now normalized to lowercase hex format:
+  - SPI values extracted from xfrm output are normalized to lowercase (e.g., `0xABCDEF12` → `0xabcdef12`)
+  - Ensures consistent SPI format for comparison and state storage
+  - Updated test expectations to match normalized format
+- **State Validation Improvements**: Enhanced state file path validation with better error handling:
+  - `get_peer_state_file_path()` now validates `STATE_DIR` is set and returns error if unset
+  - Improved error messages for missing `STATE_DIR` configuration
+  - Better error handling in state functions when path generation fails
+  - Prevents silent failures from missing state directory configuration
+
+### Fixed
+- **Test Location Parameter**: Fixed test cases to use proper location name "TEST" instead of empty string:
+  - Updated all test cases to use "TEST" location name for proper state management
+  - Ensures tests work correctly with location-based state file paths
+  - Improved test reliability and consistency with production code
+- **State File Path Generation**: Fixed state file path generation to use correct key name (`failure_count` instead of `failure_counter`):
+  - Updated `get_peer_state_file_path()` to generate paths with `failure_count` key
+  - Fixed test assertions to expect correct path format
+  - Ensures state files are created with consistent naming
+
+### Added
+- **Enhanced Test Coverage**: Added comprehensive test cases for state management:
+  - Added tests for SPI format validation (empty string, hex format, decimal format, invalid formats)
+  - Added tests for special characters in location names and IP addresses
+  - Added tests for very long location names (truncation handling)
+  - Added tests for state validation error handling (missing STATE_DIR, path generation failures)
+  - Improved test coverage for edge cases and error conditions
+- **Test Infrastructure Improvements**: Enhanced test helpers and patterns:
+  - Updated `setup_location_vpn_monitor()` helper to use `external_peer_ip` parameter name
+  - Improved test helper functions with better parameter naming
+  - Enhanced test documentation and comments
+
+### Documentation
+- **Code Patterns Documentation**: Significantly expanded `docs/CODE_PATTERNS.md` with comprehensive patterns and best practices:
+  - Added patterns for state management, error handling, and validation
+  - Enhanced documentation with examples and usage guidelines
+  - Improved code quality guidance for developers
+- **Test Maintenance Guide**: Expanded `docs/testing/TEST_MAINTENANCE.md` with comprehensive maintenance guidelines:
+  - Added patterns for test organization and structure
+  - Enhanced guidance on test isolation and reliability
+  - Improved documentation for test helpers and fixtures
+- **Test Strategy Documentation**: Enhanced `docs/testing/TEST_STRATEGY.md` with testing approach details:
+  - Added comprehensive testing strategy documentation
+  - Improved guidance on test organization and execution
+  - Enhanced documentation for test patterns and best practices
+- **State System Documentation**: Updated `docs/STATE_SYSTEM.md` with latest state management patterns:
+  - Updated documentation to reflect `failure_count` naming convention
+  - Enhanced documentation with improved examples and usage patterns
+  - Updated state file path format documentation
+
 ## 0.6.1 - 2026-01-15
 
 ### Fixed
@@ -209,8 +271,8 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
   - Better handling of empty or missing configuration values
   - Enhanced location name extraction and sanitization
 - **State File Management**: Updated state file naming to include location names:
-  - Old format: `state/failure_counter_203_0_113_1`
-  - New format: `state/failure_counter_NYC_203_0_113_1`
+  - Old format: `state/failure_count_203_0_113_1`
+  - New format: `state/failure_count_NYC_203_0_113_1`
   - State files now include location name for better organization
 - **Test Suite Expansion**: Major expansion of test coverage:
   - New test files: `test_config_location.sh`, `test_detection_error_recovery.sh`, `test_detection_ping_multiple.sh`, `test_fixtures_vpn_at_tier.sh`, `test_fixtures_vpn_idle.sh`, `test_integration_location.sh`, `test_migration.sh`, `test_recovery_cascading_failures.sh`, `test_recovery_multi_location_partial.sh`, `test_state_atomic_write_failures.sh`, `test_state_location.sh`, `test_test_isolation.sh`

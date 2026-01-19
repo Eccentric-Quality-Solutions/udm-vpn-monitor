@@ -1,6 +1,6 @@
 # Bash Coding Guide
 
-**Date:** 2026-01-17  
+**Date:** 2026-01-19  
 **Purpose:** Project-specific guide to coding in Bash for the UDM VPN Monitor codebase
 
 ## Purpose and Scope

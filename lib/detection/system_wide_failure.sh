@@ -94,14 +94,17 @@ get_system_wide_failure_state() {
 # Side effects:
 #   - Updates system-wide failure state file (atomic write)
 #   - State file: ${STATE_DIR}/system_wide_failure_state
+#   - When state is set to 0, automatically clears the recovery coordinator file
+#     to ensure consistency (coordinator should not exist when state is 0)
 #
 # Examples:
 #   set_system_wide_failure_state 1  # Mark system-wide failure detected
-#   set_system_wide_failure_state 0  # Clear system-wide failure state
+#   set_system_wide_failure_state 0  # Clear system-wide failure state (also clears coordinator)
 #
 # Note:
 #   Requires get_system_wide_failure_state_file to be set
 #   Validates value is 0 or 1 before writing
+#   Coordinator clearing is automatic when state is set to 0 (non-fatal operation)
 set_system_wide_failure_state() {
 	local state_value="$1"
 	local state_file
@@ -117,6 +120,13 @@ set_system_wide_failure_state() {
 	if ! atomic_write_file "$state_file" "$state_value"; then
 		handle_error "ERROR" "SYSTEM" "Failed to update system-wide failure state file: $state_file" 0
 		return 1
+	fi
+
+	# Clear coordinator when clearing system-wide failure state
+	# This ensures consistency: coordinator should not exist when state is 0
+	# Note: clear_system_wide_failure_coordinator is non-fatal, so we don't check return value
+	if [[ "$state_value" -eq 0 ]]; then
+		clear_system_wide_failure_coordinator
 	fi
 
 	return 0
@@ -307,12 +317,8 @@ detect_system_wide_failure() {
 	fi
 
 	# Get threshold (percentage of locations that must fail)
+	# Validation is handled by config validation layer (config_schema.sh)
 	local threshold="${SYSTEM_WIDE_FAILURE_THRESHOLD:-100}"
-	# Validate threshold (0-100)
-	if [[ ! "$threshold" =~ ^[0-9]+$ ]] || [[ "$threshold" -lt 0 ]] || [[ "$threshold" -gt 100 ]]; then
-		handle_error "WARNING" "SYSTEM" "Invalid SYSTEM_WIDE_FAILURE_THRESHOLD=$threshold (range: 0-100), using default 100"
-		threshold=100
-	fi
 
 	# Calculate percentage of failed locations
 	local failed_percentage=0
@@ -424,6 +430,13 @@ get_system_wide_failure_coordinator_file() {
 #   recovery attempts when coordination is broken (conservative approach)
 should_location_attempt_recovery() {
 	local location_name="$1"
+
+	# Validate location_name is provided and non-empty
+	# Empty location_name would cause issues with coordinator file and matching
+	if [[ -z "$location_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "should_location_attempt_recovery called with empty location_name - cannot coordinate recovery" 0
+		return 1
+	fi
 
 	# Check if coordination is needed
 	if ! should_coordinate_recovery; then

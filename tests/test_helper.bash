@@ -2239,7 +2239,7 @@ wait_for_file() {
 # Example:
 #   setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1'
 setup_location_vpn_monitor() {
-	local external_ip="${1:-${TEST_PEER_IP}}"
+	local external_peer_ip="${1:-${TEST_PEER_IP}}"
 	local state_dir="${2:-${TEST_DIR}}"
 	shift 2 || true
 	local extra_config=("$@")
@@ -2261,9 +2261,9 @@ setup_location_vpn_monitor() {
 	done
 
 	# Only set LOCATION_TEST_INTERNAL if not already provided
-	local config_args=("LOCATION_TEST_EXTERNAL=\"${external_ip}\"")
+	local config_args=("LOCATION_TEST_EXTERNAL=\"${external_peer_ip}\"")
 	if [[ $has_internal -eq 0 ]]; then
-		config_args+=("LOCATION_TEST_INTERNAL=\"${external_ip}\"")
+		config_args+=("LOCATION_TEST_INTERNAL=\"${external_peer_ip}\"")
 	fi
 	config_args+=("${extra_config[@]}")
 

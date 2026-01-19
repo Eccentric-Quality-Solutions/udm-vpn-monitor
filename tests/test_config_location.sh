@@ -46,9 +46,9 @@ declare -gA LOCATIONS
 	assert [ -n "${LOCATIONS[NYC]:-}" ]
 
 	# Verify external IP
-	local external_ip
-	external_ip=$(get_location_external_ip "NYC")
-	assert_equal "$external_ip" "203.0.113.1"
+	local external_peer_ip
+	external_peer_ip=$(get_location_external_ip "NYC")
+	assert_equal "$external_peer_ip" "203.0.113.1"
 
 	# Verify internal IPs are empty
 	local internal_ips
@@ -74,9 +74,9 @@ declare -gA LOCATIONS
 	parse_location_config
 
 	assert [ ${#LOCATIONS[@]} -eq 1 ]
-	local external_ip
-	external_ip=$(get_location_external_ip "NYC")
-	assert_equal "$external_ip" "203.0.113.1"
+	local external_peer_ip
+	external_peer_ip=$(get_location_external_ip "NYC")
+	assert_equal "$external_peer_ip" "203.0.113.1"
 
 	local internal_ips
 	internal_ips=$(get_location_internal_ips "NYC")
@@ -106,22 +106,22 @@ declare -gA LOCATIONS
 	assert [ ${#LOCATIONS[@]} -eq 3 ]
 
 	# Verify NYC
-	local external_ip
-	external_ip=$(get_location_external_ip "NYC")
-	assert_equal "$external_ip" "203.0.113.1"
+	local external_peer_ip
+	external_peer_ip=$(get_location_external_ip "NYC")
+	assert_equal "$external_peer_ip" "203.0.113.1"
 	local internal_ips
 	internal_ips=$(get_location_internal_ips "NYC")
 	assert_equal "$internal_ips" "${TEST_PEER_IP}"
 
 	# Verify LA
-	external_ip=$(get_location_external_ip "LA")
-	assert_equal "$external_ip" "198.51.100.1"
+	external_peer_ip=$(get_location_external_ip "LA")
+	assert_equal "$external_peer_ip" "198.51.100.1"
 	internal_ips=$(get_location_internal_ips "LA")
 	assert_equal "$internal_ips" "192.168.2.1 192.168.2.2"
 
 	# Verify CHI (no internal IPs)
-	external_ip=$(get_location_external_ip "CHI")
-	assert_equal "$external_ip" "192.0.2.1"
+	external_peer_ip=$(get_location_external_ip "CHI")
+	assert_equal "$external_peer_ip" "192.0.2.1"
 	internal_ips=$(get_location_internal_ips "CHI")
 	assert_equal "$internal_ips" ""
 }
@@ -151,11 +151,11 @@ declare -gA LOCATIONS
 	assert [ -n "${LOCATIONS[LA_Office]:-}" ]
 
 	# Verify we can retrieve IPs using location names
-	local external_ip
-	external_ip=$(get_location_external_ip "NYC_Office")
-	assert_equal "$external_ip" "203.0.113.1"
-	external_ip=$(get_location_external_ip "LA_Office")
-	assert_equal "$external_ip" "198.51.100.1"
+	local external_peer_ip
+	external_peer_ip=$(get_location_external_ip "NYC_Office")
+	assert_equal "$external_peer_ip" "203.0.113.1"
+	external_peer_ip=$(get_location_external_ip "LA_Office")
+	assert_equal "$external_peer_ip" "198.51.100.1"
 }
 
 # bats test_tags=category:high-risk,priority:high

@@ -516,7 +516,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Call get_peer_state which internally calls recover_corrupted_state_file
 	# Even though recovery fails, get_peer_state should return default value
 	local value
-	value=$(get_peer_state "" "${TEST_PEER_IP}" "failure_count" "0")
+	value=$(get_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "0")
 
 	# Verify caller returns default value even though recovery failed
 	assert_equal "$value" "0"
@@ -788,15 +788,15 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local unknown_key="unknown_key"
 	local peer_ip="192.168.1.1"
 	local state_file
-	state_file=$(get_peer_state_file_path "" "$peer_ip" "$unknown_key")
+	state_file=$(get_peer_state_file_path "TEST" "$peer_ip" "$unknown_key")
 
-	# Should use default path (STATE_DIR/<key>_LOCATION_<sanitized_ip>)
-	[[ "$state_file" == "${STATE_DIR}/${unknown_key}_LOCATION_192_168_1_1" ]]
+	# Should use default path (STATE_DIR/<key>_<location>_<sanitized_ip>)
+	[[ "$state_file" == "${STATE_DIR}/${unknown_key}_TEST_192_168_1_1" ]]
 
 	# Should be able to set/get unknown key
-	set_peer_state "" "$peer_ip" "$unknown_key" "test_value" || true
+	set_peer_state "TEST" "$peer_ip" "$unknown_key" "test_value" || true
 	local value
-	value=$(get_peer_state "" "$peer_ip" "$unknown_key" "default")
+	value=$(get_peer_state "TEST" "$peer_ip" "$unknown_key" "default")
 	[[ "$value" == "test_value" ]] || [[ "$value" == "default" ]]
 }
 
@@ -829,7 +829,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	export STATE_DIR="$readonly_dir"
 
 	# Should handle write failure gracefully
-	if ! set_peer_state "" "192.168.1.1" "last_bytes" "1000" 2>/dev/null; then
+	if ! set_peer_state "TEST" "192.168.1.1" "last_bytes" "1000" 2>/dev/null; then
 		# Write failed - this is expected
 		# Should not crash
 		:
@@ -859,26 +859,26 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	local peer_ip="192.168.1.1"
 
-	# Test all key types - use empty string for location to test backward compatibility
+	# Test all key types
 	local failure_count_path
-	failure_count_path=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
-	[[ "$failure_count_path" == "${STATE_DIR}/failure_counter_LOCATION_192_168_1_1" ]]
+	failure_count_path=$(get_peer_state_file_path "TEST" "$peer_ip" "failure_count")
+	[[ "$failure_count_path" == "${STATE_DIR}/failure_count_TEST_192_168_1_1" ]]
 
 	local last_bytes_path
-	last_bytes_path=$(get_peer_state_file_path "" "$peer_ip" "last_bytes")
-	[[ "$last_bytes_path" == "${STATE_DIR}/last_bytes_LOCATION_192_168_1_1" ]]
+	last_bytes_path=$(get_peer_state_file_path "TEST" "$peer_ip" "last_bytes")
+	[[ "$last_bytes_path" == "${STATE_DIR}/last_bytes_TEST_192_168_1_1" ]]
 
 	local spi_path
-	spi_path=$(get_peer_state_file_path "" "$peer_ip" "spi")
-	[[ "$spi_path" == "${STATE_DIR}/spi_LOCATION_192_168_1_1" ]]
+	spi_path=$(get_peer_state_file_path "TEST" "$peer_ip" "spi")
+	[[ "$spi_path" == "${STATE_DIR}/spi_TEST_192_168_1_1" ]]
 
 	local idle_detected_path
-	idle_detected_path=$(get_peer_state_file_path "" "$peer_ip" "idle_detected")
-	[[ "$idle_detected_path" == "${STATE_DIR}/idle_detected_LOCATION_192_168_1_1" ]]
+	idle_detected_path=$(get_peer_state_file_path "TEST" "$peer_ip" "idle_detected")
+	[[ "$idle_detected_path" == "${STATE_DIR}/idle_detected_TEST_192_168_1_1" ]]
 
 	local failure_type_path
-	failure_type_path=$(get_peer_state_file_path "" "$peer_ip" "failure_type")
-	[[ "$failure_type_path" == "${STATE_DIR}/failure_type_LOCATION_192_168_1_1" ]]
+	failure_type_path=$(get_peer_state_file_path "TEST" "$peer_ip" "failure_type")
+	[[ "$failure_type_path" == "${STATE_DIR}/failure_type_TEST_192_168_1_1" ]]
 }
 
 # bats test_tags=category:high-risk,priority:medium
@@ -903,15 +903,15 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	sanitized=$(sanitize_peer_ip "$peer_ip")
 	[[ "$sanitized" == "2001_db8__1" ]]
 
-	# Test file path resolution for IPv6 - use empty string for location to test backward compatibility
+	# Test file path resolution for IPv6
 	local failure_count_path
-	failure_count_path=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
-	[[ "$failure_count_path" == "${STATE_DIR}/failure_counter_LOCATION_2001_db8__1" ]]
+	failure_count_path=$(get_peer_state_file_path "TEST" "$peer_ip" "failure_count")
+	[[ "$failure_count_path" == "${STATE_DIR}/failure_count_TEST_2001_db8__1" ]]
 
-	# Should be able to set/get IPv6 peer state - use empty string for location to test backward compatibility
-	set_peer_state "" "$peer_ip" "failure_count" "5" || true
+	# Should be able to set/get IPv6 peer state
+	set_peer_state "TEST" "$peer_ip" "failure_count" "5" || true
 	local value
-	value=$(get_peer_state "" "$peer_ip" "failure_count" "0")
+	value=$(get_peer_state "TEST" "$peer_ip" "failure_count" "0")
 	[[ "$value" == "5" ]] || [[ "$value" == "0" ]]
 }
 
@@ -934,14 +934,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local peer2="10.0.0.1"
 
 	# Set different state values for each peer
-	set_peer_state "" "$peer1" "failure_count" "3" || true
-	set_peer_state "" "$peer2" "failure_count" "5" || true
+	set_peer_state "TEST" "$peer1" "failure_count" "3" || true
+	set_peer_state "TEST" "$peer2" "failure_count" "5" || true
 
 	# Get state values - should be independent
 	local count1
-	count1=$(get_peer_state "" "$peer1" "failure_count" "0")
+	count1=$(get_peer_state "TEST" "$peer1" "failure_count" "0")
 	local count2
-	count2=$(get_peer_state "" "$peer2" "failure_count" "0")
+	count2=$(get_peer_state "TEST" "$peer2" "failure_count" "0")
 
 	# Values should be independent
 	[[ "$count1" == "3" ]] || [[ "$count1" == "0" ]]
@@ -950,9 +950,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# File paths should be different
 	local path1
-	path1=$(get_peer_state_file_path "$peer1" "failure_count")
+	path1=$(get_peer_state_file_path "TEST" "$peer1" "failure_count")
 	local path2
-	path2=$(get_peer_state_file_path "$peer2" "failure_count")
+	path2=$(get_peer_state_file_path "TEST" "$peer2" "failure_count")
 	[[ "$path1" != "$path2" ]]
 }
 
@@ -1294,10 +1294,10 @@ EOF
 	# Set up state directory
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
-	# Create multiple failure counter files matching the pattern "failure_counter_*"
-	local file1="${STATE_DIR}/failure_counter_LOCATION_192_168_1_1"
-	local file2="${STATE_DIR}/failure_counter_LOCATION_192_168_1_2"
-	local file3="${STATE_DIR}/failure_counter_LOCATION_192_168_1_3"
+	# Create multiple failure counter files matching the pattern "failure_count_*"
+	local file1="${STATE_DIR}/failure_count_LOCATION_192_168_1_1"
+	local file2="${STATE_DIR}/failure_count_LOCATION_192_168_1_2"
+	local file3="${STATE_DIR}/failure_count_LOCATION_192_168_1_3"
 
 	# Create readable files with valid content
 	echo "5" >"$file1"
@@ -1320,7 +1320,7 @@ EOF
 		source '${BATS_TEST_DIRNAME}/../lib/state.sh' || true
 		export STATE_DIR='${STATE_DIR}'
 		export LOGS_DIR='${LOGS_DIR}'
-		validate_state_files_by_pattern 'failure_counter_*' 'integer' '0' 'Failure counter file'
+		validate_state_files_by_pattern 'failure_count_*' 'integer' '0' 'Failure counter file'
 	"
 	assert_success
 
@@ -1422,8 +1422,8 @@ EOF
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create failure counter files matching the pattern
-	local file1="${STATE_DIR}/failure_counter_LOCATION_192_168_1_1"
-	local file2="${STATE_DIR}/failure_counter_LOCATION_192_168_1_2"
+	local file1="${STATE_DIR}/failure_count_LOCATION_192_168_1_1"
+	local file2="${STATE_DIR}/failure_count_LOCATION_192_168_1_2"
 
 	# Create files with valid content
 	echo "5" >"$file1"
@@ -1459,6 +1459,227 @@ EOF
 	# Restore permissions for cleanup
 	chmod "$original_perms" "$file2" 2>/dev/null || true
 	trap - EXIT
+}
+
+# ============================================================================
+# 6.7 INPUT VALIDATION TESTS
+# ============================================================================
+
+# bats test_tags=category:validation,priority:medium
+@test "get_peer_state_file_path with empty key - should return error and empty path" {
+	# Purpose: Test verifies that get_peer_state_file_path validates key is not empty.
+	# Expected: Function returns 1 and outputs empty string, logs error.
+	# Importance: Prevents invalid paths from being generated.
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	source_function "get_peer_state_file_path"
+
+	# Test with empty key - use || true to capture exit code without failing test
+	local result exit_code
+	result=$(get_peer_state_file_path "LOCATION" "${TEST_PEER_IP}" "" 2>&1) || exit_code=$?
+
+	# Should return error code
+	assert_equal "$exit_code" 1
+
+	# Output should contain error message (logged to stderr, captured with 2>&1)
+	[[ "$result" == *"key is required"* ]] || fail "Expected error message about key being required, got: $result"
+}
+
+# bats test_tags=category:validation,priority:medium
+@test "get_peer_state_file_path with empty peer_ip - should return error and empty path" {
+	# Purpose: Test verifies that get_peer_state_file_path validates peer_ip is not empty.
+	# Expected: Function returns 1 and outputs empty string, logs error.
+	# Importance: Prevents invalid paths like failure_count_LOCATION_ from being generated.
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	source_function "get_peer_state_file_path"
+
+	# Test with empty peer_ip - use || true to capture exit code without failing test
+	local result exit_code
+	result=$(get_peer_state_file_path "LOCATION" "" "failure_count" 2>&1) || exit_code=$?
+
+	# Should return error code
+	assert_equal "$exit_code" 1
+
+	# Output should contain error message (logged to stderr, captured with 2>&1)
+	[[ "$result" == *"peer_ip is required"* ]] || fail "Expected error message about peer_ip being required, got: $result"
+}
+
+# bats test_tags=category:validation,priority:medium
+@test "get_peer_state_file_path with empty location_name for non-connection_name key - should return error" {
+	# Purpose: Test verifies that get_peer_state_file_path validates location_name for non-connection_name keys.
+	# Expected: Function returns 1 and outputs empty string for failure_count key.
+	# Importance: Prevents invalid paths from being generated for location-based keys.
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	source_function "get_peer_state_file_path"
+
+	# Test with empty location_name for failure_count (requires location)
+	# Use || exit_code=$? to capture exit code without failing test
+	local result exit_code
+	result=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count" 2>&1) || exit_code=$?
+
+	# Should return error code
+	assert_equal "$exit_code" 1
+
+	# Output should contain error message (logged to stderr, captured with 2>&1)
+	[[ "$result" == *"location_name is required"* ]] || fail "Expected error message about location_name being required, got: $result"
+}
+
+# bats test_tags=category:validation,priority:medium
+@test "get_peer_state_file_path with empty location_name for connection_name key - should succeed" {
+	# Purpose: Test verifies that get_peer_state_file_path allows empty location_name for connection_name key.
+	# Expected: Function returns 0 and outputs valid path.
+	# Importance: connection_name is per-peer only, location_name is intentionally optional.
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	source_function "get_peer_state_file_path"
+
+	# Test with empty location_name for connection_name (should be allowed)
+	local result
+	result=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "connection_name" 2>&1)
+	local exit_code=$?
+
+	# Should succeed
+	assert_equal "$exit_code" 0
+
+	# Should return valid path
+	[[ -n "$result" ]]
+	[[ "$result" == "${STATE_DIR}/connection_name_"* ]]
+}
+
+# bats test_tags=category:validation,priority:medium
+@test "get_peer_state_file_path with unset STATE_DIR - should return error and empty path" {
+	# Purpose: Test verifies that get_peer_state_file_path validates STATE_DIR is set.
+	# Expected: Function returns 1 and outputs empty string, logs error.
+	# Importance: Prevents invalid absolute paths from being generated.
+	# Unset STATE_DIR to test validation
+	local saved_state_dir="${STATE_DIR:-}"
+	unset STATE_DIR
+
+	# Source dependencies directly (source_function would set STATE_DIR)
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/state/state_paths.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state/state_paths.sh" 2>/dev/null || true
+
+	# Test with unset STATE_DIR - use || exit_code=$? to capture exit code without failing test
+	local result exit_code
+	result=$(get_peer_state_file_path "LOCATION" "${TEST_PEER_IP}" "failure_count" 2>&1) || exit_code=$?
+
+	# Should return error code
+	assert_equal "$exit_code" 1
+
+	# Output should contain error message about STATE_DIR
+	[[ "$result" == *"STATE_DIR is not set"* ]] || fail "Expected error message about STATE_DIR not being set, got: $result"
+
+	# Restore STATE_DIR
+	if [[ -n "$saved_state_dir" ]]; then
+		export STATE_DIR="$saved_state_dir"
+	fi
+}
+
+# bats test_tags=category:validation,priority:medium
+@test "get_peer_state with path generation failure - should return default value and exit code 1" {
+	# Purpose: Test verifies that get_peer_state handles path generation failure gracefully.
+	# Expected: Function returns default value (output) and exit code 1.
+	# Importance: Ensures function fails safely when validation fails upstream.
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	source_function "get_peer_state"
+
+	# Test with empty peer_ip (will cause path generation to fail)
+	# Use || exit_code=$? to capture exit code without failing test
+	local result exit_code
+	result=$(get_peer_state "LOCATION" "" "failure_count" "42" 2>&1) || exit_code=$?
+
+	# Should return error code
+	assert_equal "$exit_code" 1
+
+	# Output should end with default value (42) - there may be error message before it
+	[[ "$result" == *"42" ]] || fail "Expected output to end with default value '42', got: $result"
+}
+
+# bats test_tags=category:validation,priority:medium
+@test "get_peer_state with path generation failure and no default - should return 0" {
+	# Purpose: Test verifies that get_peer_state uses default "0" when path generation fails and no default provided.
+	# Expected: Function returns "0" (output) and exit code 1.
+	# Importance: Ensures function has safe fallback behavior.
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	source_function "get_peer_state"
+
+	# Test with empty peer_ip (will cause path generation to fail) and no default
+	# Use || exit_code=$? to capture exit code without failing test
+	local result exit_code
+	result=$(get_peer_state "LOCATION" "" "failure_count" 2>&1) || exit_code=$?
+
+	# Should return error code
+	assert_equal "$exit_code" 1
+
+	# Output should end with default value "0" - there may be error message before it
+	[[ "$result" == *"0" ]] || fail "Expected output to end with default value '0', got: $result"
+}
+
+# bats test_tags=category:validation,priority:medium
+@test "set_peer_state with path generation failure - should return error code 1" {
+	# Purpose: Test verifies that set_peer_state handles path generation failure gracefully.
+	# Expected: Function returns exit code 1, does not attempt to write file.
+	# Importance: Prevents file operations on invalid paths.
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	source_function "set_peer_state"
+
+	# Test with empty peer_ip (will cause path generation to fail)
+	run set_peer_state "LOCATION" "" "failure_count" "5" 2>&1
+
+	# Should return error code
+	assert_failure
+
+	# Should not create any files (path was invalid)
+	local invalid_path="${STATE_DIR}/failure_count_LOCATION_"
+	[[ ! -f "$invalid_path" ]]
+}
+
+# bats test_tags=category:validation,priority:medium
+@test "delete_peer_state with path generation failure - should return error code 1" {
+	# Purpose: Test verifies that delete_peer_state handles path generation failure gracefully.
+	# Expected: Function returns exit code 1, does not attempt to delete file.
+	# Importance: Prevents file operations on invalid paths.
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	source_function "delete_peer_state"
+
+	# Test with empty peer_ip (will cause path generation to fail)
+	run delete_peer_state "LOCATION" "" "failure_count" 2>&1
+
+	# Should return error code
+	assert_failure
+}
+
+# bats test_tags=category:validation,priority:medium
+@test "get_failure_type with path generation failure - should return unknown and exit code 1" {
+	# Purpose: Test verifies that get_failure_type handles path generation failure gracefully.
+	# Expected: Function returns "unknown" (output) and exit code 1.
+	# Importance: Ensures failure type detection fails safely when validation fails.
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	# Source failure_analysis.sh to get get_failure_type
+	# shellcheck source=../lib/detection/failure_analysis.sh
+	source "${BATS_TEST_DIRNAME}/../lib/detection/failure_analysis.sh" 2>/dev/null || true
+
+	# Test with empty peer_ip (will cause path generation to fail)
+	# Use || exit_code=$? to capture exit code without failing test
+	local result exit_code
+	result=$(get_failure_type "LOCATION" "" 2>&1) || exit_code=$?
+
+	# Should return error code
+	assert_equal "$exit_code" 1
+
+	# Output should end with "unknown" - there may be error message before it
+	[[ "$result" == *"unknown" ]] || fail "Expected output to end with 'unknown', got: $result"
 }
 
 # ============================================================================

@@ -91,12 +91,16 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "10.0.0.1" "0xABCD1234"
 
 	# Verify state file has custom SPI
+	# Note: SPI is stored as-is by fixture, but when extracted by extract_spi() it will be normalized
+	# The comparison functions normalize both values, so stored value format doesn't matter for comparison
 	ensure_state_functions_loaded
 	local spi
 	spi=$(get_peer_state "TEST" "${TEST_PEER_IP}" "spi" "" 2>/dev/null || echo "")
+	# Fixture stores SPI directly, so it may be in original format
+	# When code runs, extract_spi() will normalize it, and comparison functions normalize both values
 	assert_equal "$spi" "0xABCD1234"
 
-	# Verify mock ip returns custom SPI
+	# Verify mock ip returns custom SPI (mock output format unchanged)
 	assert_file_exist "${TEST_DIR}/ip"
 	run "${TEST_DIR}/ip" xfrm state 2>&1 || true
 	assert_success

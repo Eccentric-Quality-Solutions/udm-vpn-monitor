@@ -48,7 +48,7 @@ EOF
 
 	# Initialize state
 	source_function "set_peer_state"
-	set_peer_state "" "$peer_ip" "failure_count" "0"
+	set_peer_state "TEST" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_vpn_status"
@@ -89,7 +89,7 @@ EOF
 
 	# Initialize state
 	source_function "set_peer_state"
-	set_peer_state "" "$peer_ip" "failure_count" "0"
+	set_peer_state "TEST" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_xfrm_status"
@@ -125,7 +125,7 @@ EOF
 
 	# Initialize state
 	source_function "set_peer_state"
-	set_peer_state "" "$peer_ip" "failure_count" "0"
+	set_peer_state "TEST" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_ipsec_status"
@@ -684,7 +684,7 @@ EOF
 
 	# Verify the combined message format:
 	# 1. Should contain "VPN suspect for" with peer IP (location name is in log prefix, not in message)
-	# Note: format_peer_ip_display shows (internal_ip external_ip) when internal IP is provided
+	# Note: format_peer_ip_display shows (internal_peer_ip external_peer_ip) when internal IP is provided
 	assert_log_contains "$log_file" "VPN suspect for ($internal_ip $peer_ip)"
 
 	# 2. Should include xfrm detection method name
@@ -1110,7 +1110,7 @@ EOF
 	# Verify the message is combined (contains semicolon separator)
 	assert_log_contains "$log_file" ";"
 
-	# Verify the message format includes peer IP display (internal_ip external_ip when internal IP provided)
+	# Verify the message format includes peer IP display (internal_peer_ip external_peer_ip when internal IP provided)
 	assert_log_contains "$log_file" "VPN suspect for ($internal_ip $peer_ip)"
 
 	# Verify we have exactly one combined diagnostic message

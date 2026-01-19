@@ -307,8 +307,7 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_failure_count"
 
 	# Test with peer IP that has no counter file
-	# Use empty string for location to test backward compatibility
-	run get_failure_count "" "${TEST_PEER_IP}"
+	run get_failure_count "TEST" "${TEST_PEER_IP}"
 	assert_success
 	assert_output "0"
 }
@@ -322,13 +321,12 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	setup_test_environment "${TEST_DIR}"
 	# Use set_peer_state to create file with correct location-based path format
 	source_function "set_peer_state"
-	set_peer_state "" "${TEST_PEER_IP}" "failure_count" "5" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "5" || true
 
 	# Source the actual function from the library
 	source_function "get_failure_count"
 
-	# Use empty string for location to test backward compatibility
-	run get_failure_count "" "${TEST_PEER_IP}"
+	run get_failure_count "TEST" "${TEST_PEER_IP}"
 	assert_success
 	assert_output "5"
 }
@@ -345,11 +343,10 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	# Manually create corrupted file using correct path format
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	echo "invalid-value" >"$counter_file"
 
-	# Use empty string for location to test backward compatibility
-	run get_failure_count "" "${TEST_PEER_IP}"
+	run get_failure_count "TEST" "${TEST_PEER_IP}"
 	assert_success
 	# Should return default (0) for corrupted file (function logs warning)
 	# Verify it ends with 0 (the actual return value)
@@ -372,21 +369,21 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_failure_count"
 	source_function "get_peer_state_file_path"
 
-	# First increment - use empty string for location to test backward compatibility
-	run increment_failure "" "${TEST_PEER_IP}"
+	# First increment
+	run increment_failure "TEST" "${TEST_PEER_IP}"
 	assert_success
 	assert_output "1"
 
 	# Verify the file was created using get_peer_state_file_path to get correct path
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	assert_file_exist "$counter_file"
 	local count
 	count=$(cat "$counter_file")
 	assert_equal "$count" 1
 
 	# Second increment
-	run increment_failure "" "${TEST_PEER_IP}"
+	run increment_failure "TEST" "${TEST_PEER_IP}"
 	assert_success
 	assert_output "2"
 
@@ -404,19 +401,18 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	setup_test_environment "${TEST_DIR}"
 	# Use set_peer_state to create file with correct location-based path format
 	source_function "set_peer_state"
-	set_peer_state "" "${TEST_PEER_IP}" "failure_count" "5" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "5" || true
 
 	# Source the actual function from the library
 	source_function "reset_failure_count"
 	source_function "get_peer_state_file_path"
 
-	# Use empty string for location to test backward compatibility
-	run reset_failure_count "" "${TEST_PEER_IP}"
+	run reset_failure_count "TEST" "${TEST_PEER_IP}"
 	assert_success
 
 	# Verify the counter was reset using get_peer_state_file_path to get correct path
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	assert_file_exist "$counter_file"
 	local count
 	count=$(cat "$counter_file")
@@ -436,10 +432,9 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	source_function "get_peer_state_file_path"
 
-	# Use empty string for location to test backward compatibility (empty location becomes "LOCATION")
-	run get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count"
+	run get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count"
 	assert_success
-	assert_output "${STATE_DIR}/failure_counter_LOCATION_192_168_1_1"
+	assert_output "${STATE_DIR}/failure_count_TEST_192_168_1_1"
 }
 
 # bats test_tags=category:unit
@@ -451,10 +446,9 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	source_function "get_peer_state_file_path"
 
-	# Use empty string for location to test backward compatibility (empty location becomes "LOCATION")
-	run get_peer_state_file_path "" "${TEST_PEER_IP}" "last_bytes"
+	run get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes"
 	assert_success
-	assert_output "${STATE_DIR}/last_bytes_LOCATION_192_168_1_1"
+	assert_output "${STATE_DIR}/last_bytes_TEST_192_168_1_1"
 }
 
 # bats test_tags=category:unit
@@ -466,11 +460,10 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	source_function "get_peer_state_file_path"
 
-	# Use empty string for location to test backward compatibility (empty location becomes "LOCATION")
-	run get_peer_state_file_path "" "${TEST_PEER_IP}" "unknown_key"
+	run get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "unknown_key"
 	assert_success
 	# Function logs a warning but still returns the path
-	assert_output --partial "${STATE_DIR}/unknown_key_LOCATION_192_168_1_1"
+	assert_output --partial "${STATE_DIR}/unknown_key_TEST_192_168_1_1"
 }
 
 # bats test_tags=category:unit,priority:high
@@ -504,13 +497,13 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 }
 
 # bats test_tags=category:unit,priority:high
-@test "get_peer_state_file_path produces invalid path when STATE_DIR is unset" {
-	# Purpose: Test verifies that get_peer_state_file_path produces invalid absolute paths when STATE_DIR is unset
-	# Expected: Function produces paths starting with "/" (absolute paths) when STATE_DIR is unset
-	# Importance: Demonstrates the issue that module-level validation is designed to catch early
+@test "get_peer_state_file_path returns error when STATE_DIR is unset" {
+	# Purpose: Test verifies that get_peer_state_file_path validates STATE_DIR is set
+	# Expected: Function returns error and empty path when STATE_DIR is unset
+	# Importance: Validates that module-level validation properly catches missing STATE_DIR
 	setup_test_environment "${TEST_DIR}"
 
-	# Unset STATE_DIR to test the issue
+	# Unset STATE_DIR to test the validation
 	unset STATE_DIR
 
 	# Source the function (module-level warning will be logged, but function still loads)
@@ -521,12 +514,12 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	# shellcheck source=../lib/state/state_paths.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state/state_paths.sh" 2>/dev/null || true
 
-	# Call function with STATE_DIR unset
+	# Call function with STATE_DIR unset - should fail with error
 	run get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count"
-	assert_success
+	assert_failure
 
-	# Should produce invalid absolute path (starts with /)
-	assert_output --regexp "^/failure_counter_.*"
+	# Should output error message about STATE_DIR not being set
+	assert_output --partial "STATE_DIR is not set"
 }
 
 # bats test_tags=category:unit,priority:high
@@ -548,7 +541,7 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	assert_success
 
 	# Should produce valid path within STATE_DIR
-	assert_output "${STATE_DIR}/failure_counter_TEST_192_168_1_1"
+	assert_output "${STATE_DIR}/failure_count_TEST_192_168_1_1"
 }
 
 # bats test_tags=category:unit
@@ -561,12 +554,12 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state"
 
 	# Use empty string for location to test backward compatibility
-	run get_peer_state "" "${TEST_PEER_IP}" "failure_count"
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	assert_output "0"
 
 	# Test with custom default
-	run get_peer_state "" "${TEST_PEER_IP}" "failure_count" "99"
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "99"
 	assert_success
 	assert_output "99"
 }
@@ -582,11 +575,11 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "set_peer_state"
 
 	# Create file using set_peer_state to ensure correct path format
-	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "42"
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "42"
 	assert_success
 
 	# Use empty string for location to test backward compatibility
-	run get_peer_state "" "${TEST_PEER_IP}" "failure_count"
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	assert_output "42"
 }
@@ -604,11 +597,11 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	# Manually create corrupted file using correct path format
 	# Use get_peer_state_file_path to get the correct path (empty location becomes "LOCATION")
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	echo "invalid-value" >"$counter_file"
 
 	# Use empty string for location to test backward compatibility
-	run get_peer_state "" "${TEST_PEER_IP}" "failure_count"
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	# Should return default (0) for corrupted file (function logs warning)
 	# Verify it ends with 0 (the actual return value)
@@ -643,16 +636,16 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state_file_path"
 
 	# Create file using set_peer_state to ensure correct path format
-	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "5"
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "5"
 	assert_success
 
 	# Use empty string for location to test backward compatibility
-	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "10"
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "10"
 	assert_success
 
 	# Verify file was updated using get_peer_state_file_path
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	local count
 	count=$(cat "$counter_file")
 	assert_equal "$count" 10
@@ -670,13 +663,229 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	# Should fail with invalid value
 	# Use empty string for location to test backward compatibility
-	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "not-a-number"
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "not-a-number"
 	assert_failure
 
 	# File should not be created - use get_peer_state_file_path to get correct path
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	assert_file_not_exist "$counter_file"
+}
+
+# bats test_tags=category:unit,priority:medium
+@test "set_peer_state validates SPI format - accepts empty string" {
+	# Purpose: Test verifies that set_peer_state function accepts empty string for SPI (valid format)
+	# Expected: Function accepts empty string for SPI and creates state file
+	# Importance: Empty SPI is valid and should be allowed (e.g., when SPI is not yet known)
+	setup_test_environment "${TEST_DIR}"
+
+	source_function "set_peer_state"
+	source_function "get_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Empty string should be accepted for SPI
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" ""
+	assert_success
+
+	# Verify empty string was stored
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "spi" ""
+	assert_success
+	assert_output ""
+}
+
+# bats test_tags=category:unit,priority:medium
+@test "set_peer_state validates SPI format - accepts hex format" {
+	# Purpose: Test verifies that set_peer_state function accepts hex format SPI (0x...)
+	# Expected: Function accepts hex format SPI and stores it correctly
+	# Importance: Hex format is the standard format for SPI values from xfrm output
+	setup_test_environment "${TEST_DIR}"
+
+	source_function "set_peer_state"
+	source_function "get_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Hex format should be accepted
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "0x12345678"
+	assert_success
+
+	# Verify hex value was stored correctly
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "spi" ""
+	assert_success
+	assert_output "0x12345678"
+}
+
+# bats test_tags=category:unit,priority:medium
+@test "set_peer_state validates SPI format - accepts decimal format" {
+	# Purpose: Test verifies that set_peer_state function accepts decimal format SPI
+	# Expected: Function accepts decimal format SPI and stores it correctly
+	# Importance: Decimal format is an alternative valid format for SPI values
+	setup_test_environment "${TEST_DIR}"
+
+	source_function "set_peer_state"
+	source_function "get_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Decimal format should be accepted
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "305419896"
+	assert_success
+
+	# Verify decimal value was stored correctly
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "spi" ""
+	assert_success
+	assert_output "305419896"
+}
+
+# bats test_tags=category:unit,priority:medium
+@test "set_peer_state validates SPI format - rejects invalid formats" {
+	# Purpose: Test verifies that set_peer_state function rejects invalid SPI formats
+	# Expected: Function rejects non-hex, non-decimal SPI values and returns failure
+	# Importance: Validation prevents corrupted SPI values from being stored
+	setup_test_environment "${TEST_DIR}"
+
+	source_function "set_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Invalid formats should be rejected
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "not-a-spi"
+	assert_failure
+
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "0xinvalid"
+	assert_failure
+
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "123abc"
+	assert_failure
+
+	# File should not be created for any invalid format
+	local spi_file
+	spi_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "spi")
+	assert_file_not_exist "$spi_file"
+}
+
+# bats test_tags=category:unit,priority:medium
+@test "get_peer_state handles all SPI formats correctly" {
+	# Purpose: Test verifies that get_peer_state function correctly retrieves all valid SPI formats
+	# Expected: Function retrieves empty, hex, and decimal SPI values correctly
+	# Importance: Ensures SPI retrieval works for all valid formats used in practice
+	setup_test_environment "${TEST_DIR}"
+
+	source_function "get_peer_state"
+	source_function "set_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Test empty SPI
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" ""
+	assert_success
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "spi" ""
+	assert_success
+	assert_output ""
+
+	# Test hex SPI
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "0xabcdef12"
+	assert_success
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "spi" ""
+	assert_success
+	assert_output "0xabcdef12"
+
+	# Test decimal SPI
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "1234567890"
+	assert_success
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "spi" ""
+	assert_success
+	assert_output "1234567890"
+}
+
+# bats test_tags=category:unit,priority:medium
+@test "peer_state functions handle special characters in location names" {
+	# Purpose: Test verifies that peer_state functions handle special characters in location names correctly
+	# Expected: Functions sanitize location names and create valid state files
+	# Importance: Location names may contain special characters that need sanitization for filename safety
+	setup_test_environment "${TEST_DIR}"
+
+	source_function "set_peer_state"
+	source_function "get_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Test with special characters (should be sanitized)
+	local location_with_special="NYC-Office@123"
+	run set_peer_state "$location_with_special" "${TEST_PEER_IP}" "failure_count" "5"
+	assert_success
+
+	# Verify value can be retrieved
+	run get_peer_state "$location_with_special" "${TEST_PEER_IP}" "failure_count"
+	assert_success
+	assert_output "5"
+
+	# Verify file was created with sanitized name
+	local state_file
+	state_file=$(get_peer_state_file_path "$location_with_special" "${TEST_PEER_IP}" "failure_count")
+	# File should exist (name will be sanitized)
+	assert_file_exist "$state_file"
+}
+
+# bats test_tags=category:unit,priority:medium
+@test "peer_state functions handle very long location names" {
+	# Purpose: Test verifies that peer_state functions handle very long location names correctly
+	# Expected: Functions truncate location names to safe length and create valid state files
+	# Importance: Very long location names need truncation to ensure filename safety (max 64 chars)
+	setup_test_environment "${TEST_DIR}"
+
+	source_function "set_peer_state"
+	source_function "get_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Test with very long location name (should be truncated to 64 chars)
+	local long_location="ThisIsAVeryLongLocationNameThatExceedsTheMaximumAllowedLengthForSanitization123456789"
+	run set_peer_state "$long_location" "${TEST_PEER_IP}" "failure_count" "10"
+	assert_success
+
+	# Verify value can be retrieved
+	run get_peer_state "$long_location" "${TEST_PEER_IP}" "failure_count"
+	assert_success
+	assert_output "10"
+
+	# Verify file was created (name will be truncated)
+	local state_file
+	state_file=$(get_peer_state_file_path "$long_location" "${TEST_PEER_IP}" "failure_count")
+	assert_file_exist "$state_file"
+}
+
+# bats test_tags=category:unit,priority:medium
+@test "peer_state functions handle special characters in IP addresses" {
+	# Purpose: Test verifies that peer_state functions handle IP addresses with special characters correctly
+	# Expected: Functions sanitize IP addresses (dots/colons to underscores) and create valid state files
+	# Importance: IPv4/IPv6 addresses contain dots/colons that need sanitization for filename safety
+	setup_test_environment "${TEST_DIR}"
+
+	source_function "set_peer_state"
+	source_function "get_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Test with IPv4 (dots should be sanitized to underscores)
+	run set_peer_state "TEST" "192.168.1.1" "failure_count" "7"
+	assert_success
+
+	# Verify value can be retrieved
+	run get_peer_state "TEST" "192.168.1.1" "failure_count"
+	assert_success
+	assert_output "7"
+
+	# Test with IPv6 (colons should be sanitized to underscores)
+	run set_peer_state "TEST" "2001:db8::1" "failure_count" "8"
+	assert_success
+
+	# Verify value can be retrieved
+	run get_peer_state "TEST" "2001:db8::1" "failure_count"
+	assert_success
+	assert_output "8"
+
+	# Verify files were created with sanitized names
+	local ipv4_file
+	ipv4_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	assert_file_exist "$ipv4_file"
+
+	local ipv6_file
+	ipv6_file=$(get_peer_state_file_path "TEST" "2001:db8::1" "failure_count")
+	assert_file_exist "$ipv6_file"
 }
 
 # bats test_tags=category:unit
@@ -709,10 +918,10 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	# Get file path for deletion verification
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 
 	# Delete the file
-	run delete_peer_state "" "${TEST_PEER_IP}" "failure_count"
+	run delete_peer_state "TEST" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 
 	# File should be deleted
@@ -730,14 +939,14 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	# Should succeed even if file doesn't exist
 	# Use empty string for location to test backward compatibility
-	run delete_peer_state "" "${TEST_PEER_IP}" "failure_count"
+	run delete_peer_state "TEST" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 }
 
 # bats test_tags=category:unit
 @test "cleanup_peer_state removes all peer state files" {
 	# Purpose: Test verifies that cleanup_peer_state function removes all state files for a peer
-	# Expected: Function deletes all peer-specific state files including failure_count, last_bytes, and other state files
+	# Expected: Function deletes all peer-specific state files including failure_count, last_bytes, connection_name, and other state files
 	# Importance: Complete cleanup enables removal of all peer state when peer is no longer monitored
 	setup_test_environment "${TEST_DIR}"
 
@@ -745,29 +954,38 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "set_peer_state"
 	source_function "get_peer_state_file_path"
 
-	# Create both failure_count and last_bytes files using set_peer_state to ensure correct path format
-	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "5"
+	# Create state files using set_peer_state to ensure correct path format
+	# Use a test location name for location-based keys
+	local test_location="TEST"
+	run set_peer_state "$test_location" "${TEST_PEER_IP}" "failure_count" "5"
 	assert_success
-	run set_peer_state "" "${TEST_PEER_IP}" "last_bytes" "123456"
+	run set_peer_state "$test_location" "${TEST_PEER_IP}" "last_bytes" "123456"
+	assert_success
+	# connection_name is per-peer only (no location)
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "connection_name" "test-connection"
 	assert_success
 
 	# Get file paths for verification
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "$test_location" "${TEST_PEER_IP}" "failure_count")
 	local bytes_file
-	bytes_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "last_bytes")
+	bytes_file=$(get_peer_state_file_path "$test_location" "${TEST_PEER_IP}" "last_bytes")
+	local connection_file
+	connection_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "connection_name")
 
 	# Verify files exist before cleanup
 	assert_file_exist "$counter_file"
 	assert_file_exist "$bytes_file"
+	assert_file_exist "$connection_file"
 
-	# Use empty string for location to test backward compatibility
-	run cleanup_peer_state "" "${TEST_PEER_IP}"
+	# Cleanup with the same location name used for location-based keys
+	run cleanup_peer_state "$test_location" "${TEST_PEER_IP}"
 	assert_success
 
-	# Both files should be deleted
+	# All files should be deleted
 	assert_file_not_exist "$counter_file"
 	assert_file_not_exist "$bytes_file"
+	assert_file_not_exist "$connection_file"
 }
 
 # bats test_tags=category:unit
@@ -781,11 +999,11 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "set_peer_state"
 
 	# Set a value - use empty string for location to test backward compatibility
-	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "15"
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "15"
 	assert_success
 
 	# Get it back
-	run get_peer_state "" "${TEST_PEER_IP}" "failure_count"
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	assert_output "15"
 }
@@ -802,13 +1020,13 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	# Set a value - should use atomic write (temp file + mv)
 	# Use empty string for location to test backward compatibility
-	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "20"
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "20"
 	assert_success
 
 	# Verify temp file doesn't exist (should have been renamed)
 	# Use get_peer_state_file_path to get correct path
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	local temp_file="${counter_file}.tmp"
 	assert_file_not_exist "$temp_file"
 	assert_file_exist "$counter_file"
@@ -3352,8 +3570,8 @@ source_lockfile_module() {
 # bats test_tags=category:unit
 @test "extract_spi extracts decimal SPI from xfrm output" {
 	# Purpose: Test verifies that extract_spi function correctly extracts decimal SPI values from xfrm output
-	# Expected: Function extracts SPI value in decimal format (no prefix) from xfrm state output
-	# Importance: Decimal SPI extraction supports both hex and decimal SPI formats in xfrm output
+	# Expected: Function extracts SPI value and normalizes it to hex format (0x prefix) for consistent comparison
+	# Importance: Decimal SPI extraction supports both hex and decimal SPI formats in xfrm output, normalized to hex for consistency
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "extract_spi"
@@ -3364,7 +3582,8 @@ source_lockfile_module() {
 
 	run extract_spi "$xfrm_output"
 	assert_success
-	assert_output "305419896"
+	# SPI is normalized to hex format for consistent comparison (305419896 decimal = 0x12345678 hex)
+	assert_output "0x12345678"
 }
 
 # bats test_tags=category:unit
@@ -3745,9 +3964,10 @@ source_lockfile_module() {
 
 		# Verify SPI was stored - use empty string for location to test backward compatibility
 		local stored_spi
-		stored_spi=$(get_peer_state "" "203.0.113.1" "spi" "")
+		stored_spi=$(get_peer_state "TEST" "203.0.113.1" "spi" "")
 		# Use assert_equal for better error messages
-		assert_equal "$stored_spi" "0xABCDEF12"
+		# SPI is normalized to lowercase hex format (0xABCDEF12 -> 0xabcdef12)
+		assert_equal "$stored_spi" "0xabcdef12"
 	else
 		skip "Mock IP command not found in PATH (integration test requires mock_ip at ${TEST_DIR}/mock_ip to verify xfrm status checking)"
 	fi
@@ -3775,8 +3995,8 @@ source_lockfile_module() {
 
 	# Set initial state: stored SPI and byte counter
 	# Use empty string for location to test backward compatibility
-	set_peer_state "" "203.0.113.1" "spi" "0x12345678" || true
-	set_peer_state "" "203.0.113.1" "last_bytes" "5000" || true
+	set_peer_state "TEST" "203.0.113.1" "spi" "0x12345678" || true
+	set_peer_state "TEST" "203.0.113.1" "last_bytes" "5000" || true
 
 	# Create mock ip command FIRST
 	# Use explicit path for this test since it needs to verify the mock itself
@@ -3814,13 +4034,13 @@ source_lockfile_module() {
 
 		# Verify SPI was updated - use empty string for location to test backward compatibility
 		local stored_spi
-		stored_spi=$(get_peer_state "" "203.0.113.1" "spi" "")
+		stored_spi=$(get_peer_state "TEST" "203.0.113.1" "spi" "")
 		# Use assert_equal for better error messages
 		assert_equal "$stored_spi" "0x87654321"
 
 		# Verify byte counter baseline was reset (rekey detected)
 		local last_bytes
-		last_bytes=$(get_peer_state "" "203.0.113.1" "last_bytes" "0")
+		last_bytes=$(get_peer_state "TEST" "203.0.113.1" "last_bytes" "0")
 		# Use assert_equal for better error messages
 		assert_equal "$last_bytes" "1000"
 	else

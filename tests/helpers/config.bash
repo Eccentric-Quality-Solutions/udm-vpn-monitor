@@ -141,11 +141,12 @@ get_config_schema() {
 		return 0
 	fi
 	# Check pattern matches for location-based variables
-	if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+	# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
+	if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
 		# LOCATION_*_EXTERNAL pattern: required, string, non-empty
 		echo "required|string|non-empty"
 		return 0
-	elif [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+	elif [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_INTERNAL$ ]]; then
 		# LOCATION_*_INTERNAL pattern: optional, string
 		echo "optional|string"
 		return 0

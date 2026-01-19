@@ -119,7 +119,7 @@ if ! ensure_directory_exists "$LOGS_DIR" "logs"; then
 fi
 
 # State files
-# Note: Failure counters are per-peer: ${STATE_DIR}/failure_counter_<location>_<peer_ip_sanitized>
+# Note: Failure counters are per-peer: ${STATE_DIR}/failure_count_<location>_<peer_ip_sanitized>
 RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 # LAST_BYTES_FILE will be per-peer: ${STATE_DIR}/last_bytes_<peer_ip_sanitized>
 # COOLDOWN_UNTIL_FILE removed - cooldown functionality replaced by MIN_RESTART_INTERVAL_SECONDS
@@ -179,7 +179,7 @@ if ! validate_config; then
 fi
 
 # Update state file paths that depend on LOGS_DIR
-# Note: Failure counters are per-peer: ${STATE_DIR}/failure_counter_<location>_<peer_ip_sanitized>
+# Note: Failure counters are per-peer: ${STATE_DIR}/failure_count_<location>_<peer_ip_sanitized>
 RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 
 # Check cron persistence
@@ -590,8 +590,8 @@ process_locations() {
 	declare -A location_failure_status
 	for location_name in "${!LOCATIONS[@]}"; do
 		# Get external IP for this location
-		local external_ip
-		if ! external_ip=$(get_location_external_ip "$location_name"); then
+		local external_peer_ip
+		if ! external_peer_ip=$(get_location_external_ip "$location_name"); then
 			handle_error "WARNING" "$location_name" "Failed to get external IP (skipping)"
 			all_ok=1
 			location_failure_status["$location_name"]=1
@@ -602,7 +602,7 @@ process_locations() {
 		# If failure count > 0, location was failing in the previous cycle
 		# This is more efficient than re-checking VPNs and still provides immediate detection
 		local failure_count
-		failure_count=$(get_failure_count "$location_name" "$external_ip")
+		failure_count=$(get_failure_count "$location_name" "$external_peer_ip")
 		if [[ "$failure_count" -gt 0 ]]; then
 			location_failure_status["$location_name"]=1
 		else
@@ -641,8 +641,8 @@ process_locations() {
 		prev_failure_state=$(get_system_wide_failure_state)
 		if [[ "$prev_failure_state" -eq 1 ]]; then
 			# System-wide failure was previously detected but is now resolved
+			# Note: set_system_wide_failure_state automatically clears coordinator when state is set to 0
 			set_system_wide_failure_state 0
-			clear_system_wide_failure_coordinator
 			local timestamp
 			timestamp=$(get_system_wide_failure_timestamp)
 			if [[ "$timestamp" -gt 0 ]]; then
@@ -660,8 +660,8 @@ process_locations() {
 	# to coordinate recovery during system-wide failures
 	for location_name in "${!LOCATIONS[@]}"; do
 		# Get external IP for this location
-		local external_ip
-		if ! external_ip=$(get_location_external_ip "$location_name"); then
+		local external_peer_ip
+		if ! external_peer_ip=$(get_location_external_ip "$location_name"); then
 			# Already handled above, skip
 			continue
 		fi
@@ -672,7 +672,7 @@ process_locations() {
 
 		# Monitor location with external IP and internal IPs
 		# Recovery coordination is handled in determine_recovery_action()
-		if ! monitor_location "$location_name" "$external_ip" "$internal_ips"; then
+		if ! monitor_location "$location_name" "$external_peer_ip" "$internal_ips"; then
 			all_ok=1
 		fi
 	done

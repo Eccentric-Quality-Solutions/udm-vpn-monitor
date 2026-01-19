@@ -306,7 +306,11 @@ check_ping_connectivity() {
 	if [[ $ping_success -eq 1 ]]; then
 		# Extract packet loss percentage
 		local packet_loss
-		packet_loss=$(echo "$ping_result" | grep -oE '[0-9]+% packet loss' | grep -oE '[0-9]+' || echo "0")
+		if [[ "$ping_result" =~ ([0-9]+)%[[:space:]]+packet[[:space:]]+loss ]]; then
+			packet_loss="${BASH_REMATCH[1]}"
+		else
+			packet_loss="0"
+		fi
 
 		if [[ "$packet_loss" -lt $PING_PACKET_LOSS_THRESHOLD ]]; then
 			# Log successful ping at DEBUG level
@@ -410,13 +414,13 @@ check_ping_multiple_ips() {
 	fi
 
 	# Ping all IPs sequentially
-	for internal_ip in "${internal_ips_array[@]}"; do
+	for internal_peer_ip in "${internal_ips_array[@]}"; do
 		# Skip empty IPs
-		if [[ -z "$internal_ip" ]]; then
+		if [[ -z "$internal_peer_ip" ]]; then
 			continue
 		fi
 
-		if check_ping_connectivity "$internal_ip" "$local_ip" "$location_name"; then
+		if check_ping_connectivity "$internal_peer_ip" "$local_ip" "$location_name"; then
 			((ping_success_count++))
 		fi
 	done
@@ -607,12 +611,14 @@ check_ping_optional() {
 
 	# Derive SA existence from primary_check_passed as single source of truth
 	# CRITICAL: If primary_check_passed=1, SA MUST exist (fundamental invariant)
+	# If primary_check_passed=0, check SA existence directly for accurate logging
 	local sa_exists=0
-	if [[ "$primary_check_passed" == "1" ]] || [[ $primary_check_passed -eq 1 ]]; then
+	if [[ $primary_check_passed -eq 1 ]]; then
 		# Primary check passed - SA exists (either from xfrm or ipsec fallback)
 		sa_exists=1
 	else
-		# primary_check_passed=0 - check SA existence directly when needed
+		# primary_check_passed=0 - check SA existence directly for logging accuracy
+		# (this doesn't contradict the invariant; we're just getting accurate state for messages)
 		if check_ipsec_phase2 "$external_peer_ip" 2>/dev/null; then
 			sa_exists=1
 		fi

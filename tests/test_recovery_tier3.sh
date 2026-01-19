@@ -535,3 +535,284 @@ EOF
 
 	remove_mock_from_path
 }
+
+# ============================================================================
+# PARAMETER VALIDATION TESTS
+# ============================================================================
+
+# bats test_tags=category:high-risk,priority:medium
+@test "execute_ipsec_reload: fails gracefully when peer_ip is missing" {
+	# Purpose: Test verifies that execute_ipsec_reload validates peer_ip parameter is provided
+	# Expected: Function returns error when peer_ip is empty or unset
+	# Importance: Validation ensures clear error messages when required parameters are missing, preventing silent failures
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	# Source recovery functions to test directly
+	source_recovery_module
+
+	# Mock ipsec command (should not be called since validation fails first)
+	mock_ipsec_reload_restart 0 0 0
+	add_mock_to_path
+
+	# Test execute_ipsec_reload function with empty peer_ip - should fail with validation error
+	run execute_ipsec_reload "" "TEST_LOCATION"
+	assert_failure
+
+	# Should return error message about required parameters
+	assert_output --partial "peer_ip and location_name are required"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "execute_ipsec_reload: fails gracefully when location_name is missing" {
+	# Purpose: Test verifies that execute_ipsec_reload validates location_name parameter is provided
+	# Expected: Function returns error when location_name is empty or unset
+	# Importance: Validation ensures clear error messages when required parameters are missing, preventing silent failures
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	# Source recovery functions to test directly
+	source_recovery_module
+
+	# Mock ipsec command (should not be called since validation fails first)
+	mock_ipsec_reload_restart 0 0 0
+	add_mock_to_path
+
+	# Test execute_ipsec_reload function with empty location_name - should fail with validation error
+	run execute_ipsec_reload "${TEST_PEER_IP}" ""
+	assert_failure
+
+	# Should return error message about required parameters
+	assert_output --partial "peer_ip and location_name are required"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "execute_ipsec_restart: fails gracefully when location_name is missing" {
+	# Purpose: Test verifies that execute_ipsec_restart validates location_name parameter is provided
+	# Expected: Function returns error when location_name is empty or unset
+	# Importance: Validation ensures clear error messages when required parameters are missing, preventing silent failures
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	# Source recovery functions to test directly
+	source_recovery_module
+
+	# Set LOG_FILE (required for execute_ipsec_restart)
+	export LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
+	mkdir -p "${TEST_DIR}/logs"
+
+	# Mock ipsec command (should not be called since validation fails first)
+	mock_ipsec_reload_restart 0 0 0
+	add_mock_to_path
+
+	# Test execute_ipsec_restart function with empty location_name - should fail with validation error
+	run execute_ipsec_restart "${TEST_PEER_IP}" ""
+	assert_failure
+
+	# Should return error message about required parameters
+	assert_output --partial "location_name is required"
+
+	remove_mock_from_path
+}
+
+# ============================================================================
+# VERIFICATION FAILURE SCENARIO TESTS
+# ============================================================================
+
+# bats test_tags=category:high-risk,priority:high
+@test "execute_ipsec_reload: verification failure returns correct error code" {
+	# Purpose: Test verifies that execute_ipsec_reload returns failure when verification fails
+	# Expected: Function returns 1 when verify_ipsec_connections_active fails, even if ipsec reload succeeds
+	# Importance: Ensures recovery success reporting is accurate when verification fails
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	# Source recovery functions to test directly
+	source_recovery_module
+
+	# Mock ipsec - reload succeeds, status returns peer IP (verification should succeed normally)
+	# But we'll override verify_ipsec_connections_active to return failure
+	mock_ipsec_reload_restart 0 0 0
+	add_mock_to_path
+
+	# Override verify_ipsec_connections_active to return failure (simulating verification failure)
+	# Test override for verify_ipsec_connections_active
+	#
+	# Overrides the real verify_ipsec_connections_active function to simulate
+	# a verification failure scenario in tests. Always returns failure to test
+	# error handling paths.
+	#
+	# Arguments:
+	#   $1: Space-separated list of peer IPs to verify (optional, ignored in test override)
+	#
+	# Returns:
+	#   1: Always returns failure to simulate verification failure
+	#
+	# Note:
+	#   This is a test helper function that overrides the real implementation
+	#   to simulate failure scenarios
+	verify_ipsec_connections_active() {
+		return 1
+	}
+
+	# Test execute_ipsec_reload function - should succeed in reload but fail on verification
+	run execute_ipsec_reload "${TEST_PEER_IP}" "TEST_LOCATION"
+	assert_failure
+
+	# Should log warning about verification failure
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "verification: some connections not active"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "execute_ipsec_restart: verification failure for connections returns correct error code" {
+	# Purpose: Test verifies that execute_ipsec_restart returns failure when connection verification fails
+	# Expected: Function returns 1 when verify_ipsec_connections_active fails, even if ipsec restart succeeds
+	# Importance: Ensures recovery success reporting is accurate when verification fails
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	# Source recovery functions to test directly
+	source_recovery_module
+
+	# Set LOG_FILE (required for execute_ipsec_restart)
+	export LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
+	mkdir -p "${TEST_DIR}/logs"
+
+	# Mock ipsec - restart succeeds
+	mock_ipsec_reload_restart 0 0 0
+	add_mock_to_path
+
+	# Override verify_ipsec_connections_active to return failure (simulating verification failure)
+	# Test override for verify_ipsec_connections_active
+	#
+	# Overrides the real verify_ipsec_connections_active function to simulate
+	# a verification failure scenario in tests. Always returns failure to test
+	# error handling paths.
+	#
+	# Arguments:
+	#   $1: Space-separated list of peer IPs to verify (optional, ignored in test override)
+	#
+	# Returns:
+	#   1: Always returns failure to simulate verification failure
+	#
+	# Note:
+	#   This is a test helper function that overrides the real implementation
+	#   to simulate failure scenarios
+	verify_ipsec_connections_active() {
+		return 1
+	}
+
+	# Override verify_byte_counters_resume to return success (so we test connection verification failure in isolation)
+	# Test override for verify_byte_counters_resume
+	#
+	# Overrides the real verify_byte_counters_resume function to simulate
+	# a successful byte counter verification in tests. Always returns success
+	# to isolate connection verification failure testing.
+	#
+	# Arguments:
+	#   $1: Peer IP address to verify (ignored in test override)
+	#   $2: Optional location name for logging context (ignored in test override)
+	#
+	# Returns:
+	#   0: Always returns success to simulate successful byte counter verification
+	#
+	# Note:
+	#   This is a test helper function that overrides the real implementation
+	#   to simulate success scenarios for isolated testing
+	verify_byte_counters_resume() {
+		return 0
+	}
+
+	# Test execute_ipsec_restart function - should succeed in restart but fail on connection verification
+	run execute_ipsec_restart "${TEST_PEER_IP}" "TEST_LOCATION"
+	assert_failure
+
+	# Should log warning about verification failure
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "Some connections not active"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "execute_ipsec_restart: verification failure for byte counters returns correct error code" {
+	# Purpose: Test verifies that execute_ipsec_restart returns failure when byte counter verification fails
+	# Expected: Function returns 1 when verify_byte_counters_resume fails, even if connections are active
+	# Importance: Ensures recovery success reporting is accurate when byte counter verification fails
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	# Source recovery functions to test directly
+	source_recovery_module
+
+	# Set LOG_FILE (required for execute_ipsec_restart)
+	export LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
+	mkdir -p "${TEST_DIR}/logs"
+
+	# Mock ipsec - restart succeeds, status returns peer IP (connection verification should succeed)
+	mock_ipsec_reload_restart 0 0 0
+	add_mock_to_path
+
+	# Override verify_ipsec_connections_active to return success
+	# Test override for verify_ipsec_connections_active
+	#
+	# Overrides the real verify_ipsec_connections_active function to simulate
+	# a successful connection verification in tests. Always returns success to
+	# isolate byte counter verification failure testing.
+	#
+	# Arguments:
+	#   $1: Space-separated list of peer IPs to verify (optional, ignored in test override)
+	#
+	# Returns:
+	#   0: Always returns success to simulate successful connection verification
+	#
+	# Note:
+	#   This is a test helper function that overrides the real implementation
+	#   to simulate success scenarios for isolated testing
+	verify_ipsec_connections_active() {
+		return 0
+	}
+
+	# Override verify_byte_counters_resume to return failure (simulating byte counter verification failure)
+	# Test override for verify_byte_counters_resume
+	#
+	# Overrides the real verify_byte_counters_resume function to simulate
+	# a byte counter verification failure scenario in tests. Always returns
+	# failure to test error handling paths.
+	#
+	# Arguments:
+	#   $1: Peer IP address to verify (ignored in test override)
+	#   $2: Optional location name for logging context (ignored in test override)
+	#
+	# Returns:
+	#   1: Always returns failure to simulate byte counter verification failure
+	#
+	# Note:
+	#   This is a test helper function that overrides the real implementation
+	#   to simulate failure scenarios
+	verify_byte_counters_resume() {
+		return 1
+	}
+
+	# Source config module to make get_location_external_ip available
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	# Set up LOCATIONS array so execute_ipsec_restart will call verify_byte_counters_resume
+	# This simulates a multi-location scenario
+	# Format: "external:IP|internal:IPs" (pipe separator)
+	declare -A LOCATIONS
+	LOCATIONS["TEST_LOCATION"]="external:${TEST_PEER_IP}|internal:"
+	export LOCATIONS
+
+	# Test execute_ipsec_restart function - should succeed in restart and connection verification but fail on byte counter verification
+	run execute_ipsec_restart "${TEST_PEER_IP}" "TEST_LOCATION"
+	assert_failure
+
+	# Should log warning about byte counter verification failure
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "Byte counters resumed for only"
+
+	remove_mock_from_path
+}

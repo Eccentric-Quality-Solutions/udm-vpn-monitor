@@ -303,11 +303,11 @@ migrate_config() {
 
 	for ((i = 0; i < external_count; i++)); do
 		local location_name="${location_names[$i]}"
-		local external_ip="${external_array[$i]}"
+		local external_peer_ip="${external_array[$i]}"
 
 		# Validate external IP
-		if ! validate_ip_address "$external_ip"; then
-			echo "WARNING: Skipping invalid external IP: $external_ip" >&2
+		if ! validate_ip_address "$external_peer_ip"; then
+			echo "WARNING: Skipping invalid external IP: $external_peer_ip" >&2
 			continue
 		fi
 
@@ -339,7 +339,7 @@ migrate_config() {
 		fi
 
 		# Write location config
-		echo "LOCATION_${location_name}_EXTERNAL=\"$external_ip\"" >>"$temp_file"
+		echo "LOCATION_${location_name}_EXTERNAL=\"$external_peer_ip\"" >>"$temp_file"
 		if [[ -n "$internal_ip" ]]; then
 			echo "LOCATION_${location_name}_INTERNAL=\"$internal_ip\"" >>"$temp_file"
 		else

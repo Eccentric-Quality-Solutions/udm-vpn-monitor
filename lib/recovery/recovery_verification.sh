@@ -9,7 +9,7 @@
 # Source recovery constants for magic numbers
 # shellcheck source=lib/recovery/constants.sh
 RECOVERY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${RECOVERY_DIR}/constants.sh" 2>/dev/null || true
+source "${RECOVERY_DIR}/constants.sh"
 
 # Source general constants for IPSEC_STATUS_TIMEOUT (used across detection and recovery)
 # shellcheck source=lib/constants.sh
@@ -79,7 +79,7 @@ source "${LIB_DIR}/detection.sh" 2>/dev/null || {
 #   Uses fixed-string matching to prevent regex pattern injection
 #   When location_name is provided, logs detailed diagnostic information about SAs found
 count_sas_for_peer() {
-	local peer_ip="$1"
+	local external_peer_ip="$1"
 	local location_name="${2:-}"
 
 	if ! check_command_or_warn "ip" "Counting SAs for peer"; then
@@ -96,13 +96,13 @@ count_sas_for_peer() {
 
 	# Extract all SA header lines (src ... dst ...) for this peer
 	# This helps diagnose bidirectional SA state
-	# Find both forward SAs (dst=$peer_ip) and reverse SAs (src=$peer_ip)
-	# Forward SAs: "src <local_ip> dst $peer_ip"
-	# Reverse SAs: "src $peer_ip dst <local_ip>"
+	# Find both forward SAs (dst=$external_peer_ip) and reverse SAs (src=$external_peer_ip)
+	# Forward SAs: "src <local_ip> dst $external_peer_ip"
+	# Reverse SAs: "src $external_peer_ip dst <local_ip>"
 	local forward_headers
 	local reverse_headers
-	forward_headers=$(echo "$xfrm_output" | grep -F "dst $peer_ip" | grep -E "^[[:space:]]*src" || true)
-	reverse_headers=$(echo "$xfrm_output" | grep -E "^[[:space:]]*src ${peer_ip}[[:space:]]" || true)
+	forward_headers=$(echo "$xfrm_output" | grep -F "dst $external_peer_ip" | grep -E "^[[:space:]]*src" || true)
+	reverse_headers=$(echo "$xfrm_output" | grep -E "^[[:space:]]*src ${external_peer_ip}[[:space:]]" || true)
 
 	# Combine headers, deduplicating by SA header line (src ... dst ...)
 	# Use awk to deduplicate since the same SA might appear in both if grep -A includes context
@@ -115,15 +115,18 @@ count_sas_for_peer() {
 		sa_headers="$reverse_headers"
 	fi
 
-	# Count SA blocks - sa_headers already contains only lines starting with "src"
+	# Count SA blocks - validate format before counting
 	# Each SA block starts with "src <ip> dst <ip>" on a line
-	# Count lines directly since we've already filtered for lines starting with "src"
+	# Validate format matches expected SA header pattern to prevent incorrect counts
+	# if xfrm output format changes unexpectedly
 	local sa_count
 	if [[ -z "$sa_headers" ]]; then
 		sa_count=0
 	else
-		# Count non-empty lines (sa_headers already filtered for "src" lines)
-		sa_count=$(echo "$sa_headers" | grep -c . || echo "0")
+		# Count only lines that match valid SA header format: "src <ip> dst <ip>"
+		# This validates the format matches expected xfrm output structure
+		# Pattern matches IPv4 (dotted decimal) or IPv6 (hex colon) addresses
+		sa_count=$(echo "$sa_headers" | grep -cE '^[[:space:]]*src[[:space:]]+([0-9.]+|[0-9a-fA-F:]+)[[:space:]]+dst[[:space:]]+([0-9.]+|[0-9a-fA-F:]+)' || echo "0")
 	fi
 
 	# Enhanced diagnostic logging: Log detailed SA information when location_name provided
@@ -139,9 +142,9 @@ count_sas_for_peer() {
 				sa_idx=$((sa_idx + 1))
 				# Determine direction for diagnostic clarity
 				local direction="unknown"
-				if [[ "$sa_src" == "$peer_ip" ]]; then
+				if [[ "$sa_src" == "$external_peer_ip" ]]; then
 					direction="reverse (peer→local)"
-				elif [[ "$sa_dst" == "$peer_ip" ]]; then
+				elif [[ "$sa_dst" == "$external_peer_ip" ]]; then
 					direction="forward (local→peer)"
 				fi
 				sa_details="${sa_details}SA${sa_idx}: src=$sa_src dst=$sa_dst [$direction]; "
@@ -149,7 +152,7 @@ count_sas_for_peer() {
 		done <<<"$sa_headers"
 		if [[ -n "$sa_details" ]]; then
 			local ip_display
-			ip_display=$(format_peer_ip_display "$peer_ip" "")
+			ip_display=$(format_peer_ip_display "$external_peer_ip" "")
 			log_message "INFO" "$location_name" "xfrm recovery: SA count diagnostic for $ip_display: count=$sa_count, details: ${sa_details% }"
 		fi
 	fi
@@ -191,7 +194,7 @@ count_sas_for_peer() {
 #   Requires extract_byte_counter from detection.sh
 #   If byte counters are not available, returns success if SA exists (graceful degradation)
 verify_byte_counters_resume() {
-	local peer_ip="$1"
+	local external_peer_ip="$1"
 	local location_name="$2"
 	local xfrm_output
 
@@ -200,7 +203,7 @@ verify_byte_counters_resume() {
 	fi
 
 	# Get xfrm output for this peer
-	xfrm_output=$(get_xfrm_state_for_peer "$peer_ip")
+	xfrm_output=$(get_xfrm_state_for_peer "$external_peer_ip")
 
 	if [[ -z "$xfrm_output" ]]; then
 		return 1
@@ -208,7 +211,7 @@ verify_byte_counters_resume() {
 
 	# Format IP display once for reuse throughout function
 	local ip_display
-	ip_display=$(format_peer_ip_display "$peer_ip" "")
+	ip_display=$(format_peer_ip_display "$external_peer_ip" "")
 
 	# Extract byte counter
 	local current_bytes
@@ -257,7 +260,7 @@ verify_byte_counters_resume() {
 #   If byte counters are not available, returns success if SA exists (graceful degradation)
 #   This function is designed for post-recovery verification where counters may reset to zero
 verify_byte_counters_increment() {
-	local peer_ip="$1"
+	local external_peer_ip="$1"
 	local initial_bytes="$2"
 	local location_name="$3"
 	local xfrm_output
@@ -267,7 +270,7 @@ verify_byte_counters_increment() {
 	fi
 
 	# Get xfrm output for this peer
-	xfrm_output=$(get_xfrm_state_for_peer "$peer_ip")
+	xfrm_output=$(get_xfrm_state_for_peer "$external_peer_ip")
 
 	if [[ -z "$xfrm_output" ]]; then
 		return 1
@@ -275,7 +278,7 @@ verify_byte_counters_increment() {
 
 	# Format IP display once for reuse throughout function
 	local ip_display
-	ip_display=$(format_peer_ip_display "$peer_ip" "")
+	ip_display=$(format_peer_ip_display "$external_peer_ip" "")
 
 	# Extract byte counter
 	local current_bytes
@@ -358,9 +361,9 @@ verify_ipsec_connections_active() {
 			local iter_location_name
 			for iter_location_name in "${!LOCATIONS[@]}"; do
 				# Extract external IP using helper function
-				local external_ip
-				if external_ip=$(get_location_external_ip "$iter_location_name" 2>/dev/null); then
-					external_ips+=("$external_ip")
+				local external_peer_ip
+				if external_peer_ip=$(get_location_external_ip "$iter_location_name" 2>/dev/null); then
+					external_ips+=("$external_peer_ip")
 				fi
 			done
 			if [[ ${#external_ips[@]} -gt 0 ]]; then
@@ -422,16 +425,16 @@ verify_ipsec_connections_active() {
 	local active_count=0
 	local total_count=${#peer_ips_array[@]}
 
-	local peer_ip
-	for peer_ip in "${peer_ips_array[@]}"; do
+	local external_peer_ip
+	for external_peer_ip in "${peer_ips_array[@]}"; do
 		# Check if peer IP appears in ipsec status output
 		# Use fixed-string matching for safety
-		if echo "$ipsec_output" | grep -qF "$peer_ip"; then
+		if echo "$ipsec_output" | grep -qF "$external_peer_ip"; then
 			((active_count++))
-			log_message "INFO" "SYSTEM" "Recovery verification: Connection active for $peer_ip"
+			log_message "INFO" "SYSTEM" "Recovery verification: Connection active for $external_peer_ip"
 		else
 			all_active=0
-			handle_error "WARNING" "SYSTEM" "Recovery verification: Connection not found for $peer_ip"
+			handle_error "WARNING" "SYSTEM" "Recovery verification: Connection not found for $external_peer_ip"
 		fi
 	done
 

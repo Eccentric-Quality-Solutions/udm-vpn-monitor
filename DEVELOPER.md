@@ -63,6 +63,14 @@ This guide provides information for developers contributing to the UDM VPN Monit
    - **Library Modules**: Modular architecture with dedicated modules in `lib/` directory
      - See [ARCHITECTURE.md](docs/ARCHITECTURE.md) "Modular Library Architecture" section for complete module documentation
      - See [ADR-0005](docs/adr/0005-modular-library-architecture.md) for design decision rationale
+   - **Location-Based State Management**: The system uses location-based configuration and state tracking
+     - VPNs are configured using `LOCATION_<NAME>_EXTERNAL` and `LOCATION_<NAME>_INTERNAL` variables
+     - State files are named with location names: `<key>_<location>_<peer_ip>` (e.g., `failure_count_NYC_203_0_113_1`)
+     - Each location's state is tracked independently (failure counters, byte counters, etc.)
+     - Location names and IP addresses are sanitized for safe filenames (invalid chars → underscores, max 64 chars for locations)
+     - See [STATE_SYSTEM.md](docs/STATE_SYSTEM.md) for comprehensive state management documentation
+     - See [CODE_PATTERNS.md](docs/CODE_PATTERNS.md) "Pattern: Per-Location State Tracking" section for usage patterns
+     - See [ADR-0024](docs/adr/0024-location-based-configuration.md) for design decision rationale
 
 8. **Pick a small issue to start**
    - Check [docs/CODEBASE_REVIEW.md](docs/CODEBASE_REVIEW.md) for improvement recommendations
@@ -82,6 +90,18 @@ For comprehensive architecture information including:
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 For design decisions and rationale behind architectural choices, see [Architecture Decision Records](docs/adr/README.md).
+
+**State Management:**
+
+For comprehensive state management documentation including:
+- State file naming conventions and sanitization
+- Per-location vs. per-peer vs. global state
+- State file lifecycle and operations
+- State validation and recovery from corruption
+
+See [STATE_SYSTEM.md](docs/STATE_SYSTEM.md).
+
+For state management patterns and usage examples, see [CODE_PATTERNS.md](docs/CODE_PATTERNS.md) "Pattern: Per-Location State Tracking" section.
 
 **Testing:**
 

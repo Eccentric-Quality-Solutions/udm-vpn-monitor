@@ -195,3 +195,75 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	remove_mock_from_path
 }
+
+# ============================================================================
+# CONFIG SCHEMA FORMAT VALIDATION
+# ============================================================================
+
+# bats test_tags=category:low-risk,priority:low
+@test "Schema format - All schema entries parse correctly" {
+	# Purpose: Verify all CONFIG_SCHEMA entries can be parsed without errors
+	# Expected: All schema entries parse successfully using parse_config_schema
+	# Importance: Catches malformed schema definitions at test time, not runtime
+	# This test validates that the schema format is correct for all entries,
+	# ensuring parse_config_schema() can successfully parse each schema string.
+
+	# Source required functions
+	# shellcheck source=../lib/config_schema.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config_schema.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config/config_loading.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config/config_loading.sh" 2>/dev/null || true
+
+	local var_name
+	local schema
+	local parse_errors=0
+	local failed_vars=()
+
+	# Test all schema entries
+	for var_name in "${!CONFIG_SCHEMA[@]}"; do
+		schema="${CONFIG_SCHEMA[$var_name]}"
+
+		# Attempt to parse the schema
+		# parse_config_schema always returns 4 lines: required, type, rules, default
+		# Use process substitution to read lines reliably
+		# We only validate required and type fields; rules and default are read but not validated
+		local required
+		local var_type
+		local rules
+		local default_val
+
+		if ! {
+			read -r required
+			read -r var_type
+			# shellcheck disable=SC2034 # rules and default_val are intentionally read but not used - we only validate required and type
+			read -r rules
+			read -r default_val
+		} < <(parse_config_schema "$schema" 2>&1); then
+			failed_vars+=("$var_name: parse command failed")
+			parse_errors=$((parse_errors + 1))
+			continue
+		fi
+
+		# Verify required field is valid
+		if [[ "$required" != "required" ]] && [[ "$required" != "optional" ]]; then
+			failed_vars+=("$var_name: invalid required field '$required'")
+			parse_errors=$((parse_errors + 1))
+			continue
+		fi
+
+		# Verify type field is valid
+		if [[ "$var_type" != "string" ]] && [[ "$var_type" != "integer" ]]; then
+			failed_vars+=("$var_name: invalid type field '$var_type'")
+			parse_errors=$((parse_errors + 1))
+			continue
+		fi
+	done
+
+	# Report any failures
+	if [[ $parse_errors -gt 0 ]]; then
+		echo "Failed to parse $parse_errors schema entries:" >&2
+		printf '  %s\n' "${failed_vars[@]}" >&2
+	fi
+
+	assert_equal "$parse_errors" 0
+}

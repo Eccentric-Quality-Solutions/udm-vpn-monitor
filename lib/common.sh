@@ -1277,11 +1277,11 @@ check_command_or_warn() {
 # For multiple internal IPs (space-separated), uses the first one.
 #
 # Arguments:
-#   $1: External peer IP address (required)
+#   $1: External peer IP address (external/public IP of remote VPN gateway, required)
 #   $2: Internal peer IP address(es) (optional, can be single IP or space-separated string)
 #
 # Returns:
-#   Prints formatted IP string to stdout: "($internal_ip $external_ip)" or "($external_ip)"
+#   Prints formatted IP string to stdout: "($internal_peer_ip $external_peer_ip)" or "($external_peer_ip)"
 #
 # Examples:
 #   ip_display=$(format_peer_ip_display "203.0.113.1" "192.168.1.1")

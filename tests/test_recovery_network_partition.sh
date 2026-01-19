@@ -57,7 +57,7 @@ ADDITIONAL_EOF
 	# Set up state files for VPN failure (3 failures to trigger recovery) using location-based state functions
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "" "${TEST_PEER_IP}" "failure_count" "3" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "3" || true
 
 	# Set network partition state
 	local partition_state_file="${STATE_DIR}/network_partition_state"

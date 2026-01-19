@@ -153,7 +153,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Check that peer1 failure counter was incremented
 	# Peer1 should have failure counter incremented - use location-based path
 	local failure_counter1
-	failure_counter1=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter1=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter1" ]]; then
 		local count1
 		count1=$(cat "$failure_counter1")
@@ -177,8 +177,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Set up state files using location-based state functions
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "" "${TEST_PEER_IP}" "last_bytes" "1000" || true
-	set_peer_state "" "${TEST_PEER_IP}" "spi" "0x12345678" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "last_bytes" "1000" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "0x12345678" || true
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000 "0x12345678" "192.168.1.1" 0
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
@@ -199,8 +199,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Set up state files using location-based state functions
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "" "${TEST_PEER_IP}" "last_bytes" "1000" || true
-	set_peer_state "" "${TEST_PEER_IP}" "spi" "0x12345678" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "last_bytes" "1000" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "0x12345678" || true
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 2000 "0x12345678" "192.168.1.1" 1
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
@@ -444,7 +444,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Increment to Tier 2 threshold using location-based state functions
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "" "${TEST_PEER_IP}" "failure_count" "2" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "2" || true
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	assert_success
@@ -452,7 +452,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_file_contains "$LOG_FILE" "Tier 2"
 
 	# Increment to Tier 3 threshold using location-based state functions
-	set_peer_state "" "${TEST_PEER_IP}" "failure_count" "3" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "3" || true
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	assert_success

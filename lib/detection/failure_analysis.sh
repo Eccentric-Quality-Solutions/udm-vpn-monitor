@@ -164,9 +164,10 @@ check_rekey_for_failure_type() {
 #   where each value is 0 or 1
 #
 # Note:
-#   Caller should capture output to determine which checks were performed.
+#   Caller MUST capture stdout to get flags, even if only return code is needed.
 #   Example: flags=$(check_routing_issue_for_failure_type "$bytes" "$loc" "$ip" "$int_ip")
 #            read -r byte_counters_available ping_checked ping_failed <<< "$flags"
+#   WARNING: If stdout is not captured, flags will be lost and subsequent parsing will fail.
 check_routing_issue_for_failure_type() {
 	local current_bytes="$1"
 	local location_name="$2"
@@ -279,16 +280,8 @@ build_failure_diagnostic_message() {
 	fi
 
 	# Join parts with commas
-	local diagnostic_msg=""
-	local first=1
-	for part in "${diagnostic_parts[@]}"; do
-		if [[ $first -eq 1 ]]; then
-			diagnostic_msg="$part"
-			first=0
-		else
-			diagnostic_msg="$diagnostic_msg, $part"
-		fi
-	done
+	local IFS=', '
+	local diagnostic_msg="${diagnostic_parts[*]}"
 
 	echo "$diagnostic_msg"
 }
@@ -474,9 +467,12 @@ detect_failure_type() {
 
 	# Unable to determine failure type (fallback)
 	# This should be unreachable in normal operation since:
-	#   - If ipsec_phase2_up=0, we return "tunnel_down" above
-	#   - If ipsec_phase2_up=1, we enter the elif block and should return there
-	# This fallback exists as a safety net for unexpected code paths
+	#   - If ipsec_phase2_up=0, we return "tunnel_down" at line 380
+	#   - If ipsec_phase2_up=1, we enter the elif block at line 382 and return one of:
+	#     "rekey" (line 414), "routing_issue" (line 429), or "unknown" (line 444 or 471)
+	# This fallback exists as a defensive guard for unexpected code paths (e.g., if
+	# check_sa_existence_for_failure_type() has a bug or ipsec_phase2_up is corrupted).
+	# If this code is reached, it indicates a logic error that should be investigated.
 	echo "unknown"
 	return 1
 }
@@ -509,11 +505,18 @@ detect_failure_type() {
 #   Note: "rekey" is not a failure type but is stored for monitoring purposes
 get_failure_type() {
 	local location_name="$1"
-	local peer_ip="$2"
+	local external_peer_ip="$2"
 	local failure_type_file
 
 	# Use abstraction layer to ensure consistent path format
-	failure_type_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "failure_type")
+	failure_type_file=$(get_peer_state_file_path "$location_name" "$external_peer_ip" "failure_type")
+
+	# Validate path was generated successfully
+	if [[ -z "$failure_type_file" ]]; then
+		# Error already logged by get_peer_state_file_path
+		echo "unknown"
+		return 1
+	fi
 
 	if file_exists_and_readable "$failure_type_file"; then
 		local failure_type
@@ -542,9 +545,8 @@ get_failure_type() {
 #   $1: Current VPN status (0 = failed, 1 = OK)
 #   $2: External peer IP address (external/public IP of remote VPN gateway)
 #   $3: Internal peer IP address (optional, used for failure type detection)
-#   $4: Sanitized peer IP (for state file operations)
-#   $5: Location name (required, used for state file naming)
-#   $6: XFRM output (optional, xfrm state output for reuse, if not provided will fetch if needed)
+#   $4: Location name (required, used for state file naming)
+#   $5: XFRM output (optional, xfrm state output for reuse, if not provided will fetch if needed)
 #
 # Returns:
 #   Outputs final VPN status (0 or 1) to stdout
@@ -557,45 +559,21 @@ determine_vpn_status() {
 	local primary_check_passed="$1"
 	local external_peer_ip="$2"
 	local internal_peer_ip="${3:-}"
-	local peer_sanitized="$4"
-	local location_name="$5"
-	local xfrm_output="${6:-}"
-
-	# Validate location_name is provided
-	if [[ -z "$location_name" ]]; then
-		handle_error "ERROR" "SYSTEM" "determine_vpn_status: location_name is required" 0
-		echo "0"
-		return 1
-	fi
+	local location_name="$4"
+	local xfrm_output="${5:-}"
 
 	# Format IP display once for reuse throughout function
 	local ip_display
 	ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ip")
 
-	# If primary check failed, detect and log the failure type
-	# Also check for rekey events (which are not failures but should be logged)
-	# Additionally, if primary check passed, check for rekey events and routing issues via ping (if enabled)
-	local check_failure_type=0
-	if [[ $primary_check_passed -eq 0 ]]; then
-		check_failure_type=1
-	elif [[ $primary_check_passed -eq 1 ]]; then
-		# Primary check passed, but we should still check for:
-		# 1. Rekey events (SPI changes) - always check
-		# 2. Routing issues via ping - only if ping check is enabled and internal IP provided
-		# Note: If primary_check_passed=1, SA MUST exist (either from xfrm or ipsec fallback)
-		# This is a fundamental invariant - if primary check passed, SA exists
-		# Always check for rekey events when VPN is OK
-		# Also check for routing issues via ping if ping check is enabled
-		if [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
-			# Check for routing issues via ping when ping check is enabled
-			check_failure_type=1
-		else
-			# Even if ping check is disabled, we should check for rekey events
-			# We'll call detect_failure_type which will check for rekey first
-			# If no rekey and no routing issue to check, it will return "unknown" which we'll ignore
-			check_failure_type=1
-		fi
-	fi
+	# Always check failure type to detect:
+	# 1. Rekey events (SPI changes) - always checked regardless of primary check status
+	# 2. Routing issues via ping - if ping check is enabled and internal IP provided
+	# 3. Tunnel down - when primary check failed
+	# Note: Even when primary check passed, we need to check for rekey events and routing issues.
+	#       The detect_failure_type() function handles the logic for what to check based on
+	#       the current state (primary_check_passed, ping check enabled, etc.).
+	local check_failure_type=1
 
 	if [[ $check_failure_type -eq 1 ]]; then
 		local failure_type
@@ -613,7 +591,10 @@ determine_vpn_status() {
 		# Use abstraction layer to ensure consistent path format with location component
 		local failure_type_file
 		failure_type_file=$(get_peer_state_file_path "$location_name" "$external_peer_ip" "failure_type")
-		atomic_write_file "$failure_type_file" "$failure_type" 2>/dev/null || true
+		# Validate path was generated successfully before writing
+		if [[ -n "$failure_type_file" ]]; then
+			atomic_write_file "$failure_type_file" "$failure_type" 2>/dev/null || true
+		fi
 
 		case "$failure_type" in
 		"rekey")
@@ -788,8 +769,8 @@ check_vpn_status() {
 	check_ping_optional "$primary_check_passed" "$external_peer_ip" "$internal_peer_ips" "$location_name"
 
 	# Determine final primary check status based on failure type detection
-	# Pass location_name, first internal IP, peer_sanitized, and xfrm_output for failure type detection
-	primary_check_passed=$(determine_vpn_status "$primary_check_passed" "$external_peer_ip" "$first_internal_ip" "$peer_sanitized" "$location_name" "$xfrm_output")
+	# Pass location_name, first internal IP, and xfrm_output for failure type detection
+	primary_check_passed=$(determine_vpn_status "$primary_check_passed" "$external_peer_ip" "$first_internal_ip" "$location_name" "$xfrm_output")
 
 	# Return 0 if OK, 1 if failed (invert primary_check_passed: 1 becomes 0, 0 becomes 1)
 	return $((1 - primary_check_passed))

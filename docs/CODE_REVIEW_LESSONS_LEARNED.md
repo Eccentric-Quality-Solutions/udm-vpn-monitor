@@ -2079,7 +2079,7 @@ acquire_lockfile_flock() {
 ### Problem
 During code review, found bug in `full_restart()` where external IP was incorrectly extracted from `LOCATIONS` array:
 - `LOCATIONS` stores values in format: `"external:IP|internal:IPs"` (not just the IP)
-- Code was using: `local external_ip="${LOCATIONS[$location_name]}"` ❌ **BUG FIXED**
+- Code was using: `local external_peer_ip="${LOCATIONS[$location_name]}"` ❌ **BUG FIXED**
 - This would pass the full string `"external:192.168.1.1|internal:192.168.1.1"` to verification functions
 - Same pattern existed correctly in `verify_ipsec_connections_active()` ✅ **ALREADY CORRECT**
 
@@ -2094,9 +2094,9 @@ During code review, found bug in `full_restart()` where external IP was incorrec
 ### Pattern to Follow
 ```bash
 # ✅ GOOD: Use helper function directly
-local external_ip
-if external_ip=$(get_location_external_ip "$location_name" 2>/dev/null); then
-    # Use external_ip
+local external_peer_ip
+if external_peer_ip=$(get_location_external_ip "$location_name" 2>/dev/null); then
+    # Use external_peer_ip
 else
     # Handle error: location not found or extraction failed
     handle_error "WARNING" "$location_name" "Failed to get external IP"
@@ -2104,7 +2104,7 @@ else
 fi
 
 # ❌ BAD: Direct array access (gets full delimited string)
-local external_ip="${LOCATIONS[$location_name]}"
+local external_peer_ip="${LOCATIONS[$location_name]}"
 ```
 
 ### Systematic Application

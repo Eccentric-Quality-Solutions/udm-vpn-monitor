@@ -254,7 +254,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Per-peer failure counter should be incremented
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -274,8 +274,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Set initial failure count using location-based state functions
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "" "${TEST_PEER_IP}" "failure_count" "5" || true
-	set_peer_state "" "${TEST_PEER_IP}" "last_bytes" "1000" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "5" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "last_bytes" "1000" || true
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
