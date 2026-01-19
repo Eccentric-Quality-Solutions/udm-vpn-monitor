@@ -47,7 +47,6 @@ We will refactor the codebase into a modular library architecture with dedicated
     - `lib/detection/xfrm_detection.sh` - xfrm state and byte counter detection
     - `lib/detection/ping_detection.sh` - Ping-based detection
     - `lib/detection/failure_analysis.sh` - Failure type classification
-  - `lib/fallbacks.sh` - Centralized fallback function definitions for graceful degradation
   - `lib/lockfile.sh` - Lockfile management (flock/atomic)
   - `lib/logging.sh` - Centralized logging functionality
   - `lib/recovery.sh` - Tiered recovery actions (compatibility layer)
@@ -73,7 +72,7 @@ We will refactor the codebase into a modular library architecture with dedicated
 
 ## Related ADRs
 - ADR-0007: Comprehensive In-Code Documentation
-- ADR-0030: Centralized Fallback Functions (graceful degradation when modules can't be loaded)
+- ADR-0030: Centralized Fallback Functions (deprecated - removed 2026-01-18)
 
 ## Change History
 - **2026-01-11**: Major refactoring in v0.6.0 - All large monolithic modules split into focused subdirectories:
@@ -81,7 +80,7 @@ We will refactor the codebase into a modular library architecture with dedicated
   - `lib/detection.sh` (3004 lines) → `lib/detection/` subdirectory with 4 modules
   - `lib/recovery.sh` (2633 lines) → `lib/recovery/` subdirectory with 6 modules
   - `lib/state.sh` (1421 lines) → `lib/state/` subdirectory with 5 modules
-  - Added `lib/fallbacks.sh` module for centralized fallback function definitions
+  - ~~Added `lib/fallbacks.sh` module for centralized fallback function definitions~~ (Removed 2026-01-18 - see `docs/reviews/fallback-system-removal-review.md`)
   - All main module files maintained as compatibility layers that source submodules
   - This demonstrates the evolution of the modular architecture principle - large modules can be further decomposed when they grow too large
 

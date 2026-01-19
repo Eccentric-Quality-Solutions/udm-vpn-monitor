@@ -473,6 +473,84 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	assert_output --partial "${STATE_DIR}/unknown_key_LOCATION_192_168_1_1"
 }
 
+# bats test_tags=category:unit,priority:high
+@test "state_paths module logs warning when STATE_DIR is unset" {
+	# Purpose: Test verifies that state_paths.sh module logs a warning when STATE_DIR is unset at module load time
+	# Expected: Module logs WARNING message when STATE_DIR is unset, but does not exit
+	# Importance: Fail-fast detection of missing STATE_DIR prevents invalid paths from being generated silently
+	setup_test_environment "${TEST_DIR}"
+
+	# Unset STATE_DIR to test module-level validation
+	unset STATE_DIR
+
+	# Set up logging to capture the warning
+	local log_file="${TEST_DIR}/test.log"
+	export LOG_FILE="$log_file"
+	mkdir -p "$(dirname "$log_file")"
+
+	# Source logging functions first (needed for handle_error)
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+
+	# Source state_paths.sh - this should log a warning
+	# shellcheck source=../lib/state/state_paths.sh
+	run source "${BATS_TEST_DIRNAME}/../lib/state/state_paths.sh" 2>&1
+	assert_success
+
+	# Verify warning was logged
+	assert_file_exist "$log_file"
+	run grep -E "\[.*\] \[WARNING\] SYSTEM: STATE_DIR is not set when loading state_paths.sh" "$log_file"
+	assert_success
+}
+
+# bats test_tags=category:unit,priority:high
+@test "get_peer_state_file_path produces invalid path when STATE_DIR is unset" {
+	# Purpose: Test verifies that get_peer_state_file_path produces invalid absolute paths when STATE_DIR is unset
+	# Expected: Function produces paths starting with "/" (absolute paths) when STATE_DIR is unset
+	# Importance: Demonstrates the issue that module-level validation is designed to catch early
+	setup_test_environment "${TEST_DIR}"
+
+	# Unset STATE_DIR to test the issue
+	unset STATE_DIR
+
+	# Source the function (module-level warning will be logged, but function still loads)
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/state/state_paths.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state/state_paths.sh" 2>/dev/null || true
+
+	# Call function with STATE_DIR unset
+	run get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count"
+	assert_success
+
+	# Should produce invalid absolute path (starts with /)
+	assert_output --regexp "^/failure_counter_.*"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "get_peer_state_file_path works correctly when STATE_DIR is set" {
+	# Purpose: Test verifies that get_peer_state_file_path works correctly when STATE_DIR is properly set
+	# Expected: Function produces valid relative paths when STATE_DIR is set
+	# Importance: Ensures normal operation works correctly after module-level validation
+	setup_test_environment "${TEST_DIR}"
+
+	# STATE_DIR should be set by setup_test_environment
+	# Verify it's set
+	assert [ -n "${STATE_DIR:-}" ]
+
+	# Source the function
+	source_function "get_peer_state_file_path"
+
+	# Call function with STATE_DIR set
+	run get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count"
+	assert_success
+
+	# Should produce valid path within STATE_DIR
+	assert_output "${STATE_DIR}/failure_counter_TEST_192_168_1_1"
+}
+
 # bats test_tags=category:unit
 @test "get_peer_state returns default when file missing" {
 	# Purpose: Test verifies that get_peer_state function returns default value when state file doesn't exist
@@ -3185,10 +3263,12 @@ source_lockfile_module() {
 
 	# Verify xfrm constants
 	assert_equal "$XFRM_OUTPUT_CONTEXT_LINES" 10
-	assert_equal "$XFRM_RECOVERY_SLEEP_SECONDS" 3
-	assert_equal "$XFRM_RECOVERY_VERIFY_TIMEOUT" 30
-	assert_equal "$XFRM_RECOVERY_VERIFY_INTERVAL" 2
-	assert_equal "$XFRM_RECOVERY_MAX_INTERVAL" 16
+
+	# Verify command timeout constants
+	assert_equal "$IPSEC_STATUS_TIMEOUT" 5
+	assert_equal "$STATE_FILE_READ_TIMEOUT" 1
+
+	# Note: XFRM_RECOVERY_* constants are in lib/recovery/constants.sh and tested in recovery tests
 
 	# Verify time constants
 	assert_equal "$SECONDS_PER_MINUTE" 60
@@ -3782,14 +3862,15 @@ source_lockfile_module() {
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	# Test strategy selection (call directly, not with run, so global variables persist)
-	select_recovery_strategy "203.0.113.1" 2
+	# Test strategy selection (uses nameref associative array)
+	declare -A recovery_info
+	select_recovery_strategy "203.0.113.1" 2 "recovery_info"
 
 	# Use assert_equal for better error messages
-	assert_equal "$RECOVERY_STRATEGY" "xfrm"
-	assert_equal "$RECOVERY_COMMAND" "attempt_xfrm_recovery"
-	assert_equal "$RECOVERY_IMPACT" "per-connection"
-	assert_equal "$RECOVERY_AVAILABLE" "1"
+	assert_equal "${recovery_info[strategy]}" "xfrm"
+	assert_equal "${recovery_info[command]}" "attempt_xfrm_recovery"
+	assert_equal "${recovery_info[impact]}" "per-connection"
+	assert_equal "${recovery_info[available]}" "1"
 
 	remove_mock_from_path
 }
@@ -3812,9 +3893,6 @@ source_lockfile_module() {
 		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
 	fi
 
-	# Clear variables from previous tests
-	unset RECOVERY_STRATEGY RECOVERY_COMMAND RECOVERY_IMPACT RECOVERY_AVAILABLE
-
 	# Set up environment
 	ENABLE_XFRM_RECOVERY=0
 	# Mock ipsec command available
@@ -3823,14 +3901,15 @@ source_lockfile_module() {
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	# Test strategy selection (call directly, not with run, so global variables persist)
-	select_recovery_strategy "203.0.113.1" 2
+	# Test strategy selection (uses nameref associative array)
+	declare -A recovery_info
+	select_recovery_strategy "203.0.113.1" 2 "recovery_info"
 
 	# Use assert_equal for better error messages
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload"
-	assert_equal "$RECOVERY_COMMAND" "ipsec reload"
-	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
-	assert_equal "$RECOVERY_AVAILABLE" "1"
+	assert_equal "${recovery_info[strategy]}" "ipsec_reload"
+	assert_equal "${recovery_info[command]}" "ipsec reload"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" "1"
 
 	remove_mock_from_path
 }
@@ -3853,9 +3932,6 @@ source_lockfile_module() {
 		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
 	fi
 
-	# Clear variables from previous tests
-	unset RECOVERY_STRATEGY RECOVERY_COMMAND RECOVERY_IMPACT RECOVERY_AVAILABLE
-
 	# Set up environment
 	ENABLE_XFRM_RECOVERY=0
 	# Mock ipsec command available
@@ -3864,14 +3940,15 @@ source_lockfile_module() {
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	# Test strategy selection (call directly, not with run, so global variables persist)
-	select_recovery_strategy "" 3
+	# Test strategy selection (uses nameref associative array)
+	declare -A recovery_info
+	select_recovery_strategy "" 3 "recovery_info"
 
 	# Use assert_equal for better error messages
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_restart"
-	assert_equal "$RECOVERY_COMMAND" "ipsec restart"
-	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
-	assert_equal "$RECOVERY_AVAILABLE" "1"
+	assert_equal "${recovery_info[strategy]}" "ipsec_restart"
+	assert_equal "${recovery_info[command]}" "ipsec restart"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" "1"
 
 	remove_mock_from_path
 }
@@ -3894,9 +3971,6 @@ source_lockfile_module() {
 		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
 	fi
 
-	# Clear variables from previous tests
-	unset RECOVERY_STRATEGY RECOVERY_COMMAND RECOVERY_IMPACT RECOVERY_AVAILABLE
-
 	# Set up environment
 	ENABLE_XFRM_RECOVERY=1
 	# Mock ipsec command available
@@ -3905,14 +3979,15 @@ source_lockfile_module() {
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	# Test strategy selection (no peer IP, call directly so global variables persist)
-	select_recovery_strategy "" 2
+	# Test strategy selection (uses nameref associative array)
+	declare -A recovery_info
+	select_recovery_strategy "" 2 "recovery_info"
 
 	# Use assert_equal for better error messages
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload"
-	assert_equal "$RECOVERY_COMMAND" "ipsec reload"
-	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
-	assert_equal "$RECOVERY_AVAILABLE" "1"
+	assert_equal "${recovery_info[strategy]}" "ipsec_reload"
+	assert_equal "${recovery_info[command]}" "ipsec reload"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" "1"
 
 	remove_mock_from_path
 }
@@ -3934,9 +4009,6 @@ source_lockfile_module() {
 		# shellcheck source=/dev/null
 		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
 	fi
-
-	# Clear variables from previous tests
-	unset RECOVERY_STRATEGY RECOVERY_COMMAND RECOVERY_IMPACT RECOVERY_AVAILABLE
 
 	# Set up environment - no commands available
 	ENABLE_XFRM_RECOVERY=1
@@ -3976,15 +4048,16 @@ source_lockfile_module() {
 		command -v "$cmd" >/dev/null 2>&1
 	}
 
-	# Test strategy selection (call directly so global variables persist)
-	select_recovery_strategy "203.0.113.1" 2 || true
+	# Test strategy selection (uses nameref associative array)
+	declare -A recovery_info
+	select_recovery_strategy "203.0.113.1" 2 "recovery_info" || true
 
 	# Restore PATH
 	PATH="$original_path"
 
 	# Use assert_equal for better error messages
-	assert_equal "$RECOVERY_STRATEGY" "unavailable"
-	assert_equal "$RECOVERY_AVAILABLE" "0"
+	assert_equal "${recovery_info[strategy]}" "unavailable"
+	assert_equal "${recovery_info[available]}" "0"
 }
 
 # bats test_tags=category:unit
@@ -4018,7 +4091,8 @@ source_lockfile_module() {
 	}
 
 	# Test invalid tier
-	run select_recovery_strategy "203.0.113.1" 1
+	declare -A recovery_info
+	run select_recovery_strategy "203.0.113.1" 1 "recovery_info"
 
 	assert_failure
 }

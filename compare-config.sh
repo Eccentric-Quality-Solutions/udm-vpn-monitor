@@ -83,11 +83,11 @@ if [[ -z "$EXISTING_CONFIG" ]]; then
 	fi
 fi
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# Colors for output (defined in lib/common.sh, use defaults if not sourced)
+[[ -z "${RED:-}" ]] && RED='\033[0;31m'
+[[ -z "${GREEN:-}" ]] && GREEN='\033[0;32m'
+[[ -z "${YELLOW:-}" ]] && YELLOW='\033[1;33m'
+[[ -z "${NC:-}" ]] && NC='\033[0m' # No Color
 
 # Parse config file to extract variable names
 #
@@ -159,6 +159,9 @@ parse_config_variables() {
 #
 # Output:
 #   Prints the value (with quotes removed) to stdout
+#
+# Note:
+#   Uses escape_sed_regex() to safely escape variable names for regex matching
 get_config_value() {
 	local config_file="$1"
 	local var_name="$2"
@@ -170,8 +173,12 @@ get_config_value() {
 		return 1
 	fi
 
+	# Escape variable name for regex matching
+	local escaped_var_name
+	escaped_var_name=$(escape_sed_regex "$var_name")
+
 	# Find the variable assignment line
-	line=$(grep "^${var_name}=" "$config_file" 2>/dev/null | head -1)
+	line=$(grep "^${escaped_var_name}=" "$config_file" 2>/dev/null | head -1)
 
 	if [[ -z "$line" ]]; then
 		return 1

@@ -109,10 +109,10 @@ check_rate_limit() {
 			# extra protection for edge cases (race conditions, test suite timing issues, etc.)
 			# Use helper function to standardize timeout command availability check
 			local last_restart
-			last_restart=$(run_with_timeout 1 sh -c "grep -E '^[0-9]+$' \"$RESTART_COUNT_FILE\" 2>/dev/null | sort -n | tail -n 1" || echo "0")
+			last_restart=$(run_with_timeout "$STATE_FILE_READ_TIMEOUT" sh -c "grep -E '^[0-9]+$' \"$RESTART_COUNT_FILE\" 2>/dev/null | sort -n | tail -n 1" || echo "0")
 			if [[ "$last_restart" != "0" ]] && [[ "$last_restart" =~ ^[0-9]+$ ]]; then
 				local time_since_last
-				time_since_last=$(safe_timestamp_diff "$now" "$last_restart" 2>/dev/null || echo "0")
+				time_since_last=$(calculate_duration "$last_restart" "$now" 2>/dev/null || echo "0")
 				if [[ "$time_since_last" -lt "$min_interval" ]]; then
 					local remaining=$((min_interval - time_since_last))
 					handle_error "WARNING" "SYSTEM" "Minimum restart interval not met: ${remaining} seconds remaining (minimum: ${min_interval}s, last restart: $(date -d "@$last_restart" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$last_restart"))"
@@ -185,11 +185,7 @@ check_rate_limit() {
 
 		# Calculate countdown (time remaining until reset)
 		local countdown_seconds
-		countdown_seconds=$(safe_timestamp_diff "$reset_timestamp" "$now" 2>/dev/null || echo "0")
-		# Clamp negative values to 0 (shouldn't happen, but handle edge cases like clock skew)
-		if [[ "$countdown_seconds" -lt 0 ]]; then
-			countdown_seconds=0
-		fi
+		countdown_seconds=$(calculate_duration "$now" "$reset_timestamp" 2>/dev/null || echo "0")
 
 		# Format reset timestamp for human readability
 		local reset_formatted
@@ -609,7 +605,7 @@ validate_state_file() {
 	integer)
 		# Should contain only digits (0-9), possibly with newlines
 		local grep_result=1
-		run_with_timeout 1 grep -qE '^[0-9]+$' "$file" && grep_result=0 || grep_result=1
+		run_with_timeout "$STATE_FILE_READ_TIMEOUT" grep -qE '^[0-9]+$' "$file" && grep_result=0 || grep_result=1
 		if [[ $grep_result -ne 0 ]]; then
 			handle_error "WARNING" "SYSTEM" "State file corrupted (expected integer): $file"
 			return 1
@@ -619,8 +615,8 @@ validate_state_file() {
 		# Should contain a single Unix timestamp (digits only)
 		local grep_result=1
 		local line_count=0
-		run_with_timeout 1 grep -qE '^[0-9]+$' "$file" && grep_result=0 || grep_result=1
-		line_count=$(run_with_timeout 1 wc -l <"$file" || echo "0")
+		run_with_timeout "$STATE_FILE_READ_TIMEOUT" grep -qE '^[0-9]+$' "$file" && grep_result=0 || grep_result=1
+		line_count=$(run_with_timeout "$STATE_FILE_READ_TIMEOUT" wc -l <"$file" || echo "0")
 		if [[ $grep_result -ne 0 ]] || [[ "$line_count" -ne 1 ]]; then
 			handle_error "WARNING" "SYSTEM" "State file corrupted (expected single timestamp): $file"
 			return 1
@@ -631,7 +627,7 @@ validate_state_file() {
 		# Empty file is valid (no restarts recorded)
 		if [[ -s "$file" ]]; then
 			local grep_result=1
-			run_with_timeout 1 grep -qE '^[0-9]+$' "$file" && grep_result=0 || grep_result=1
+			run_with_timeout "$STATE_FILE_READ_TIMEOUT" grep -qE '^[0-9]+$' "$file" && grep_result=0 || grep_result=1
 			if [[ $grep_result -ne 0 ]]; then
 				handle_error "WARNING" "SYSTEM" "State file corrupted (expected timestamp list): $file"
 				return 1
@@ -702,8 +698,11 @@ validate_state_files_by_pattern() {
 	# Set up cleanup trap for temp file and file descriptor
 	# This trap ensures cleanup even if function exits early due to error
 	# Closes file descriptor 3 if opened, then removes temp file
-	# Note: We clear this trap before returning (see line 756) to avoid interfering with caller's traps
+	# IMPORTANT: Save the old EXIT trap so we can restore it later
+	# Using `trap - EXIT` would clear all EXIT traps including the lockfile cleanup trap
 	# shellcheck disable=SC2064 # We want variable expansion at trap definition time
+	local old_exit_trap
+	old_exit_trap=$(trap -p EXIT)
 	trap "exec 3<&- 2>/dev/null || true; rm -f \"$find_temp_file\" 2>/dev/null || true" EXIT
 	# Use timeout with --kill-after to ensure find is killed if it hangs
 	# Use -readable to skip unreadable files entirely (prevents hangs on files with 000 permissions)
@@ -728,11 +727,16 @@ validate_state_files_by_pattern() {
 		fi
 	done
 	exec 3<&-
-	# Clean up temp file and remove trap
+	# Clean up temp file and restore the old EXIT trap
 	# Explicit cleanup ensures temp file is removed even if trap wasn't set
-	# Clearing trap prevents interference with caller's EXIT trap handlers
+	# Restoring the old trap preserves the caller's EXIT trap handlers (e.g., lockfile cleanup)
 	rm -f "$find_temp_file" 2>/dev/null || true
-	trap - EXIT
+	# Restore old EXIT trap (or clear if there wasn't one)
+	if [[ -n "$old_exit_trap" ]]; then
+		eval "$old_exit_trap"
+	else
+		trap - EXIT
+	fi
 
 	return $validation_failed
 }

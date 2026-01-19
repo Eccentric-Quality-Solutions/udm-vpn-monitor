@@ -591,8 +591,11 @@ load fixtures/vpn_recovery_test
     setup_vpn_recovery_test_fixture "192.168.1.1"
     # Recovery test setup with pass-through mocks, ENABLE_XFRM_RECOVERY=1 by default
     source_recovery_module
-    select_recovery_strategy "192.168.1.1" 2
-    assert_equal "$RECOVERY_STRATEGY" "xfrm"
+    declare -A recovery_info
+    select_recovery_strategy "192.168.1.1" 2 "recovery_info"
+    assert_equal "${recovery_info[strategy]}" "xfrm"
+    assert_equal "${recovery_info[command]}" "attempt_xfrm_recovery"
+    assert_equal "${recovery_info[available]}" "1"
     remove_mock_from_path
 }
 

@@ -38,14 +38,15 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# shellcheck source=../lib/recovery.sh
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
-	# Test select_recovery_strategy function (call directly, not with run, to preserve global variables)
-	select_recovery_strategy "${TEST_PEER_IP}" 2
+	# Test select_recovery_strategy function (uses nameref associative array)
+	declare -A recovery_info
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 	local exit_code=$?
 	assert_equal "$exit_code" 0
-	assert_equal "$RECOVERY_STRATEGY" "xfrm"
-	assert_equal "$RECOVERY_COMMAND" "attempt_xfrm_recovery"
-	assert_equal "$RECOVERY_IMPACT" "per-connection"
-	assert_equal "$RECOVERY_AVAILABLE" 1
+	assert_equal "${recovery_info[strategy]}" "xfrm"
+	assert_equal "${recovery_info[command]}" "attempt_xfrm_recovery"
+	assert_equal "${recovery_info[impact]}" "per-connection"
+	assert_equal "${recovery_info[available]}" 1
 
 	remove_mock_from_path
 }
@@ -67,14 +68,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test select_recovery_strategy function (no peer IP, forces ipsec reload)
-	# Call directly, not with run, to preserve global variables
-	select_recovery_strategy "" 2
+	declare -A recovery_info
+	select_recovery_strategy "" 2 "recovery_info"
 	local exit_code=$?
 	assert_equal "$exit_code" 0
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload"
-	assert_equal "$RECOVERY_COMMAND" "ipsec reload"
-	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
-	assert_equal "$RECOVERY_AVAILABLE" 1
+	assert_equal "${recovery_info[strategy]}" "ipsec_reload"
+	assert_equal "${recovery_info[command]}" "ipsec reload"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" 1
 
 	remove_mock_from_path
 }
@@ -96,14 +97,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test select_recovery_strategy function (no peer IP, forces ipsec restart)
-	# Call directly, not with run, to preserve global variables
-	select_recovery_strategy "" 3
+	declare -A recovery_info
+	select_recovery_strategy "" 3 "recovery_info"
 	local exit_code=$?
 	assert_equal "$exit_code" 0
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_restart"
-	assert_equal "$RECOVERY_COMMAND" "ipsec restart"
-	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
-	assert_equal "$RECOVERY_AVAILABLE" 1
+	assert_equal "${recovery_info[strategy]}" "ipsec_restart"
+	assert_equal "${recovery_info[command]}" "ipsec restart"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" 1
 
 	remove_mock_from_path
 }
@@ -156,17 +157,18 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		fi
 	}
 
-	# Test select_recovery_strategy function (call directly, not with run, to preserve global variables)
+	# Test select_recovery_strategy function (uses nameref associative array)
 	# Use set +e to allow function to return error code without failing test
+	declare -A recovery_info
 	set +e
-	select_recovery_strategy "${TEST_PEER_IP}" 2
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 	local exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
-	assert_equal "$RECOVERY_STRATEGY" "unavailable"
-	assert_equal "$RECOVERY_COMMAND" ""
-	assert_equal "$RECOVERY_IMPACT" ""
-	assert_equal "$RECOVERY_AVAILABLE" 0
+	assert_equal "${recovery_info[strategy]}" "unavailable"
+	assert_equal "${recovery_info[command]}" ""
+	assert_equal "${recovery_info[impact]}" ""
+	assert_equal "${recovery_info[available]}" 0
 
 	# Restore original check_command_available if it was saved
 	# Note: Each BATS test runs in a fresh shell, so cleanup isn't strictly necessary,
@@ -195,22 +197,23 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# shellcheck source=../lib/recovery.sh
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
-	# Test select_recovery_strategy with invalid tier (call directly, not with run, to preserve global variables)
+	# Test select_recovery_strategy with invalid tier (uses nameref associative array)
 	# Use set +e to allow function to return error code without failing test
+	declare -A recovery_info
 	set +e
-	select_recovery_strategy "${TEST_PEER_IP}" 1
+	select_recovery_strategy "${TEST_PEER_IP}" 1 "recovery_info"
 	local exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
 
 	set +e
-	select_recovery_strategy "${TEST_PEER_IP}" 4
+	select_recovery_strategy "${TEST_PEER_IP}" 4 "recovery_info"
 	exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
 
 	set +e
-	select_recovery_strategy "${TEST_PEER_IP}" "invalid"
+	select_recovery_strategy "${TEST_PEER_IP}" "invalid" "recovery_info"
 	exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
@@ -233,15 +236,15 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test select_recovery_strategy function (peer IP provided but xfrm disabled)
-	# Call directly, not with run, to preserve global variables
-	select_recovery_strategy "${TEST_PEER_IP}" 2
+	declare -A recovery_info
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 	local exit_code=$?
 	assert_equal "$exit_code" 0
 	# Should use ipsec_reload, not xfrm
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload"
-	assert_equal "$RECOVERY_COMMAND" "ipsec reload"
-	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
-	assert_equal "$RECOVERY_AVAILABLE" 1
+	assert_equal "${recovery_info[strategy]}" "ipsec_reload"
+	assert_equal "${recovery_info[command]}" "ipsec reload"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" 1
 
 	remove_mock_from_path
 }
@@ -1604,9 +1607,15 @@ EOF
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'EOF'
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "show" ]]; then
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
     # Return empty (no SAs found) - xfrm recovery will fail
     exit 0
+# Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
+elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    # Return empty (no SAs found) - xfrm recovery will fail
+    exit 0
+# Handle "ip xfrm state delete" (deletion command)
 elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "delete" ]]; then
     # Delete fails
     exit 1
@@ -1615,8 +1624,9 @@ exec /usr/bin/ip "$@"
 EOF
 	chmod +x "$mock_ip"
 
-	# Mock ipsec - reload succeeds
-	mock_ipsec_reload_restart 0 0
+	# Mock ipsec - reload succeeds, but VPN must be DOWN for recovery to trigger
+	# status_exit=1 so ipsec status fails (VPN appears DOWN)
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -1641,8 +1651,8 @@ EOF
 	# Importance: Multiple fallback options ensure recovery succeeds even when methods fail
 	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0'
 
-	# Mock ipsec - reload fails, restart succeeds
-	mock_ipsec_reload_restart 1 0
+	# Mock ipsec - reload fails, restart succeeds; VPN must be DOWN (status_exit=1)
+	mock_ipsec_reload_restart 1 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -1669,8 +1679,8 @@ EOF
 	# Mock ip command - xfrm recovery fails
 	mock_ip_vpn_down
 
-	# Mock ipsec - reload succeeds
-	mock_ipsec_reload_restart 0 0
+	# Mock ipsec - reload succeeds; VPN must be DOWN (status_exit=1)
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -1718,8 +1728,8 @@ exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
 
-	# Mock ipsec - reload succeeds
-	mock_ipsec_reload_restart 0 0
+	# Mock ipsec - reload succeeds; VPN must be DOWN (status_exit=1)
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -1789,17 +1799,18 @@ EOF
 	}
 
 	# Test select_recovery_strategy function (xfrm disabled, no ipsec)
-	# Call directly (not with run) to preserve global variables set by declare -g
+	# Uses nameref associative array
 	# Use set +e to allow function to return error code without failing test
+	declare -A recovery_info
 	set +e
-	select_recovery_strategy "${TEST_PEER_IP}" 2
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 	local exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
-	assert_equal "$RECOVERY_STRATEGY" "unavailable"
-	assert_equal "$RECOVERY_COMMAND" ""
-	assert_equal "$RECOVERY_IMPACT" ""
-	assert_equal "$RECOVERY_AVAILABLE" 0
+	assert_equal "${recovery_info[strategy]}" "unavailable"
+	assert_equal "${recovery_info[command]}" ""
+	assert_equal "${recovery_info[impact]}" ""
+	assert_equal "${recovery_info[available]}" 0
 
 	# Restore original check_command_available if it was saved
 	# Note: Each BATS test runs in a fresh shell, so cleanup isn't strictly necessary,
@@ -1862,17 +1873,18 @@ EOF
 	}
 
 	# Test select_recovery_strategy function for Tier 3
-	# Call directly (not with run) to preserve global variables set by declare -g
+	# Uses nameref associative array
 	# Use set +e to allow function to return error code without failing test
+	declare -A recovery_info
 	set +e
-	select_recovery_strategy "${TEST_PEER_IP}" 3
+	select_recovery_strategy "${TEST_PEER_IP}" 3 "recovery_info"
 	local exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
-	assert_equal "$RECOVERY_STRATEGY" "unavailable"
-	assert_equal "$RECOVERY_COMMAND" ""
-	assert_equal "$RECOVERY_IMPACT" ""
-	assert_equal "$RECOVERY_AVAILABLE" 0
+	assert_equal "${recovery_info[strategy]}" "unavailable"
+	assert_equal "${recovery_info[command]}" ""
+	assert_equal "${recovery_info[impact]}" ""
+	assert_equal "${recovery_info[available]}" 0
 
 	# Restore original check_command_available if it was saved
 	# Note: Each BATS test runs in a fresh shell, so cleanup isn't strictly necessary,
@@ -2570,15 +2582,16 @@ EOF
 	}
 
 	# Test select_recovery_strategy directly (simulating call from surgical_cleanup)
-	# Call directly (not with run) to preserve global variables set by declare -g
+	# Uses nameref associative array
 	# Use set +e to allow function to return error code without failing test
+	declare -A recovery_info
 	set +e
-	select_recovery_strategy "${TEST_PEER_IP}" 2
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 	local exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
-	assert_equal "$RECOVERY_STRATEGY" "unavailable"
-	assert_equal "$RECOVERY_AVAILABLE" 0
+	assert_equal "${recovery_info[strategy]}" "unavailable"
+	assert_equal "${recovery_info[available]}" 0
 
 	# Restore original check_command_available if it was saved
 	# Note: Each BATS test runs in a fresh shell, so cleanup isn't strictly necessary,
@@ -2787,11 +2800,12 @@ EOF
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test with invalid tier (1 is not valid for recovery strategy selection)
-	run select_recovery_strategy "${TEST_PEER_IP}" 1
+	declare -A recovery_info
+	run select_recovery_strategy "${TEST_PEER_IP}" 1 "recovery_info"
 	assert_failure
 
 	# Test with invalid tier (4 is not valid)
-	run select_recovery_strategy "${TEST_PEER_IP}" 4
+	run select_recovery_strategy "${TEST_PEER_IP}" 4 "recovery_info"
 	assert_failure
 
 	remove_mock_from_path
@@ -2811,11 +2825,12 @@ EOF
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test with empty peer IP - should fall back to ipsec_reload for tier 2
-	select_recovery_strategy "" 2
+	declare -A recovery_info
+	select_recovery_strategy "" 2 "recovery_info"
 	local exit_code=$?
 	assert_equal "$exit_code" 0
 	# Should select ipsec_reload (not xfrm, since peer IP is empty)
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload" || assert_equal "$RECOVERY_STRATEGY" "unavailable"
+	assert_equal "${recovery_info[strategy]}" "ipsec_reload" || assert_equal "${recovery_info[strategy]}" "unavailable"
 
 	remove_mock_from_path
 }
@@ -2837,11 +2852,12 @@ EOF
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test with peer IP but xfrm disabled - should fall back to ipsec_reload
-	select_recovery_strategy "${TEST_PEER_IP}" 2
+	declare -A recovery_info
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 	local exit_code=$?
 	assert_equal "$exit_code" 0
 	# Should select ipsec_reload (not xfrm, since it's disabled)
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload" || assert_equal "$RECOVERY_STRATEGY" "unavailable"
+	assert_equal "${recovery_info[strategy]}" "ipsec_reload" || assert_equal "${recovery_info[strategy]}" "unavailable"
 
 	remove_mock_from_path
 }
@@ -2897,18 +2913,19 @@ EOF
 	}
 
 	# Test strategy selection - should fail when no commands available
-	# Call directly (not with run) to preserve global variables
+	# Uses nameref associative array
 	# Use set +e to allow function to return error code without failing test
+	declare -A recovery_info
 	set +e
-	select_recovery_strategy "${TEST_PEER_IP}" 2
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 	local exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
-	assert_equal "$RECOVERY_STRATEGY" "unavailable"
-	assert_equal "$RECOVERY_COMMAND" ""
-	assert_equal "$RECOVERY_IMPACT" ""
-	# RECOVERY_AVAILABLE should be 0
-	assert_equal "${RECOVERY_AVAILABLE:-1}" 0
+	assert_equal "${recovery_info[strategy]}" "unavailable"
+	assert_equal "${recovery_info[command]}" ""
+	assert_equal "${recovery_info[impact]}" ""
+	# available should be 0
+	assert_equal "${recovery_info[available]}" 0
 
 	# Restore original function if it existed
 	if command -v check_command_available.original >/dev/null 2>&1; then
@@ -3169,34 +3186,35 @@ EOF
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test xfrm strategy selection (Tier 2 with peer IP)
-	select_recovery_strategy "${TEST_PEER_IP}" 2
+	declare -A recovery_info
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 	local exit_code=$?
 	assert_equal "$exit_code" 0
-	# Verify all global variables are set correctly
-	assert_equal "$RECOVERY_STRATEGY" "xfrm"
-	assert_equal "$RECOVERY_COMMAND" "attempt_xfrm_recovery"
-	assert_equal "$RECOVERY_IMPACT" "per-connection"
-	assert_equal "$RECOVERY_AVAILABLE" 1
+	# Verify all array values are set correctly
+	assert_equal "${recovery_info[strategy]}" "xfrm"
+	assert_equal "${recovery_info[command]}" "attempt_xfrm_recovery"
+	assert_equal "${recovery_info[impact]}" "per-connection"
+	assert_equal "${recovery_info[available]}" 1
 
 	# Test ipsec_reload strategy selection (Tier 2 without peer IP)
-	select_recovery_strategy "" 2
+	select_recovery_strategy "" 2 "recovery_info"
 	exit_code=$?
 	assert_equal "$exit_code" 0
-	# Verify all global variables are set correctly
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload"
-	assert_equal "$RECOVERY_COMMAND" "ipsec reload"
-	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
-	assert_equal "$RECOVERY_AVAILABLE" 1
+	# Verify all array values are set correctly
+	assert_equal "${recovery_info[strategy]}" "ipsec_reload"
+	assert_equal "${recovery_info[command]}" "ipsec reload"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" 1
 
 	# Test ipsec_restart strategy selection (Tier 3)
-	select_recovery_strategy "" 3
+	select_recovery_strategy "" 3 "recovery_info"
 	exit_code=$?
 	assert_equal "$exit_code" 0
-	# Verify all global variables are set correctly
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_restart"
-	assert_equal "$RECOVERY_COMMAND" "ipsec restart"
-	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
-	assert_equal "$RECOVERY_AVAILABLE" 1
+	# Verify all array values are set correctly
+	assert_equal "${recovery_info[strategy]}" "ipsec_restart"
+	assert_equal "${recovery_info[command]}" "ipsec restart"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" 1
 
 	remove_mock_from_path
 }
@@ -3256,13 +3274,14 @@ EOF
 	# Call select_recovery_strategy
 	# It should use the cached availability from _check_recovery_command_availability()
 	# and not re-check during strategy selection
-	select_recovery_strategy "${TEST_PEER_IP}" 2
+	declare -A recovery_info
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 	local exit_code=$?
 	assert_equal "$exit_code" 0
 
 	# Verify that strategy was selected successfully (using cached availability)
-	assert_equal "$RECOVERY_STRATEGY" "xfrm" || assert_equal "$RECOVERY_STRATEGY" "ipsec_reload"
-	assert_equal "$RECOVERY_AVAILABLE" 1
+	assert_equal "${recovery_info[strategy]}" "xfrm" || assert_equal "${recovery_info[strategy]}" "ipsec_reload"
+	assert_equal "${recovery_info[available]}" 1
 
 	# Verify that check_command_available was called (for initial availability check)
 	# It should be called at least twice (once for ip, once for ipsec)

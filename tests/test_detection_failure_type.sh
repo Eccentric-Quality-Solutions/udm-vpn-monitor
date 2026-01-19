@@ -566,16 +566,17 @@ EOF
 }
 
 # bats test_tags=category:high-risk,priority:medium
-@test "State passing: sa_exists=1 but xfrm_output empty - handled gracefully" {
-	# Purpose: Test verifies that inconsistent state (sa_exists=1 but xfrm_output empty) is handled gracefully
-	# Expected: When ipsec fallback succeeds, sa_exists=1 is set but xfrm_output remains empty. Code should handle this by
-	#           fetching xfrm_output if needed for failure type detection, or returning "unknown" if unavailable.
-	# Importance: Tests defensive handling of state passing when ipsec fallback is used (realistic scenario)
-	# This tests the edge case identified in LOGIC_REVIEW_REPORT.md: state passing pattern validation
+@test "State passing: primary_check_passed=1 but xfrm_output empty - handled gracefully" {
+	# Purpose: Test verifies that when ipsec fallback succeeds (primary_check_passed=1) but xfrm_output is empty,
+	#          the code handles this gracefully by using primary_check_passed as single source of truth.
+	# Expected: When ipsec fallback succeeds, primary_check_passed=1 means SA exists (invariant), even if xfrm_output is empty.
+	#           Code should not return "tunnel_down" since SA exists via ipsec fallback.
+	# Importance: Tests that primary_check_passed is used as single source of truth (eliminates sa_exists synchronization bugs)
+	# This tests the fix for state synchronization bug where sa_exists parameter created two sources of truth
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_PING_CHECK=0'
 
 	# Mock ip command - returns empty output (xfrm_output will be empty)
-	# But ipsec will show SA exists, creating state: sa_exists=1 (from ipsec fallback) but xfrm_output is empty
+	# But ipsec will show SA exists, creating scenario: primary_check_passed=1 (from ipsec fallback) but xfrm_output is empty
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
@@ -590,8 +591,9 @@ exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
 	# Mock ipsec to succeed (SA exists via ipsec fallback, but xfrm_output is empty)
-	# This creates the scenario: sa_exists=1 (from ipsec) but xfrm_output is empty
-	mock_ipsec_status 0 >/dev/null
+	# This creates the scenario: primary_check_passed=1 (from ipsec) but xfrm_output is empty
+	# Need to provide output that contains peer IP so check_ipsec_status succeeds
+	mock_ipsec_status 0 "test-conn: ESTABLISHED 1 hour ago, ${TEST_PEER_IP}...192.168.1.1" >/dev/null
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -601,17 +603,21 @@ EOF
 	assert_file_exist "$LOG_FILE"
 	refute_file_contains "$LOG_FILE" "tunnel_down"
 	# Failure type detection should handle empty xfrm_output gracefully
-	# It should either fetch xfrm_output (which will still be empty) or return "unknown"
-	# Verify failure type is not tunnel_down (since sa_exists=1)
+	# Since primary_check_passed=1, SA exists (invariant), so should not return "tunnel_down"
+	# It should return "unknown" or "rekey" depending on whether rekey is detected
+	# Note: When VPN check passes, failure_type file may not exist or may contain "unknown"
 	source_function "get_peer_state_file_path"
 	local failure_type_file
 	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
 	if [[ -f "$failure_type_file" ]]; then
 		local failure_type
 		failure_type=$(cat "$failure_type_file")
-		# Should not be tunnel_down since sa_exists=1 (from ipsec fallback)
-		assert [ "$failure_type" != "tunnel_down" ]
+		# Should not be tunnel_down since primary_check_passed=1 (SA exists via ipsec fallback)
+		# When primary_check_passed=1, detect_failure_type uses it as single source of truth
+		# and sets ipsec_phase2_up=1, so should not return "tunnel_down"
+		assert [ "$failure_type" != "tunnel_down" ] || fail "Expected failure_type != tunnel_down when primary_check_passed=1 (ipsec fallback succeeded), but got: $failure_type"
 	fi
+	# If failure_type file doesn't exist, that's also OK - VPN check passed so no failure type needed
 
 	remove_mock_from_path
 }

@@ -265,7 +265,7 @@ set_system_wide_failure_timestamp() {
 #   Requires ENABLE_SYSTEM_WIDE_FAILURE_DETECTION configuration variable (default: 1)
 #   Requires SYSTEM_WIDE_FAILURE_THRESHOLD configuration variable (default: 100, meaning all must fail)
 #   Threshold is percentage (0-100): 100 = all must fail, 80 = 80% must fail, etc.
-#   Uses get_failure_count() to check if locations are currently failing
+#   Receives failure statuses as parameters and iterates through them to count failures
 detect_system_wide_failure() {
 	local -n location_names_ref="$1"
 	local -n failure_statuses_ref="$2"
@@ -408,7 +408,7 @@ get_system_wide_failure_coordinator_file() {
 #
 # Returns:
 #   0: This location should attempt recovery
-#   1: Another location is coordinating recovery, or coordination not needed
+#   1: Another location is coordinating recovery, coordination not needed, or coordination setup failed
 #
 # Examples:
 #   if should_location_attempt_recovery "NYC"; then
@@ -419,6 +419,9 @@ get_system_wide_failure_coordinator_file() {
 #   Uses a coordinator file to track which location is designated
 #   First location to check becomes the coordinator if none exists
 #   Coordinator persists until system-wide failure is cleared
+#   Uses atomic check-and-create pattern (noclobber mode) to prevent race conditions
+#   If coordinator file creation fails (disk full, permissions, etc.), returns 1 to prevent
+#   recovery attempts when coordination is broken (conservative approach)
 should_location_attempt_recovery() {
 	local location_name="$1"
 
@@ -432,9 +435,21 @@ should_location_attempt_recovery() {
 	local coordinator_file
 	coordinator_file=$(get_system_wide_failure_coordinator_file)
 
-	# Check if coordinator file exists
+	# Try to atomically create coordinator file (check-and-set pattern)
+	# Uses noclobber mode (set -C) to prevent race condition: only first writer succeeds
+	# set -C: noclobber mode - prevents overwriting existing file (atomic check-and-create)
+	if (
+		set -C
+		echo "$location_name" >"$coordinator_file"
+	) 2>/dev/null; then
+		# Successfully created coordinator file - we are the coordinator
+		log_message "INFO" "SYSTEM" "Location $location_name designated as recovery coordinator for system-wide failure"
+		return 0
+	fi
+
+	# Coordinator file already exists (another location created it first)
+	# Check if we are the coordinator
 	if file_exists_and_readable "$coordinator_file"; then
-		# Coordinator already designated, check if it's this location
 		local coordinator
 		coordinator=$(cat "$coordinator_file" 2>/dev/null || echo "")
 		if [[ "$coordinator" == "$location_name" ]]; then
@@ -445,16 +460,11 @@ should_location_attempt_recovery() {
 			return 1
 		fi
 	else
-		# No coordinator yet, this location becomes the coordinator
-		# Use atomic write to set coordinator
-		if atomic_write_file "$coordinator_file" "$location_name" 2>/dev/null; then
-			log_message "INFO" "SYSTEM" "Location $location_name designated as recovery coordinator for system-wide failure"
-			return 0
-		else
-			# Failed to write coordinator file, allow recovery attempt anyway
-			handle_error "WARNING" "SYSTEM" "Failed to set recovery coordinator, allowing recovery attempt" 0
-			return 0
-		fi
+		# File doesn't exist but creation failed - coordination broken, be conservative
+		# This could happen due to disk full, permissions, or other I/O errors
+		handle_error "ERROR" "SYSTEM" "Failed to set recovery coordinator file: $coordinator_file. Coordination disabled for this cycle." 0
+		# Conservative approach: don't attempt recovery if coordination is broken
+		return 1
 	fi
 }
 

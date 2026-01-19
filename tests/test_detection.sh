@@ -619,7 +619,11 @@ ADDITIONAL_EOF
 	# Allow extra time for script initialization and other operations
 	# Note: In VPN down scenarios, ipsec status may be called multiple times (via xfrm fallbacks),
 	# each taking IPSEC_STATUS_TIMEOUT (5s) to timeout, so we need sufficient buffer
-	run timeout 20 bash "$TEST_SCRIPT" --fake
+	# When VPN is down, ipsec status is called at least twice:
+	# 1. Once in get_xfrm_state_for_peer when no SAs are found (line 486)
+	# 2. Once in check_ipsec_fallback when xfrm check fails
+	# Each call takes 5 seconds to timeout = 10 seconds minimum, plus script initialization
+	run timeout 30 bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should handle ipsec status hang gracefully (should timeout and continue)

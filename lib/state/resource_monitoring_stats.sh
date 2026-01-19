@@ -6,6 +6,44 @@
 # Version: 0.6.0
 #
 
+# Internal helper to increment a counter file
+#
+# Safely increments a counter file with proper error handling, corruption recovery,
+# and atomic writes. Used by track_resource_check() and track_resource_constraint().
+#
+# Arguments:
+#   $1: Counter file path to increment
+#
+# Returns:
+#   0: Always succeeds (tracking failures are non-fatal)
+#
+# Side effects:
+#   - Creates counter file if it doesn't exist (initialized to 0)
+#   - Increments counter using atomic writes
+#   - Handles file corruption by resetting to 0
+#
+# Note:
+#   Requires atomic_write_file, ensure_file_exists, and read_counter_file to be set
+#   Uses atomic writes per ADR-0012 for state file integrity
+_increment_counter_file() {
+	local counter_file="$1"
+
+	# Initialize state file if it doesn't exist
+	ensure_file_exists "$counter_file" "0" 2>/dev/null || return 0
+
+	# Read current count using shared helper
+	local current_count
+	current_count=$(read_counter_file "$counter_file")
+
+	# Increment count
+	current_count=$((current_count + 1))
+
+	# Use atomic write for state file (per ADR-0012)
+	atomic_write_file "$counter_file" "$current_count" 2>/dev/null || true
+
+	return 0
+}
+
 # Track resource check result
 #
 # Increments the appropriate success or failure counter for a specific resource check type.
@@ -27,7 +65,7 @@
 #   track_resource_check "ram" 0    # Track RAM check failure
 #
 # Note:
-#   Requires STATE_DIR, atomic_write_file, and ensure_file_exists to be set
+#   Requires STATE_DIR, atomic_write_file, ensure_file_exists, and read_counter_file to be set
 #   Uses atomic writes per ADR-0012 for state file integrity
 track_resource_check() {
 	local resource_type="$1"
@@ -57,28 +95,7 @@ track_resource_check() {
 		counter_file="${STATE_DIR}/resource_${resource_type}_check_fail_count"
 	fi
 
-	# Initialize state file if it doesn't exist
-	ensure_file_exists "$counter_file" "0" 2>/dev/null || return 0
-
-	# Read current count
-	# Check readability before reading to prevent hangs on unreadable files
-	local current_count
-	if file_exists_and_readable "$counter_file"; then
-		current_count=$(cat "$counter_file" 2>/dev/null || echo "0")
-	else
-		current_count="0"
-	fi
-
-	# Validate count is numeric (handle corruption)
-	if ! [[ "$current_count" =~ ^[0-9]+$ ]]; then
-		current_count=0
-	fi
-
-	# Increment count
-	current_count=$((current_count + 1))
-
-	# Use atomic write for state file (per ADR-0012)
-	atomic_write_file "$counter_file" "$current_count" 2>/dev/null || true
+	_increment_counter_file "$counter_file"
 
 	return 0
 }
@@ -103,7 +120,7 @@ track_resource_check() {
 #   track_resource_constraint "disk_critical"      # Track disk critical event
 #
 # Note:
-#   Requires STATE_DIR, atomic_write_file, and ensure_file_exists to be set
+#   Requires STATE_DIR, atomic_write_file, ensure_file_exists, and read_counter_file to be set
 #   Uses atomic writes per ADR-0012 for state file integrity
 track_resource_constraint() {
 	local constraint_type="$1"
@@ -127,28 +144,7 @@ track_resource_constraint() {
 	# Determine counter file
 	local counter_file="${STATE_DIR}/resource_${constraint_type}_count"
 
-	# Initialize state file if it doesn't exist
-	ensure_file_exists "$counter_file" "0" 2>/dev/null || return 0
-
-	# Read current count
-	# Check readability before reading to prevent hangs on unreadable files
-	local current_count
-	if file_exists_and_readable "$counter_file"; then
-		current_count=$(cat "$counter_file" 2>/dev/null || echo "0")
-	else
-		current_count="0"
-	fi
-
-	# Validate count is numeric (handle corruption)
-	if ! [[ "$current_count" =~ ^[0-9]+$ ]]; then
-		current_count=0
-	fi
-
-	# Increment count
-	current_count=$((current_count + 1))
-
-	# Use atomic write for state file (per ADR-0012)
-	atomic_write_file "$counter_file" "$current_count" 2>/dev/null || true
+	_increment_counter_file "$counter_file"
 
 	return 0
 }
@@ -178,7 +174,7 @@ track_resource_constraint() {
 #   # Logs: "Resource monitoring summary (past hour): CPU checks succeeded 60 times, failed 0 times; RAM checks succeeded 60 times, failed 0 times; Disk checks succeeded 60 times, failed 0 times; CPU constrained 0 times; RAM constrained 0 times; Disk critical 0 times"
 #
 # Note:
-#   Requires STATE_DIR, SECONDS_PER_HOUR, get_unix_timestamp, log_message, ensure_file_exists, and atomic_write_file to be set
+#   Requires STATE_DIR, SECONDS_PER_HOUR, get_unix_timestamp, log_message, ensure_file_exists, atomic_write_file, and read_counter_file to be set
 #   Uses atomic writes per ADR-0012 for state file integrity
 log_resource_monitoring_summary_if_due() {
 	# Only proceed if STATE_DIR is set
@@ -235,78 +231,28 @@ log_resource_monitoring_summary_if_due() {
 	local time_since_last=$((current_time - last_time))
 
 	if [[ $time_since_last -ge $summary_interval_seconds ]] || [[ $last_time -eq 0 ]]; then
-		# Time to log summary - read all counters
-		# Check readability before reading to prevent hangs on unreadable files
-		local cpu_success
-		if file_exists_and_readable "$cpu_success_file"; then
-			cpu_success=$(cat "$cpu_success_file" 2>/dev/null || echo "0")
-		else
-			cpu_success="0"
-		fi
-		local cpu_fail
-		if file_exists_and_readable "$cpu_fail_file"; then
-			cpu_fail=$(cat "$cpu_fail_file" 2>/dev/null || echo "0")
-		else
-			cpu_fail="0"
-		fi
-		local ram_success
-		if file_exists_and_readable "$ram_success_file"; then
-			ram_success=$(cat "$ram_success_file" 2>/dev/null || echo "0")
-		else
-			ram_success="0"
-		fi
-		local ram_fail
-		if file_exists_and_readable "$ram_fail_file"; then
-			ram_fail=$(cat "$ram_fail_file" 2>/dev/null || echo "0")
-		else
-			ram_fail="0"
-		fi
-		local disk_success
-		if file_exists_and_readable "$disk_success_file"; then
-			disk_success=$(cat "$disk_success_file" 2>/dev/null || echo "0")
-		else
-			disk_success="0"
-		fi
-		local disk_fail
-		if file_exists_and_readable "$disk_fail_file"; then
-			disk_fail=$(cat "$disk_fail_file" 2>/dev/null || echo "0")
-		else
-			disk_fail="0"
-		fi
-		local cpu_constrained
-		if file_exists_and_readable "$cpu_constrained_file"; then
-			cpu_constrained=$(cat "$cpu_constrained_file" 2>/dev/null || echo "0")
-		else
-			cpu_constrained="0"
-		fi
-		local ram_constrained
-		if file_exists_and_readable "$ram_constrained_file"; then
-			ram_constrained=$(cat "$ram_constrained_file" 2>/dev/null || echo "0")
-		else
-			ram_constrained="0"
-		fi
-		local disk_critical
-		if file_exists_and_readable "$disk_critical_file"; then
-			disk_critical=$(cat "$disk_critical_file" 2>/dev/null || echo "0")
-		else
-			disk_critical="0"
-		fi
-
-		# Validate all counts are numeric (handle corruption)
-		[[ "$cpu_success" =~ ^[0-9]+$ ]] || cpu_success=0
-		[[ "$cpu_fail" =~ ^[0-9]+$ ]] || cpu_fail=0
-		[[ "$ram_success" =~ ^[0-9]+$ ]] || ram_success=0
-		[[ "$ram_fail" =~ ^[0-9]+$ ]] || ram_fail=0
-		[[ "$disk_success" =~ ^[0-9]+$ ]] || disk_success=0
-		[[ "$disk_fail" =~ ^[0-9]+$ ]] || disk_fail=0
-		[[ "$cpu_constrained" =~ ^[0-9]+$ ]] || cpu_constrained=0
-		[[ "$ram_constrained" =~ ^[0-9]+$ ]] || ram_constrained=0
-		[[ "$disk_critical" =~ ^[0-9]+$ ]] || disk_critical=0
+		# Time to log summary - read all counters using shared helper
+		local cpu_success=$(read_counter_file "$cpu_success_file")
+		local cpu_fail=$(read_counter_file "$cpu_fail_file")
+		local ram_success=$(read_counter_file "$ram_success_file")
+		local ram_fail=$(read_counter_file "$ram_fail_file")
+		local disk_success=$(read_counter_file "$disk_success_file")
+		local disk_fail=$(read_counter_file "$disk_fail_file")
+		local cpu_constrained=$(read_counter_file "$cpu_constrained_file")
+		local ram_constrained=$(read_counter_file "$ram_constrained_file")
+		local disk_critical=$(read_counter_file "$disk_critical_file")
 
 		# Only log if there were any checks in the past hour
 		if [[ $cpu_success -gt 0 ]] || [[ $cpu_fail -gt 0 ]] || [[ $ram_success -gt 0 ]] || [[ $ram_fail -gt 0 ]] || [[ $disk_success -gt 0 ]] || [[ $disk_fail -gt 0 ]] || [[ $cpu_constrained -gt 0 ]] || [[ $ram_constrained -gt 0 ]] || [[ $disk_critical -gt 0 ]]; then
-			# Build summary message
-			local summary_msg="Resource monitoring summary (past hour): CPU checks succeeded ${cpu_success} times, failed ${cpu_fail} times; RAM checks succeeded ${ram_success} times, failed ${ram_fail} times; Disk checks succeeded ${disk_success} times, failed ${disk_fail} times; CPU constrained ${cpu_constrained} times; RAM constrained ${ram_constrained} times; Disk critical ${disk_critical} times"
+			# Build summary message (broken into multiple lines for readability)
+			local summary_msg
+			summary_msg="Resource monitoring summary (past hour): "
+			summary_msg+="CPU checks succeeded ${cpu_success} times, failed ${cpu_fail} times; "
+			summary_msg+="RAM checks succeeded ${ram_success} times, failed ${ram_fail} times; "
+			summary_msg+="Disk checks succeeded ${disk_success} times, failed ${disk_fail} times; "
+			summary_msg+="CPU constrained ${cpu_constrained} times; "
+			summary_msg+="RAM constrained ${ram_constrained} times; "
+			summary_msg+="Disk critical ${disk_critical} times"
 
 			log_message "INFO" "SYSTEM" "$summary_msg"
 		fi

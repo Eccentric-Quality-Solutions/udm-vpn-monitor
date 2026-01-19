@@ -27,7 +27,7 @@
 #   track_network_partition_check "route" 0  # Track route failure
 #
 # Note:
-#   Requires STATE_DIR, atomic_write_file, and ensure_file_exists to be set
+#   Requires STATE_DIR, atomic_write_file, ensure_file_exists, and read_counter_file to be set
 #   Uses atomic writes per ADR-0012 for state file integrity
 track_network_partition_check() {
 	local check_type="$1"
@@ -60,19 +60,9 @@ track_network_partition_check() {
 	# Initialize state file if it doesn't exist
 	ensure_file_exists "$counter_file" "0" 2>/dev/null || return 0
 
-	# Read current count
-	# Check readability before reading to prevent hangs on unreadable files
+	# Read current count using shared helper
 	local current_count
-	if file_exists_and_readable "$counter_file"; then
-		current_count=$(cat "$counter_file" 2>/dev/null || echo "0")
-	else
-		current_count="0"
-	fi
-
-	# Validate count is numeric (handle corruption)
-	if ! [[ "$current_count" =~ ^[0-9]+$ ]]; then
-		current_count=0
-	fi
+	current_count=$(read_counter_file "$counter_file")
 
 	# Increment count
 	current_count=$((current_count + 1))
@@ -108,7 +98,7 @@ track_network_partition_check() {
 #   # Logs: "Network partition check summary (past hour): DNS resolution succeeded 60 times, failed 0 times; Default route check succeeded 60 times, failed 0 times; Interface state check succeeded 60 times, failed 0 times"
 #
 # Note:
-#   Requires STATE_DIR, SECONDS_PER_HOUR, get_unix_timestamp, log_message, ensure_file_exists, and atomic_write_file to be set
+#   Requires STATE_DIR, SECONDS_PER_HOUR, get_unix_timestamp, log_message, ensure_file_exists, atomic_write_file, and read_counter_file to be set
 #   Uses atomic writes per ADR-0012 for state file integrity
 log_network_partition_summary_if_due() {
 	# Only proceed if STATE_DIR is set
@@ -116,7 +106,7 @@ log_network_partition_summary_if_due() {
 		return 0
 	fi
 
-	# Fixed 1-hour interval (3600 seconds)
+	# Configurable 1-hour interval (defaults to 3600 seconds if SECONDS_PER_HOUR not set)
 	local summary_interval_seconds="${SECONDS_PER_HOUR:-3600}"
 
 	# State files for tracking
@@ -159,52 +149,13 @@ log_network_partition_summary_if_due() {
 	local time_since_last=$((current_time - last_time))
 
 	if [[ $time_since_last -ge $summary_interval_seconds ]] || [[ $last_time -eq 0 ]]; then
-		# Time to log summary - read all counters
-		# Check readability before reading to prevent hangs on unreadable files
-		local dns_success
-		if file_exists_and_readable "$dns_success_file"; then
-			dns_success=$(cat "$dns_success_file" 2>/dev/null || echo "0")
-		else
-			dns_success="0"
-		fi
-		local dns_fail
-		if file_exists_and_readable "$dns_fail_file"; then
-			dns_fail=$(cat "$dns_fail_file" 2>/dev/null || echo "0")
-		else
-			dns_fail="0"
-		fi
-		local route_success
-		if file_exists_and_readable "$route_success_file"; then
-			route_success=$(cat "$route_success_file" 2>/dev/null || echo "0")
-		else
-			route_success="0"
-		fi
-		local route_fail
-		if file_exists_and_readable "$route_fail_file"; then
-			route_fail=$(cat "$route_fail_file" 2>/dev/null || echo "0")
-		else
-			route_fail="0"
-		fi
-		local interface_success
-		if file_exists_and_readable "$interface_success_file"; then
-			interface_success=$(cat "$interface_success_file" 2>/dev/null || echo "0")
-		else
-			interface_success="0"
-		fi
-		local interface_fail
-		if file_exists_and_readable "$interface_fail_file"; then
-			interface_fail=$(cat "$interface_fail_file" 2>/dev/null || echo "0")
-		else
-			interface_fail="0"
-		fi
-
-		# Validate all counts are numeric (handle corruption)
-		[[ "$dns_success" =~ ^[0-9]+$ ]] || dns_success=0
-		[[ "$dns_fail" =~ ^[0-9]+$ ]] || dns_fail=0
-		[[ "$route_success" =~ ^[0-9]+$ ]] || route_success=0
-		[[ "$route_fail" =~ ^[0-9]+$ ]] || route_fail=0
-		[[ "$interface_success" =~ ^[0-9]+$ ]] || interface_success=0
-		[[ "$interface_fail" =~ ^[0-9]+$ ]] || interface_fail=0
+		# Time to log summary - read all counters using shared helper
+		local dns_success=$(read_counter_file "$dns_success_file")
+		local dns_fail=$(read_counter_file "$dns_fail_file")
+		local route_success=$(read_counter_file "$route_success_file")
+		local route_fail=$(read_counter_file "$route_fail_file")
+		local interface_success=$(read_counter_file "$interface_success_file")
+		local interface_fail=$(read_counter_file "$interface_fail_file")
 
 		# Only log if there were any checks in the past hour
 		if [[ $dns_success -gt 0 ]] || [[ $dns_fail -gt 0 ]] || [[ $route_success -gt 0 ]] || [[ $route_fail -gt 0 ]] || [[ $interface_success -gt 0 ]] || [[ $interface_fail -gt 0 ]]; then

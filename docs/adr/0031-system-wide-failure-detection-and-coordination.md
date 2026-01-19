@@ -128,8 +128,8 @@ We will implement system-wide failure detection with a simple coordination appro
 
 ### Coordination Mechanism
 - **First Location Wins**: First location to check during system-wide failure becomes the coordinator
-- **Atomic File Writes**: Uses `atomic_write_file()` to safely designate coordinator
-- **Race Condition Handling**: If two locations check simultaneously, both may become coordinator (acceptable - still better than all locations)
+- **Atomic Check-and-Create**: Uses noclobber mode (`set -C`) for atomic check-and-create operation to safely designate coordinator
+- **Race Condition Handling**: Atomic operation ensures only one location can become coordinator, preventing simultaneous coordinator designation
 - **Coordinator Persistence**: Coordinator persists until system-wide failure is resolved
 - **Automatic Cleanup**: Coordinator is cleared when system-wide failure state is cleared
 

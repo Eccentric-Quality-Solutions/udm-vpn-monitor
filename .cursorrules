@@ -6,6 +6,7 @@
 - If you make a change and it doesn't fix the problem, revert the change unless it is worthwhile otherwise. In general we want to minimize the number of code changes we make when fixing a bug/error. You can add suggestions to FUTURE.md, but we want to minimize side effects.
 - Run relevant tests after you alter functionality in any significant way.
 - If git commit hooks or associated scripts are updated make sure to install/update them so they are actually used by git.
+- DO NOT FIT CODE TO TESTS. Tests need to run the code. If there is a bug in the code, that is one thing. But we should not be creating or changing code simply to pass a test.
 
 ## Debugging
 - When debugging make sure you put a comment before the function that says, "AGENT {NAME} DEBUGGING" and then remove it when you are done.

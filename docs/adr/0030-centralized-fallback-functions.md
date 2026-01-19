@@ -1,7 +1,11 @@
 # ADR-0030: Centralized Fallback Functions
 
 ## Status
-Accepted
+Deprecated
+
+**Note:** This ADR was superseded by a pragmatic engineering decision to remove the centralized fallback system. The fallback system was removed on 2026-01-18 because it addressed theoretical edge cases that are extremely unlikely in production. Modules now fail fast if dependencies can't be sourced, which is a better approach than silent degradation with minimal functionality.
+
+**See:** `docs/reviews/fallback-system-removal-review.md` for details on the removal decision.
 
 ## Context
 As the codebase evolved into a modular architecture (ADR-0005), modules became independently sourceable for testing and installation scenarios. However, when modules are sourced independently, their dependencies may not be available, leading to failures.

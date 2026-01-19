@@ -591,9 +591,8 @@ EOF
 	create_valid_config "$template_config"
 	create_valid_config "$existing_config"
 
-	# Copy script to test directory
-	cp "$COMPARE_CONFIG_SCRIPT" "${test_dir}/compare-config.sh"
-	chmod +x "${test_dir}/compare-config.sh"
+	# Copy script and dependencies to test directory
+	copy_compare_config_script "$test_dir"
 
 	# Run from test directory with only --existing specified (should auto-detect template)
 	run bash "${test_dir}/compare-config.sh" --existing "$existing_config"
@@ -618,9 +617,8 @@ EOF
 	create_valid_config "$template_config"
 	create_valid_config "$existing_config"
 
-	# Copy script to test directory
-	cp "$COMPARE_CONFIG_SCRIPT" "${test_dir}/compare-config.sh"
-	chmod +x "${test_dir}/compare-config.sh"
+	# Copy script and dependencies to test directory
+	copy_compare_config_script "$test_dir"
 
 	# Run from test directory with only --template specified (should auto-detect existing)
 	run bash "${test_dir}/compare-config.sh" --template "$template_config"
@@ -643,9 +641,8 @@ EOF
 
 	create_valid_config "$config_file"
 
-	# Copy script to test directory
-	cp "$COMPARE_CONFIG_SCRIPT" "${test_dir}/compare-config.sh"
-	chmod +x "${test_dir}/compare-config.sh"
+	# Copy script and dependencies to test directory
+	copy_compare_config_script "$test_dir"
 
 	# Run from test directory without any arguments (should auto-detect both)
 	run bash "${test_dir}/compare-config.sh"

@@ -139,11 +139,12 @@ validate_config_rule() {
 		if [[ -z "$var_value" ]]; then
 			if [[ "$required" == "required" ]]; then
 				# Use handle_error_or_exit_fake_mode to respect fake mode
-				# Note: This function exits, so return 1 won't be reached
-				# but we include it for clarity and in case exit is trapped
-				handle_error_or_exit_fake_mode "SYSTEM" "$var_name cannot be empty" "${EXIT_VALIDATION_ERROR:-3}"
-				# If handle_error_or_exit_fake_mode doesn't exit (e.g., in tests), return error
-				return 1
+				# In fake mode, it returns 1; in normal mode it calls die() and never returns
+				if ! handle_error_or_exit_fake_mode "SYSTEM" "$var_name cannot be empty" "${EXIT_VALIDATION_ERROR:-3}"; then
+					# In fake mode, handle_error_or_exit_fake_mode returns 1
+					return 1
+				fi
+				# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 			else
 				# Apply default value for optional variables (centralized logic)
 				local updated_value
@@ -185,11 +186,12 @@ validate_config_rule() {
 		if [[ "$var_type" == "integer" ]] && [[ "$var_value" -lt "$min_val" ]]; then
 			if [[ "$required" == "required" ]]; then
 				# Use handle_error_or_exit_fake_mode to respect fake mode
-				# Note: This function exits, so return 1 won't be reached
-				# but we include it for clarity and in case exit is trapped
-				handle_error_or_exit_fake_mode "SYSTEM" "$var_name must be at least $min_val (current value: $var_value)" "${EXIT_VALIDATION_ERROR:-3}"
-				# If handle_error_or_exit_fake_mode doesn't exit (e.g., in tests), return error
-				return 1
+				# In fake mode, it returns 1; in normal mode it calls die() and never returns
+				if ! handle_error_or_exit_fake_mode "SYSTEM" "$var_name must be at least $min_val (current value: $var_value)" "${EXIT_VALIDATION_ERROR:-3}"; then
+					# In fake mode, handle_error_or_exit_fake_mode returns 1
+					return 1
+				fi
+				# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 			else
 				# Apply default value for optional variables (centralized logic)
 				local updated_value
@@ -210,11 +212,12 @@ validate_config_rule() {
 		if [[ "$var_type" == "integer" ]] && [[ "$var_value" -gt "$max_val" ]]; then
 			if [[ "$required" == "required" ]]; then
 				# Use handle_error_or_exit_fake_mode to respect fake mode
-				# Note: This function exits, so return 1 won't be reached
-				# but we include it for clarity and in case exit is trapped
-				handle_error_or_exit_fake_mode "SYSTEM" "$var_name must be at most $max_val (current value: $var_value)" "${EXIT_VALIDATION_ERROR:-3}"
-				# If handle_error_or_exit_fake_mode doesn't exit (e.g., in tests), return error
-				return 1
+				# In fake mode, it returns 1; in normal mode it calls die() and never returns
+				if ! handle_error_or_exit_fake_mode "SYSTEM" "$var_name must be at most $max_val (current value: $var_value)" "${EXIT_VALIDATION_ERROR:-3}"; then
+					# In fake mode, handle_error_or_exit_fake_mode returns 1
+					return 1
+				fi
+				# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 			else
 				# Apply default value for optional variables (centralized logic)
 				local updated_value
@@ -243,11 +246,12 @@ validate_config_rule() {
 		if [[ $found -eq 0 ]]; then
 			if [[ "$required" == "required" ]]; then
 				# Use handle_error_or_exit_fake_mode to respect fake mode
-				# Note: This function exits, so return 1 won't be reached
-				# but we include it for clarity and in case exit is trapped
-				handle_error_or_exit_fake_mode "SYSTEM" "$var_name must be one of: $allowed_values (current value: '$var_value')" "${EXIT_VALIDATION_ERROR:-3}"
-				# If handle_error_or_exit_fake_mode doesn't exit (e.g., in tests), return error
-				return 1
+				# In fake mode, it returns 1; in normal mode it calls die() and never returns
+				if ! handle_error_or_exit_fake_mode "SYSTEM" "$var_name must be one of: $allowed_values (current value: '$var_value')" "${EXIT_VALIDATION_ERROR:-3}"; then
+					# In fake mode, handle_error_or_exit_fake_mode returns 1
+					return 1
+				fi
+				# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 			else
 				# Apply default value for optional variables (centralized logic)
 				local updated_value
@@ -313,10 +317,18 @@ split_rules_string() {
 	# Fallback to comma for backward compatibility with old format
 	# Special case: if rules is a single values: rule (e.g., "values:0,1"), don't split it
 	if [[ "$rules" == *"|||"* ]]; then
-		# Use awk to split by ||| since IFS doesn't support multi-character separators
-		while IFS= read -r rule; do
+		# Split by ||| using parameter expansion (more portable than awk)
+		# IFS doesn't support multi-character separators, so we use parameter expansion
+		local remaining="$rules"
+		while [[ "$remaining" == *"|||"* ]]; do
+			# Extract part before ||| separator
+			local rule="${remaining%%|||*}"
 			[[ -n "$rule" ]] && rule_array_ref+=("$rule")
-		done < <(echo "$rules" | awk -F'\\|\\|\\|' '{for(i=1;i<=NF;i++) print $i}')
+			# Remove processed part and separator
+			remaining="${remaining#*|||}"
+		done
+		# Add remaining part (after last |||)
+		[[ -n "$remaining" ]] && rule_array_ref+=("$remaining")
 	elif [[ "$rules" =~ ^values: ]]; then
 		# Single values: rule - don't split (comma is part of the rule value)
 		rule_array_ref=("$rules")
@@ -460,8 +472,13 @@ validate_config_var() {
 	# ============================================================
 	# Check if required variable is empty
 	if [[ "$required" == "required" ]] && [[ -z "$var_value" ]]; then
-		handle_error_or_exit_fake_mode "SYSTEM" "$var_name is required but not configured" "${EXIT_VALIDATION_ERROR:-3}"
-		return 1
+		# Use handle_error_or_exit_fake_mode to respect fake mode
+		# In fake mode, it returns 1; in normal mode it calls die() and never returns
+		if ! handle_error_or_exit_fake_mode "SYSTEM" "$var_name is required but not configured" "${EXIT_VALIDATION_ERROR:-3}"; then
+			# In fake mode, handle_error_or_exit_fake_mode returns 1
+			return 1
+		fi
+		# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 	fi
 
 	# Apply default for optional empty variables (using centralized function)
@@ -483,56 +500,20 @@ validate_config_var() {
 	# ============================================================
 	# SECTION 4: Validate type
 	# ============================================================
-	case "$var_type" in
-	integer)
-		if ! [[ "$var_value" =~ ^[0-9]+$ ]]; then
-			if [[ "$required" == "required" ]]; then
-				handle_error_or_exit_fake_mode "SYSTEM" "$var_name must be an integer (current value: '$var_value')" "${EXIT_VALIDATION_ERROR:-3}"
-				return 1
-			else
-				# Optional variable with invalid type - try to apply default
-				if [[ -z "$default_val" ]]; then
-					handle_error "WARNING" "SYSTEM" "$var_name must be an integer (current value: '$var_value'), no default available"
-					return 1
-				elif ! [[ "$default_val" =~ ^[0-9]+$ ]]; then
-					# Default value is invalid - don't apply it
-					handle_error "ERROR" "SYSTEM" "Default value for $var_name is invalid (default: '$default_val'), cannot apply default" 0
-					return 1
-				else
-					# Default is valid, apply it (using centralized function)
-					local updated_value
-					if updated_value=$(apply_optional_default "$var_name" "$var_value" "$required" "$default_val" "$var_name must be an integer (current value: '$var_value'), using default: $default_val"); then
-						var_value="$updated_value"
-					else
-						# This should not happen since we validated default above, but handle gracefully
-						handle_error "WARNING" "SYSTEM" "$var_name must be an integer (current value: '$var_value'), failed to apply default"
-						return 1
-					fi
-				fi
-			fi
-		fi
-		;;
-	string)
-		# String type validation handled by rules
-		;;
-	*)
-		# Unknown type - allow it
-		;;
-	esac
+	# Use validate_config_type() to avoid code duplication
+	# This function handles integer validation, string type handling, and default application
+	if ! var_value=$(validate_config_type "$var_name" "$var_value" "$var_type" "$required" "$default_val"); then
+		return 1
+	fi
 
 	# ============================================================
 	# SECTION 5: Validate rules
 	# ============================================================
 	if [[ -n "$rules" ]]; then
-		# Split rules string into array using helper function
-		local -a rule_array
-		split_rules_string "$rules" "rule_array"
-
-		for rule in "${rule_array[@]}"; do
-			if ! var_value=$(validate_config_rule "$var_name" "$var_value" "$var_type" "$required" "$default_val" "$rule"); then
-				return 1
-			fi
-		done
+		# Use existing helper function to validate all rules
+		if ! var_value=$(validate_config_rules "$var_name" "$var_value" "$var_type" "$required" "$default_val" "$rules"); then
+			return 1
+		fi
 	fi
 
 	# ============================================================
@@ -657,7 +638,12 @@ setup_routes_if_needed() {
 	# Routes are needed - check if detection.sh functions are available
 	# These functions are required for route setup but may not be available
 	# if config.sh is sourced independently (e.g., in check-config.sh or tests)
-	if ! command -v get_local_ip_for_ping >/dev/null 2>&1 || ! command -v check_route_exists >/dev/null 2>&1 || ! command -v add_route_if_needed >/dev/null 2>&1; then
+	local missing_deps=()
+	command -v get_local_ip_for_ping >/dev/null 2>&1 || missing_deps+=("get_local_ip_for_ping")
+	command -v check_route_exists >/dev/null 2>&1 || missing_deps+=("check_route_exists")
+	command -v add_route_if_needed >/dev/null 2>&1 || missing_deps+=("add_route_if_needed")
+
+	if [[ ${#missing_deps[@]} -gt 0 ]]; then
 		# Detection functions not available - this is critical if routes are needed
 		# Check if log_message is available before using it (may not be available in all contexts)
 		if command -v log_message >/dev/null 2>&1; then
@@ -666,7 +652,7 @@ setup_routes_if_needed() {
 			# - Routes are needed (ping checks enabled, internal IPs configured)
 			# - Routes won't be added during ping checks if VPN checks are skipped (network partition, cooldown, etc.)
 			# - This will cause ping checks to fail silently
-			handle_error "ERROR" "SYSTEM" "Cannot set up routes during config validation: detection.sh functions not available (get_local_ip_for_ping, check_route_exists, or add_route_if_needed). Routes are required for ping checks but may not be added if VPN checks are skipped. Ensure detection.sh is sourced before config.sh."
+			handle_error "ERROR" "SYSTEM" "Cannot set up routes during config validation: missing detection.sh functions: ${missing_deps[*]}. Routes are required for ping checks but may not be added if VPN checks are skipped. Ensure detection.sh is sourced before config.sh."
 		fi
 		# Return error to indicate route setup failed (non-critical in test contexts)
 		return 1
@@ -728,21 +714,35 @@ validate_config() {
 	# - Value enumeration (allowed values)
 	# - Relative validation (e.g., TIER2_THRESHOLD >= TIER1_THRESHOLD)
 	if ! validate_config_schema; then
-		handle_error_or_exit_fake_mode "SYSTEM" "Configuration validation failed - check schema rules" "${EXIT_VALIDATION_ERROR:-3}"
-		# If handle_error_or_exit_fake_mode doesn't exit (e.g., in fake mode), return error
-		return 1
+		# Use handle_error_or_exit_fake_mode to respect fake mode
+		# In fake mode, it returns 1; in normal mode it calls die() and never returns
+		if ! handle_error_or_exit_fake_mode "SYSTEM" "Configuration validation failed - check schema rules" "${EXIT_VALIDATION_ERROR:-3}"; then
+			# In fake mode, handle_error_or_exit_fake_mode returns 1
+			return 1
+		fi
+		# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 	fi
 
 	# Check for old format variables (should not exist)
 	if [[ -n "${EXTERNAL_PEER_IPS:-}" ]] || [[ -n "${INTERNAL_PEER_IPS:-}" ]]; then
-		handle_error_or_exit_fake_mode "SYSTEM" "Old configuration format detected (EXTERNAL_PEER_IPS/INTERNAL_PEER_IPS). Please migrate to location-based format using the migration script." "${EXIT_VALIDATION_ERROR:-3}"
-		return 1
+		# Use handle_error_or_exit_fake_mode to respect fake mode
+		# In fake mode, it returns 1; in normal mode it calls die() and never returns
+		if ! handle_error_or_exit_fake_mode "SYSTEM" "Old configuration format detected (EXTERNAL_PEER_IPS/INTERNAL_PEER_IPS). Please migrate to location-based format using the migration script." "${EXIT_VALIDATION_ERROR:-3}"; then
+			# In fake mode, handle_error_or_exit_fake_mode returns 1
+			return 1
+		fi
+		# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 	fi
 
 	# Parse location-based configuration
 	if ! parse_location_config; then
-		handle_error_or_exit_fake_mode "SYSTEM" "Failed to parse location-based configuration" "${EXIT_VALIDATION_ERROR:-3}"
-		return 1
+		# Use handle_error_or_exit_fake_mode to respect fake mode
+		# In fake mode, it returns 1; in normal mode it calls die() and never returns
+		if ! handle_error_or_exit_fake_mode "SYSTEM" "Failed to parse location-based configuration" "${EXIT_VALIDATION_ERROR:-3}"; then
+			# In fake mode, handle_error_or_exit_fake_mode returns 1
+			return 1
+		fi
+		# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 	fi
 
 	# Validate location-based configuration: IP address formats
@@ -755,14 +755,24 @@ validate_config() {
 	for location_name in "${!LOCATIONS[@]}"; do
 		# Get external IP for this location
 		if ! external_ip=$(get_location_external_ip "$location_name"); then
-			handle_error_or_exit_fake_mode "$location_name" "Failed to get external IP" "${EXIT_VALIDATION_ERROR:-3}"
-			return 1
+			# Use handle_error_or_exit_fake_mode to respect fake mode
+			# In fake mode, it returns 1; in normal mode it calls die() and never returns
+			if ! handle_error_or_exit_fake_mode "$location_name" "Failed to get external IP" "${EXIT_VALIDATION_ERROR:-3}"; then
+				# In fake mode, handle_error_or_exit_fake_mode returns 1
+				return 1
+			fi
+			# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 		fi
 
 		# Validate external IP format
 		if ! validate_ip_address "$external_ip"; then
-			handle_error_or_exit_fake_mode "$location_name" "Invalid external IP format: $external_ip" "${EXIT_VALIDATION_ERROR:-3}"
-			return 1
+			# Use handle_error_or_exit_fake_mode to respect fake mode
+			# In fake mode, it returns 1; in normal mode it calls die() and never returns
+			if ! handle_error_or_exit_fake_mode "$location_name" "Invalid external IP format: $external_ip" "${EXIT_VALIDATION_ERROR:-3}"; then
+				# In fake mode, handle_error_or_exit_fake_mode returns 1
+				return 1
+			fi
+			# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 		fi
 
 		# Get internal IPs for this location (may be empty)
@@ -779,8 +789,13 @@ validate_config() {
 
 				# Validate IP address format
 				if ! validate_ip_address "$internal_ip"; then
-					handle_error_or_exit_fake_mode "$location_name" "Invalid internal IP format: $internal_ip" "${EXIT_VALIDATION_ERROR:-3}"
-					return 1
+					# Use handle_error_or_exit_fake_mode to respect fake mode
+					# In fake mode, it returns 1; in normal mode it calls die() and never returns
+					if ! handle_error_or_exit_fake_mode "$location_name" "Invalid internal IP format: $internal_ip" "${EXIT_VALIDATION_ERROR:-3}"; then
+						# In fake mode, handle_error_or_exit_fake_mode returns 1
+						return 1
+					fi
+					# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 				fi
 			done
 
@@ -830,8 +845,13 @@ validate_config() {
 		if command -v log_message >/dev/null 2>&1; then
 			# Main execution path - routes are needed, setup failed, fail validation
 			# setup_routes_if_needed already logged ERROR with details
-			handle_error_or_exit_fake_mode "SYSTEM" "Route setup failed during config validation and routes are required for ping checks. See previous error messages for details." "${EXIT_VALIDATION_ERROR:-3}"
-			return 1
+			# Use handle_error_or_exit_fake_mode to respect fake mode
+			# In fake mode, it returns 1; in normal mode it calls die() and never returns
+			if ! handle_error_or_exit_fake_mode "SYSTEM" "Route setup failed during config validation and routes are required for ping checks. See previous error messages for details." "${EXIT_VALIDATION_ERROR:-3}"; then
+				# In fake mode, handle_error_or_exit_fake_mode returns 1
+				return 1
+			fi
+			# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 		fi
 		# Test context - don't fail validation (allows tests to work)
 		# ERROR was already logged by setup_routes_if_needed if log_message was available

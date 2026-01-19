@@ -178,3 +178,42 @@ get_config_default() {
 EOF
 	fi
 }
+
+# Copy compare-config.sh script and its dependencies to test directory
+#
+# Copies the compare-config.sh script to the test directory along with
+# lib/common.sh which it depends on. This allows the script to run
+# from the test directory and find its dependencies.
+#
+# Arguments:
+#   $1: Test directory where script should be copied
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Copies compare-config.sh to test directory
+#   - Creates lib directory in test directory
+#   - Copies lib/common.sh to test directory
+#   - Makes script executable
+#
+# Example:
+#   copy_compare_config_script "${TEST_DIR}/test-compare"
+#   # Script is now at ${TEST_DIR}/test-compare/compare-config.sh
+#   # lib/common.sh is at ${TEST_DIR}/test-compare/lib/common.sh
+copy_compare_config_script() {
+	local test_dir="$1"
+	local script_path="${BATS_TEST_DIRNAME}/../compare-config.sh"
+
+	# Copy script to test directory
+	if [[ -f "$script_path" ]]; then
+		cp "$script_path" "${test_dir}/compare-config.sh"
+		chmod +x "${test_dir}/compare-config.sh"
+	fi
+
+	# Copy lib directory so script can find lib/common.sh
+	mkdir -p "${test_dir}/lib"
+	if [[ -f "${BATS_TEST_DIRNAME}/../lib/common.sh" ]]; then
+		cp "${BATS_TEST_DIRNAME}/../lib/common.sh" "${test_dir}/lib/common.sh"
+	fi
+}

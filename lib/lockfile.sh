@@ -8,20 +8,15 @@
 
 # shellcheck source=lib/common.sh
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${LIB_DIR}/common.sh" 2>/dev/null || {
-	# shellcheck source=lib/fallbacks.sh
-	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
-	fi
-}
+source "${LIB_DIR}/common.sh"
 
 # shellcheck source=lib/logging.sh
-source "${LIB_DIR}/logging.sh" 2>/dev/null || {
-	# shellcheck source=lib/fallbacks.sh
-	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_logging_timestamp_fallback
-	fi
-}
+source "${LIB_DIR}/logging.sh"
+
+# Maximum number of retry attempts for fallback lockfile acquisition
+# Used when flock is unavailable. Set to 1 to limit retries and prevent infinite loops.
+# Note: This is a fallback method with inherent race conditions - retries help but don't eliminate all races.
+readonly FALLBACK_MAX_RETRIES=1
 
 # Extract PID from lockfile
 #
@@ -141,7 +136,7 @@ create_lockfile_atomically() {
 #
 # Determines if an existing lockfile is stale (older than LOCKFILE_TIMEOUT seconds).
 # Stale lockfiles indicate a hung or crashed previous instance that didn't clean up.
-# Compares file modification time to current time.
+# Compares file modification time to current time using safe timestamp arithmetic.
 #
 # Arguments:
 #   None
@@ -158,9 +153,12 @@ create_lockfile_atomically() {
 #
 # Note:
 #   Uses get_file_mtime to get file modification time
-#   Requires LOCKFILE, LOCKFILE_TIMEOUT, and get_file_mtime to be set
+#   Requires LOCKFILE, LOCKFILE_TIMEOUT, get_file_mtime, and calculate_duration to be set
 #   If file mtime cannot be determined (returns 0), considers lockfile stale
-#   Calculates age as: now - lockfile_mtime
+#   Uses calculate_duration() for safe timestamp arithmetic (handles clock skew)
+#   Detects clock skew: if lockfile mtime is significantly in the future (>60s), logs warning
+#   but does not treat as stale (safer to keep lockfile than remove valid one)
+#   Clock skew can occur due to NTP adjustments, VM snapshot restores, or system clock changes
 check_lockfile_stale() {
 	if [[ ! -f "$LOCKFILE" ]]; then
 		return 1 # No lockfile, not stale
@@ -169,6 +167,7 @@ check_lockfile_stale() {
 	local lockfile_age
 	local lockfile_mtime
 	local now
+	local clock_skew_threshold=60 # Seconds - detect significant clock skew (future-dated lockfile)
 
 	now=$(get_unix_timestamp)
 	lockfile_mtime=$(get_file_mtime "$LOCKFILE")
@@ -178,7 +177,25 @@ check_lockfile_stale() {
 		return 0 # Consider stale
 	fi
 
-	lockfile_age=$((now - lockfile_mtime))
+	# Check for clock skew: lockfile mtime significantly in the future
+	# This can happen if system clock moved backward (NTP adjustment, VM restore)
+	# We log a warning but don't treat as stale (safer to keep lockfile than remove valid one)
+	if [[ $lockfile_mtime -gt $now ]]; then
+		local future_diff=$((lockfile_mtime - now))
+		if [[ $future_diff -gt $clock_skew_threshold ]]; then
+			# Significant clock skew detected - log warning but don't treat as stale
+			if type log_message >/dev/null 2>&1; then
+				log_message "WARNING" "SYSTEM" "Clock skew detected: lockfile mtime is ${future_diff}s in the future (lockfile: $lockfile_mtime, now: $now). Not treating as stale."
+			fi
+			return 1 # Not stale (future-dated due to clock skew)
+		fi
+		# Small future difference (<= threshold) - likely minor NTP adjustment, treat as not stale
+		return 1
+	fi
+
+	# Use calculate_duration() for safe timestamp arithmetic
+	# This handles negative values (clamps to 0) and validates timestamps
+	lockfile_age=$(calculate_duration "$lockfile_mtime" "$now" 2>/dev/null || echo "0")
 
 	if [[ "$lockfile_age" -gt "$LOCKFILE_TIMEOUT" ]]; then
 		return 0 # Stale (exceeded timeout)
@@ -283,6 +300,10 @@ log_and_exit_lockfile_conflict() {
 # Attempts to acquire lockfile using flock command.
 # Handles stale lockfiles and retries as needed.
 #
+# This implementation uses explicit fd opening inside the subshell (not the
+# `( ... ) 9>file` pattern) to avoid a TOCTOU race condition where the file
+# would be created/truncated before any lock logic runs.
+#
 # Arguments:
 #   $1: Function to execute after lock is acquired (typically main function)
 #   $@: Arguments to pass to the function
@@ -293,43 +314,50 @@ log_and_exit_lockfile_conflict() {
 # Side effects:
 #   - Creates lockfile with timestamp:pid
 #   - Executes provided function with arguments
-#   - Removes lockfile on exit
+#   - Removes lockfile on exit (always, since we created/truncated it)
 #
 # Note:
-#   Requires LOCKFILE, remove_stale_lockfile_if_needed, check_lockfile_stale,
-#   log_and_exit_lockfile_conflict to be set
+#   Requires LOCKFILE, check_lockfile_stale, log_and_exit_lockfile_conflict to be set
 acquire_lockfile_flock() {
 	local main_func="$1"
 	shift
 
-	# Check if lockfile exists and contains a valid PID before trying flock
-	# This handles the case where a lockfile was created manually (not via flock)
-	# This check must happen BEFORE opening the file descriptor (which would truncate the file)
+	# Save existing lockfile info BEFORE entering subshell (before truncation)
+	# This allows us to:
+	# 1. Report the correct PID in conflict messages (file will be truncated when we open it)
+	# 2. Know if the lockfile was stale (for retry logic after flock fails)
+	# 3. Exit early if another instance is running (don't truncate their lockfile)
+	local existing_pid=""
+	local was_stale=0
 	if file_exists_and_readable "$LOCKFILE"; then
-		local lock_pid
-		lock_pid=$(extract_lockfile_pid "$LOCKFILE" 2>/dev/null || echo "")
-		if [[ -n "$lock_pid" ]] && is_process_running "$lock_pid"; then
-			# Lockfile exists with a running PID - another instance is running
-			log_and_exit_lockfile_conflict "$lock_pid"
+		existing_pid=$(extract_lockfile_pid "$LOCKFILE" 2>/dev/null || echo "")
+		# If lockfile has a running PID, exit immediately
+		# This prevents us from truncating another process's lockfile
+		if [[ -n "$existing_pid" ]] && is_process_running "$existing_pid"; then
+			log_and_exit_lockfile_conflict "$existing_pid"
 		fi
-		# Lockfile exists but PID is not running or invalid - check if stale
-		remove_stale_lockfile_if_needed || true
+		# Check if stale for retry logic (used if flock fails)
+		if check_lockfile_stale; then
+			was_stale=1
+		fi
 	fi
 
-	# Use flock if available (preferred method)
-	# Open lockfile for writing, acquire exclusive non-blocking lock
-	# File descriptor 9 is used for the lockfile
-	# shellcheck disable=SC2094
+	# Use subshell to isolate traps and ensure cleanup
+	# NOTE: We do NOT use `) 9>"$LOCKFILE"` because that opens the file
+	# BEFORE any subshell code runs, causing TOCTOU issues. Instead, we
+	# use explicit `exec 9>` inside the subshell for control.
 	(
 		# Track signal type for proper exit code
 		local signal_exit_code=0
-		# Track if we actually acquired the lock (to avoid removing another process's lockfile)
+		# Track if we actually acquired the lock
 		local lock_acquired=0
 		# Track if cleanup has already run (prevents double cleanup)
 		local cleanup_done=0
+		# Track if we opened the file (for cleanup purposes)
+		local file_opened=0
 
 		# Cleanup function for signal handlers
-		# Ensures file descriptor is closed and lockfile is removed even if one operation fails
+		# Ensures file descriptor is closed and lockfile is removed
 		#
 		# Arguments:
 		#   None (uses $? to capture exit code from trap context)
@@ -339,17 +367,13 @@ acquire_lockfile_flock() {
 		#
 		# Side effects:
 		#   - Closes file descriptor 9
-		#   - Removes lockfile if it was acquired by this process
+		#   - Removes lockfile if we opened it (we always clean up what we create)
 		#   - Exits script with appropriate exit code
 		cleanup_and_exit() {
-			# Capture the actual exit code from the script
-			# When called from EXIT trap, $? contains the exit code that triggered the trap
 			local actual_exit_code=$?
 
 			# Prevent double cleanup (defensive programming)
 			if [[ $cleanup_done -eq 1 ]]; then
-				# Use signal_exit_code if it's non-zero (set by signal handler)
-				# Otherwise use actual_exit_code (from die() or main return)
 				if [[ ${signal_exit_code:-0} -ne 0 ]]; then
 					exit "$signal_exit_code"
 				else
@@ -359,18 +383,15 @@ acquire_lockfile_flock() {
 			cleanup_done=1
 
 			# Close file descriptor first (more critical than removing lockfile)
-			# Suppress errors - fd may already be closed or close may fail
 			exec 9>&- 2>/dev/null || true
 
-			# Remove lockfile only if we actually acquired it
-			# Suppress errors - file may already be removed or removal may fail
-			if [[ $lock_acquired -eq 1 ]]; then
+			# Always remove lockfile if we opened it
+			# We created/truncated it via our redirect, so we should clean it up
+			# regardless of whether we acquired the lock. This prevents orphan lockfiles.
+			if [[ $file_opened -eq 1 ]]; then
 				rm -f "$LOCKFILE" 2>/dev/null || true
 			fi
 
-			# Use signal_exit_code if it's non-zero (set by signal handler)
-			# Otherwise use actual_exit_code (from die() or main return)
-			# This preserves exit codes from die() calls or main function returns
 			if [[ ${signal_exit_code:-0} -ne 0 ]]; then
 				exit "$signal_exit_code"
 			else
@@ -384,57 +405,92 @@ acquire_lockfile_flock() {
 		trap 'signal_exit_code=143; cleanup_and_exit' TERM
 		trap 'cleanup_and_exit' EXIT
 
-		# Try to acquire lock first (prevents race condition)
-		# -n: non-blocking (fail immediately if lock can't be acquired)
-		if ! flock -n 9; then
-			# Lock acquisition failed - check if it's stale
-			if remove_stale_lockfile_if_needed; then
-				# Lockfile was stale and removed, try again with non-blocking lock
-				if ! flock -n 9; then
-					# Still can't acquire lock after removing stale lockfile
-					# This could happen if another process acquired it between
-					# removal and retry, or if the lockfile wasn't actually stale
-					log_and_exit_lockfile_conflict
+		# Open lockfile for writing (creates/truncates the file)
+		# This is explicit so we control when it happens and can track it
+		exec 9>"$LOCKFILE"
+		file_opened=1
+
+		# Try non-blocking flock
+		if flock -n 9; then
+			# Lock acquired - write our PID
+			echo "$(get_unix_timestamp):$$" >"$LOCKFILE"
+			lock_acquired=1
+
+			# Run main function and capture its exit code
+			"$main_func" "$@"
+			local main_exit_code=$?
+
+			if [[ $signal_exit_code -eq 0 ]]; then
+				signal_exit_code=$main_exit_code
+			fi
+		else
+			# flock failed - another process might have the lock
+			# Check if the lockfile WAS stale (before we truncated it)
+			# We saved this info before entering the subshell
+			if [[ "$was_stale" -eq 1 ]]; then
+				# Lockfile was stale - close fd, remove file, reopen, retry
+				# This is the proper sequence: we must close and reopen to get a new inode
+				exec 9>&- 2>/dev/null || true
+				rm -f "$LOCKFILE"
+				log_message "WARNING" "SYSTEM" "Removed stale lockfile (timeout exceeded, previous PID was: ${existing_pid:-unknown})"
+
+				# Reopen fd to new file
+				exec 9>"$LOCKFILE"
+
+				if flock -n 9; then
+					# Got the lock on second try
+					echo "$(get_unix_timestamp):$$" >"$LOCKFILE"
+					lock_acquired=1
+
+					"$main_func" "$@"
+					local main_exit_code=$?
+
+					if [[ $signal_exit_code -eq 0 ]]; then
+						signal_exit_code=$main_exit_code
+					fi
+				else
+					# Still can't get lock - another process beat us to it
+					log_and_exit_lockfile_conflict "${existing_pid:-}"
 				fi
 			else
-				# Lockfile is valid, another instance is actually running
-				# Extract PID for better logging
-				local lock_pid
-				lock_pid=$(extract_lockfile_pid "$LOCKFILE" 2>/dev/null || echo "")
-				log_and_exit_lockfile_conflict "$lock_pid"
+				# Lockfile was not stale - another instance is actually running
+				log_and_exit_lockfile_conflict "${existing_pid:-}"
 			fi
 		fi
 
-		# Lock acquired successfully, write timestamp:pid to lockfile for timeout checking
-		echo "$(get_unix_timestamp):$$" >"$LOCKFILE"
-		lock_acquired=1
-
-		# Run main function and capture its exit code
-		"$main_func" "$@"
-		local main_exit_code=$?
-
-		# If no signal was received, use main function's exit code
-		# (signal_exit_code is only set by signal handlers)
-		if [[ $signal_exit_code -eq 0 ]]; then
-			signal_exit_code=$main_exit_code
-		fi
-
-		# Explicitly clean up before exit (EXIT trap will also run but cleanup_done prevents double cleanup)
-		# Close file descriptor first (more critical than removing lockfile)
+		# Explicit cleanup (EXIT trap also runs but cleanup_done prevents double)
 		exec 9>&- 2>/dev/null || true
-		# Remove lockfile only if we actually acquired it
-		if [[ $lock_acquired -eq 1 ]]; then
+		if [[ $file_opened -eq 1 ]]; then
 			rm -f "$LOCKFILE" 2>/dev/null || true
 		fi
-		# Mark cleanup as done so EXIT trap doesn't try again
 		cleanup_done=1
-	) 9>"$LOCKFILE"
+	)
 }
 
 # Acquire lockfile using fallback method (atomic file creation)
 #
 # Attempts to acquire lockfile using atomic file creation (noclobber).
 # Less reliable than flock but works on systems without flock.
+#
+# **Race Condition Limitations:**
+# This fallback method has inherent TOCTOU (Time-Of-Check-Time-Of-Use) race conditions:
+# - Between checking if lockfile exists and reading its PID
+# - Between checking and attempting atomic creation
+# - During retry logic when another process may acquire the lock
+#
+# These races are mitigated by:
+# - Atomic file creation using `set -C` (noclobber mode)
+# - Retry logic (limited to FALLBACK_MAX_RETRIES attempts)
+# - PID validation before treating lockfile as valid
+#
+# However, in rare cases, concurrent execution may still occur if:
+# - Multiple processes attempt lock acquisition simultaneously
+# - Race windows align unfavorably
+# - PID reuse occurs between check and validation
+#
+# This is acceptable for a fallback method that is only used when flock is unavailable
+# (which should be rare on UDM OS 4.3+). The primary flock method provides proper
+# atomic locking when available.
 #
 # Arguments:
 #   $1: Function to execute after lock is acquired (typically main function)
@@ -494,7 +550,7 @@ acquire_lockfile_fallback() {
 				# PID is not running - stale lockfile, remove it and try again
 				rm -f "$LOCKFILE"
 				log_message "WARNING" "SYSTEM" "Removed stale lockfile (PID $lock_pid not running), retrying"
-				# Retry lockfile creation once
+				# Retry lockfile creation (limited to FALLBACK_MAX_RETRIES attempts)
 				if create_lockfile_atomically "$LOCKFILE"; then
 					lock_acquired=1
 				else
@@ -506,8 +562,8 @@ acquire_lockfile_fallback() {
 							log_and_exit_lockfile_conflict "$lock_pid"
 						fi
 					fi
-					# Final fallback - couldn't acquire lockfile
-					log_and_exit_lockfile_conflict "" "Could not acquire lockfile after retry, exiting"
+					# Final fallback - couldn't acquire lockfile after FALLBACK_MAX_RETRIES attempts
+					log_and_exit_lockfile_conflict "" "Could not acquire lockfile after ${FALLBACK_MAX_RETRIES} retry attempt(s), exiting"
 				fi
 			fi
 		else

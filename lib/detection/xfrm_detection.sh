@@ -29,12 +29,7 @@ fi
 source "${LIB_DIR}/common.sh"
 
 # shellcheck source=lib/logging.sh
-if ! source "${LIB_DIR}/logging.sh" 2>/dev/null; then
-	# shellcheck source=lib/fallbacks.sh
-	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_logging_fallbacks
-	fi
-fi
+source "${LIB_DIR}/logging.sh"
 
 # shellcheck source=lib/detection/network_validation.sh
 source "${LIB_DIR}/detection/network_validation.sh"
@@ -753,6 +748,10 @@ check_byte_counters() {
 		return 1
 	fi
 
+	# Format IP display once for reuse throughout function
+	local ip_display
+	ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
+
 	# Check for SA rekey if SPI is provided
 	if [[ -n "$current_spi" ]]; then
 		if detect_sa_rekey "$current_spi" "$peer_ip" "$location_name"; then
@@ -764,8 +763,6 @@ check_byte_counters() {
 			last_bytes=$(get_peer_state "$location_name" "$peer_ip" "last_bytes" "0")
 			if [[ "$current_bytes" -gt 0 ]]; then
 				# Bytes are non-zero after rekey - update baseline
-				local ip_display
-				ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
 				if set_peer_state "$location_name" "$peer_ip" "last_bytes" "$current_bytes"; then
 					log_message "INFO" "$location_name" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset) for $ip_display"
 					return 0
@@ -797,15 +794,11 @@ check_byte_counters() {
 					# Ping succeeds - VPN is healthy but idle (newly established or idle)
 					set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "$current_bytes"
 					set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
-					local ip_display
-					ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
 					log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=0 (first check, idle but healthy, ping check passed) for $ip_display"
 					return 0
 				else
 					# Ping fails - VPN is likely broken
 					local failure_reason="bytes=0 (first check, ping check failed)"
-					local ip_display
-					ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
 					if [[ -n "$diagnostic_var" ]]; then
 						printf -v "$diagnostic_var" "%s" "$failure_reason"
 					else
@@ -816,8 +809,6 @@ check_byte_counters() {
 			else
 				# Ping check disabled or internal_peer_ip not provided - fail-safe behavior
 				local failure_reason="bytes=0 (first check, may be idle, ping check disabled)"
-				local ip_display
-				ip_display=$(format_peer_ip_display "$peer_ip" "")
 				if [[ -n "$diagnostic_var" ]]; then
 					printf -v "$diagnostic_var" "%s" "$failure_reason"
 				else
@@ -828,8 +819,6 @@ check_byte_counters() {
 		else
 			# Bytes dropped to zero after previously having traffic - likely broken
 			local failure_reason="bytes dropped to 0 (was $last_bytes)"
-			local ip_display
-			ip_display=$(format_peer_ip_display "$peer_ip" "")
 			if [[ -n "$diagnostic_var" ]]; then
 				printf -v "$diagnostic_var" "%s" "$failure_reason"
 			else
@@ -851,8 +840,6 @@ check_byte_counters() {
 			if ! check_ping_connectivity "$internal_peer_ip" "$local_ip"; then
 				# Ping fails even though bytes are increasing - routing issue
 				local failure_reason="bytes increasing ($current_bytes, was $last_bytes) but ping check failed"
-				local ip_display
-				ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
 				if [[ -n "$diagnostic_var" ]]; then
 					printf -v "$diagnostic_var" "%s" "$failure_reason"
 				else
@@ -862,8 +849,6 @@ check_byte_counters() {
 			fi
 		fi
 		# Bytes are increasing and ping check passed (or disabled) - definitely healthy
-		local ip_display
-		ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
 		if set_peer_state "$location_name" "$peer_ip" "last_bytes" "$current_bytes"; then
 			# Clear idle state if set (traffic is flowing again)
 			delete_peer_state "$location_name" "$peer_ip" "idle_detected" || true
@@ -887,8 +872,6 @@ check_byte_counters() {
 				# Ping succeeds - tunnel is idle but healthy
 				set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "$current_bytes"
 				set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
-				local ip_display
-				ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
 				log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (static, idle but healthy, ping check passed) for $ip_display"
 				# Populate diagnostic variable if provided (for failure type detection)
 				# Even though this is a success case, diagnostic info is useful for monitoring
@@ -911,8 +894,6 @@ check_byte_counters() {
 			else
 				# Ping fails - bytes are static and ping check failed, VPN is likely broken
 				local failure_reason="bytes not increasing (current=$current_bytes, last=$last_bytes, ping check failed)"
-				local ip_display
-				ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
 				if [[ -n "$diagnostic_var" ]]; then
 					printf -v "$diagnostic_var" "%s" "$failure_reason"
 				else
@@ -925,8 +906,6 @@ check_byte_counters() {
 			# Mark as suspect since we can't verify health without ping check
 			# Return success (0) to avoid false positives on healthy idle VPNs, but populate diagnostic
 			# so that routing_issue can still be detected in determine_vpn_status
-			local ip_display
-			ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
 			local warning_msg="bytes not increasing (current=$current_bytes, last=$last_bytes, ping check disabled)"
 			# Always populate diagnostic variable if provided (for failure type detection)
 			if [[ -n "$diagnostic_var" ]]; then
@@ -947,8 +926,6 @@ check_byte_counters() {
 		# Note: This is logged separately from the final failure message below
 		# We still need to check ping to determine if it's actually broken
 		if [[ -z "$diagnostic_var" ]]; then
-			local ip_display
-			ip_display=$(format_peer_ip_display "$peer_ip" "${internal_peer_ip:-}")
 			handle_error "WARNING" "$location_name" "VPN suspect: SA exists but bytes decreased (current=$current_bytes, last=$last_bytes) - bytes not increasing for $ip_display"
 		fi
 	fi
@@ -962,8 +939,6 @@ check_byte_counters() {
 			# Ping succeeds - tunnel is idle but healthy
 			set_peer_state_non_critical "$location_name" "$peer_ip" "last_bytes" "$current_bytes"
 			set_peer_state_non_critical "$location_name" "$peer_ip" "idle_detected" "1"
-			local ip_display
-			ip_display=$(format_peer_ip_display "$peer_ip" "$internal_peer_ip")
 			log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (idle but healthy, ping check passed) for $ip_display"
 			# Check keepalive status and suggest action if needed
 			if [[ "${ENABLE_KEEPALIVE:-0}" -ne 1 ]]; then
@@ -992,8 +967,6 @@ check_byte_counters() {
 	if [[ -n "$diagnostic_var" ]]; then
 		printf -v "$diagnostic_var" "%s" "$failure_reason"
 	else
-		local ip_display
-		ip_display=$(format_peer_ip_display "$peer_ip" "${internal_peer_ip:-}")
 		handle_error "WARNING" "$location_name" "VPN suspect: SA exists but $failure_reason for $ip_display"
 	fi
 	return 1
@@ -1048,18 +1021,20 @@ check_xfrm_status() {
 		return 1
 	fi
 
-	local xfrm_output
+	# Use different variable name to avoid collision when caller passes "xfrm_output" as output variable name
+	# (printf -v would set local variable instead of caller's variable due to bash scoping)
+	local xfrm_state_data
 	# Use fixed-string matching to prevent regex pattern injection and avoid partial IP matches
 	# Match on "dst $peer_ip" pattern which appears at the start of each SA entry
 	# This ensures we capture the complete SA block including lifetime information
-	xfrm_output=$(get_xfrm_state_for_peer "$peer_ip")
+	xfrm_state_data=$(get_xfrm_state_for_peer "$peer_ip")
 
-	# Store xfrm_output in output variable if provided (for reuse by downstream functions)
+	# Store xfrm_state_data in output variable if provided (for reuse by downstream functions)
 	if [[ -n "$xfrm_output_var" ]]; then
-		printf -v "$xfrm_output_var" "%s" "$xfrm_output"
+		printf -v "$xfrm_output_var" "%s" "$xfrm_state_data"
 	fi
 
-	if [[ -z "$xfrm_output" ]]; then
+	if [[ -z "$xfrm_state_data" ]]; then
 		# Set SA existence to 0 if output variable provided
 		if [[ -n "$sa_exists_var" ]]; then
 			printf -v "$sa_exists_var" "%s" "0"
@@ -1082,11 +1057,11 @@ check_xfrm_status() {
 
 	# Extract SPI for rekey detection
 	local current_spi=""
-	current_spi=$(extract_spi "$xfrm_output" 2>/dev/null || echo "")
+	current_spi=$(extract_spi "$xfrm_state_data" 2>/dev/null || echo "")
 
 	# Check if we have byte counters
 	local current_bytes
-	if current_bytes=$(extract_byte_counter "$xfrm_output"); then
+	if current_bytes=$(extract_byte_counter "$xfrm_state_data"); then
 		# Successfully extracted byte counter - validate it using simple heuristics
 		# Pass location_name, SPI and internal IP to check_byte_counters for rekey detection and idle detection
 		# Also pass diagnostic variable to capture detailed failure reason

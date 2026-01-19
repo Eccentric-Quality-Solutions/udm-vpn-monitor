@@ -735,7 +735,7 @@ cat /data/vpn-monitor/reports/vpn-monitor-analysis.csv
 
 **Recovery Action**:
 ```
-[WARNING] Tier 2: Attempting surgical SA cleanup for 203.0.113.1
+[INFO] Tier 2: Attempting surgical SA cleanup for 203.0.113.1
 [INFO] Surgical cleanup completed for 203.0.113.1
 ```
 

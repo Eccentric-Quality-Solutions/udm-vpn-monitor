@@ -22,6 +22,14 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Note: Partial fix implemented - `check_vpn_status()` combines diagnostic messages when both xfrm and ipsec checks fail (see `lib/detection.sh:2410,2474`)
     - Still needed: General message combining across codebase for related events (recovery sequences, detection failures, verification steps)
 
+- Standardize output parameter passing patterns
+    - Currently uses mixed patterns: namerefs for arrays, eval for scalars
+    - Consider standardizing on namerefs for all output parameters (scalars and arrays)
+    - Would improve consistency and reduce reliance on eval
+    - Note: Refactoring of `delete_stale_sas()` uses namerefs for scalars, which is a step in this direction
+    - Benefit: More consistent codebase, easier to understand
+    - Effort: MEDIUM (requires updating multiple functions)
+
 - Automate mock cleanup verification in CI/CD
     - Run `scripts/audit_mock_cleanup.sh` as part of CI/CD pipeline to catch missing cleanup calls early
     - Could be integrated into pre-commit hooks or as a CI check
@@ -164,3 +172,21 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Low priority: Tests may still work if they don't call `check_ipsec_phase2` or if fallback path is used
     - Action: Review tests that use inline `ip xfrm state` mocks and update to handle `-s` flag or use helper functions
     - Note: Fixed in `test_detection_ping_optional.sh` 2026-01-28
+
+- Consider using `read_counter_file()` in `ping_detection.sh` for `ping_count` reading
+    - `ping_detection.sh` lines 123-128 use manual pattern for reading counter file
+    - Could use shared `read_counter_file()` helper for consistency
+    - Low priority: Only one instance, works correctly as-is
+    - Benefit: Consistency with other counter reading patterns
+    - Effort: LOW (replace 6 lines with 1 line)
+    - Note: `read_counter_file()` added to `common.sh` 2025-01-27
+
+- Refactor error handling argument parsing to use explicit argument order
+    - Current pattern: `handle_error "ERROR" "SYSTEM" "message" 2` (last arg is optional exit code)
+    - Issue: Ambiguous when message ends with a number (e.g., "Retry count: 3" vs exit code "3")
+    - Proposed: `handle_error "ERROR" "SYSTEM" "message" 2` (explicit 4th argument for exit code)
+    - Benefit: Eliminates ambiguity, clearer API, easier to understand
+    - Cost: Breaking change - requires updating all call sites across codebase
+    - Priority: LOW - current pattern works, just has edge case limitations
+    - Note: Duplication issue resolved 2026-01-27, but ambiguous design remains
+    - See: `docs/reviews/logging_review.md` issue #2 for detailed analysis

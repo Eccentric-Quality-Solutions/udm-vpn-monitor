@@ -94,21 +94,23 @@ The `run` command:
 - Captures exit status to `$status`
 - Splits output into lines in `$lines` array
 
-**Important**: Because `run` executes in a subshell, global variables set with `declare -g` inside the function will not persist to the parent shell. If you need to check global variables set by a function, call the function directly (not with `run`) and use `set +e` / `set -e` to handle non-zero exit codes:
+**Important**: Because `run` executes in a subshell, global variables set with `declare -g` inside the function will not persist to the parent shell. If you need to check return values from a function that uses nameref arrays, call the function directly (not with `run`) and use `set +e` / `set -e` to handle non-zero exit codes:
 
 ```bash
-# ❌ Wrong: Global variables won't persist
-run select_recovery_strategy "${TEST_PEER_IP}" 2
+# ❌ Wrong: Nameref arrays won't persist in subshell
+run select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 assert_failure
-assert_equal "$RECOVERY_STRATEGY" "unavailable"  # This will be empty!
+assert_equal "${recovery_info[strategy]}" "unavailable"  # This will be empty!
 
-# ✅ Correct: Call directly to preserve global variables
+# ✅ Correct: Call directly to preserve nameref array values
+declare -A recovery_info
 set +e
-select_recovery_strategy "${TEST_PEER_IP}" 2
+select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 local exit_code=$?
 set -e
 assert_equal "$exit_code" 1
-assert_equal "$RECOVERY_STRATEGY" "unavailable"  # This will work
+assert_equal "${recovery_info[strategy]}" "unavailable"  # This will work
+assert_equal "${recovery_info[available]}" "0"
 ```
 
 ## BATS Helper Libraries
@@ -287,10 +289,13 @@ We use advanced bats-assert features for precise validation:
 }
 
 @test "recovery strategy selection" {
-    select_recovery_strategy "203.0.113.1" 2
+    declare -A recovery_info
+    select_recovery_strategy "203.0.113.1" 2 "recovery_info"
     # Use assert_equal for precise value comparisons
-    assert_equal "$RECOVERY_STRATEGY" "xfrm"
-    assert_equal "$RECOVERY_COMMAND" "attempt_xfrm_recovery"
+    assert_equal "${recovery_info[strategy]}" "xfrm"
+    assert_equal "${recovery_info[command]}" "attempt_xfrm_recovery"
+    assert_equal "${recovery_info[impact]}" "per-connection"
+    assert_equal "${recovery_info[available]}" "1"
     # Use assert_regex for pattern validation
     assert_regex "$failure_count" '^[1-9][0-9]*$'
 }
@@ -362,9 +367,10 @@ Our test suite extensively uses advanced bats-assert features (112 instances acr
 }
 
 @test "compares values precisely" {
-    select_recovery_strategy "192.168.1.1" 2
+    declare -A recovery_info
+    select_recovery_strategy "192.168.1.1" 2 "recovery_info"
     # Precise value comparison with better error messages
-    assert_equal "$RECOVERY_STRATEGY" "xfrm"
+    assert_equal "${recovery_info[strategy]}" "xfrm"
     assert_equal "$stored_spi" "0x12345678"
 }
 

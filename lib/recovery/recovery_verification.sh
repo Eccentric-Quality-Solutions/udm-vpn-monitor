@@ -9,12 +9,18 @@
 # Source recovery constants for magic numbers
 # shellcheck source=lib/recovery/constants.sh
 RECOVERY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if ! source "${RECOVERY_DIR}/constants.sh" 2>/dev/null; then
+source "${RECOVERY_DIR}/constants.sh" 2>/dev/null || true
+
+# Source general constants for IPSEC_STATUS_TIMEOUT (used across detection and recovery)
+# shellcheck source=lib/constants.sh
+if [[ -z "${LIB_DIR:-}" ]]; then
+	LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
+if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	[[ -z "${IPSEC_STATUS_TIMEOUT:-}" ]] && readonly IPSEC_STATUS_TIMEOUT=5
 fi
 
 # shellcheck source=lib/detection.sh
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${LIB_DIR}/detection.sh" 2>/dev/null || {
 	# Extract byte counter from xfrm output (fallback stub)
 	#
@@ -200,24 +206,22 @@ verify_byte_counters_resume() {
 		return 1
 	fi
 
+	# Format IP display once for reuse throughout function
+	local ip_display
+	ip_display=$(format_peer_ip_display "$peer_ip" "")
+
 	# Extract byte counter
 	local current_bytes
 	if current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null); then
 		if [[ "$current_bytes" -gt 0 ]]; then
-			local ip_display
-			ip_display=$(format_peer_ip_display "$peer_ip" "")
 			log_message "INFO" "$location_name" "Recovery verification: Byte counters resumed for $ip_display (bytes=$current_bytes)"
 			return 0
 		else
-			local ip_display
-			ip_display=$(format_peer_ip_display "$peer_ip" "")
 			handle_error "WARNING" "$location_name" "Recovery verification: Byte counters are zero for $ip_display (tunnel may not be passing traffic)"
 			return 1
 		fi
 	else
 		# Byte counters not available, but SA exists - log and return success
-		local ip_display
-		ip_display=$(format_peer_ip_display "$peer_ip" "")
 		log_message "INFO" "$location_name" "Recovery verification: Byte counters not available for $ip_display (SA exists, verification limited)"
 		return 0
 	fi
@@ -269,6 +273,10 @@ verify_byte_counters_increment() {
 		return 1
 	fi
 
+	# Format IP display once for reuse throughout function
+	local ip_display
+	ip_display=$(format_peer_ip_display "$peer_ip" "")
+
 	# Extract byte counter
 	local current_bytes
 	if current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null); then
@@ -278,16 +286,12 @@ verify_byte_counters_increment() {
 		fi
 		# Validate current_bytes is numeric
 		if [[ ! "$current_bytes" =~ ^[0-9]+$ ]]; then
-			local ip_display
-			ip_display=$(format_peer_ip_display "$peer_ip" "")
 			handle_error "WARNING" "$location_name" "Recovery verification: Invalid byte counter value for $ip_display (current=$current_bytes)"
 			return 1
 		fi
 		# Check if counters have increased from initial value
 		if [[ "$current_bytes" -gt "$initial_bytes" ]]; then
 			local increment=$((current_bytes - initial_bytes))
-			local ip_display
-			ip_display=$(format_peer_ip_display "$peer_ip" "")
 			log_message "INFO" "$location_name" "Recovery verification: Byte counters incrementing for $ip_display (initial=$initial_bytes, current=$current_bytes, increment=$increment)"
 			return 0
 		else
@@ -295,21 +299,15 @@ verify_byte_counters_increment() {
 			# This allows the verification loop to continue waiting
 			if [[ "$current_bytes" -eq 0 ]] && [[ "$initial_bytes" -eq 0 ]]; then
 				# Both are zero - counters reset but haven't started incrementing yet
-				local ip_display
-				ip_display=$(format_peer_ip_display "$peer_ip" "")
 				handle_error "WARNING" "$location_name" "Recovery verification: Byte counters are zero for $ip_display (waiting for traffic to resume)"
 			else
 				# Counters haven't increased (may have decreased or stayed same)
-				local ip_display
-				ip_display=$(format_peer_ip_display "$peer_ip" "")
 				handle_error "WARNING" "$location_name" "Recovery verification: Byte counters not incrementing for $ip_display (initial=$initial_bytes, current=$current_bytes)"
 			fi
 			return 1
 		fi
 	else
 		# Byte counters not available, but SA exists - log and return success
-		local ip_display
-		ip_display=$(format_peer_ip_display "$peer_ip" "")
 		log_message "INFO" "$location_name" "Recovery verification: Byte counters not available for $ip_display (SA exists, verification limited)"
 		return 0
 	fi
@@ -348,9 +346,13 @@ verify_ipsec_connections_active() {
 	local peer_ips="${1:-}"
 
 	# If no peer IPs provided, try to parse location config
+	# Use global LOCATIONS array if available, otherwise parse config
 	if [[ -z "$peer_ips" ]] && command -v parse_location_config >/dev/null 2>&1; then
-		declare -A LOCATIONS
-		if parse_location_config; then
+		# Ensure location config is parsed (may not be if called directly)
+		if ! declare -p LOCATIONS &>/dev/null 2>&1; then
+			parse_location_config 2>/dev/null || true
+		fi
+		if [[ ${#LOCATIONS[@]} -gt 0 ]]; then
 			local external_ips=()
 			# Use iter_location_name to avoid overwriting location_name from parent scope
 			local iter_location_name

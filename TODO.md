@@ -19,6 +19,36 @@ This file tracks planned improvements and tasks for the UDM VPN Monitor project.
 
 ## High Priority
 
+### Documentation Updates - Fallback System Removal
+**Source:** Code Review (2026-01-18)
+**Status:** Pending
+**Action:** Update documentation to reflect removal of fallback system
+**Files:**
+- `docs/adr/0030-centralized-fallback-functions.md` - Mark as deprecated/superseded
+- `docs/CODE_PATTERNS.md` - Remove "Pattern: Centralized Fallback Functions" section (lines 2190-2372)
+- `docs/ARCHITECTURE.md` - Remove `lib/fallbacks.sh` from module list (lines 982-999)
+- `docs/code-diagrams/fallbacks-flow.md` - Deprecate or remove
+**Priority:** High - Documentation should match codebase
+
+## High Priority
+
+### xfrm Recovery Refactoring - Test Fixes Needed
+**Source:** Code Review (2026-01-18)
+**Status:** In Progress
+**Action:** Fix test mocks and verify refactored `delete_stale_sas()` function works correctly
+**Issue:** After refactoring `delete_stale_sas()` into smaller functions, several xfrm recovery tests are failing. The refactoring is structurally correct, but test mocks may need updates to handle the new function call patterns.
+**Tests Affected:**
+- xfrm recovery - SA re-establishment verification succeeds
+- xfrm recovery - Byte counter verification after re-establishment
+- xfrm recovery - Multiple SAs deleted and re-established
+- xfrm recovery - Policy deletion with DIR parameter
+- And several others
+**Next Steps:**
+1. Verify mock_ip_xfrm_state_transition handles "ip xfrm state delete" correctly
+2. Check if nameref variable passing is working correctly in test environment
+3. Add debug logging to identify where deletion is failing
+4. Verify all tests pass after fixes
+
 ### System-Wide Failure Detection - Test Coverage
 **Source:** System-Wide Failure Detection Implementation (2026-01-12)
 **Status:** Pending
@@ -98,3 +128,78 @@ This file tracks planned improvements and tasks for the UDM VPN Monitor project.
 ---
 
 **Note:** For additional future considerations that are less immediate, see [FUTURE.md](FUTURE.md).
+
+#### 3. **Complex Quote Parsing Logic Could Be Simplified**
+
+**Location:** Lines 186-320 (`parse_quoted_value()`)
+
+**Problem:**
+The quote parsing function is 135 lines long with complex character-by-character parsing. While it works correctly, it's hard to maintain and test.
+
+**Current Approach:**
+- Character-by-character parsing with state tracking
+- Separate logic for single quotes vs double quotes
+- Complex escape handling
+
+**Issues:**
+1. Long function (135 lines) is hard to understand and maintain
+2. Character-by-character parsing is error-prone
+3. Duplicate logic for single vs double quotes
+4. Hard to test all edge cases
+
+**Recommendation:**
+Consider using bash's built-in quote removal capabilities where possible, or at least extract helper functions:
+
+```bash
+# Helper: Parse double-quoted string
+parse_double_quoted() {
+	local input="$1"
+	local result=""
+	local i=0
+	local len=${#input}
+	local escaped=false
+	
+	while [[ $i -lt $len ]]; do
+		local char="${input:$i:1}"
+		if [[ "$escaped" == true ]]; then
+			# Handle escaped characters
+			case "$char" in
+				\\|\"|\') result="${result}${char}" ;;
+				*) result="${result}\\${char}" ;;
+			esac
+			escaped=false
+		elif [[ "$char" == "\\" ]]; then
+			escaped=true
+		elif [[ "$char" == "\"" ]]; then
+			# Closing quote
+			break
+		else
+			result="${result}${char}"
+		fi
+		i=$((i + 1))
+	done
+	
+	echo "$result"
+	return 0
+}
+
+# Helper: Parse single-quoted string (no escaping)
+parse_single_quoted() {
+	local input="$1"
+	local result=""
+	local i=0
+	local len=${#input}
+	
+	while [[ $i -lt $len ]]; do
+		local char="${input:$i:1}"
+		if [[ "$char" == "'" ]]; then
+			break
+		fi
+		result="${result}${char}"
+		i=$((i + 1))
+	done
+	
+	echo "$result"
+	return 0
+}
+```

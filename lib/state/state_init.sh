@@ -14,7 +14,8 @@
 #
 # State files:
 #   - RESTART_COUNT_FILE: Tracks restart timestamps for rate limiting (created here)
-#   - NETWORK_PARTITION_STATE_FILE: Tracks network partition status (created here)
+#   - Network partition state file: Tracks network partition status (path from get_network_partition_state_file())
+#   - System-wide failure state file: Tracks system-wide failure status (path from get_system_wide_failure_state_file(), created if function available)
 #   - Per-peer failure counters: Created on-demand as failure_counter_<peer_ip>
 #   - Per-peer byte counters: Created on-demand as last_bytes_<peer_ip>
 #
@@ -26,7 +27,8 @@
 #
 # Side effects:
 #   - Creates RESTART_COUNT_FILE with default value "0" if it doesn't exist
-#   - Creates NETWORK_PARTITION_STATE_FILE with default value "0" if it doesn't exist
+#   - Creates network partition state file with default value "0" if it doesn't exist (path from get_network_partition_state_file())
+#   - Creates system-wide failure state file with default value "0" if it doesn't exist and function is available (path from get_system_wide_failure_state_file())
 #   - Logs warning if file creation fails (but doesn't exit)
 #
 # Examples:
@@ -34,7 +36,9 @@
 #   # Ensures restart count file exists before use
 #
 # Note:
-#   Requires RESTART_COUNT_FILE, NETWORK_PARTITION_STATE_FILE, ensure_file_exists, and log_message to be set
+#   Requires RESTART_COUNT_FILE, STATE_DIR, LOGS_DIR, ensure_file_exists, try_ensure_directory_exists,
+#   get_network_partition_state_file, handle_error, and log_message to be set
+#   get_system_wide_failure_state_file is optional (checked with command -v)
 #   Per-peer files are created on-demand by increment_failure and check_byte_counters
 init_state() {
 	# Ensure directories exist before creating files

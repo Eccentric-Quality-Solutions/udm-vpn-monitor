@@ -63,10 +63,13 @@ sanitize_peer_ip() {
 #   # Returns: ${STATE_DIR}/connection_name_203_0_113_1
 #
 # Note:
-#   Requires LOGS_DIR, STATE_DIR, sanitize_location_name (from common.sh), and sanitize_peer_ip to be set
-#   Used internally by get_peer_state and set_peer_state
-#   Location name is sanitized before use in filename
-#   For connection_name key, location name is ignored (per-peer only, no location)
+#   Requires STATE_DIR, sanitize_location_name (from common.sh), and sanitize_peer_ip to be set
+#   STATE_DIR must be set before this function is called (validated during module load and state initialization).
+#   If STATE_DIR is unset, this function will produce invalid absolute paths starting with "/".
+#   The module logs a warning if STATE_DIR is unset when state_paths.sh is sourced.
+#   Used internally by get_peer_state and set_peer_state.
+#   Location name is sanitized before use in filename.
+#   For connection_name key, location name is ignored (per-peer only, no location).
 #
 #   Files intentionally outside this abstraction layer (global state, not per-peer/location):
 #   - RESTART_COUNT_FILE: Global restart tracking
@@ -142,8 +145,25 @@ get_peer_state_file_path() {
 #   # Returns: ${STATE_DIR}/network_partition_state (or NETWORK_PARTITION_STATE_FILE if set)
 #
 # Note:
-#   Requires STATE_DIR to be set
-#   Used internally by get_network_partition_state and set_network_partition_state
+#   Requires STATE_DIR to be set (validated during module load and state initialization).
+#   If STATE_DIR is unset and NETWORK_PARTITION_STATE_FILE is also unset, this function will produce
+#   an invalid absolute path starting with "/".
+#   The module logs a warning if STATE_DIR is unset when state_paths.sh is sourced.
+#   Used internally by get_network_partition_state and set_network_partition_state.
 get_network_partition_state_file() {
 	echo "${NETWORK_PARTITION_STATE_FILE:-${STATE_DIR}/network_partition_state}"
 }
+
+# Module-level validation: Check that STATE_DIR is set
+# This provides fail-fast detection if STATE_DIR is unset when the module loads.
+# In normal operation, STATE_DIR is set during config loading before state modules are sourced.
+# This check logs a warning but does not exit, allowing the caller to decide how to handle it.
+if [[ -z "${STATE_DIR:-}" ]]; then
+	# Use handle_error if available (from logging.sh), otherwise fall back to echo
+	# This allows the module to be sourced even if logging isn't fully initialized
+	if type handle_error >/dev/null 2>&1; then
+		handle_error "WARNING" "SYSTEM" "STATE_DIR is not set when loading state_paths.sh - state path functions may produce invalid paths" 0
+	else
+		echo "Warning: STATE_DIR is not set when loading state_paths.sh" >&2
+	fi
+fi

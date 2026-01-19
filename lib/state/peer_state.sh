@@ -57,7 +57,7 @@ get_peer_state() {
 		# file_exists_and_readable checks alone. If test suite timing issues persist, investigate
 		# test execution environment separately rather than adding timeouts everywhere.
 		# Use helper function to standardize timeout command availability check
-		value=$(run_with_timeout 1 cat "$state_file" 2>/dev/null || echo "$default_value")
+		value=$(run_with_timeout "$STATE_FILE_READ_TIMEOUT" cat "$state_file" 2>/dev/null || echo "$default_value")
 		# Validate numeric keys
 		case "$key" in
 		failure_count | last_bytes | last_status_log)

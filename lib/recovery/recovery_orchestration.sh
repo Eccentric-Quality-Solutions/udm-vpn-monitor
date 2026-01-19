@@ -108,25 +108,102 @@ _is_strategy_applicable() {
 	esac
 }
 
-# Select recovery strategy based on peer IP and tier
+# Validate recovery tier parameter
 #
-# Centralizes recovery strategy selection logic, determining the best recovery
-# approach based on configuration, peer IP availability, and tier level.
-# Returns recovery plan information via global variables for easy access.
+# Validates that the tier parameter is a valid recovery tier value.
+# Tier must be 2 (surgical cleanup) or 3 (full restart).
+#
+# Arguments:
+#   $1: Tier level to validate
+#
+# Returns:
+#   0: Tier is valid
+#   1: Tier is invalid
+#
+# Note:
+#   This is a helper function for select_recovery_strategy()
+_validate_recovery_tier() {
+	local tier="${1:-}"
+	[[ "$tier" == "2" ]] || [[ "$tier" == "3" ]]
+}
+
+# Find applicable recovery strategy
+#
+# Searches through recovery strategies in priority order and returns the first
+# applicable strategy entry based on peer IP, tier, and command availability.
 #
 # Arguments:
 #   $1: Peer IP address (optional, required for per-connection recovery)
 #   $2: Tier level (2 for surgical cleanup, 3 for full restart)
 #
 # Returns:
+#   0: Applicable strategy found (strategy entry returned via stdout)
+#   1: No applicable strategy found (empty string returned via stdout)
+#
+# Output (via stdout):
+#   Strategy entry in format "name:command:impact" if found, empty string if not found
+#
+# Note:
+#   This is a helper function for select_recovery_strategy()
+#   Assumes _check_recovery_command_availability() has been called first
+#   Strategies are evaluated in priority order: xfrm → ipsec_reload → ipsec_restart
+_find_applicable_strategy() {
+	local peer_ip="${1:-}"
+	local tier="${2:-2}"
+
+	# Define strategy lookup table (in priority order)
+	# Format: "strategy_name:command:impact"
+	# Priority: xfrm (highest) → ipsec_reload → ipsec_restart (lowest)
+	# First applicable strategy in this order will be selected
+	local -a strategies=(
+		"xfrm:attempt_xfrm_recovery:per-connection"
+		"ipsec_reload:ipsec reload:all-tunnels"
+		"ipsec_restart:ipsec restart:all-tunnels"
+	)
+
+	# Iterate through strategies in priority order
+	# Parse each strategy entry and check applicability
+	# Return immediately when first applicable strategy is found
+	local strategy_entry
+	for strategy_entry in "${strategies[@]}"; do
+		# Parse strategy entry: split by colon to extract name, command, and impact
+		IFS=':' read -r strategy_name strategy_command strategy_impact <<<"$strategy_entry"
+
+		# Check if this strategy is applicable given current conditions
+		# _is_strategy_applicable() checks: peer IP, tier, config, and command availability
+		if _is_strategy_applicable "$strategy_name" "$peer_ip" "$tier"; then
+			# Strategy is applicable - return full strategy entry
+			echo "$strategy_entry"
+			return 0
+		fi
+		# Strategy not applicable - continue to next strategy in priority order
+	done
+
+	# No strategy available
+	echo ""
+	return 1
+}
+
+# Select recovery strategy based on peer IP and tier
+#
+# Centralizes recovery strategy selection logic, determining the best recovery
+# approach based on configuration, peer IP availability, and tier level.
+# Returns recovery plan information via nameref associative array.
+#
+# Arguments:
+#   $1: Peer IP address (optional, required for per-connection recovery)
+#   $2: Tier level (2 for surgical cleanup, 3 for full restart)
+#   $3: Nameref to associative array to store strategy information (required)
+#
+# Returns:
 #   0: Strategy selected successfully
 #   1: Invalid tier or no strategy available
 #
-# Output (via global variables):
-#   RECOVERY_STRATEGY: Strategy name ("xfrm", "ipsec_reload", "ipsec_restart", or "unavailable")
-#   RECOVERY_COMMAND: Command to execute (function name or command string)
-#   RECOVERY_IMPACT: Impact description ("per-connection" or "all-tunnels")
-#   RECOVERY_AVAILABLE: Whether recovery is available (1) or not (0)
+# Output (via nameref associative array):
+#   result["strategy"]: Strategy name ("xfrm", "ipsec_reload", "ipsec_restart", or "unavailable")
+#   result["command"]: Command to execute (function name or command string)
+#   result["impact"]: Impact description ("per-connection" or "all-tunnels")
+#   result["available"]: Whether recovery is available (1) or not (0)
 #
 # Strategy Selection Algorithm:
 #   Implements a priority-based selection system using a lookup table approach.
@@ -147,8 +224,8 @@ _is_strategy_applicable() {
 #   2. Check command availability (ip, ipsec) via _check_recovery_command_availability()
 #   3. Iterate through strategies in priority order
 #   4. For each strategy, check applicability via _is_strategy_applicable()
-#   5. Select first applicable strategy and set global variables
-#   6. If no strategy applicable, set RECOVERY_STRATEGY="unavailable" and return error
+#   5. Select first applicable strategy and set nameref array values
+#   6. If no strategy applicable, set result["strategy"]="unavailable" and return error
 #
 # Edge Cases and Assumptions:
 #   - Empty peer IP: xfrm strategy not applicable, falls back to ipsec_reload/restart
@@ -192,52 +269,67 @@ _is_strategy_applicable() {
 #   - Uses _check_recovery_command_availability() to cache command availability
 #   - Uses _is_strategy_applicable() to evaluate strategy conditions
 #   - Strategy lookup table format: "strategy_name:command:impact"
-#   - Global variables are declared with declare -g for proper scoping
+#   - Uses nameref associative array for return values (improves testability)
 #   - Returns immediately after finding first applicable strategy
 #
 # Examples:
 #   # Tier 2 recovery with peer IP (prefers xfrm)
-#   select_recovery_strategy "203.0.113.1" 2
-#   # Result: RECOVERY_STRATEGY="xfrm", RECOVERY_COMMAND="attempt_xfrm_recovery"
-#   #         RECOVERY_IMPACT="per-connection", RECOVERY_AVAILABLE=1
+#   declare -A recovery_info
+#   select_recovery_strategy "203.0.113.1" 2 "recovery_info"
+#   # Result: recovery_info["strategy"]="xfrm", recovery_info["command"]="attempt_xfrm_recovery"
+#   #         recovery_info["impact"]="per-connection", recovery_info["available"]=1
 #
 #   # Tier 2 recovery without peer IP (uses ipsec_reload)
-#   select_recovery_strategy "" 2
-#   # Result: RECOVERY_STRATEGY="ipsec_reload", RECOVERY_COMMAND="ipsec reload"
-#   #         RECOVERY_IMPACT="all-tunnels", RECOVERY_AVAILABLE=1
+#   declare -A recovery_info
+#   select_recovery_strategy "" 2 "recovery_info"
+#   # Result: recovery_info["strategy"]="ipsec_reload", recovery_info["command"]="ipsec reload"
+#   #         recovery_info["impact"]="all-tunnels", recovery_info["available"]=1
 #
 #   # Tier 3 recovery (uses ipsec_restart)
-#   select_recovery_strategy "" 3
-#   # Result: RECOVERY_STRATEGY="ipsec_restart", RECOVERY_COMMAND="ipsec restart"
-#   #         RECOVERY_IMPACT="all-tunnels", RECOVERY_AVAILABLE=1
+#   declare -A recovery_info
+#   select_recovery_strategy "" 3 "recovery_info"
+#   # Result: recovery_info["strategy"]="ipsec_restart", recovery_info["command"]="ipsec restart"
+#   #         recovery_info["impact"]="all-tunnels", recovery_info["available"]=1
 #
 #   # Invalid tier (returns error)
-#   select_recovery_strategy "203.0.113.1" 1
-#   # Result: Error logged, returns 1, RECOVERY_AVAILABLE=0
+#   declare -A recovery_info
+#   select_recovery_strategy "203.0.113.1" 1 "recovery_info"
+#   # Result: Error logged, returns 1, recovery_info["available"]=0
 #
 #   # No strategies available (missing commands)
-#   select_recovery_strategy "203.0.113.1" 2
-#   # Result: RECOVERY_STRATEGY="unavailable", returns 1, RECOVERY_AVAILABLE=0
+#   declare -A recovery_info
+#   select_recovery_strategy "203.0.113.1" 2 "recovery_info"
+#   # Result: recovery_info["strategy"]="unavailable", returns 1, recovery_info["available"]=0
 #
 # Note:
 #   Requires ENABLE_XFRM_RECOVERY configuration variable
 #   Checks for command availability (ip, ipsec) before selecting strategy
 #   Uses helper function _is_strategy_applicable() to evaluate strategy conditions
 #   Command availability is checked once per function call (cached in global variables)
+#   Uses nameref associative array for return values (improves testability, avoids global state)
 select_recovery_strategy() {
 	local peer_ip="${1:-}"
 	local tier="${2:-2}"
+	local result_ref_name="${3:-}"
 
-	# Initialize return variables (declare as global)
-	declare -g RECOVERY_STRATEGY=""
-	declare -g RECOVERY_COMMAND=""
-	declare -g RECOVERY_IMPACT=""
-	declare -g RECOVERY_AVAILABLE=0
+	# Validate nameref parameter (must be done before declaring nameref)
+	if [[ -z "$result_ref_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "select_recovery_strategy: nameref parameter is required" 0
+		return 1
+	fi
+
+	local -n result="$result_ref_name"
+
+	# Initialize return variables in nameref array
+	result["strategy"]=""
+	result["command"]=""
+	result["impact"]=""
+	result["available"]=0
 
 	# Step 1: Validate tier parameter
 	# Tier must be 2 (surgical cleanup) or 3 (full restart)
 	# Invalid tier is a critical error - fail immediately without checking strategies
-	if [[ "$tier" != "2" ]] && [[ "$tier" != "3" ]]; then
+	if ! _validate_recovery_tier "$tier"; then
 		handle_error "ERROR" "SYSTEM" "Invalid tier: $tier (must be 2 or 3)" 0
 		return 1
 	fi
@@ -247,49 +339,113 @@ select_recovery_strategy() {
 	# These are cached for use by _is_strategy_applicable() to avoid repeated checks
 	_check_recovery_command_availability
 
-	# Step 3: Define strategy lookup table (in priority order)
-	# Format: "strategy_name:command:impact"
-	# Priority: xfrm (highest) → ipsec_reload → ipsec_restart (lowest)
-	# First applicable strategy in this order will be selected
-	local -a strategies=(
-		"xfrm:attempt_xfrm_recovery:per-connection"
-		"ipsec_reload:ipsec reload:all-tunnels"
-		"ipsec_restart:ipsec restart:all-tunnels"
-	)
-
-	# Step 4: Iterate through strategies in priority order
-	# Parse each strategy entry and check applicability
-	# Return immediately when first applicable strategy is found
+	# Step 3: Find applicable strategy
+	# This searches through strategies in priority order and returns the first applicable one
 	local strategy_entry
-	for strategy_entry in "${strategies[@]}"; do
-		# Parse strategy entry: split by colon to extract name, command, and impact
+	strategy_entry=$(_find_applicable_strategy "$peer_ip" "$tier")
+
+	# Step 4: Set nameref array values based on selected strategy
+	if [[ -n "$strategy_entry" ]]; then
+		# Strategy found - parse strategy entry to extract name, command, and impact
 		IFS=':' read -r strategy_name strategy_command strategy_impact <<<"$strategy_entry"
 
-		# Check if this strategy is applicable given current conditions
-		# _is_strategy_applicable() checks: peer IP, tier, config, and command availability
-		if _is_strategy_applicable "$strategy_name" "$peer_ip" "$tier"; then
-			# Strategy is applicable - set global variables and return success
-			# These variables are used by calling code to execute the selected strategy
-			declare -g RECOVERY_STRATEGY="$strategy_name"
-			declare -g RECOVERY_COMMAND="$strategy_command"
-			declare -g RECOVERY_IMPACT="$strategy_impact"
-			declare -g RECOVERY_AVAILABLE=1
-			return 0
-		fi
-		# Strategy not applicable - continue to next strategy in priority order
-	done
+		# Set nameref array values and return success
+		# These values are used by calling code to execute the selected strategy
+		result["strategy"]="$strategy_name"
+		result["command"]="$strategy_command"
+		result["impact"]="$strategy_impact"
+		result["available"]=1
+		return 0
+	fi
 
 	# Step 5: No strategy available (fallback case)
 	# This occurs when:
 	#   - No commands available (ip and ipsec both missing)
 	#   - xfrm disabled and no peer IP provided
 	#   - Other conditions prevent all strategies
-	# Set variables to indicate unavailability and return error
-	declare -g RECOVERY_STRATEGY="unavailable"
-	declare -g RECOVERY_COMMAND=""
-	declare -g RECOVERY_IMPACT=""
-	declare -g RECOVERY_AVAILABLE=0
+	# Set array values to indicate unavailability and return error
+	result["strategy"]="unavailable"
+	result["command"]=""
+	result["impact"]=""
+	result["available"]=0
 	return 1
+}
+
+# Execute xfrm recovery with fallback support
+#
+# Attempts xfrm-based per-connection recovery and handles fallback to
+# all-tunnels recovery if xfrm recovery fails. This centralizes the
+# duplicate fallback logic used in both surgical_cleanup() and full_restart().
+#
+# Arguments:
+#   $1: Peer IP address
+#   $2: Location name
+#   $3: Tier level (2 for surgical cleanup, 3 for full restart)
+#   $4: Nameref to associative array containing recovery strategy information (will be updated on fallback)
+#   $5: Log prefix (optional, e.g., "Tier 3: " for full_restart)
+#   $6: Fallback action description (e.g., "ipsec reload" or "full restart")
+#
+# Returns:
+#   0: xfrm recovery succeeded
+#   1: xfrm recovery failed and fallback strategy selected (caller should continue loop)
+#   2: xfrm recovery failed and no fallback strategy available (caller should return error)
+#
+# Output (via nameref array):
+#   result["strategy"]: Updated to fallback strategy if xfrm fails
+#   result["command"]: Updated to fallback command if xfrm fails
+#   result["impact"]: Updated to fallback impact if xfrm fails
+#
+# Note:
+#   This is a helper function for surgical_cleanup() and full_restart()
+#   Updates nameref array with fallback strategy information from select_recovery_strategy()
+_execute_xfrm_recovery_with_fallback() {
+	local peer_ip="$1"
+	local location_name="$2"
+	local tier="$3"
+	local result_ref_name="$4"
+	local -n result="$result_ref_name"
+	local log_prefix="${5:-}"
+	local fallback_action="${6:-ipsec recovery}"
+
+	local ip_display
+	ip_display=$(format_peer_ip_display "$peer_ip" "")
+	log_message "INFO" "$location_name" "${log_prefix}Attempting xfrm-based per-connection recovery for $ip_display"
+
+	# Store recovery method before attempting recovery
+	# For Tier 3, only store if peer_ip is provided (full_restart allows empty peer_ip)
+	if [[ "$tier" == "3" ]]; then
+		if [[ -n "$peer_ip" ]]; then
+			store_recovery_method "$location_name" "$peer_ip" "xfrm"
+		fi
+	else
+		# Tier 2 always stores recovery method
+		store_recovery_method "$location_name" "$peer_ip" "xfrm"
+	fi
+
+	# Attempt xfrm recovery
+	if attempt_xfrm_recovery "$peer_ip" "$location_name"; then
+		# xfrm recovery succeeded
+		if [[ "$tier" == "3" ]]; then
+			log_message "INFO" "$location_name" "${log_prefix}xfrm-based per-connection recovery successful for $ip_display"
+			# Record restart for rate limiting (even though it's per-connection)
+			record_restart
+		else
+			log_message "INFO" "$location_name" "xfrm-based recovery completed successfully for $ip_display"
+			log_message "INFO" "$location_name" "Surgical cleanup completed for $ip_display (via xfrm)"
+		fi
+		return 0
+	else
+		# xfrm recovery failed - fall back to all-tunnels recovery
+		handle_error "WARNING" "$location_name" "${log_prefix}xfrm-based recovery failed for $ip_display, falling back to $fallback_action"
+		# Re-select strategy for fallback (without peer IP to force all-tunnels recovery)
+		if ! select_recovery_strategy "" "$tier" "$result_ref_name"; then
+			# Fallback strategy not available
+			handle_error "ERROR" "$location_name" "${log_prefix}xfrm recovery failed and no fallback strategy available for $ip_display" 0
+			return 2
+		fi
+		# Return 1 to indicate fallback strategy selected (caller should continue loop)
+		return 1
+	fi
 }
 
 # Surgical SA cleanup (Tier 2 recovery)
@@ -335,13 +491,21 @@ select_recovery_strategy() {
 surgical_cleanup() {
 	local peer_ip="$1"
 	local location_name="$2"
+
+	# Validate required parameters
+	if [[ -z "$peer_ip" ]] || [[ -z "$location_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "surgical_cleanup: peer_ip and location_name are required" 0
+		return 1
+	fi
+
 	local peer_display
 	peer_display=$(format_peer_display "$peer_ip")
 	# Note: surgical_cleanup doesn't have access to internal_peer_ip, so we only show external IP
 	log_message "INFO" "$location_name" "Attempting surgical SA cleanup for ($peer_display)"
 
 	# Select recovery strategy
-	if ! select_recovery_strategy "$peer_ip" 2; then
+	declare -A recovery_info
+	if ! select_recovery_strategy "$peer_ip" 2 "recovery_info"; then
 		# No recovery strategy available
 		warn_if_missing "ip"
 		warn_if_missing "ipsec"
@@ -352,30 +516,29 @@ surgical_cleanup() {
 	# Execute selected strategy with fallback support
 	local strategy_executed=0
 	local recovery_succeeded=0
-	while [[ $strategy_executed -eq 0 ]]; do
-		case "$RECOVERY_STRATEGY" in
+	local max_attempts=3
+	local attempt=0
+	while [[ $strategy_executed -eq 0 ]] && [[ $attempt -lt $max_attempts ]]; do
+		((++attempt))
+		case "${recovery_info[strategy]}" in
 		"xfrm")
-			local ip_display
-			ip_display=$(format_peer_ip_display "$peer_ip" "")
-			log_message "INFO" "$location_name" "Attempting xfrm-based per-connection recovery for $ip_display"
-			# Store recovery method before attempting recovery
-			store_recovery_method "$location_name" "$peer_ip" "xfrm"
-			if attempt_xfrm_recovery "$peer_ip" "$location_name"; then
-				log_message "INFO" "$location_name" "xfrm-based recovery completed successfully for $ip_display"
-				log_message "INFO" "$location_name" "Surgical cleanup completed for $ip_display (via xfrm)"
+			# Call helper and capture return code (not stdout - function uses return, not echo)
+			_execute_xfrm_recovery_with_fallback "$peer_ip" "$location_name" 2 "recovery_info" "" "ipsec reload (affects all tunnels)"
+			local xfrm_result=$?
+			case $xfrm_result in
+			0)
+				# xfrm recovery succeeded
 				return 0
-			else
-				# xfrm recovery failed - fall back to ipsec reload
-				handle_error "WARNING" "$location_name" "xfrm-based recovery failed for $ip_display, falling back to ipsec reload (affects all tunnels)"
-				# Re-select strategy for fallback (without peer IP to force ipsec reload)
-				if ! select_recovery_strategy "" 2; then
-					# Fallback strategy not available
-					handle_error "ERROR" "$location_name" "xfrm recovery failed and no fallback strategy available for $ip_display" 0
-					return 1
-				fi
-				# Continue loop to execute fallback strategy
+				;;
+			1)
+				# Fallback strategy selected - continue loop to execute it
 				continue
-			fi
+				;;
+			2)
+				# No fallback strategy available
+				return 1
+				;;
+			esac
 			;;
 		"ipsec_reload")
 			recovery_succeeded=0
@@ -387,11 +550,18 @@ surgical_cleanup() {
 		*)
 			local ip_display
 			ip_display=$(format_peer_ip_display "$peer_ip" "")
-			handle_error "ERROR" "$location_name" "Unknown recovery strategy: $RECOVERY_STRATEGY for $ip_display" 0
+			handle_error "ERROR" "$location_name" "Unknown recovery strategy: ${recovery_info[strategy]} for $ip_display" 0
 			return 1
 			;;
 		esac
 	done
+	# Check if we exited the loop without executing a strategy (hit max attempts)
+	if [[ $strategy_executed -eq 0 ]]; then
+		local ip_display
+		ip_display=$(format_peer_ip_display "$peer_ip" "")
+		handle_error "ERROR" "$location_name" "Recovery failed after $max_attempts attempts for $ip_display" 0
+		return 1
+	fi
 
 	# Return based on whether recovery actually succeeded
 	if [[ $recovery_succeeded -eq 1 ]]; then
@@ -447,7 +617,7 @@ surgical_cleanup() {
 #
 # Note:
 #   Requires check_rate_limit, record_restart, log_message, LOG_FILE,
-#   warn_if_missing, die, attempt_xfrm_recovery to be set
+#   warn_if_missing, handle_error_or_exit_fake_mode, attempt_xfrm_recovery to be set
 #   Uses PIPESTATUS to capture command exit code (not tee exit code)
 #   Command output is both displayed and appended to log file (for full restart)
 full_restart() {
@@ -462,41 +632,40 @@ full_restart() {
 	fi
 
 	# Select recovery strategy
-	if ! select_recovery_strategy "$peer_ip" 3; then
+	declare -A recovery_info
+	if ! select_recovery_strategy "$peer_ip" 3 "recovery_info"; then
 		# No recovery strategy available
 		warn_if_missing "ip"
 		warn_if_missing "ipsec"
-		die "No recovery strategy available for Tier 3 recovery"
+		handle_error_or_exit_fake_mode "$location_name" "No recovery strategy available for Tier 3 recovery"
+		return 1
 	fi
 
 	# Execute selected strategy with fallback support
 	local strategy_executed=0
-	while [[ $strategy_executed -eq 0 ]]; do
-		case "$RECOVERY_STRATEGY" in
+	local max_attempts=3
+	local attempt=0
+	while [[ $strategy_executed -eq 0 ]] && [[ $attempt -lt $max_attempts ]]; do
+		((++attempt))
+		case "${recovery_info[strategy]}" in
 		"xfrm")
-			local ip_display
-			ip_display=$(format_peer_ip_display "$peer_ip" "")
-			log_message "INFO" "$location_name" "Tier 3: Attempting xfrm-based per-connection recovery for $ip_display"
-			# Store recovery method before attempting recovery
-			if [[ -n "$peer_ip" ]]; then
-				store_recovery_method "$location_name" "$peer_ip" "xfrm"
-			fi
-			if attempt_xfrm_recovery "$peer_ip" "$location_name"; then
-				log_message "INFO" "$location_name" "Tier 3: xfrm-based per-connection recovery successful for $ip_display"
-				# Record restart for rate limiting (even though it's per-connection)
-				record_restart
+			# Call helper and capture return code (not stdout - function uses return, not echo)
+			_execute_xfrm_recovery_with_fallback "$peer_ip" "$location_name" 3 "recovery_info" "Tier 3: " "full restart"
+			local xfrm_result=$?
+			case $xfrm_result in
+			0)
+				# xfrm recovery succeeded
 				return 0
-			else
-				handle_error "WARNING" "$location_name" "Tier 3: xfrm-based recovery failed for $ip_display, falling back to full restart"
-				# Re-select strategy for fallback (without peer IP to force ipsec restart)
-				if ! select_recovery_strategy "" 3; then
-					# Fallback strategy not available
-					handle_error "ERROR" "$location_name" "Tier 3: xfrm recovery failed and no fallback strategy available for $ip_display" 0
-					return 1
-				fi
-				# Continue loop to execute fallback strategy
+				;;
+			1)
+				# Fallback strategy selected - continue loop to execute it
 				continue
-			fi
+				;;
+			2)
+				# No fallback strategy available
+				return 1
+				;;
+			esac
 			;;
 		"ipsec_restart")
 			# Record restart before executing
@@ -510,11 +679,18 @@ full_restart() {
 		*)
 			local ip_display
 			ip_display=$(format_peer_ip_display "$peer_ip" "")
-			handle_error "ERROR" "$location_name" "Unknown recovery strategy: $RECOVERY_STRATEGY for $ip_display" 0
+			handle_error "ERROR" "$location_name" "Unknown recovery strategy: ${recovery_info[strategy]} for $ip_display" 0
 			return 1
 			;;
 		esac
 	done
+	# Check if we exited the loop without executing a strategy (hit max attempts)
+	if [[ $strategy_executed -eq 0 ]]; then
+		local ip_display
+		ip_display=$(format_peer_ip_display "$peer_ip" "")
+		handle_error "ERROR" "$location_name" "Recovery failed after $max_attempts attempts for $ip_display" 0
+		return 1
+	fi
 
 	# Note: full_restart doesn't have access to internal_peer_ip, and location_name is already in log prefix
 	log_message "INFO" "$location_name" "Full IPsec restart completed"
@@ -600,6 +776,7 @@ check_vpn_status_for_location() {
 #   $1: Location name
 #   $2: External peer IP address
 #   $3: Status ("healthy" or "failed")
+#   $4: Internal peer IPs (optional, space-separated)
 #
 # Returns:
 #   0: State updated successfully
@@ -614,7 +791,12 @@ update_location_state() {
 	local location_name="$1"
 	local external_peer_ip="$2"
 	local status="$3"
+	local internal_peer_ips="${4:-}"
 	local failure_count
+
+	# Format IP display once for reuse throughout function
+	local ip_display
+	ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ips")
 
 	if [[ "$status" == "healthy" ]]; then
 		# VPN is OK
@@ -641,8 +823,6 @@ update_location_state() {
 			fi
 
 			# Log recovery success with method if available
-			local ip_display
-			ip_display=$(format_peer_ip_display "$external_peer_ip" "${internal_peer_ips:-}")
 			if [[ -n "$recovery_method_display" ]]; then
 				log_message "INFO" "$location_name" "${VPN_NAME:-VPN} restored for $ip_display after $failure_count failures (recovery method: $recovery_method_display)"
 			else
@@ -679,13 +859,8 @@ update_location_state() {
 					handle_error "WARNING" "SYSTEM" "Invalid timestamp from get_unix_timestamp, skipping periodic status log" 0
 				else
 					local time_diff
-					time_diff=$(safe_timestamp_diff "$current_time" "$last_status_log" 2>/dev/null || echo "0")
-					if [[ $time_diff -lt 0 ]]; then
-						time_diff=0
-					fi
+					time_diff=$(calculate_duration "$last_status_log" "$current_time" 2>/dev/null || echo "0")
 					if [[ $time_diff -ge $status_log_interval ]] || [[ "$last_status_log" -eq 0 ]]; then
-						local ip_display
-						ip_display=$(format_peer_ip_display "$external_peer_ip" "${internal_peer_ips:-}")
 						log_message "INFO" "$location_name" "${VPN_NAME:-VPN} check OK for $ip_display"
 						set_peer_state_non_critical "$location_name" "$external_peer_ip" "last_status_log" "$current_time"
 					fi
@@ -711,8 +886,6 @@ update_location_state() {
 				local prev_partition_state
 				prev_partition_state=$(get_network_partition_state)
 				set_network_partition_state 1
-				local ip_display
-				ip_display=$(format_peer_ip_display "$external_peer_ip" "${internal_peer_ips:-}")
 				if [[ "$prev_partition_state" -eq 0 ]]; then
 					log_message "WARNING" "$location_name" "Network partition detected - skipping VPN recovery for $ip_display until connectivity restored"
 				else
@@ -725,8 +898,6 @@ update_location_state() {
 				local prev_partition_state
 				prev_partition_state=$(get_network_partition_state)
 				if [[ "$prev_partition_state" -eq 1 ]]; then
-					local ip_display
-					ip_display=$(format_peer_ip_display "$external_peer_ip" "${internal_peer_ips:-}")
 					log_message "INFO" "$location_name" "Network connectivity restored - resuming VPN monitoring for $ip_display"
 					set_network_partition_state 0
 				fi
@@ -743,8 +914,6 @@ update_location_state() {
 		"tunnel_down") failure_type_display=" (tunnel down)" ;;
 		"routing_issue") failure_type_display=" (routing issue)" ;;
 		esac
-		local ip_display
-		ip_display=$(format_peer_ip_display "$external_peer_ip" "${internal_peer_ips:-}")
 		handle_error "WARNING" "$location_name" "${VPN_NAME:-VPN} check failed for $ip_display (failure count: $failure_count)$failure_type_display"
 	fi
 	return 0
@@ -759,6 +928,7 @@ update_location_state() {
 #   $1: Location name
 #   $2: External peer IP address
 #   $3: Failure count
+#   $4: Internal peer IPs (optional, space-separated)
 #
 # Returns:
 #   0: Recovery attempted or no recovery needed
@@ -772,6 +942,11 @@ determine_recovery_action() {
 	local location_name="$1"
 	local external_peer_ip="$2"
 	local failure_count="$3"
+	local internal_peer_ips="${4:-}"
+
+	# Format IP display once for reuse throughout function
+	local ip_display
+	ip_display=$(format_peer_ip_display "$external_peer_ip" "$internal_peer_ips")
 
 	# Get failure type for safety checks and logging
 	local failure_type="unknown"
@@ -801,8 +976,6 @@ determine_recovery_action() {
 
 		# If neither tool is available, detection is unreliable - don't escalate recovery
 		if [[ $ip_available -eq 0 ]] && [[ $ipsec_available -eq 0 ]]; then
-			local ip_display
-			ip_display=$(format_peer_ip_display "$external_peer_ip" "${internal_peer_ips:-}")
 			handle_error "ERROR" "$location_name" "Detection unreliable: Both 'ip' and 'ipsec' commands unavailable - skipping recovery escalation for $ip_display to prevent false recovery actions" 0
 			# Still log the failure but don't escalate recovery
 			if [[ "$failure_count" -ge "$TIER1_THRESHOLD" ]]; then
@@ -814,8 +987,6 @@ determine_recovery_action() {
 
 	# Tier 1: Logging
 	if [[ "$failure_count" -ge "$TIER1_THRESHOLD" ]]; then
-		local ip_display
-		ip_display=$(format_peer_ip_display "$external_peer_ip" "${internal_peer_ips:-}")
 		log_message "INFO" "$location_name" "Tier 1: Logging ${VPN_NAME:-VPN} failure for $ip_display$failure_type_display"
 	fi
 
@@ -826,8 +997,6 @@ determine_recovery_action() {
 			# System-wide failure detected and another location is coordinating recovery
 			# Log that this location is skipping recovery to avoid cascades
 			if [[ "$failure_count" -ge "$TIER2_THRESHOLD" ]]; then
-				local ip_display
-				ip_display=$(format_peer_ip_display "$external_peer_ip" "${internal_peer_ips:-}")
 				log_message "INFO" "$location_name" "Skipping recovery for $location_name ($ip_display) - recovery coordinated by another location during system-wide failure"
 			fi
 			return 0
@@ -839,23 +1008,18 @@ determine_recovery_action() {
 	if [[ "$failure_count" -ge "$TIER2_THRESHOLD" ]] && [[ "$failure_count" -lt "$TIER3_THRESHOLD" ]]; then
 		recovery_attempted=1
 		if [[ "${NO_ESCALATE:-0}" -eq 1 ]]; then
-			if ! select_recovery_strategy "$external_peer_ip" 2; then
+			declare -A recovery_info
+			if ! select_recovery_strategy "$external_peer_ip" 2 "recovery_info"; then
 				:
-			elif [[ "$RECOVERY_STRATEGY" == "xfrm" ]]; then
-				local ip_display
-				ip_display=$(format_peer_ip_display "$external_peer_ip" "${internal_peer_ips:-}")
+			elif [[ "${recovery_info[strategy]}" == "xfrm" ]]; then
 				log_message "INFO" "$location_name" "Tier 2: Would attempt xfrm-based per-connection recovery for $ip_display (skipped in fake mode)"
 			else
 				# Log the specific command that would be executed
-				local command_display="${RECOVERY_COMMAND:-ipsec reload}"
-				local ip_display
-				ip_display=$(format_peer_ip_display "$external_peer_ip" "${internal_peer_ips:-}")
+				local command_display="${recovery_info[command]:-ipsec reload}"
 				log_message "INFO" "$location_name" "Tier 2: Would attempt surgical SA cleanup for $ip_display via $command_display (skipped in fake mode)"
 			fi
 		else
-			local ip_display
-			ip_display=$(format_peer_ip_display "$external_peer_ip" "${internal_peer_ips:-}")
-			handle_error "WARNING" "$location_name" "Tier 2: Attempting surgical SA cleanup for $ip_display"
+			log_message "INFO" "$location_name" "Tier 2: Attempting surgical SA cleanup for $ip_display"
 			surgical_cleanup "$external_peer_ip" "$location_name"
 		fi
 	fi
@@ -872,23 +1036,18 @@ determine_recovery_action() {
 				# In fake mode, still record restart for cleanup purposes (prevents restart count file from growing)
 				# but skip the actual restart command
 				record_restart
-				if ! select_recovery_strategy "$external_peer_ip" 3; then
+				declare -A recovery_info
+				if ! select_recovery_strategy "$external_peer_ip" 3 "recovery_info"; then
 					# No recovery strategy available - log Tier 3 reached but no strategy available
-					local ip_display
-					ip_display=$(format_peer_ip_display "$external_peer_ip" "${internal_peer_ips:-}")
 					log_message "WARNING" "$location_name" "Tier 3: Recovery threshold reached for $ip_display but no recovery strategy available (skipped in fake mode)"
-				elif [[ "$RECOVERY_STRATEGY" == "xfrm" ]]; then
-					local ip_display
-					ip_display=$(format_peer_ip_display "$external_peer_ip" "${internal_peer_ips:-}")
+				elif [[ "${recovery_info[strategy]}" == "xfrm" ]]; then
 					log_message "INFO" "$location_name" "Tier 3: Would attempt xfrm-based per-connection recovery for $ip_display (skipped in fake mode)"
 				else
 					log_message "INFO" "$location_name" "Tier 3: Would attempt full IPsec restart (affects all tunnels, skipped in fake mode)"
 				fi
 			fi
 		else
-			local ip_display
-			ip_display=$(format_peer_ip_display "$external_peer_ip" "${internal_peer_ips:-}")
-			handle_error "ERROR" "$location_name" "Tier 3: Attempting IPsec restart for $ip_display" 0
+			log_message "INFO" "$location_name" "Tier 3: Attempting IPsec restart for $ip_display"
 			if full_restart "$external_peer_ip" "$location_name"; then
 				reset_failure_count "$location_name" "$external_peer_ip"
 			fi
@@ -943,11 +1102,11 @@ monitor_location() {
 
 	if [[ $vpn_status_rc -eq 0 ]]; then
 		# VPN is healthy
-		update_location_state "$location_name" "$external_peer_ip" "healthy"
+		update_location_state "$location_name" "$external_peer_ip" "healthy" "$internal_peer_ips"
 		return 0
 	else
 		# VPN check failed - update state (increments failure count and checks partition)
-		update_location_state "$location_name" "$external_peer_ip" "failed"
+		update_location_state "$location_name" "$external_peer_ip" "failed" "$internal_peer_ips"
 		local state_update_rc=$?
 
 		# Handle network partition detected after failure count increment
@@ -958,7 +1117,7 @@ monitor_location() {
 
 		# Continue with recovery
 		failure_count=$(get_failure_count "$location_name" "$external_peer_ip")
-		determine_recovery_action "$location_name" "$external_peer_ip" "$failure_count"
+		determine_recovery_action "$location_name" "$external_peer_ip" "$failure_count" "$internal_peer_ips"
 		local recovery_rc=$?
 		return $recovery_rc
 	fi

@@ -63,7 +63,9 @@ load fixtures/vpn_at_tier
 	mock_check_ipsec_phase2 1
 
 	# Mock ipsec for fallback reload (Tier 2 falls back to reload, not restart)
-	mock_ipsec_reload_restart 0 0
+	# Third parameter (status_exit=1) makes ipsec status return empty (VPN down) so recovery is triggered
+	# This is needed because VPN detection falls back to ipsec status when xfrm returns empty
+	mock_ipsec_reload_restart 0 0 1
 
 	# Mock ip command - stateful: return SAs during recovery, empty after deletion
 	# Uses log file content to determine recovery phase (more robust than counter-based approach)

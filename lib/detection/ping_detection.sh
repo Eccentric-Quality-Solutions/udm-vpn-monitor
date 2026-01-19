@@ -30,40 +30,11 @@ fi
 source "${LIB_DIR}/common.sh"
 
 # shellcheck source=lib/logging.sh
-if ! source "${LIB_DIR}/logging.sh" 2>/dev/null; then
-	# shellcheck source=lib/fallbacks.sh
-	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_logging_fallbacks
-	fi
-fi
+source "${LIB_DIR}/logging.sh"
 
 # shellcheck source=lib/detection/network_validation.sh
 source "${LIB_DIR}/detection/network_validation.sh"
 
-# Check connectivity via ping
-#
-# Verifies end-to-end connectivity through the VPN tunnel by pinging a target IP.
-# This complements xfrm state checks by confirming actual traffic can flow.
-# Automatically manages route (IP address on br0) if needed before pinging.
-#
-# Arguments:
-#   $1: Target IP address to ping (IPv4 or IPv6)
-#   $2: Local IP address to use as source (optional, from LOCAL_UDM_IP config)
-#
-# Returns:
-#   0: Ping successful (packet loss < 100%)
-#   1: Ping failed (100% packet loss or command error)
-#
-# Configuration:
-#   Uses PING_COUNT and PING_TIMEOUT from config file
-#   Automatically detects IPv4 vs IPv6 and uses appropriate ping command
-#   Uses LOCAL_UDM_IP as source IP if provided
-#
-# Note:
-#   Uses Linux ping command format
-#   Requires log_message, PING_COUNT, PING_TIMEOUT to be set
-#   If local_ip is provided, uses ping -I flag and manages route on br0
-#
 # Log periodic ping summary at configured interval
 #
 # Logs a summary of successful ping checks at INFO level at the interval specified by
@@ -121,11 +92,7 @@ log_ping_summary_if_due() {
 		last_time="0"
 	fi
 	local ping_count
-	if file_exists_and_readable "$count_file"; then
-		ping_count=$(cat "$count_file" 2>/dev/null || echo "0")
-	else
-		ping_count="0"
-	fi
+	ping_count=$(read_counter_file "$count_file")
 
 	# Increment ping count
 	ping_count=$((ping_count + 1))
@@ -148,6 +115,82 @@ log_ping_summary_if_due() {
 		# Reset count and update last time (use atomic writes per ADR-0012)
 		atomic_write_file "$count_file" "0" 2>/dev/null || true
 		atomic_write_file "$last_time_file" "$current_time" 2>/dev/null || true
+	fi
+
+	return 0
+}
+
+# Build ping command and arguments for target IP
+#
+# Determines the appropriate ping command (ping, ping6, or ping -6) and builds
+# the command arguments based on the target IP version (IPv4 or IPv6) and
+# optional source IP address.
+#
+# Arguments:
+#   $1: Target IP address to ping (required)
+#   $2: Local source IP address (optional, for ping -I flag)
+#
+# Output:
+#   Sets the following variables in caller's scope (caller must declare them):
+#   - ping_cmd: The ping command to use ("ping" or "ping6")
+#   - ping_args: Array of ping arguments (e.g., (-I "192.168.1.1") or (-6 -I "192.168.1.1"))
+#
+# Returns:
+#   0: Successfully determined ping command and arguments
+#   1: IPv6 ping not available (only for IPv6 targets)
+#
+# Examples:
+#   local ping_cmd ping_args=()
+#   if build_ping_command "192.168.1.1" "192.168.1.100"; then
+#       "$ping_cmd" "${ping_args[@]}" -c 3 "192.168.1.1"
+#   fi
+#
+# Note:
+#   - Uses validate_ipv4() for IP version detection (more accurate than regex)
+#   - Prefers ping6 for IPv6 if available, falls back to ping -6
+#   - Caller is responsible for error handling and logging
+build_ping_command() {
+	local target_ip="$1"
+	local local_ip="${2:-}"
+
+	# Validate input
+	if [[ -z "$target_ip" ]]; then
+		return 1
+	fi
+
+	# Determine ping command based on IP version
+	# Some systems have separate ping6, others use ping -6
+	if validate_ipv4 "$target_ip"; then
+		# IPv4
+		ping_cmd="ping"
+		# Add -I flag if local_ip is provided
+		if [[ -n "$local_ip" ]]; then
+			ping_args=(-I "$local_ip")
+		else
+			ping_args=()
+		fi
+	else
+		# IPv6
+		if check_command_available "ping6"; then
+			ping_cmd="ping6"
+			# Add -I flag if local_ip is provided (ping6 uses -I for source interface/IP)
+			if [[ -n "$local_ip" ]]; then
+				ping_args=(-I "$local_ip")
+			else
+				ping_args=()
+			fi
+		elif check_command_available "ping" && ping -6 >/dev/null 2>&1; then
+			ping_cmd="ping"
+			# Add -I flag if local_ip is provided
+			if [[ -n "$local_ip" ]]; then
+				ping_args=(-6 -I "$local_ip")
+			else
+				ping_args=(-6)
+			fi
+		else
+			# IPv6 ping not available
+			return 1
+		fi
 	fi
 
 	return 0
@@ -201,36 +244,12 @@ check_ping_connectivity() {
 		fi
 	fi
 
-	# Determine ping command based on IP version
-	# Some systems have separate ping6, others use ping -6
+	# Build ping command and arguments
 	local ping_cmd
 	local ping_args=()
-	if validate_ipv4 "$target_ip"; then
-		# IPv4
-		ping_cmd="ping"
-		# Add -I flag if local_ip is provided
-		if [[ -n "$local_ip" ]]; then
-			ping_args=(-I "$local_ip")
-		fi
-	else
-		# IPv6
-		if check_command_available "ping6"; then
-			ping_cmd="ping6"
-			# Add -I flag if local_ip is provided (ping6 uses -I for source interface/IP)
-			if [[ -n "$local_ip" ]]; then
-				ping_args=(-I "$local_ip")
-			fi
-		elif check_command_available "ping" && ping -6 >/dev/null 2>&1; then
-			ping_cmd="ping"
-			ping_args=(-6)
-			# Add -I flag if local_ip is provided
-			if [[ -n "$local_ip" ]]; then
-				ping_args=(-6 -I "$local_ip")
-			fi
-		else
-			handle_error "WARNING" "${location_name:-SYSTEM}" "IPv6 ping not available"
-			return 1
-		fi
+	if ! build_ping_command "$target_ip" "$local_ip"; then
+		handle_error "WARNING" "${location_name:-SYSTEM}" "IPv6 ping not available"
+		return 1
 	fi
 
 	# Perform ping check
@@ -238,18 +257,16 @@ check_ping_connectivity() {
 	# -c: count of packets, -q: quiet (summary only), -W: timeout per packet
 	# -I: source IP address (if local_ip provided)
 	# Wrap ping commands with timeout to prevent hanging
-	# Calculate timeout: min(ping_timeout + 1, min(ping_count * ping_timeout + 1, 5))
-	# This ensures we catch hanging commands quickly (ping_timeout + 1) while allowing
-	# normal pings to complete (ping_count * ping_timeout + 1), capped at 5 seconds
-	# We use the smaller timeout to ensure script remains responsive
-	local ping_wrapper_timeout
+	# Calculate timeout wrapper: min(ping_timeout + 1, min(ping_count * ping_timeout + 1, 5))
+	# This ensures we catch hanging commands quickly while allowing normal pings to complete
 	local quick_timeout=$((ping_timeout + 1))
 	local normal_timeout=$((ping_count * ping_timeout + 1))
-	# Use the smaller of the two to catch hangs quickly, but cap normal timeout at 5 seconds
+	# Cap normal timeout at 5 seconds for responsiveness
 	if [[ $normal_timeout -gt 5 ]]; then
 		normal_timeout=5
 	fi
-	# Use the smaller timeout to ensure script remains responsive
+	# Use the smaller timeout to catch hangs quickly
+	local ping_wrapper_timeout
 	if [[ $quick_timeout -lt $normal_timeout ]]; then
 		ping_wrapper_timeout=$quick_timeout
 	else
@@ -261,28 +278,26 @@ check_ping_connectivity() {
 
 	# Use Linux-style ping with timeout wrapper
 	if check_command_available "timeout"; then
-		# Try Linux-style ping with timeout wrapper
+		# Try with -W flag first (Linux-style timeout per packet)
 		if ping_result=$(timeout "$ping_wrapper_timeout" "$ping_cmd" "${ping_args[@]}" -c "$ping_count" -W "$ping_timeout" -q "$target_ip" 2>&1); then
 			ping_success=1
 		else
 			ping_exit_code=$?
-			# If timeout occurred (exit code 124), don't try fallbacks
+			# If timeout wrapper triggered (exit 124), ping hung - don't try fallbacks
 			if [[ $ping_exit_code -eq 124 ]]; then
-				# Timeout occurred - ping command hung
 				ping_success=0
-			else
-				# Try without timeout flag as fallback (only if not timeout)
-				if [[ $ping_exit_code -ne 124 ]] && ping_result=$(timeout "$ping_wrapper_timeout" "$ping_cmd" "${ping_args[@]}" -c "$ping_count" -q "$target_ip" 2>&1); then
-					ping_success=1
-					ping_exit_code=0
-				fi
+			# Try without -W flag as fallback (some ping implementations don't support -W)
+			# Still use timeout wrapper to prevent hanging
+			elif ping_result=$(timeout "$ping_wrapper_timeout" "$ping_cmd" "${ping_args[@]}" -c "$ping_count" -q "$target_ip" 2>&1); then
+				ping_success=1
+				ping_exit_code=0
 			fi
 		fi
 	else
 		# Fallback if timeout command not available (shouldn't happen on UDM)
 		if ping_result=$("$ping_cmd" "${ping_args[@]}" -c "$ping_count" -W "$ping_timeout" -q "$target_ip" 2>&1); then
 			ping_success=1
-		# Try without timeout flag as fallback
+		# Try without -W flag as fallback
 		elif ping_result=$("$ping_cmd" "${ping_args[@]}" -c "$ping_count" -q "$target_ip" 2>&1); then
 			ping_success=1
 		fi
@@ -573,30 +588,31 @@ handle_ping_single_target() {
 #   $2: External peer IP address (external/public IP of remote VPN gateway)
 #   $3: Internal peer IP address (optional, used for ping checks, falls back to external if not provided)
 #   $4: Location name (optional, used for logging)
-#   $5: SA existence state (optional, 0 = no SA, 1 = SA exists, if not provided will check SA existence)
 #
 # Returns:
 #   0: Always returns 0 (doesn't affect VPN status)
 #
 # Side effects:
 #   - Logs ping check results
-#   - Uses provided SA existence state to ensure accurate messages (or checks SA existence if not provided)
+#   - Derives SA existence from primary_check_passed (if primary_check_passed=1, SA exists; otherwise checks directly)
 check_ping_optional() {
 	local primary_check_passed="$1"
 	local external_peer_ip="$2"
 	local internal_peer_ip="${3:-}"
 	local location_name="${4:-}"
-	local sa_exists="${5:-}"
 
 	if [[ "${ENABLE_PING_CHECK:-0}" -ne 1 ]]; then
 		return 0
 	fi
 
-	# Use provided SA existence state if available, otherwise check SA existence
-	# This optimization eliminates duplicate SA checks by reusing state from check_xfrm_status()
-	if [[ -z "$sa_exists" ]]; then
-		# Fallback: check SA existence if not provided (for backward compatibility)
-		sa_exists=0
+	# Derive SA existence from primary_check_passed as single source of truth
+	# CRITICAL: If primary_check_passed=1, SA MUST exist (fundamental invariant)
+	local sa_exists=0
+	if [[ "$primary_check_passed" == "1" ]] || [[ $primary_check_passed -eq 1 ]]; then
+		# Primary check passed - SA exists (either from xfrm or ipsec fallback)
+		sa_exists=1
+	else
+		# primary_check_passed=0 - check SA existence directly when needed
 		if check_ipsec_phase2 "$external_peer_ip" 2>/dev/null; then
 			sa_exists=1
 		fi

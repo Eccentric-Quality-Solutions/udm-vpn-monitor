@@ -369,57 +369,36 @@ start_daemon() {
 						log_message "WARNING" "$location_name" "Keepalive: ping check failed (<30% of internal IPs responded)" || true
 					fi
 				else
-					# Single IP - use existing ping logic
-					local ping_cmd="ping"
-					local ping_args=()
-
+					# Single IP - use build_ping_command function
 					# Determine if we should use source IP (LOCAL_UDM_IP configured and using internal IP)
-					local use_source_ip=false
+					local source_ip_for_ping=""
 					if [[ -n "$local_udm_ip" ]] && [[ "$ping_target" != "$external_ip" ]]; then
-						use_source_ip=true
+						source_ip_for_ping="$local_udm_ip"
 					fi
 
-					# Determine if IPv6
-					if [[ ! "$ping_target" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-						# IPv6
-						if check_command_available "ping6"; then
-							ping_cmd="ping6"
-							if [[ "$use_source_ip" == "true" ]]; then
-								ping_args=(-I "$local_udm_ip")
-							fi
-						elif check_command_available "ping" && ping -6 >/dev/null 2>&1; then
-							ping_cmd="ping"
-							ping_args=(-6)
-							if [[ "$use_source_ip" == "true" ]]; then
-								ping_args=(-6 -I "$local_udm_ip")
-							fi
-						else
-							# IPv6 ping not available, skip this location
-							continue
-						fi
-					else
-						# IPv4 - add source IP if needed
-						if [[ "$use_source_ip" == "true" ]]; then
-							ping_args=(-I "$local_udm_ip")
-						fi
+					# Build ping command and arguments
+					local ping_cmd
+					local ping_args=()
+					if ! build_ping_command "$ping_target" "$source_ip_for_ping"; then
+						# IPv6 ping not available, skip this location
+						continue
 					fi
 
 					# Perform quiet ping (suppress all output)
 					# Only log failures, not successes (to reduce log noise)
 					# UDM runs Linux, so we use Linux-style ping (-W flag)
 					# Wrap ping commands with timeout to prevent hanging
-					# Calculate timeout: min(ping_timeout + 1, min(ping_count * ping_timeout + 1, 5))
-					# This ensures we catch hanging commands quickly (ping_timeout + 1) while allowing
-					# normal pings to complete (ping_count * ping_timeout + 1), capped at 5 seconds
+					# Calculate timeout wrapper: min(ping_timeout + 1, min(ping_count * ping_timeout + 1, 5))
+					# This ensures we catch hanging commands quickly while allowing normal pings to complete
 					local ping_timeout="${PING_TIMEOUT:-2}"
-					local ping_wrapper_timeout
 					local quick_timeout=$((ping_timeout + 1))
 					local normal_timeout=$((keepalive_ping_count * ping_timeout + 1))
-					# Use the smaller of the two to catch hangs quickly, but cap normal timeout at 5 seconds
+					# Cap normal timeout at 5 seconds for responsiveness
 					if [[ $normal_timeout -gt 5 ]]; then
 						normal_timeout=5
 					fi
-					# Use the smaller timeout to ensure daemon remains responsive
+					# Use the smaller timeout to catch hangs quickly
+					local ping_wrapper_timeout
 					if [[ $quick_timeout -lt $normal_timeout ]]; then
 						ping_wrapper_timeout=$quick_timeout
 					else

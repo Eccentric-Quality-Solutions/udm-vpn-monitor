@@ -31,7 +31,7 @@ create_sample_log_file() {
 [${date_prefix} 10:01:00] [INFO] Tier 1: Logging VPN failure for 192.168.1.1
 [${date_prefix} 10:02:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 2)
 [${date_prefix} 10:03:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 3)
-[${date_prefix} 10:03:00] [WARNING] Tier 2: Attempting surgical SA cleanup for 192.168.1.1
+[${date_prefix} 10:03:00] [INFO] Tier 2: Attempting surgical SA cleanup for 192.168.1.1
 [${date_prefix} 10:03:05] [INFO] Surgical cleanup completed for 192.168.1.1
 [${date_prefix} 10:04:00] [INFO] VPN recovered for 192.168.1.1 after 3 failures
 [${date_prefix} 10:05:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 1)
@@ -39,7 +39,7 @@ create_sample_log_file() {
 [${date_prefix} 10:07:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 3)
 [${date_prefix} 10:08:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 4)
 [${date_prefix} 10:09:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 5)
-[${date_prefix} 10:09:00] [ERROR] Tier 3: Attempting full IPsec restart
+[${date_prefix} 10:09:00] [INFO] Tier 3: Attempting IPsec restart for 192.168.1.1
 [${date_prefix} 10:09:10] [INFO] Full IPsec restart completed
 [${date_prefix} 10:10:00] [INFO] VPN recovered for 192.168.1.1 after 5 failures
 [${date_prefix} 10:11:00] [WARNING] VPN check failed for 198.51.100.1 (failure count: 1)
@@ -74,7 +74,7 @@ create_recovery_type_test_log_file() {
 [${date_prefix} 10:03:00] [WARNING] VPN check failed for 192.168.1.2 (failure count: 1)
 [${date_prefix} 10:04:00] [WARNING] VPN check failed for 192.168.1.2 (failure count: 2)
 [${date_prefix} 10:05:00] [WARNING] VPN check failed for 192.168.1.2 (failure count: 3)
-[${date_prefix} 10:05:00] [WARNING] Tier 2: Attempting surgical SA cleanup for 192.168.1.2
+[${date_prefix} 10:05:00] [INFO] Tier 2: Attempting surgical SA cleanup for 192.168.1.2
 [${date_prefix} 10:05:05] [INFO] Surgical cleanup completed for 192.168.1.2
 [${date_prefix} 10:06:00] [INFO] VPN restored for 192.168.1.2 after 3 failures (recovery method: xfrm-based recovery)
 # Another self-healed recovery
@@ -86,7 +86,7 @@ create_recovery_type_test_log_file() {
 [${date_prefix} 10:11:00] [WARNING] VPN check failed for 192.168.1.4 (failure count: 3)
 [${date_prefix} 10:12:00] [WARNING] VPN check failed for 192.168.1.4 (failure count: 4)
 [${date_prefix} 10:13:00] [WARNING] VPN check failed for 192.168.1.4 (failure count: 5)
-[${date_prefix} 10:13:00] [ERROR] Tier 3: Attempting full IPsec restart
+[${date_prefix} 10:13:00] [INFO] Tier 3: Attempting IPsec restart for 192.168.1.4
 [${date_prefix} 10:13:10] [INFO] Full IPsec restart completed
 [${date_prefix} 10:14:00] [INFO] VPN restored for 192.168.1.4 after 5 failures (recovery method: ipsec restart)
 EOF

@@ -113,7 +113,6 @@ graph TB
         RecoveryLib[lib/recovery.sh<br/>Recovery Actions<br/>Compatibility Layer]
         CommonLib[lib/common.sh<br/>Shared Utilities]
         ConstantsLib[lib/constants.sh<br/>Named Constants]
-        FallbacksLib[lib/fallbacks.sh<br/>Fallback Functions]
     end
 
     subgraph "Detection Layer"
@@ -147,8 +146,6 @@ graph TB
     MainScript --> RecoveryLib
     MainScript --> CommonLib
     MainScript --> ConstantsLib
-    ConfigLib --> FallbacksLib
-    DetectionLib --> FallbacksLib
 
     DetectionLib --> XfrmCheck
     XfrmCheck -->|No SA| IpsecCheck
@@ -707,7 +704,7 @@ Each peer's monitoring and recovery actions operate completely independently.
 - **Behavior**: First location to check during system-wide failure becomes the coordinator (via atomic file write). Coordinator persists until system-wide failure is resolved. Non-coordinator locations skip recovery actions during system-wide failures
 - **Coordination Logic**: Uses `should_location_attempt_recovery()` function to check if current location is the coordinator before attempting recovery
 - **Configuration**: Controlled via `COORDINATE_SYSTEM_WIDE_RECOVERY` (default: 1, enabled). If disabled, all locations attempt recovery independently even during system-wide failures
-- **Race Condition Mitigation**: Uses atomic file writes (`atomic_write_file()`) to minimize race conditions. If multiple locations simultaneously become coordinator, both attempt recovery (still better than all locations attempting recovery)
+- **Race Condition Mitigation**: Uses atomic check-and-create pattern (noclobber mode, `set -C`) to prevent race conditions. Only the first location to successfully create the coordinator file becomes the coordinator, ensuring true atomicity
 
 **Lockfile** (`vpn-monitor.lock`):
 - **Purpose**: Prevents concurrent script execution
@@ -762,7 +759,6 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │   │   ├── ping_detection.sh      # Ping-based detection
 │   │   ├── failure_analysis.sh    # Failure type classification
 │   │   └── system_wide_failure.sh # System-wide failure detection and coordination
-│   ├── fallbacks.sh            # Centralized fallback function definitions
 │   ├── lockfile.sh             # Lockfile management (flock/atomic)
 │   ├── logging.sh              # Centralized logging functionality
 │   ├── recovery.sh             # Tiered recovery actions (compatibility layer)
@@ -979,25 +975,6 @@ The system uses a modular library architecture where functionality is organized 
 
 **Used By**: All modules for consistent logging
 
-#### `lib/fallbacks.sh`
-**Purpose**: Centralized fallback function definitions for when modules cannot be sourced.
-
-**Key Functions**:
-- `define_schema_fallbacks()` - Defines fallback implementations for schema-related functions
-- `define_logging_fallbacks()` - Defines fallback implementations for logging functions
-- `define_common_fallbacks()` - Defines fallback implementations for common utility functions
-- `define_logging_timestamp_fallback()` - Defines fallback timestamp formatting function
-
-**Usage Pattern**: Modules that may be sourced independently (e.g., during installation) source `lib/fallbacks.sh` and call appropriate fallback definition functions when dependencies cannot be loaded. This ensures graceful degradation when modules are used in isolation.
-
-**Benefits**:
-- Single source of truth for fallback implementations
-- Consistent fallback behavior across all modules
-- Easier maintenance (all fallbacks in one place)
-- Prevents code duplication of fallback definitions
-
-**Used By**: `lib/config.sh`, `lib/detection.sh`, and other modules that need fallback functions
-
 #### `lib/recovery.sh`
 **Purpose**: Tiered recovery actions (logging → surgical cleanup → full restart). Compatibility layer that sources all recovery modules.
 
@@ -1035,19 +1012,19 @@ The system uses a modular library architecture where functionality is organized 
 **Module Structure**: The state management functionality is organized into focused modules in the `lib/state/` subdirectory:
 - **`lib/state/state_paths.sh`**: State file path generation, sanitization, and path management utilities
 - **`lib/state/peer_state.sh`**: Per-peer state operations (connection name caching)
-- **`lib/state/location_state.sh`**: Per-location state operations (failure counters, byte counters, SPI, failure type, idle detection, status logging, recovery method tracking)
+- **`lib/state/location_state.sh`**: Per-location state operations (currently placeholder - reserved for future location-specific state operations not tied to individual peers)
 - **`lib/state/global_state.sh`**: Global state operations (cooldown, restart count, network partition state)
 - **`lib/state/state_init.sh`**: State initialization and validation functions
 - **`lib/state/network_partition_stats.sh`**: Network partition check statistics tracking (success/failure counting, hourly summary logging)
 
 **Key Functions** (distributed across modules):
-- `increment_failure()` - Increments per-location failure counter (in `location_state.sh`)
-- `reset_failure_count()` - Resets per-location failure counter (in `location_state.sh`)
-- `get_failure_count()` - Retrieves current failure count for a location (in `location_state.sh`)
+- `increment_failure()` - Increments per-location failure counter (in `peer_state.sh`)
+- `reset_failure_count()` - Resets per-location failure counter (in `peer_state.sh`)
+- `get_failure_count()` - Retrieves current failure count for a location (in `peer_state.sh`)
 - `check_rate_limit()` - Validates restart rate limiting (in `global_state.sh`)
 - `record_restart()` - Records restart timestamp (in `global_state.sh`)
-- `set_peer_state()` - Updates per-location state (byte counters, SPI, etc.) (in `location_state.sh`)
-- `get_peer_state()` - Retrieves per-location state values (in `location_state.sh`)
+- `set_peer_state()` - Updates per-location state (byte counters, SPI, etc.) (in `peer_state.sh`)
+- `get_peer_state()` - Retrieves per-location state values (in `peer_state.sh`)
 - `get_peer_state_file_path()` - Generates state file path with proper sanitization (in `state_paths.sh`)
 - `sanitize_peer_ip()` - Sanitizes IP addresses for use in filenames (in `state_paths.sh`)
 - `sanitize_location_name()` - Sanitizes location names for use in filenames (in `state_paths.sh`)

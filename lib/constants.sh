@@ -3,6 +3,15 @@
 # Constants for UDM VPN Monitor
 # Defines commonly used magic numbers as named constants for better code readability
 #
+# Usage Guidelines:
+#   - Always use these constants instead of magic numbers in code
+#   - Add new constants here when a value is used in multiple places or has semantic meaning
+#   - For module-specific constants (e.g., recovery), see lib/recovery/constants.sh
+#
+# Sourcing:
+#   This file is safe to source multiple times (idempotent).
+#   Constants are only defined if not already set.
+#
 # Version: 0.6.0
 #
 
@@ -49,21 +58,16 @@ readonly PING_CEIL_ADJUSTMENT=0.999
 # Used to capture byte counter information that appears after SA entries
 readonly XFRM_OUTPUT_CONTEXT_LINES=10
 
-# Recovery constants
-# Sleep delay (in seconds) after xfrm SA deletion to allow IKE re-establishment
-# Gives strongSwan time to detect SA deletion and initiate re-establishment
-readonly XFRM_RECOVERY_SLEEP_SECONDS=3
-# Maximum time (in seconds) to wait for SA re-establishment after deletion
-# Verification checks are performed with retries up to this timeout
-readonly XFRM_RECOVERY_VERIFY_TIMEOUT=30
-# Interval (in seconds) between verification retry attempts
-readonly XFRM_RECOVERY_VERIFY_INTERVAL=2
-# Maximum interval (in seconds) for exponential backoff during recovery verification
-# Used to cap the exponential backoff interval growth
-readonly XFRM_RECOVERY_MAX_INTERVAL=16
+# Command timeout constants
 # Timeout (in seconds) for ipsec status command to prevent hanging
 # Prevents ipsec status from blocking script execution indefinitely
+# Used across detection and recovery modules
 readonly IPSEC_STATUS_TIMEOUT=5
+# Timeout (in seconds) for state file read operations to prevent hanging
+# Defensive timeout wrapper for file reading operations (cat, grep, wc, etc.)
+# Prevents hangs from race conditions, test suite timing issues, or edge cases
+# Used when reading state files even after file_exists_and_readable checks
+readonly STATE_FILE_READ_TIMEOUT=1
 
 # Error code constants
 # Standard exit codes for consistent error handling throughout the codebase

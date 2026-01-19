@@ -32,7 +32,7 @@ source "${SCRIPT_DIR}/lib/logging.sh" 2>/dev/null || {
 	# Output:
 	#   Prints formatted timestamp to stdout (format: YYYY-MM-DD HH:MM:SS)
 	get_formatted_timestamp() {
-		date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S'
+		date '+%Y-%m-%d %H:%M:%S'
 	}
 }
 

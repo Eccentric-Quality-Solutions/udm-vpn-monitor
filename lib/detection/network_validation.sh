@@ -29,12 +29,7 @@ fi
 source "${LIB_DIR}/common.sh"
 
 # shellcheck source=lib/logging.sh
-if ! source "${LIB_DIR}/logging.sh" 2>/dev/null; then
-	# shellcheck source=lib/fallbacks.sh
-	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_logging_fallbacks
-	fi
-fi
+source "${LIB_DIR}/logging.sh"
 
 # Validate IPv4 address format
 #
@@ -214,6 +209,44 @@ validate_ipv6_segments() {
 	return 0
 }
 
+# Count IPv6 segments in a colon-separated string
+#
+# Counts the number of non-empty segments in an IPv6 address portion
+# (before or after compression). Handles empty strings and removes
+# empty elements that result from leading/trailing colons.
+#
+# Arguments:
+#   $1: Colon-separated string to count segments in
+#
+# Returns:
+#   0: Always succeeds
+#
+# Outputs:
+#   Number of segments (non-empty elements) to stdout
+#
+# Examples:
+#   count_ipv6_segments "2001:db8"     # Outputs: 2
+#   count_ipv6_segments "2001:"         # Outputs: 1
+#   count_ipv6_segments ""              # Outputs: 0
+count_ipv6_segments() {
+	local segments_str="$1"
+	local count=0
+
+	if [[ -n "$segments_str" ]]; then
+		# Count segments by splitting on ':' and counting non-empty elements
+		local IFS=':'
+		local -a temp_segs
+		read -ra temp_segs <<<"$segments_str"
+		count=${#temp_segs[@]}
+		# Remove empty elements (from leading/trailing colons)
+		for seg in "${temp_segs[@]}"; do
+			[[ -z "$seg" ]] && ((count--))
+		done
+	fi
+
+	echo "$count"
+}
+
 # Validate IPv6 address format
 #
 # Validates that an IP address is properly formatted as IPv6.
@@ -268,22 +301,12 @@ validate_ipv6() {
 	fi
 
 	# Count segments before compression
-	local segments_before=0
-	if [[ -n "$before_compression" ]]; then
-		# Count colons (segments = colons + 1)
-		local colons_before
-		colons_before=$(echo "$before_compression" | tr -cd ':' | wc -c)
-		segments_before=$((colons_before + 1))
-	fi
+	local segments_before
+	segments_before=$(count_ipv6_segments "$before_compression")
 
 	# Count segments after compression
-	local segments_after=0
-	if [[ -n "$after_compression" ]]; then
-		# Count colons (segments = colons + 1)
-		local colons_after
-		colons_after=$(echo "$after_compression" | tr -cd ':' | wc -c)
-		segments_after=$((colons_after + 1))
-	fi
+	local segments_after
+	segments_after=$(count_ipv6_segments "$after_compression")
 
 	# Validate segments format and count
 	if ! validate_ipv6_segments "$ip" "$segments_before" "$segments_after" "$has_compression"; then

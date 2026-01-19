@@ -21,7 +21,8 @@ load fixtures/vpn_failing
 	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Mock ipsec for recovery actions
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	# Step 1: VPN fails - Tier 1 (logging)
@@ -44,7 +45,8 @@ load fixtures/vpn_failing
 	# Pass ENABLE_XFRM_RECOVERY=0 to ensure ipsec restart strategy is selected
 	setup_vpn_down_fixture "${TEST_PEER_IP}" 2 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'ENABLE_XFRM_RECOVERY=0'
 	# Recreate mock ipsec after fixture (fixture may have recreated TEST_DIR structure)
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	# Verify mock ipsec is available before running script
 	add_mock_to_path
 	if ! command -v ipsec >/dev/null 2>&1; then
@@ -132,7 +134,8 @@ load fixtures/vpn_failing
 	setup_test_vpn_monitor "${TEST_PEER_IP} ${TEST_PEER_IP2}" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Mock ipsec for recovery
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 
 	# Mock ip - both peers down
 	mock_ip_vpn_down
@@ -195,7 +198,8 @@ load fixtures/vpn_failing
 	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Mock ipsec - recovery succeeds
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	# VPN fails, reaches Tier 2
@@ -232,7 +236,8 @@ load fixtures/vpn_failing
 	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Mock ipsec - recovery fails
-	mock_ipsec_reload_restart 1 1
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 1 1 1
 	add_mock_to_path
 
 	# VPN fails, reaches Tier 2
@@ -280,7 +285,8 @@ load fixtures/vpn_failing
 		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	# Mock ipsec
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	# Mock VPN as down (no SA)

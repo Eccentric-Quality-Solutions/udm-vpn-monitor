@@ -1084,7 +1084,11 @@ mock_ip_xfrm_with_incrementing_bytes() {
 
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+# Handle "ip xfrm state delete" (deletion command) - must come before "ip xfrm state" check
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
+	# Deletion always succeeds in this mock
+	exit 0
+elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
 	# Handle "ip -s xfrm state" (with statistics flag)
 	verify_attempts=\$(cat "$state_file" 2>/dev/null || echo "0")
 	verify_attempts=\$((verify_attempts + 1))
@@ -1164,60 +1168,107 @@ mock_ip_xfrm_state_transition() {
 	local verify_attempt_file="${8:-${TEST_DIR}/verify_attempts}"
 	local mock_ip="${9:-${TEST_DIR}/ip}"
 
-	# Initialize verify attempt counter
+	# State tracking files:
+	# - verify_attempt_file: counts verification attempts AFTER deletion (for re-establishment)
+	# - deleted_file: tracks whether SA has been deleted (0=exists, 1=deleted)
+	local deleted_file="${verify_attempt_file}.deleted"
+
+	# Initialize state: SA exists, no verification attempts yet
 	echo "0" >"$verify_attempt_file"
+	echo "0" >"$deleted_file"
 
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
-# Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
-if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
-	verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
-	verify_attempts=\$((verify_attempts + 1))
-	echo "\$verify_attempts" > "$verify_attempt_file"
+# State files for tracking SA lifecycle:
+# - deleted_file: 0=SA exists, 1=SA deleted (set by delete command)
+# - verify_attempt_file: counts queries after deletion (for re-establishment timing)
 
-	# First call: SA exists with initial SPI and byte counter
-	if [[ \$verify_attempts -le 1 ]]; then
+# Handle "ip xfrm state delete" - MUST come first to set deleted state
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
+	# Mark SA as deleted
+	echo "1" > "$deleted_file"
+	# Reset verify counter for re-establishment tracking
+	echo "0" > "$verify_attempt_file"
+	# Deletion always succeeds in this mock
+	exit 0
+fi
+
+# Handle "ip xfrm state get" (diagnostics) - check deleted state
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; then
+	is_deleted=\$(cat "$deleted_file" 2>/dev/null || echo "0")
+	if [[ "\$is_deleted" == "0" ]]; then
+		# SA still exists with initial SPI
 		echo "src ${peer_ip} dst ${peer_ip}"
 		echo "    proto esp spi ${initial_spi} reqid 1 mode tunnel"
-		echo "    lifetime current: ${initial_bytes} bytes, 10 packets"
 		exit 0
-	# Next few calls: SA deleted (no output)
-	elif [[ \$verify_attempts -le ${reestablishment_attempt} ]]; then
-		exit 0  # Return empty output (SA deleted)
-	# After re-establishment threshold: SA re-established with new SPI and incrementing byte counters
 	else
-		local call_count=\$((verify_attempts - ${reestablishment_attempt}))
-		local byte_count=\$((initial_bytes + (call_count - 1) * ${increment}))
-		echo "src ${peer_ip} dst ${peer_ip}"
-		echo "    proto esp spi ${final_spi} reqid 1 mode tunnel"
-		echo "    lifetime current: \${byte_count} bytes, 10 packets"
-		exit 0
-	fi
-# Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
-elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-	verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
-	verify_attempts=\$((verify_attempts + 1))
-	echo "\$verify_attempts" > "$verify_attempt_file"
-
-	# First call: SA exists with initial SPI and byte counter
-	if [[ \$verify_attempts -le 1 ]]; then
-		echo "src ${peer_ip} dst ${peer_ip}"
-		echo "    proto esp spi ${initial_spi} reqid 1 mode tunnel"
-		echo "    lifetime current: ${initial_bytes} bytes, 10 packets"
-		exit 0
-	# Next few calls: SA deleted (no output)
-	elif [[ \$verify_attempts -le ${reestablishment_attempt} ]]; then
-		exit 0  # Return empty output (SA deleted)
-	# After re-establishment threshold: SA re-established with new SPI and incrementing byte counters
-	else
-		local call_count=\$((verify_attempts - ${reestablishment_attempt}))
-		local byte_count=\$((initial_bytes + (call_count - 1) * ${increment}))
-		echo "src ${peer_ip} dst ${peer_ip}"
-		echo "    proto esp spi ${final_spi} reqid 1 mode tunnel"
-		echo "    lifetime current: \${byte_count} bytes, 10 packets"
-		exit 0
+		# SA deleted - get fails
+		exit 1
 	fi
 fi
+
+# Handle "ip -s xfrm state" (with statistics flag) - primary query path
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+	is_deleted=\$(cat "$deleted_file" 2>/dev/null || echo "0")
+
+	if [[ "\$is_deleted" == "0" ]]; then
+		# SA exists - return initial state
+		echo "src ${peer_ip} dst ${peer_ip}"
+		echo "    proto esp spi ${initial_spi} reqid 1 mode tunnel"
+		echo "    lifetime current: ${initial_bytes} bytes, 10 packets"
+		exit 0
+	else
+		# SA deleted - count verification attempts for re-establishment
+		verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+		verify_attempts=\$((verify_attempts + 1))
+		echo "\$verify_attempts" > "$verify_attempt_file"
+
+		if [[ \$verify_attempts -lt ${reestablishment_attempt} ]]; then
+			# Still waiting for re-establishment
+			exit 0  # Return empty output
+		else
+			# SA re-established with new SPI and incrementing byte counters
+			local call_count=\$((verify_attempts - ${reestablishment_attempt} + 1))
+			local byte_count=\$((${initial_bytes} + (call_count - 1) * ${increment}))
+			echo "src ${peer_ip} dst ${peer_ip}"
+			echo "    proto esp spi ${final_spi} reqid 1 mode tunnel"
+			echo "    lifetime current: \${byte_count} bytes, 10 packets"
+			exit 0
+		fi
+	fi
+fi
+
+# Handle "ip xfrm state" (without -s flag) - fallback query path
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+	is_deleted=\$(cat "$deleted_file" 2>/dev/null || echo "0")
+
+	if [[ "\$is_deleted" == "0" ]]; then
+		# SA exists - return initial state
+		echo "src ${peer_ip} dst ${peer_ip}"
+		echo "    proto esp spi ${initial_spi} reqid 1 mode tunnel"
+		echo "    lifetime current: ${initial_bytes} bytes, 10 packets"
+		exit 0
+	else
+		# SA deleted - count verification attempts for re-establishment
+		verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+		verify_attempts=\$((verify_attempts + 1))
+		echo "\$verify_attempts" > "$verify_attempt_file"
+
+		if [[ \$verify_attempts -lt ${reestablishment_attempt} ]]; then
+			# Still waiting for re-establishment
+			exit 0  # Return empty output
+		else
+			# SA re-established with new SPI and incrementing byte counters
+			local call_count=\$((verify_attempts - ${reestablishment_attempt} + 1))
+			local byte_count=\$((${initial_bytes} + (call_count - 1) * ${increment}))
+			echo "src ${peer_ip} dst ${peer_ip}"
+			echo "    proto esp spi ${final_spi} reqid 1 mode tunnel"
+			echo "    lifetime current: \${byte_count} bytes, 10 packets"
+			exit 0
+		fi
+	fi
+fi
+
 # Handle other ip commands
 exec /usr/bin/ip "\$@"
 EOF
@@ -1836,7 +1887,7 @@ fi
 if [[ "\$1" == "status" ]]; then
     if [[ ${status_exit} -eq 0 ]]; then
         echo "IPsec connections:"
-        echo "  ${conn_name}: ESTABLISHED"
+        echo "  ${conn_name}: ESTABLISHED, ${peer_ip}...192.168.1.2"
     fi
     exit ${status_exit}
 elif [[ "\$1" == "--help" ]] || [[ "\$1" == "--version" ]]; then
@@ -3497,6 +3548,12 @@ source_recovery_module() {
 	LOG_FILE="${LOG_FILE:-${LOGS_DIR}/vpn-monitor.log}"
 	export LOG_FILE
 	mkdir -p "$LOGS_DIR"
+
+	# Source config file if set (needed for ENABLE_XFRM_RECOVERY and other config vars)
+	if [[ -n "${TEST_CONFIG_FILE:-}" ]] && [[ -f "$TEST_CONFIG_FILE" ]]; then
+		# shellcheck source=/dev/null
+		source "$TEST_CONFIG_FILE" 2>/dev/null || true
+	fi
 
 	# Source dependencies in order
 	# shellcheck source=../lib/constants.sh

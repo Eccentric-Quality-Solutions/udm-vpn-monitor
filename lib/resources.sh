@@ -10,13 +10,7 @@
 # shellcheck source=lib/common.sh
 # Determine lib directory (where this file is located)
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${LIB_DIR}/common.sh" 2>/dev/null || {
-	# Fallback if common.sh not found - use centralized fallbacks
-	# shellcheck source=lib/fallbacks.sh
-	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
-	fi
-}
+source "${LIB_DIR}/common.sh"
 
 # Get CPU usage percentage
 #
@@ -375,6 +369,54 @@ check_resource_constrained() {
 	return 1
 }
 
+# Internal helper to check a resource and handle throttling
+#
+# Checks if a resource (CPU or RAM) is constrained and handles throttling logic.
+# This function centralizes the common pattern of checking resource constraints,
+# tracking events, and logging warnings.
+#
+# Arguments:
+#   $1: Resource name (e.g., "cpu", "ram")
+#   $2: Current usage percentage (0-100)
+#   $3: Threshold percentage (0-100)
+#   $4: Duration in seconds
+#   $5: State directory for storing state files
+#   $6: Constraint type for tracking (e.g., "cpu_constrained", "ram_constrained")
+#
+# Returns:
+#   0: Resource is healthy or not constrained long enough
+#   1: Resource is constrained and throttling should occur
+#
+# Side effects:
+#   - Tracks successful resource check
+#   - Tracks constraint events
+#   - Logs warnings when throttling occurs
+_check_resource_with_throttling() {
+	local resource_name="$1"
+	local usage="$2"
+	local threshold="$3"
+	local duration="$4"
+	local state_dir="$5"
+	local constraint_type="$6"
+
+	# Track successful check (usage was provided, so getter succeeded)
+	if command -v track_resource_check >/dev/null 2>&1; then
+		track_resource_check "$resource_name" 1
+	fi
+
+	if check_resource_constrained "$resource_name" "$usage" "$threshold" "$duration" "$state_dir"; then
+		# Track constraint event
+		if command -v track_resource_constraint >/dev/null 2>&1; then
+			track_resource_constraint "$constraint_type"
+		fi
+		handle_error "WARNING" "SYSTEM" \
+			"${resource_name^^} usage has been at ${threshold}%+ (currently ${usage}%) for ${duration}s - throttling execution" 0
+		return 1
+	fi
+
+	return 0
+}
+
 # Check system resources and implement throttling
 #
 # Monitors CPU, RAM, and disk space usage and implements throttling if resources are constrained.
@@ -435,16 +477,7 @@ check_system_resources() {
 	# Check CPU usage
 	local cpu_usage
 	if cpu_usage=$(get_cpu_usage 2>/dev/null); then
-		# Track successful CPU check
-		if command -v track_resource_check >/dev/null 2>&1; then
-			track_resource_check "cpu" 1
-		fi
-		if check_resource_constrained "cpu" "$cpu_usage" "$cpu_threshold" "$cpu_duration" "$state_dir"; then
-			# Track CPU constraint event
-			if command -v track_resource_constraint >/dev/null 2>&1; then
-				track_resource_constraint "cpu_constrained"
-			fi
-			handle_error "WARNING" "SYSTEM" "CPU usage has been at ${cpu_threshold}%+ (currently ${cpu_usage}%) for ${cpu_duration}s - throttling execution" 0
+		if ! _check_resource_with_throttling "cpu" "$cpu_usage" "$cpu_threshold" "$cpu_duration" "$state_dir" "cpu_constrained"; then
 			return 1
 		fi
 	else
@@ -457,16 +490,7 @@ check_system_resources() {
 	# Check RAM usage
 	local ram_usage
 	if ram_usage=$(get_memory_usage 2>/dev/null); then
-		# Track successful RAM check
-		if command -v track_resource_check >/dev/null 2>&1; then
-			track_resource_check "ram" 1
-		fi
-		if check_resource_constrained "ram" "$ram_usage" "$ram_threshold" "$ram_duration" "$state_dir"; then
-			# Track RAM constraint event
-			if command -v track_resource_constraint >/dev/null 2>&1; then
-				track_resource_constraint "ram_constrained"
-			fi
-			handle_error "WARNING" "SYSTEM" "RAM usage has been at ${ram_threshold}%+ (currently ${ram_usage}%) for ${ram_duration}s - throttling execution" 0
+		if ! _check_resource_with_throttling "ram" "$ram_usage" "$ram_threshold" "$ram_duration" "$state_dir" "ram_constrained"; then
 			return 1
 		fi
 	else

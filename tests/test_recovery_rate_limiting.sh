@@ -210,7 +210,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# This ensures VPN is detected as down, triggering Tier 3 recovery
 	mock_ip_vpn_down
 
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	local test_script
@@ -273,7 +274,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# This ensures VPN is detected as down, triggering Tier 3 recovery
 	mock_ip_vpn_down
 
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -326,7 +328,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# This ensures VPN is detected as down, triggering Tier 3 recovery
 	mock_ip_vpn_down
 
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -407,7 +410,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Create mock ip command that returns empty output (no SA) - VPN is definitely down
 	mock_ip_vpn_down
 
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	local test_script
@@ -486,7 +490,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Create mock ip command that returns empty output (no SA) - VPN is definitely down
 	mock_ip_vpn_down
 
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	local test_script
@@ -566,7 +571,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Create mock ip command that returns empty output (no SA) - VPN is definitely down
 	mock_ip_vpn_down
 
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	local test_script
@@ -650,7 +656,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Create mock ip command that returns empty output (no SA) - VPN is definitely down
 	mock_ip_vpn_down
 
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	local test_script
@@ -734,7 +741,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Create mock ip command that returns empty output (no SA) - VPN is definitely down
 	mock_ip_vpn_down
 
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	local test_script
@@ -841,7 +849,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Create mock ip command that returns empty output (no SA) - VPN is definitely down
 	mock_ip_vpn_down
 
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	local test_script
@@ -928,7 +937,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Create mock ip command that returns empty output (no SA) - VPN is definitely down
 	mock_ip_vpn_down
 
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	local test_script

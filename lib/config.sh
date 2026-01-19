@@ -31,11 +31,22 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" 2>/dev/null || LIB_DIR="
 # Note: safe_source_lib not available here since constants.sh is sourced before common.sh
 source "${LIB_DIR}/constants.sh" 2>/dev/null || {
 	# Fallback if constants.sh not found (shouldn't happen in normal operation)
-	readonly LOCKFILE_TIMEOUT_DEFAULT=300
-	readonly SECONDS_PER_MINUTE=60
-	readonly SECONDS_PER_HOUR=3600
-	readonly SECONDS_PER_DAY=86400
-	readonly MAX_IPV6_SEGMENTS=8
+	# Only set if not already set (to avoid readonly variable errors)
+	if ! declare -p LOCKFILE_TIMEOUT_DEFAULT &>/dev/null; then
+		readonly LOCKFILE_TIMEOUT_DEFAULT=300
+	fi
+	if ! declare -p SECONDS_PER_MINUTE &>/dev/null; then
+		readonly SECONDS_PER_MINUTE=60
+	fi
+	if ! declare -p SECONDS_PER_HOUR &>/dev/null; then
+		readonly SECONDS_PER_HOUR=3600
+	fi
+	if ! declare -p SECONDS_PER_DAY &>/dev/null; then
+		readonly SECONDS_PER_DAY=86400
+	fi
+	if ! declare -p MAX_IPV6_SEGMENTS &>/dev/null; then
+		readonly MAX_IPV6_SEGMENTS=8
+	fi
 }
 
 # Source common utility functions
@@ -44,13 +55,25 @@ source "${LIB_DIR}/common.sh"
 
 # Source configuration modules in dependency order
 # shellcheck source=lib/config/config_loading.sh
-source "${LIB_DIR}/config/config_loading.sh"
+source "${LIB_DIR}/config/config_loading.sh" || {
+	echo "ERROR: Failed to source config/config_loading.sh" >&2
+	exit 1
+}
 
 # shellcheck source=lib/config/config_defaults.sh
-source "${LIB_DIR}/config/config_defaults.sh"
+source "${LIB_DIR}/config/config_defaults.sh" || {
+	echo "ERROR: Failed to source config/config_defaults.sh" >&2
+	exit 1
+}
 
 # shellcheck source=lib/config/config_validation.sh
-source "${LIB_DIR}/config/config_validation.sh"
+source "${LIB_DIR}/config/config_validation.sh" || {
+	echo "ERROR: Failed to source config/config_validation.sh" >&2
+	exit 1
+}
 
 # shellcheck source=lib/config/location_parsing.sh
-source "${LIB_DIR}/config/location_parsing.sh"
+source "${LIB_DIR}/config/location_parsing.sh" || {
+	echo "ERROR: Failed to source config/location_parsing.sh" >&2
+	exit 1
+}

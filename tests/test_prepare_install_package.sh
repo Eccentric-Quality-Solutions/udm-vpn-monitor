@@ -26,7 +26,6 @@ EXPECTED_LIB_FILES=(
 	"lib/config_schema.sh"
 	"lib/constants.sh"
 	"lib/detection.sh"
-	"lib/fallbacks.sh"
 	"lib/lockfile.sh"
 	"lib/logging.sh"
 	"lib/recovery.sh"

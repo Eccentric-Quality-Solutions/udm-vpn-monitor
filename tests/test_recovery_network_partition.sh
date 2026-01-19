@@ -176,9 +176,16 @@ EOF
 	export TEST_DIR
 	cat >"$mock_ip" <<MOCKEOF
 #!/bin/bash
-# Handle xfrm state (preserve fixture's behavior - VPN down, no SA)
+# Handle "ip -s xfrm state" (with statistics flag) - VPN down, no SA
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    echo "mock_ip: handling ip -s xfrm state" >> "${TEST_DIR}/mock_calls.log" 2>/dev/null || true
+    # Return empty output (no SA found - VPN is down)
+    exit 0
+fi
+
+# Handle "ip xfrm state" (without statistics flag) - VPN down, no SA
 if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    echo "mock_ip: handling xfrm state" >> "${TEST_DIR}/mock_calls.log" 2>/dev/null || true
+    echo "mock_ip: handling ip xfrm state" >> "${TEST_DIR}/mock_calls.log" 2>/dev/null || true
     # Return empty output (no SA found - VPN is down)
     exit 0
 fi
@@ -267,8 +274,9 @@ EOF
 		return 1
 	fi
 
-	# Mock ipsec - reload should be called once partition clears
-	mock_ipsec_reload_restart 0 0
+	# Mock ipsec - VPN is DOWN initially (status_exit=1), reload/restart succeed
+	# This ensures VPN detection fails and recovery is triggered
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"

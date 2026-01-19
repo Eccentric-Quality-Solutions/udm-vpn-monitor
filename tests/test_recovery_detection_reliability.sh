@@ -79,7 +79,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Don't create ipsec mock (unavailable)
 
 	# Mock ipsec for recovery (even though detection can't use it, recovery needs it)
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -198,7 +199,8 @@ EOF
 	# This will result in "tunnel_down" failure type, not "unknown"
 
 	# Mock ipsec for recovery
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake

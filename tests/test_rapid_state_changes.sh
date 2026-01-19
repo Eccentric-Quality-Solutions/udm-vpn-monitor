@@ -39,7 +39,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local test_script="$TEST_SCRIPT"
 
 	# Mock ipsec for Tier 2 recovery
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	# VPN fails - switch to down state
@@ -189,7 +190,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	mock_ip_vpn_down >/dev/null
 
 	# Mock ipsec for Tier 3 recovery
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	# Run - should hit rate limit

@@ -6,25 +6,26 @@
 # Version: 0.6.0
 #
 # This module provides shared utility functions used throughout the codebase to reduce duplication:
-# - File operations: file_exists_and_readable(), ensure_file_exists(), atomic_write_file()
+# - File operations: file_exists_and_readable(), ensure_file_exists(), atomic_write_file(), read_counter_file()
 # - Directory operations: directory_exists(), directory_writable()
-# - Timestamp operations: get_unix_timestamp(), validate_timestamp(), safe_timestamp_subtract(), safe_timestamp_add(), safe_timestamp_diff()
+# - Timestamp operations: get_unix_timestamp(), validate_timestamp(), safe_timestamp_subtract(), safe_timestamp_add(), safe_timestamp_diff(), calculate_duration()
 # - String escaping: escape_sed_replacement(), escape_sed_regex()
 # - String sanitization: sanitize_location_name()
 # - String trimming: trim()
 # - Config file operations: update_config_value()
 # - Logging: log_info(), log_warn(), log_error()
 # - System checks: check_root()
+# - Path resolution: resolve_lib_dir()
 #
 # All modules should use these shared functions instead of duplicating logic.
 # See ARCHITECTURAL_REVIEW.md section 8.3 for code duplication reduction guidelines.
 #
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# Colors for output (only set if not already defined to allow re-sourcing)
+[[ -z "${RED:-}" ]] && readonly RED='\033[0;31m'
+[[ -z "${GREEN:-}" ]] && readonly GREEN='\033[0;32m'
+[[ -z "${YELLOW:-}" ]] && readonly YELLOW='\033[1;33m'
+[[ -z "${NC:-}" ]] && readonly NC='\033[0m' # No Color
 
 # Log an informational message
 #
@@ -296,6 +297,7 @@ run_with_timeout_kill_after() {
 # Ensure file exists with optional default content
 #
 # Creates a file if it doesn't exist, optionally writing default content.
+# Automatically creates parent directories if they don't exist.
 # This reduces code duplication for file initialization patterns.
 #
 # Arguments:
@@ -304,10 +306,10 @@ run_with_timeout_kill_after() {
 #
 # Returns:
 #   0: File exists or was created successfully
-#   1: Failed to create file
+#   1: Failed to create file or parent directories
 #
 # Side effects:
-#   Creates file with default content if it doesn't exist
+#   Creates parent directories and file with default content if they don't exist
 #
 # Examples:
 #   ensure_file_exists "$counter_file" "0"
@@ -320,11 +322,20 @@ run_with_timeout_kill_after() {
 # Note:
 #   Returns error code on failure - callers should handle errors appropriately.
 #   Some callers may want to log and continue, others may want to die().
+#   Automatically creates parent directories using mkdir -p if they don't exist.
 ensure_file_exists() {
 	local file="$1"
 	local default_content="${2:-}"
 
 	if [[ ! -f "$file" ]]; then
+		# Ensure parent directory exists
+		local parent_dir
+		parent_dir=$(dirname "$file")
+		if [[ ! -d "$parent_dir" ]]; then
+			if ! mkdir -p "$parent_dir" 2>/dev/null; then
+				return 1
+			fi
+		fi
 		if ! echo "$default_content" >"$file" 2>/dev/null; then
 			return 1
 		fi
@@ -355,6 +366,7 @@ ensure_file_exists() {
 #
 # Note:
 #   Uses 'date +%s' command internally
+#   May fail if date command is unavailable (returns error, caller should handle)
 get_unix_timestamp() {
 	date +%s
 }
@@ -558,6 +570,42 @@ safe_timestamp_diff() {
 	return 0
 }
 
+# Calculate duration between two timestamps
+#
+# Calculates the duration between a start time and an end time (defaults to now).
+# Ensures the result is non-negative (clamps to 0 if negative).
+# This is a convenience wrapper around safe_timestamp_diff that handles
+# common error cases and ensures non-negative durations.
+#
+# Arguments:
+#   $1: Start timestamp (required)
+#   $2: End timestamp (optional, defaults to current time)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints duration in seconds (non-negative integer) to stdout
+#
+# Examples:
+#   duration=$(calculate_duration "$start_time")
+#   duration=$(calculate_duration "$start_time" "$end_time")
+#
+# Note:
+#   Requires get_unix_timestamp() and safe_timestamp_diff() to be available
+#   Negative durations are clamped to 0
+calculate_duration() {
+	local start_time="$1"
+	local end_time="${2:-$(get_unix_timestamp)}"
+	local duration
+	duration=$(safe_timestamp_diff "$end_time" "$start_time" 2>/dev/null || echo "0")
+	if [[ $duration -lt 0 ]]; then
+		duration=0
+	fi
+	echo "$duration"
+	return 0
+}
+
 # Check if directory exists
 #
 # Verifies that a directory exists. This is a common pattern used throughout
@@ -702,6 +750,48 @@ atomic_write_file() {
 	return 0
 }
 
+# Read counter value from file safely
+#
+# Safely reads a counter file with proper error handling and corruption recovery.
+# This function consolidates the common pattern of reading counter files used
+# throughout the codebase for statistics tracking.
+#
+# Arguments:
+#   $1: Counter file path to read
+#
+# Returns:
+#   0: Always succeeds (read failures default to 0)
+#
+# Output:
+#   Prints counter value (0 if file doesn't exist, is unreadable, or corrupted)
+#
+# Side effects:
+#   None
+#
+# Examples:
+#   local count=$(read_counter_file "$counter_file")
+#   local dns_success=$(read_counter_file "$dns_success_file")
+#
+# Note:
+#   Handles file corruption by returning 0
+#   Uses file_exists_and_readable() to prevent hangs on unreadable files
+#   Validates that the value is numeric before returning it
+read_counter_file() {
+	local counter_file="$1"
+	local value
+
+	if file_exists_and_readable "$counter_file"; then
+		value=$(cat "$counter_file" 2>/dev/null || echo "0")
+	else
+		value="0"
+	fi
+
+	# Validate value is numeric (handle corruption)
+	[[ "$value" =~ ^[0-9]+$ ]] || value=0
+
+	echo "$value"
+}
+
 # Escape string for sed replacement
 #
 # Escapes special characters in a string for use in sed replacement strings.
@@ -735,9 +825,9 @@ escape_sed_replacement() {
 	# Use a different delimiter for the sed command that escapes the delimiter character
 	# This avoids issues when delimiter is | (which would create invalid s||| syntax)
 	if [[ "$delimiter" == "|" ]]; then
-		printf '%s\n' "$value" | sed 's/\\/\\\\/g' | sed 's/&/\\&/g' | sed "s#|#\\|#g"
+		printf '%s\n' "$value" | sed -e 's/\\/\\\\/g' -e 's/&/\\&/g' -e "s#|#\\\\|#g"
 	else
-		printf '%s\n' "$value" | sed 's/\\/\\\\/g' | sed 's/&/\\&/g' | sed "s|${delimiter}|\\${delimiter}|g"
+		printf '%s\n' "$value" | sed -e 's/\\/\\\\/g' -e 's/&/\\&/g' -e "s|${delimiter}|\\\\${delimiter}|g"
 	fi
 }
 
@@ -843,7 +933,8 @@ sanitize_location_name() {
 # Note:
 #   - Uses bash parameter expansion for performance (faster than sed)
 #   - Handles all POSIX whitespace characters: space, tab, newline, etc.
-#   - Returns empty string if input is all whitespace
+#   - Returns empty string if input is all whitespace or empty
+#   - Accepts empty or missing arguments (treats as empty string)
 trim() {
 	local str="$1"
 
@@ -884,13 +975,22 @@ trim() {
 #   update_config_value "$config_file" "LOCAL_UDM_IP" "$ip" "^ENABLE_PING_CHECK="
 #
 # Note:
+#   Uses escape_sed_regex() to safely escape variable names for regex matching
 #   Uses escape_sed_replacement() to safely escape values for sed replacement
 #   Uses | as delimiter in sed to avoid conflicts with / in paths/IPs
+#   Variable names should be valid shell identifiers (alphanumeric + underscore, starting with letter/underscore)
+#   Variable names containing regex special characters are properly escaped
 update_config_value() {
 	local config_file="$1"
 	local var_name="$2"
 	local var_value="$3"
 	local insert_after="${4:-}"
+
+	# Validate variable name format (must be valid shell identifier)
+	# Shell variable names: start with letter/underscore, followed by alphanumeric/underscore
+	if [[ ! "$var_name" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+		return 1
+	fi
 
 	# Validate config file exists
 	if [[ ! -f "$config_file" ]]; then
@@ -902,13 +1002,17 @@ update_config_value() {
 		return 1
 	fi
 
+	# Escape variable name for regex matching
+	local escaped_var_name
+	escaped_var_name=$(escape_sed_regex "$var_name")
+
 	# Escape value for sed replacement
 	local escaped_value
 	escaped_value=$(escape_sed_replacement "$var_value" "|")
 
-	if grep -q "^${var_name}=" "$config_file"; then
-		# Update existing line
-		sed -i "s|^${var_name}=.*|${var_name}=\"${escaped_value}\"|" "$config_file"
+	if grep -q "^${escaped_var_name}=" "$config_file"; then
+		# Update existing line (use original var_name in replacement, escaped in pattern)
+		sed -i "s|^${escaped_var_name}=.*|${var_name}=\"${escaped_value}\"|" "$config_file"
 	else
 		# Add new line
 		if [[ -n "$insert_after" ]]; then
@@ -918,7 +1022,7 @@ update_config_value() {
 			sed -i "/${insert_after}/a ${var_name}=\"${escaped_value}\"" "$config_file"
 		else
 			# Append to end of file
-			echo "${var_name}=\"${var_value}\"" >>"$config_file"
+			echo "${var_name}=\"${escaped_value}\"" >>"$config_file"
 		fi
 	fi
 
@@ -936,7 +1040,8 @@ update_config_value() {
 #   $2: Value to assign
 #
 # Returns:
-#   0: Always succeeds
+#   0: Success
+#   1: Invalid variable name format
 #
 # Side effects:
 #   Sets global variable via declare -g + printf -v
@@ -949,9 +1054,17 @@ update_config_value() {
 #   This function is used throughout config.sh to safely set configuration
 #   variables without risk of code injection. It replaces the repeated pattern
 #   of "declare -g \"$var_name\"; printf -v \"$var_name\" '%s' \"$var_value\""
+#   Variable names must be valid shell identifiers (alphanumeric + underscore,
+#   starting with letter or underscore)
 safe_set_variable() {
 	local var_name="$1"
 	local var_value="$2"
+
+	# Validate variable name format (must be valid shell identifier)
+	if [[ ! "$var_name" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+		return 1
+	fi
+
 	declare -g "$var_name"
 	printf -v "$var_name" '%s' "$var_value"
 }
@@ -1246,4 +1359,95 @@ safe_source_lib() {
 		# Source failed
 		return 1
 	fi
+}
+
+# Resolve lib directory path
+#
+# Determines the absolute path to the lib directory based on the location of a source file.
+# This function centralizes LIB_DIR resolution logic to eliminate duplication across modules.
+#
+# Arguments:
+#   $1: Optional source file path (defaults to BASH_SOURCE[0] if not provided)
+#   $2: Optional number of directory levels to go up from source file's directory (defaults to 0)
+#       For example, if source file is in lib/config/, use 1 to get lib/
+#
+# Returns:
+#   0: Success (LIB_DIR resolved and set)
+#   1: Failure (could not resolve LIB_DIR)
+#
+# Side effects:
+#   Sets global variable LIB_DIR to the resolved path
+#   In fake mode (NO_ESCALATE=1), continues execution even if resolution fails
+#
+# Examples:
+#   # Resolve lib/ directory from lib/config/config_loading.sh (go up one level)
+#   resolve_lib_dir "${BASH_SOURCE[0]}" 1
+#
+#   # Resolve lib/ directory from lib/config.sh (no levels up needed)
+#   resolve_lib_dir "${BASH_SOURCE[0]}" 0
+#
+#   # Use default (BASH_SOURCE[0], 0 levels)
+#   resolve_lib_dir
+#
+# Note:
+#   - Uses readlink -f if available for better symlink resolution
+#   - Falls back to cd/pwd if readlink not available
+#   - Handles both absolute and relative source file paths
+#   - Validates that resolved directory exists before setting LIB_DIR
+#   - This function is used by config.sh and config module files to ensure consistent LIB_DIR resolution
+resolve_lib_dir() {
+	local source_file="${1:-${BASH_SOURCE[0]}}"
+	local levels_up="${2:-0}"
+	local resolved_dir=""
+	local current_dir
+
+	# Try to resolve using readlink if available (handles symlinks better)
+	# Note: We check for check_command_available function first (if common.sh was sourced),
+	# but fall back to command -v if not available (for cases where this function is called
+	# before common.sh is fully loaded)
+	if { (declare -f check_command_available >/dev/null 2>&1 && check_command_available "readlink") || command -v readlink >/dev/null 2>&1; } && { [[ -L "$source_file" ]] || [[ -f "$source_file" ]]; }; then
+		# Try to resolve to absolute path
+		if current_dir=$(readlink -f "$source_file" 2>/dev/null) || [[ "$source_file" =~ ^/ ]]; then
+			if [[ -n "$current_dir" ]]; then
+				source_file="$current_dir"
+			fi
+			# Get directory containing source file
+			current_dir="$(dirname "$source_file")"
+			# Go up specified number of levels
+			if [[ $levels_up -gt 0 ]]; then
+				resolved_dir="$(cd "$current_dir" && for ((i = 0; i < levels_up; i++)); do cd ..; done && pwd)" 2>/dev/null || resolved_dir=""
+			else
+				resolved_dir="$(cd "$current_dir" && pwd)" 2>/dev/null || resolved_dir=""
+			fi
+		fi
+	fi
+
+	# Fallback: try relative path resolution if readlink method didn't work
+	if [[ -z "$resolved_dir" ]] && [[ "$source_file" =~ \.\.?/ ]]; then
+		current_dir="$(dirname "$source_file")"
+		# Go up specified number of levels
+		if [[ $levels_up -gt 0 ]]; then
+			resolved_dir="$(cd "$current_dir" && for ((i = 0; i < levels_up; i++)); do cd ..; done && pwd)" 2>/dev/null || resolved_dir=""
+		else
+			resolved_dir="$(cd "$current_dir" && pwd)" 2>/dev/null || resolved_dir=""
+		fi
+	fi
+
+	# Validate resolved directory exists
+	if [[ -z "$resolved_dir" ]] || [[ ! -d "$resolved_dir" ]]; then
+		# In fake mode, allow LIB_DIR to remain unset (subsequent code will handle it)
+		if [[ -n "${NO_ESCALATE:-}" ]] && [[ "${NO_ESCALATE}" == "1" ]]; then
+			LIB_DIR=""
+			return 1
+		fi
+		# Normal mode: error out
+		echo "ERROR: Cannot determine lib directory (source_file=${source_file:-<empty>}, levels_up=${levels_up})" >&2
+		echo "ERROR: BASH_SOURCE[0]=${BASH_SOURCE[0]:-<empty>}" >&2
+		LIB_DIR=""
+		return 1
+	fi
+
+	# Set LIB_DIR to resolved path
+	LIB_DIR="$resolved_dir"
+	return 0
 }

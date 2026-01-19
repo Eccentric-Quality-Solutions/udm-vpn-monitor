@@ -978,9 +978,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local peer_ips="${ip1} ${ip2} ${ip3} ${ip4}"
 
 	# Set up test with 4 locations, threshold 75% (3 out of 4 must fail)
+	# Disable ping check since this test is about system-wide failure detection, not ping
 	setup_test_vpn_monitor "$peer_ips" "${TEST_DIR}" \
 		'ENABLE_SYSTEM_WIDE_FAILURE_DETECTION=1' \
-		'SYSTEM_WIDE_FAILURE_THRESHOLD=75'
+		'SYSTEM_WIDE_FAILURE_THRESHOLD=75' \
+		'ENABLE_PING_CHECK=0'
 
 	# Source required functions
 	# shellcheck source=../lib/common.sh
@@ -1004,11 +1006,43 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# TEST4 was healthy (no failure_count)
 
 	# Step 2: Current cycle - 2 locations have recovered (TEST1 and TEST2), but stale state shows 3 failing
-	# Mock ip command - TEST1 and TEST2 are healthy, TEST3 is still failing, TEST4 is healthy
-	mock_ip_xfrm_state "$ip1" "2000" >/dev/null
-	mock_ip_xfrm_state "$ip2" "2000" >/dev/null
-	# TEST3 has no SA (still failing)
-	mock_ip_xfrm_state "" "" >/dev/null
+	# Mock ip command - TEST1, TEST2, and TEST4 are healthy (have SAs), TEST3 is still failing (no SA)
+	# Create custom mock that returns SAs for TEST1, TEST2, and TEST4, but not TEST3
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Return SAs for TEST1, TEST2, and TEST4 (healthy), but not TEST3 (failing)
+    echo "src ${ip1} dst ${ip1}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: 2000 bytes, 10 packets"
+    echo "src ${ip2} dst ${ip2}"
+    echo "    proto esp spi 0x12345678 reqid 2 mode tunnel"
+    echo "    lifetime current: 2000 bytes, 10 packets"
+    echo "src ${ip4} dst ${ip4}"
+    echo "    proto esp spi 0x12345678 reqid 4 mode tunnel"
+    echo "    lifetime current: 2000 bytes, 10 packets"
+    exit 0
+fi
+# Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Return SAs for TEST1, TEST2, and TEST4 (healthy), but not TEST3 (failing)
+    echo "src ${ip1} dst ${ip1}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: 2000 bytes, 10 packets"
+    echo "src ${ip2} dst ${ip2}"
+    echo "    proto esp spi 0x12345678 reqid 2 mode tunnel"
+    echo "    lifetime current: 2000 bytes, 10 packets"
+    echo "src ${ip4} dst ${ip4}"
+    echo "    proto esp spi 0x12345678 reqid 4 mode tunnel"
+    echo "    lifetime current: 2000 bytes, 10 packets"
+    exit 0
+fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
 	mock_ipsec_status 1 >/dev/null
 	add_mock_to_path
 
@@ -1034,10 +1068,43 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	rm -f "$LOG_FILE"
 	mkdir -p "$(dirname "$LOG_FILE")"
 
-	# Mock - TEST1 and TEST2 still healthy, TEST3 still failing
-	mock_ip_xfrm_state "$ip1" "3000" >/dev/null
-	mock_ip_xfrm_state "$ip2" "3000" >/dev/null
-	mock_ip_xfrm_state "" "" >/dev/null
+	# Mock - TEST1, TEST2, and TEST4 healthy (have SAs), TEST3 failing (no SA)
+	# Create custom mock that returns SAs for TEST1, TEST2, and TEST4, but not TEST3
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Return SAs for TEST1, TEST2, and TEST4 (healthy), but not TEST3 (failing)
+    echo "src ${ip1} dst ${ip1}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: 3000 bytes, 10 packets"
+    echo "src ${ip2} dst ${ip2}"
+    echo "    proto esp spi 0x12345678 reqid 2 mode tunnel"
+    echo "    lifetime current: 3000 bytes, 10 packets"
+    echo "src ${ip4} dst ${ip4}"
+    echo "    proto esp spi 0x12345678 reqid 4 mode tunnel"
+    echo "    lifetime current: 3000 bytes, 10 packets"
+    exit 0
+fi
+# Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Return SAs for TEST1, TEST2, and TEST4 (healthy), but not TEST3 (failing)
+    echo "src ${ip1} dst ${ip1}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: 3000 bytes, 10 packets"
+    echo "src ${ip2} dst ${ip2}"
+    echo "    proto esp spi 0x12345678 reqid 2 mode tunnel"
+    echo "    lifetime current: 3000 bytes, 10 packets"
+    echo "src ${ip4} dst ${ip4}"
+    echo "    proto esp spi 0x12345678 reqid 4 mode tunnel"
+    echo "    lifetime current: 3000 bytes, 10 packets"
+    exit 0
+fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
 	mock_ipsec_status 1 >/dev/null
 	add_mock_to_path
 

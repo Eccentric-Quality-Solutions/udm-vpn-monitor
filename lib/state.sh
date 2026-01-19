@@ -7,10 +7,12 @@
 #
 # This file sources modular state management components:
 #   - state_paths.sh: Path generation and sanitization
+#   - global_state.sh: Global state (cooldown, restart count, etc.)
 #   - peer_state.sh: Per-peer state operations
 #   - location_state.sh: Per-location state operations
-#   - global_state.sh: Global state (cooldown, restart count, etc.)
 #   - state_init.sh: State initialization
+#   - network_partition_stats.sh: Network partition statistics tracking
+#   - resource_monitoring_stats.sh: Resource monitoring statistics tracking
 
 # Source constants for magic numbers
 # shellcheck source=lib/constants.sh
@@ -20,20 +22,20 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	# Fallback if constants.sh not found (shouldn't happen in normal operation)
 	# Only set if not already set (to avoid readonly variable errors)
-	[[ -z "${SECONDS_PER_MINUTE:-}" ]] && readonly SECONDS_PER_MINUTE=60
-	[[ -z "${SECONDS_PER_HOUR:-}" ]] && readonly SECONDS_PER_HOUR=3600
-	[[ -z "${SECONDS_PER_DAY:-}" ]] && readonly SECONDS_PER_DAY=86400
+	if [[ -z "${SECONDS_PER_MINUTE:-}" ]]; then
+		readonly SECONDS_PER_MINUTE=60
+	fi
+	if [[ -z "${SECONDS_PER_HOUR:-}" ]]; then
+		readonly SECONDS_PER_HOUR=3600
+	fi
+	if [[ -z "${SECONDS_PER_DAY:-}" ]]; then
+		readonly SECONDS_PER_DAY=86400
+	fi
 fi
 
 # Source common utility functions
 # shellcheck source=lib/common.sh
-source "${LIB_DIR}/common.sh" 2>/dev/null || {
-	# Fallback if common.sh not found - use centralized fallbacks
-	# shellcheck source=lib/fallbacks.sh
-	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
-	fi
-}
+source "${LIB_DIR}/common.sh"
 
 # Helper function to log errors when sourcing state modules fails
 #

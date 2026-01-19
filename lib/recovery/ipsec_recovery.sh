@@ -90,10 +90,22 @@ source "${RECOVERY_DIR}/recovery_state.sh" 2>/dev/null || {
 #
 # Note:
 #   Requires _RECOVERY_IPSEC_PATH to be set (from recovery orchestration)
+#   Falls back to 'ipsec' command if _RECOVERY_IPSEC_PATH is unset
 #   Uses verify_ipsec_connections_active for verification
 execute_ipsec_reload() {
 	local peer_ip="$1"
 	local location_name="$2"
+
+	# Validate required parameters
+	if [[ -z "$peer_ip" ]] || [[ -z "$location_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "execute_ipsec_reload: peer_ip and location_name are required" 0
+		return 1
+	fi
+
+	# Calculate once, reuse throughout
+	local ip_display
+	ip_display=$(format_peer_ip_display "$peer_ip" "")
+
 	local reload_start_time
 	reload_start_time=$(get_unix_timestamp)
 	local command_succeeded=0
@@ -106,8 +118,6 @@ execute_ipsec_reload() {
 	local recovery_method_used="ipsec_reload"
 	store_recovery_method "$location_name" "$peer_ip" "$recovery_method_used"
 
-	local ip_display
-	ip_display=$(format_peer_ip_display "$peer_ip" "")
 	log_message "INFO" "$location_name" "Attempting ipsec reload for $ip_display (affects all tunnels)"
 	if "$ipsec_cmd" reload >/dev/null 2>&1; then
 		command_succeeded=1
@@ -133,30 +143,18 @@ execute_ipsec_reload() {
 		# Wait a moment for connections to re-establish
 		sleep "$XFRM_RECOVERY_SLEEP_SECONDS"
 
+		# Calculate duration once for use in both success and failure paths
+		local reload_duration
+		reload_duration=$(calculate_duration "$reload_start_time")
+
 		# Verify connections are active (not just that command succeeded)
+		# Note: ipsec reload/restart affects ALL tunnels, so we verify all locations
+		# to ensure we didn't break other working tunnels while fixing this one
 		if verify_ipsec_connections_active; then
-			local current_time
-			current_time=$(get_unix_timestamp)
-			local reload_duration
-			reload_duration=$(safe_timestamp_diff "$current_time" "$reload_start_time" 2>/dev/null || echo "0")
-			if [[ $reload_duration -lt 0 ]]; then
-				reload_duration=0
-			fi
-			local ip_display
-			ip_display=$(format_peer_ip_display "$peer_ip" "")
-			log_message "INFO" "$location_name" "Recovery completed for $ip_display (via ipsec fallback, verification: connections active, duration: ${reload_duration}s)"
+			log_message "INFO" "$location_name" "Recovery completed for $ip_display (via $recovery_method_used, verification: connections active, duration: ${reload_duration}s)"
 			return 0
 		else
-			local current_time
-			current_time=$(get_unix_timestamp)
-			local reload_duration
-			reload_duration=$(safe_timestamp_diff "$current_time" "$reload_start_time" 2>/dev/null || echo "0")
-			if [[ $reload_duration -lt 0 ]]; then
-				reload_duration=0
-			fi
-			local ip_display
-			ip_display=$(format_peer_ip_display "$peer_ip" "")
-			handle_error "WARNING" "$location_name" "Recovery completed for $ip_display (via ipsec fallback, verification: some connections not active, duration: ${reload_duration}s)"
+			handle_error "WARNING" "$location_name" "Recovery completed for $ip_display (via $recovery_method_used, verification: some connections not active, duration: ${reload_duration}s)"
 			# Clear recovery method since verification failed (prevents stale recovery method from being logged if VPN recovers naturally later)
 			if command -v clear_recovery_method >/dev/null 2>&1; then
 				clear_recovery_method "$location_name" "$peer_ip"
@@ -164,9 +162,7 @@ execute_ipsec_reload() {
 			return 1
 		fi
 	else
-		local ip_display
-		ip_display=$(format_peer_ip_display "$peer_ip" "")
-		handle_error "WARNING" "$location_name" "Surgical cleanup failed for $ip_display (ipsec commands failed, exit codes: reload=${reload_exit_code:-unknown}, restart=${restart_exit_code:-unknown})"
+		handle_error "WARNING" "$location_name" "IPsec recovery failed for $ip_display (ipsec commands failed, exit codes: reload=${reload_exit_code:-unknown}, restart=${restart_exit_code:-unknown})"
 		# Clear recovery method since recovery failed (prevents stale recovery method from being logged if VPN recovers naturally later)
 		if command -v clear_recovery_method >/dev/null 2>&1; then
 			clear_recovery_method "$location_name" "$peer_ip"
@@ -185,8 +181,8 @@ execute_ipsec_reload() {
 #   $2: Location name (for logging context)
 #
 # Returns:
-#   0: Restart successful (command executed successfully)
-#   1: Restart failed (command error)
+#   0: Restart successful (command executed successfully and verification passed)
+#   1: Restart failed (command error or verification failed)
 #
 # Side effects:
 #   - Executes ipsec restart (affects all VPN tunnels)
@@ -205,6 +201,18 @@ execute_ipsec_reload() {
 execute_ipsec_restart() {
 	local peer_ip="${1:-}"
 	local location_name="$2"
+
+	# Validate required parameters
+	if [[ -z "$location_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "execute_ipsec_restart: location_name is required" 0
+		return 1
+	fi
+
+	# Validate LOG_FILE is set (required for tee output)
+	if [[ -z "${LOG_FILE:-}" ]]; then
+		handle_error "ERROR" "$location_name" "LOG_FILE not set, cannot log ipsec restart output" 0
+		return 1
+	fi
 
 	# Store recovery method before attempting recovery
 	if [[ -n "$peer_ip" ]]; then
@@ -246,9 +254,13 @@ execute_ipsec_restart() {
 
 	# Verify byte counters resume for all configured locations
 	# Parse location configuration to get all external IPs
+	# Use global LOCATIONS array if available, otherwise parse config
 	if command -v parse_location_config >/dev/null 2>&1; then
-		declare -A LOCATIONS
-		if parse_location_config; then
+		# Ensure location config is parsed (may not be if called directly)
+		if ! declare -p LOCATIONS &>/dev/null 2>&1; then
+			parse_location_config 2>/dev/null || true
+		fi
+		if [[ ${#LOCATIONS[@]} -gt 0 ]]; then
 			local peers_with_bytes=0
 			local total_peers=0
 
@@ -289,19 +301,19 @@ execute_ipsec_restart() {
 		log_message "INFO" "SYSTEM" "Tier 3: Byte counter verification skipped (location parsing not available)"
 	fi
 
-	local current_time
-	current_time=$(get_unix_timestamp)
 	local restart_duration
-	restart_duration=$(safe_timestamp_diff "$current_time" "$restart_start_time" 2>/dev/null || echo "0")
-	if [[ $restart_duration -lt 0 ]]; then
-		restart_duration=0
-	fi
+	restart_duration=$(calculate_duration "$restart_start_time")
 	local verify_duration
-	verify_duration=$(safe_timestamp_diff "$current_time" "$verify_start_time" 2>/dev/null || echo "0")
-	if [[ $verify_duration -lt 0 ]]; then
-		verify_duration=0
-	fi
+	verify_duration=$(calculate_duration "$verify_start_time")
 	# Note: execute_ipsec_restart doesn't have access to internal_peer_ip, and location_name is already in log prefix
 	log_message "INFO" "$location_name" "Tier 3: Full IPsec restart completed (duration: ${restart_duration}s, verification: ${verify_duration}s, connections: ${connections_verified}, byte counters: ${byte_counters_verified})"
-	return 0
+	if [[ $connections_verified -eq 1 ]] && [[ $byte_counters_verified -eq 1 ]]; then
+		return 0
+	else
+		# Clear recovery method since verification failed (prevents stale recovery method from being logged if VPN recovers naturally later)
+		if [[ -n "$peer_ip" ]] && command -v clear_recovery_method >/dev/null 2>&1; then
+			clear_recovery_method "$location_name" "$peer_ip"
+		fi
+		return 1
+	fi
 }

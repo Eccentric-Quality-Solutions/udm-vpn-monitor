@@ -227,6 +227,12 @@ is_config_required() {
 #   Prints default value to stdout (empty string if no default)
 #
 # Limitations:
+#   Default values cannot contain pipe characters (|). If you need a default
+#   with a pipe character:
+#   1. Use a different format (e.g., comma-separated list)
+#   2. Set the default in the calling code instead of schema
+#   3. Contact maintainers to discuss schema format changes
+#
 #   The regex pattern `default:([^|]+)$` extracts everything after "default:" until
 #   the end of the string. This works correctly for all current default values.
 #   However, if a default value ever needs to contain a pipe character (|), it would
@@ -237,11 +243,6 @@ is_config_required() {
 #   - Integers: "1", "3", "15"
 #   - Cron schedules: "*/1 * * * *" (contains spaces and asterisks, no pipes)
 #   - Empty strings: ""
-#
-#   If defaults with pipe characters are needed in the future, consider:
-#   - Using a different delimiter in the schema format
-#   - Implementing escaping mechanism (e.g., \| for literal pipe)
-#   - Using a different schema format that supports complex values
 #
 #   For now, this limitation is acceptable as no current defaults require pipe characters.
 get_config_default() {

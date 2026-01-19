@@ -59,8 +59,8 @@ EOF
 	# Importance: Recovery actions can fail due to system issues; script must handle failures robustly
 	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}"
 
-	# Mock ipsec - reload fails
-	mock_ipsec_reload_restart 0 1
+	# Mock ipsec - reload succeeds, restart fails; VPN must be DOWN (status_exit=1)
+	mock_ipsec_reload_restart 0 1 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -209,8 +209,8 @@ EOF
 	# Mock ip command - VPN still down after recovery
 	mock_ip_vpn_down
 
-	# Mock ipsec - reload succeeds
-	mock_ipsec_reload_restart 1 1
+	# Mock ipsec - reload/restart fail; VPN must be DOWN (status_exit=1)
+	mock_ipsec_reload_restart 1 1 1
 	add_mock_to_path
 
 	# Create test version of script
@@ -262,8 +262,8 @@ EOF
 	# Mock ip command - VPN down
 	mock_ip_vpn_down
 
-	# Mock ipsec - reload fails
-	mock_ipsec_reload_restart 0 1
+	# Mock ipsec - reload succeeds, restart fails; VPN must be DOWN (status_exit=1)
+	mock_ipsec_reload_restart 0 1 1
 	add_mock_to_path
 
 	# Create test version of script

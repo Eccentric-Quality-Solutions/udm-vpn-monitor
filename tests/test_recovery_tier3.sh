@@ -57,8 +57,8 @@ EOF
 	# Importance: Error handling prevents script crashes and ensures monitoring continues after recovery failures
 	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60'
 
-	# Mock ipsec - restart fails
-	mock_ipsec_reload_restart 1 0
+	# Mock ipsec - reload fails, restart fails; VPN must be DOWN (status_exit=1)
+	mock_ipsec_reload_restart 1 1 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -125,8 +125,8 @@ EOF
 	# Mock ip command - VPN still down after restart
 	mock_ip_vpn_down
 
-	# Mock ipsec - restart succeeds
-	mock_ipsec_reload_restart 1 1
+	# Mock ipsec - reload/restart fail; VPN must be DOWN (status_exit=1)
+	mock_ipsec_reload_restart 1 1 1
 	add_mock_to_path
 
 	# Create test version of script
@@ -170,8 +170,8 @@ EOF
 		initial_restart_count=$(wc -l <"$restart_file" 2>/dev/null | tr -d ' ' || echo "0")
 	fi
 
-	# Mock ipsec - restart fails (second parameter 1 = restart fails)
-	mock_ipsec_reload_restart 0 1
+	# Mock ipsec - reload succeeds, restart fails; VPN must be DOWN (status_exit=1)
+	mock_ipsec_reload_restart 0 1 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -227,8 +227,8 @@ EOF
 	# This ensures Tier 3 recovery is triggered
 	mock_ip_vpn_down
 
-	# Mock ipsec - restart fails (tests PIPESTATUS handling)
-	mock_ipsec_reload_restart 1 0
+	# Mock ipsec - reload fails, restart fails; VPN must be DOWN (status_exit=1)
+	mock_ipsec_reload_restart 1 1 1
 	add_mock_to_path
 
 	# Create test version of script
@@ -502,6 +502,36 @@ EOF
 	# Should handle case where VPN recovers (SA exists) but byte counters don't increase immediately
 	# Script should log warning about bytes not increasing but continue execution
 	assert_file_exist "$LOG_FILE"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:medium
+@test "tier 3: execute_ipsec_restart fails gracefully when LOG_FILE is unset" {
+	# Purpose: Test verifies that execute_ipsec_restart validates LOG_FILE is set before using it
+	# Expected: Function returns error when LOG_FILE is unset, preventing tee command from failing silently
+	# Importance: Validation ensures clear error messages when required variables are missing, preventing silent failures
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	# Source recovery functions to test directly
+	source_recovery_module
+
+	# Unset LOG_FILE to test validation
+	unset LOG_FILE
+
+	# Mock ipsec command (should not be called since validation fails first)
+	# VPN must be DOWN (status_exit=1) for consistency
+	mock_ipsec_reload_restart 1 1 1
+	add_mock_to_path
+
+	# Test execute_ipsec_restart function directly - should fail with validation error
+	# run captures both stdout and stderr by default
+	run execute_ipsec_restart "${TEST_PEER_IP}" "TEST_LOCATION"
+	assert_failure
+
+	# Should return error message about LOG_FILE not being set
+	# handle_error writes ERROR messages to stderr, which is captured by run
+	assert_output --partial "LOG_FILE not set"
 
 	remove_mock_from_path
 }

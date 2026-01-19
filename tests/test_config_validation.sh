@@ -964,3 +964,223 @@ EOF
 	unset CONFIG_SCHEMA
 	unset LOG_FILE
 }
+
+# ============================================================================
+# SPLIT_RULES_STRING FUNCTION TESTS
+# ============================================================================
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - empty rules string" {
+	# Purpose: Test that split_rules_string handles empty rules string correctly
+	# Expected: Function returns success and produces empty array
+	# Importance: Edge case handling - empty input should not cause errors
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "" "result_array"
+	local status=$?
+
+	# Should succeed and produce empty array
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 0 ]
+}
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - ||| separator with multiple rules" {
+	# Purpose: Test that split_rules_string correctly splits rules using ||| separator
+	# Expected: Function splits rules by ||| separator into array elements
+	# Importance: Core functionality - new format for rule separation
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "min:1|||max:10" "result_array"
+	local status=$?
+
+	# Should succeed and split into two rules
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 2 ]
+	assert_equal "${result_array[0]}" "min:1"
+	assert_equal "${result_array[1]}" "max:10"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - ||| separator with three rules" {
+	# Purpose: Test that split_rules_string handles multiple ||| separators correctly
+	# Expected: Function splits all rules separated by ||| into array elements
+	# Importance: Ensures function works with more than two rules
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "min:1|||max:10|||step:2" "result_array"
+	local status=$?
+
+	# Should succeed and split into three rules
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 3 ]
+	assert_equal "${result_array[0]}" "min:1"
+	assert_equal "${result_array[1]}" "max:10"
+	assert_equal "${result_array[2]}" "step:2"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - values: prefix special case (single rule)" {
+	# Purpose: Test that split_rules_string does not split values: rules (comma is part of value)
+	# Expected: Function returns single-element array containing the entire values: rule
+	# Importance: Special case handling - commas in values: rules are part of the value, not separators
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "values:0,1" "result_array"
+	local status=$?
+
+	# Should succeed and return single rule (not split by comma)
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 1 ]
+	assert_equal "${result_array[0]}" "values:0,1"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - values: prefix with multiple values" {
+	# Purpose: Test that split_rules_string handles values: rules with multiple comma-separated values
+	# Expected: Function returns single-element array containing the entire values: rule
+	# Importance: Ensures commas in values: rules are preserved as part of the value
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "values:0,1,2,3" "result_array"
+	local status=$?
+
+	# Should succeed and return single rule (not split by comma)
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 1 ]
+	assert_equal "${result_array[0]}" "values:0,1,2,3"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - comma separator backward compatibility" {
+	# Purpose: Test that split_rules_string supports comma separator for backward compatibility
+	# Expected: Function splits rules by comma when ||| is not present and not a values: rule
+	# Importance: Backward compatibility - old format should still work
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "min:1,max:10" "result_array"
+	local status=$?
+
+	# Should succeed and split into two rules
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 2 ]
+	assert_equal "${result_array[0]}" "min:1"
+	assert_equal "${result_array[1]}" "max:10"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - comma separator with three rules" {
+	# Purpose: Test that split_rules_string handles multiple comma-separated rules
+	# Expected: Function splits all rules separated by comma into array elements
+	# Importance: Ensures backward compatibility works with multiple rules
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "min:1,max:10,step:2" "result_array"
+	local status=$?
+
+	# Should succeed and split into three rules
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 3 ]
+	assert_equal "${result_array[0]}" "min:1"
+	assert_equal "${result_array[1]}" "max:10"
+	assert_equal "${result_array[2]}" "step:2"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - single rule without separator" {
+	# Purpose: Test that split_rules_string handles single rule without any separator
+	# Expected: Function returns single-element array containing the rule
+	# Importance: Edge case - single rule should work correctly
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "min:1" "result_array"
+	local status=$?
+
+	# Should succeed and return single rule
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 1 ]
+	assert_equal "${result_array[0]}" "min:1"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - ||| separator takes precedence over comma" {
+	# Purpose: Test that ||| separator is checked first and takes precedence
+	# Expected: Function uses ||| separator when present, even if comma is also present
+	# Importance: Ensures correct precedence - ||| should be used when present
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "min:1|||max:10,step:2" "result_array"
+	local status=$?
+
+	# Should succeed and split by ||| (not by comma)
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 2 ]
+	assert_equal "${result_array[0]}" "min:1"
+	assert_equal "${result_array[1]}" "max:10,step:2"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - values: prefix takes precedence over comma" {
+	# Purpose: Test that values: prefix takes precedence over comma separator
+	# Expected: Function does not split values: rules even when comma is present
+	# Importance: Special case handling - values: should not be split by comma
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "values:0,1,2" "result_array"
+	local status=$?
+
+	# Should succeed and return single rule (not split by comma)
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 1 ]
+	assert_equal "${result_array[0]}" "values:0,1,2"
+}

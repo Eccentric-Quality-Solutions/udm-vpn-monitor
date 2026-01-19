@@ -3,6 +3,16 @@
 # Recovery module constants for UDM VPN Monitor
 # Defines recovery-specific constants used across recovery modules
 #
+# Usage Guidelines:
+#   - Always use these constants instead of magic numbers in recovery code
+#   - Add new constants here when a value is used in multiple recovery modules or has semantic meaning
+#   - For general application constants, see lib/constants.sh
+#
+# Sourcing:
+#   This file is safe to source multiple times (idempotent).
+#   Constants are only defined if not already set.
+#   Recovery modules source this file with defensive fallback patterns.
+#
 # Version: 0.6.0
 #
 
@@ -27,8 +37,3 @@ readonly XFRM_RECOVERY_VERIFY_INTERVAL=2
 # Used to cap the exponential backoff interval growth
 # Used by xfrm_recovery.sh
 readonly XFRM_RECOVERY_MAX_INTERVAL=16
-
-# Timeout (in seconds) for ipsec status command to prevent hanging
-# Prevents ipsec status from blocking script execution indefinitely
-# Used by recovery_verification.sh
-readonly IPSEC_STATUS_TIMEOUT=5

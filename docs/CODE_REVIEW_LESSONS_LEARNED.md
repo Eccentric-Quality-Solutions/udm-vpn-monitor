@@ -2875,6 +2875,71 @@ log_message "INFO" "$location_name" "Surgical cleanup completed for $location_na
 
 ---
 
+## Lesson 37: Avoid Over-Engineering for Theoretical Edge Cases
+
+**Impact Level:** Medium  
+**Applicability:** Architecture/Design  
+**Actionability:** High  
+**Date:** 2026-01-18
+
+### Problem
+The codebase included a centralized fallback system (`lib/fallbacks.sh`) that provided fallback implementations when core modules failed to source. This system:
+- Required maintaining two implementations of the same functions (main + fallback)
+- Added complexity to module sourcing (9+ files had fallback logic)
+- Addressed theoretical edge cases (file corruption, syntax errors) that are extremely unlikely in production
+- Created maintenance burden (keeping implementations in sync)
+
+### Impact
+- **Maintenance Burden:** Two implementations to keep in sync (289 lines of fallback code)
+- **Complexity:** Complex fallback sourcing patterns in every module
+- **Cognitive Load:** Developers need to understand both main and fallback implementations
+- **Risk:** Fallback implementations could drift from main implementations
+
+### Lesson
+**Don't over-engineer for theoretical edge cases.** If a dependency can't be sourced in production, the application is broken anyway. Fail fast is better than silent degradation.
+
+**When to use fallbacks:**
+- ✅ **Good:** Fallback to alternative detection method (xfrm → ipsec) - real-world scenario
+- ✅ **Good:** Fallback command availability checks (command -v → system directories) - real-world scenario
+- ❌ **Bad:** Fallback when core modules fail to source - theoretical edge case
+
+**Pragmatic approach:**
+- If `common.sh` can't be sourced, the app is broken - fail immediately
+- Installation scripts should ensure dependencies exist, not rely on fallbacks
+- Tests can source real modules, don't need fallbacks
+
+### Pattern to Follow
+```bash
+# ✅ GOOD: Direct sourcing, fail fast
+source "${LIB_DIR}/common.sh"
+
+# ❌ BAD: Over-engineered fallback
+source "${LIB_DIR}/common.sh" 2>/dev/null || {
+    if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
+        source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
+    fi
+}
+```
+
+### When Fallbacks Are Appropriate
+- **Real-world alternatives:** When you have multiple ways to accomplish the same goal (e.g., xfrm vs ipsec)
+- **Optional features:** When functionality can be disabled if dependencies are missing
+- **Command availability:** When checking for optional commands that enhance but don't require functionality
+
+### When Fallbacks Are Over-Engineering
+- **Core dependencies:** When the module is essential for application operation
+- **Theoretical failures:** When the failure scenario is extremely unlikely (file corruption, syntax errors)
+- **Silent degradation:** When fallback provides minimal functionality that masks real problems
+
+### References
+- YAGNI Principle: "You Aren't Gonna Need It"
+- Fail Fast Principle: Better to fail immediately with clear error than degrade silently
+- Pragmatic Programming: Balance between robustness and simplicity
+
+**Recommendation:** ✅ **Keep** - Important lesson about avoiding over-engineering.
+
+---
+
 ## Summary: Key Takeaways
 
 These lessons should be applied systematically in future development and code reviews to prevent similar issues:
@@ -2917,12 +2982,14 @@ These lessons should be applied systematically in future development and code re
 
 32. **Centralize test data to improve maintainability** - Extract embedded test data (mock outputs, expected values, configuration templates) from test files into a centralized `tests/data/` directory structure. Create generator functions for parameterized data patterns. This centralizes maintenance (changes in one place), ensures consistency (all tests use same format), improves discoverability (easier to find and reuse), and serves as documentation of test data patterns. Use structured bash format (functions and variables) for consistency with the codebase. Example: Created `tests/data/` with `mock_outputs/`, `configs/`, and `expected_values/` subdirectories, with generator functions in `helpers/test_data.bash` for xfrm state, ipsec status, and config templates.
 
-33. **Path resolution in sourced bash scripts** - When writing helper modules that are sourced (not executed), be careful with path resolution. `BATS_TEST_DIRNAME` is relative to the test file, not the helper file. Use `${BASH_SOURCE[0]}` to get the helper's directory: `helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"`. Also, `local` cannot be used at the top level of a sourced script (only inside functions) - use regular variables with a naming convention like `_helper_dir` to avoid namespace pollution. Example: Fixed `tests/helpers/test_data.bash` to use `_helper_dir` instead of `local helper_dir` at the top level, and to use `${BASH_SOURCE[0]}` instead of `BATS_TEST_DIRNAME` for path resolution.
+33. **Avoid variable shadowing with global arrays** - When a global array exists (like `LOCATIONS`), don't create a local variable with the same name using `declare -A` inside functions. This creates a local shadow that hides the global, causing confusion and potential bugs. Instead, check if the global exists first using `declare -p`, and only populate it if needed. This pattern is more efficient (reuses existing data), avoids shadowing, and is consistent across the codebase. Example: Changed `declare -A LOCATIONS; if parse_location_config; then` to `if ! declare -p LOCATIONS &>/dev/null 2>&1; then parse_location_config 2>/dev/null || true; fi; if [[ ${#LOCATIONS[@]} -gt 0 ]]; then` in `ipsec_recovery.sh` and `recovery_verification.sh` to match the pattern in `xfrm_recovery.sh`.
 
-33. **Error handling functions should be defensive with invalid input** - When error handling functions receive invalid input (e.g., invalid severity levels, non-numeric exit codes), they should be conservative and not cause unexpected script termination. Invalid input should not trigger exits unless an exit code was explicitly provided. This prevents accidental exits when typos or incorrect parameters are passed. Example: `handle_error()` now defaults invalid severity to ERROR but sets exit_code to 0 (no exit) unless an exit code was explicitly provided. Similarly, non-numeric last arguments are treated as part of the message with exit_code set to 0 to prevent accidental exits.
+34. **Path resolution in sourced bash scripts** - When writing helper modules that are sourced (not executed), be careful with path resolution. `BATS_TEST_DIRNAME` is relative to the test file, not the helper file. Use `${BASH_SOURCE[0]}` to get the helper's directory: `helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"`. Also, `local` cannot be used at the top level of a sourced script (only inside functions) - use regular variables with a naming convention like `_helper_dir` to avoid namespace pollution. Example: Fixed `tests/helpers/test_data.bash` to use `_helper_dir` instead of `local helper_dir` at the top level, and to use `${BASH_SOURCE[0]}` instead of `BATS_TEST_DIRNAME` for path resolution.
 
-34. **Extract core test infrastructure into reusable standard functions** - When standardizing test setup/teardown patterns, extract core logic into `standard_setup()` and `standard_teardown()` functions that can be called from custom implementations. Keep default `setup()` and `teardown()` calling the standard functions to maintain backward compatibility. This pattern allows tests with custom setup/teardown to extend standard functions while ensuring consistent test isolation. Benefits: reduces duplication, ensures consistency, maintains backward compatibility, and provides clear extension points. Example: Extracted `standard_setup()` and `standard_teardown()` from `setup()` and `teardown()` in `test_helper.bash`, allowing `test_vpn_keepalive.sh` to extend standard teardown with keepalive-specific cleanup.
+35. **Error handling functions should be defensive with invalid input** - When error handling functions receive invalid input (e.g., invalid severity levels, non-numeric exit codes), they should be conservative and not cause unexpected script termination. Invalid input should not trigger exits unless an exit code was explicitly provided. This prevents accidental exits when typos or incorrect parameters are passed. Example: `handle_error()` now defaults invalid severity to ERROR but sets exit_code to 0 (no exit) unless an exit code was explicitly provided. Similarly, non-numeric last arguments are treated as part of the message with exit_code set to 0 to prevent accidental exits.
 
-35. **Process cleanup in parallel test execution requires defensive programming** - When running tests in parallel with coverage tools (e.g., kcov), orphan processes can accumulate if cleanup is not handled properly. The `timeout` command with `--kill-after` helps, but additional defensive cleanup is needed. Use process group cleanup (`kill -TERM -pgid` followed by `kill -KILL -pgid`) to ensure all child processes are terminated. Add cleanup traps in parallel runner functions and explicit cleanup calls after timeout execution. This prevents resource leaks and ensures CI stability. Example: Added `cleanup_test_processes()` function that kills process groups, integrated into `run_single_test_with_timeout()` and `parallel_test_runner_with_coverage()` with cleanup traps to handle interruptions and timeouts.
+36. **Extract core test infrastructure into reusable standard functions** - When standardizing test setup/teardown patterns, extract core logic into `standard_setup()` and `standard_teardown()` functions that can be called from custom implementations. Keep default `setup()` and `teardown()` calling the standard functions to maintain backward compatibility. This pattern allows tests with custom setup/teardown to extend standard functions while ensuring consistent test isolation. Benefits: reduces duplication, ensures consistency, maintains backward compatibility, and provides clear extension points. Example: Extracted `standard_setup()` and `standard_teardown()` from `setup()` and `teardown()` in `test_helper.bash`, allowing `test_vpn_keepalive.sh` to extend standard teardown with keepalive-specific cleanup.
 
-36. **Signal handlers can be triggered by cleanup code, not just user interrupts** - When cleanup functions send signals (e.g., `kill -TERM`), those signals can trigger signal handlers (traps) that were set up to handle user interrupts. This causes false "interrupted" messages even when no user interruption occurred. **Always temporarily disable signal traps before calling cleanup functions that send signals**, then re-enable them immediately after. Only call cleanup functions when actually needed (e.g., on timeout), not after every operation. Example: Fixed `run_single_test_with_timeout()` to only call `cleanup_test_processes()` on timeout (exit codes 124 or 143), and to temporarily disable TERM/INT traps before cleanup to prevent false "Interrupted by user (Ctrl+C)" messages.
+37. **Process cleanup in parallel test execution requires defensive programming** - When running tests in parallel with coverage tools (e.g., kcov), orphan processes can accumulate if cleanup is not handled properly. The `timeout` command with `--kill-after` helps, but additional defensive cleanup is needed. Use process group cleanup (`kill -TERM -pgid` followed by `kill -KILL -pgid`) to ensure all child processes are terminated. Add cleanup traps in parallel runner functions and explicit cleanup calls after timeout execution. This prevents resource leaks and ensures CI stability. Example: Added `cleanup_test_processes()` function that kills process groups, integrated into `run_single_test_with_timeout()` and `parallel_test_runner_with_coverage()` with cleanup traps to handle interruptions and timeouts.
+
+38. **Signal handlers can be triggered by cleanup code, not just user interrupts** - When cleanup functions send signals (e.g., `kill -TERM`), those signals can trigger signal handlers (traps) that were set up to handle user interrupts. This causes false "interrupted" messages even when no user interruption occurred. **Always temporarily disable signal traps before calling cleanup functions that send signals**, then re-enable them immediately after. Only call cleanup functions when actually needed (e.g., on timeout), not after every operation. Example: Fixed `run_single_test_with_timeout()` to only call `cleanup_test_processes()` on timeout (exit codes 124 or 143), and to temporarily disable TERM/INT traps before cleanup to prevent false "Interrupted by user (Ctrl+C)" messages.

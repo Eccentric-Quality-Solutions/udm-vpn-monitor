@@ -29,12 +29,12 @@ load fixtures/vpn_at_tier
 
 	# Mock ip command - xfrm recovery fails (can't delete SAs)
 	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
+	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "delete" ]]; then
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
     # xfrm delete fails
     exit 1
-elif [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     # Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
     # Return SAs so recovery is attempted
     # Include zero byte counters to ensure VPN is detected as DOWN
@@ -42,7 +42,7 @@ elif [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
     echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
     echo "    lifetime current: 0 bytes, 0 packets"
     exit 0
-elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     # Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
     # Return SAs so recovery is attempted
     # Include zero byte counters to ensure VPN is detected as DOWN
@@ -51,12 +51,13 @@ elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
     echo "    lifetime current: 0 bytes, 0 packets"
     exit 0
 fi
-exec /usr/bin/ip "$@"
+exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
 
 	# Mock ipsec - both reload and restart fail
-	mock_ipsec_reload_restart 1 1
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 1 1 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"

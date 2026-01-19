@@ -10,22 +10,70 @@
 # - xfrm_detection.sh: xfrm state and byte counter detection
 # - ping_detection.sh: Ping-based detection
 # - failure_analysis.sh: Failure type classification
+# - system_wide_failure.sh: System-wide failure detection
 
 # Determine lib directory (where this file is located)
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Helper function to log errors when sourcing detection modules fails
+#
+# Uses log_message if available (from logging.sh), otherwise falls back to echo.
+# This ensures errors are logged consistently when possible.
+#
+# Arguments:
+#   $1: Error message to log
+#
+# Returns:
+#   0: Always succeeds (logging never fails)
+#
+# Output:
+#   - If log_message is available: logs via log_message to LOG_FILE and stderr
+#   - Otherwise: prints error message to stderr
+#
+# Examples:
+#   log_detection_error "Failed to source detection module: network_validation.sh"
+#
+# Note:
+#   This function is used during module loading when log_message may not be available yet.
+#   It gracefully falls back to echo if log_message is not defined.
+log_detection_error() {
+	local message="$1"
+	if type log_message >/dev/null 2>&1; then
+		# log_message is available - use it (it will handle LOG_FILE not being set)
+		log_message "ERROR" "SYSTEM" "$message"
+	else
+		# Fallback to echo if log_message not available
+		echo "Error: $message" >&2
+	fi
+}
+
 # Source all detection modules in dependency order
 # shellcheck source=lib/detection/network_validation.sh
-source "${LIB_DIR}/detection/network_validation.sh"
+source "${LIB_DIR}/detection/network_validation.sh" 2>/dev/null || {
+	log_detection_error "Failed to source detection/network_validation.sh"
+	exit 1
+}
 
 # shellcheck source=lib/detection/xfrm_detection.sh
-source "${LIB_DIR}/detection/xfrm_detection.sh"
+source "${LIB_DIR}/detection/xfrm_detection.sh" 2>/dev/null || {
+	log_detection_error "Failed to source detection/xfrm_detection.sh"
+	exit 1
+}
 
 # shellcheck source=lib/detection/ping_detection.sh
-source "${LIB_DIR}/detection/ping_detection.sh"
+source "${LIB_DIR}/detection/ping_detection.sh" 2>/dev/null || {
+	log_detection_error "Failed to source detection/ping_detection.sh"
+	exit 1
+}
 
 # shellcheck source=lib/detection/failure_analysis.sh
-source "${LIB_DIR}/detection/failure_analysis.sh"
+source "${LIB_DIR}/detection/failure_analysis.sh" 2>/dev/null || {
+	log_detection_error "Failed to source detection/failure_analysis.sh"
+	exit 1
+}
 
 # shellcheck source=lib/detection/system_wide_failure.sh
-source "${LIB_DIR}/detection/system_wide_failure.sh"
+source "${LIB_DIR}/detection/system_wide_failure.sh" 2>/dev/null || {
+	log_detection_error "Failed to source detection/system_wide_failure.sh"
+	exit 1
+}

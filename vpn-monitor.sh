@@ -647,7 +647,7 @@ process_locations() {
 			timestamp=$(get_system_wide_failure_timestamp)
 			if [[ "$timestamp" -gt 0 ]]; then
 				local duration
-				duration=$(safe_timestamp_diff "$now" "$timestamp" 2>/dev/null || echo "0")
+				duration=$(calculate_duration "$timestamp" "$now" 2>/dev/null || echo "0")
 				log_message "INFO" "SYSTEM" "System-wide failure resolved after ${duration} seconds"
 			else
 				log_message "INFO" "SYSTEM" "System-wide failure resolved"

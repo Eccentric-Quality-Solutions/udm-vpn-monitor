@@ -1236,6 +1236,33 @@ local result=$((value * 2))
 - No quotes needed inside `$(( ))`
 - Variables don't need `$` prefix inside `$(( ))` (but it's safe to include)
 
+### Post-Increment with `set -e` Pitfall
+
+**Important:** When using `set -e` (errexit), post-increment `((variable++))` can cause script exit if the variable starts at 0.
+
+```bash
+# ❌ BAD: With set -e, this exits when count=0
+local count=0
+((count++))  # Evaluates to 0 (false), script exits with set -e
+
+# ✅ GOOD: Use pre-increment instead
+local count=0
+((++count))  # Evaluates to 1 (true), safe with set -e
+
+# ✅ GOOD: Use explicit assignment
+local count=0
+count=$((count + 1))  # Always succeeds, safe with set -e
+```
+
+**Why:** Post-increment `((count++))` returns the value before increment. When `count=0`, it evaluates to 0 (false), which triggers `set -e` to exit the script. Pre-increment `((++count))` returns the value after increment, so it evaluates to 1 (true) when `count=0`.
+
+**When This Matters:**
+- Standalone arithmetic statements (not in conditions)
+- Variables initialized to 0
+- Scripts or functions called from contexts with `set -e` enabled (e.g., BATS tests)
+
+**Note:** This doesn't apply to C-style for loops `for ((i = 0; i < 10; i++))` because `set -e` is disabled in loop conditions.
+
 ### Integer Overflow Limitations
 
 **Important:** Bash uses signed 64-bit integers (maximum: 9,223,372,036,854,775,807). Very large numbers can overflow, and operations exceeding the maximum will wrap around with undefined behavior. For timestamp calculations, large counters, or financial calculations, validate results and consider using external tools like `bc` or `awk`. For project-specific safe timestamp arithmetic functions, see `CODE_PATTERNS.md`.
@@ -2481,11 +2508,10 @@ Source modules safely with proper path resolution, error handling, and idempoten
 ```bash
 # ✅ GOOD: Safe module sourcing with path resolution
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${LIB_DIR}/common.sh" 2>/dev/null || {
-    # Fallback if common.sh not found
-    if [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-        source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
-    fi
+# Source required module - fail fast if it can't be loaded
+source "${LIB_DIR}/common.sh" || {
+    echo "Error: Failed to source ${LIB_DIR}/common.sh" >&2
+    exit 1
 }
 
 # ✅ GOOD: Required module with error handling
