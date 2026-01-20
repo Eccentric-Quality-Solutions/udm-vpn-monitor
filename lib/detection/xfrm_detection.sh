@@ -280,9 +280,23 @@ execute_xfrm_state_command() {
 	local ip_cmd
 	ip_cmd=$(get_command_path "ip")
 
+	# Validate that we got a valid command path
+	if [[ -z "$ip_cmd" ]]; then
+		log_message "ERROR" "SYSTEM" "get_command_path returned empty string for 'ip' command"
+		return 2
+	fi
+
+	# If we got a full path (not just command name), verify it's executable
+	# This catches cases where get_command_path returns a path that doesn't actually exist
+	if [[ "$ip_cmd" == /* ]]; then
+		if [[ ! -x "$ip_cmd" ]]; then
+			log_message "ERROR" "SYSTEM" "ip command path from get_command_path is not executable: '$ip_cmd'"
+			return 2
+		fi
+	fi
+
 	# Try with statistics first (ip -s xfrm state) which may show more detail
 	local full_xfrm_output
-	local xfrm_stderr
 	local xfrm_exit_code
 
 	# Capture both stdout and stderr to distinguish command failure from empty output
@@ -290,6 +304,17 @@ execute_xfrm_state_command() {
 	# So we need to check stderr for actual command errors
 	full_xfrm_output=$("$ip_cmd" -s xfrm state 2>&1)
 	xfrm_exit_code=$?
+
+	# Handle specific exit codes that indicate command execution problems
+	if [[ $xfrm_exit_code -eq 127 ]]; then
+		# Command not found - log the path we tried to use
+		log_message "ERROR" "SYSTEM" "ip command not found at path: '$ip_cmd' (exit code 127)"
+		return 2
+	elif [[ $xfrm_exit_code -eq 126 ]]; then
+		# Command not executable
+		log_message "ERROR" "SYSTEM" "ip command not executable at path: '$ip_cmd' (exit code 126)"
+		return 2
+	fi
 
 	if [[ $xfrm_exit_code -eq 0 ]]; then
 		# Command succeeded - check if output contains error messages in stderr
@@ -310,6 +335,17 @@ execute_xfrm_state_command() {
 	full_xfrm_output=$("$ip_cmd" xfrm state 2>&1)
 	xfrm_exit_code=$?
 
+	# Handle specific exit codes that indicate command execution problems
+	if [[ $xfrm_exit_code -eq 127 ]]; then
+		# Command not found - log the path we tried to use
+		log_message "ERROR" "SYSTEM" "ip command not found at path: '$ip_cmd' (exit code 127) - fallback attempt"
+		return 2
+	elif [[ $xfrm_exit_code -eq 126 ]]; then
+		# Command not executable
+		log_message "ERROR" "SYSTEM" "ip command not executable at path: '$ip_cmd' (exit code 126) - fallback attempt"
+		return 2
+	fi
+
 	if [[ $xfrm_exit_code -eq 0 ]]; then
 		if echo "$full_xfrm_output" | grep -qE "(error|Error|ERROR|failed|Failed|FAILED|No such|Permission denied)"; then
 			return 2
@@ -321,6 +357,10 @@ execute_xfrm_state_command() {
 		fi
 		return 1
 	elif [[ $xfrm_exit_code -ne 0 ]]; then
+		# Non-zero exit code - log diagnostic info if output is empty
+		if [[ -z "${full_xfrm_output//[[:space:]]/}" ]]; then
+			log_message "DEBUG" "SYSTEM" "ip xfrm state failed with exit code $xfrm_exit_code but no output (command path: '$ip_cmd')"
+		fi
 		return 2
 	fi
 

@@ -1161,9 +1161,9 @@ check_command_available() {
 
 # Get full path to a command
 #
-# Attempts to find the full path to a command, handling PATH restrictions
-# common in cron/systemd environments. Returns the command name itself if
-# path cannot be determined (fallback to PATH at execution time).
+# Attempts to find the full path to a command by checking standard system
+# directories directly. This avoids relying on PATH or command -v, which don't
+# work reliably in cron/systemd environments with restricted PATH.
 #
 # Arguments:
 #   $1: Command name to find (e.g., "ip", "ipsec", "ping")
@@ -1182,24 +1182,18 @@ check_command_available() {
 #   "$ipsec_cmd" reload
 #
 # Note:
-#   Uses same fallback logic as check_command_available() but returns path
-#   Falls back to command name if path cannot be determined
+#   Since this script always runs in cron/systemd with restricted PATH,
+#   we check standard system directories first without relying on command -v.
+#   Falls back to command name if path cannot be determined.
 #   Useful for executing commands in PATH-restricted environments (cron/systemd)
 get_command_path() {
 	local cmd="$1"
 	local cmd_path=""
 
-	# First try command -v (POSIX compliant, checks PATH)
-	cmd_path=$(command -v "$cmd" 2>/dev/null || echo "")
-	if [[ -n "$cmd_path" ]]; then
-		echo "$cmd_path"
-		return 0
-	fi
-
-	# Fallback: Check common system directories
-	# This handles cases where PATH doesn't include /usr/sbin or /sbin
-	# (common in cron/systemd environments on UDM systems)
-	local system_dirs=("/usr/sbin" "/usr/bin" "/sbin" "/bin")
+	# Check common system directories directly (without relying on PATH or command -v)
+	# This is the primary method since we always run in PATH-restricted environments
+	# Order matters: check /usr/sbin and /sbin first (where ip, ipsec typically live)
+	local system_dirs=("/usr/sbin" "/sbin" "/usr/bin" "/bin")
 	for dir in "${system_dirs[@]}"; do
 		if [[ -x "${dir}/${cmd}" ]]; then
 			echo "${dir}/${cmd}"
@@ -1207,7 +1201,17 @@ get_command_path() {
 		fi
 	done
 
+	# Fallback: Try command -v only if we're not in a restricted environment
+	# (This is unlikely to succeed in cron/systemd, but provides fallback for manual execution)
+	cmd_path=$(command -v "$cmd" 2>/dev/null || echo "")
+	if [[ -n "$cmd_path" ]]; then
+		echo "$cmd_path"
+		return 0
+	fi
+
 	# Path not found - return command name (will rely on PATH at execution time)
+	# This should be rare since we check standard directories first
+	# Caller should have checked availability with check_command_available first
 	echo "$cmd"
 	return 0
 }

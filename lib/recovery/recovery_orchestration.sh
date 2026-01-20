@@ -45,16 +45,10 @@ _check_recovery_command_availability() {
 	if check_command_available "ip"; then
 		_RECOVERY_IP_AVAILABLE=1
 		# Get full path to ip command for reliable execution
-		# Uses get_command_path() helper which handles PATH restrictions
-		if command -v get_command_path >/dev/null 2>&1; then
-			# Use || true to prevent command substitution from failing if get_command_path returns non-zero
-			_RECOVERY_IP_PATH=$(get_command_path "ip" || true)
-			# If get_command_path returns empty string, fall back to command name
-			if [[ -z "$_RECOVERY_IP_PATH" ]]; then
-				_RECOVERY_IP_PATH="ip"
-			fi
-		else
-			# Fallback if get_command_path not available (shouldn't happen)
+		# get_command_path() checks standard system directories first (works in PATH-restricted cron/systemd)
+		_RECOVERY_IP_PATH=$(get_command_path "ip" || true)
+		# If get_command_path returns empty, fall back to command name
+		if [[ -z "$_RECOVERY_IP_PATH" ]]; then
 			_RECOVERY_IP_PATH="ip"
 		fi
 	fi
@@ -62,16 +56,10 @@ _check_recovery_command_availability() {
 	if check_command_available "ipsec"; then
 		_RECOVERY_IPSEC_AVAILABLE=1
 		# Get full path to ipsec command for reliable execution
-		# Uses get_command_path() helper which handles PATH restrictions
-		if command -v get_command_path >/dev/null 2>&1; then
-			# Use || true to prevent command substitution from failing if get_command_path returns non-zero
-			_RECOVERY_IPSEC_PATH=$(get_command_path "ipsec" || true)
-			# If get_command_path returns empty string, fall back to command name
-			if [[ -z "$_RECOVERY_IPSEC_PATH" ]]; then
-				_RECOVERY_IPSEC_PATH="ipsec"
-			fi
-		else
-			# Fallback if get_command_path not available (shouldn't happen)
+		# get_command_path() checks standard system directories first (works in PATH-restricted cron/systemd)
+		_RECOVERY_IPSEC_PATH=$(get_command_path "ipsec" || true)
+		# If get_command_path returns empty, fall back to command name
+		if [[ -z "$_RECOVERY_IPSEC_PATH" ]]; then
 			_RECOVERY_IPSEC_PATH="ipsec"
 		fi
 	fi
