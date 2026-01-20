@@ -35,14 +35,28 @@ source "${RECOVERY_DIR}/ipsec_recovery.sh" 2>/dev/null || true
 # Note:
 #   This is a helper function for select_recovery_strategy()
 #   Uses global variables with underscore prefix to indicate internal use
-#   Stores full path to ipsec command to ensure reliable execution even when PATH is restricted
+#   Stores full path to ip and ipsec commands to ensure reliable execution even when PATH is restricted
 _check_recovery_command_availability() {
 	declare -g _RECOVERY_IP_AVAILABLE=0
 	declare -g _RECOVERY_IPSEC_AVAILABLE=0
+	declare -g _RECOVERY_IP_PATH=""
 	declare -g _RECOVERY_IPSEC_PATH=""
 
 	if check_command_available "ip"; then
 		_RECOVERY_IP_AVAILABLE=1
+		# Get full path to ip command for reliable execution
+		# Uses get_command_path() helper which handles PATH restrictions
+		if command -v get_command_path >/dev/null 2>&1; then
+			# Use || true to prevent command substitution from failing if get_command_path returns non-zero
+			_RECOVERY_IP_PATH=$(get_command_path "ip" || true)
+			# If get_command_path returns empty string, fall back to command name
+			if [[ -z "$_RECOVERY_IP_PATH" ]]; then
+				_RECOVERY_IP_PATH="ip"
+			fi
+		else
+			# Fallback if get_command_path not available (shouldn't happen)
+			_RECOVERY_IP_PATH="ip"
+		fi
 	fi
 
 	if check_command_available "ipsec"; then

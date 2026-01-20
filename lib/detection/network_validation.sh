@@ -580,18 +580,22 @@ get_route_info() {
 		return 1
 	fi
 
+	# Get full path to ip command for reliable execution in PATH-restricted environments (cron/systemd)
+	local ip_cmd
+	ip_cmd=$(get_command_path "ip")
+
 	# Get route information
 	# Format: "172.31.13.239 via 192.168.1.1 dev eth0 src 192.168.1.100"
 	# We want to extract: "via <gateway> dev <interface>" or "dev <interface>"
 	local route_output
 	if [[ -n "$src_ip" ]] && validate_ip_address "$src_ip"; then
 		# Use source-specific routing
-		if ! route_output=$(ip route get "$dest_ip" from "$src_ip" 2>/dev/null); then
+		if ! route_output=$("$ip_cmd" route get "$dest_ip" from "$src_ip" 2>/dev/null); then
 			return 1
 		fi
 	else
 		# Standard routing
-		if ! route_output=$(ip route get "$dest_ip" 2>/dev/null); then
+		if ! route_output=$("$ip_cmd" route get "$dest_ip" 2>/dev/null); then
 			return 1
 		fi
 	fi
@@ -671,9 +675,13 @@ check_default_route() {
 		return 1
 	fi
 
+	# Get full path to ip command for reliable execution in PATH-restricted environments (cron/systemd)
+	local ip_cmd
+	ip_cmd=$(get_command_path "ip")
+
 	# Check if default route exists
 	# ip route show default returns 0 if route exists, 1 if not found
-	if ip route show default >/dev/null 2>&1; then
+	if "$ip_cmd" route show default >/dev/null 2>&1; then
 		return 0
 	fi
 

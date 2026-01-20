@@ -550,6 +550,16 @@ delete_sas_from_list() {
 	local deleted_count_var_name="${!deleted_count_var_idx}"
 	local failed_count_var_name="${!failed_count_var_idx}"
 
+	# Get full path to ip command for reliable execution in PATH-restricted environments (cron/systemd)
+	# Use _RECOVERY_IP_PATH if available (set by recovery orchestration), otherwise resolve via get_command_path()
+	local ip_cmd="${_RECOVERY_IP_PATH:-}"
+	if [[ -z "$ip_cmd" ]] && command -v get_command_path >/dev/null 2>&1; then
+		ip_cmd=$(get_command_path "ip")
+	fi
+	if [[ -z "$ip_cmd" ]]; then
+		ip_cmd="ip" # Fallback to command name
+	fi
+
 	# Use namerefs for output variables (cleaner than eval)
 	local -n deleted_count_ref="$deleted_count_var_name"
 	local -n failed_count_ref="$failed_count_var_name"
@@ -623,7 +633,7 @@ delete_sas_from_list() {
 		# and to capture the exact format the kernel sees
 		local pre_delete_xfrm_output
 		local pre_delete_query_success=0
-		if pre_delete_xfrm_output=$(ip xfrm state 2>/dev/null | grep -F "dst $sa_dst" -A 20 2>/dev/null); then
+		if pre_delete_xfrm_output=$("$ip_cmd" xfrm state 2>/dev/null | grep -F "dst $sa_dst" -A 20 2>/dev/null); then
 			pre_delete_query_success=1
 			# Check if this specific SA (with all selectors) appears in the output
 			# Include mark in check if present (mark is a required selector when present)
@@ -679,7 +689,8 @@ delete_sas_from_list() {
 
 		# Build deletion command with all selectors (including mark if present)
 		# Mark is a required selector when present - must be included for successful deletion
-		local delete_cmd_args=("ip" "xfrm" "state" "delete" "src" "$sa_src" "dst" "$sa_dst" "proto" "$sa_proto" "spi" "$sa_spi")
+		# Use full path to ip command for reliable execution in PATH-restricted environments
+		local delete_cmd_args=("$ip_cmd" "xfrm" "state" "delete" "src" "$sa_src" "dst" "$sa_dst" "proto" "$sa_proto" "spi" "$sa_spi")
 		if [[ -n "$mark_value" ]] && [[ -n "$mark_mask" ]]; then
 			delete_cmd_args+=("mark" "$mark_value" "mask" "$mark_mask")
 		fi
@@ -688,7 +699,8 @@ delete_sas_from_list() {
 		# This helps identify if we need additional selectors
 		# Note: We capture output with 2>&1 - on success (exit 0), output is stdout (SA details)
 		# On failure (non-zero exit), output is stderr (error message)
-		local get_sa_cmd_args=("ip" "xfrm" "state" "get" "src" "$sa_src" "dst" "$sa_dst" "proto" "$sa_proto" "spi" "$sa_spi")
+		# Use full path to ip command for reliable execution in PATH-restricted environments
+		local get_sa_cmd_args=("$ip_cmd" "xfrm" "state" "get" "src" "$sa_src" "dst" "$sa_dst" "proto" "$sa_proto" "spi" "$sa_spi")
 		if [[ -n "$mark_value" ]] && [[ -n "$mark_mask" ]]; then
 			get_sa_cmd_args+=("mark" "$mark_value" "mask" "$mark_mask")
 		fi
@@ -890,6 +902,16 @@ delete_xfrm_policies() {
 	local external_peer_ip="$1"
 	local location_name="$2"
 
+	# Get full path to ip command for reliable execution in PATH-restricted environments (cron/systemd)
+	# Use _RECOVERY_IP_PATH if available (set by recovery orchestration), otherwise resolve via get_command_path()
+	local ip_cmd="${_RECOVERY_IP_PATH:-}"
+	if [[ -z "$ip_cmd" ]] && command -v get_command_path >/dev/null 2>&1; then
+		ip_cmd=$(get_command_path "ip")
+	fi
+	if [[ -z "$ip_cmd" ]]; then
+		ip_cmd="ip" # Fallback to command name
+	fi
+
 	# Also delete policies for this peer (less critical, but helps cleanup)
 	# Policies require DIR (direction) parameter for deletion: in, out, or fwd
 	# Query existing policies first to determine which directions exist, then delete each
@@ -910,7 +932,7 @@ delete_xfrm_policies() {
 	#
 	# Note: external_peer_ip is the external IP of remote locations (from LOCATION_*_EXTERNAL config)
 	local existing_policies
-	existing_policies=$(ip xfrm policy 2>/dev/null | grep -F "dst $external_peer_ip" -A 5 2>/dev/null || echo "")
+	existing_policies=$("$ip_cmd" xfrm policy 2>/dev/null | grep -F "dst $external_peer_ip" -A 5 2>/dev/null || echo "")
 
 	local policy_deleted_count=0
 	local policy_failed_count=0
@@ -958,7 +980,8 @@ delete_xfrm_policies() {
 		local policy_exit_code=0
 		local policy_start_time
 		policy_start_time=$(get_unix_timestamp 2>/dev/null || echo "0")
-		local policy_cmd_args=("ip" "xfrm" "policy" "delete" "dst" "$external_peer_ip" "dir" "$policy_dir")
+		# Use full path to ip command for reliable execution in PATH-restricted environments
+		local policy_cmd_args=("$ip_cmd" "xfrm" "policy" "delete" "dst" "$external_peer_ip" "dir" "$policy_dir")
 		log_message "INFO" "$location_name" "xfrm recovery: Executing policy deletion command: ${policy_cmd_args[*]}"
 		# Use || to prevent set -e from triggering on command failure
 		policy_stderr=$("${policy_cmd_args[@]}" 2>&1) || policy_exit_code=$?
@@ -1420,7 +1443,16 @@ attempt_xfrm_recovery() {
 	if kernel_version=$(uname -r 2>/dev/null); then
 		log_message "INFO" "$location_name" "xfrm recovery: Starting recovery for $ip_display - kernel: $kernel_version"
 	fi
-	if ip_version=$(ip -Version 2>&1 | head -1); then
+	# Get full path to ip command for reliable execution in PATH-restricted environments (cron/systemd)
+	# Use _RECOVERY_IP_PATH if available (set by recovery orchestration), otherwise resolve via get_command_path()
+	local ip_cmd="${_RECOVERY_IP_PATH:-}"
+	if [[ -z "$ip_cmd" ]] && command -v get_command_path >/dev/null 2>&1; then
+		ip_cmd=$(get_command_path "ip")
+	fi
+	if [[ -z "$ip_cmd" ]]; then
+		ip_cmd="ip" # Fallback to command name
+	fi
+	if ip_version=$("$ip_cmd" -Version 2>&1 | head -1); then
 		log_message "INFO" "$location_name" "xfrm recovery: ip command version: $ip_version"
 	fi
 

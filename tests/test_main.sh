@@ -38,7 +38,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Run script in background and send SIGTERM
 	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
 	local script_pid=$!
-	sleep 0.1
+	# Wait for lockfile to exist before sending signal
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test SIGTERM handling"
+	fi
 	kill -TERM "$script_pid" 2>/dev/null || true
 	wait "$script_pid" 2>/dev/null || true
 

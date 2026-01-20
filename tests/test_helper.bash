@@ -3756,6 +3756,7 @@ source_function() {
 					"${LIB_DIR}/detection/xfrm_detection.sh"
 					"${LIB_DIR}/detection/ping_detection.sh"
 					"${LIB_DIR}/detection/failure_analysis.sh"
+					"${LIB_DIR}/detection/system_wide_failure.sh"
 				)
 				local found_in_module=0
 				for detection_module in "${detection_modules[@]}"; do
@@ -3809,6 +3810,80 @@ source_function() {
 					if [[ -f "${LIB_DIR}/detection.sh" ]]; then
 						# shellcheck source=/dev/null
 						source "${LIB_DIR}/detection.sh" 2>/dev/null || true
+						# Function already sourced, skip eval below
+						return 0
+					fi
+				fi
+			fi
+			# Special handling for recovery.sh: functions are in module files
+			# Since recovery.sh sources module files, we should source the entire recovery.sh
+			# when looking for any function that might be from recovery.sh
+			if [[ "$module" == "${LIB_DIR}/recovery.sh" ]]; then
+				# Check if function exists in any recovery module file
+				local recovery_modules=(
+					"${LIB_DIR}/recovery/constants.sh"
+					"${LIB_DIR}/recovery/recovery_verification.sh"
+					"${LIB_DIR}/recovery/recovery_state.sh"
+					"${LIB_DIR}/recovery/xfrm_recovery.sh"
+					"${LIB_DIR}/recovery/ipsec_recovery.sh"
+					"${LIB_DIR}/recovery/recovery_orchestration.sh"
+				)
+				local found_in_module=0
+				for recovery_module in "${recovery_modules[@]}"; do
+					if [[ -f "$recovery_module" ]]; then
+						func_def=$(sed -n "/^${func_name}(/,/^}/p" "$recovery_module" 2>/dev/null)
+						if [[ -n "$func_def" ]]; then
+							found_in_module=1
+							break
+						fi
+					fi
+				done
+				# If function found in module files, source entire recovery.sh module
+				if [[ $found_in_module -eq 1 ]]; then
+					# Set minimal required variables for functions that need them
+					# Export these so they're available in subshells created by 'run'
+					SCRIPT_DIR="${SCRIPT_DIR:-${BATS_TEST_DIRNAME}/..}"
+					export SCRIPT_DIR
+					STATE_DIR="${STATE_DIR:-${TEST_DIR:-/tmp}}"
+					export STATE_DIR
+					LOGS_DIR="${LOGS_DIR:-${STATE_DIR}/logs}"
+					export LOGS_DIR
+					LOCKFILE="${LOCKFILE:-${STATE_DIR}/vpn-monitor.lock}"
+					export LOCKFILE
+					LOG_FILE="${LOG_FILE:-${LOGS_DIR}/vpn-monitor.log}"
+					export LOG_FILE
+					RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
+					export RESTART_COUNT_FILE
+					CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
+					export CONFIG_FILE
+					DEBUG="${DEBUG:-0}"
+					export DEBUG
+					# recovery.sh needs logging.sh, state.sh, detection.sh, and common.sh
+					# Source entire recovery.sh module since functions depend on each other
+					if [[ -f "${LIB_DIR}/constants.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/constants.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/common.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/common.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/state.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/detection.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/detection.sh" 2>/dev/null || true
+					fi
+					# Source entire recovery.sh to make all functions available
+					if [[ -f "${LIB_DIR}/recovery.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
 						# Function already sourced, skip eval below
 						return 0
 					fi

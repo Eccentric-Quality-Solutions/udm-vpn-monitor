@@ -449,3 +449,210 @@ EOF
 
 	remove_mock_from_path
 }
+
+# ============================================================================
+# update_location_state TESTS - Coverage gaps from COVERAGE_REVIEW
+# ============================================================================
+
+# bats test_tags=category:high-risk,priority:high
+@test "update_location_state: periodic status logging - logs status when interval elapsed" {
+	# Purpose: Test verifies that periodic status logging occurs when STATUS_LOG_INTERVAL_SECONDS elapsed
+	# Expected: Function logs "VPN check OK" when status log interval has elapsed
+	# Importance: Covers lines 868-884 - periodic status logging path
+	setup_location_test_vpn_monitor "${TEST_DIR}" \
+		'ENABLE_PING_CHECK=0' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0' \
+		'STATUS_LOG_INTERVAL_SECONDS=300'
+
+	# Mock VPN as healthy
+	mock_ip_xfrm_state "203.0.113.1" "1000" "0x12345678" >/dev/null
+	add_mock_to_path
+
+	# Set up state: VPN healthy, no failures, last_status_log set to 0 (never logged)
+	ensure_state_functions_loaded
+	set_peer_state "NYC" "203.0.113.1" "failure_count" "0" || true
+	set_peer_state "NYC" "203.0.113.1" "last_status_log" "0" || true
+
+	# Source required functions
+	source_recovery_module
+
+	# Test update_location_state directly with healthy status
+	run update_location_state "NYC" "203.0.113.1" "healthy" ""
+
+	# Should succeed
+	assert_success
+	# Should log periodic status
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "VPN check OK" "check OK"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "update_location_state: periodic status logging - skips logging when interval not elapsed" {
+	# Purpose: Test verifies that periodic status logging is skipped when interval hasn't elapsed
+	# Expected: Function does not log status when time since last log is less than interval
+	# Importance: Covers lines 868-884 - periodic status logging interval check
+	setup_location_test_vpn_monitor "${TEST_DIR}" \
+		'ENABLE_PING_CHECK=0' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0' \
+		'STATUS_LOG_INTERVAL_SECONDS=300'
+
+	# Mock VPN as healthy
+	mock_ip_xfrm_state "203.0.113.1" "1000" "0x12345678" >/dev/null
+	add_mock_to_path
+
+	# Set up state: VPN healthy, no failures, last_status_log set to recent time (within interval)
+	ensure_state_functions_loaded
+	set_peer_state "NYC" "203.0.113.1" "failure_count" "0" || true
+	local current_time
+	current_time=$(get_unix_timestamp)
+	# Set last_status_log to 100 seconds ago (less than 300 second interval)
+	local recent_time=$((current_time - 100))
+	set_peer_state "NYC" "203.0.113.1" "last_status_log" "$recent_time" || true
+
+	# Source required functions
+	source_recovery_module
+
+	# Clear log file before test
+	>"$LOG_FILE"
+
+	# Test update_location_state directly with healthy status
+	run update_location_state "NYC" "203.0.113.1" "healthy" ""
+
+	# Should succeed
+	assert_success
+	# Should NOT log periodic status (interval not elapsed)
+	# Note: May still have other log messages, but not the periodic "check OK" message
+	if [[ -f "$LOG_FILE" ]]; then
+		refute_file_contains "$LOG_FILE" "check OK"
+	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "update_location_state: false positive cleanup - clears stale failure_type file" {
+	# Purpose: Test verifies that false positive cleanup clears stale failure_type file when VPN is healthy with no failures
+	# Expected: Function silently removes failure_type file when had_failure_type=1 but failure_count=0
+	# Importance: Covers lines 859-865 - false positive cleanup path
+	setup_location_test_vpn_monitor "${TEST_DIR}" \
+		'ENABLE_PING_CHECK=0' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0'
+
+	# Mock VPN as healthy
+	mock_ip_xfrm_state "203.0.113.1" "1000" "0x12345678" >/dev/null
+	add_mock_to_path
+
+	# Set up state: VPN healthy, no failures, but failure_type file exists (false positive)
+	ensure_state_functions_loaded
+	set_peer_state "NYC" "203.0.113.1" "failure_count" "0" || true
+	# Create failure_type file to simulate false positive
+	# Source state functions to get get_peer_state_file_path
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+	local failure_type_file
+	failure_type_file=$(get_peer_state_file_path "NYC" "203.0.113.1" "failure_type")
+	mkdir -p "$(dirname "$failure_type_file")"
+	echo "tunnel_down" >"$failure_type_file"
+
+	# Source required functions
+	source_recovery_module
+
+	# Test update_location_state directly with healthy status
+	run update_location_state "NYC" "203.0.113.1" "healthy" ""
+
+	# Should succeed
+	assert_success
+	# Failure type file should be removed (false positive cleanup)
+	refute_file_exist "$failure_type_file"
+	# Should NOT log recovery message (silent cleanup)
+	if [[ -f "$LOG_FILE" ]]; then
+		refute_file_contains "$LOG_FILE" "recovered"
+		refute_file_contains "$LOG_FILE" "restored"
+	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "update_location_state: partition state transition - detects partition after failure" {
+	# Purpose: Test verifies that partition state transition is detected and logged when network partition occurs after VPN failure
+	# Expected: Function detects partition, updates state, logs warning, and returns 2
+	# Importance: Covers lines 900-920 - partition state transitions after failure
+	setup_location_test_vpn_monitor "${TEST_DIR}" \
+		'ENABLE_PING_CHECK=0' \
+		'ENABLE_NETWORK_PARTITION_CHECK=1'
+
+	# Mock VPN as down
+	mock_ip_vpn_down "${TEST_DIR}/ip" >/dev/null
+
+	# Mock network partition check to fail (network partitioned)
+	mock_ip_interfaces_up "br0,eth0" "0" >/dev/null
+	mock_dig 0
+	add_mock_to_path
+
+	# Set up state: VPN failed, partition state initially healthy
+	mkdir -p "$STATE_DIR"
+	local partition_state_file="${STATE_DIR}/network_partition_state"
+	echo "0" >"$partition_state_file"
+
+	# Source required functions
+	source_recovery_module
+
+	# Test update_location_state directly with failed status
+	run update_location_state "NYC" "203.0.113.1" "failed" ""
+
+	# Should return 2 (partition detected)
+	assert_equal "$status" 2
+	# Should log partition detection warning
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Network partition detected" "skipping VPN recovery"
+	# Partition state should be set to 1
+	local partition_state
+	partition_state=$(get_network_partition_state)
+	assert_equal "$partition_state" 1
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "update_location_state: partition state transition - detects partition cleared after failure" {
+	# Purpose: Test verifies that partition cleared transition is detected and logged when network recovers after VPN failure
+	# Expected: Function detects partition cleared, updates state, logs info, and continues
+	# Importance: Covers lines 913-920 - partition cleared path after failure
+	setup_location_test_vpn_monitor "${TEST_DIR}" \
+		'ENABLE_PING_CHECK=0' \
+		'ENABLE_NETWORK_PARTITION_CHECK=1'
+
+	# Mock VPN as down
+	mock_ip_vpn_down "${TEST_DIR}/ip" >/dev/null
+
+	# Mock network partition check to succeed (network healthy)
+	mock_ip_interfaces_up "br0,eth0" "1" >/dev/null
+	mock_dig 1 "8.8.8.8"
+	add_mock_to_path
+
+	# Set up state: VPN failed, partition state was previously partitioned
+	mkdir -p "$STATE_DIR"
+	local partition_state_file="${STATE_DIR}/network_partition_state"
+	echo "1" >"$partition_state_file"
+
+	# Source required functions
+	source_recovery_module
+
+	# Test update_location_state directly with failed status
+	run update_location_state "NYC" "203.0.113.1" "failed" ""
+
+	# Should return 0 (no partition, continues with failure handling)
+	assert_equal "$status" 0
+	# Should log that network connectivity restored
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Network connectivity restored" "resuming VPN monitoring"
+	# Partition state should be cleared
+	local partition_state
+	partition_state=$(get_network_partition_state)
+	assert_equal "$partition_state" 0
+
+	remove_mock_from_path
+}

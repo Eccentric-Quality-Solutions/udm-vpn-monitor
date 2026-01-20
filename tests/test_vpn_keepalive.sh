@@ -6,6 +6,7 @@
 load test_helper
 load helpers/config
 load helpers/assertions
+load helpers/mocks
 
 # Path to the vpn-keepalive script
 KEEPALIVE_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-keepalive.sh"
@@ -455,13 +456,8 @@ cleanup_keepalive_daemon() {
 	# Importance: Ensures keepalive works with IPv6 VPN tunnels.
 	setup_keepalive_test 'LOCATION_TEST_EXTERNAL="2001:db8::1"'
 
-	# Mock ping6 command
-	local mock_ping6="${TEST_DIR}/ping6"
-	cat >"$mock_ping6" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-	chmod +x "$mock_ping6"
+	# Mock ping6 command (just succeeds)
+	create_mock_output "ping6" "" >/dev/null
 
 	# Mock ping command (should support -6 flag)
 	local mock_ping="${TEST_DIR}/ping"

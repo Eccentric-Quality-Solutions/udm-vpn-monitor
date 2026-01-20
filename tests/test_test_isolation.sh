@@ -10,6 +10,7 @@
 # Importance: Test isolation is critical for reliable test execution
 
 load test_helper
+load helpers/mocks
 
 # bats test_tags=category:test-infrastructure,priority:high
 @test "Test isolation - Environment variables are properly restored" {
@@ -86,13 +87,9 @@ load test_helper
 	# Expected: Mock commands should be isolated to TEST_DIR which is cleaned up
 	# Importance: Prevents mock command pollution
 
-	# Create a mock command
-	local mock_cmd="${TEST_DIR}/mock_test_cmd"
-	cat >"$mock_cmd" <<'EOF'
-#!/bin/bash
-echo "mock_output"
-EOF
-	chmod +x "$mock_cmd"
+	# Create a mock command using helper
+	local mock_cmd
+	mock_cmd=$(create_mock_output "mock_test_cmd" "mock_output")
 
 	# Verify mock command exists
 	[[ -f "$mock_cmd" ]]

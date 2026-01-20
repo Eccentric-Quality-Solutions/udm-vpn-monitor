@@ -180,9 +180,7 @@ load test_helper
 	) &
 
 	# Wait for update to start
-	while [[ ! -f "$update_started" ]]; do
-		sleep 0.01
-	done
+	wait_for_file "$update_started" 5
 
 	# Perform concurrent reads while update is in progress
 	local read_count=0

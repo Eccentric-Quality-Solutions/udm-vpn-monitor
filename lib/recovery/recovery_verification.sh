@@ -86,8 +86,12 @@ count_sas_for_peer() {
 		return 1
 	fi
 
+	# Get full path to ip command for reliable execution in PATH-restricted environments (cron/systemd)
+	local ip_cmd
+	ip_cmd=$(get_command_path "ip")
+
 	local xfrm_output
-	xfrm_output=$(ip xfrm state 2>/dev/null)
+	xfrm_output=$("$ip_cmd" xfrm state 2>/dev/null)
 	local xfrm_exit_code=$?
 
 	if [[ $xfrm_exit_code -ne 0 ]]; then
@@ -427,14 +431,38 @@ verify_ipsec_connections_active() {
 
 	local external_peer_ip
 	for external_peer_ip in "${peer_ips_array[@]}"; do
-		# Check if peer IP appears in ipsec status output
+		# Check if peer IP appears in ipsec status output (IKE connection check)
 		# Use fixed-string matching for safety
+		local ike_found=0
 		if echo "$ipsec_output" | grep -qF "$external_peer_ip"; then
+			ike_found=1
+		fi
+
+		# Also check if Phase 2 SAs are actually established (xfrm state check)
+		# This is more reliable than just checking IKE connections
+		local sa_count=0
+		if command -v count_sas_for_peer >/dev/null 2>&1; then
+			sa_count=$(count_sas_for_peer "$external_peer_ip" "" 2>/dev/null || echo "0")
+			# Ensure sa_count is numeric
+			if ! [[ "$sa_count" =~ ^[0-9]+$ ]]; then
+				sa_count=0
+			fi
+		fi
+
+		# Connection is considered active only if BOTH IKE connection exists AND Phase 2 SAs are established
+		if [[ $ike_found -eq 1 ]] && [[ "$sa_count" -gt 0 ]]; then
 			((active_count++))
-			log_message "INFO" "SYSTEM" "Recovery verification: Connection active for $external_peer_ip"
+			log_message "INFO" "SYSTEM" "Recovery verification: Connection active for $external_peer_ip (IKE: yes, Phase 2 SAs: $sa_count)"
+		elif [[ $ike_found -eq 1 ]] && [[ "$sa_count" -eq 0 ]]; then
+			all_active=0
+			handle_error "WARNING" "SYSTEM" "Recovery verification: IKE connection exists but no Phase 2 SAs for $external_peer_ip (tunnel not fully established)"
+		elif [[ $ike_found -eq 0 ]] && [[ "$sa_count" -gt 0 ]]; then
+			# Edge case: SAs exist but IKE not showing in status (may be timing issue)
+			((active_count++))
+			log_message "INFO" "SYSTEM" "Recovery verification: Connection active for $external_peer_ip (IKE: not found in status, Phase 2 SAs: $sa_count - may be timing issue)"
 		else
 			all_active=0
-			handle_error "WARNING" "SYSTEM" "Recovery verification: Connection not found for $external_peer_ip"
+			handle_error "WARNING" "SYSTEM" "Recovery verification: Connection not found for $external_peer_ip (IKE: no, Phase 2 SAs: $sa_count)"
 		fi
 	done
 

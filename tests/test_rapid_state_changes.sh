@@ -145,9 +145,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	run bash "$test_script" --fake
 
 	# Verify peer 1's failure count was reset (recovered)
+	# Use consistent pattern: read with fallback to 0, then assert equals 0
 	failure_count_1=$(cat "$failure_count_file_1" 2>/dev/null || echo "0")
-	# Should be 0 (recovered) or file doesn't exist
-	assert [ "$failure_count_1" -eq 0 ] || [ ! -f "$failure_count_file_1" ]
+	assert_equal "$failure_count_1" "0"
 
 	# Verify peers 2 and 3's failure counts increased
 	failure_count_2=$(cat "$failure_count_file_2" 2>/dev/null || echo "0")

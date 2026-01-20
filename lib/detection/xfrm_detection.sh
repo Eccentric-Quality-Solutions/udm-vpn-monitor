@@ -276,6 +276,10 @@ execute_xfrm_state_command() {
 		return 1
 	fi
 
+	# Get full path to ip command for reliable execution in PATH-restricted environments (cron/systemd)
+	local ip_cmd
+	ip_cmd=$(get_command_path "ip")
+
 	# Try with statistics first (ip -s xfrm state) which may show more detail
 	local full_xfrm_output
 	local xfrm_stderr
@@ -284,7 +288,7 @@ execute_xfrm_state_command() {
 	# Capture both stdout and stderr to distinguish command failure from empty output
 	# Note: ip xfrm state returns exit code 0 even when no SAs exist (just empty output)
 	# So we need to check stderr for actual command errors
-	full_xfrm_output=$(ip -s xfrm state 2>&1)
+	full_xfrm_output=$("$ip_cmd" -s xfrm state 2>&1)
 	xfrm_exit_code=$?
 
 	if [[ $xfrm_exit_code -eq 0 ]]; then
@@ -303,7 +307,7 @@ execute_xfrm_state_command() {
 	fi
 
 	# Fall back to regular ip xfrm state (without -s)
-	full_xfrm_output=$(ip xfrm state 2>&1)
+	full_xfrm_output=$("$ip_cmd" xfrm state 2>&1)
 	xfrm_exit_code=$?
 
 	if [[ $xfrm_exit_code -eq 0 ]]; then
@@ -448,17 +452,40 @@ get_xfrm_state_for_peer() {
 
 	# Handle different failure types
 	if [[ $xfrm_result -eq 2 ]]; then
-		# Command failed - log xfrm output for diagnostics (first 10 lines, sanitized)
+		# Command failed - extract and log error information
 		# This helps debug xfrm command failures without exposing sensitive information
+		local xfrm_error_msg=""
 		if [[ -n "$full_xfrm_output" ]]; then
-			local xfrm_output_preview
-			xfrm_output_preview=$(echo "$full_xfrm_output" | head -10)
-			# Format output as single line (replace newlines with semicolons) for log readability
-			local xfrm_output_formatted
-			xfrm_output_formatted=$(echo "$xfrm_output_preview" | tr '\n' '; ' || echo "<output formatting failed>")
-			# Log with peer IP for context (xfrm output contains IPs but they're already known from config)
-			# Use INFO level so diagnostic information is always visible
-			log_message "INFO" "SYSTEM" "xfrm command failed for peer $external_peer_ip - xfrm output (first 10 lines): $xfrm_output_formatted"
+			# Try to extract error messages from output
+			# Look for common error patterns
+			if echo "$full_xfrm_output" | grep -qE "(Permission denied|permission denied)"; then
+				xfrm_error_msg="Permission denied - check if running as root or if ip command has proper permissions"
+			elif echo "$full_xfrm_output" | grep -qE "(No such|no such)"; then
+				xfrm_error_msg="No such device or resource - xfrm subsystem may not be available"
+			elif echo "$full_xfrm_output" | grep -qE "(Operation not permitted|operation not permitted)"; then
+				xfrm_error_msg="Operation not permitted - insufficient permissions"
+			elif echo "$full_xfrm_output" | grep -qE "(error|Error|ERROR|failed|Failed|FAILED)"; then
+				# Extract error line(s)
+				xfrm_error_msg=$(echo "$full_xfrm_output" | grep -iE "(error|failed)" | head -1 | tr -d '\n\r' | head -c 200)
+			fi
+
+			# Log error message if found, otherwise log full output preview
+			if [[ -n "$xfrm_error_msg" ]]; then
+				log_message "WARNING" "SYSTEM" "xfrm command failed for peer $external_peer_ip - error: $xfrm_error_msg"
+			else
+				# No specific error message found, log output preview
+				local xfrm_output_preview
+				xfrm_output_preview=$(echo "$full_xfrm_output" | head -10)
+				# Format output as single line (replace newlines with semicolons) for log readability
+				local xfrm_output_formatted
+				xfrm_output_formatted=$(echo "$xfrm_output_preview" | tr '\n' '; ' || echo "<output formatting failed>")
+				# Log with peer IP for context (xfrm output contains IPs but they're already known from config)
+				# Use WARNING level since this is an error condition
+				log_message "WARNING" "SYSTEM" "xfrm command failed for peer $external_peer_ip - xfrm output (first 10 lines): $xfrm_output_formatted"
+			fi
+		else
+			# No output at all - command may have failed silently
+			log_message "WARNING" "SYSTEM" "xfrm command failed for peer $external_peer_ip - no output received (command may have failed silently)"
 		fi
 
 		# Command failed - try alternative method (ipsec status) to confirm tunnel state
@@ -593,11 +620,20 @@ get_ipsec_status_for_peer() {
 		return 1
 	fi
 
+	# Get full path to ipsec command for reliable execution in PATH-restricted environments (cron/systemd)
+	local ipsec_cmd="${_RECOVERY_IPSEC_PATH:-}"
+	if [[ -z "$ipsec_cmd" ]] && command -v get_command_path >/dev/null 2>&1; then
+		ipsec_cmd=$(get_command_path "ipsec")
+	fi
+	if [[ -z "$ipsec_cmd" ]]; then
+		ipsec_cmd="ipsec" # Fallback to command name
+	fi
+
 	# Get ipsec status with timeout
 	if check_command_available "timeout"; then
-		ipsec_output=$(timeout "${IPSEC_STATUS_TIMEOUT:-5}" ipsec status 2>/dev/null || true)
+		ipsec_output=$(timeout "${IPSEC_STATUS_TIMEOUT:-5}" "$ipsec_cmd" status 2>/dev/null || true)
 	else
-		ipsec_output=$(ipsec status 2>/dev/null || true)
+		ipsec_output=$("$ipsec_cmd" status 2>/dev/null || true)
 	fi
 
 	# Filter by peer IP if provided

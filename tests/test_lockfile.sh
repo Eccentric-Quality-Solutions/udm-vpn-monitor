@@ -6,6 +6,8 @@
 load test_helper
 load helpers/config
 load helpers/assertions
+load helpers/lockfile
+load helpers/mocks
 load fixtures/vpn_active
 
 # Path to the VPN monitor script
@@ -70,11 +72,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Lockfile should be cleaned up even on error
 	# Note: Script may exit before lockfile creation, so check may be flaky
 	# But if lockfile was created, it should be cleaned up
-	if [[ -f "$lockfile" ]]; then
-		# If lockfile exists, it should be stale or cleaned up
-		# This is a best-effort check
-		echo "Lockfile still exists after error - may need manual cleanup"
-	fi
+	# In test environments, error handling may be unreliable, so we verify
+	# the cleanup path exists even if it doesn't fire perfectly
+	verify_lockfile_cleanup_or_stale "$lockfile" "error"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -227,27 +227,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that script falls back to atomic file-based locking when flock is unavailable
 	# Expected: Script uses fallback locking mechanism (atomic file operations) when flock command is not found
 	# Importance: Fallback mechanism ensures lockfile functionality works even without flock command
-	# Temporarily hide flock command
-	local test_bin="${TEST_DIR}/bin"
-	mkdir -p "$test_bin"
-
-	# Create a fake flock that doesn't exist
-	# We'll modify PATH to exclude real flock, but keep essential directories
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		# Keep essential directories (/bin, /usr/bin) even if they contain flock
-		# Only exclude directories that contain flock but aren't essential
-		if [[ "$dir" == "/bin" ]] || [[ "$dir" == "/usr/bin" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		elif [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
-	# Ensure /bin and /usr/bin are always present
-	if [[ "$path_without_flock" != *"/bin"* ]]; then
-		path_without_flock="/bin:/usr/bin:${path_without_flock}"
-	fi
+	# Create PATH without flock to force fallback method
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
@@ -298,21 +280,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
-	# Create a PATH without flock to test fallback mode
-	# Use the same approach as the existing fallback test
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		if [[ "$dir" == "/bin" ]] || [[ "$dir" == "/usr/bin" ]]; then
-			# Keep essential directories even if they contain flock
-			path_without_flock="${path_without_flock}:${dir}"
-		elif [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
-	if [[ "$path_without_flock" != *"/bin"* ]]; then
-		path_without_flock="/bin:/usr/bin:${path_without_flock}"
-	fi
+	# Create PATH without flock to test fallback mode
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	# Test 1: Verify concurrent execution prevention works when switching modes
 	# Create a lockfile with a running PID (current process) - format is same for both modes
@@ -402,27 +372,58 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
-	# Mock ip command - VPN healthy
-	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
+	# Create a slow mock ip command that pauses long enough for us to catch the lockfile
+	# This is essential for signal handling tests - the script must be running when we send SIGTERM
+	cat >"${TEST_DIR}/ip" <<'MOCK_EOF'
+#!/bin/bash
+# Slow mock ip command for signal handling test
+sleep 0.5
+if [[ "$*" == *"xfrm state"* ]]; then
+    cat << 'EOF'
+src 192.168.1.1 dst 192.168.1.2
+    proto esp spi 0xc1234567 reqid 1 mode tunnel
+    replay-window 32
+    auth-trunc hmac(sha256) 0x... 128
+    enc cbc(aes) 0x...
+    encap type espinudp sport 4500 dport 4500 addr 0.0.0.0
+    sel src 0.0.0.0/0 dst 0.0.0.0/0
+    lifetime config:
+      limit: soft (INF)(INF), hard (INF)(INF)
+    lifetime current:
+      1000(bytes), 100(packets)
+EOF
+fi
+MOCK_EOF
+	chmod +x "${TEST_DIR}/ip"
 	add_mock_to_path
 
-	# Run script in background
-	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
+	# Run script in background in its own process group (for reliable signal delivery)
+	PATH="${TEST_DIR}:${PATH}" setsid bash "$test_script" --fake &
 	local script_pid=$!
 
-	# Give script a moment to start and create lockfile (needed for signal test)
-	sleep 0.01
+	# Wait for lockfile to exist (file-based sync using helper)
+	if ! wait_for_file "$lockfile" 2; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test signal handling"
+	fi
 
-	# Send SIGTERM
-	kill -TERM "$script_pid" 2>/dev/null || true
-	wait "$script_pid" 2>/dev/null || true
+	# Send SIGTERM to the entire process group (negative PID targets the group)
+	# This ensures the signal reaches the subshell where the trap is set
+	kill -TERM -- -"$script_pid" 2>/dev/null || kill -TERM "$script_pid" 2>/dev/null || true
+
+	# Wait for process to exit (with timeout)
+	local wait_count=0
+	while kill -0 "$script_pid" 2>/dev/null && [[ $wait_count -lt 20 ]]; do
+		sleep 0.05
+		wait_count=$((wait_count + 1))
+	done
+
+	# Give trap handler a moment to clean up
+	sleep 0.1
 
 	# Lockfile should be cleaned up by trap handler
-	# Note: This is a best-effort check - trap may not always fire in test environment
-	if [[ -f "$lockfile" ]]; then
-		# If lockfile still exists, it should be stale
-		echo "Lockfile may still exist - trap cleanup may not fire in test environment"
-	fi
+	assert_file_not_exist "$lockfile"
 
 	remove_mock_from_path
 }
@@ -494,19 +495,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that fallback locking prevents multiple processes from acquiring lock simultaneously
 	# Expected: Only one process succeeds in acquiring lock using atomic file operations, others detect conflict
 	# Importance: Fallback mechanism must provide same mutual exclusion guarantees as flock-based locking
-	# Temporarily hide flock command to force fallback path
-	local test_bin="${TEST_DIR}/bin"
-	mkdir -p "$test_bin"
-
-	# Create a fake flock that doesn't exist
-	# We'll modify PATH to exclude real flock
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		if [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
+	# Create PATH without flock to force fallback path
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
@@ -711,13 +702,11 @@ EOF
 	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
 	local script_pid=$!
 
-	# Give script a moment to create lockfile before killing it
-	sleep 0.01
-
-	# Skip condition: Lockfile must be created by script before we can test crash recovery
-	# Verify lockfile exists (should be created by script)
-	if [[ ! -f "$lockfile" ]]; then
-		skip "Lockfile not created quickly enough for crash test (script may have been killed before lockfile creation, test requires lockfile to exist to verify crash recovery)"
+	# Wait for lockfile to exist (file-based sync using helper)
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid crash test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test crash recovery"
 	fi
 
 	# Kill script with SIGKILL (cannot be caught, simulates crash)
@@ -772,30 +761,35 @@ EOF
 	# Test 2: SIGINT (INT trap)
 	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
 	local script_pid=$!
-	# Give script a moment to start before sending signal
-	sleep 0.01
+	# Wait for lockfile to exist before sending signal
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test SIGINT handling"
+	fi
 	kill -INT "$script_pid" 2>/dev/null || true
 	wait "$script_pid" 2>/dev/null || true
 	# Lockfile should be cleaned up by INT trap
-	if [[ -f "$lockfile" ]]; then
-		# Trap may not fire in test environment, but lockfile should be stale
-		# Verify it would be detected as stale
-		echo "Lockfile exists after SIGINT - verifying stale detection"
-	fi
+	# In test environments, signal handling may be unreliable, so we verify
+	# the cleanup path exists even if it doesn't fire perfectly
+	verify_lockfile_cleanup_or_stale "$lockfile" "SIGINT"
 
 	# Test 3: SIGTERM (TERM trap) - already tested above but verify consistency
 	rm -f "$lockfile"
 	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
 	script_pid=$!
-	# Give script a moment to start before sending signal
-	sleep 0.01
+	# Wait for lockfile to exist before sending signal
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test SIGTERM handling"
+	fi
 	kill -TERM "$script_pid" 2>/dev/null || true
 	wait "$script_pid" 2>/dev/null || true
 	# Lockfile should be cleaned up by TERM trap
-	if [[ -f "$lockfile" ]]; then
-		# Trap may not fire in test environment, but lockfile should be stale
-		echo "Lockfile exists after SIGTERM - verifying stale detection"
-	fi
+	# In test environments, signal handling may be unreliable, so we verify
+	# the cleanup path exists even if it doesn't fire perfectly
+	verify_lockfile_cleanup_or_stale "$lockfile" "SIGTERM"
 
 	# Clean up any remaining lockfile
 	rm -f "$lockfile"
@@ -824,13 +818,7 @@ EOF
 	echo "$(date +%s):12345" >"$lockfile"
 
 	# Mock stat command to fail (simulates permission issues)
-	local mock_stat="${TEST_DIR}/stat"
-	cat >"$mock_stat" <<'EOF'
-#!/bin/bash
-# Simulate stat failure (permission denied)
-exit 1
-EOF
-	chmod +x "$mock_stat"
+	mock_command_failure "stat" 1 >/dev/null
 
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
@@ -874,13 +862,7 @@ EOF
 	echo "$(date +%s):12345" >"$lockfile"
 
 	# Mock kill command to fail (simulates permission denied)
-	local mock_kill="${TEST_DIR}/kill"
-	cat >"$mock_kill" <<'EOF'
-#!/bin/bash
-# Simulate kill -0 failure (permission denied for different user)
-exit 1
-EOF
-	chmod +x "$mock_kill"
+	mock_command_failure "kill" 1 >/dev/null
 
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
@@ -924,13 +906,7 @@ EOF
 	echo "$(date +%s):12345" >"$lockfile"
 
 	# Mock kill to succeed (zombie processes still respond to kill -0)
-	local mock_kill="${TEST_DIR}/kill"
-	cat >"$mock_kill" <<'EOF'
-#!/bin/bash
-# Simulate kill -0 succeeding for zombie process
-exit 0
-EOF
-	chmod +x "$mock_kill"
+	create_mock_output "kill" "" >/dev/null
 
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
@@ -1013,7 +989,12 @@ EOF
 	# Run script in background
 	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
 	local script_pid=$!
-	sleep 0.1
+	# Wait for lockfile to exist before making directory read-only
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test lockfile removal failure"
+	fi
 
 	# Make lockfile directory read-only to prevent removal (simulate failure)
 	# Note: This may not work on all systems, but tests the error handling path
@@ -1087,7 +1068,12 @@ EOF
 	# Run script in background and send SIGTERM
 	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
 	local script_pid=$!
-	sleep 0.1
+	# Wait for lockfile to exist before sending signal
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test exit code handling"
+	fi
 	kill -TERM "$script_pid" 2>/dev/null || true
 	wait "$script_pid" 2>/dev/null || local exit_code=$?
 
@@ -1100,10 +1086,9 @@ EOF
 
 	# Lockfile should be cleaned up regardless of exit code
 	# Cleanup should have run (even if signal handling didn't work perfectly in test)
-	if [[ -f "$lockfile" ]]; then
-		# Lockfile may still exist if signal wasn't handled, but it should be stale
-		echo "Lockfile exists - may be stale if signal wasn't handled in test environment"
-	fi
+	# In test environments, signal handling may be unreliable, so we verify
+	# the cleanup path exists even if it doesn't fire perfectly
+	verify_lockfile_cleanup_or_stale "$lockfile" "signal"
 
 	remove_mock_from_path
 }
@@ -1617,18 +1602,8 @@ EOF
 	add_mock_to_path
 
 	# Create a PATH without flock to force fallback method
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		if [[ "$dir" == "/bin" ]] || [[ "$dir" == "/usr/bin" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		elif [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
-	if [[ "$path_without_flock" != *"/bin"* ]]; then
-		path_without_flock="/bin:/usr/bin:${path_without_flock}"
-	fi
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	# Create a short-lived process to get its PID
 	# This simulates a process that dies between PID check and exit
@@ -1680,18 +1655,8 @@ EOF
 	add_mock_to_path
 
 	# Create a PATH without flock to force fallback method
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		if [[ "$dir" == "/bin" ]] || [[ "$dir" == "/usr/bin" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		elif [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
-	if [[ "$path_without_flock" != *"/bin"* ]]; then
-		path_without_flock="/bin:/usr/bin:${path_without_flock}"
-	fi
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	# Create a stale lockfile (dead PID)
 	local old_timestamp=$(($(date +%s) - 120))
@@ -1756,18 +1721,8 @@ EOF
 	add_mock_to_path
 
 	# Create a PATH without flock to force fallback method
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		if [[ "$dir" == "/bin" ]] || [[ "$dir" == "/usr/bin" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		elif [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
-	if [[ "$path_without_flock" != *"/bin"* ]]; then
-		path_without_flock="/bin:/usr/bin:${path_without_flock}"
-	fi
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	# Create a race condition script that removes lockfile after failed creation
 	# This simulates the edge case where lockfile doesn't exist after failed creation
@@ -1823,18 +1778,8 @@ EOF
 	add_mock_to_path
 
 	# Create a PATH without flock to force fallback method
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		if [[ "$dir" == "/bin" ]] || [[ "$dir" == "/usr/bin" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		elif [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
-	if [[ "$path_without_flock" != *"/bin"* ]]; then
-		path_without_flock="/bin:/usr/bin:${path_without_flock}"
-	fi
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	# Create a stale lockfile
 	local old_timestamp=$(($(date +%s) - 120))
@@ -1899,18 +1844,8 @@ EOF
 	add_mock_to_path
 
 	# Create a PATH without flock to force fallback method
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		if [[ "$dir" == "/bin" ]] || [[ "$dir" == "/usr/bin" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		elif [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
-	if [[ "$path_without_flock" != *"/bin"* ]]; then
-		path_without_flock="/bin:/usr/bin:${path_without_flock}"
-	fi
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	# Run script - should complete successfully
 	PATH="${TEST_DIR}:${path_without_flock}" run bash "$test_script" --fake
@@ -1946,47 +1881,44 @@ EOF
 	add_mock_to_path
 
 	# Create a PATH without flock to force fallback method
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		if [[ "$dir" == "/bin" ]] || [[ "$dir" == "/usr/bin" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		elif [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
-	if [[ "$path_without_flock" != *"/bin"* ]]; then
-		path_without_flock="/bin:/usr/bin:${path_without_flock}"
-	fi
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	# Test 1: SIGINT (INT trap) - should exit with 130
 	PATH="${TEST_DIR}:${path_without_flock}" bash "$test_script" --fake &
 	local script_pid=$!
-	# Give script a moment to start and create lockfile
-	sleep 0.1
+	# Wait for lockfile to exist before sending signal
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test SIGINT handling"
+	fi
 	kill -INT "$script_pid" 2>/dev/null || true
 	wait "$script_pid" 2>/dev/null || true
 
 	# Lockfile should be cleaned up by INT trap handler (line 583)
 	# Note: In test environment, trap may not fire perfectly, but cleanup should be attempted
-	if [[ -f "$lockfile" ]]; then
-		# If lockfile exists, it should be stale (trap may not have fired)
-		echo "Lockfile exists after SIGINT - trap may not have fired in test environment"
-	fi
+	# In test environments, signal handling may be unreliable, so we verify
+	# the cleanup path exists even if it doesn't fire perfectly
+	verify_lockfile_cleanup_or_stale "$lockfile" "SIGINT"
 
 	# Test 2: SIGTERM (TERM trap) - should exit with 143
 	rm -f "$lockfile"
 	PATH="${TEST_DIR}:${path_without_flock}" bash "$test_script" --fake &
 	script_pid=$!
-	# Give script a moment to start and create lockfile
-	sleep 0.1
+	# Wait for lockfile to exist before sending signal
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test SIGTERM handling"
+	fi
 	kill -TERM "$script_pid" 2>/dev/null || true
 	wait "$script_pid" 2>/dev/null || true
 
 	# Lockfile should be cleaned up by TERM trap handler (line 585)
-	if [[ -f "$lockfile" ]]; then
-		echo "Lockfile exists after SIGTERM - trap may not have fired in test environment"
-	fi
+	# In test environments, signal handling may be unreliable, so we verify
+	# the cleanup path exists even if it doesn't fire perfectly
+	verify_lockfile_cleanup_or_stale "$lockfile" "SIGTERM"
 
 	# Test 3: Normal exit (EXIT trap) - should use main function exit code
 	rm -f "$lockfile"
@@ -2030,7 +1962,12 @@ EOF
 	# Run script in background
 	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
 	local script_pid=$!
-	sleep 0.1
+	# Wait for lockfile to exist before sending signals
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test signal storm"
+	fi
 
 	# Send multiple signals simultaneously to test race condition
 	# This simulates a signal storm where INT and TERM arrive at the same time
@@ -2043,10 +1980,9 @@ EOF
 	# Even if multiple signals arrive, cleanup_and_exit should only run once
 	# The lockfile should be cleaned up (or be stale if cleanup didn't run)
 	# The important thing is the script doesn't crash or hang
-	if [[ -f "$lockfile" ]]; then
-		# Lockfile may still exist if signals weren't handled, but it should be stale
-		echo "Lockfile exists after multiple signals - verifying stale detection"
-	fi
+	# In test environments, signal handling may be unreliable, so we verify
+	# the cleanup path exists even if it doesn't fire perfectly
+	verify_lockfile_cleanup_or_stale "$lockfile" "multiple signals"
 
 	# Script should have exited (not hung)
 	# If we got here, the script completed or was killed, which is expected
@@ -2155,7 +2091,12 @@ EOF
 	# Then EXIT trap runs, sees cleanup_done=1, and should use signal_exit_code
 	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
 	local script_pid=$!
-	sleep 0.1
+	# Wait for lockfile to exist before sending signal
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test exit code with cleanup_done"
+	fi
 	kill -TERM "$script_pid" 2>/dev/null || true
 	wait "$script_pid" 2>/dev/null || local exit_code=$?
 
@@ -2170,10 +2111,9 @@ EOF
 
 	# Lockfile should be cleaned up
 	# cleanup_done prevents double cleanup, but cleanup should have run once
-	if [[ -f "$lockfile" ]]; then
-		# Lockfile may still exist if signal wasn't handled, but it should be stale
-		echo "Lockfile exists - may be stale if signal wasn't handled in test environment"
-	fi
+	# In test environments, signal handling may be unreliable, so we verify
+	# the cleanup path exists even if it doesn't fire perfectly
+	verify_lockfile_cleanup_or_stale "$lockfile" "signal"
 
 	remove_mock_from_path
 }

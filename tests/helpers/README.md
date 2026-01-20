@@ -50,14 +50,28 @@ Provides helpers for testing VPN recovery functionality.
 
 **Key Functions:**
 - `generate_xfrm_state_output()` - Generate xfrm state output for recovery testing
+- `override_calculate_duration_with_increment()` - Override calculate_duration for time-based testing
+- `override_calculate_duration_always_zero()` - Override calculate_duration to simulate time calculation failure
+- `setup_retry_xfrm_recovery_mocks()` - Set up common mocks for retry_xfrm_recovery tests
 
 **Usage:**
 ```bash
 load test_helper
 load helpers/recovery
 
-# Use in a mock script
+# Generate xfrm state output in a mock script
 generate_xfrm_state_output 1
+
+# Override calculate_duration for time-based testing
+local time_increment_file="${TEST_DIR}/time_increment"
+echo "0" >"$time_increment_file"
+source_recovery_module
+override_calculate_duration_with_increment "$time_increment_file"
+
+# Set up common mocks for retry_xfrm_recovery tests
+local log_file
+log_file=$(setup_retry_xfrm_recovery_mocks)
+add_mock_to_path
 ```
 
 ### `helpers/config.bash` - Config Test Helpers

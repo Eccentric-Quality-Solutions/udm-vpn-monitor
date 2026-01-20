@@ -735,10 +735,50 @@ check_vpn_status() {
 			local ipsec_daemon_status="unknown"
 			if check_command_available "systemctl"; then
 				# Try systemctl first (more reliable on UDM OS)
-				ipsec_daemon_status=$(systemctl is-active ipsec 2>/dev/null || echo "unknown")
+				# Get full path to systemctl for reliable execution in PATH-restricted environments (cron/systemd)
+				local systemctl_cmd
+				systemctl_cmd=$(get_command_path "systemctl")
+				# Capture both stdout and stderr, handle exit code properly
+				# systemctl is-active returns: "active", "inactive", "activating", "deactivating", "failed", "unknown", or exit code 3 for unknown
+				local systemctl_output
+				systemctl_output=$("$systemctl_cmd" is-active ipsec 2>&1)
+				local systemctl_exit=$?
+
+				if [[ $systemctl_exit -eq 0 ]]; then
+					# Command succeeded - output should be service state
+					# Normalize output (trim whitespace, handle case)
+					ipsec_daemon_status=$(echo "$systemctl_output" | tr -d '\n\r ' | tr '[:upper:]' '[:lower:]')
+					# Map systemctl states to our status values
+					case "$ipsec_daemon_status" in
+					"active")
+						ipsec_daemon_status="running"
+						;;
+					"inactive" | "failed")
+						ipsec_daemon_status="inactive"
+						;;
+					"activating" | "deactivating")
+						ipsec_daemon_status="transitioning"
+						;;
+					*)
+						# Unknown state from systemctl
+						ipsec_daemon_status="unknown_state"
+						log_message "DEBUG" "$location_name" "systemctl is-active ipsec returned unexpected state: $systemctl_output"
+						;;
+					esac
+				elif [[ $systemctl_exit -eq 3 ]]; then
+					# Exit code 3 means service is in unknown state (not loaded/not found)
+					ipsec_daemon_status="not_found"
+				else
+					# Command failed for other reason
+					ipsec_daemon_status="check_failed"
+					log_message "DEBUG" "$location_name" "systemctl is-active ipsec failed (exit: $systemctl_exit, output: $systemctl_output)"
+				fi
 			elif check_command_available "pgrep"; then
 				# Fallback to pgrep if systemctl unavailable
-				if pgrep -x ipsec >/dev/null 2>&1; then
+				# Get full path to pgrep for reliable execution in PATH-restricted environments (cron/systemd)
+				local pgrep_cmd
+				pgrep_cmd=$(get_command_path "pgrep")
+				if "$pgrep_cmd" -x ipsec >/dev/null 2>&1; then
 					ipsec_daemon_status="running"
 				else
 					ipsec_daemon_status="not_running"
