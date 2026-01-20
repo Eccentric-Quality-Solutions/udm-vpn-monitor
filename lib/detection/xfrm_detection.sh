@@ -286,6 +286,9 @@ execute_xfrm_state_command() {
 		return 2
 	fi
 
+	# Log the resolved path for debugging (DEBUG level to avoid log spam)
+	log_message "DEBUG" "SYSTEM" "get_command_path resolved 'ip' to: '$ip_cmd'"
+
 	# If we got a full path (not just command name), verify it's executable
 	# This catches cases where get_command_path returns a path that doesn't actually exist
 	if [[ "$ip_cmd" == /* ]]; then
@@ -293,6 +296,9 @@ execute_xfrm_state_command() {
 			log_message "ERROR" "SYSTEM" "ip command path from get_command_path is not executable: '$ip_cmd'"
 			return 2
 		fi
+	elif [[ "$ip_cmd" == "ip" ]]; then
+		# Got command name instead of path - this shouldn't happen if get_command_path works correctly
+		log_message "WARNING" "SYSTEM" "get_command_path returned command name 'ip' instead of full path - may fail in PATH-restricted environment"
 	fi
 
 	# Try with statistics first (ip -s xfrm state) which may show more detail
@@ -305,6 +311,9 @@ execute_xfrm_state_command() {
 	full_xfrm_output=$("$ip_cmd" -s xfrm state 2>&1)
 	xfrm_exit_code=$?
 
+	# Log diagnostic information for debugging
+	log_message "DEBUG" "SYSTEM" "Executed '$ip_cmd -s xfrm state' - exit code: $xfrm_exit_code, output length: ${#full_xfrm_output}"
+
 	# Handle specific exit codes that indicate command execution problems
 	if [[ $xfrm_exit_code -eq 127 ]]; then
 		# Command not found - log the path we tried to use
@@ -314,11 +323,10 @@ execute_xfrm_state_command() {
 		# Command not executable
 		log_message "ERROR" "SYSTEM" "ip command not executable at path: '$ip_cmd' (exit code 126)"
 		return 2
-	fi
-
-	if [[ $xfrm_exit_code -eq 0 ]]; then
+	elif [[ $xfrm_exit_code -eq 0 ]]; then
 		# Command succeeded - check if output contains error messages in stderr
 		if echo "$full_xfrm_output" | grep -qE "(error|Error|ERROR|failed|Failed|FAILED|No such|Permission denied)"; then
+			log_message "WARNING" "SYSTEM" "ip -s xfrm state returned exit code 0 but contains error messages (command path: '$ip_cmd')"
 			return 2
 		fi
 		# Check if we have actual output (not just empty/whitespace)
@@ -326,14 +334,26 @@ execute_xfrm_state_command() {
 			echo "$full_xfrm_output"
 			return 0
 		fi
-	elif [[ $xfrm_exit_code -ne 0 ]]; then
-		# Command failed with non-zero exit code - this is a command failure
+		# Exit code 0 but empty output - this is normal when no SAs exist, fall through to try without -s
+		log_message "DEBUG" "SYSTEM" "ip -s xfrm state returned exit code 0 with empty output (no SAs found), trying fallback without -s"
+	else
+		# Command failed with non-zero exit code (not 127 or 126) - log diagnostic info
+		if [[ -z "${full_xfrm_output//[[:space:]]/}" ]]; then
+			log_message "WARNING" "SYSTEM" "ip -s xfrm state failed with exit code $xfrm_exit_code but no output (command path: '$ip_cmd')"
+		else
+			local output_preview
+			output_preview=$(echo "$full_xfrm_output" | head -5 | tr '\n' '; ' || echo "<output formatting failed>")
+			log_message "WARNING" "SYSTEM" "ip -s xfrm state failed with exit code $xfrm_exit_code (command path: '$ip_cmd', output preview: $output_preview)"
+		fi
 		return 2
 	fi
 
 	# Fall back to regular ip xfrm state (without -s)
 	full_xfrm_output=$("$ip_cmd" xfrm state 2>&1)
 	xfrm_exit_code=$?
+
+	# Log diagnostic information for debugging (fallback attempt)
+	log_message "DEBUG" "SYSTEM" "Executed '$ip_cmd xfrm state' (fallback) - exit code: $xfrm_exit_code, output length: ${#full_xfrm_output}"
 
 	# Handle specific exit codes that indicate command execution problems
 	if [[ $xfrm_exit_code -eq 127 ]]; then
@@ -344,10 +364,10 @@ execute_xfrm_state_command() {
 		# Command not executable
 		log_message "ERROR" "SYSTEM" "ip command not executable at path: '$ip_cmd' (exit code 126) - fallback attempt"
 		return 2
-	fi
-
-	if [[ $xfrm_exit_code -eq 0 ]]; then
+	elif [[ $xfrm_exit_code -eq 0 ]]; then
+		# Command succeeded - check if output contains error messages
 		if echo "$full_xfrm_output" | grep -qE "(error|Error|ERROR|failed|Failed|FAILED|No such|Permission denied)"; then
+			log_message "WARNING" "SYSTEM" "ip xfrm state returned exit code 0 but contains error messages (command path: '$ip_cmd') - fallback attempt"
 			return 2
 		fi
 		# Check if we have actual output
@@ -355,11 +375,16 @@ execute_xfrm_state_command() {
 			echo "$full_xfrm_output"
 			return 0
 		fi
+		# Exit code 0 but empty output - no SAs found
 		return 1
-	elif [[ $xfrm_exit_code -ne 0 ]]; then
-		# Non-zero exit code - log diagnostic info if output is empty
+	else
+		# Non-zero exit code (not 127 or 126) - log diagnostic info
 		if [[ -z "${full_xfrm_output//[[:space:]]/}" ]]; then
-			log_message "DEBUG" "SYSTEM" "ip xfrm state failed with exit code $xfrm_exit_code but no output (command path: '$ip_cmd')"
+			log_message "WARNING" "SYSTEM" "ip xfrm state failed with exit code $xfrm_exit_code but no output (command path: '$ip_cmd') - fallback attempt"
+		else
+			local output_preview
+			output_preview=$(echo "$full_xfrm_output" | head -5 | tr '\n' '; ' || echo "<output formatting failed>")
+			log_message "WARNING" "SYSTEM" "ip xfrm state failed with exit code $xfrm_exit_code (command path: '$ip_cmd', output preview: $output_preview) - fallback attempt"
 		fi
 		return 2
 	fi
