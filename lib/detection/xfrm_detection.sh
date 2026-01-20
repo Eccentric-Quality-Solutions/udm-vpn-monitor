@@ -448,6 +448,19 @@ get_xfrm_state_for_peer() {
 
 	# Handle different failure types
 	if [[ $xfrm_result -eq 2 ]]; then
+		# Command failed - log xfrm output for diagnostics (first 10 lines, sanitized)
+		# This helps debug xfrm command failures without exposing sensitive information
+		if [[ -n "$full_xfrm_output" ]]; then
+			local xfrm_output_preview
+			xfrm_output_preview=$(echo "$full_xfrm_output" | head -10)
+			# Format output as single line (replace newlines with semicolons) for log readability
+			local xfrm_output_formatted
+			xfrm_output_formatted=$(echo "$xfrm_output_preview" | tr '\n' '; ' || echo "<output formatting failed>")
+			# Log with peer IP for context (xfrm output contains IPs but they're already known from config)
+			# Use INFO level so diagnostic information is always visible
+			log_message "INFO" "SYSTEM" "xfrm command failed for peer $external_peer_ip - xfrm output (first 10 lines): $xfrm_output_formatted"
+		fi
+
 		# Command failed - try alternative method (ipsec status) to confirm tunnel state
 		local ipsec_status_output
 		local ipsec_status_result

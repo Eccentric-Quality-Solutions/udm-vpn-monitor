@@ -719,6 +719,52 @@ main() {
 	# Validate state and check cooldown (may exit if in cooldown)
 	validate_monitor_state
 
+	# Apply startup grace period if this is first run after restart
+	# This prevents false positives when IPsec/xfrm subsystems are still initializing
+	# Check if this is a fresh start (no state file indicating recent run)
+	# We consider it a "fresh start" if:
+	#   1. The timestamp file doesn't exist (first run ever, or state directory was cleared)
+	#   2. The timestamp file is older than 5 minutes (likely system restart or script hasn't run in a while)
+	#      Note: 5-minute threshold assumes cron runs at least every minute. If file is older than 5 minutes,
+	#      it indicates the script hasn't run recently (likely due to system restart or cron being disabled)
+	local last_run_timestamp_file="${STATE_DIR}/.last_run_timestamp"
+	local apply_grace_period=0
+	local grace_period="${STARTUP_GRACE_PERIOD:-30}"
+
+	if [[ ! -f "$last_run_timestamp_file" ]]; then
+		# File doesn't exist - first run detected
+		apply_grace_period=1
+	elif [[ "$grace_period" -gt 0 ]]; then
+		# File exists - check if it's recent (within last 5 minutes)
+		# If file is older than 5 minutes, likely a system restart or script hasn't run in a while
+		# Use find to check file age (more portable than stat)
+		local find_result
+		local find_exit_code
+		find_result=$(find "$last_run_timestamp_file" -mmin -5 2>&1)
+		find_exit_code=$?
+		# Debug logging for test investigation (can be removed after test is fixed)
+		if [[ "${DEBUG:-0}" -eq 1 ]]; then
+			log_message "DEBUG" "SYSTEM" "Grace period check: file=$last_run_timestamp_file, find_result='$find_result', find_exit=$find_exit_code"
+		fi
+		if [[ $find_exit_code -ne 0 ]] || [[ -z "$find_result" ]]; then
+			# File is older than 5 minutes - likely a restart
+			apply_grace_period=1
+		fi
+	fi
+
+	if [[ "$apply_grace_period" -eq 1 ]] && [[ "$grace_period" -gt 0 ]]; then
+		log_message "INFO" "SYSTEM" "First run detected - waiting ${grace_period} seconds for IPsec/xfrm to initialize"
+		log_message "INFO" "SYSTEM" "Startup grace period active - VPN checks will begin after ${grace_period} seconds"
+		sleep "$grace_period"
+		log_message "INFO" "SYSTEM" "Startup grace period complete - beginning VPN checks"
+	fi
+
+	# Update timestamp file on every run to track last execution time
+	# Handle errors gracefully - if we can't create/update the file, continue anyway
+	if ! touch "$last_run_timestamp_file" 2>/dev/null; then
+		handle_error "WARNING" "SYSTEM" "Cannot create/update .last_run_timestamp file in ${STATE_DIR} (check permissions) - grace period may apply on next restart"
+	fi
+
 	# Process all locations
 	local all_ok=0
 	if ! process_locations; then

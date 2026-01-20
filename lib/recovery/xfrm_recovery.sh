@@ -407,7 +407,7 @@ parse_xfrm_output_to_sa_list() {
 					else
 						# Invalid selectors: log warning but continue parsing (may have valid SAs later)
 						handle_error "WARNING" "$location_name" "xfrm recovery: Invalid SA selectors: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi for $ip_display"
-						((parse_errors++))
+						parse_errors=$((parse_errors + 1))
 					fi
 				else
 					# SA doesn't match target peer IP (neither dst nor src matches) - skip this SA
@@ -486,7 +486,7 @@ parse_xfrm_output_to_sa_list() {
 				log_message "DEBUG" "$location_name" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi mark=${current_mark:-<none>} for $ip_display"
 			else
 				handle_error "WARNING" "$location_name" "xfrm recovery: Invalid SA selectors: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi for $ip_display"
-				((parse_errors++))
+				parse_errors=$((parse_errors + 1))
 			fi
 		else
 			# SA doesn't match target peer IP (neither dst nor src matches) - skip this SA
@@ -536,7 +536,7 @@ delete_sas_from_list() {
 	local i=1
 	while [[ $i -le $sa_count ]]; do
 		sa_list+=("${!i}")
-		((i++))
+		i=$((i + 1))
 	done
 
 	# Extract last 4 arguments using eval for arithmetic in indirect reference
@@ -692,13 +692,13 @@ delete_sas_from_list() {
 		if [[ -n "$mark_value" ]] && [[ -n "$mark_mask" ]]; then
 			get_sa_cmd_args+=("mark" "$mark_value" "mask" "$mark_mask")
 		fi
-		local get_sa_output
+		local get_sa_output=""
 		local get_sa_stderr=""
-		local get_sa_exit_code
+		local get_sa_exit_code=0
 		local get_sa_start_time
 		get_sa_start_time=$(get_unix_timestamp 2>/dev/null || echo "0")
-		get_sa_output=$("${get_sa_cmd_args[@]}" 2>&1)
-		get_sa_exit_code=$?
+		# Use || to prevent set -e from triggering on command failure
+		get_sa_output=$("${get_sa_cmd_args[@]}" 2>&1) || get_sa_exit_code=$?
 		local get_sa_duration=0
 		if [[ "$get_sa_start_time" != "0" ]]; then
 			local get_sa_end_time
@@ -733,12 +733,12 @@ delete_sas_from_list() {
 
 		# Capture stderr and exit code for diagnostic purposes
 		# Enhanced diagnostics: Add timing information for deletion operations
-		local delete_stderr
-		local delete_exit_code
+		local delete_stderr=""
+		local delete_exit_code=0
 		local delete_start_time
 		delete_start_time=$(get_unix_timestamp 2>/dev/null || echo "0")
-		delete_stderr=$("${delete_cmd_args[@]}" 2>&1)
-		delete_exit_code=$?
+		# Use || to prevent set -e from triggering on command failure
+		delete_stderr=$("${delete_cmd_args[@]}" 2>&1) || delete_exit_code=$?
 		local delete_duration=0
 		if [[ "$delete_start_time" != "0" ]]; then
 			local delete_end_time
@@ -755,7 +755,7 @@ delete_sas_from_list() {
 			else
 				log_message "INFO" "$location_name" "xfrm recovery: Deleted SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi for $ip_display (duration: ${delete_duration}s)"
 			fi
-			((_deleted_count++))
+			_deleted_count=$((_deleted_count + 1))
 		else
 			# Deletion failed - gather comprehensive diagnostic information
 			# Enhanced diagnostics: Include timing information in failure diagnostics
@@ -844,7 +844,7 @@ delete_sas_from_list() {
 			# Only log once per recovery attempt to avoid excessive logging
 			# Note: We don't have access to xfrm_output here, so we skip this logging
 			# It will be logged by the caller if needed
-			((_failed_count++))
+			_failed_count=$((_failed_count + 1))
 		fi
 	done
 
@@ -954,14 +954,14 @@ delete_xfrm_policies() {
 
 	# Delete policies for each direction found
 	for policy_dir in "${policy_directions[@]}"; do
-		local policy_stderr
-		local policy_exit_code
+		local policy_stderr=""
+		local policy_exit_code=0
 		local policy_start_time
 		policy_start_time=$(get_unix_timestamp 2>/dev/null || echo "0")
 		local policy_cmd_args=("ip" "xfrm" "policy" "delete" "dst" "$external_peer_ip" "dir" "$policy_dir")
 		log_message "INFO" "$location_name" "xfrm recovery: Executing policy deletion command: ${policy_cmd_args[*]}"
-		policy_stderr=$("${policy_cmd_args[@]}" 2>&1)
-		policy_exit_code=$?
+		# Use || to prevent set -e from triggering on command failure
+		policy_stderr=$("${policy_cmd_args[@]}" 2>&1) || policy_exit_code=$?
 		local policy_duration=0
 		if [[ "$policy_start_time" != "0" ]]; then
 			local policy_end_time
@@ -972,13 +972,13 @@ delete_xfrm_policies() {
 		fi
 
 		if [[ $policy_exit_code -eq 0 ]]; then
-			((policy_deleted_count++))
+			policy_deleted_count=$((policy_deleted_count + 1))
 			# Note: delete_xfrm_policies doesn't have access to internal_peer_ip, so we only show external IP
 			log_message "INFO" "$location_name" "xfrm recovery: Deleted xfrm policy for dst=$external_peer_ip dir=$policy_dir (duration: ${policy_duration}s)"
 		else
 			# Policy deletion failed - log diagnostic info (non-fatal, so use INFO level)
 			# Enhanced diagnostics: Always log policy deletion failures (not just DEBUG mode)
-			((policy_failed_count++))
+			policy_failed_count=$((policy_failed_count + 1))
 			local policy_diagnostic="exit_code=$policy_exit_code, duration=${policy_duration}s"
 			if [[ -n "$policy_stderr" ]]; then
 				policy_diagnostic="$policy_diagnostic, stderr=\"$policy_stderr\""

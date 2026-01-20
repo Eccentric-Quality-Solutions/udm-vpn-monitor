@@ -87,6 +87,9 @@ declare -gA CONFIG_SCHEMA=(
 	["MAX_RESTARTS_PER_WINDOW"]="required|integer|min:1|max:20|default:20"
 	["RATE_LIMIT_WINDOW_MINUTES"]="required|integer|min:5|max:1440|default:60"
 	["MIN_RESTART_INTERVAL_SECONDS"]="required|integer|min:0|max:300|default:40"
+	# Startup grace period (seconds) - wait time before first VPN check after script restart
+	# Prevents false positives when IPsec/xfrm subsystems are still initializing
+	["STARTUP_GRACE_PERIOD"]="optional|integer|min:0|max:300|default:30"
 	# Backward compatibility: MAX_RESTARTS_PER_HOUR is deprecated but still supported
 	["MAX_RESTARTS_PER_HOUR"]="optional|integer|min:1|max:60|default:"
 	# Backward compatibility: COOLDOWN_MINUTES is deprecated but still supported (migrated to MIN_RESTART_INTERVAL_SECONDS)

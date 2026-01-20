@@ -731,6 +731,23 @@ check_vpn_status() {
 		if check_ipsec_fallback "$external_peer_ip" "$location_name" "ipsec_diagnostic"; then
 			primary_check_passed=1
 		else
+			# Both methods failed - check IPsec daemon status for diagnostics
+			local ipsec_daemon_status="unknown"
+			if check_command_available "systemctl"; then
+				# Try systemctl first (more reliable on UDM OS)
+				ipsec_daemon_status=$(systemctl is-active ipsec 2>/dev/null || echo "unknown")
+			elif check_command_available "pgrep"; then
+				# Fallback to pgrep if systemctl unavailable
+				if pgrep -x ipsec >/dev/null 2>&1; then
+					ipsec_daemon_status="running"
+				else
+					ipsec_daemon_status="not_running"
+				fi
+			fi
+
+			# Log IPsec daemon status for diagnostics
+			log_message "DEBUG" "$location_name" "Both xfrm and ipsec status checks failed - IPsec daemon status: $ipsec_daemon_status"
+
 			# Both methods failed - log combined diagnostic message
 			local combined_diagnostics=()
 			if [[ -n "$xfrm_diagnostic" ]]; then
