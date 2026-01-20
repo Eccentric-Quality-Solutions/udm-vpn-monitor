@@ -5,6 +5,11 @@
 #
 # This ensures code quality and that the installer package is always up-to-date
 # with the current codebase when committing changes.
+#
+# Environment variables:
+#   SKIP_DOC_CHECKS: If set to any value, skips documentation checks only.
+#                    Other checks (linting, formatting, package generation) still run.
+#                    Example: SKIP_DOC_CHECKS=1 git commit -m "message"
 
 set -euo pipefail
 
@@ -138,16 +143,20 @@ if [[ ${#STAGED_SH_FILES[@]} -gt 0 ]]; then
 		fi
 	fi
 
-	# Check documentation standards
-	DOC_CHECK_SCRIPT="${REPO_ROOT}/scripts/check-documentation.sh"
-	if [[ -f "$DOC_CHECK_SCRIPT" ]] && [[ -x "$DOC_CHECK_SCRIPT" ]]; then
-		echo "Checking function documentation standards..."
-		if ! "$DOC_CHECK_SCRIPT"; then
-			echo "Error: Documentation check failed. Please fix documentation issues before committing." >&2
-			exit 1
+	# Check documentation standards (skip if SKIP_DOC_CHECKS is set)
+	if [[ -z "${SKIP_DOC_CHECKS:-}" ]]; then
+		DOC_CHECK_SCRIPT="${REPO_ROOT}/scripts/check-documentation.sh"
+		if [[ -f "$DOC_CHECK_SCRIPT" ]] && [[ -x "$DOC_CHECK_SCRIPT" ]]; then
+			echo "Checking function documentation standards..."
+			if ! "$DOC_CHECK_SCRIPT"; then
+				echo "Error: Documentation check failed. Please fix documentation issues before committing." >&2
+				exit 1
+			fi
+		else
+			echo "Warning: Documentation checker script not found or not executable: $DOC_CHECK_SCRIPT" >&2
 		fi
 	else
-		echo "Warning: Documentation checker script not found or not executable: $DOC_CHECK_SCRIPT" >&2
+		echo "Skipping documentation checks (SKIP_DOC_CHECKS is set)..."
 	fi
 fi
 

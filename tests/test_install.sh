@@ -624,7 +624,7 @@ EOF
 
 	# Script should fail when mkdir fails (set -e causes exit)
 	# Verify directory wasn't created (confirms mkdir failure occurred)
-	refute_dir_exist "${TEST_DIR}/vpn-monitor"
+	assert_dir_not_exist "${TEST_DIR}/vpn-monitor"
 
 	remove_mock_from_path
 	chmod 755 "${TEST_DIR}/readonly" 2>/dev/null || true
@@ -655,7 +655,7 @@ EOF
 	# Script should fail when trying to copy files to read-only directory
 	# The exact error depends on cp behavior, but script should exit with error
 	# Verify files weren't actually copied (confirms cp failure occurred)
-	refute_file_exist "${TEST_DIR}/vpn-monitor/vpn-monitor.sh"
+	assert_file_not_exist "${TEST_DIR}/vpn-monitor/vpn-monitor.sh"
 
 	# Cleanup
 	chmod 755 "${TEST_DIR}/vpn-monitor" 2>/dev/null || true

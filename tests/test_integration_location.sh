@@ -565,7 +565,7 @@ EOF
 	# Should succeed
 	assert_success
 	# Failure type file should be removed (false positive cleanup)
-	refute_file_exist "$failure_type_file"
+	assert_file_not_exist "$failure_type_file"
 	# Should NOT log recovery message (silent cleanup)
 	if [[ -f "$LOG_FILE" ]]; then
 		refute_file_contains "$LOG_FILE" "recovered"
