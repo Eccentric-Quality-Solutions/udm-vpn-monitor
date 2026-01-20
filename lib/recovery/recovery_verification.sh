@@ -87,8 +87,11 @@ count_sas_for_peer() {
 	fi
 
 	# Get full path to ip command for reliable execution in PATH-restricted environments (cron/systemd)
-	local ip_cmd
-	ip_cmd=$(get_command_path "ip")
+	# Use _RECOVERY_IP_PATH if available (set by recovery orchestration), otherwise resolve via get_command_path()
+	local ip_cmd="${_RECOVERY_IP_PATH:-}"
+	if [[ -z "$ip_cmd" ]]; then
+		ip_cmd=$(get_command_path "ip")
+	fi
 
 	local xfrm_output
 	xfrm_output=$("$ip_cmd" xfrm state 2>/dev/null)

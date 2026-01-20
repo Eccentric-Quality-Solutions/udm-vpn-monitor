@@ -111,14 +111,17 @@ log_message() {
 	fi
 
 	# Write to log file (append, create if doesn't exist)
+	# Skip DEBUG messages unless DEBUG=1 to prevent log file spam
 	# Try to write, but don't fail the script if it doesn't work
-	{
-		echo "$log_entry" >>"$LOG_FILE" 2>&1
-	} || {
-		# If write failed, at least we tried - output to stderr
-		echo "$log_entry" >&2
-		echo "[$timestamp] [ERROR] SYSTEM: Failed to write to log file: $LOG_FILE" >&2
-	}
+	if [[ "$level" != "DEBUG" ]] || [[ "${DEBUG:-0}" == "1" ]]; then
+		{
+			echo "$log_entry" >>"$LOG_FILE" 2>&1
+		} || {
+			# If write failed, at least we tried - output to stderr
+			echo "$log_entry" >&2
+			echo "[$timestamp] [ERROR] SYSTEM: Failed to write to log file: $LOG_FILE" >&2
+		}
+	fi
 
 	# Determine if running interactively (TTY attached to stderr)
 	# This allows INFO messages to be shown when running manually
