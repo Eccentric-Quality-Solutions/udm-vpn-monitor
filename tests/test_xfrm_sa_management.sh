@@ -614,6 +614,8 @@ EOF
 	sed -i "s|PEER_IP|${TEST_PEER_IP}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 	add_mock_to_path
+	# Set _RECOVERY_IP_PATH to mock since get_command_path() bypasses PATH for reliability
+	export _RECOVERY_IP_PATH="$mock_ip"
 
 	run delete_xfrm_policies "${TEST_PEER_IP}" "TEST"
 	assert_success
@@ -651,6 +653,8 @@ EOF
 	sed -i "s|PEER_IP|${TEST_PEER_IP}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 	add_mock_to_path
+	# Set _RECOVERY_IP_PATH to mock since get_command_path() bypasses PATH for reliability
+	export _RECOVERY_IP_PATH="$mock_ip"
 
 	# Should still return success (non-fatal)
 	run delete_xfrm_policies "${TEST_PEER_IP}" "TEST"
@@ -682,6 +686,8 @@ exec /usr/bin/ip "$@"
 EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
+	# Set _RECOVERY_IP_PATH to mock since get_command_path() bypasses PATH for reliability
+	export _RECOVERY_IP_PATH="$mock_ip"
 
 	run delete_xfrm_policies "${TEST_PEER_IP}" "TEST"
 	assert_success
@@ -715,6 +721,8 @@ EOF
 	sed -i "s|PEER_IP|${TEST_PEER_IP}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 	add_mock_to_path
+	# Set _RECOVERY_IP_PATH to mock since get_command_path() bypasses PATH for reliability
+	export _RECOVERY_IP_PATH="$mock_ip"
 
 	run count_sas_for_peer "${TEST_PEER_IP}" "TEST"
 	assert_success
@@ -748,6 +756,8 @@ EOF
 	sed -i "s|PEER_IP|${TEST_PEER_IP}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 	add_mock_to_path
+	# Set _RECOVERY_IP_PATH to mock since get_command_path() bypasses PATH for reliability
+	export _RECOVERY_IP_PATH="$mock_ip"
 
 	run count_sas_for_peer "${TEST_PEER_IP}" "TEST"
 	assert_success
@@ -775,6 +785,8 @@ exec /usr/bin/ip "$@"
 EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
+	# Set _RECOVERY_IP_PATH to mock since get_command_path() bypasses PATH for reliability
+	export _RECOVERY_IP_PATH="$mock_ip"
 
 	run count_sas_for_peer "${TEST_PEER_IP}" "TEST"
 	assert_success
@@ -802,6 +814,8 @@ exec /usr/bin/ip "$@"
 EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
+	# Set _RECOVERY_IP_PATH to mock since get_command_path() bypasses PATH for reliability
+	export _RECOVERY_IP_PATH="$mock_ip"
 
 	run count_sas_for_peer "${TEST_PEER_IP}" "TEST"
 	assert_failure
@@ -834,6 +848,8 @@ EOF
 	sed -i "s|PEER_IP|${TEST_PEER_IP}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 	add_mock_to_path
+	# Set _RECOVERY_IP_PATH to mock since get_command_path() bypasses PATH for reliability
+	export _RECOVERY_IP_PATH="$mock_ip"
 
 	run count_sas_for_peer "${TEST_PEER_IP}" "TEST"
 	assert_success

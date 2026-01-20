@@ -729,7 +729,7 @@ main() {
 	#      it indicates the script hasn't run recently (likely due to system restart or cron being disabled)
 	local last_run_timestamp_file="${STATE_DIR}/.last_run_timestamp"
 	local apply_grace_period=0
-	local grace_period="${STARTUP_GRACE_PERIOD:-30}"
+	local grace_period="${STARTUP_GRACE_PERIOD:-5}"
 
 	if [[ ! -f "$last_run_timestamp_file" ]]; then
 		# File doesn't exist - first run detected

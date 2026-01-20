@@ -607,18 +607,16 @@ determine_vpn_status() {
 			handle_error "WARNING" "$location_name" "VPN failure type: Tunnel down (no Phase 2 SA found) for $ip_display"
 			;;
 		"routing_issue")
-			# Log routing issue warning regardless of primary_check_passed status
+			# Log routing issue warning only when primary check failed
 			# When primary_check_passed=0: Primary check failed, routing issue is the cause
-			# When primary_check_passed=1: Primary check passed but routing issue detected from byte counters (e.g., bytes static with ping disabled)
-			#   In this case, log for diagnostic purposes but don't change primary check status
+			# When primary_check_passed=1: Primary check passed (SA exists, bytes increasing) but routing issue detected from ping failure
+			#   In this case, silently ignore since ping is supplementary and primary check is authoritative
+			#   This prevents log noise from transient ping failures when VPN is actually healthy
 			if [[ $primary_check_passed -eq 0 ]]; then
 				handle_error "WARNING" "$location_name" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $ip_display"
-			else
-				# primary_check_passed=1 but routing issue detected - diagnostic-only, primary check status remains passed
-				# Use "Routing issue" (capital R) to match test expectations and maintain consistency
-				handle_error "WARNING" "$location_name" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $ip_display - monitoring for potential issues (primary check passed)"
 			fi
-			# Note: If primary_check_passed was 1, we keep it as 1 since the routing_issue detection is for diagnostic purposes
+			# Note: If primary_check_passed was 1, we keep it as 1 and don't log routing_issue warning
+			# since ping check is supplementary and primary check (SA + byte counters) is authoritative
 			;;
 		*)
 			# "unknown" failure type
