@@ -325,7 +325,9 @@ execute_xfrm_state_command() {
 		return 2
 	elif [[ $xfrm_exit_code -eq 0 ]]; then
 		# Command succeeded - check if output contains error messages in stderr
-		if echo "$full_xfrm_output" | grep -qE "(error|Error|ERROR|failed|Failed|FAILED|No such|Permission denied)"; then
+		# Note: We avoid matching "failed" in statistics (e.g., "failed 0" in stats output)
+		# by looking for error patterns that are more specific to actual error messages
+		if echo "$full_xfrm_output" | grep -qE "^(error|Error|ERROR):|Permission denied|No such (file|device|resource)|Operation not permitted"; then
 			log_message "WARNING" "SYSTEM" "ip -s xfrm state returned exit code 0 but contains error messages (command path: '$ip_cmd')"
 			return 2
 		fi
@@ -366,7 +368,9 @@ execute_xfrm_state_command() {
 		return 2
 	elif [[ $xfrm_exit_code -eq 0 ]]; then
 		# Command succeeded - check if output contains error messages
-		if echo "$full_xfrm_output" | grep -qE "(error|Error|ERROR|failed|Failed|FAILED|No such|Permission denied)"; then
+		# Note: We avoid matching "failed" in statistics (e.g., "failed 0" in stats output)
+		# by looking for error patterns that are more specific to actual error messages
+		if echo "$full_xfrm_output" | grep -qE "^(error|Error|ERROR):|Permission denied|No such (file|device|resource)|Operation not permitted"; then
 			log_message "WARNING" "SYSTEM" "ip xfrm state returned exit code 0 but contains error messages (command path: '$ip_cmd') - fallback attempt"
 			return 2
 		fi
@@ -529,9 +533,9 @@ get_xfrm_state_for_peer() {
 				xfrm_error_msg="No such device or resource - xfrm subsystem may not be available"
 			elif echo "$full_xfrm_output" | grep -qE "(Operation not permitted|operation not permitted)"; then
 				xfrm_error_msg="Operation not permitted - insufficient permissions"
-			elif echo "$full_xfrm_output" | grep -qE "(error|Error|ERROR|failed|Failed|FAILED)"; then
-				# Extract error line(s)
-				xfrm_error_msg=$(echo "$full_xfrm_output" | grep -iE "(error|failed)" | head -1 | tr -d '\n\r' | head -c 200)
+			elif echo "$full_xfrm_output" | grep -qE "^(error|Error|ERROR):"; then
+				# Extract error line(s) - look for error: at start of line to avoid matching "failed" in statistics
+				xfrm_error_msg=$(echo "$full_xfrm_output" | grep -iE "^error:" | head -1 | tr -d '\n\r' | head -c 200)
 			fi
 
 			# Log error message if found, otherwise log full output preview

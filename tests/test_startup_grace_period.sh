@@ -242,8 +242,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:high
 @test "Startup grace period uses default value when not configured" {
-	# Purpose: Test verifies that default grace period (30 seconds) is used when not configured
-	# Expected: Script uses 30 second default grace period
+	# Purpose: Test verifies that default grace period (5 seconds) is used when not configured
+	# Expected: Script uses 5 second default grace period
 	# Importance: Ensures reasonable default behavior
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
@@ -274,15 +274,15 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should succeed
 	assert_success
 
-	# Should log grace period messages with default value (30 seconds)
+	# Should log grace period messages with default value (5 seconds)
 	assert_file_exist "$LOG_FILE"
-	assert_log_contains "$LOG_FILE" "First run detected - waiting 30 seconds for IPsec/xfrm to initialize"
+	assert_log_contains "$LOG_FILE" "First run detected - waiting 5 seconds for IPsec/xfrm to initialize"
 	assert_log_contains "$LOG_FILE" "Startup grace period complete - beginning VPN checks"
 
-	# Should have waited at least 30 seconds (default grace period)
+	# Should have waited at least 5 seconds (default grace period)
 	# Allow some tolerance for test execution overhead
-	# Note: This test takes 30+ seconds, so it's slow
-	assert [ "$elapsed" -ge 25 ]
+	# Note: This test takes 5+ seconds, so it's slow
+	assert [ "$elapsed" -ge 4 ]
 
 	# Timestamp file should be created
 	assert_file_exist "$last_run_file"

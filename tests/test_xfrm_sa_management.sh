@@ -261,6 +261,8 @@ exit 0
 EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
+	# Set _RECOVERY_IP_PATH to mock since get_command_path() bypasses PATH for reliability
+	export _RECOVERY_IP_PATH="$mock_ip"
 
 	local sa_list=("192.168.1.2|${TEST_PEER_IP}|esp|0x12345678|")
 	local deleted_count=0
@@ -313,6 +315,8 @@ exit 0
 EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
+	# Set _RECOVERY_IP_PATH to mock since get_command_path() bypasses PATH for reliability
+	export _RECOVERY_IP_PATH="$mock_ip"
 
 	local sa_list=("192.168.1.2|${TEST_PEER_IP}|esp|0x12345678|0x12000000/0xfe000000")
 	local deleted_count=0
@@ -353,6 +357,8 @@ exit 0
 EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
+	# Set _RECOVERY_IP_PATH to mock since get_command_path() bypasses PATH for reliability
+	export _RECOVERY_IP_PATH="$mock_ip"
 
 	local sa_list=("192.168.1.2|${TEST_PEER_IP}|esp|0x12345678|")
 	local deleted_count=0
@@ -403,6 +409,8 @@ EOF
 	sed -i "s|MOCK_DELETE_COUNT_FILE|${TEST_DIR}/delete_count|g" "$mock_ip"
 	chmod +x "$mock_ip"
 	add_mock_to_path
+	# Set _RECOVERY_IP_PATH to mock since get_command_path() bypasses PATH for reliability
+	export _RECOVERY_IP_PATH="$mock_ip"
 
 	local sa_list=(
 		"192.168.1.2|${TEST_PEER_IP}|esp|0x12345678|"
@@ -474,6 +482,8 @@ exit 0
 EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
+	# Set _RECOVERY_IP_PATH to mock since get_command_path() bypasses PATH for reliability
+	export _RECOVERY_IP_PATH="$mock_ip"
 
 	local xfrm_output="src 192.168.1.2 dst ${TEST_PEER_IP}
   proto esp spi 0x12345678
@@ -512,6 +522,8 @@ exit 0
 EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
+	# Set _RECOVERY_IP_PATH to mock since get_command_path() bypasses PATH for reliability
+	export _RECOVERY_IP_PATH="$mock_ip"
 
 	# Incomplete xfrm output (missing required SPI selector)
 	# This SA will be silently skipped because it's incomplete, not counted as a parse error
@@ -552,6 +564,8 @@ exit 0
 EOF
 	chmod +x "$mock_ip"
 	add_mock_to_path
+	# Set _RECOVERY_IP_PATH to mock since get_command_path() bypasses PATH for reliability
+	export _RECOVERY_IP_PATH="$mock_ip"
 
 	local xfrm_output=""
 	local __deleted_count=0
