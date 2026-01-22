@@ -574,7 +574,7 @@ handle_ping_single_target() {
 	fi
 
 	if check_ping_connectivity "$ping_target" "$local_ip" "$location_name"; then
-		log_message "INFO" "${location_name:-SYSTEM}" "VPN connectivity verified: ping check passed for $ping_target"
+		log_message "INFO" "${location_name:-SYSTEM}" "VPN connectivity verified: ping check passed from $local_ip to $ping_target"
 		return
 	fi
 

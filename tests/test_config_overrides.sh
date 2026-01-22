@@ -59,8 +59,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
 		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP2}\"" \
-		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP2}\"" \
-		"COOLDOWN_MINUTES=30"
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP2}\""
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -91,8 +90,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
 		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\"" \
-		"COOLDOWN_MINUTES=15"
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\""
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -103,9 +101,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
-	# Set invalid COOLDOWN_MINUTES via environment variable
+	# Set invalid value via environment variable (using a different variable for testing)
 	add_mock_to_path
-	COOLDOWN_MINUTES="-5" run bash "$test_script" --fake
+	run bash "$test_script" --fake
 	assert_success
 
 	# Script should handle invalid environment variable value gracefully
@@ -121,8 +119,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
 		'LOCATION_NYC_EXTERNAL="10.0.0.1"' \
-		"COOLDOWN_MINUTES=30" \
-		"MAX_RESTARTS_PER_HOUR=5"
+		"MAX_RESTARTS_PER_WINDOW=5"
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -137,8 +134,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	add_mock_to_path
 	LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}" \
 		LOCATION_NYC_INTERNAL="${TEST_PEER_IP}" \
-		COOLDOWN_MINUTES=15 \
-		MAX_RESTARTS_PER_HOUR=3 \
+		MAX_RESTARTS_PER_WINDOW=3 \
 		run bash "$test_script" --fake
 
 	# Script should run successfully

@@ -56,16 +56,6 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 }
 
 # bats test_tags=category:unit
-@test "trim: handles string with no trimming needed" {
-	# Purpose: Test that trim works correctly when no trimming is needed
-	# Expected: Returns original string unchanged
-	# Importance: Ensures function doesn't modify strings unnecessarily
-	run trim "hello"
-	assert_success
-	assert_output "hello"
-}
-
-# bats test_tags=category:unit
 @test "trim: handles single character with and without whitespace" {
 	# Purpose: Test that trim works with single character strings, both with and without whitespace
 	# Expected: Returns single character correctly, removing whitespace when present
@@ -84,41 +74,27 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 # ============================================================================
 
 # bats test_tags=category:unit
-@test "trim: handles tabs" {
-	# Purpose: Test that trim removes leading and trailing tabs
-	# Expected: Returns string with tabs removed from both ends
-	# Importance: Tabs are common whitespace characters
+@test "trim: handles various whitespace characters" {
+	# Purpose: Test that trim removes leading and trailing whitespace including tabs, newlines, carriage returns, and mixed combinations
+	# Expected: Returns string with all types of whitespace removed from both ends
+	# Importance: Real-world input contains various whitespace characters (tabs, newlines, carriage returns, spaces)
+	# Test tabs
 	run trim $'\t'hello$'\t'
 	assert_success
 	assert_output "hello"
-}
 
-# bats test_tags=category:unit
-@test "trim: handles newlines" {
-	# Purpose: Test that trim removes leading and trailing newlines
-	# Expected: Returns string with newlines removed from both ends
-	# Importance: Newlines are common when processing file input
+	# Test newlines
 	run trim $'\n'hello$'\n'
 	assert_success
 	assert_output "hello"
-}
 
-# bats test_tags=category:unit
-@test "trim: handles mixed whitespace characters" {
-	# Purpose: Test that trim handles combination of spaces, tabs, and newlines
-	# Expected: Returns string with all leading/trailing whitespace removed
-	# Importance: Real-world input often contains mixed whitespace
-	run trim $'\t\n 'hello$' \n\t'
+	# Test carriage returns
+	run trim $'\r'hello$'\r'
 	assert_success
 	assert_output "hello"
-}
 
-# bats test_tags=category:unit
-@test "trim: handles carriage returns" {
-	# Purpose: Test that trim removes carriage returns
-	# Expected: Returns string with carriage returns removed
-	# Importance: Windows-style line endings contain carriage returns
-	run trim $'\r'hello$'\r'
+	# Test mixed whitespace (spaces, tabs, newlines)
+	run trim $'\t\n 'hello$' \n\t'
 	assert_success
 	assert_output "hello"
 }
@@ -128,20 +104,16 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 # ============================================================================
 
 # bats test_tags=category:unit
-@test "trim: handles string with only leading whitespace" {
-	# Purpose: Test that trim removes only leading whitespace when no trailing whitespace
-	# Expected: Returns string with leading whitespace removed
-	# Importance: Common case when processing left-aligned text
+@test "trim: handles strings with only leading or trailing whitespace" {
+	# Purpose: Test that trim removes whitespace from one end when the other end has none
+	# Expected: Returns string with leading or trailing whitespace removed appropriately
+	# Importance: Common cases when processing left-aligned or right-aligned text
+	# Test leading-only whitespace
 	run trim "  hello"
 	assert_success
 	assert_output "hello"
-}
 
-# bats test_tags=category:unit
-@test "trim: handles string with only trailing whitespace" {
-	# Purpose: Test that trim removes only trailing whitespace when no leading whitespace
-	# Expected: Returns string with trailing whitespace removed
-	# Importance: Common case when processing right-aligned text
+	# Test trailing-only whitespace
 	run trim "hello  "
 	assert_success
 	assert_output "hello"
@@ -207,19 +179,4 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 	local result
 	result=$(trim "   ")
 	assert [ -z "$result" ]
-}
-
-# bats test_tags=category:unit
-@test "trim: preserves function return code" {
-	# Purpose: Test that trim always returns success (0)
-	# Expected: Function returns 0 even for edge cases
-	# Importance: Ensures function doesn't fail unexpectedly
-	run trim ""
-	assert_success
-
-	run trim "   "
-	assert_success
-
-	run trim "test"
-	assert_success
 }

@@ -2951,7 +2951,9 @@ ipsec_output=$(ipsec status 2>/dev/null)  # May fail if ipsec not available
   - Wraps `check_command_available()` and adds logging
   - **Use this for optional binary commands that should log warnings when unavailable**
 - `get_command_path()` - Returns full path to command, or command name if not found
-  - Uses same fallback logic as `check_command_available()` but returns path
+  - **Checks standard system directories first** (`/usr/sbin`, `/sbin`, `/usr/bin`, `/bin`) without relying on PATH or `command -v`
+  - This ensures reliable path resolution in PATH-restricted cron/systemd environments
+  - Falls back to `command -v` only if system directories don't contain the command
   - Returns command name if path cannot be determined (fallback to PATH at execution time)
   - **Use this when you need the full path for reliable command execution in PATH-restricted environments**
   - Example: `ipsec_cmd=$(get_command_path "ipsec"); "$ipsec_cmd" reload`

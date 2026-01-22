@@ -78,8 +78,8 @@ create_valid_config() {
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3'
+		'MAX_RESTARTS_PER_WINDOW=20' \
+		'RATE_LIMIT_WINDOW_MINUTES=60'
 }
 
 # Create a test lib directory with config_schema.sh
@@ -117,9 +117,8 @@ declare -A CONFIG_SCHEMA=(
 	["TIER1_THRESHOLD"]="required|integer|min:1|default:1"
 	["TIER2_THRESHOLD"]="required|integer|min:TIER1_THRESHOLD|default:3"
 	["TIER3_THRESHOLD"]="required|integer|min:TIER2_THRESHOLD|default:5"
-	["COOLDOWN_MINUTES"]="required|integer|min:1|max:1440|default:15"
-	["MAX_RESTARTS_PER_HOUR"]="required|integer|min:1|max:60|default:3"
-	["VPN_NAME"]="optional|string||default:Site-to-Site VPN"
+	["MAX_RESTARTS_PER_WINDOW"]="required|integer|min:1|max:20|default:20"
+	["RATE_LIMIT_WINDOW_MINUTES"]="required|integer|min:5|max:1440|default:60"
 	["NO_ESCALATE"]="optional|integer|values:0,1|default:0"
 	["RECOVERY_VERIFY_TIMEOUT"]="optional|integer|min:10|max:300|default:30"
 	["LOGS_DIR"]="optional|string||default:"

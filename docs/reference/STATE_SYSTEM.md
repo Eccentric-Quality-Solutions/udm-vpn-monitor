@@ -280,6 +280,16 @@ These files control script execution and prevent concurrent runs.
 - **Format**: Empty file (existence indicates check was performed)
 - **Usage**: Prevents redundant cron persistence verification
 
+### 4. Last Run Timestamp (`.last_run_timestamp`)
+
+- **Path**: `${STATE_DIR}/.last_run_timestamp`
+- **Purpose**: Tracks last script execution time to detect script/system restarts
+- **Format**: Empty file (file modification time indicates last run time)
+- **Creation**: Created on first script run, updated on every subsequent run
+- **Usage**: Determines if startup grace period should be applied
+- **Update**: Updated on every script run via `touch` command
+- **Detection Logic**: Grace period applies if file doesn't exist or is older than 5 minutes (indicates restart or script hasn't run recently)
+
 ## State Management Patterns
 
 ### Atomic File Operations

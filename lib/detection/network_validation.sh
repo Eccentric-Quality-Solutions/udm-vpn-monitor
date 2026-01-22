@@ -381,6 +381,246 @@ validate_ip_address() {
 	return 1
 }
 
+# Validate DNS name format
+#
+# Validates that a string is a properly formatted DNS name (hostname or FQDN).
+# DNS names must:
+#   - Be 1-253 characters total
+#   - Consist of labels separated by dots
+#   - Each label: 1-63 characters, alphanumeric and hyphens, cannot start/end with hyphen
+#   - Can contain underscores (though not standard, commonly used)
+#   - Cannot be all numeric (to avoid confusion with IP addresses)
+#
+# Arguments:
+#   $1: DNS name to validate
+#
+# Returns:
+#   0: DNS name format is valid
+#   1: DNS name format is invalid
+#
+# Examples:
+#   validate_dns_name "example.com"          # Returns 0 (valid)
+#   validate_dns_name "server.example.com"   # Returns 0 (valid)
+#   validate_dns_name "192.168.1.1"         # Returns 1 (looks like IP)
+#   validate_dns_name "-invalid.com"        # Returns 1 (starts with hyphen)
+#   validate_dns_name "a"                   # Returns 0 (valid single label)
+validate_dns_name() {
+	local dns_name="$1"
+
+	# Check for empty input
+	if [[ -z "$dns_name" ]]; then
+		return 1
+	fi
+
+	# Total length must be 1-253 characters
+	if [[ ${#dns_name} -lt 1 ]] || [[ ${#dns_name} -gt 253 ]]; then
+		return 1
+	fi
+
+	# Cannot be all numeric (to avoid confusion with IP addresses)
+	# Check if it's a pure number (digits only)
+	if [[ "$dns_name" =~ ^[0-9]+$ ]]; then
+		return 1
+	fi
+
+	# Split by dots to validate each label
+	local IFS='.'
+	local -a labels
+	read -ra labels <<<"$dns_name"
+
+	# Must have at least one label
+	if [[ ${#labels[@]} -eq 0 ]]; then
+		return 1
+	fi
+
+	# Validate each label
+	for label in "${labels[@]}"; do
+		# Label must be 1-63 characters
+		if [[ ${#label} -lt 1 ]] || [[ ${#label} -gt 63 ]]; then
+			return 1
+		fi
+
+		# Label must contain only alphanumeric, hyphens, and underscores
+		# Cannot start or end with hyphen
+		if [[ ! "$label" =~ ^[a-zA-Z0-9_]([a-zA-Z0-9_-]*[a-zA-Z0-9_])?$ ]] && [[ ! "$label" =~ ^[a-zA-Z0-9_]$ ]]; then
+			return 1
+		fi
+	done
+
+	return 0
+}
+
+# Validate IP address or DNS name
+#
+# Validates that a string is either a valid IP address (IPv4 or IPv6) or a valid DNS name.
+# This is used for location configuration where either format is acceptable.
+#
+# Arguments:
+#   $1: String to validate (IP address or DNS name)
+#
+# Returns:
+#   0: String is valid IP address or DNS name
+#   1: String is invalid
+#
+# Examples:
+#   validate_ip_or_dns "192.168.1.1"        # Returns 0 (valid IP)
+#   validate_ip_or_dns "example.com"        # Returns 0 (valid DNS)
+#   validate_ip_or_dns "invalid"            # Returns 1 (invalid)
+validate_ip_or_dns() {
+	local input="$1"
+
+	# Check for empty input
+	if [[ -z "$input" ]]; then
+		return 1
+	fi
+
+	# Try IP address validation first
+	if validate_ip_address "$input"; then
+		return 0
+	fi
+
+	# Try DNS name validation
+	if validate_dns_name "$input"; then
+		return 0
+	fi
+
+	# Not valid IP or DNS
+	return 1
+}
+
+# DNS resolution cache (associative array)
+#
+# Caches DNS name to IP address resolutions to improve performance and reduce DNS query load.
+# Only successful DNS resolutions are cached; failed resolutions are not cached to allow retry.
+#
+# Format: DNS_RESOLVE_CACHE["hostname"]="ip_address"
+#
+# Cache Behavior:
+#   - Lifetime: Cache persists for the entire script execution (no TTL)
+#   - Scope: Global (associative array shared across all function calls)
+#   - Updates: Cache is never cleared or updated during script execution
+#   - Benefits: Reduces DNS queries when same hostname is resolved multiple times
+#
+# Cache Limitations:
+#   - If DNS changes during script execution, cache won't reflect the change
+#   - This is acceptable for periodic monitoring scripts (run every minute via cron)
+#   - Each script run starts with an empty cache
+#
+# Usage:
+#   - Checked before DNS resolution: if cached, return cached IP immediately
+#   - Updated after successful resolution: store hostname -> IP mapping
+#   - Not updated on resolution failures: allows retry on next call
+#
+declare -gA DNS_RESOLVE_CACHE=()
+
+# Resolve DNS name to IP address
+#
+# Resolves a DNS name to an IP address using getent (preferred) or host command.
+# Results are cached to avoid repeated DNS lookups during script execution.
+# If input is already an IP address, returns it unchanged (no DNS lookup needed).
+#
+# Arguments:
+#   $1: DNS name or IP address to resolve
+#   $2: Timeout in seconds (optional, defaults to 5)
+#
+# Returns:
+#   0: Resolution successful
+#   1: Resolution failed or invalid input
+#
+# Output:
+#   Prints resolved IP address to stdout, or original input if already an IP
+#
+# Side effects:
+#   - Caches successful DNS resolutions in DNS_RESOLVE_CACHE (global associative array)
+#   - Failed resolutions are NOT cached (allows retry on subsequent calls)
+#   - Logs warnings on resolution failures
+#
+# Cache Behavior:
+#   - Cache is checked first: if hostname is already cached, returns cached IP immediately
+#   - Cache is updated only on successful resolution: stores hostname -> IP mapping
+#   - Cache lifetime: persists for entire script execution (no TTL, not cleared)
+#   - Cache scope: global (shared across all calls to resolve_dns() in same script run)
+#
+# Cache Limitations:
+#   - If DNS changes during script execution, cache won't reflect the change
+#   - This is acceptable for periodic monitoring scripts (typically run every minute via cron)
+#   - Each new script execution starts with an empty cache
+#
+# Examples:
+#   resolve_dns "example.com"        # Outputs: "93.184.216.34" (or current IP)
+#   resolve_dns "192.168.1.1"        # Outputs: "192.168.1.1" (unchanged, no DNS lookup)
+#   resolve_dns "invalid.host"           # Returns 1 (resolution failed, not cached)
+#
+# Note:
+#   - Uses getent ahostsv4 (preferred) or host -t A (fallback) for DNS resolution
+#   - Only IPv4 addresses are resolved (IPv6 not supported)
+#   - If DNS name resolves to multiple IPs, only the first is used and cached
+resolve_dns() {
+	local input="$1"
+	local timeout="${2:-5}"
+
+	# Check for empty input
+	if [[ -z "$input" ]]; then
+		return 1
+	fi
+
+	# If input is already an IP address, return it unchanged
+	if validate_ip_address "$input"; then
+		echo "$input"
+		return 0
+	fi
+
+	# Check cache first (avoid DNS lookup if already resolved in this script run)
+	# Cache lookup is fast (associative array access) compared to DNS query
+	if [[ -n "${DNS_RESOLVE_CACHE[$input]:-}" ]]; then
+		echo "${DNS_RESOLVE_CACHE[$input]}"
+		return 0
+	fi
+
+	# Validate DNS name format
+	if ! validate_dns_name "$input"; then
+		handle_error "WARNING" "SYSTEM" "Invalid DNS name format: $input"
+		return 1
+	fi
+
+	# Try getent first (preferred, available on most systems)
+	local resolved_ip=""
+	if check_command_available "getent"; then
+		# getent ahostsv4 returns IPv4 addresses, format: "IP STREAM HOSTNAME"
+		# We want the first IP address
+		if resolved_ip=$(timeout "$timeout" getent ahostsv4 "$input" 2>/dev/null | awk 'NR==1 {print $1}'); then
+			# Validate resolved IP is actually an IP address
+			if [[ -n "$resolved_ip" ]] && validate_ip_address "$resolved_ip"; then
+				# Cache the result for future lookups in this script run
+				# Only successful resolutions are cached; failures are not cached to allow retry
+				DNS_RESOLVE_CACHE["$input"]="$resolved_ip"
+				echo "$resolved_ip"
+				return 0
+			fi
+		fi
+	fi
+
+	# Fallback to host command
+	if check_command_available "host"; then
+		# host returns format: "hostname has address IP"
+		# Extract first IPv4 address
+		if resolved_ip=$(timeout "$timeout" host -t A "$input" 2>/dev/null | awk '/has address/ {print $4; exit}'); then
+			# Validate resolved IP is actually an IP address
+			if [[ -n "$resolved_ip" ]] && validate_ip_address "$resolved_ip"; then
+				# Cache the result for future lookups in this script run
+				# Only successful resolutions are cached; failures are not cached to allow retry
+				DNS_RESOLVE_CACHE["$input"]="$resolved_ip"
+				echo "$resolved_ip"
+				return 0
+			fi
+		fi
+	fi
+
+	# Resolution failed
+	handle_error "WARNING" "SYSTEM" "Failed to resolve DNS name: $input"
+	return 1
+}
+
 # Get local UDM IP address from configuration
 #
 # Retrieves and validates the LOCAL_UDM_IP configuration value.

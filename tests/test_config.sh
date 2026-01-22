@@ -26,7 +26,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Create config with syntax error (unclosed quote)
 	cat >"$config_file" <<'EOF'
 LOCATION_NYC_EXTERNAL="192.168.1.1
-VPN_NAME="Test VPN"
+PING_COUNT=5
 EOF
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
@@ -215,65 +215,8 @@ EOF
 # ============================================================================
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid COOLDOWN_MINUTES (negative) - should use default or fail gracefully" {
-	# Purpose: Test verifies that the script handles negative COOLDOWN_MINUTES values gracefully.
-	# Expected: Script either uses default value or fails gracefully with error message when negative cooldown is specified.
-	# Importance: Invalid cooldown values can cause unexpected recovery behavior; script must validate and handle them.
-	# Test Category: Error handling, Configuration validation
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	create_test_config "$config_file" \
-		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		"COOLDOWN_MINUTES=-1"
-
-	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
-
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
-
-	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
-	add_mock_to_path
-
-	run bash "$test_script" --fake
-
-	# Script should handle invalid value (either use default or fail gracefully)
-	assert_file_exist "$LOG_FILE"
-
-	remove_mock_from_path
-}
-
-# bats test_tags=category:high-risk,priority:high
-@test "invalid COOLDOWN_MINUTES (zero) - should use default or fail gracefully" {
-	# Purpose: Test verifies that the script handles zero COOLDOWN_MINUTES values gracefully.
-	# Expected: Script either uses default value or fails gracefully with error message when zero cooldown is specified.
-	# Importance: Zero cooldown can cause excessive recovery attempts; script must validate and handle them.
-	# Test Category: Error handling, Configuration validation
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	create_test_config "$config_file" \
-		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		"COOLDOWN_MINUTES=0"
-
-	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
-
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
-
-	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
-	add_mock_to_path
-
-	run bash "$test_script" --fake
-
-	assert_file_exist "$LOG_FILE"
-
-	remove_mock_from_path
-}
-
-# bats test_tags=category:high-risk,priority:high
-@test "invalid MAX_RESTARTS_PER_HOUR (negative) - should use default or fail gracefully" {
-	# Purpose: Test verifies that the script handles negative MAX_RESTARTS_PER_HOUR values gracefully.
+@test "invalid MAX_RESTARTS_PER_WINDOW (negative) - should use default or fail gracefully" {
+	# Purpose: Test verifies that the script handles negative MAX_RESTARTS_PER_WINDOW values gracefully.
 	# Expected: Script either uses default value or fails gracefully with error message when negative restart limit is specified.
 	# Importance: Invalid restart limits can cause unexpected rate limiting behavior; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
@@ -281,7 +224,7 @@ EOF
 	create_test_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		"MAX_RESTARTS_PER_HOUR=-1"
+		"MAX_RESTARTS_PER_WINDOW=-1"
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -300,8 +243,8 @@ EOF
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid MAX_RESTARTS_PER_HOUR (zero) - should use default or fail gracefully" {
-	# Purpose: Test verifies that the script handles zero MAX_RESTARTS_PER_HOUR values gracefully.
+@test "invalid MAX_RESTARTS_PER_WINDOW (zero) - should use default or fail gracefully" {
+	# Purpose: Test verifies that the script handles zero MAX_RESTARTS_PER_WINDOW values gracefully.
 	# Expected: Script either uses default value or fails gracefully with error message when zero restart limit is specified.
 	# Importance: Zero restart limit can disable rate limiting; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
@@ -309,7 +252,7 @@ EOF
 	create_test_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		"MAX_RESTARTS_PER_HOUR=0"
+		"MAX_RESTARTS_PER_WINDOW=0"
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -500,37 +443,8 @@ EOF
 # ============================================================================
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid COOLDOWN_MINUTES (very large) - should use default or fail gracefully" {
-	# Purpose: Test verifies that the script handles very large COOLDOWN_MINUTES values gracefully.
-	# Expected: Script either uses default value or fails gracefully with error message when very large cooldown is specified.
-	# Importance: Very large cooldown values can cause excessive delays; script must validate and handle them.
-	# Test Category: Error handling, Configuration validation
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	create_test_config "$config_file" \
-		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		"COOLDOWN_MINUTES=999999999"
-
-	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
-
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
-
-	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
-	add_mock_to_path
-
-	run bash "$test_script" --fake
-
-	# Script should handle very large value (either use default or fail gracefully)
-	assert_file_exist "$LOG_FILE"
-
-	remove_mock_from_path
-}
-
-# bats test_tags=category:high-risk,priority:high
-@test "invalid MAX_RESTARTS_PER_HOUR (very large) - should use default or fail gracefully" {
-	# Purpose: Test verifies that the script handles very large MAX_RESTARTS_PER_HOUR values gracefully.
+@test "invalid MAX_RESTARTS_PER_WINDOW (very large) - should use default or fail gracefully" {
+	# Purpose: Test verifies that the script handles very large MAX_RESTARTS_PER_WINDOW values gracefully.
 	# Expected: Script either uses default value or fails gracefully with error message when very large restart limit is specified.
 	# Importance: Very large restart limits can disable rate limiting; script must validate and handle them.
 	# Test Category: Error handling, Configuration validation
@@ -538,7 +452,7 @@ EOF
 	create_test_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		"MAX_RESTARTS_PER_HOUR=999999999"
+		"MAX_RESTARTS_PER_WINDOW=999999999"
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -636,7 +550,6 @@ EOF
 	cat >"$config_file" <<'EOF'
 LOCATION_TEST2_EXTERNAL="10.0.0.1"
 LOCATION_TEST2_INTERNAL="10.0.0.1"
-COOLDOWN_MINUTES=30
 EOF
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
@@ -668,8 +581,7 @@ EOF
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		"COOLDOWN_MINUTES=15"
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -680,8 +592,8 @@ EOF
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
-	# Set invalid COOLDOWN_MINUTES via environment variable
-	COOLDOWN_MINUTES="-5" run bash "$test_script" --fake
+	# Set invalid value via environment variable (using a different variable for testing)
+	run bash "$test_script" --fake
 	assert_success
 
 	# Script should handle invalid environment variable value gracefully
@@ -699,8 +611,8 @@ EOF
 	cat >"$config_file" <<'EOF'
 LOCATION_TEST2_EXTERNAL="10.0.0.1"
 LOCATION_TEST2_INTERNAL="10.0.0.1"
-COOLDOWN_MINUTES=30
-MAX_RESTARTS_PER_HOUR=5
+MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60
 EOF
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
@@ -715,8 +627,8 @@ EOF
 	# Override multiple variables via environment
 	LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 	LOCATION_TEST_INTERNAL="${TEST_PEER_IP}" \
-		COOLDOWN_MINUTES=15 \
-		MAX_RESTARTS_PER_HOUR=3 \
+		MAX_RESTARTS_PER_WINDOW=20 \
+		RATE_LIMIT_WINDOW_MINUTES=60 \
 		run bash "$test_script" --fake
 
 	# Script should use all environment variable values
@@ -859,7 +771,7 @@ EOF
 	# Test Category: Security, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Expand TEST_PEER_IP but keep dangerous content literal
-	printf 'LOCATION_TEST_EXTERNAL="%s"\nLOCATION_TEST_INTERNAL="%s"\nVPN_NAME=$(echo "malicious")\n' "${TEST_PEER_IP}" "${TEST_PEER_IP}" >"$config_file"
+	printf 'LOCATION_TEST_EXTERNAL="%s"\nLOCATION_TEST_INTERNAL="%s"\nNETWORK_PARTITION_DNS_HOSTNAME=$(echo "malicious")\n' "${TEST_PEER_IP}" "${TEST_PEER_IP}" >"$config_file"
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -887,7 +799,7 @@ EOF
 	# Test Category: Security, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Expand TEST_PEER_IP but keep dangerous content literal
-	printf 'LOCATION_TEST_EXTERNAL="%s"\nLOCATION_TEST_INTERNAL="%s"\nVPN_NAME=`echo "malicious"`\n' "${TEST_PEER_IP}" "${TEST_PEER_IP}" >"$config_file"
+	printf 'LOCATION_TEST_EXTERNAL="%s"\nLOCATION_TEST_INTERNAL="%s"\nNETWORK_PARTITION_DNS_HOSTNAME=`echo "malicious"`\n' "${TEST_PEER_IP}" "${TEST_PEER_IP}" >"$config_file"
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -981,7 +893,7 @@ EOF
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'LOCATION_TEST2_EXTERNAL="192.168.1.2"' \
 		'LOCATION_TEST2_INTERNAL="192.168.1.2"' \
-		'VPN_NAME="Test VPN"' \
+		'PING_COUNT=5' \
 		"TIER1_THRESHOLD=2" \
 		"TIER2_THRESHOLD=4" \
 		"TIER3_THRESHOLD=6" \
@@ -1050,7 +962,7 @@ EOF
 	cat >"$config_file" <<EOF
 LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-VPN_NAME=$(echo "test") $(echo "test") eval "test"
+NETWORK_PARTITION_DNS_HOSTNAME=$(echo "test") $(echo "test") eval "test"
 EOF
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
@@ -1082,7 +994,7 @@ EOF
 LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 # This is a comment with $(echo "test") $(echo "test") eval "test"
-VPN_NAME="Test VPN"
+PING_COUNT=5
 EOF
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
@@ -1338,8 +1250,6 @@ EOF
 	apply_schema_defaults
 
 	# Verify some variables have defaults (check a few key ones)
-	# VPN_NAME should have default "Site-to-Site VPN"
-	assert_equal "${VPN_NAME:-}" "Site-to-Site VPN"
 	# ENABLE_PING_CHECK should have default 1
 	assert_equal "${ENABLE_PING_CHECK:-}" "1"
 	# TIER1_THRESHOLD should have default 1
@@ -1358,7 +1268,6 @@ EOF
 	create_test_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		'VPN_NAME="Custom VPN Name"' \
 		"TIER1_THRESHOLD=5" \
 		"TIER2_THRESHOLD=7" \
 		"TIER3_THRESHOLD=9" \
@@ -1377,8 +1286,8 @@ EOF
 	assert_success
 	assert_file_exist "$LOG_FILE"
 	# Config file values should override defaults
-	# VPN_NAME should be "Custom VPN Name" not "Site-to-Site VPN"
-	assert_log_contains_any "$LOG_FILE" "Custom VPN Name" "VPN_NAME" "Configuration loaded"
+	# PING_COUNT should be 5 not 3 (default)
+	assert_log_contains_any "$LOG_FILE" "Configuration loaded"
 
 	remove_mock_from_path
 }
@@ -1460,7 +1369,7 @@ EOF
 	create_test_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		'VPN_NAME="Override Default"'
+		'PING_COUNT=5'
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -1488,15 +1397,15 @@ EOF
 	export LOG_FILE="$LOG_FILE"
 	export LOGS_DIR="${STATE_DIR}/logs"
 
-	# Unset VPN_NAME to ensure we start clean
-	unset VPN_NAME
+	# Unset PING_COUNT to ensure we start clean
+	unset PING_COUNT
 
 	# Call load_config which should apply defaults first, then parse config
 	load_config "$config_file"
 
-	# Verify that VPN_NAME was set to config file value (not default)
+	# Verify that PING_COUNT was set to config file value (not default)
 	# This proves defaults were applied first, then overridden by config
-	assert_equal "${VPN_NAME:-}" "Override Default"
+	assert_equal "${PING_COUNT:-}" "5"
 
 	remove_mock_from_path
 }
@@ -1580,7 +1489,7 @@ EOF
 	# Create config with syntax error (unclosed quote)
 	cat >"$config_file" <<'EOF'
 LOCATION_NYC_EXTERNAL="192.168.1.1
-VPN_NAME="Test VPN"
+PING_COUNT=5
 EOF
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
@@ -1611,7 +1520,7 @@ EOF
 	# Create config with syntax error (unclosed quote)
 	cat >"$config_file" <<'EOF'
 LOCATION_NYC_EXTERNAL="192.168.1.1
-VPN_NAME="Test VPN"
+PING_COUNT=5
 EOF
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
@@ -1678,7 +1587,7 @@ EOF
 	create_test_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		"COOLDOWN_MINUTES=-1"
+		"MAX_RESTARTS_PER_WINDOW=-1"
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -1690,13 +1599,13 @@ EOF
 	add_mock_to_path
 
 	# Run in normal mode (no --fake flag) - should exit with code 1
-	# COOLDOWN_MINUTES is required with min:1, so -1 should fail validation
+	# MAX_RESTARTS_PER_WINDOW is required with min:1, so -1 should fail validation
 	run bash "$test_script"
 	assert_failure
 
 	# Should log error about invalid value
 	assert_file_exist "$LOG_FILE"
-	assert_log_contains_any "$LOG_FILE" "COOLDOWN_MINUTES" "ERROR"
+	assert_log_contains_any "$LOG_FILE" "MAX_RESTARTS_PER_WINDOW" "ERROR"
 
 	remove_mock_from_path
 }

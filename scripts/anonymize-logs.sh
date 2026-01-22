@@ -1,31 +1,37 @@
 #!/bin/bash
 #
 # UDM VPN Monitor Log Anonymization Script
-# Anonymizes location names and IP addresses in vpn-monitor.log files
-# while maintaining consistency so logs remain understandable
+# Anonymizes location names, IP addresses (IPv4/IPv6), MAC addresses, and hostnames
+# in vpn-monitor.log files while maintaining consistency so logs remain understandable
 #
-# Version: 1.0.0
+# Version: 0.1.0
 #
 
 set -euo pipefail
 
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Source anonymization library
+# shellcheck source=../lib/anonymize.sh
+source "${PROJECT_ROOT}/lib/anonymize.sh" 2>/dev/null || {
+	echo "Error: Could not source lib/anonymize.sh" >&2
+	exit 1
+}
+
+# Source common utilities (for escape_sed_regex/escape_sed_replacement)
+# shellcheck source=../lib/common.sh
+source "${PROJECT_ROOT}/lib/common.sh" 2>/dev/null || {
+	echo "Error: Could not source lib/common.sh" >&2
+	exit 1
+}
+
 # Default values
 INPUT_FILE=""
 OUTPUT_FILE=""
+MAPPING_FILE=""
 VERBOSE=0
-
-# City names for location anonymization (common US cities)
-CITY_NAMES=(
-	"HOUSTON" "DALLAS" "PHOENIX" "SAN_ANTONIO" "SAN_DIEGO" "AUSTIN"
-	"JACKSONVILLE" "FORT_WORTH" "COLUMBUS" "CHARLOTTE" "SAN_FRANCISCO"
-	"INDIANAPOLIS" "SEATTLE" "DENVER" "BOSTON" "EL_PASO" "DETROIT"
-	"NASHVILLE" "PORTLAND" "OKLAHOMA_CITY" "LAS_VEGAS" "MEMPHIS"
-	"LOUISVILLE" "BALTIMORE" "MILWAUKEE" "ALBUQUERQUE" "TUCSON"
-	"FRESNO" "SACRAMENTO" "KANSAS_CITY" "MESA" "ATLANTA"
-	"OMAHA" "LOS_ANGELES" "RALEIGH" "VIRGINIA_BEACH" "MIAMI"
-	"OAKLAND" "PHILADELPHIA" "CHICAGO" "CLEVELAND" "WICHITA"
-	"ARLINGTON" "NEW_ORLEANS" "TAMPA" "HONOLULU" "ANAHEIM"
-)
 
 # Print usage information
 #
@@ -40,13 +46,15 @@ show_usage() {
 	cat <<EOF
 Usage: $0 [OPTIONS]
 
-UDM VPN Monitor Log Anonymization Tool v1.0.0
+UDM VPN Monitor Log Anonymization Tool v0.1.0
 Anonymizes location names and IP addresses in vpn-monitor.log files
 while maintaining consistency so logs remain understandable.
 
 Options:
   -i, --input FILE      Input log file (required)
   -o, --output FILE     Output file for anonymized log (default: stdout)
+  -m, --mapping-file FILE  Mapping file for unified anonymization (optional)
+                          If provided, loads existing mappings and saves updated mappings
   -v, --verbose         Verbose output
   -h, --help            Show this help message
 
@@ -77,6 +85,10 @@ parse_args() {
 			;;
 		-o | --output)
 			OUTPUT_FILE="$2"
+			shift 2
+			;;
+		-m | --mapping-file)
+			MAPPING_FILE="$2"
 			shift 2
 			;;
 		-v | --verbose)
@@ -113,156 +125,13 @@ parse_args() {
 	fi
 }
 
-# Generate deterministic hash from string
-#
-# Creates a deterministic numeric hash from a string input.
-# Used to ensure consistent mapping of IPs and locations.
-#
-# Arguments:
-#   $1: String to hash
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints hash value to stdout
-hash_string() {
-	local str="$1"
-	# Use a simple hash function (sum of character codes)
-	local hash=0
-	local i
-	for ((i = 0; i < ${#str}; i++)); do
-		local char="${str:$i:1}"
-		local code
-		code=$(printf '%d' "'$char")
-		hash=$((hash * 31 + code))
-		# Keep hash positive
-		hash=$((hash & 0x7FFFFFFF))
-	done
-	echo "$hash"
-}
-
-# Anonymize IPv4 address
-#
-# Maps an IPv4 address to a consistent anonymized address in the 10.x.x.x range.
-# Uses deterministic hashing to ensure same input always produces same output.
-#
-# Arguments:
-#   $1: Original IP address
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints anonymized IP address to stdout
-anonymize_ipv4() {
-	local original_ip="$1"
-	local hash
-	hash=$(hash_string "$original_ip")
-
-	# Map to 10.x.x.x range (10.0.0.0 - 10.255.255.255)
-	# Use hash to generate consistent octets
-	local octet1=10
-	local octet2=$(((hash / 65536) % 256))
-	local octet3=$(((hash / 256) % 256))
-	local octet4=$((hash % 256))
-
-	# Ensure we don't generate 10.0.0.0 or 10.255.255.255 (edge cases)
-	[[ $octet2 -eq 0 ]] && octet2=1
-	[[ $octet2 -eq 255 ]] && octet2=254
-	[[ $octet3 -eq 0 ]] && octet3=1
-	[[ $octet3 -eq 255 ]] && octet3=254
-	[[ $octet4 -eq 0 ]] && octet4=1
-	[[ $octet4 -eq 255 ]] && octet4=254
-
-	echo "${octet1}.${octet2}.${octet3}.${octet4}"
-}
-
-# Extract all IP addresses from log file
-#
-# Scans the log file and extracts all unique IPv4 addresses.
-# Handles various formats: "for IP", "location NAME (IP)", etc.
-#
-# Arguments:
-#   $1: Log file path
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints unique IP addresses (one per line) to stdout
-extract_ips() {
-	local log_file="$1"
-	# Extract IPv4 addresses (pattern: 1-3 digits, dot, 1-3 digits, dot, 1-3 digits, dot, 1-3 digits)
-	# This pattern matches IPs in various contexts
-	grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' "$log_file" | sort -u
-}
-
-# Extract all location names from log file
-#
-# Scans the log file and extracts all unique location names.
-# Handles formats: "for location NAME", "location NAME (IP)", etc.
-#
-# Arguments:
-#   $1: Log file path
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints unique location names (one per line) to stdout
-extract_locations() {
-	local log_file="$1"
-	local locations=()
-
-	# Pattern 1: "for location LOCATION_NAME (IP)" or "location LOCATION_NAME (IP)"
-	# Pattern 2: "for location LOCATION_NAME" (without IP)
-	# Pattern 3: "location LOCATION_NAME" followed by various text
-	# Pattern 4: "Location LOCATION_NAME" (capital L, e.g., "Location AUSTIN - ping failed")
-	# Pattern 5: Location names in comma-separated lists (e.g., "Found 11 location(s): PHOENIX, SEATTLE...")
-	# Extract location names (uppercase words/underscores between "location" and parentheses or end)
-	while IFS= read -r line || [[ -n "$line" ]]; do
-		# Pattern: "location NAME (" - most common format
-		if [[ $line =~ location\ ([A-Z][A-Z0-9_]+)\ \( ]]; then
-			locations+=("${BASH_REMATCH[1]}")
-		# Pattern: "for location NAME ("
-		elif [[ $line =~ for\ location\ ([A-Z][A-Z0-9_]+)\ \( ]]; then
-			locations+=("${BASH_REMATCH[1]}")
-		# Pattern: "location NAME" followed by space and various keywords
-		elif [[ $line =~ location\ ([A-Z][A-Z0-9_]+)\ (failure|after|VPN|check|recovered|OK|FAILED|until|still|resuming|Logging|Would|Attempting|Performing|Recovery|threshold|reached|skipped) ]]; then
-			locations+=("${BASH_REMATCH[1]}")
-		# Pattern: "for location NAME" at end or followed by space or colon
-		elif [[ $line =~ for\ location\ ([A-Z][A-Z0-9_]+)(\ |:|$) ]]; then
-			locations+=("${BASH_REMATCH[1]}")
-		# Pattern: "Location NAME" (capital L, e.g., "Location AUSTIN - ping failed")
-		elif [[ $line =~ Location\ ([A-Z][A-Z0-9_]+)\ ([-a-z]|$) ]]; then
-			locations+=("${BASH_REMATCH[1]}")
-		# Pattern: Location names in comma-separated lists (e.g., "Found 11 location(s): PHOENIX, SEATTLE, BOSTON...")
-		# Extract all uppercase words/underscores after "location(s):" or "location:"
-		elif [[ $line =~ location\(s\)?:\ ([A-Z][A-Z0-9_]+(,\ [A-Z][A-Z0-9_]+)*) ]]; then
-			# Extract the comma-separated list
-			local location_list="${BASH_REMATCH[1]}"
-			# Split by comma and add each location
-			IFS=',' read -ra location_array <<<"$location_list"
-			for loc in "${location_array[@]}"; do
-				# Trim whitespace
-				loc="${loc#"${loc%%[![:space:]]*}"}"
-				loc="${loc%"${loc##*[![:space:]]}"}"
-				if [[ -n "$loc" ]] && [[ $loc =~ ^[A-Z][A-Z0-9_]+$ ]]; then
-					locations+=("$loc")
-				fi
-			done
-		fi
-	done <"$log_file"
-
-	# Remove duplicates and sort
-	printf '%s\n' "${locations[@]}" | sort -u
-}
+# Note: hash_string, anonymize_ipv4, anonymize_ipv6, anonymize_location are now provided by lib/anonymize.sh
+# Note: extract_ips_from_log and extract_locations_from_log are provided by lib/anonymize.sh
 
 # Anonymize log file
 #
-# Reads input log file, replaces all IP addresses and location names
-# with anonymized versions, and writes to output.
+# Reads input log file, replaces all IP addresses (IPv4/IPv6), MAC addresses,
+# hostnames, and location names with anonymized versions, and writes to output.
 #
 # Arguments:
 #   $1: Input log file path
@@ -275,73 +144,79 @@ anonymize_log_file() {
 	local input_file="$1"
 	local output_file="${2:-}"
 
-	# Create associative arrays for mappings (bash 4+)
-	declare -A ip_map
-	declare -A location_map
-
-	[[ $VERBOSE -eq 1 ]] && echo "Extracting IP addresses..." >&2
-	local ip_count=0
+	[[ $VERBOSE -eq 1 ]] && echo "Extracting IPv4 addresses..." >&2
+	local ipv4_count=0
 	while IFS= read -r ip || [[ -n "$ip" ]]; do
 		[[ -z "$ip" ]] && continue
-		if [[ -z "${ip_map[$ip]:-}" ]]; then
-			ip_map["$ip"]=$(anonymize_ipv4 "$ip")
-			ip_count=$((ip_count + 1))
-			[[ $VERBOSE -eq 1 ]] && echo "  Mapping $ip -> ${ip_map[$ip]}" >&2
-		fi
-	done < <(extract_ips "$input_file")
+		# Use unified mapping function (call without command substitution to avoid subshell)
+		get_or_create_ipv4_mapping "$ip" >/dev/null
+		ipv4_count=$((ipv4_count + 1))
+		[[ $VERBOSE -eq 1 ]] && echo "  Mapping $ip -> ${ANON_IPV4_MAP[$ip]}" >&2
+	done < <(extract_ips_from_log "$input_file")
 
-	[[ $VERBOSE -eq 1 ]] && echo "Extracted $ip_count unique IP addresses" >&2
+	[[ $VERBOSE -eq 1 ]] && echo "Extracted $ipv4_count unique IPv4 addresses" >&2
+
+	[[ $VERBOSE -eq 1 ]] && echo "Extracting IPv6 addresses..." >&2
+	local ipv6_count=0
+	while IFS= read -r ip || [[ -n "$ip" ]]; do
+		[[ -z "$ip" ]] && continue
+		# Use unified mapping function (call without command substitution to avoid subshell)
+		get_or_create_ipv6_mapping "$ip" >/dev/null
+		ipv6_count=$((ipv6_count + 1))
+		[[ $VERBOSE -eq 1 ]] && echo "  Mapping $ip -> ${ANON_IPV6_MAP[$ip]}" >&2
+	done < <(extract_ipv6_from_file "$input_file")
+
+	[[ $VERBOSE -eq 1 ]] && echo "Extracted $ipv6_count unique IPv6 addresses" >&2
+
+	[[ $VERBOSE -eq 1 ]] && echo "Extracting MAC addresses..." >&2
+	local mac_count=0
+	while IFS= read -r mac || [[ -n "$mac" ]]; do
+		[[ -z "$mac" ]] && continue
+		# Use unified mapping function (call without command substitution to avoid subshell)
+		get_or_create_mac_mapping "$mac" >/dev/null
+		mac_count=$((mac_count + 1))
+		[[ $VERBOSE -eq 1 ]] && echo "  Mapping $mac -> ${ANON_MAC_MAP[$mac]}" >&2
+	done < <(extract_mac_addresses_from_file "$input_file")
+
+	[[ $VERBOSE -eq 1 ]] && echo "Extracted $mac_count unique MAC addresses" >&2
+
+	[[ $VERBOSE -eq 1 ]] && echo "Extracting hostnames..." >&2
+	local hostname_count=0
+	while IFS= read -r hostname || [[ -n "$hostname" ]]; do
+		[[ -z "$hostname" ]] && continue
+		# Use unified mapping function (call without command substitution to avoid subshell)
+		get_or_create_hostname_mapping "$hostname" >/dev/null
+		hostname_count=$((hostname_count + 1))
+		[[ $VERBOSE -eq 1 ]] && echo "  Mapping $hostname -> ${ANON_HOSTNAME_MAP[$hostname]}" >&2
+	done < <(extract_hostnames_from_file "$input_file")
+
+	[[ $VERBOSE -eq 1 ]] && echo "Extracted $hostname_count unique hostnames" >&2
 
 	[[ $VERBOSE -eq 1 ]] && echo "Extracting location names..." >&2
 	local location_count=0
-	# Track which city names have been used to ensure unique mappings
-	declare -A used_cities=()
 	while IFS= read -r location || [[ -n "$location" ]]; do
 		[[ -z "$location" ]] && continue
-		if [[ -z "${location_map[$location]:-}" ]]; then
-			# Ensure unique mapping: use hash as starting point, then find next available city
-			local hash
-			hash=$(hash_string "$location")
-			local start_index=$((hash % ${#CITY_NAMES[@]}))
-			local city_index=$start_index
-			local anonymized_city
-			local attempts=0
-			# Find next available city name (with safety limit to prevent infinite loop)
-			while [[ -n "${used_cities[${CITY_NAMES[$city_index]}]:-}" ]] && [[ $attempts -lt ${#CITY_NAMES[@]} ]]; do
-				city_index=$(((city_index + 1) % ${#CITY_NAMES[@]}))
-				attempts=$((attempts + 1))
-			done
-			# If all cities are used (more locations than city names), append number for uniqueness
-			# This should be rare in practice, but ensures we don't have collisions
-			if [[ $attempts -ge ${#CITY_NAMES[@]} ]]; then
-				# All cities are used, find first available with number suffix
-				local suffix=1
-				while [[ -n "${used_cities[${CITY_NAMES[$start_index]}_${suffix}]:-}" ]]; do
-					suffix=$((suffix + 1))
-				done
-				anonymized_city="${CITY_NAMES[$start_index]}_${suffix}"
-			else
-				anonymized_city="${CITY_NAMES[$city_index]}"
-			fi
-			location_map["$location"]="$anonymized_city"
-			used_cities["$anonymized_city"]=1
-			location_count=$((location_count + 1))
-			[[ $VERBOSE -eq 1 ]] && echo "  Mapping $location -> ${location_map[$location]}" >&2
-		fi
-	done < <(extract_locations "$input_file")
+		# Use unified mapping function (call without command substitution to avoid subshell)
+		get_or_create_location_mapping "$location" >/dev/null
+		location_count=$((location_count + 1))
+		[[ $VERBOSE -eq 1 ]] && echo "  Mapping $location -> ${ANON_LOCATION_MAP[$location]}" >&2
+	done < <(extract_locations_from_log "$input_file")
 
 	[[ $VERBOSE -eq 1 ]] && echo "Extracted $location_count unique location names" >&2
 
-	# Build sed scripts for replacements (separate scripts for locations and IPs)
+	# Build sed scripts for replacements (separate scripts for each type)
 	[[ $VERBOSE -eq 1 ]] && echo "Building replacement scripts..." >&2
 	local location_sed_script
-	local ip_sed_script
+	local ipv4_sed_script
+	local ipv6_sed_script
+	local mac_sed_script
+	local hostname_sed_script
 	location_sed_script=$(mktemp)
-	ip_sed_script=$(mktemp)
-	# Use cleanup function to defer variable expansion until trap executes
-	# This satisfies shellcheck SC2064: variables expand when trap executes, not when it's set
-	# Use default value expansion to handle case where variables might be unset (set -u)
-	#
+	ipv4_sed_script=$(mktemp)
+	ipv6_sed_script=$(mktemp)
+	mac_sed_script=$(mktemp)
+	hostname_sed_script=$(mktemp)
+
 	# Cleanup temporary files
 	#
 	# Removes temporary sed script files created during anonymization.
@@ -352,89 +227,190 @@ anonymize_log_file() {
 	# Returns:
 	#   0: Always succeeds
 	cleanup_temp_files() {
-		rm -f "${location_sed_script:-}" "${ip_sed_script:-}"
+		rm -f "${location_sed_script:-}" "${ipv4_sed_script:-}" "${ipv6_sed_script:-}" "${mac_sed_script:-}" "${hostname_sed_script:-}"
 	}
 	trap cleanup_temp_files EXIT
 
 	# Build location replacements script
 	# Process locations in reverse order of length to avoid partial replacements
-	if [[ -n "${!location_map[*]}" ]]; then
+	set +u
+	if [[ ${#ANON_LOCATION_MAP[@]} -gt 0 ]]; then
 		local sorted_locations
-		readarray -t sorted_locations < <(printf '%s\n' "${!location_map[@]}" | awk '{print length($0), $0}' | sort -rn | cut -d' ' -f2-)
+		readarray -t sorted_locations < <(printf '%s\n' "${!ANON_LOCATION_MAP[@]}" | awk '{print length($0), $0}' | sort -rn | cut -d' ' -f2-)
 		for location in "${sorted_locations[@]}"; do
 			[[ -z "$location" ]] && continue
-			local anonymized_location="${location_map[$location]}"
+			local anonymized_location="${ANON_LOCATION_MAP[$location]}"
 			# Escape special regex characters in location name
-			# Note: Use [*] and [?] to match literal * and ? in bash pattern substitution (not glob patterns)
-			local escaped_location="${location//\//\\/}"
-			escaped_location="${escaped_location//./\\.}"
-			escaped_location="${escaped_location//+/\\+}"
-			escaped_location="${escaped_location//[*]/\\*}"
-			escaped_location="${escaped_location//[?]/\\?}"
-			escaped_location="${escaped_location//[/\\[}"
-			escaped_location="${escaped_location//]/\\]}"
-			escaped_location="${escaped_location//^/\\^}"
-			escaped_location="${escaped_location//\$/\\\$}"
-			escaped_location="${escaped_location//|/\\|}"
+			local escaped_location
+			escaped_location=$(escape_sed_regex "$location")
 
 			# Escape special characters in anonymized location (for sed replacement)
-			local escaped_anon_location="${anonymized_location//\\/\\\\}"
-			escaped_anon_location="${escaped_anon_location//\//\\/}"
-			escaped_anon_location="${escaped_anon_location//&/\\&}"
+			local escaped_anon_location
+			escaped_anon_location=$(escape_sed_replacement "$anonymized_location" "@")
 
 			# Replace "location LOCATION_NAME" patterns (lowercase)
 			# Escape literal parentheses in patterns for extended regex
 			# Group printf commands with same redirect to satisfy shellcheck SC2129
+			# Use | as delimiter to avoid issues with / in location names
 			{
-				printf 's/location %s /location %s /g\n' "$escaped_location" "$escaped_anon_location"
-				printf 's/location %s\\(/location %s(/g\n' "$escaped_location" "$escaped_anon_location"
-				printf 's/for location %s /for location %s /g\n' "$escaped_location" "$escaped_anon_location"
-				printf 's/for location %s\\(/for location %s(/g\n' "$escaped_location" "$escaped_anon_location"
+				printf 's|location %s |location %s |g\n' "$escaped_location" "$escaped_anon_location"
+				printf 's|location %s\\(|location %s(|g\n' "$escaped_location" "$escaped_anon_location"
+				printf 's|for location %s |for location %s |g\n' "$escaped_location" "$escaped_anon_location"
+				printf 's|for location %s\\(|for location %s(|g\n' "$escaped_location" "$escaped_anon_location"
 				# Replace "Location LOCATION_NAME" patterns (capital L)
-				printf 's/Location %s /Location %s /g\n' "$escaped_location" "$escaped_anon_location"
-				printf 's/Location %s -/Location %s -/g\n' "$escaped_location" "$escaped_anon_location"
+				printf 's|Location %s |Location %s |g\n' "$escaped_location" "$escaped_anon_location"
+				printf 's|Location %s -|Location %s -|g\n' "$escaped_location" "$escaped_anon_location"
 				# Replace location names at start of log entries: [timestamp] [LEVEL] LOCATION:
 				# Pattern: ] LOCATION: (after log level)
-				printf 's/\\] %s:/] %s:/g\n' "$escaped_location" "$escaped_anon_location"
+				printf 's|\\] %s:|] %s:|g\n' "$escaped_location" "$escaped_anon_location"
 				# Replace location names in comma-separated lists and standalone
 				# Use pattern that matches word boundaries: non-word char or start/end of line before/after
 				# This catches remaining instances (must be last to avoid conflicts with above patterns)
-				printf 's/(^|[^A-Z0-9_])%s([^A-Z0-9_]|$)/\\1%s\\2/g\n' "$escaped_location" "$escaped_anon_location"
+				printf 's@(^|[^A-Z0-9_])%s([^A-Z0-9_]|$)@\\1%s\\2@g\n' "$escaped_location" "$escaped_anon_location"
 			} >>"$location_sed_script"
 		done
 	fi
+	set -u
 
-	# Build IP address replacements script
+	# Build IPv4 replacements script
 	# Process IPs in reverse order of length to avoid partial replacements
-	# (e.g., replace 192.168.1.10 before 192.168.1.1)
-	if [[ -n "${!ip_map[*]}" ]]; then
+	set +u
+	if [[ ${#ANON_IPV4_MAP[@]} -gt 0 ]]; then
 		local sorted_ips
-		readarray -t sorted_ips < <(printf '%s\n' "${!ip_map[@]}" | awk '{print length($0), $0}' | sort -rn | cut -d' ' -f2-)
+		readarray -t sorted_ips < <(printf '%s\n' "${!ANON_IPV4_MAP[@]}" | awk '{print length($0), $0}' | sort -rn | cut -d' ' -f2-)
 		for ip in "${sorted_ips[@]}"; do
 			[[ -z "$ip" ]] && continue
-			local anonymized_ip="${ip_map[$ip]}"
-			# Escape dots in IP for sed pattern
-			local escaped_ip="${ip//./\\.}"
+			local anonymized_ip="${ANON_IPV4_MAP[$ip]}"
+			# Escape special regex characters in IP for sed pattern
+			local escaped_ip
+			escaped_ip=$(escape_sed_regex "$ip")
 			# Escape special characters in anonymized IP (for sed replacement)
-			local escaped_anon_ip="${anonymized_ip//\\/\\\\}"
-			escaped_anon_ip="${escaped_anon_ip//\//\\/}"
-			escaped_anon_ip="${escaped_anon_ip//&/\\&}"
+			local escaped_anon_ip
+			escaped_anon_ip=$(escape_sed_replacement "$anonymized_ip" "@")
 			# Pattern: start of word or non-word char, then IP, then end of word or non-word char
-			printf 's/(^|[^0-9.])%s([^0-9.]|$)/\\1%s\\2/g\n' "$escaped_ip" "$escaped_anon_ip" >>"$ip_sed_script"
+			# Use @ as delimiter to avoid issues with / and | in patterns
+			printf 's@(^|[^0-9.])%s([^0-9.]|$)@\\1%s\\2@g\n' "$escaped_ip" "$escaped_anon_ip" >>"$ipv4_sed_script"
 		done
 	fi
+	set -u
 
-	# Process log file with two sed invocations: locations first, then IPs
-	# This ensures locations are replaced before IPs to avoid conflicts
+	# Build IPv6 replacements script
+	set +u
+	if [[ ${#ANON_IPV6_MAP[@]} -gt 0 ]]; then
+		local sorted_ips
+		readarray -t sorted_ips < <(printf '%s\n' "${!ANON_IPV6_MAP[@]}" | awk '{print length($0), $0}' | sort -rn | cut -d' ' -f2-)
+		for ip in "${sorted_ips[@]}"; do
+			[[ -z "$ip" ]] && continue
+			local anonymized_ip="${ANON_IPV6_MAP[$ip]}"
+			# Escape special regex characters in IPv6 for sed pattern
+			# Note: escape_sed_regex handles all regex metacharacters; colon (:) is not a regex metacharacter
+			# but we escape it manually for IPv6 addresses to be safe with sed patterns
+			local escaped_ip
+			escaped_ip=$(escape_sed_regex "$ip")
+			# Manually escape colon for IPv6 (not a regex metacharacter, but defensive programming)
+			escaped_ip="${escaped_ip//:/\\:}"
+			# Escape special characters in anonymized IP (for sed replacement)
+			local escaped_anon_ip
+			escaped_anon_ip=$(escape_sed_replacement "$anonymized_ip" "@")
+			# Pattern: word boundary or non-word char, then IP, then word boundary or non-word char
+			# Use @ as delimiter to avoid issues with / and | in patterns
+			printf 's@(^|[^0-9a-fA-F:./])%s([^0-9a-fA-F:./]|$)@\\1%s\\2@g\n' "$escaped_ip" "$escaped_anon_ip" >>"$ipv6_sed_script"
+		done
+	fi
+	set -u
+
+	# Build MAC address replacements script
+	set +u
+	if [[ ${#ANON_MAC_MAP[@]} -gt 0 ]]; then
+		local sorted_macs
+		readarray -t sorted_macs < <(printf '%s\n' "${!ANON_MAC_MAP[@]}" | awk '{print length($0), $0}' | sort -rn | cut -d' ' -f2-)
+		for mac in "${sorted_macs[@]}"; do
+			[[ -z "$mac" ]] && continue
+			local anonymized_mac="${ANON_MAC_MAP[$mac]}"
+			# Escape colons in MAC for sed pattern
+			# Note: colon is not a regex metacharacter, but we escape it for MAC addresses
+			local escaped_mac="${mac//:/\\:}"
+			# Escape special characters in anonymized MAC (for sed replacement)
+			# Note: colon doesn't need escaping in replacement strings, but keeping for consistency
+			local escaped_anon_mac
+			escaped_anon_mac=$(escape_sed_replacement "$anonymized_mac" "@")
+			escaped_anon_mac="${escaped_anon_mac//:/\\:}"
+			# Pattern: word boundary, then MAC, then word boundary
+			# Use | as delimiter (simple pattern, no alternation operator)
+			printf 's|\\b%s\\b|%s|g\n' "$escaped_mac" "$escaped_anon_mac" >>"$mac_sed_script"
+		done
+	fi
+	set -u
+
+	# Build hostname replacements script
+	set +u
+	if [[ ${#ANON_HOSTNAME_MAP[@]} -gt 0 ]]; then
+		local sorted_hostnames
+		readarray -t sorted_hostnames < <(printf '%s\n' "${!ANON_HOSTNAME_MAP[@]}" | awk '{print length($0), $0}' | sort -rn | cut -d' ' -f2-)
+		for hostname in "${sorted_hostnames[@]}"; do
+			[[ -z "$hostname" ]] && continue
+			local anonymized_hostname="${ANON_HOSTNAME_MAP[$hostname]}"
+			# Escape special regex characters in hostname
+			local escaped_hostname
+			escaped_hostname=$(escape_sed_regex "$hostname")
+			# Escape special characters in anonymized hostname (for sed replacement)
+			local escaped_anon_hostname
+			escaped_anon_hostname=$(escape_sed_replacement "$anonymized_hostname" "@")
+			# Pattern: word boundary, then hostname, then word boundary
+			# Use | as delimiter (simple pattern, no alternation operator)
+			printf 's|\\b%s\\b|%s|g\n' "$escaped_hostname" "$escaped_anon_hostname" >>"$hostname_sed_script"
+		done
+	fi
+	set -u
+
+	# Process log file with multiple sed invocations
+	# Order: hostnames, MACs, locations, IPv6, IPv4
+	# This ensures longer patterns are replaced before shorter ones
 	[[ $VERBOSE -eq 1 ]] && echo "Anonymizing log file..." >&2
 
 	# Use -E for extended regex to support backreferences
-	# Pipe location replacements into IP replacements
-	if [[ -n "$output_file" ]]; then
-		sed -Ef "$location_sed_script" "$input_file" | sed -Ef "$ip_sed_script" >"$output_file"
-	else
-		sed -Ef "$location_sed_script" "$input_file" | sed -Ef "$ip_sed_script"
+	# Chain sed invocations in order using pipes
+	local temp_stage
+	temp_stage=$(mktemp)
+	cp "$input_file" "$temp_stage"
+
+	# Stage 1: hostnames
+	if [[ -s "$hostname_sed_script" ]]; then
+		sed -Ef "$hostname_sed_script" "$temp_stage" >"${temp_stage}.2" 2>/dev/null || true
+		mv "${temp_stage}.2" "$temp_stage"
 	fi
+
+	# Stage 2: MAC addresses
+	if [[ -s "$mac_sed_script" ]]; then
+		sed -Ef "$mac_sed_script" "$temp_stage" >"${temp_stage}.2" 2>/dev/null || true
+		mv "${temp_stage}.2" "$temp_stage"
+	fi
+
+	# Stage 3: locations
+	if [[ -s "$location_sed_script" ]]; then
+		sed -Ef "$location_sed_script" "$temp_stage" >"${temp_stage}.2" 2>/dev/null || true
+		mv "${temp_stage}.2" "$temp_stage"
+	fi
+
+	# Stage 4: IPv6
+	if [[ -s "$ipv6_sed_script" ]]; then
+		sed -Ef "$ipv6_sed_script" "$temp_stage" >"${temp_stage}.2" 2>/dev/null || true
+		mv "${temp_stage}.2" "$temp_stage"
+	fi
+
+	# Stage 5: IPv4
+	if [[ -s "$ipv4_sed_script" ]]; then
+		sed -Ef "$ipv4_sed_script" "$temp_stage" >"${temp_stage}.2" 2>/dev/null || true
+		mv "${temp_stage}.2" "$temp_stage"
+	fi
+
+	# Copy final result to output
+	if [[ -n "$output_file" ]]; then
+		cp "$temp_stage" "$output_file"
+	else
+		cat "$temp_stage"
+	fi
+	rm -f "$temp_stage" "${temp_stage}.2"
 
 	local line_count
 	line_count=$(wc -l <"$input_file" || echo "0")
@@ -459,10 +435,31 @@ main() {
 	# Parse command line arguments
 	parse_args "$@"
 
+	# Load existing mapping file if provided
+	if [[ -n "$MAPPING_FILE" ]]; then
+		if [[ -f "$MAPPING_FILE" ]]; then
+			[[ $VERBOSE -eq 1 ]] && echo "Loading existing mapping file: $MAPPING_FILE" >&2
+			if ! load_mapping_file "$MAPPING_FILE"; then
+				echo "WARNING: Failed to load mapping file: $MAPPING_FILE" >&2
+				echo "         Continuing with new mappings..." >&2
+			fi
+		else
+			[[ $VERBOSE -eq 1 ]] && echo "Mapping file does not exist, will create new one: $MAPPING_FILE" >&2
+		fi
+	fi
+
 	# Anonymize log file
 	if ! anonymize_log_file "$INPUT_FILE" "$OUTPUT_FILE"; then
 		echo "ERROR: Failed to anonymize log file" >&2
 		exit 1
+	fi
+
+	# Save mapping file if provided
+	if [[ -n "$MAPPING_FILE" ]]; then
+		[[ $VERBOSE -eq 1 ]] && echo "Saving mapping file: $MAPPING_FILE" >&2
+		if ! save_mapping_file "$MAPPING_FILE"; then
+			echo "WARNING: Failed to save mapping file: $MAPPING_FILE" >&2
+		fi
 	fi
 
 	# Print summary

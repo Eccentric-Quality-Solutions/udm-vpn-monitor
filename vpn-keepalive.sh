@@ -338,16 +338,16 @@ start_daemon() {
 
 			# Ping each configured location
 			for location_name in "${!locations[@]}"; do
-				# Get external IP for this location
+				# Get external IP for this location (resolved from DNS if needed)
 				local external_peer_ip
-				if ! external_peer_ip=$(get_location_external_ip "$location_name"); then
-					log_message "WARNING" "$location_name" "Keepalive: failed to get external IP (skipping)" || true
+				if ! external_peer_ip=$(get_location_external_ip_resolved "$location_name"); then
+					log_message "WARNING" "$location_name" "Keepalive: failed to get or resolve external IP (skipping)" || true
 					continue
 				fi
 
-				# Get internal IPs for this location (may be empty)
+				# Get internal IPs for this location (resolved from DNS if needed, may be empty)
 				local internal_ips
-				internal_ips=$(get_location_internal_ips "$location_name")
+				internal_ips=$(get_location_internal_ips_resolved "$location_name" 2>/dev/null || echo "")
 
 				# Determine ping target(s)
 				local ping_target

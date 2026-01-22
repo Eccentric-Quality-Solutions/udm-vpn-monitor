@@ -684,8 +684,8 @@ EOF
 
 	# Verify the combined message format:
 	# 1. Should contain "VPN suspect for" with peer IP (location name is in log prefix, not in message)
-	# Note: format_peer_ip_display shows (internal_peer_ip external_peer_ip) when internal IP is provided
-	assert_log_contains "$log_file" "VPN suspect for ($internal_ip $peer_ip)"
+	# Note: format_peer_ip_display shows (internal_peer_ip, external_peer_ip) when internal IP is provided
+	assert_log_contains "$log_file" "VPN suspect for ($internal_ip, $peer_ip)"
 
 	# 2. Should include xfrm detection method name
 	assert_log_contains "$log_file" "Detection method: xfrm (ip xfrm state)"
@@ -1110,8 +1110,8 @@ EOF
 	# Verify the message is combined (contains semicolon separator)
 	assert_log_contains "$log_file" ";"
 
-	# Verify the message format includes peer IP display (internal_peer_ip external_peer_ip when internal IP provided)
-	assert_log_contains "$log_file" "VPN suspect for ($internal_ip $peer_ip)"
+	# Verify the message format includes peer IP display (internal_peer_ip, external_peer_ip when internal IP provided)
+	assert_log_contains "$log_file" "VPN suspect for ($internal_ip, $peer_ip)"
 
 	# Verify we have exactly one combined diagnostic message
 	local suspect_count

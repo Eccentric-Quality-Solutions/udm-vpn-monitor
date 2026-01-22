@@ -222,3 +222,71 @@ EOF
 
 	echo "$log_file"
 }
+
+# Set up date and sleep mocks with time increment file support
+#
+# Creates date and sleep mocks that work together to simulate time progression
+# during retry_xfrm_recovery tests. The date mock reads from time_increment_file
+# to return dynamic timestamps, and the sleep mock increments the file.
+#
+# Arguments:
+#   $1: Base timestamp in Unix seconds (default: 1609459200 = 2021-01-01 00:00:00 UTC)
+#   $2: Path to time increment file (file should contain elapsed seconds as integer)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Creates mock date and sleep commands in TEST_DIR
+#   - Date mock handles +%s (Unix timestamp) and formatted timestamps (for logging)
+#   - Sleep mock increments time_increment_file by sleep duration
+#
+# Example:
+#   local time_increment_file="${TEST_DIR}/time_increment"
+#   echo "0" >"$time_increment_file"
+#   setup_date_sleep_mocks_with_increment 1609459200 "$time_increment_file"
+#   add_mock_to_path
+#   # Now date and sleep work together for time-based testing
+#
+# Note:
+#   Must be called before add_mock_to_path to ensure mocks are in PATH
+#   The date mock handles formatted timestamps to avoid permission issues with /bin/date fallback
+setup_date_sleep_mocks_with_increment() {
+	local base_time="${1:-1609459200}"
+	local time_increment_file="${2:-${TEST_DIR}/time_increment}"
+
+	# Create date mock that handles both Unix timestamps and formatted timestamps
+	local mock_date="${TEST_DIR}/date"
+	cat >"$mock_date" <<EOF
+#!/bin/bash
+if [[ "\$1" == "+%s" ]]; then
+    # Unix timestamp format - read from time_increment_file
+    increment=\$(cat "${time_increment_file}" 2>/dev/null || echo "0")
+    echo $((base_time + increment))
+    exit 0
+elif [[ "\$1" == "+%Y-%m-%d %H:%M:%S" ]] || [[ "\$1" == '+%Y-%m-%d %H:%M:%S' ]]; then
+    # Formatted timestamp format (used by logging) - return simple fixed format
+    # Test doesn't care about exact timestamp, just that logging works
+    echo "2021-01-01 00:00:00"
+    exit 0
+fi
+# For other date formats, return error rather than falling back (prevents permission issues)
+echo "Mock date: unsupported format: \$*" >&2
+exit 1
+EOF
+	sed -i "s|base_time|${base_time}|g" "$mock_date"
+	chmod +x "$mock_date"
+
+	# Create sleep mock that increments time_increment_file
+	local mock_sleep="${TEST_DIR}/sleep"
+	cat >"$mock_sleep" <<EOF
+#!/bin/bash
+# Increment time by sleep duration
+increment=\$(cat "${time_increment_file}" 2>/dev/null || echo "0")
+increment=\$((increment + \$1))
+echo "\$increment" > "${time_increment_file}"
+# Use real sleep for actual delays (but short for testing)
+/usr/bin/sleep 0.1
+EOF
+	chmod +x "$mock_sleep"
+}

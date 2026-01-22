@@ -170,6 +170,11 @@ We will implement a three-parameter rate limiting system:
   - Prevents extended outages (38+ minutes) when coordinator is rate-limited during infrastructure issues
   - Maintains system stability by still enforcing minimum restart interval
   - Logs info message when bypass is used for visibility
+- **2026-01-27**: Removed deprecated variables (breaking change):
+  - `MAX_RESTARTS_PER_HOUR` removed (replaced by `MAX_RESTARTS_PER_WINDOW` and `RATE_LIMIT_WINDOW_MINUTES`)
+  - `COOLDOWN_MINUTES` removed (replaced by `MIN_RESTART_INTERVAL_SECONDS`)
+  - Migration logic removed - users must update config files manually
+  - See CHANGELOG.md for migration instructions
 
 ## References
 - ARCHITECTURE.md: "Key Design Decisions #8: Rate Limiting"

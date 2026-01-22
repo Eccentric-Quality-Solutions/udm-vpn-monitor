@@ -1035,7 +1035,7 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 # bats test_tags=category:unit
 @test "check_rate_limit allows restart when under limit" {
 	# Purpose: Test verifies that check_rate_limit function allows restarts when under the rate limit
-	# Expected: Function returns success when number of recent restarts is below MAX_RESTARTS_PER_HOUR
+	# Expected: Function returns success when number of recent restarts is below MAX_RESTARTS_PER_WINDOW
 	# Importance: Rate limiting prevents excessive IPsec restarts that could cause service disruption
 	local state_dir="${TEST_DIR}"
 	local logs_dir="${TEST_DIR}/logs"
@@ -1045,12 +1045,13 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	cat >"${TEST_DIR}/test_script.sh" <<'SCRIPT'
 #!/bin/bash
 RESTART_COUNT_FILE="$1"
-MAX_RESTARTS_PER_HOUR=3
+MAX_RESTARTS_PER_WINDOW=3
+RATE_LIMIT_WINDOW_MINUTES=60
 
 # Check if restart is within rate limit
 #
 # Arguments:
-#   None (uses RESTART_COUNT_FILE and MAX_RESTARTS_PER_HOUR variables)
+#   None (uses RESTART_COUNT_FILE, MAX_RESTARTS_PER_WINDOW, and RATE_LIMIT_WINDOW_MINUTES variables)
 #
 # Returns:
 #   0: Within rate limit (restart allowed)
@@ -1058,17 +1059,17 @@ MAX_RESTARTS_PER_HOUR=3
 check_rate_limit() {
 	local now
 	now=$(date +%s)
-	local one_hour_ago
-	one_hour_ago=$((now - 3600))
+	local window_seconds=$((RATE_LIMIT_WINDOW_MINUTES * 60))
+	local window_start=$((now - window_seconds))
 
 	if [[ ! -f "$RESTART_COUNT_FILE" ]]; then
 		return 0 # No previous restarts, allow
 	fi
 
 	local recent_restarts
-	recent_restarts=$(awk -v cutoff="$one_hour_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | wc -l | tr -d ' ')
+	recent_restarts=$(awk -v cutoff="$window_start" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | wc -l | tr -d ' ')
 
-	if [[ $recent_restarts -ge $MAX_RESTARTS_PER_HOUR ]]; then
+	if [[ $recent_restarts -ge $MAX_RESTARTS_PER_WINDOW ]]; then
 		return 1 # Rate limited
 	fi
 
@@ -1087,7 +1088,7 @@ SCRIPT
 # bats test_tags=category:unit
 @test "check_rate_limit blocks restart when over limit" {
 	# Purpose: Test verifies that check_rate_limit function blocks restarts when over the rate limit
-	# Expected: Function returns failure when number of recent restarts exceeds MAX_RESTARTS_PER_HOUR
+	# Expected: Function returns failure when number of recent restarts exceeds MAX_RESTARTS_PER_WINDOW
 	# Importance: Rate limiting prevents excessive IPsec restarts that could cause service disruption
 	local state_dir="${TEST_DIR}"
 	local logs_dir="${TEST_DIR}/logs"
@@ -1104,12 +1105,13 @@ SCRIPT
 	cat >"${TEST_DIR}/test_script.sh" <<'SCRIPT'
 #!/bin/bash
 RESTART_COUNT_FILE="$1"
-MAX_RESTARTS_PER_HOUR=3
+MAX_RESTARTS_PER_WINDOW=3
+RATE_LIMIT_WINDOW_MINUTES=60
 
 # Check if restart is within rate limit
 #
 # Arguments:
-#   None (uses RESTART_COUNT_FILE and MAX_RESTARTS_PER_HOUR variables)
+#   None (uses RESTART_COUNT_FILE, MAX_RESTARTS_PER_WINDOW, and RATE_LIMIT_WINDOW_MINUTES variables)
 #
 # Returns:
 #   0: Within rate limit (restart allowed)
@@ -1117,17 +1119,17 @@ MAX_RESTARTS_PER_HOUR=3
 check_rate_limit() {
 	local now
 	now=$(date +%s)
-	local one_hour_ago
-	one_hour_ago=$((now - 3600))
+	local window_seconds=$((RATE_LIMIT_WINDOW_MINUTES * 60))
+	local window_start=$((now - window_seconds))
 
 	if [[ ! -f "$RESTART_COUNT_FILE" ]]; then
 		return 0 # No previous restarts, allow
 	fi
 
 	local recent_restarts
-	recent_restarts=$(awk -v cutoff="$one_hour_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | wc -l | tr -d ' ')
+	recent_restarts=$(awk -v cutoff="$window_start" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | wc -l | tr -d ' ')
 
-	if [[ $recent_restarts -ge $MAX_RESTARTS_PER_HOUR ]]; then
+	if [[ $recent_restarts -ge $MAX_RESTARTS_PER_WINDOW ]]; then
 		return 1 # Rate limited
 	fi
 
@@ -1151,8 +1153,8 @@ SCRIPT
 	setup_test_environment "${TEST_DIR}"
 
 	# Set required environment variables for check_rate_limit
-	export MAX_RESTARTS_PER_HOUR=3
-	export SECONDS_PER_HOUR=3600
+	export MAX_RESTARTS_PER_WINDOW=3
+	export RATE_LIMIT_WINDOW_MINUTES=60
 
 	source_function "check_rate_limit"
 	source_function "get_unix_timestamp"
@@ -1515,7 +1517,7 @@ EOF
 		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
 	fi
 
-	run is_config_required "VPN_NAME"
+	run is_config_required "PING_COUNT"
 
 	assert_failure
 }
@@ -1547,7 +1549,7 @@ EOF
 		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
 	fi
 
-	run get_config_default "VPN_NAME"
+	run get_config_default "PING_COUNT"
 
 	assert_success
 	assert_output "Site-to-Site VPN"
@@ -1644,8 +1646,8 @@ EOF
 
 	# Unset all config variables to test defaults
 	# Use both unset and explicit empty assignment to ensure variables are truly unset
-	unset VPN_NAME TIER1_THRESHOLD TIER2_THRESHOLD TIER3_THRESHOLD 2>/dev/null || true
-	unset COOLDOWN_MINUTES MAX_RESTARTS_PER_HOUR LOCKFILE_TIMEOUT ENABLE_PING_CHECK LOCAL_UDM_IP 2>/dev/null || true
+	unset PING_COUNT TIER1_THRESHOLD TIER2_THRESHOLD TIER3_THRESHOLD 2>/dev/null || true
+	unset MAX_RESTARTS_PER_WINDOW RATE_LIMIT_WINDOW_MINUTES LOCKFILE_TIMEOUT ENABLE_PING_CHECK LOCAL_UDM_IP 2>/dev/null || true
 	unset PING_COUNT PING_TIMEOUT ENABLE_KEEPALIVE KEEPALIVE_INTERVAL KEEPALIVE_PING_COUNT 2>/dev/null || true
 	unset DEBUG NO_ESCALATE ENABLE_XFRM_RECOVERY LOG_FILE STATE_DIR LOGS_DIR CRON_SCHEDULE 2>/dev/null || true
 
@@ -1666,9 +1668,6 @@ EOF
 	assert_equal "$ENABLE_XFRM_RECOVERY" "1"
 	assert_equal "$LOCKFILE_TIMEOUT" "300"
 
-	# Test VPN_NAME (has spaces) - use assert_equal for better error messages
-	assert_equal "$VPN_NAME" "Site-to-Site VPN"
-
 	# Test CRON_SCHEDULE (has spaces and special chars) - use assert_equal for better error messages
 	assert_equal "$CRON_SCHEDULE" "*/1 * * * *"
 
@@ -1676,8 +1675,6 @@ EOF
 	assert_equal "$TIER1_THRESHOLD" "1"
 	assert_equal "$TIER2_THRESHOLD" "3"
 	assert_equal "$TIER3_THRESHOLD" "5"
-	# Note: COOLDOWN_MINUTES and MAX_RESTARTS_PER_HOUR are deprecated (optional with empty defaults)
-	# They are migrated to MIN_RESTART_INTERVAL_SECONDS and MAX_RESTARTS_PER_WINDOW respectively
 }
 
 # ============================================================================
@@ -2785,11 +2782,11 @@ EOF
 
 	# Test 1: Parse first assignment
 	declare -A parse_result
-	if ! parse_assignment "VPN_NAME=\"First VPN\"" 1 "parse_result"; then
+	if ! parse_assignment "PING_COUNT=5" 1 "parse_result"; then
 		fail "parse_assignment should succeed for valid assignment"
 	fi
-	assert_equal "${parse_result[name]}" "VPN_NAME"
-	assert_equal "${parse_result[value]}" "First VPN"
+	assert_equal "${parse_result[name]}" "PING_COUNT"
+	assert_equal "${parse_result[value]}" "5"
 
 	# Test 2: Parse second assignment - should return new values
 	declare -A parse_result2
@@ -2844,7 +2841,7 @@ EOF
 	local config_file="${TEST_DIR:-/tmp}/test-reset.conf"
 	load helpers/config
 	create_test_config "$config_file" \
-		'VPN_NAME="Test VPN"' \
+		"PING_COUNT=5" \
 		"TIER1_THRESHOLD=1" \
 		"TIER2_THRESHOLD=3" \
 		"ENABLE_PING_CHECK=1"
@@ -2855,7 +2852,7 @@ EOF
 	# Verify all variables were set correctly (implicitly tests variable reset)
 	# This proves that variables are properly reset between iterations because
 	# each line is parsed independently and all values are set correctly
-	assert_equal "${VPN_NAME:-}" "Test VPN"
+	assert_equal "${PING_COUNT:-}" "5"
 	assert_equal "${TIER1_THRESHOLD:-}" "1"
 	assert_equal "${TIER2_THRESHOLD:-}" "3"
 	assert_equal "${ENABLE_PING_CHECK:-}" "1"

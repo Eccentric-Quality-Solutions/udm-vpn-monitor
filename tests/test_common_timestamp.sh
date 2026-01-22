@@ -52,43 +52,41 @@ readonly CURRENT_TIMESTAMP=$(date +%s)
 }
 
 # bats test_tags=category:unit
-@test "validate_timestamp: rejects negative timestamp" {
-	# Purpose: Test that validate_timestamp rejects negative values
-	# Expected: Returns failure (1) for negative timestamp
+@test "validate_timestamp: rejects invalid input values" {
+	# Purpose: Test that validate_timestamp rejects various invalid input formats
+	# Expected: Returns failure (1) for all invalid inputs
+	# Importance: Comprehensive validation ensures only valid timestamps are accepted
+	# Test negative values
 	run validate_timestamp "-1"
 	assert_failure
-}
 
-# bats test_tags=category:unit
-@test "validate_timestamp: rejects timestamp exceeding maximum" {
-	# Purpose: Test that validate_timestamp rejects timestamps beyond year 2100
-	# Expected: Returns failure (1) for timestamp exceeding maximum
+	# Test timestamps exceeding maximum
 	local test_timestamp=$((MAX_TIMESTAMP + 1))
 	run validate_timestamp "$test_timestamp"
 	assert_failure
-}
 
-# bats test_tags=category:unit
-@test "validate_timestamp: rejects very large timestamp" {
-	# Purpose: Test that validate_timestamp rejects very large values
-	# Expected: Returns failure (1) for very large timestamp
+	# Test very large values
 	run validate_timestamp "99999999999"
 	assert_failure
-}
 
-# bats test_tags=category:unit
-@test "validate_timestamp: rejects non-numeric string" {
-	# Purpose: Test that validate_timestamp rejects non-numeric strings
-	# Expected: Returns failure (1) for non-numeric input
+	# Test non-numeric strings
 	run validate_timestamp "not_a_number"
 	assert_failure
-}
 
-# bats test_tags=category:unit
-@test "validate_timestamp: rejects empty string" {
-	# Purpose: Test that validate_timestamp rejects empty strings
-	# Expected: Returns failure (1) for empty input
+	# Test empty string
 	run validate_timestamp ""
+	assert_failure
+
+	# Test decimal numbers
+	run validate_timestamp "123.456"
+	assert_failure
+
+	# Test alphanumeric strings
+	run validate_timestamp "123abc"
+	assert_failure
+
+	# Test strings with spaces
+	run validate_timestamp "123 456"
 	assert_failure
 }
 
@@ -99,30 +97,6 @@ readonly CURRENT_TIMESTAMP=$(date +%s)
 	# Note: "000123" is valid as bash treats it as octal, but regex ^[0-9]+ matches it
 	run validate_timestamp "000123"
 	assert_success
-}
-
-# bats test_tags=category:unit
-@test "validate_timestamp: rejects decimal number" {
-	# Purpose: Test that validate_timestamp rejects decimal numbers
-	# Expected: Returns failure (1) for decimal input
-	run validate_timestamp "123.456"
-	assert_failure
-}
-
-# bats test_tags=category:unit
-@test "validate_timestamp: rejects alphanumeric string" {
-	# Purpose: Test that validate_timestamp rejects strings with letters and numbers
-	# Expected: Returns failure (1) for alphanumeric input
-	run validate_timestamp "123abc"
-	assert_failure
-}
-
-# bats test_tags=category:unit
-@test "validate_timestamp: rejects string with spaces" {
-	# Purpose: Test that validate_timestamp rejects strings with spaces
-	# Expected: Returns failure (1) for input with spaces
-	run validate_timestamp "123 456"
-	assert_failure
 }
 
 # ============================================================================
@@ -163,60 +137,44 @@ readonly CURRENT_TIMESTAMP=$(date +%s)
 }
 
 # bats test_tags=category:unit
-@test "safe_timestamp_subtract: rejects invalid base timestamp (negative)" {
-	# Purpose: Test that safe_timestamp_subtract rejects negative base timestamp
-	# Expected: Returns failure (1) for invalid base timestamp
+@test "safe_timestamp_subtract: rejects invalid base timestamp" {
+	# Purpose: Test that safe_timestamp_subtract rejects various invalid base timestamp formats
+	# Expected: Returns failure (1) for all invalid base timestamp inputs
+	# Importance: Ensures function validates base timestamp before processing
+	# Test negative base timestamp
 	run safe_timestamp_subtract "-1" "100"
 	assert_failure
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_subtract: rejects invalid base timestamp (too large)" {
-	# Purpose: Test that safe_timestamp_subtract rejects base timestamp exceeding maximum
-	# Expected: Returns failure (1) for invalid base timestamp
+	# Test base timestamp exceeding maximum
 	local invalid_timestamp=$((MAX_TIMESTAMP + 1))
 	run safe_timestamp_subtract "$invalid_timestamp" "100"
 	assert_failure
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_subtract: rejects invalid base timestamp (non-numeric)" {
-	# Purpose: Test that safe_timestamp_subtract rejects non-numeric base timestamp
-	# Expected: Returns failure (1) for invalid base timestamp
+	# Test non-numeric base timestamp
 	run safe_timestamp_subtract "not_a_number" "100"
 	assert_failure
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_subtract: rejects invalid base timestamp (empty)" {
-	# Purpose: Test that safe_timestamp_subtract rejects empty base timestamp
-	# Expected: Returns failure (1) for invalid base timestamp
+	# Test empty base timestamp
 	run safe_timestamp_subtract "" "100"
 	assert_failure
 }
 
 # bats test_tags=category:unit
-@test "safe_timestamp_subtract: rejects invalid seconds (negative)" {
-	# Purpose: Test that safe_timestamp_subtract rejects negative seconds
-	# Expected: Returns failure (2) for invalid seconds value
+@test "safe_timestamp_subtract: rejects invalid seconds parameter" {
+	# Purpose: Test that safe_timestamp_subtract rejects various invalid seconds formats
+	# Expected: Returns failure (2) for all invalid seconds inputs
+	# Importance: Ensures function validates seconds parameter before processing
+	# Test negative seconds
 	run safe_timestamp_subtract "1000" "-1"
 	assert_failure
 	assert [ "$status" -eq 2 ]
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_subtract: rejects invalid seconds (non-numeric)" {
-	# Purpose: Test that safe_timestamp_subtract rejects non-numeric seconds
-	# Expected: Returns failure (2) for invalid seconds value
+	# Test non-numeric seconds
 	run safe_timestamp_subtract "1000" "not_a_number"
 	assert_failure
 	assert [ "$status" -eq 2 ]
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_subtract: rejects invalid seconds (empty)" {
-	# Purpose: Test that safe_timestamp_subtract rejects empty seconds
-	# Expected: Returns failure (2) for invalid seconds value
+	# Test empty seconds
 	run safe_timestamp_subtract "1000" ""
 	assert_failure
 	assert [ "$status" -eq 2 ]
@@ -311,60 +269,44 @@ readonly CURRENT_TIMESTAMP=$(date +%s)
 }
 
 # bats test_tags=category:unit
-@test "safe_timestamp_add: rejects invalid base timestamp (negative)" {
-	# Purpose: Test that safe_timestamp_add rejects negative base timestamp
-	# Expected: Returns failure (1) for invalid base timestamp
+@test "safe_timestamp_add: rejects invalid base timestamp" {
+	# Purpose: Test that safe_timestamp_add rejects various invalid base timestamp formats
+	# Expected: Returns failure (1) for all invalid base timestamp inputs
+	# Importance: Ensures function validates base timestamp before processing
+	# Test negative base timestamp
 	run safe_timestamp_add "-1" "100"
 	assert_failure
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_add: rejects invalid base timestamp (too large)" {
-	# Purpose: Test that safe_timestamp_add rejects base timestamp exceeding maximum
-	# Expected: Returns failure (1) for invalid base timestamp
+	# Test base timestamp exceeding maximum
 	local invalid_timestamp=$((MAX_TIMESTAMP + 1))
 	run safe_timestamp_add "$invalid_timestamp" "100"
 	assert_failure
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_add: rejects invalid base timestamp (non-numeric)" {
-	# Purpose: Test that safe_timestamp_add rejects non-numeric base timestamp
-	# Expected: Returns failure (1) for invalid base timestamp
+	# Test non-numeric base timestamp
 	run safe_timestamp_add "not_a_number" "100"
 	assert_failure
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_add: rejects invalid base timestamp (empty)" {
-	# Purpose: Test that safe_timestamp_add rejects empty base timestamp
-	# Expected: Returns failure (1) for invalid base timestamp
+	# Test empty base timestamp
 	run safe_timestamp_add "" "100"
 	assert_failure
 }
 
 # bats test_tags=category:unit
-@test "safe_timestamp_add: rejects invalid seconds (negative)" {
-	# Purpose: Test that safe_timestamp_add rejects negative seconds
-	# Expected: Returns failure (2) for invalid seconds value
+@test "safe_timestamp_add: rejects invalid seconds parameter" {
+	# Purpose: Test that safe_timestamp_add rejects various invalid seconds formats
+	# Expected: Returns failure (2) for all invalid seconds inputs
+	# Importance: Ensures function validates seconds parameter before processing
+	# Test negative seconds
 	run safe_timestamp_add "1000" "-1"
 	assert_failure
 	assert [ "$status" -eq 2 ]
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_add: rejects invalid seconds (non-numeric)" {
-	# Purpose: Test that safe_timestamp_add rejects non-numeric seconds
-	# Expected: Returns failure (2) for invalid seconds value
+	# Test non-numeric seconds
 	run safe_timestamp_add "1000" "not_a_number"
 	assert_failure
 	assert [ "$status" -eq 2 ]
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_add: rejects invalid seconds (empty)" {
-	# Purpose: Test that safe_timestamp_add rejects empty seconds
-	# Expected: Returns failure (2) for invalid seconds value
+	# Test empty seconds
 	run safe_timestamp_add "1000" ""
 	assert_failure
 	assert [ "$status" -eq 2 ]
@@ -456,74 +398,54 @@ readonly CURRENT_TIMESTAMP=$(date +%s)
 }
 
 # bats test_tags=category:unit
-@test "safe_timestamp_diff: rejects invalid first timestamp (negative)" {
-	# Purpose: Test that safe_timestamp_diff rejects negative first timestamp
-	# Expected: Returns failure (1) for invalid first timestamp
+@test "safe_timestamp_diff: rejects invalid first timestamp" {
+	# Purpose: Test that safe_timestamp_diff rejects various invalid first timestamp formats
+	# Expected: Returns failure (1) for all invalid first timestamp inputs
+	# Importance: Ensures function validates first timestamp before processing
+	# Test negative first timestamp
 	run safe_timestamp_diff "-1" "1000"
 	assert_failure
 	assert [ "$status" -eq 1 ]
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_diff: rejects invalid first timestamp (too large)" {
-	# Purpose: Test that safe_timestamp_diff rejects first timestamp exceeding maximum
-	# Expected: Returns failure (1) for invalid first timestamp
+	# Test first timestamp exceeding maximum
 	local invalid_timestamp=$((MAX_TIMESTAMP + 1))
 	run safe_timestamp_diff "$invalid_timestamp" "1000"
 	assert_failure
 	assert [ "$status" -eq 1 ]
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_diff: rejects invalid first timestamp (non-numeric)" {
-	# Purpose: Test that safe_timestamp_diff rejects non-numeric first timestamp
-	# Expected: Returns failure (1) for invalid first timestamp
+	# Test non-numeric first timestamp
 	run safe_timestamp_diff "not_a_number" "1000"
 	assert_failure
 	assert [ "$status" -eq 1 ]
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_diff: rejects invalid first timestamp (empty)" {
-	# Purpose: Test that safe_timestamp_diff rejects empty first timestamp
-	# Expected: Returns failure (1) for invalid first timestamp
+	# Test empty first timestamp
 	run safe_timestamp_diff "" "1000"
 	assert_failure
 	assert [ "$status" -eq 1 ]
 }
 
 # bats test_tags=category:unit
-@test "safe_timestamp_diff: rejects invalid second timestamp (negative)" {
-	# Purpose: Test that safe_timestamp_diff rejects negative second timestamp
-	# Expected: Returns failure (2) for invalid second timestamp
+@test "safe_timestamp_diff: rejects invalid second timestamp" {
+	# Purpose: Test that safe_timestamp_diff rejects various invalid second timestamp formats
+	# Expected: Returns failure (2) for all invalid second timestamp inputs
+	# Importance: Ensures function validates second timestamp before processing
+	# Test negative second timestamp
 	run safe_timestamp_diff "1000" "-1"
 	assert_failure
 	assert [ "$status" -eq 2 ]
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_diff: rejects invalid second timestamp (too large)" {
-	# Purpose: Test that safe_timestamp_diff rejects second timestamp exceeding maximum
-	# Expected: Returns failure (2) for invalid second timestamp
+	# Test second timestamp exceeding maximum
 	local invalid_timestamp=$((MAX_TIMESTAMP + 1))
 	run safe_timestamp_diff "1000" "$invalid_timestamp"
 	assert_failure
 	assert [ "$status" -eq 2 ]
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_diff: rejects invalid second timestamp (non-numeric)" {
-	# Purpose: Test that safe_timestamp_diff rejects non-numeric second timestamp
-	# Expected: Returns failure (2) for invalid second timestamp
+	# Test non-numeric second timestamp
 	run safe_timestamp_diff "1000" "not_a_number"
 	assert_failure
 	assert [ "$status" -eq 2 ]
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_diff: rejects invalid second timestamp (empty)" {
-	# Purpose: Test that safe_timestamp_diff rejects empty second timestamp
-	# Expected: Returns failure (2) for invalid second timestamp
+	# Test empty second timestamp
 	run safe_timestamp_diff "1000" ""
 	assert_failure
 	assert [ "$status" -eq 2 ]

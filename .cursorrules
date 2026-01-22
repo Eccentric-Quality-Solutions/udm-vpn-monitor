@@ -1,4 +1,5 @@
-
+- ALWAYS RUN TESTS so that they are visible to me, you can log them to a file but they need to be REAL-TIME outputting to the screen!
+- PUT A TIMEOUT on TESTS so you don't hang FOREVER!
 - Remember that this is meant to run on UDM OS 4.3+ and that we do not need to be compatible with other versions of *nix besides that running on the UDM.
     - In addition, we need to use only tools and commands which are available in the UDM OS unless it is something we can easily add without causing any issues to the UDM stability, etc.
 - Don't assume we need backwards compatibility, this app is currently only used in a single deployment. In most cases we can move forward without maintaining backwards compatibility and just reinstall the app on the applicable UDMs. Do ask before ignoring backwards compatibility but don't assume it is necessary.

@@ -53,6 +53,7 @@ Provides helpers for testing VPN recovery functionality.
 - `override_calculate_duration_with_increment()` - Override calculate_duration for time-based testing
 - `override_calculate_duration_always_zero()` - Override calculate_duration to simulate time calculation failure
 - `setup_retry_xfrm_recovery_mocks()` - Set up common mocks for retry_xfrm_recovery tests
+- `setup_date_sleep_mocks_with_increment()` - Set up date and sleep mocks with time increment file support
 
 **Usage:**
 ```bash

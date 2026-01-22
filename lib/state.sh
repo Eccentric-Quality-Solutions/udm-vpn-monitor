@@ -37,38 +37,6 @@ fi
 # shellcheck source=lib/common.sh
 source "${LIB_DIR}/common.sh"
 
-# Helper function to log errors when sourcing state modules fails
-#
-# Uses log_message if available (from logging.sh), otherwise falls back to echo.
-# This ensures errors are logged consistently when possible.
-#
-# Arguments:
-#   $1: Error message to log
-#
-# Returns:
-#   0: Always succeeds (logging never fails)
-#
-# Output:
-#   - If log_message is available: logs via log_message to LOG_FILE and stderr
-#   - Otherwise: prints error message to stderr
-#
-# Examples:
-#   log_state_error "Failed to source state module: peer_state.sh"
-#
-# Note:
-#   This function is used during module loading when log_message may not be available yet.
-#   It gracefully falls back to echo if log_message is not defined.
-log_state_error() {
-	local message="$1"
-	if type log_message >/dev/null 2>&1; then
-		# log_message is available - use it (it will handle LOG_FILE not being set)
-		log_message "ERROR" "SYSTEM" "$message"
-	else
-		# Fallback to echo if log_message not available
-		echo "Error: $message" >&2
-	fi
-}
-
 # Source state management modules
 # Order matters: modules are sourced in dependency order
 # Use STATE_MODULE_DIR for module directory to avoid overwriting STATE_DIR
@@ -76,36 +44,36 @@ log_state_error() {
 STATE_MODULE_DIR="${LIB_DIR}/state"
 # shellcheck source=lib/state/state_paths.sh
 source "${STATE_MODULE_DIR}/state_paths.sh" 2>/dev/null || {
-	log_state_error "Failed to source state_paths.sh"
+	log_module_error "Failed to source state_paths.sh"
 	exit 1
 }
 # shellcheck source=lib/state/global_state.sh
 source "${STATE_MODULE_DIR}/global_state.sh" 2>/dev/null || {
-	log_state_error "Failed to source global_state.sh"
+	log_module_error "Failed to source global_state.sh"
 	exit 1
 }
 # shellcheck source=lib/state/peer_state.sh
 source "${STATE_MODULE_DIR}/peer_state.sh" 2>/dev/null || {
-	log_state_error "Failed to source peer_state.sh"
+	log_module_error "Failed to source peer_state.sh"
 	exit 1
 }
 # shellcheck source=lib/state/location_state.sh
 source "${STATE_MODULE_DIR}/location_state.sh" 2>/dev/null || {
-	log_state_error "Failed to source location_state.sh"
+	log_module_error "Failed to source location_state.sh"
 	exit 1
 }
 # shellcheck source=lib/state/state_init.sh
 source "${STATE_MODULE_DIR}/state_init.sh" 2>/dev/null || {
-	log_state_error "Failed to source state_init.sh"
+	log_module_error "Failed to source state_init.sh"
 	exit 1
 }
 # shellcheck source=lib/state/network_partition_stats.sh
 source "${STATE_MODULE_DIR}/network_partition_stats.sh" 2>/dev/null || {
-	log_state_error "Failed to source network_partition_stats.sh"
+	log_module_error "Failed to source network_partition_stats.sh"
 	exit 1
 }
 # shellcheck source=lib/state/resource_monitoring_stats.sh
 source "${STATE_MODULE_DIR}/resource_monitoring_stats.sh" 2>/dev/null || {
-	log_state_error "Failed to source resource_monitoring_stats.sh"
+	log_module_error "Failed to source resource_monitoring_stats.sh"
 	exit 1
 }

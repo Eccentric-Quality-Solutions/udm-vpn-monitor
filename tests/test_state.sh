@@ -25,7 +25,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create corrupted failure counter file (location-based path)
 	local failure_counter
-	failure_counter=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "failure_count" "invalid-non-numeric-value")
+	failure_counter=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "failure_count" "invalid-non-numeric-value")
 
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
@@ -48,7 +48,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create failure counter file with negative number
 	local failure_counter
-	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	echo "-5" >"$failure_counter"
 
 	add_mock_to_path
@@ -72,7 +72,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create empty failure counter file (clear any existing file from fixture)
 	local failure_counter
-	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	rm -f "$failure_counter"
 	touch "$failure_counter"
 	# Verify file is empty before script runs
@@ -114,7 +114,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create failure counter file and make it read-only (prevents write)
 	local failure_counter
-	failure_counter=$(setup_readonly_state_file "" "${TEST_PEER_IP}" "failure_count" "3" "444")
+	failure_counter=$(setup_readonly_state_file "TEST" "${TEST_PEER_IP}" "failure_count" "3" "444")
 	# Verify permissions were set correctly
 	assert_file_permission 444 "$failure_counter"
 
@@ -140,7 +140,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create failure counter file and make it unreadable (prevents read)
 	local failure_counter
-	failure_counter=$(setup_readonly_state_file "" "${TEST_PEER_IP}" "failure_count" "3" "000")
+	failure_counter=$(setup_readonly_state_file "TEST" "${TEST_PEER_IP}" "failure_count" "3" "000")
 	# Verify permissions were set correctly (use stat with timeout to avoid hanging)
 	# Note: stat can hang on files with 000 permissions in some cases, so we use timeout
 	# Format as 3-digit octal for comparison (stat returns "0" not "000")
@@ -254,7 +254,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Delete failure counter file during execution (simulate file deletion)
 	# This is a simplified test - in real scenario, file might be deleted between checks
 	local failure_counter
-	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	rm -f "$failure_counter"
 
 	add_mock_to_path
@@ -305,7 +305,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create corrupted failure counter file
 	local failure_counter
-	failure_counter=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "failure_count")
 
 	# Source state functions to test directly
 	# shellcheck source=../lib/state.sh
@@ -344,11 +344,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create multiple corrupted files
 	local failure_counter
-	failure_counter=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "failure_count")
 	local bytes_file
-	bytes_file=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "last_bytes")
+	bytes_file=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "last_bytes")
 	local spi_file
-	spi_file=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "spi")
+	spi_file=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "spi")
 	local cooldown_file="${STATE_DIR}/cooldown_until"
 
 	echo "invalid-value" >"$cooldown_file"
@@ -378,7 +378,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create corrupted failure counter file
 	local failure_counter
-	failure_counter=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "failure_count")
 
 	# Store original corrupted content
 	local original_content
@@ -457,7 +457,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create corrupted failure counter file
 	local failure_counter
-	failure_counter=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "failure_count")
 
 	# Make file unreadable (but still exists)
 	local original_perms
@@ -495,7 +495,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create corrupted failure counter file
 	local failure_counter
-	failure_counter=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "failure_count")
 
 	# Store original corrupted content
 	local original_content
@@ -567,7 +567,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create corrupted failure counter file
 	local failure_counter
-	failure_counter=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "failure_count")
 
 	# Source state functions to test directly
 	# shellcheck source=../lib/state.sh
@@ -595,11 +595,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create corrupted per-peer files
 	local failure_counter
-	failure_counter=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "failure_count")
 	local bytes_file
-	bytes_file=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "last_bytes")
+	bytes_file=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "last_bytes")
 	local spi_file
-	spi_file=$(create_corrupted_state_file "" "${TEST_PEER_IP}" "spi")
+	spi_file=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "spi")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path

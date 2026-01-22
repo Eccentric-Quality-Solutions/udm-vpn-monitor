@@ -232,7 +232,7 @@ EOF
 
 	assert_success
 	# Verify verbose messages are present (sent to stderr)
-	assert_line --partial "Extracting IP addresses..."
+	assert_line --partial "Extracting IPv4 addresses..."
 	assert_line --partial "Extracting location names..."
 	assert_line --partial "Anonymizing log file..."
 	assert_line --partial "Anonymization complete!"
@@ -380,14 +380,14 @@ EOF
 # bats test_tags=category:unit
 @test "anonymize-logs.sh anonymizes location names in comma-separated lists" {
 	# Purpose: Test verifies that the anonymize-logs script anonymizes location names in comma-separated lists
-	# Expected: Script replaces location names in patterns like "Found 11 location(s): PHOENIX, SEATTLE..."
-	# Importance: Ensures location names are anonymized in configuration summary messages
+	# Expected: Script replaces location names in patterns like "Found 11 location(s): PHOENIX (IP, IP), SEATTLE (IP)..."
+	# Importance: Ensures location names are anonymized in configuration summary messages (with or without IPs in parentheses)
 	local input_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local output_file="${TEST_DIR}/anonymized.log"
 	mkdir -p "$(dirname "$input_file")"
 	cat >"$input_file" <<EOF
-[2025-01-15 10:00:00] [INFO] Found 3 location(s): NYC, DC, CHICAGO
-[2025-01-15 10:01:00] [INFO] Found 2 location(s): NYC, DC
+[2025-01-15 10:00:00] [INFO] Found 3 location(s): NYC (203.0.113.1, 192.168.1.1), DC (198.51.100.1), CHICAGO (192.0.2.1)
+[2025-01-15 10:01:00] [INFO] Found 2 location(s): NYC (203.0.113.1), DC (198.51.100.1)
 EOF
 
 	run bash "$ANONYMIZE_LOGS_SCRIPT" -i "$input_file" -o "$output_file"

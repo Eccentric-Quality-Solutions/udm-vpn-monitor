@@ -134,30 +134,21 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 # ============================================================================
 
 # bats test_tags=category:unit
-@test "escape_sed_replacement: escapes multiple backslashes" {
-	# Purpose: Test that escape_sed_replacement escapes all occurrences of backslashes
-	# Expected: All backslashes are escaped, not just the first one
-	# Importance: Values may contain multiple backslashes
+@test "escape_sed_replacement: escapes multiple occurrences of special characters" {
+	# Purpose: Test that escape_sed_replacement escapes all occurrences of special characters, not just the first
+	# Expected: All occurrences of backslashes, ampersands, and pipes are properly escaped
+	# Importance: Values may contain multiple occurrences of special characters (e.g., IP lists, paths)
+	# Test multiple backslashes
 	run escape_sed_replacement "test\\value\\here"
 	assert_success
 	assert_output "test\\\\value\\\\here"
-}
 
-# bats test_tags=category:unit
-@test "escape_sed_replacement: escapes multiple ampersands" {
-	# Purpose: Test that escape_sed_replacement escapes all occurrences of ampersands
-	# Expected: All ampersands are escaped, not just the first one
-	# Importance: Values may contain multiple ampersands
+	# Test multiple ampersands
 	run escape_sed_replacement "test&value&here"
 	assert_success
 	assert_output "test\\&value\\&here"
-}
 
-# bats test_tags=category:unit
-@test "escape_sed_replacement: escapes multiple pipes" {
-	# Purpose: Test that escape_sed_replacement escapes all occurrences of pipes
-	# Expected: All pipes are escaped, not just the first one
-	# Importance: Values may contain multiple pipes (e.g., IP lists)
+	# Test multiple pipes
 	run escape_sed_replacement "test|value|here"
 	assert_success
 	assert_output "test\\|value\\|here"
@@ -230,21 +221,6 @@ line3\\|value"
 }
 
 # bats test_tags=category:unit
-@test "escape_sed_replacement: preserves function return code" {
-	# Purpose: Test that escape_sed_replacement always returns success (0)
-	# Expected: Function returns 0 even for edge cases
-	# Importance: Ensures function doesn't fail unexpectedly
-	run escape_sed_replacement ""
-	assert_success
-
-	run escape_sed_replacement "test"
-	assert_success
-
-	run escape_sed_replacement "test\\&|"
-	assert_success
-}
-
-# bats test_tags=category:unit
 @test "escape_sed_replacement: works with command substitution" {
 	# Purpose: Test that escape_sed_replacement works correctly in command substitution context
 	# Expected: Returns escaped value when used in variable assignment
@@ -259,40 +235,26 @@ line3\\|value"
 # ============================================================================
 
 # bats test_tags=category:unit
-@test "escape_sed_replacement: handles consecutive special characters" {
-	# Purpose: Test that escape_sed_replacement handles consecutive special characters correctly
-	# Expected: All consecutive special characters are properly escaped
-	# Importance: Edge case where special characters appear together
+@test "escape_sed_replacement: handles edge cases with special characters" {
+	# Purpose: Test that escape_sed_replacement handles various edge cases correctly
+	# Expected: Special characters are properly escaped in edge cases (consecutive, boundaries, unicode, numeric)
+	# Importance: Ensures function works correctly with real-world edge cases
+	# Test consecutive special characters
 	run escape_sed_replacement "test\\\\&&||"
 	assert_success
 	assert_output "test\\\\\\\\\\&\\&\\|\\|"
-}
 
-# bats test_tags=category:unit
-@test "escape_sed_replacement: handles special characters at start and end" {
-	# Purpose: Test that escape_sed_replacement handles special characters at boundaries
-	# Expected: Special characters at start and end are properly escaped
-	# Importance: Edge case for boundary conditions
+	# Test special characters at start and end (boundaries)
 	run escape_sed_replacement "|test&value\\"
 	assert_success
 	assert_output "\\|test\\&value\\\\"
-}
 
-# bats test_tags=category:unit
-@test "escape_sed_replacement: handles unicode and special characters together" {
-	# Purpose: Test that escape_sed_replacement works with unicode characters
-	# Expected: Unicode characters are preserved, special characters are escaped
-	# Importance: Ensures function works with international characters
+	# Test unicode characters with special characters
 	run escape_sed_replacement "café\\test&value|here"
 	assert_success
 	assert_output "café\\\\test\\&value\\|here"
-}
 
-# bats test_tags=category:unit
-@test "escape_sed_replacement: handles numeric values with special characters" {
-	# Purpose: Test that escape_sed_replacement works with numeric values containing special chars
-	# Expected: Numbers are preserved, special characters are escaped
-	# Importance: Config values may contain numbers with special characters
+	# Test numeric values with special characters
 	run escape_sed_replacement "192.168.1.1|10.0.0.1"
 	assert_success
 	assert_output "192.168.1.1\\|10.0.0.1"

@@ -91,8 +91,8 @@ apply_schema_defaults() {
 #   - Logs warning message if provided and default is applied
 #
 # Examples:
-#   var_value=$(apply_optional_default "VPN_NAME" "$VPN_NAME" "optional" "Site-to-Site VPN" "VPN_NAME is empty, using default")
-#   # Sets VPN_NAME="Site-to-Site VPN" if optional and empty, prints value to stdout
+#   var_value=$(apply_optional_default "PING_COUNT" "$PING_COUNT" "optional" "3" "PING_COUNT is empty, using default")
+#   # Sets PING_COUNT="3" if optional and empty, prints value to stdout
 #
 # Note:
 #   This is the centralized default application logic used by apply_config_default(),
@@ -156,8 +156,8 @@ apply_optional_default() {
 #   - Calls die() if required variable is empty (exits script)
 #
 # Examples:
-#   var_value=$(apply_config_default "VPN_NAME" "$VPN_NAME" "optional" "Site-to-Site VPN")
-#   # Sets VPN_NAME="Site-to-Site VPN" if empty, prints value to stdout
+#   var_value=$(apply_config_default "PING_COUNT" "$PING_COUNT" "optional" "3")
+#   # Sets PING_COUNT="3" if empty, prints value to stdout
 #
 # Note:
 #   Requires die function to be available (from logging.sh)

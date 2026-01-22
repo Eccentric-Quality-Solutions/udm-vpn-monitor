@@ -26,7 +26,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source_function "get_peer_state_file_path"
 	# Should not increment failure counter
 	local failure_counter
-	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -89,7 +89,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies the complete monitoring flow when VPN failures reach Tier 3 threshold, triggering full restart
 	# Expected: Script executes ipsec restart command and logs Tier 3 action when failure count reaches threshold
 	# Importance: Validates tier escalation system correctly triggers the most aggressive recovery action at highest threshold
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10
+RATE_LIMIT_WINDOW_MINUTES=60'
 
 	# Mock ipsec for full restart
 	local mock_ipsec
@@ -209,7 +210,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source_function "get_peer_state_file_path"
 	# Should not increment failure counter
 	local failure_counter
-	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -322,7 +323,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source_function "get_peer_state_file_path"
 	# Should not increment failure counter
 	local failure_counter
-	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -399,7 +400,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source_function "get_peer_state_file_path"
 	# Failure counter should be incremented
 	local failure_counter
-	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -458,6 +459,55 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_success
 	# Should log Tier 3 action
 	assert_file_contains "$LOG_FILE" "Tier 3"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:integration
+@test "integration: DNS name in location config - full monitoring cycle" {
+	# Purpose: Test verifies the complete monitoring flow with DNS name in location configuration
+	# Expected: Script resolves DNS name to IP, monitors VPN, and handles failures correctly
+	# Importance: Validates end-to-end DNS name support in location configuration
+	local test_hostname="vpn-gateway.example.com"
+	local resolved_ip="${TEST_PEER_IP}"
+
+	# Set up test VPN monitor (creates location "TEST1" by default)
+	setup_location_vpn_monitor "$resolved_ip" "${TEST_DIR}" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
+
+	# Replace IP with DNS name in the config file (setup_location_vpn_monitor creates LOCATION_TEST1_EXTERNAL)
+	# Use sed to replace the IP address with the DNS hostname
+	sed -i "s|LOCATION_TEST1_EXTERNAL=\"${resolved_ip}\"|LOCATION_TEST1_EXTERNAL=\"${test_hostname}\"|" "$TEST_CONFIG_FILE"
+
+	# Set up state files with initial byte counter (no failures)
+	# setup_location_vpn_monitor creates location "TEST1" for the peer IP
+	ensure_state_functions_loaded
+	set_peer_state "TEST1" "$resolved_ip" "last_bytes" "1000" || true
+	set_peer_state "TEST1" "$resolved_ip" "spi" "0x12345678" || true
+
+	# Set up mock VPN environment with current byte counter (VPN active)
+	setup_mock_vpn_environment "$resolved_ip" "2000" "0x12345678"
+
+	# Mock DNS resolution - resolve hostname to IP
+	mock_getent "1" "$resolved_ip" "$test_hostname"
+	add_mock_to_path
+
+	# Run script - bytes should have increased from baseline
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
+
+	assert_success
+	source_function "get_peer_state_file_path"
+	# Should not increment failure counter (VPN is healthy)
+	# setup_location_vpn_monitor creates location "TEST1" for the peer IP
+	local failure_counter
+	failure_counter=$(get_state_file_path "TEST1" "$resolved_ip" "failure_count")
+	if [[ -f "$failure_counter" ]]; then
+		local count
+		count=$(cat "$failure_counter")
+		assert_equal "$count" 0
+	fi
 
 	remove_mock_from_path
 }

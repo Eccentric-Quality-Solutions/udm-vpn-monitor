@@ -2,6 +2,34 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
+## [Unreleased]
+
+### Removed
+- **BREAKING**: Removed `MAX_RESTARTS_PER_HOUR` configuration variable
+  - This parameter has been fully replaced by `MAX_RESTARTS_PER_WINDOW` and `RATE_LIMIT_WINDOW_MINUTES`
+  - The migration logic that automatically converted `MAX_RESTARTS_PER_HOUR` to the new parameters has been removed
+  - **Migration**: Users with existing config files must update their configuration:
+    - Replace `MAX_RESTARTS_PER_HOUR=3` with:
+      - `MAX_RESTARTS_PER_WINDOW=3` (or desired value, default is 20)
+      - `RATE_LIMIT_WINDOW_MINUTES=60` (or desired window size in minutes, default is 60)
+    - For example, if you had `MAX_RESTARTS_PER_HOUR=5`, use:
+      - `MAX_RESTARTS_PER_WINDOW=5`
+      - `RATE_LIMIT_WINDOW_MINUTES=60`
+  - This is a breaking change - config files with `MAX_RESTARTS_PER_HOUR` will fail to load with error: "Unknown configuration variable 'MAX_RESTARTS_PER_HOUR' (not in schema whitelist)"
+- **BREAKING**: Removed `COOLDOWN_MINUTES` configuration variable
+  - This parameter has been fully replaced by `MIN_RESTART_INTERVAL_SECONDS`
+  - The migration logic that automatically converted `COOLDOWN_MINUTES` to `MIN_RESTART_INTERVAL_SECONDS` has been removed
+  - **Migration**: Users with existing config files must update their configuration:
+    - Replace `COOLDOWN_MINUTES=15` with `MIN_RESTART_INTERVAL_SECONDS=900` (15 minutes × 60 = 900 seconds)
+    - Note: `MIN_RESTART_INTERVAL_SECONDS` has a maximum value of 300 seconds (5 minutes), so values greater than 5 minutes will be capped
+    - For example, if you had `COOLDOWN_MINUTES=2`, use `MIN_RESTART_INTERVAL_SECONDS=120`
+  - This is a breaking change - config files with `COOLDOWN_MINUTES` will fail to load with error: "Unknown configuration variable 'COOLDOWN_MINUTES' (not in schema whitelist)"
+- **BREAKING**: Removed `VPN_NAME` configuration variable
+  - Was only used in log messages and provided minimal value
+  - Log messages now use hardcoded "VPN" text instead of configurable name
+  - **Migration**: Users with existing config files should remove the `VPN_NAME=` line from their config file
+  - This is a breaking change - config files with `VPN_NAME` will fail to load with error: "Unknown configuration variable 'VPN_NAME' (not in schema whitelist)"
+
 ## 0.6.2 - 2026-01-19
 
 ### Changed

@@ -31,7 +31,6 @@ EOF
 # Arguments:
 #   $1: External peer IP
 #   $2: Internal peer IP (optional, defaults to external IP)
-#   $3: VPN name (optional, defaults to "Test VPN")
 #
 # Returns:
 #   0: Always succeeds
@@ -41,17 +40,15 @@ EOF
 generate_config_standard() {
 	local external_peer_ip="$1"
 	local internal_ip="${2:-$external_peer_ip}"
-	local vpn_name="${3:-Test VPN}"
 
 	cat <<EOF
 LOCATION_TEST_EXTERNAL="${external_peer_ip}"
 LOCATION_TEST_INTERNAL="${internal_ip}"
-VPN_NAME="${vpn_name}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
-COOLDOWN_MINUTES=15
-MAX_RESTARTS_PER_HOUR=3
+MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60
 LOG_FILE="/data/vpn-monitor/logs/vpn-monitor.log"
 STATE_DIR="/data/vpn-monitor"
 CRON_SCHEDULE="*/1 * * * *"
@@ -111,12 +108,11 @@ LOCATION_TEST_EXTERNAL="${ext1}"
 LOCATION_TEST_INTERNAL="${int1}"
 LOCATION_TEST2_EXTERNAL="${ext2}"
 LOCATION_TEST2_INTERNAL="${int2}"
-VPN_NAME="Test VPN"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
-COOLDOWN_MINUTES=15
-MAX_RESTARTS_PER_HOUR=3
+MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60
 LOG_FILE="/data/vpn-monitor/logs/vpn-monitor.log"
 STATE_DIR="/data/vpn-monitor"
 CRON_SCHEDULE="*/1 * * * *"
@@ -128,30 +124,28 @@ DEBUG=0
 EOF
 }
 
-# Generate configuration for cooldown and rate limit testing
+# Generate configuration for rate limit testing
 #
 # Arguments:
 #   $1: External peer IP
-#   $2: Cooldown minutes (optional, defaults to 1)
-#   $3: Max restarts per hour (optional, defaults to 3)
+#   $2: Max restarts per window (optional, defaults to 20)
 #
 # Returns:
 #   0: Always succeeds
 #
 # Output:
 #   Prints configuration content to stdout
-generate_config_cooldown_rate_limit() {
+generate_config_rate_limit() {
 	local external_peer_ip="$1"
-	local cooldown_minutes="${2:-1}"
-	local max_restarts="${3:-3}"
+	local max_restarts="${2:-20}"
 
 	cat <<EOF
 LOCATION_NYC_EXTERNAL="${external_peer_ip}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_HOUR=${max_restarts}
-COOLDOWN_MINUTES=${cooldown_minutes}
+MAX_RESTARTS_PER_WINDOW=${max_restarts}
+RATE_LIMIT_WINDOW_MINUTES=60
 ENABLE_XFRM_RECOVERY=0
 ENABLE_NETWORK_PARTITION_CHECK=0
 ENABLE_RESOURCE_MONITORING=0

@@ -52,7 +52,6 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Create temporary config without LOCATION_*_EXTERNAL
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
-		'VPN_NAME="Test VPN"' \
 		"TIER1_THRESHOLD=1" \
 		"TIER2_THRESHOLD=3" \
 		"TIER3_THRESHOLD=5"
@@ -285,7 +284,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Per-peer failure counter should be reset (if script ran successfully)
 	local failure_counter
-	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -342,7 +341,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script successfully loads configuration variables from the config file.
 	# Expected: Script reads config file and logs successful configuration load message.
 	# Importance: Configuration loading is essential for script customization and proper operation.
-	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'VPN_NAME="Custom VPN Name"' 'DEBUG=1'
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'DEBUG=1'
 
 	run bash "$TEST_SCRIPT" --fake
 

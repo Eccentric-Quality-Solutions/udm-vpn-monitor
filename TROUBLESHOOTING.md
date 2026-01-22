@@ -248,10 +248,9 @@ service cron status
 - **Note**: If you see "Tier 3: Attempting..." messages but no actual restart, rate limiting is working as designed. The log message appears before the rate limit check, but the restart only executes if allowed.
 
 **If minimum restart interval not met**:
-- Restart attempted too soon after previous restart (default: minimum 30 seconds)
+- Restart attempted too soon after previous restart (default: minimum 40 seconds)
 - Wait for minimum interval to elapse
 - Or adjust `MIN_RESTART_INTERVAL_SECONDS` in config (set to 0 to disable)
-- Or reduce `COOLDOWN_MINUTES` in config
 
 **If recovery actions fail**:
 - Check if `ipsec` command works manually:

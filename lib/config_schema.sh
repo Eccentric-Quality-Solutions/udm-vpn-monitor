@@ -14,7 +14,7 @@
 #   - rules: Multiple rules separated by pipe (|) characters in the schema definition.
 #            Internally, rules are joined with triple-pipe (|||) separator to avoid
 #            conflicts with commas in values: rules. When parsing, rules are split
-#            by ||| separator first, with fallback to comma for backward compatibility.
+#            by ||| separator.
 #            Rule types:
 #     * non-empty: value must not be empty (for strings)
 #     * min:N: minimum value (for integers)
@@ -33,8 +33,7 @@
 #   After parsing: rules string becomes "min:1|||max:10"
 #   This allows proper splitting without breaking "values:0,1" rules.
 #
-#   When validating, rules are split by ||| separator first. If no ||| found,
-#   falls back to comma-separated format for backward compatibility.
+#   When validating, rules are split by ||| separator.
 #   Special case: Single "values:" rule is not split (comma is part of value).
 #
 # LIMITATION: The pipe character (|) is used as a delimiter in the schema format.
@@ -82,21 +81,15 @@ declare -gA CONFIG_SCHEMA=(
 	# NOTE: TIER3_THRESHOLD has relative validation (depends on TIER2_THRESHOLD)
 	# Validation order is handled safely - see validate_config_schema() documentation
 	["TIER3_THRESHOLD"]="required|integer|min:TIER2_THRESHOLD|default:5"
-	# Rate limiting configuration (replaces MAX_RESTARTS_PER_HOUR and COOLDOWN_MINUTES)
-	# Backward compatibility: If MAX_RESTARTS_PER_HOUR is set, it will be migrated to MAX_RESTARTS_PER_WINDOW with RATE_LIMIT_WINDOW_MINUTES=60
+	# Rate limiting configuration
 	["MAX_RESTARTS_PER_WINDOW"]="required|integer|min:1|max:20|default:20"
 	["RATE_LIMIT_WINDOW_MINUTES"]="required|integer|min:5|max:1440|default:60"
 	["MIN_RESTART_INTERVAL_SECONDS"]="required|integer|min:0|max:300|default:40"
 	# Startup grace period (seconds) - wait time before first VPN check after script restart
 	# Prevents false positives when IPsec/xfrm subsystems are still initializing
 	["STARTUP_GRACE_PERIOD"]="optional|integer|min:0|max:300|default:5"
-	# Backward compatibility: MAX_RESTARTS_PER_HOUR is deprecated but still supported
-	["MAX_RESTARTS_PER_HOUR"]="optional|integer|min:1|max:60|default:"
-	# Backward compatibility: COOLDOWN_MINUTES is deprecated but still supported (migrated to MIN_RESTART_INTERVAL_SECONDS)
-	["COOLDOWN_MINUTES"]="optional|integer|min:1|max:1440|default:"
 
 	# Optional configuration with defaults
-	["VPN_NAME"]="optional|string||default:Site-to-Site VPN"
 	["ENABLE_PING_CHECK"]="optional|integer|values:0,1|default:1"
 	["LOCAL_UDM_IP"]="optional|string||default:"
 	["PING_COUNT"]="optional|integer|min:1|max:10|default:3"

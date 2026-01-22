@@ -455,6 +455,172 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_file_contains "$LOG_FILE" "xfrm recovery failed and no fallback strategy available"
 }
 
+# bats test_tags=category:high-risk,priority:high
+@test "_execute_xfrm_recovery_with_fallback: returns 1 when xfrm fails and fallback strategy selected (Tier 3)" {
+	# Purpose: Test verifies that function returns 1 when xfrm fails and fallback strategy is selected for Tier 3
+	# Expected: Function returns 1, updates nameref array with fallback strategy, logs fallback message with Tier 3 prefix
+	# Importance: Ensures Tier 3 fallback logic works correctly when xfrm recovery fails
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	# Source required functions
+	source_recovery_module
+
+	# Set up config
+	export ENABLE_XFRM_RECOVERY=1
+
+	# Initialize logging
+	LOG_FILE="${TEST_DIR}/vpn-monitor.log"
+	LOGS_DIR="${TEST_DIR}/logs"
+	mkdir -p "$LOGS_DIR"
+
+	# Track function calls
+	local attempt_xfrm_called="${TEST_DIR}/attempt_xfrm_called"
+	local select_strategy_called="${TEST_DIR}/select_strategy_called"
+	local store_recovery_called="${TEST_DIR}/store_recovery_called"
+
+	# Mock attempt_xfrm_recovery to fail
+	attempt_xfrm_recovery() {
+		echo "called" >"$attempt_xfrm_called"
+		return 1
+	}
+
+	# Mock select_recovery_strategy to succeed (fallback available)
+	select_recovery_strategy() {
+		echo "called" >"$select_strategy_called"
+		local result_ref_name="$3"
+		local -n result="$result_ref_name"
+		result["strategy"]="ipsec_restart"
+		result["command"]="ipsec restart"
+		result["impact"]="all-tunnels"
+		result["available"]=1
+		return 0
+	}
+
+	# Mock store_recovery_method (should be called before attempting recovery)
+	store_recovery_method() {
+		echo "called" >"$store_recovery_called"
+	}
+
+	# Mock format_peer_ip_display
+	format_peer_ip_display() {
+		echo "$1"
+	}
+
+	# Test parameters for Tier 3
+	local external_peer_ip="${TEST_PEER_IP}"
+	local location_name="TEST"
+	local tier=3
+	declare -A recovery_info
+
+	# Test function - call directly (not via run) to preserve nameref array updates
+	# Disable set -e to allow capturing return code 1
+	set +e
+	_execute_xfrm_recovery_with_fallback "$external_peer_ip" "$location_name" "$tier" "recovery_info" "Tier 3: " "full restart"
+	local exit_code=$?
+	set -e
+
+	# Should return 1 (fallback selected)
+	assert_equal "$exit_code" 1
+
+	# Should call attempt_xfrm_recovery
+	assert_file_exist "$attempt_xfrm_called"
+
+	# Should call store_recovery_method (Tier 3 stores if peer IP provided)
+	assert_file_exist "$store_recovery_called"
+
+	# Should call select_recovery_strategy for fallback (without peer IP)
+	assert_file_exist "$select_strategy_called"
+
+	# Should update nameref array with fallback strategy
+	assert_equal "${recovery_info[strategy]}" "ipsec_restart"
+	assert_equal "${recovery_info[command]}" "ipsec restart"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" "1"
+
+	# Should log fallback message with Tier 3 prefix
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "Tier 3: xfrm-based recovery failed"
+	assert_file_contains "$LOG_FILE" "falling back to full restart"
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "_execute_xfrm_recovery_with_fallback: returns 2 when xfrm fails and no fallback available (Tier 3)" {
+	# Purpose: Test verifies that function returns 2 when xfrm fails and no fallback strategy is available for Tier 3
+	# Expected: Function returns 2, logs error message with Tier 3 prefix, does not update nameref array
+	# Importance: Ensures Tier 3 error handling works when no recovery options are available
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	# Source required functions
+	source_recovery_module
+
+	# Set up config
+	export ENABLE_XFRM_RECOVERY=1
+
+	# Initialize logging
+	LOG_FILE="${TEST_DIR}/vpn-monitor.log"
+	LOGS_DIR="${TEST_DIR}/logs"
+	mkdir -p "$LOGS_DIR"
+
+	# Track function calls
+	local attempt_xfrm_called="${TEST_DIR}/attempt_xfrm_called"
+	local select_strategy_called="${TEST_DIR}/select_strategy_called"
+	local store_recovery_called="${TEST_DIR}/store_recovery_called"
+
+	# Mock attempt_xfrm_recovery to fail
+	attempt_xfrm_recovery() {
+		echo "called" >"$attempt_xfrm_called"
+		return 1
+	}
+
+	# Mock select_recovery_strategy to fail (no fallback available)
+	select_recovery_strategy() {
+		echo "called" >"$select_strategy_called"
+		local result_ref_name="$3"
+		local -n result="$result_ref_name"
+		result["strategy"]="unavailable"
+		result["command"]=""
+		result["impact"]=""
+		result["available"]=0
+		return 1
+	}
+
+	# Mock store_recovery_method (should be called before attempting recovery)
+	store_recovery_method() {
+		echo "called" >"$store_recovery_called"
+	}
+
+	# Mock format_peer_ip_display
+	format_peer_ip_display() {
+		echo "$1"
+	}
+
+	# Test parameters for Tier 3
+	local external_peer_ip="${TEST_PEER_IP}"
+	local location_name="TEST"
+	local tier=3
+	declare -A recovery_info
+
+	# Test function
+	run _execute_xfrm_recovery_with_fallback "$external_peer_ip" "$location_name" "$tier" "recovery_info" "Tier 3: " "full restart"
+
+	# Should return 2 (no fallback available)
+	assert_failure
+	assert_equal "$status" 2
+
+	# Should call attempt_xfrm_recovery
+	assert_file_exist "$attempt_xfrm_called"
+
+	# Should call store_recovery_method (Tier 3 stores if peer IP provided)
+	assert_file_exist "$store_recovery_called"
+
+	# Should call select_recovery_strategy for fallback
+	assert_file_exist "$select_strategy_called"
+
+	# Should log error message with Tier 3 prefix
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "Tier 3: xfrm recovery failed and no fallback strategy available"
+}
+
 # ============================================================================
 # TIER-SPECIFIC BEHAVIOR TESTS
 # ============================================================================

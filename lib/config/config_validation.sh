@@ -272,9 +272,8 @@ validate_config_rule() {
 
 # Split rules string into array
 #
-# Splits a rules string into an array of individual rules, handling multiple formats:
-# - New format: Rules separated by ||| (e.g., "min:1|||max:10")
-# - Old format: Rules separated by comma (e.g., "min:1,max:10")
+# Splits a rules string into an array of individual rules, handling:
+# - Rules separated by ||| (e.g., "min:1|||max:10")
 # - Special case: Single values: rule (e.g., "values:0,1") - comma is part of value, don't split
 #
 # Arguments:
@@ -295,9 +294,6 @@ validate_config_rule() {
 #   split_rules_string "values:0,1" "rules_array"
 #   # rules_array contains: ("values:0,1") - not split because comma is part of value
 #
-#   split_rules_string "min:1,max:10" "rules_array"
-#   # rules_array contains: ("min:1" "max:10") - backward compatibility
-#
 # Note:
 #   This function centralizes rule splitting logic to avoid duplication.
 #   The ||| separator is used to avoid conflicts with commas in values: rules.
@@ -314,7 +310,6 @@ split_rules_string() {
 	fi
 
 	# Split rules by ||| separator (used to avoid conflicts with commas in values: rules)
-	# Fallback to comma for backward compatibility with old format
 	# Special case: if rules is a single values: rule (e.g., "values:0,1"), don't split it
 	if [[ "$rules" == *"|||"* ]]; then
 		# Split by ||| using parameter expansion (more portable than awk)
@@ -333,8 +328,8 @@ split_rules_string() {
 		# Single values: rule - don't split (comma is part of the rule value)
 		rule_array_ref=("$rules")
 	else
-		# Old format: comma-separated (for backward compatibility)
-		IFS=',' read -ra rule_array_ref <<<"$rules"
+		# Single rule without separator - add as-is
+		rule_array_ref=("$rules")
 	fi
 
 	return 0
@@ -344,7 +339,7 @@ split_rules_string() {
 #
 # Validates a configuration variable against all rules in the schema.
 # Processes rules sequentially, stopping on first failure.
-# Rules are comma-separated (e.g., "min:1,max:10,values:0,1").
+# Rules are separated by ||| (e.g., "min:1|||max:10").
 #
 # Arguments:
 #   $1: Variable name (passed to validate_config_rule)
@@ -352,7 +347,7 @@ split_rules_string() {
 #   $3: Variable type ("integer" or "string")
 #   $4: Required flag ("required" or "optional")
 #   $5: Default value from schema
-#   $6: Rules string (comma-separated list, e.g., "min:1,max:10" or empty)
+#   $6: Rules string (separated by |||, e.g., "min:1|||max:10" or empty)
 #
 # Returns:
 #   0: All rules passed (or no rules to validate)
@@ -366,8 +361,8 @@ split_rules_string() {
 #   - Calls validate_config_rule for each rule in the list
 #
 # Examples:
-#   var_value=$(validate_config_rules "COOLDOWN_MINUTES" "15" "integer" "required" "" "min:1,max:1440")
-#   # Validates both min:1 and max:1440 rules
+#   var_value=$(validate_config_rules "MAX_RESTARTS_PER_WINDOW" "20" "integer" "required" "" "min:1|||max:20")
+#   # Validates both min:1 and max:20 rules
 #
 # Note:
 #   Empty rules string is valid (no rules to validate)
@@ -423,12 +418,11 @@ validate_config_rules() {
 #   - Calls handle_error() for warnings about optional variables
 #
 # Examples:
-#   validate_config_var "EXTERNAL_PEER_IPS"
 #   validate_config_var "TIER1_THRESHOLD" "5"
 #
 # Note:
 #   Requires CONFIG_SCHEMA to be defined (from config_schema.sh)
-#   Unknown variables (not in schema) are allowed for backward compatibility
+#   Unknown variables (not in schema) are allowed (defensive programming - may be set programmatically)
 #   Uses indirect variable reference (${!var_name}) to read variable value if not provided
 #   Always updates global variable with final validated value to ensure corrections are persisted
 validate_config_var() {
@@ -449,7 +443,8 @@ validate_config_var() {
 	local schema
 	schema=$(get_config_schema "$var_name")
 	if [[ -z "$schema" ]]; then
-		# Unknown variable - allow it (for backward compatibility)
+		# Unknown variable - allow it (defensive programming: may be set programmatically)
+		# Note: Unknown variables are already rejected during config file parsing for security
 		return 0
 	fi
 
@@ -723,17 +718,6 @@ validate_config() {
 		# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 	fi
 
-	# Check for old format variables (should not exist)
-	if [[ -n "${EXTERNAL_PEER_IPS:-}" ]] || [[ -n "${INTERNAL_PEER_IPS:-}" ]]; then
-		# Use handle_error_or_exit_fake_mode to respect fake mode
-		# In fake mode, it returns 1; in normal mode it calls die() and never returns
-		if ! handle_error_or_exit_fake_mode "SYSTEM" "Old configuration format detected (EXTERNAL_PEER_IPS/INTERNAL_PEER_IPS). Please migrate to location-based format using the migration script." "${EXIT_VALIDATION_ERROR:-3}"; then
-			# In fake mode, handle_error_or_exit_fake_mode returns 1
-			return 1
-		fi
-		# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
-	fi
-
 	# Parse location-based configuration
 	if ! parse_location_config; then
 		# Use handle_error_or_exit_fake_mode to respect fake mode
@@ -764,11 +748,11 @@ validate_config() {
 			# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 		fi
 
-		# Validate external IP format
-		if ! validate_ip_address "$external_peer_ip"; then
+		# Validate external IP or DNS name format
+		if ! validate_ip_or_dns "$external_peer_ip"; then
 			# Use handle_error_or_exit_fake_mode to respect fake mode
 			# In fake mode, it returns 1; in normal mode it calls die() and never returns
-			if ! handle_error_or_exit_fake_mode "$location_name" "Invalid external IP format: $external_peer_ip" "${EXIT_VALIDATION_ERROR:-3}"; then
+			if ! handle_error_or_exit_fake_mode "$location_name" "Invalid external IP or DNS name format: $external_peer_ip" "${EXIT_VALIDATION_ERROR:-3}"; then
 				# In fake mode, handle_error_or_exit_fake_mode returns 1
 				return 1
 			fi
@@ -778,7 +762,7 @@ validate_config() {
 		# Get internal IPs for this location (may be empty)
 		internal_ips=$(get_location_internal_ips "$location_name")
 
-		# Validate internal IPs if set
+		# Validate internal IPs or DNS names if set
 		if [[ -n "$internal_ips" ]]; then
 			read -ra internal_ips_array <<<"$internal_ips"
 			for internal_peer_ip in "${internal_ips_array[@]}"; do
@@ -787,11 +771,11 @@ validate_config() {
 					continue
 				fi
 
-				# Validate IP address format
-				if ! validate_ip_address "$internal_peer_ip"; then
+				# Validate IP address or DNS name format
+				if ! validate_ip_or_dns "$internal_peer_ip"; then
 					# Use handle_error_or_exit_fake_mode to respect fake mode
 					# In fake mode, it returns 1; in normal mode it calls die() and never returns
-					if ! handle_error_or_exit_fake_mode "$location_name" "Invalid internal IP format: $internal_peer_ip" "${EXIT_VALIDATION_ERROR:-3}"; then
+					if ! handle_error_or_exit_fake_mode "$location_name" "Invalid internal IP or DNS name format: $internal_peer_ip" "${EXIT_VALIDATION_ERROR:-3}"; then
 						# In fake mode, handle_error_or_exit_fake_mode returns 1
 						return 1
 					fi

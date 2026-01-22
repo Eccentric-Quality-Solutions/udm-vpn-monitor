@@ -59,25 +59,23 @@ COMPARE_CONFIG_SCRIPT="${BATS_TEST_DIRNAME}/../compare-config.sh"
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3' \
-		'VPN_NAME="Site-to-Site VPN"' \
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60' \
 		'NO_ESCALATE=0'
 
-	# Create existing config with fewer fields (missing VPN_NAME and NO_ESCALATE)
+	# Create existing config with fewer fields (missing NO_ESCALATE)
 	create_test_config "$existing_config" \
 		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3'
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60'
 
 	run bash "$COMPARE_CONFIG_SCRIPT" --template "$template_config" --existing "$existing_config"
 
 	assert_success
 	assert_output --partial "New Settings in Template"
-	assert_output --partial "VPN_NAME"
 	assert_output --partial "NO_ESCALATE"
 }
 
@@ -98,8 +96,8 @@ COMPARE_CONFIG_SCRIPT="${BATS_TEST_DIRNAME}/../compare-config.sh"
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3'
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60'
 
 	# Create existing config with deprecated fields
 	create_test_config "$existing_config" \
@@ -108,8 +106,8 @@ COMPARE_CONFIG_SCRIPT="${BATS_TEST_DIRNAME}/../compare-config.sh"
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3' \
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60' \
 		'PING_TARGET_IP="192.168.1.100"' \
 		'OLD_DEPRECATED_SETTING="value"'
 
@@ -139,18 +137,16 @@ COMPARE_CONFIG_SCRIPT="${BATS_TEST_DIRNAME}/../compare-config.sh"
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3' \
-		'VPN_NAME="Site-to-Site VPN"'
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60'
 
 	create_test_config "$existing_config" \
 		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3' \
-		'VPN_NAME="Site-to-Site VPN"'
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60'
 
 	run bash "$COMPARE_CONFIG_SCRIPT" --template "$template_config" --existing "$existing_config"
 
@@ -253,23 +249,21 @@ COMPARE_CONFIG_SCRIPT="${BATS_TEST_DIRNAME}/../compare-config.sh"
 	create_test_config "$template_config" \
 		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_DC_EXTERNAL=\"${TEST_PEER_IP2}\"" \
-		'VPN_NAME="Site-to-Site VPN"' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3'
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60'
 
 	# Create existing config with same variables but different values (quoted)
 	create_test_config "$existing_config" \
 		'LOCATION_NYC_EXTERNAL="192.168.1.2"' \
 		'LOCATION_DC_EXTERNAL="10.0.0.2"' \
-		'VPN_NAME="My VPN"' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3'
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60'
 
 	run bash "$COMPARE_CONFIG_SCRIPT" --template "$template_config" --existing "$existing_config"
 
@@ -298,8 +292,8 @@ COMPARE_CONFIG_SCRIPT="${BATS_TEST_DIRNAME}/../compare-config.sh"
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3' \
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60' \
 		'NO_ESCALATE=0' \
 		'RECOVERY_VERIFY_TIMEOUT=30'
 
@@ -309,8 +303,8 @@ COMPARE_CONFIG_SCRIPT="${BATS_TEST_DIRNAME}/../compare-config.sh"
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3' \
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60' \
 		'NO_ESCALATE=0' \
 		'RECOVERY_VERIFY_TIMEOUT=30'
 
@@ -338,22 +332,20 @@ COMPARE_CONFIG_SCRIPT="${BATS_TEST_DIRNAME}/../compare-config.sh"
 	create_test_config "$template_config" \
 		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP} ${TEST_LOCAL_IP} 192.168.1.3\"" \
-		'VPN_NAME="Site-to-Site VPN"' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3'
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60'
 
 	# Create existing config missing the internal IPs variable
 	create_test_config "$existing_config" \
 		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		'VPN_NAME="Site-to-Site VPN"' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3'
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60'
 
 	run bash "$COMPARE_CONFIG_SCRIPT" --template "$template_config" --existing "$existing_config"
 
@@ -382,8 +374,8 @@ COMPARE_CONFIG_SCRIPT="${BATS_TEST_DIRNAME}/../compare-config.sh"
 		'TIER1_THRESHOLD=2' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3'
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60'
 
 	create_valid_config "$existing_config"
 
@@ -415,8 +407,8 @@ COMPARE_CONFIG_SCRIPT="${BATS_TEST_DIRNAME}/../compare-config.sh"
 		'TIER1_THRESHOLD=2' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3'
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60'
 
 	run bash "$COMPARE_CONFIG_SCRIPT" --template "$template_config" --existing "$existing_config"
 
@@ -471,18 +463,17 @@ EOF
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3' \
-		'VPN_NAME="My VPN Name"'
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60' \
+		'PING_COUNT=5'
 
 	create_valid_config "$existing_config"
 
 	run bash "$COMPARE_CONFIG_SCRIPT" --template "$template_config" --existing "$existing_config"
 
 	assert_success
-	assert_output --partial "VPN_NAME"
+	assert_output --partial "PING_COUNT"
 	assert_output --partial "Template value:"
-	assert_output --partial "My VPN Name"
 	assert_output --partial "Add to your config:"
 }
 
@@ -503,9 +494,9 @@ EOF
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3' \
-		'VPN_NAME="Site-to-Site VPN"'
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60' \
+		'DEBUG=0'
 
 	# Create existing config with deprecated setting
 	create_test_config "$existing_config" \
@@ -514,8 +505,8 @@ EOF
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3'
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60'
 
 	run bash "$COMPARE_CONFIG_SCRIPT" --template "$template_config" --existing "$existing_config"
 
@@ -564,8 +555,8 @@ LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"  # External IP
 TIER1_THRESHOLD=1  # Tier 1 threshold
 TIER2_THRESHOLD=3  # Tier 2 threshold
 TIER3_THRESHOLD=5  # Tier 3 threshold
-COOLDOWN_MINUTES=15  # Cooldown period
-MAX_RESTARTS_PER_HOUR=3  # Max restarts
+MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60  # Max restarts
 EOF
 
 	create_valid_config "$existing_config"
@@ -673,8 +664,8 @@ EOF
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3'
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60'
 
 	# Existing config has customer-specific locations
 	create_test_config "$existing_config" \
@@ -685,8 +676,8 @@ EOF
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3' \
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60' \
 		'OLD_DEPRECATED_SETTING="value"'
 
 	run bash "$COMPARE_CONFIG_SCRIPT" --template "$template_config" --existing "$existing_config"
@@ -722,9 +713,9 @@ EOF
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3' \
-		'VPN_NAME="My VPN"'
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60' \
+		'PING_COUNT=3'
 
 	# Existing config has customer-specific locations
 	create_test_config "$existing_config" \
@@ -733,15 +724,15 @@ EOF
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3'
+		'MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60'
 
 	run bash "$COMPARE_CONFIG_SCRIPT" --template "$template_config" --existing "$existing_config"
 
 	assert_success
-	# Should report VPN_NAME as new (not in existing config)
+	# Should report PING_COUNT as new (not in existing config)
 	assert_output --partial "New Settings in Template"
-	assert_output --partial "VPN_NAME"
+	assert_output --partial "PING_COUNT"
 	# Should NOT flag template LOCATION variables as new since existing config has LOCATION pattern
 	refute_output --partial "LOCATION_NYC_EXTERNAL"
 	refute_output --partial "LOCATION_NYC_INTERNAL"

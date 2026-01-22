@@ -647,7 +647,7 @@ load fixtures/vpn_at_tier
 }
 
 @test "tier 3: restart" {
-    setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_HOUR=10'
+    setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_WINDOW=10'
     # VPN at Tier 3 threshold (failure_count=5, TIER3_THRESHOLD=5)
     run bash "$TEST_SCRIPT" --fake
     # Should trigger Tier 3 action (ipsec restart)
@@ -1884,6 +1884,8 @@ PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
     # Importance: Prevents script from running with invalid configuration that would cause runtime errors.
 
     # Create temporary config without LOCATION_*_EXTERNAL
+    # Note: This config intentionally includes removed variables (VPN_NAME) to test
+    # that the script properly rejects invalid/outdated configuration
     local config_file="${TEST_DIR}/vpn-monitor.conf"
     cat >"$config_file" <<'EOF'
 VPN_NAME="Test VPN"
@@ -3160,6 +3162,143 @@ add_mock_to_path
 
 **Related**: See `tests/helpers/mocks.bash` for complete documentation and all available helpers.
 
+### 29. Date and Sleep Mock Setup with Time Increment Files
+
+**Pattern**: Use `setup_date_sleep_mocks_with_increment()` helper function for time-based testing that requires dynamic time progression.
+
+**When to use**: When testing time-dependent behavior such as:
+- Exponential backoff algorithms (sleep intervals)
+- Timeout handling
+- Duration calculations
+- Any test that needs to simulate elapsed time
+
+**Key Insight**:
+- The date mock reads from a time increment file to return dynamic timestamps
+- The sleep mock increments the time increment file by the sleep duration
+- Together, they simulate time progression: `date +%s` returns `base_time + increment`, and each `sleep N` adds `N` to the increment
+- The date mock must handle both Unix timestamps (`+%s`) and formatted timestamps (`+%Y-%m-%d %H:%M:%S`) for logging
+
+**Example - Basic Usage**:
+```bash
+load helpers/recovery
+
+@test "timeout handling test" {
+    setup_test_environment "${TEST_DIR}"
+    
+    local base_time=1609459200  # 2021-01-01 00:00:00 UTC
+    local time_increment_file="${TEST_DIR}/time_increment"
+    echo "0" >"$time_increment_file"
+    
+    # Set up date and sleep mocks with time increment file
+    setup_date_sleep_mocks_with_increment "$base_time" "$time_increment_file"
+    add_mock_to_path
+    
+    # Override calculate_duration to use time_increment_file
+    source_recovery_module
+    override_calculate_duration_with_increment "$time_increment_file"
+    
+    # Now time progresses as sleep is called:
+    # - First call: date +%s returns base_time + 0
+    # - After sleep 5: date +%s returns base_time + 5
+    # - After sleep 10: date +%s returns base_time + 15
+    
+    # ... test code ...
+    
+    remove_mock_from_path
+}
+```
+
+**Example - With Sleep Interval Logging**:
+```bash
+@test "exponential backoff test" {
+    setup_test_environment "${TEST_DIR}"
+    
+    local base_time=1609459200
+    local time_increment_file="${TEST_DIR}/time_increment"
+    echo "0" >"$time_increment_file"
+    
+    # Track sleep calls to verify exponential backoff
+    local sleep_log="${TEST_DIR}/sleep_log"
+    rm -f "$sleep_log"
+    
+    # Set up date mock (sleep mock needs custom logging)
+    local mock_date="${TEST_DIR}/date"
+    cat >"$mock_date" <<EOF
+#!/bin/bash
+if [[ "\$1" == "+%s" ]]; then
+    increment=\$(cat "${time_increment_file}" 2>/dev/null || echo "0")
+    echo $((base_time + increment))
+    exit 0
+elif [[ "\$1" == "+%Y-%m-%d %H:%M:%S" ]] || [[ "\$1" == '+%Y-%m-%d %H:%M:%S' ]]; then
+    echo "2021-01-01 00:00:00"
+    exit 0
+fi
+echo "Mock date: unsupported format: \$*" >&2
+exit 1
+EOF
+    sed -i "s|base_time|${base_time}|g" "$mock_date"
+    chmod +x "$mock_date"
+    
+    # Create sleep mock that logs intervals AND increments time
+    local mock_sleep="${TEST_DIR}/sleep"
+    cat >"$mock_sleep" <<EOF
+#!/bin/bash
+echo "\$1" >> "${sleep_log}"
+increment=\$(cat "${time_increment_file}" 2>/dev/null || echo "0")
+increment=\$((increment + \$1))
+echo "\$increment" > "${time_increment_file}"
+/usr/bin/sleep 0.1
+EOF
+    chmod +x "$mock_sleep"
+    
+    add_mock_to_path
+    # ... test code ...
+}
+```
+
+**Important Notes**:
+- **Date mock must handle formatted timestamps**: The logging system calls `date '+%Y-%m-%d %H:%M:%S'`, so the mock must handle this format to avoid permission issues with `/bin/date` fallback
+- **Time increment file must be initialized**: Always initialize with `echo "0" >"$time_increment_file"` before calling the helper
+- **Call helper before `add_mock_to_path`**: The helper creates mocks in `TEST_DIR`, which must be added to PATH
+- **Special cases**: If you need custom sleep behavior (e.g., logging intervals, timeout simulation), create the sleep mock manually after calling the helper, or create both mocks manually
+
+**Common Mistakes**:
+```bash
+# ❌ WRONG - Date mock doesn't handle formatted timestamps
+cat >"$mock_date" <<EOF
+#!/bin/bash
+if [[ "\$1" == "+%s" ]]; then
+    echo $((base_time + increment))
+else
+    exec /bin/date "\$@"  # Falls back to real date, may cause permission issues
+fi
+EOF
+
+# ✅ CORRECT - Date mock handles both formats
+cat >"$mock_date" <<EOF
+#!/bin/bash
+if [[ "\$1" == "+%s" ]]; then
+    increment=\$(cat "${time_increment_file}" 2>/dev/null || echo "0")
+    echo $((base_time + increment))
+    exit 0
+elif [[ "\$1" == "+%Y-%m-%d %H:%M:%S" ]] || [[ "\$1" == '+%Y-%m-%d %H:%M:%S' ]]; then
+    echo "2021-01-01 00:00:00"
+    exit 0
+fi
+echo "Mock date: unsupported format: \$*" >&2
+exit 1
+EOF
+```
+
+**Standard**:
+- Use `setup_date_sleep_mocks_with_increment()` for standard time-based testing
+- Initialize time increment file before calling helper: `echo "0" >"$time_increment_file"`
+- Use `override_calculate_duration_with_increment()` to make `calculate_duration()` read from the time increment file
+- For special cases (sleep logging, timeout simulation), create custom mocks with clear comments explaining why
+- Always handle both Unix timestamp (`+%s`) and formatted timestamp (`+%Y-%m-%d %H:%M:%S`) formats in date mocks
+
+**Related**: See `tests/helpers/recovery.bash` for `setup_date_sleep_mocks_with_increment()` and `override_calculate_duration_with_increment()` functions.
+
 ## Migration Notes
 
 - Old pattern `NO_ESCALATE=1; export NO_ESCALATE` → Use `enable_fake_mode()`
@@ -3169,3 +3308,4 @@ add_mock_to_path
 - Old pattern missing cleanup → Always use `remove_mock_from_path()`
 - Old pattern manual location name extraction → Use `get_failure_counter_path_for_location_var()` or `get_location_name_from_config_var()`
 - Old pattern embedded xfrm/ipsec output in mock scripts → Use `generate_xfrm_state_output()` or `generate_ipsec_status_output()` with placeholder pattern
+- Old pattern manual date/sleep mock setup → Use `setup_date_sleep_mocks_with_increment()` helper function

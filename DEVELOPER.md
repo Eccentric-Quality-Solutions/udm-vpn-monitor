@@ -922,7 +922,7 @@ This should be run once after cloning the repository (see [First Time Setup](#fi
    - Warns if ShellCheck or shfmt are not installed (but allows commit to proceed)
 
 2. **Package Regeneration**:
-   - Runs `prepare_install_package.sh` to regenerate the installer package
+   - Runs `scripts/prepare_install_package.sh` to regenerate the installer package
    - Adds the generated `udm-vpn-monitor.zip` file to the commit
    - Ensures the package is always synchronized with source code changes
 
@@ -947,7 +947,7 @@ git commit --no-verify -m "commit message"
 ./scripts/setup-git-hooks.sh
 ```
 
-**Note:** The hook will fail if `prepare_install_package.sh` fails or if the package file cannot be created. Fix any issues before committing.
+**Note:** The hook will fail if `scripts/prepare_install_package.sh` fails or if the package file cannot be created. Fix any issues before committing.
 
 ## Project Structure
 
@@ -958,7 +958,8 @@ udm-vpn-monitor/
 ├── uninstall.sh              # Uninstallation script
 ├── vpn-monitor.sh            # Main monitoring script
 ├── vpn-monitor.conf          # Configuration template
-├── prepare_install_package.sh # Creates installer package
+├── scripts/
+│   ├── prepare_install_package.sh # Creates installer package
 ├── lib/
 │   ├── common.sh            # Shared utilities (logging, validation)
 │   ├── config.sh            # Configuration loading and validation

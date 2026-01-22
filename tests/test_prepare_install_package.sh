@@ -6,7 +6,7 @@
 load test_helper
 
 # Path to the prepare install package script
-PREPARE_SCRIPT="${BATS_TEST_DIRNAME}/../prepare_install_package.sh"
+PREPARE_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/prepare_install_package.sh"
 
 # Project root directory
 PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."

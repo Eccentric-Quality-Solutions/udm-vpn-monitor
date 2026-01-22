@@ -401,7 +401,7 @@ parse_xfrm_output_to_sa_list() {
 					if [[ "$current_proto" =~ ^(esp|ah)$ ]] && [[ "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
 						# Store complete SA as delimited string for later processing
 						# Format: "src|dst|proto|spi|mark" (pipe separator avoids IP address conflicts)
-						# Mark may be empty (backward compatibility with SAs without marks)
+						# Mark is optional - may be empty for SAs without mark selectors
 						sa_list_ref+=("$current_src|$current_dst|$current_proto|$current_spi|${current_mark:-}")
 						log_message "DEBUG" "$location_name" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi mark=${current_mark:-<none>} for $ip_display"
 					else
@@ -1277,16 +1277,17 @@ retry_xfrm_recovery() {
 					# This actively verifies the tunnel can pass traffic rather than waiting passively
 					if [[ "$initial_byte_counter" -eq 0 ]]; then
 						if [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
-							# Get internal IPs for this location to ping
+							# Get internal IPs for this location to ping (resolved from DNS if needed)
 							local internal_ips=""
-							# parse_location_config and get_location_internal_ips are in the same module,
+							# parse_location_config and get_location_internal_ips_resolved are in the same module,
 							# so checking for parse_location_config is sufficient
 							if command -v parse_location_config >/dev/null 2>&1; then
 								# Ensure location config is parsed (may not be if called directly)
 								if ! declare -p LOCATIONS &>/dev/null 2>&1; then
 									parse_location_config 2>/dev/null || true
 								fi
-								internal_ips=$(get_location_internal_ips "$location_name" 2>/dev/null || echo "")
+								# Use resolved version to handle DNS names
+								internal_ips=$(get_location_internal_ips_resolved "$location_name" 2>/dev/null || echo "")
 							fi
 
 							# If we have internal IPs, ping the first one to generate traffic

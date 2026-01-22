@@ -842,9 +842,9 @@ update_location_state() {
 
 			# Log recovery success with method if available
 			if [[ -n "$recovery_method_display" ]]; then
-				log_message "INFO" "$location_name" "${VPN_NAME:-VPN} restored for $ip_display after $failure_count failures (recovery method: $recovery_method_display)"
+				log_message "INFO" "$location_name" "VPN restored for $ip_display after $failure_count failures (recovery method: $recovery_method_display)"
 			else
-				log_message "INFO" "$location_name" "${VPN_NAME:-VPN} recovered for $ip_display after $failure_count failures"
+				log_message "INFO" "$location_name" "VPN recovered for $ip_display after $failure_count failures"
 			fi
 			reset_failure_count "$location_name" "$external_peer_ip"
 
@@ -879,7 +879,7 @@ update_location_state() {
 					local time_diff
 					time_diff=$(calculate_duration "$last_status_log" "$current_time" 2>/dev/null || echo "0")
 					if [[ $time_diff -ge $status_log_interval ]] || [[ "$last_status_log" -eq 0 ]]; then
-						log_message "INFO" "$location_name" "${VPN_NAME:-VPN} check OK for $ip_display"
+						log_message "INFO" "$location_name" "VPN check OK for $ip_display"
 						set_peer_state_non_critical "$location_name" "$external_peer_ip" "last_status_log" "$current_time"
 					fi
 				fi
@@ -932,7 +932,7 @@ update_location_state() {
 		"tunnel_down") failure_type_display=" (tunnel down)" ;;
 		"routing_issue") failure_type_display=" (routing issue)" ;;
 		esac
-		handle_error "WARNING" "$location_name" "${VPN_NAME:-VPN} check failed for $ip_display (failure count: $failure_count)$failure_type_display"
+		handle_error "WARNING" "$location_name" "VPN check failed for $ip_display (failure count: $failure_count)$failure_type_display"
 	fi
 	return 0
 }
@@ -997,7 +997,7 @@ determine_recovery_action() {
 			handle_error "ERROR" "$location_name" "Detection unreliable: Both 'ip' and 'ipsec' commands unavailable - skipping recovery escalation for $ip_display to prevent false recovery actions" 0
 			# Still log the failure but don't escalate recovery
 			if [[ "$failure_count" -ge "$TIER1_THRESHOLD" ]]; then
-				log_message "INFO" "$location_name" "Tier 1: Logging ${VPN_NAME:-VPN} failure for $ip_display$failure_type_display (recovery skipped - detection unreliable)"
+				log_message "INFO" "$location_name" "Tier 1: Logging VPN failure for $ip_display$failure_type_display (recovery skipped - detection unreliable)"
 			fi
 			return 0
 		fi
@@ -1005,7 +1005,7 @@ determine_recovery_action() {
 
 	# Tier 1: Logging
 	if [[ "$failure_count" -ge "$TIER1_THRESHOLD" ]]; then
-		log_message "INFO" "$location_name" "Tier 1: Logging ${VPN_NAME:-VPN} failure for $ip_display$failure_type_display"
+		log_message "INFO" "$location_name" "Tier 1: Logging VPN failure for $ip_display$failure_type_display"
 	fi
 
 	# Check if recovery should be coordinated (system-wide failure mode)

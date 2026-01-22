@@ -38,8 +38,8 @@ INTERNAL_PEER_IPS="${internal_ips}"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
-COOLDOWN_MINUTES=15
-MAX_RESTARTS_PER_HOUR=3
+MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60
 EOF
 
 	# Add extra config variables
@@ -134,14 +134,12 @@ EOF
 	# Importance: Migration shouldn't break existing config
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_old_config "$config_file" "203.0.113.1" "" \
-		'VPN_NAME="Test VPN"' \
 		'LOG_FILE="/var/log/vpn-monitor.log"'
 
 	CONFIG_FILE="$config_file" run bash "$MIGRATION_SCRIPT" --auto 2>&1
 
 	assert_file_exist "$config_file"
 	assert_file_contains "$config_file" "TIER1_THRESHOLD=1"
-	assert_file_contains "$config_file" "VPN_NAME"
 	assert_file_contains "$config_file" "LOG_FILE"
 }
 

@@ -50,7 +50,7 @@ if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
 	echo "	proto esp spi 0x12345678 reqid 1 mode tunnel"
 	exit 0
 fi
-# Handle "ip xfrm state" (without -s flag, for backward compatibility)
+# Handle "ip xfrm state" (without -s flag, fallback case)
 if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
 	# Return SA exists for external_peer_ip
 	echo "src 203.0.113.1 dst 203.0.113.1"
@@ -130,7 +130,7 @@ if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
 	# Return empty (no SA)
 	exit 0
 fi
-# Handle "ip xfrm state" (without -s flag, for backward compatibility)
+# Handle "ip xfrm state" (without -s flag, fallback case)
 if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
 	# Return empty (no SA)
 	exit 0
@@ -204,7 +204,7 @@ if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
 	echo "	proto esp spi 0x12345678 reqid 1 mode tunnel"
 	exit 0
 fi
-# Handle "ip xfrm state" (without -s flag, for backward compatibility)
+# Handle "ip xfrm state" (without -s flag, fallback case)
 if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
 	echo "src 203.0.113.1 dst 203.0.113.1"
 	echo "	proto esp spi 0x12345678 reqid 1 mode tunnel"
@@ -304,7 +304,7 @@ EOF
 # bats test_tags=category:unit,category:high-risk,priority:high
 @test "check_ping_if_enabled - sa_exists=1, ping succeeds - logs connectivity verified" {
 	# Purpose: Test that check_ping_if_enabled correctly handles sa_exists=1 with successful ping
-	# Expected: Should log "VPN connectivity verified: ping check passed"
+	# Expected: Should log "VPN connectivity verified: ping check passed from local_udm_ip to internal_peer_ip"
 	# Importance: Validates function works correctly with explicit SA status
 	setup_ping_optional_test
 

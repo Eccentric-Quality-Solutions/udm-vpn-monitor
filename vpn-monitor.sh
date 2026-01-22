@@ -388,7 +388,7 @@ parse_args() {
 #   # Sets up script environment, parses args, logs start
 #
 # Note:
-#   Requires parse_args, log_message, init_state, VPN_NAME, NO_ESCALATE, DEBUG to be set
+#   Requires parse_args, log_message, init_state, NO_ESCALATE, DEBUG to be set
 #   Debug output goes to stderr (>&2)
 initialize_monitor() {
 	# Parse command-line arguments
@@ -396,9 +396,9 @@ initialize_monitor() {
 
 	# Log script start
 	if [[ "${NO_ESCALATE:-0}" -eq 1 ]]; then
-		log_message "INFO" "SYSTEM" "${VPN_NAME:-VPN} monitor script started in fake mode (PID: $$) - tier escalation disabled"
+		log_message "INFO" "SYSTEM" "VPN monitor script started in fake mode (PID: $$) - tier escalation disabled"
 	else
-		log_message "INFO" "SYSTEM" "${VPN_NAME:-VPN} monitor script started (PID: $$)"
+		log_message "INFO" "SYSTEM" "VPN monitor script started (PID: $$)"
 	fi
 
 	# Debug output (only if DEBUG=1)
@@ -562,7 +562,18 @@ process_locations() {
 		if [[ -n "$location_list" ]]; then
 			location_list="${location_list}, "
 		fi
-		location_list="${location_list}${loc}"
+		# Get external and internal IPs for this location
+		local external_ip
+		local internal_ips
+		external_ip=$(get_location_external_ip "$loc" 2>/dev/null || echo "")
+		internal_ips=$(get_location_internal_ips "$loc" 2>/dev/null || echo "")
+
+		# Format location with IPs in parentheses
+		if [[ -n "$internal_ips" ]]; then
+			location_list="${location_list}${loc} (${external_ip}, ${internal_ips})"
+		else
+			location_list="${location_list}${loc} (${external_ip})"
+		fi
 	done
 	log_message "INFO" "SYSTEM" "Found ${#LOCATIONS[@]} location(s): $location_list"
 
@@ -659,16 +670,17 @@ process_locations() {
 	# monitor_location() will check should_location_attempt_recovery() internally
 	# to coordinate recovery during system-wide failures
 	for location_name in "${!LOCATIONS[@]}"; do
-		# Get external IP for this location
+		# Get external IP for this location (resolved from DNS if needed)
 		local external_peer_ip
-		if ! external_peer_ip=$(get_location_external_ip "$location_name"); then
-			# Already handled above, skip
+		if ! external_peer_ip=$(get_location_external_ip_resolved "$location_name"); then
+			# DNS resolution failed or location not found - skip
+			handle_error "WARNING" "$location_name" "Failed to get or resolve external IP (skipping)"
 			continue
 		fi
 
-		# Get internal IPs for this location (may be empty)
+		# Get internal IPs for this location (resolved from DNS if needed, may be empty)
 		local internal_ips
-		internal_ips=$(get_location_internal_ips "$location_name")
+		internal_ips=$(get_location_internal_ips_resolved "$location_name" 2>/dev/null || echo "")
 
 		# Monitor location with external IP and internal IPs
 		# Recovery coordination is handled in determine_recovery_action()
@@ -773,9 +785,9 @@ main() {
 
 	# Log completion and exit
 	if [[ $all_ok -eq 0 ]]; then
-		log_message "INFO" "SYSTEM" "VPN monitor check completed successfully"
+		log_message "INFO" "SYSTEM" "The VPN monitor script has successfully finished running"
 	else
-		log_message "WARNING" "SYSTEM" "VPN monitor check completed with warnings/errors"
+		log_message "WARNING" "SYSTEM" "The VPN monitor script finished running with issues (some locations below recovery threshold)"
 	fi
 
 	# In fake mode, always exit with 0 (we're just checking/logging, not taking action)

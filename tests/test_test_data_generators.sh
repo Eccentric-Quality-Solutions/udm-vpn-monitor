@@ -229,7 +229,7 @@ load helpers/test_data
 	assert_file_contains "$config_file" "LOCATION_TEST_EXTERNAL=\"${peer_ip}\""
 	assert_file_contains "$config_file" "LOCATION_TEST_INTERNAL=\"${peer_ip}\""
 	# Verify file doesn't contain extra fields
-	refute_file_contains "$config_file" "VPN_NAME"
+	refute_file_contains "$config_file" "PING_COUNT"
 	refute_file_contains "$config_file" "TIER1_THRESHOLD"
 }
 
@@ -260,27 +260,27 @@ load helpers/test_data
 	# Verify file contains expected standard fields
 	assert_file_contains "$config_file" "LOCATION_TEST_EXTERNAL=\"${peer_ip}\""
 	assert_file_contains "$config_file" "LOCATION_TEST_INTERNAL=\"${peer_ip}\""
-	assert_file_contains "$config_file" "VPN_NAME=\"Test VPN\""
+	assert_file_contains "$config_file" "PING_COUNT=3"
 	assert_file_contains "$config_file" "TIER1_THRESHOLD=1"
 	assert_file_contains "$config_file" "TIER2_THRESHOLD=3"
 	assert_file_contains "$config_file" "TIER3_THRESHOLD=5"
-	assert_file_contains "$config_file" "COOLDOWN_MINUTES=15"
-	assert_file_contains "$config_file" "MAX_RESTARTS_PER_HOUR=3"
+	assert_file_contains "$config_file" "MAX_RESTARTS_PER_WINDOW=20"
 	assert_file_contains "$config_file" "LOG_FILE="
 	assert_file_contains "$config_file" "STATE_DIR="
 }
 
 # bats test_tags=category:test-infrastructure,priority:low
-@test "generate_config_file - standard template with custom VPN name" {
-	# Purpose: Verify generate_config_file standard template accepts custom VPN name
-	# Expected: Config file uses provided VPN name
-	local config_file="${BATS_TEST_TMPDIR}/test_standard_vpn.conf"
+@test "generate_config_file - standard template with internal IP" {
+	# Purpose: Verify generate_config_file standard template accepts internal IP parameter
+	# Expected: Config file uses provided parameters
+	local config_file="${BATS_TEST_TMPDIR}/test_standard_internal.conf"
 	local peer_ip="${TEST_PEER_IP}"
-	local vpn_name="Custom VPN Name"
-	generate_config_file "standard" "$config_file" "$peer_ip" "$peer_ip" "$vpn_name"
+	local internal_ip="192.168.1.100"
+	generate_config_file "standard" "$config_file" "$peer_ip" "$internal_ip"
 
-	# Verify file uses custom VPN name
-	assert_file_contains "$config_file" "VPN_NAME=\"${vpn_name}\""
+	# Verify file contains location config with both external and internal IPs
+	assert_file_contains "$config_file" "LOCATION_TEST_EXTERNAL"
+	assert_file_contains "$config_file" "LOCATION_TEST_INTERNAL"
 }
 
 # bats test_tags=category:test-infrastructure,priority:low
@@ -354,9 +354,9 @@ load helpers/test_data
 
 # bats test_tags=category:test-infrastructure,priority:low
 @test "generate_config_file - cooldown_rate_limit template" {
-	# Purpose: Verify generate_config_file creates cooldown_rate_limit config file correctly
-	# Expected: Config file contains cooldown and rate limit settings
-	local config_file="${BATS_TEST_TMPDIR}/test_cooldown_rate_limit.conf"
+	# Purpose: Verify generate_config_file creates rate_limit config file correctly
+	# Expected: Config file contains rate limit settings
+	local config_file="${BATS_TEST_TMPDIR}/test_rate_limit.conf"
 	local peer_ip="${TEST_PEER_IP}"
 	generate_config_file "cooldown_rate_limit" "$config_file" "$peer_ip"
 
@@ -364,8 +364,7 @@ load helpers/test_data
 	assert_file_exist "$config_file"
 	# Verify file contains expected fields
 	assert_file_contains "$config_file" "LOCATION_NYC_EXTERNAL=\"${peer_ip}\""
-	assert_file_contains "$config_file" "MAX_RESTARTS_PER_HOUR=3"
-	assert_file_contains "$config_file" "COOLDOWN_MINUTES=1"
+	assert_file_contains "$config_file" "MAX_RESTARTS_PER_WINDOW=20"
 	assert_file_contains "$config_file" "ENABLE_XFRM_RECOVERY=0"
 	assert_file_contains "$config_file" "ENABLE_NETWORK_PARTITION_CHECK=0"
 	assert_file_contains "$config_file" "ENABLE_RESOURCE_MONITORING=0"
@@ -373,18 +372,16 @@ load helpers/test_data
 
 # bats test_tags=category:test-infrastructure,priority:low
 @test "generate_config_file - cooldown_rate_limit template with custom values" {
-	# Purpose: Verify generate_config_file cooldown_rate_limit template accepts custom cooldown and rate limit
-	# Expected: Config file uses provided cooldown minutes and max restarts
-	local config_file="${BATS_TEST_TMPDIR}/test_cooldown_rate_limit_custom.conf"
+	# Purpose: Verify generate_config_file rate_limit template accepts custom rate limit
+	# Expected: Config file uses provided max restarts
+	local config_file="${BATS_TEST_TMPDIR}/test_rate_limit_custom.conf"
 	local peer_ip="${TEST_PEER_IP}"
-	local cooldown_minutes=2
 	local max_restarts=5
-	generate_config_file "cooldown_rate_limit" "$config_file" "$peer_ip" "$cooldown_minutes" "$max_restarts"
+	generate_config_file "cooldown_rate_limit" "$config_file" "$peer_ip" "$max_restarts"
 
 	# Verify file uses custom values
 	assert_file_contains "$config_file" "LOCATION_NYC_EXTERNAL=\"${peer_ip}\""
-	assert_file_contains "$config_file" "MAX_RESTARTS_PER_HOUR=${max_restarts}"
-	assert_file_contains "$config_file" "COOLDOWN_MINUTES=${cooldown_minutes}"
+	assert_file_contains "$config_file" "MAX_RESTARTS_PER_WINDOW=${max_restarts}"
 }
 
 # bats test_tags=category:test-infrastructure,priority:low

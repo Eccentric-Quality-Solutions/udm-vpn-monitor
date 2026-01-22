@@ -79,6 +79,7 @@ This document describes the architecture and design of the UDM VPN Monitor syste
 │  │  • system_wide_failure_coordinator  # System-wide     │  │
 │  │  • vpn-monitor.lock  # System-wide                      │  │
 │  │  • .cron_checked  # System-wide                        │  │
+│  │  • .last_run_timestamp  # System-wide                  │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
@@ -238,7 +239,15 @@ flowchart TD
 
     NextLocation --> MoreLocations{More<br/>Locations?}
     MoreLocations -->|Yes| ForEachLocation
-    MoreLocations -->|No| ReleaseLock[Release Lockfile]
+    MoreLocations -->|No| SystemWideFailureCheck{System-Wide<br/>Failure<br/>Detection<br/>Enabled?}
+    SystemWideFailureCheck -->|Yes| CheckSystemWideFailure[Check System-Wide<br/>Failure Status<br/>Compare Failure Counts<br/>to Threshold]
+    SystemWideFailureCheck -->|No| ReleaseLock[Release Lockfile]
+    CheckSystemWideFailure -->|System-Wide<br/>Failure<br/>Detected| SetSystemWideFailureState[Set System-Wide<br/>Failure State<br/>Designate Coordinator]
+    CheckSystemWideFailure -->|No System-Wide<br/>Failure| ClearSystemWideFailureState{Previous<br/>System-Wide<br/>Failure?}
+    ClearSystemWideFailureState -->|Yes| ClearSystemWideState[Clear System-Wide<br/>Failure State<br/>Clear Coordinator]
+    ClearSystemWideFailureState -->|No| ReleaseLock
+    SetSystemWideFailureState --> ReleaseLock
+    ClearSystemWideState --> ReleaseLock
     ReleaseLock --> End([End])
 
     Exit1 --> End
@@ -257,7 +266,134 @@ flowchart TD
 
 - **Cron Persistence Check**: Performed once per run (tracked via `.cron_checked` file) after cooldown check. Detects if cron jobs were removed during system upgrades (common after UniFi OS updates). Logs warnings but doesn't fail execution - this is a diagnostic check to help users detect configuration loss.
 
-- **System-Wide Failure Detection**: (if enabled via `ENABLE_SYSTEM_WIDE_FAILURE_DETECTION`) occurs after all locations are checked but before recovery attempts. The system checks all locations' VPN status (read-only, doesn't update state) and compares failure count to configured threshold. If threshold exceeded, system-wide failure state is set and recovery coordination is enabled. Only the designated coordinator location attempts recovery during system-wide failures, preventing cascades and rate limiting issues. System-wide failure state is cleared when failures drop below threshold. This detection happens in `process_locations()` before individual location recovery attempts in `monitor_location()`.
+- **System-Wide Failure Detection**: (if enabled via `ENABLE_SYSTEM_WIDE_FAILURE_DETECTION`) occurs after all locations are checked but before recovery attempts. The system checks all locations' VPN status (read-only, doesn't update state) and compares failure count to configured threshold. If threshold exceeded, system-wide failure state is set and recovery coordination is enabled. Only the designated coordinator location attempts recovery during system-wide failures, preventing cascades and rate limiting issues. System-wide failure state is cleared when failures drop below threshold. This detection happens in `process_locations()` before individual location recovery attempts in `monitor_location()`. See the "System-Wide Failure Detection" section below for detailed documentation.
+
+## System-Wide Failure Detection
+
+System-wide failure detection identifies infrastructure-level issues when multiple VPN locations fail simultaneously. This feature prevents recovery cascades and rate limiting by coordinating recovery attempts during infrastructure outages.
+
+### Overview
+
+When all (or a configured majority) of VPN locations fail at the same time, this typically indicates an infrastructure-level problem (ISP outage, router issues, network-wide connectivity problems) rather than individual VPN tunnel failures. In such scenarios, attempting recovery for each location independently would:
+- Create recovery cascades (all locations attempting recovery simultaneously)
+- Trigger rate limiting mechanisms
+- Waste system resources (recovery cannot succeed during infrastructure outages)
+- Generate excessive log noise
+
+System-wide failure detection addresses these issues by:
+1. **Detecting** when multiple locations fail simultaneously
+2. **Coordinating** recovery so only one location (the coordinator) attempts recovery
+3. **Preventing** cascades and rate limiting during infrastructure outages
+4. **Resuming** normal per-location recovery when infrastructure is restored
+
+### Detection Mechanism
+
+System-wide failure detection occurs in `process_locations()` after all locations have been checked but before individual recovery attempts:
+
+1. **Failure Status Collection**: The system collects failure status for all locations from existing state (failure counts from previous cycle)
+   - Uses existing failure counts rather than re-checking VPNs (avoids double work)
+   - One-cycle delay is acceptable for coordination purposes
+   - Conservative approach: better to coordinate unnecessarily than miss a real system-wide failure
+
+2. **Threshold Comparison**: Compares failed location percentage to configured threshold
+   - Default threshold: 100% (all locations must fail)
+   - Configurable via `SYSTEM_WIDE_FAILURE_THRESHOLD` (range: 50-100%)
+   - Requires at least 2 locations to detect system-wide failure (single location failure is not "system-wide")
+
+3. **State Management**: Updates system-wide failure state and timestamp
+   - Sets system-wide failure state to 1 when threshold exceeded
+   - Records timestamp when failure first detected
+   - Clears state when failures drop below threshold
+
+### Recovery Coordination
+
+When system-wide failure is detected, recovery is coordinated using a "first location wins" approach:
+
+1. **Coordinator Designation**: First location to check during system-wide failure becomes the coordinator
+   - Uses atomic file write (`set -C` noclobber mode) to safely designate coordinator
+   - Coordinator designation stored in `system_wide_failure_coordinator` state file
+   - Coordinator persists until system-wide failure is resolved
+
+2. **Recovery Attempts**: Only the coordinator location attempts recovery
+   - Coordinator attempts recovery normally (Tier 1, 2, 3 as appropriate)
+   - Non-coordinator locations skip recovery actions but continue monitoring
+   - Recovery coordination checked in `monitor_location()` before Tier 2/3 recovery attempts
+
+3. **Coordination Check**: Each location checks `should_location_attempt_recovery()` before recovery
+   - Returns 0 (attempt recovery) if:
+     - System-wide failure detection is disabled, OR
+     - No system-wide failure detected, OR
+     - Current location is the coordinator
+   - Returns 1 (skip recovery) if:
+     - System-wide failure detected AND current location is not coordinator
+
+4. **Automatic Cleanup**: Coordinator is automatically cleared when system-wide failure is resolved
+   - When failures drop below threshold, system-wide failure state is cleared
+   - Coordinator file is automatically removed
+   - Per-location recovery resumes normally
+
+### Configuration
+
+System-wide failure detection is controlled by three configuration options:
+
+- **`ENABLE_SYSTEM_WIDE_FAILURE_DETECTION`** (default: 1, enabled)
+  - Enable/disable system-wide failure detection
+  - When disabled, all locations attempt recovery independently
+
+- **`SYSTEM_WIDE_FAILURE_THRESHOLD`** (default: 100, range: 50-100)
+  - Percentage of locations that must fail to trigger detection
+  - 100 = all locations must fail (default)
+  - 80 = 80% of locations must fail
+  - Lower thresholds detect system-wide failures earlier but may trigger on partial outages
+
+- **`COORDINATE_SYSTEM_WIDE_RECOVERY`** (default: 1, enabled)
+  - Enable/disable recovery coordination during system-wide failures
+  - When disabled, all locations attempt recovery independently even during system-wide failures
+  - When enabled, only coordinator attempts recovery during system-wide failures
+
+### State Files
+
+System-wide failure detection uses three system-wide state files (not per-peer, since infrastructure issues affect all peers):
+
+- **`system_wide_failure_state`**: System-wide failure status (0 = no failure, 1 = failure detected)
+- **`system_wide_failure_timestamp`**: Unix timestamp when failure was first detected
+- **`system_wide_failure_coordinator`**: Location name of recovery coordinator
+
+See the "State Management" section above for detailed state file documentation.
+
+### Integration Points
+
+1. **Detection** (`vpn-monitor.sh` → `process_locations()`):
+   - Runs after all locations are checked
+   - Collects failure status from existing state
+   - Updates system-wide failure state and timestamp
+   - Logs system-wide failure events
+
+2. **Recovery Actions** (`lib/recovery/recovery_orchestration.sh` → `monitor_location()`):
+   - Checks `should_location_attempt_recovery()` before Tier 2/3 recovery attempts
+   - Coordinator attempts recovery normally
+   - Non-coordinator locations skip recovery actions
+   - Logs informative messages about skipped recovery
+
+### Design Rationale
+
+The "first location wins" coordination approach was chosen over alternatives for:
+
+- **Simplicity**: No complex leader election or consensus algorithms needed
+- **Effectiveness**: Handles common case (infrastructure outages) very well
+- **Minimal Overhead**: Atomic file writes are fast and reliable
+- **Acceptable Race Condition**: If two locations check simultaneously, worst case is both attempt recovery (still better than all locations)
+- **No Additional Infrastructure**: Works with existing state file system
+
+See ADR-0031 for detailed design rationale and alternative approaches considered.
+
+### Related Documentation
+
+- **ADR-0031**: System-Wide Failure Detection and Coordination (detailed design rationale)
+- **Code Diagram**: `docs/code-diagrams/system-wide-failure-flow.md` (function flow diagrams)
+- **Implementation**: `lib/detection/system_wide_failure.sh` (detection and coordination functions)
+- **Integration**: `vpn-monitor.sh` → `process_locations()` (detection integration)
+- **Recovery Integration**: `lib/recovery/recovery_orchestration.sh` → `monitor_location()` (coordination integration)
 
 ## Detection Method Flow
 
@@ -379,9 +515,17 @@ stateDiagram-v2
 
     Monitoring --> SkipRecovery: Network Partitioned
     SkipRecovery --> Monitoring: Continue Monitoring
+
+    Monitoring --> CheckSystemWideFailure: VPN Failed
+    CheckSystemWideFailure --> SkipRecoverySystemWide: System-Wide Failure<br/>& Not Coordinator
+    CheckSystemWideFailure --> AttemptRecovery: System-Wide Failure<br/>& Coordinator<br/>OR<br/>No System-Wide Failure
+    SkipRecoverySystemWide --> Monitoring: Continue Monitoring
+    AttemptRecovery --> Tier1
 ```
 
 **Note**: Network partition check also occurs after VPN check fails. When a VPN failure is detected, the failure counter is incremented first (to track the failure even if recovery is skipped), then network partition state is checked. If network is partitioned when a VPN failure is detected, recovery actions are skipped to avoid unnecessary disruption, but the failure count is still incremented for tracking purposes.
+
+**System-Wide Failure Coordination**: When system-wide failure is detected (all or majority of locations failing simultaneously), recovery is coordinated to prevent cascades and rate limiting. Before attempting Tier 2 or Tier 3 recovery actions, the system checks if system-wide failure is active and if the current location is the designated coordinator. Only the coordinator location attempts recovery during system-wide failures; non-coordinator locations skip recovery actions but continue monitoring. This coordination prevents multiple simultaneous recovery attempts that could overwhelm the system or trigger rate limiting during infrastructure-level outages.
 
 ## Data Flow
 
@@ -489,6 +633,7 @@ State files are organized into two categories:
 - `${STATE_DIR}/resource_monitoring_summary_last_time`: Timestamp of last resource monitoring summary (for hourly summary logging)
 - `${STATE_DIR}/vpn-monitor.lock`: Lockfile for execution control (format: `timestamp:pid` for timeout detection)
 - `${STATE_DIR}/.cron_checked`: Flag file to prevent repeated cron persistence checks
+- `${STATE_DIR}/.last_run_timestamp`: Timestamp file to track last script execution (for startup grace period detection)
 
 **Note**: `STATE_DIR` defaults to `${SCRIPT_DIR}/state` and `LOGS_DIR` defaults to `${SCRIPT_DIR}/logs`. These can be overridden via configuration. When installed to `/data/vpn-monitor`, these resolve to `/data/vpn-monitor/state` and `/data/vpn-monitor/logs` respectively.
 
@@ -671,7 +816,6 @@ Each peer's monitoring and recovery actions operate completely independently.
   - Uses sliding window: counts restarts in last N minutes from current time
   - Checks minimum interval first (prevents rapid-fire restarts)
   - If limit exceeded, Tier 3 recovery actions are skipped until rate limit window expires
-  - Backward compatibility: `MAX_RESTARTS_PER_HOUR` is automatically migrated to new parameters
 
 **Network Partition State** (`network_partition_state`):
 - **Purpose**: Tracks network connectivity status to distinguish VPN failures from network partition issues
@@ -793,6 +937,7 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
     ├── system_wide_failure_coordinator # Recovery coordinator location name
     ├── vpn-monitor.lock        # Lockfile (timestamp:pid format)
     ├── .cron_checked           # Flag file for cron check
+    ├── .last_run_timestamp     # Timestamp file for startup grace period detection
     ├── failure_count_NYC_203_0_113_1  # Per-location failure counters
     ├── failure_count_DC_198_51_100_1   # (sanitized location name and IP in filename)
     ├── last_bytes_NYC_203_0_113_1  # Per-location byte counters

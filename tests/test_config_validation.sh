@@ -15,15 +15,15 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # ============================================================================
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid COOLDOWN_MINUTES (negative)" {
-	# Purpose: Test verifies that the script handles negative COOLDOWN_MINUTES values gracefully
+@test "invalid MAX_RESTARTS_PER_WINDOW (negative)" {
+	# Purpose: Test verifies that the script handles negative MAX_RESTARTS_PER_WINDOW values gracefully
 	# Expected: Script processes negative value without crashing, either using default or failing gracefully
 	# Importance: Negative values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		'COOLDOWN_MINUTES=-1'
+		'MAX_RESTARTS_PER_WINDOW=-1'
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -36,76 +36,21 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	run bash "$test_script" --fake
 
-	# Script should handle invalid value (either use default or fail gracefully)
 	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid COOLDOWN_MINUTES (zero)" {
-	# Purpose: Test verifies that the script handles zero COOLDOWN_MINUTES values gracefully
+@test "invalid MAX_RESTARTS_PER_WINDOW (zero)" {
+	# Purpose: Test verifies that the script handles zero MAX_RESTARTS_PER_WINDOW values gracefully
 	# Expected: Script processes zero value without crashing, either using default or failing gracefully
 	# Importance: Zero values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		'COOLDOWN_MINUTES=0'
-
-	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
-
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
-
-	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
-	add_mock_to_path
-
-	run bash "$test_script" --fake
-
-	assert_file_exist "$LOG_FILE"
-
-	remove_mock_from_path
-}
-
-# bats test_tags=category:high-risk,priority:high
-@test "invalid MAX_RESTARTS_PER_HOUR (negative)" {
-	# Purpose: Test verifies that the script handles negative MAX_RESTARTS_PER_HOUR values gracefully
-	# Expected: Script processes negative value without crashing, either using default or failing gracefully
-	# Importance: Negative values can occur from manual editing errors; script must handle them robustly
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	setup_test_location_config "$config_file" \
-		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		'MAX_RESTARTS_PER_HOUR=-1'
-
-	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
-
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
-
-	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
-	add_mock_to_path
-
-	run bash "$test_script" --fake
-
-	assert_file_exist "$LOG_FILE"
-
-	remove_mock_from_path
-}
-
-# bats test_tags=category:high-risk,priority:high
-@test "invalid MAX_RESTARTS_PER_HOUR (zero)" {
-	# Purpose: Test verifies that the script handles zero MAX_RESTARTS_PER_HOUR values gracefully
-	# Expected: Script processes zero value without crashing, either using default or failing gracefully
-	# Importance: Zero values can occur from manual editing errors; script must handle them robustly
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	setup_test_location_config "$config_file" \
-		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		'MAX_RESTARTS_PER_HOUR=0'
+		'MAX_RESTARTS_PER_WINDOW=0'
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -1077,51 +1022,6 @@ EOF
 }
 
 # bats test_tags=category:unit,priority:high
-@test "split_rules_string - comma separator backward compatibility" {
-	# Purpose: Test that split_rules_string supports comma separator for backward compatibility
-	# Expected: Function splits rules by comma when ||| is not present and not a values: rule
-	# Importance: Backward compatibility - old format should still work
-	# Source required modules
-	# shellcheck source=../lib/common.sh
-	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
-	# shellcheck source=../lib/config.sh
-	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
-
-	local -a result_array
-	split_rules_string "min:1,max:10" "result_array"
-	local status=$?
-
-	# Should succeed and split into two rules
-	assert [ $status -eq 0 ]
-	assert [ ${#result_array[@]} -eq 2 ]
-	assert_equal "${result_array[0]}" "min:1"
-	assert_equal "${result_array[1]}" "max:10"
-}
-
-# bats test_tags=category:unit,priority:high
-@test "split_rules_string - comma separator with three rules" {
-	# Purpose: Test that split_rules_string handles multiple comma-separated rules
-	# Expected: Function splits all rules separated by comma into array elements
-	# Importance: Ensures backward compatibility works with multiple rules
-	# Source required modules
-	# shellcheck source=../lib/common.sh
-	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
-	# shellcheck source=../lib/config.sh
-	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
-
-	local -a result_array
-	split_rules_string "min:1,max:10,step:2" "result_array"
-	local status=$?
-
-	# Should succeed and split into three rules
-	assert [ $status -eq 0 ]
-	assert [ ${#result_array[@]} -eq 3 ]
-	assert_equal "${result_array[0]}" "min:1"
-	assert_equal "${result_array[1]}" "max:10"
-	assert_equal "${result_array[2]}" "step:2"
-}
-
-# bats test_tags=category:unit,priority:high
 @test "split_rules_string - single rule without separator" {
 	# Purpose: Test that split_rules_string handles single rule without any separator
 	# Expected: Function returns single-element array containing the rule
@@ -1143,10 +1043,10 @@ EOF
 }
 
 # bats test_tags=category:unit,priority:high
-@test "split_rules_string - ||| separator takes precedence over comma" {
-	# Purpose: Test that ||| separator is checked first and takes precedence
-	# Expected: Function uses ||| separator when present, even if comma is also present
-	# Importance: Ensures correct precedence - ||| should be used when present
+@test "split_rules_string - ||| separator with comma in rule value" {
+	# Purpose: Test that ||| separator correctly splits rules even when comma is present in rule values
+	# Expected: Function uses ||| separator to split, preserving commas within individual rules
+	# Importance: Ensures ||| separator works correctly with complex rule values
 	# Source required modules
 	# shellcheck source=../lib/common.sh
 	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
@@ -1157,7 +1057,7 @@ EOF
 	split_rules_string "min:1|||max:10,step:2" "result_array"
 	local status=$?
 
-	# Should succeed and split by ||| (not by comma)
+	# Should succeed and split by ||| (preserving comma in second rule)
 	assert [ $status -eq 0 ]
 	assert [ ${#result_array[@]} -eq 2 ]
 	assert_equal "${result_array[0]}" "min:1"
@@ -1165,8 +1065,8 @@ EOF
 }
 
 # bats test_tags=category:unit,priority:high
-@test "split_rules_string - values: prefix takes precedence over comma" {
-	# Purpose: Test that values: prefix takes precedence over comma separator
+@test "split_rules_string - values: rule preserves commas" {
+	# Purpose: Test that values: rules are not split (comma is part of the value)
 	# Expected: Function does not split values: rules even when comma is present
 	# Importance: Special case handling - values: should not be split by comma
 	# Source required modules

@@ -139,7 +139,6 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	# Check default config was created
 	assert_file_exist "${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
 	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "LOCATION_NYC_EXTERNAL"
-	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "VPN_NAME"
 	# Verify critical enable flags are set to 1 by default
 	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "ENABLE_PING_CHECK=1"
 	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "ENABLE_KEEPALIVE=1"

@@ -18,9 +18,11 @@ set -euo pipefail
 
 # Source common functions for file_exists_and_readable
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Determine repo root (parent of scripts directory)
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=lib/common.sh
-if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
-	source "${SCRIPT_DIR}/lib/common.sh"
+if [[ -f "${REPO_ROOT}/lib/common.sh" ]]; then
+	source "${REPO_ROOT}/lib/common.sh"
 fi
 
 # Parse arguments
@@ -46,8 +48,7 @@ for arg in "$@"; do
 	esac
 done
 
-# Get script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# REPO_ROOT is already set above
 if [[ $USE_TAR -eq 1 ]]; then
 	PACKAGE_NAME="udm-vpn-monitor.tar.gz"
 else
@@ -153,10 +154,10 @@ SCRIPT_FILES=(
 echo "Preparing install package..."
 
 # Copy main files
-copy_files_with_validation "$SCRIPT_DIR" "$TEMP_DIR" "${MAIN_FILES[@]}"
+copy_files_with_validation "$REPO_ROOT" "$TEMP_DIR" "${MAIN_FILES[@]}"
 
 # Copy library files
-copy_files_with_validation "$SCRIPT_DIR" "$TEMP_DIR" "${LIB_FILES[@]}"
+copy_files_with_validation "$REPO_ROOT" "$TEMP_DIR" "${LIB_FILES[@]}"
 
 # Copy module subdirectories
 MODULE_DIRS=(
@@ -167,12 +168,12 @@ MODULE_DIRS=(
 )
 
 for dir in "${MODULE_DIRS[@]}"; do
-	if [[ -d "${SCRIPT_DIR}/${dir}" ]]; then
+	if [[ -d "${REPO_ROOT}/${dir}" ]]; then
 		mkdir -p "${TEMP_DIR}/${dir}"
 		# Copy files if directory is not empty
 		# Check if directory has any files before copying to avoid glob expansion issues with set -u
-		if [[ -n "$(ls -A "${SCRIPT_DIR}/${dir}" 2>/dev/null)" ]]; then
-			cp -r "${SCRIPT_DIR}/${dir}"/* "${TEMP_DIR}/${dir}/"
+		if [[ -n "$(ls -A "${REPO_ROOT}/${dir}" 2>/dev/null)" ]]; then
+			cp -r "${REPO_ROOT}/${dir}"/* "${TEMP_DIR}/${dir}/"
 			echo "  Added directory: ${dir}/"
 		else
 			echo "  Warning: ${dir}/ is empty, skipping" >&2
@@ -181,42 +182,42 @@ for dir in "${MODULE_DIRS[@]}"; do
 done
 
 # Copy script files
-copy_files_with_validation "$SCRIPT_DIR" "$TEMP_DIR" "${SCRIPT_FILES[@]}"
+copy_files_with_validation "$REPO_ROOT" "$TEMP_DIR" "${SCRIPT_FILES[@]}"
 
 # Create package file (zip or tar)
 cd "$TEMP_DIR"
 if [[ $USE_TAR -eq 1 ]]; then
-	tar -czf "${SCRIPT_DIR}/${PACKAGE_NAME}" . >/dev/null
+	tar -czf "${REPO_ROOT}/${PACKAGE_NAME}" . >/dev/null
 else
-	zip -r "${SCRIPT_DIR}/${PACKAGE_NAME}" . >/dev/null
+	zip -r "${REPO_ROOT}/${PACKAGE_NAME}" . >/dev/null
 fi
-cd "$SCRIPT_DIR"
+cd "$REPO_ROOT"
 
 echo ""
-echo "Package created successfully: ${PACKAGE_NAME}"
+echo "Package created successfully: ${REPO_ROOT}/${PACKAGE_NAME}"
 echo ""
 echo "Files included:"
 echo "  Main files:"
 for file in "${MAIN_FILES[@]}"; do
-	if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
+	if [[ -f "${REPO_ROOT}/${file}" ]]; then
 		echo "    - ${file}"
 	fi
 done
 echo "  Library files:"
 for file in "${LIB_FILES[@]}"; do
-	if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
+	if [[ -f "${REPO_ROOT}/${file}" ]]; then
 		echo "    - ${file}"
 	fi
 done
 echo "  Script files:"
 for file in "${SCRIPT_FILES[@]}"; do
-	if [[ -f "${SCRIPT_DIR}/${file}" ]]; then
+	if [[ -f "${REPO_ROOT}/${file}" ]]; then
 		echo "    - ${file}"
 	fi
 done
 echo "  Module directories:"
 for dir in "${MODULE_DIRS[@]}"; do
-	if [[ -d "${SCRIPT_DIR}/${dir}" ]]; then
+	if [[ -d "${REPO_ROOT}/${dir}" ]]; then
 		echo "    - ${dir}/"
 	fi
 done

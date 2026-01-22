@@ -329,12 +329,8 @@ cleanup_keepalive_daemon() {
 
 			assert_success
 			# Wait for PID file to be removed (indicates daemon stopped)
-			# Use timeout to prevent hanging if daemon doesn't stop
-			local wait_count=0
-			while [[ -f "$pidfile" ]] && [[ $wait_count -lt 20 ]]; do
-				sleep 0.05
-				wait_count=$((wait_count + 1))
-			done
+			# Using file-based synchronization helper instead of custom polling loop
+			wait_for_file_removed "$pidfile" 1 || true
 
 			# Verify process is stopped (with timeout protection)
 			if [[ -n "$pid" ]]; then

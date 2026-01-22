@@ -321,12 +321,11 @@ LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 LOCATION_TEST2_EXTERNAL="${TEST_PEER_IP2}"
 LOCATION_TEST2_INTERNAL="${TEST_PEER_IP2}"
-VPN_NAME="Test VPN"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
-COOLDOWN_MINUTES=15
-MAX_RESTARTS_PER_HOUR=3
+MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60
 LOG_FILE="/data/vpn-monitor/logs/vpn-monitor.log"
 STATE_DIR="/data/vpn-monitor"
 CRON_SCHEDULE="*/1 * * * *"
@@ -2214,6 +2213,60 @@ wait_for_file() {
 	done
 }
 
+# Wait for a file to be removed (not exist)
+#
+# Waits for a file to be removed/not exist, using the same pattern as wait_for_file().
+# This provides file-based synchronization for process completion by waiting for
+# cleanup files (like lockfiles) to be removed.
+#
+# Arguments:
+#   $1: Path to file to wait for removal
+#   $2: Timeout in seconds (default: 5)
+#
+# Returns:
+#   0: File was removed within timeout
+#   1: Timeout exceeded, file still exists
+wait_for_file_removed() {
+	local file="$1"
+	local timeout="${2:-5}"
+	local start_time
+	local elapsed_time
+	local sleep_interval=0.01 # Same as wait_for_file for consistency
+
+	# Get start time in seconds since epoch
+	start_time=$(date +%s 2>/dev/null || echo "0")
+
+	# If date command failed, use iteration-based fallback
+	if [[ "$start_time" == "0" ]]; then
+		# Fallback: use iteration counting (less accurate but works without date)
+		local max_iterations=$((timeout * 100)) # timeout * (1 / sleep_interval)
+		local iterations=0
+		while [[ $iterations -lt $max_iterations ]]; do
+			if [[ ! -f "$file" ]]; then
+				return 0
+			fi
+			sleep "$sleep_interval"
+			iterations=$((iterations + 1))
+		done
+		return 1
+	fi
+
+	# Normal path: use time-based checking
+	while true; do
+		if [[ ! -f "$file" ]]; then
+			return 0
+		fi
+
+		# Calculate elapsed time
+		elapsed_time=$(($(date +%s) - start_time))
+		if [[ $elapsed_time -ge $timeout ]]; then
+			return 1
+		fi
+
+		sleep "$sleep_interval"
+	done
+}
+
 # ============================================================================
 # Test Setup Helper Functions - Reduce Duplication Across Tests
 # ============================================================================
@@ -2507,7 +2560,6 @@ setup_test_location_config() {
 	mkdir -p "$(dirname "$config_file")"
 
 	cat >"$config_file" <<EOF
-VPN_NAME="Test VPN"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
@@ -3117,6 +3169,112 @@ exit 1
 EOF
 	chmod +x "$mock_nslookup"
 	echo "$mock_nslookup"
+}
+
+# Create mock getent command for DNS resolution
+#
+# Creates a mock 'getent' command that simulates DNS resolution via getent ahostsv4.
+# Used for testing resolve_dns() function.
+#
+# Arguments:
+#   $1: Success flag ("1" for success, "0" for failure, default: "1")
+#   $2: IP address to return (default: "192.168.1.1")
+#   $3: Hostname to match (optional, if provided only matches that hostname)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "getent"
+#
+# Note:
+#   getent ahostsv4 returns format: "IP STREAM HOSTNAME"
+#   The mock outputs this format when successful
+mock_getent() {
+	local success="${1:-1}"
+	local ip_address="${2:-192.168.1.1}"
+	local hostname="${3:-}"
+
+	local mock_getent="${TEST_DIR}/getent"
+	cat >"$mock_getent" <<EOF
+#!/bin/bash
+# getent ahostsv4 hostname
+if [[ "\$1" == "ahostsv4" ]]; then
+	if [[ "$success" == "1" ]]; then
+		# Check if hostname matches (if specified)
+		if [[ -z "$hostname" ]] || [[ "\$2" == "$hostname" ]]; then
+			echo "$ip_address STREAM \$2"
+			exit 0
+		fi
+	fi
+	# Failure case
+	exit 2
+fi
+# For other getent commands, pass through to real getent if available
+if command -v /usr/bin/getent >/dev/null 2>&1; then
+	exec /usr/bin/getent "\$@"
+else
+	exit 1
+fi
+EOF
+	chmod +x "$mock_getent"
+	echo "$mock_getent"
+}
+
+# Create mock host command for DNS resolution
+#
+# Creates a mock 'host' command that simulates DNS resolution.
+# Used for testing resolve_dns() function fallback.
+#
+# Arguments:
+#   $1: Success flag ("1" for success, "0" for failure, default: "1")
+#   $2: IP address to return (default: "192.168.1.1")
+#   $3: Hostname to match (optional, if provided only matches that hostname)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "host"
+#
+# Note:
+#   host -t A returns format: "hostname has address IP"
+#   The mock outputs this format when successful
+mock_host() {
+	local success="${1:-1}"
+	local ip_address="${2:-192.168.1.1}"
+	local hostname="${3:-}"
+
+	local mock_host="${TEST_DIR}/host"
+	cat >"$mock_host" <<EOF
+#!/bin/bash
+# host -t A hostname
+if [[ "\$1" == "-t" ]] && [[ "\$2" == "A" ]]; then
+	if [[ "$success" == "1" ]]; then
+		# Check if hostname matches (if specified)
+		if [[ -z "$hostname" ]] || [[ "\$3" == "$hostname" ]]; then
+			echo "\$3 has address $ip_address"
+			exit 0
+		fi
+	fi
+	# Failure case
+	exit 1
+fi
+# For other host commands, pass through to real host if available
+if command -v /usr/bin/host >/dev/null 2>&1; then
+	exec /usr/bin/host "\$@"
+else
+	exit 1
+fi
+EOF
+	chmod +x "$mock_host"
+	echo "$mock_host"
 }
 
 # Create mock check_ipsec_phase2 command
@@ -4092,185 +4250,6 @@ restore_permissions_after_test() {
 	local original_perms="$2"
 
 	chmod "$original_perms" "$path" 2>/dev/null || true
-}
-
-# Get state file path with common defaults
-#
-# Helper function that wraps get_peer_state_file_path with sensible defaults
-# to reduce repetition in tests. Uses TEST_PEER_IP as default peer IP and
-# empty string for location (backward compatibility).
-#
-# Arguments:
-#   $1: Optional location name (defaults to "" for backward compatibility)
-#   $2: Optional peer IP address (defaults to TEST_PEER_IP)
-#   $3: Optional state key (defaults to "failure_count")
-#
-# Returns:
-#   Outputs the state file path
-#   Returns 0 on success, 1 on failure
-#
-# Side effects:
-#   Sources get_peer_state_file_path function if not available
-#
-# Example:
-#   source_function "get_peer_state_file_path"
-#   local failure_counter
-#   failure_counter=$(get_state_file_path)
-#   # or with custom values:
-#   failure_counter=$(get_state_file_path "NYC" "${TEST_PEER_IP}" "last_bytes")
-#
-# Note:
-#   Requires get_peer_state_file_path function to be available.
-#   Automatically sources it if not already loaded.
-# Note: This function is now provided by helpers/state.bash
-# It is kept here for backward compatibility.
-get_state_file_path() {
-	local location="${1:-}"
-	local peer_ip="${2:-${TEST_PEER_IP}}"
-	local key="${3:-failure_count}"
-
-	# Ensure get_peer_state_file_path is available
-	if ! command -v get_peer_state_file_path >/dev/null 2>&1; then
-		source_function "get_peer_state_file_path" || return 1
-	fi
-
-	get_peer_state_file_path "$location" "$peer_ip" "$key"
-}
-
-# Create a corrupted state file
-#
-# Helper function that creates a state file with an invalid value to test
-# corruption handling. Reduces repetition of the common pattern of creating
-# corrupted state files in tests.
-#
-# Arguments:
-#   $1: Optional location name (defaults to "" for backward compatibility)
-#   $2: Optional peer IP address (defaults to TEST_PEER_IP)
-#   $3: Optional state key (defaults to "failure_count")
-#   $4: Optional invalid value to write (defaults to "invalid-value")
-#
-# Returns:
-#   Outputs the state file path
-#   Returns 0 on success, 1 on failure
-#
-# Side effects:
-#   Creates or overwrites the state file with invalid content
-#   Sources get_peer_state_file_path function if not available
-#
-# Example:
-#   source_function "get_peer_state_file_path"
-#   local failure_counter
-#   failure_counter=$(create_corrupted_state_file)
-#   # or with custom values:
-#   local bytes_file
-#   bytes_file=$(create_corrupted_state_file "NYC" "${TEST_PEER_IP}" "last_bytes" "not-a-number")
-#
-# Note:
-#   Requires get_peer_state_file_path function to be available.
-#   Automatically sources it if not already loaded.
-# Note: This function is now provided by helpers/state.bash
-# It is kept here for backward compatibility.
-create_corrupted_state_file() {
-	local location="${1:-}"
-	local peer_ip="${2:-${TEST_PEER_IP}}"
-	local key="${3:-failure_count}"
-	local invalid_value="${4:-invalid-value}"
-
-	# Get the state file path
-	local state_file
-	state_file=$(get_state_file_path "$location" "$peer_ip" "$key") || return 1
-
-	# Create corrupted file
-	echo "$invalid_value" >"$state_file"
-
-	# Return the path for use in tests
-	echo "$state_file"
-}
-
-# Setup a read-only state file with automatic cleanup
-#
-# Helper function that creates a state file, sets it to read-only, and sets up
-# a trap to restore permissions on EXIT. Reduces repetition of the common pattern
-# of testing read-only state file handling.
-#
-# Arguments:
-#   $1: Optional location name (defaults to "" for backward compatibility)
-#   $2: Optional peer IP address (defaults to TEST_PEER_IP)
-#   $3: Optional state key (defaults to "failure_count")
-#   $4: Optional initial value to write (defaults to "3")
-#   $5: Optional permissions to set (defaults to "444" for read-only)
-#
-# Returns:
-#   Outputs the state file path
-#   Returns 0 on success, 1 on failure
-#
-# Side effects:
-#   Creates the state file with initial value
-#   Sets file permissions to read-only (or specified permissions)
-#   Sets up EXIT trap to restore original permissions
-#   Sources get_peer_state_file_path function if not available
-#
-# Example:
-#   source_function "get_peer_state_file_path"
-#   local failure_counter
-#   failure_counter=$(setup_readonly_state_file)
-#   # File is now read-only and will be restored on test exit
-#   # or with custom values:
-#   local bytes_file
-#   bytes_file=$(setup_readonly_state_file "NYC" "${TEST_PEER_IP}" "last_bytes" "1000" "000")
-#
-# Note:
-#   Requires get_peer_state_file_path function to be available.
-#   Automatically sources it if not already loaded.
-#   The trap is set up automatically and will restore permissions even if test fails.
-# Note: This function is now provided by helpers/state.bash
-# It is kept here for backward compatibility.
-setup_readonly_state_file() {
-	local location="${1:-}"
-	local peer_ip="${2:-${TEST_PEER_IP}}"
-	local key="${3:-failure_count}"
-	local initial_value="${4:-3}"
-	local readonly_perms="${5:-444}"
-
-	# Get the state file path
-	local state_file
-	state_file=$(get_state_file_path "$location" "$peer_ip" "$key") || return 1
-
-	# Ensure parent directory exists
-	local parent_dir
-	parent_dir=$(dirname "$state_file")
-	mkdir -p "$parent_dir" || return 1
-
-	# Remove existing file if it exists to ensure clean state
-	rm -f "$state_file"
-
-	# Create file with initial value and set permissions in one step using install
-	# This ensures the file is created with the correct permissions from the start
-	printf '%s' "$initial_value" | install -m "$readonly_perms" /dev/stdin "$state_file" || {
-		# Fallback to echo + chmod if install fails
-		echo "$initial_value" >"$state_file" || return 1
-		chmod "$readonly_perms" "$state_file" || {
-			echo "Failed to set permissions on $state_file" >&2
-			return 1
-		}
-	}
-
-	# Verify file was created
-	[[ -f "$state_file" ]] || {
-		echo "Failed to create file: $state_file" >&2
-		return 1
-	}
-
-	# Save original permissions for restoration
-	local original_perms
-	original_perms=$(save_permissions_for_restore "$state_file")
-
-	# Set up trap to restore permissions on EXIT
-	# Use actual path value, not variable, since trap executes after function returns
-	trap "chmod $original_perms \"$state_file\" 2>/dev/null || true" EXIT
-
-	# Return the path for use in tests
-	echo "$state_file"
 }
 
 # Source helper modules for backward compatibility

@@ -512,3 +512,112 @@ get_location_internal_ips() {
 	echo ""
 	return 0
 }
+
+# Get external IP for a location (resolved from DNS if needed)
+#
+# Retrieves the external IP address for a given location name, resolving DNS names to IP addresses.
+# If the stored value is already an IP address, returns it unchanged.
+# If the stored value is a DNS name, resolves it to an IP address.
+#
+# Arguments:
+#   $1: Location name (sanitized)
+#
+# Returns:
+#   0: External IP found and resolved
+#   1: Location not found or DNS resolution failed
+#
+# Output:
+#   Prints resolved IP address to stdout
+#
+# Side effects:
+#   - May perform DNS resolution (cached for performance)
+#   - Logs warnings on DNS resolution failures
+#
+# Note:
+#   Requires parse_location_config() to be called first
+#   Requires resolve_dns() function from network_validation.sh (available when detection.sh is sourced)
+get_location_external_ip_resolved() {
+	local location_name="$1"
+	local external_value
+	local resolved_ip
+
+	# Get original value (IP or DNS name)
+	if ! external_value=$(get_location_external_ip "$location_name"); then
+		return 1
+	fi
+
+	# Resolve DNS name to IP if needed
+	if ! resolved_ip=$(resolve_dns "$external_value" 2>/dev/null); then
+		handle_error "WARNING" "$location_name" "Failed to resolve external DNS name: $external_value"
+		return 1
+	fi
+
+	echo "$resolved_ip"
+	return 0
+}
+
+# Get internal IPs for a location (resolved from DNS if needed)
+#
+# Retrieves the internal IP addresses (space-separated) for a given location name, resolving DNS names to IP addresses.
+# If stored values are already IP addresses, returns them unchanged.
+# If stored values are DNS names, resolves them to IP addresses.
+#
+# Arguments:
+#   $1: Location name (sanitized)
+#
+# Returns:
+#   0: Internal IPs found and resolved (may be empty string)
+#   1: Location not found or DNS resolution failed
+#
+# Output:
+#   Prints resolved IP addresses (space-separated) to stdout, or empty string if not set
+#
+# Side effects:
+#   - May perform DNS resolution (cached for performance)
+#   - Logs warnings on DNS resolution failures
+#
+# Note:
+#   Requires parse_location_config() to be called first
+#   Requires resolve_dns() function from network_validation.sh (available when detection.sh is sourced)
+get_location_internal_ips_resolved() {
+	local location_name="$1"
+	local internal_values
+	local IFS=' '
+	local -a values_array
+	local -a resolved_ips_array
+	local resolved_ip
+
+	# Get original values (IPs or DNS names)
+	if ! internal_values=$(get_location_internal_ips "$location_name"); then
+		return 1
+	fi
+
+	# If empty, return empty string
+	if [[ -z "$internal_values" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Split into array and resolve each value
+	read -ra values_array <<<"$internal_values"
+	resolved_ips_array=()
+
+	for value in "${values_array[@]}"; do
+		# Skip empty values
+		if [[ -z "$value" ]]; then
+			continue
+		fi
+
+		# Resolve DNS name to IP if needed
+		if ! resolved_ip=$(resolve_dns "$value" 2>/dev/null); then
+			handle_error "WARNING" "$location_name" "Failed to resolve internal DNS name: $value"
+			return 1
+		fi
+
+		resolved_ips_array+=("$resolved_ip")
+	done
+
+	# Join resolved IPs with spaces
+	echo "${resolved_ips_array[*]}"
+	return 0
+}

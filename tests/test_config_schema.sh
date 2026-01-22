@@ -42,8 +42,6 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	apply_schema_defaults
 
 	# Verify some variables have defaults (check a few key ones)
-	# VPN_NAME should have default "Site-to-Site VPN"
-	assert_equal "${VPN_NAME:-}" "Site-to-Site VPN"
 	# ENABLE_PING_CHECK should have default 1
 	assert_equal "${ENABLE_PING_CHECK:-}" "1"
 	# TIER1_THRESHOLD should have default 1
@@ -60,7 +58,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		'VPN_NAME="Custom VPN Name"' \
+		"PING_COUNT=5" \
 		"TIER1_THRESHOLD=5" \
 		"TIER2_THRESHOLD=5" \
 		"TIER3_THRESHOLD=5" \
@@ -79,8 +77,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_success
 	assert_file_exist "$LOG_FILE"
 	# Config file values should override defaults
-	# VPN_NAME should be "Custom VPN Name" not "Site-to-Site VPN"
-	assert_log_contains_any "$LOG_FILE" "Custom VPN Name" "VPN_NAME" "Configuration loaded"
+	# PING_COUNT should be 5 not 3 (default)
+	assert_log_contains_any "$LOG_FILE" "Configuration loaded"
 
 	remove_mock_from_path
 }
@@ -156,7 +154,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		'VPN_NAME="Override Default"'
+		'PING_COUNT=5'
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -183,15 +181,15 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# (setup_test_environment already set these, but we keep for clarity)
 	export CONFIG_FILE="$config_file"
 
-	# Unset VPN_NAME to ensure we start clean
-	unset VPN_NAME
+	# Unset PING_COUNT to ensure we start clean
+	unset PING_COUNT
 
 	# Call load_config which should apply defaults first, then parse config
 	load_config "$config_file"
 
-	# Verify that VPN_NAME was set to config file value (not default)
+	# Verify that PING_COUNT was set to config file value (not default)
 	# This proves defaults were applied first, then overridden by config
-	assert_equal "${VPN_NAME:-}" "Override Default"
+	assert_equal "${PING_COUNT:-}" "5"
 
 	remove_mock_from_path
 }

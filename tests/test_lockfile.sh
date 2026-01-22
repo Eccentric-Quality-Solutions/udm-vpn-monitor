@@ -412,18 +412,15 @@ MOCK_EOF
 	# This ensures the signal reaches the subshell where the trap is set
 	kill -TERM -- -"$script_pid" 2>/dev/null || kill -TERM "$script_pid" 2>/dev/null || true
 
-	# Wait for process to exit (with timeout)
-	local wait_count=0
-	while kill -0 "$script_pid" 2>/dev/null && [[ $wait_count -lt 20 ]]; do
-		sleep 0.05
-		wait_count=$((wait_count + 1))
-	done
-
-	# Give trap handler a moment to clean up
-	sleep 0.1
-
-	# Lockfile should be cleaned up by trap handler
-	assert_file_not_exist "$lockfile"
+	# Wait for lockfile to be removed (file-based sync using helper)
+	# This indicates the process has exited and cleaned up via trap handler
+	# Using file-based synchronization instead of polling process directly
+	if ! wait_for_file_removed "$lockfile" 2; then
+		# Lockfile still exists after timeout - process may not have cleaned up
+		# Try to wait for process anyway to avoid leaving zombie processes
+		wait "$script_pid" 2>/dev/null || true
+		fail "Lockfile was not removed after SIGTERM (timeout after 2s) - trap handler may not have executed"
+	fi
 
 	remove_mock_from_path
 }

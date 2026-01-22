@@ -136,7 +136,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Prevents arbitrary code execution if config file is compromised
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Expand TEST_PEER_IP but keep dangerous content literal
-	printf 'LOCATION_TEST_EXTERNAL="%s"\nVPN_NAME=$(echo "malicious")\n' "${TEST_PEER_IP}" >"$config_file"
+	printf 'LOCATION_TEST_EXTERNAL="%s"\nNETWORK_PARTITION_DNS_HOSTNAME=$(echo "malicious")\n' "${TEST_PEER_IP}" >"$config_file"
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -161,7 +161,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Prevents arbitrary code execution if config file is compromised
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Expand TEST_PEER_IP but keep dangerous content literal
-	printf 'LOCATION_TEST_EXTERNAL="%s"\nVPN_NAME=`echo "malicious"`\n' "${TEST_PEER_IP}" >"$config_file"
+	printf 'LOCATION_TEST_EXTERNAL="%s"\nNETWORK_PARTITION_DNS_HOSTNAME=`echo "malicious"`\n' "${TEST_PEER_IP}" >"$config_file"
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -239,7 +239,6 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	setup_test_location_config "$config_file" \
 		"LOCATION_TEST1_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'LOCATION_TEST2_EXTERNAL="192.168.1.2"' \
-		'VPN_NAME="Test VPN"' \
 		'TIER1_THRESHOLD=2' \
 		'TIER2_THRESHOLD=4' \
 		'TIER3_THRESHOLD=6' \
@@ -300,7 +299,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Ensures all dangerous patterns are detected even when combined
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Expand TEST_PEER_IP but keep dangerous content literal
-	printf 'LOCATION_TEST_EXTERNAL="%s"\nVPN_NAME=$(echo "test") `echo "test"` eval "test"\n' "${TEST_PEER_IP}" >"$config_file"
+	printf 'LOCATION_TEST_EXTERNAL="%s"\nNETWORK_PARTITION_DNS_HOSTNAME=$(echo "test") `echo "test"` eval "test"\n' "${TEST_PEER_IP}" >"$config_file"
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -325,7 +324,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Comments should not trigger security checks
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	# Expand TEST_PEER_IP but keep dangerous content literal in comments
-	printf 'LOCATION_TEST_EXTERNAL="%s"\n# This is a comment with $(echo "test") `echo "test"` eval "test"\nVPN_NAME="Test VPN"\n' "${TEST_PEER_IP}" >"$config_file"
+	printf 'LOCATION_TEST_EXTERNAL="%s"\n# This is a comment with $(echo "test") `echo "test"` eval "test"\nNETWORK_PARTITION_DNS_HOSTNAME=google.com\n' "${TEST_PEER_IP}" >"$config_file"
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 

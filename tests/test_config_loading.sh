@@ -24,7 +24,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Create config with syntax error (unclosed quote)
 	cat >"$config_file" <<EOF
 LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}
-VPN_NAME="Test VPN"
+PING_COUNT=5
 EOF
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
@@ -230,7 +230,7 @@ EOF
 	# Create config with invalid syntax (unclosed quote)
 	cat >"$config_file" <<'EOF'
 LOCATION_TEST_EXTERNAL="192.168.1.1
-VPN_NAME="Test VPN"
+PING_COUNT=5
 EOF
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
@@ -260,7 +260,7 @@ EOF
 	# Create config that parses but is missing required variables
 	# Note: This is hard to test directly since schema defaults are applied, but we can test the validation path
 	create_test_config "$config_file" \
-		'VPN_NAME="Test VPN"'
+		'PING_COUNT=5'
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
@@ -290,7 +290,7 @@ EOF
 	# Note: INVALID_LINE_WITHOUT_EQUALS must be written directly since create_test_config only handles valid assignments
 	create_test_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		'VPN_NAME="Test VPN"' \
+		"PING_COUNT=5" \
 		"TIER1_THRESHOLD=1"
 	# Add invalid line manually (testing that parser skips it)
 	echo "INVALID_LINE_WITHOUT_EQUALS" >>"$config_file"
@@ -361,7 +361,7 @@ EOF
 	# Create config with invalid syntax that will cause load_config to fail
 	cat >"$config_file" <<'EOF'
 LOCATION_TEST_EXTERNAL="192.168.1.1
-VPN_NAME="Test VPN"
+PING_COUNT=5
 EOF
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
@@ -394,7 +394,7 @@ EOF
 	# Create config that parses successfully but fails validation
 	# Missing location config will cause validation to fail
 	create_test_config "$config_file" \
-		'VPN_NAME="Test VPN"' \
+		"PING_COUNT=5" \
 		"TIER1_THRESHOLD=1" \
 		"TIER2_THRESHOLD=3" \
 		"TIER3_THRESHOLD=5"
@@ -435,7 +435,7 @@ EOF
 	# In fake mode, this won't exit, allowing us to test LOG_FILE preservation
 	cat >"$config_file" <<'EOF'
 LOCATION_TEST_EXTERNAL="192.168.1.1
-VPN_NAME="Test VPN"
+PING_COUNT=5
 EOF
 
 	# Create test version of script with custom log file
@@ -471,7 +471,7 @@ EOF
 	# Create config with syntax error that will cause safe_parse_config_file to fail
 	cat >"$config_file" <<'EOF'
 LOCATION_TEST_EXTERNAL="192.168.1.1
-VPN_NAME="Test VPN"
+PING_COUNT=5
 EOF
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
@@ -507,7 +507,7 @@ EOF
 	cat >"$config_file" <<'EOF'
 LOCATION_TEST_EXTERNAL="192.168.1.1"
 # Dangerous content patterns that should be caught
-VPN_NAME="Test $(echo evil)"
+NETWORK_PARTITION_DNS_HOSTNAME=$(echo evil)
 LOCATION_TEST_INTERNAL="`whoami`"
 TIER1_THRESHOLD=$(id)
 EOF

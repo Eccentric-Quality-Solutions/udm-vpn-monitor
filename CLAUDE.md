@@ -35,8 +35,8 @@ shfmt -d *.sh lib/*.sh  # Check formatting (no changes)
 shfmt -w *.sh lib/*.sh  # Format in-place
 
 # Create installation package
-./prepare_install_package.sh        # Creates zip
-./prepare_install_package.sh --tar  # Creates tar.gz
+./scripts/prepare_install_package.sh        # Creates zip
+./scripts/prepare_install_package.sh --tar  # Creates tar.gz
 ```
 
 ## Architecture

@@ -177,7 +177,7 @@ handle_config_error() {
 #
 # Examples:
 #   declare -A parse_result
-#   if parse_quoted_value "Site-to-Site" "VPN_NAME=Site-to-Site" 1 "parse_result"; then
+#   if parse_quoted_value "192.168.1.1" "LOCATION_NYC_EXTERNAL=192.168.1.1" 1 "parse_result"; then
 #       echo "Value: ${parse_result[value]}"
 #   fi
 #   declare -A parse_result
@@ -350,7 +350,7 @@ parse_quoted_value() {
 #
 # Examples:
 #   declare -A parse_result
-#   if parse_assignment "VPN_NAME=Site-to-Site" 1 "parse_result"; then
+#   if parse_assignment "PING_COUNT=5" 1 "parse_result"; then
 #       echo "Variable: ${parse_result[name]}, Value: ${parse_result[value]}"
 #   fi
 #
@@ -528,8 +528,7 @@ safe_parse_config_file() {
 #   Example: "optional|integer|min:1|max:10|default:3"
 #   Parsed rules string: "min:1|||max:10"
 #
-#   When validating, rules are split by ||| separator first. If no ||| found,
-#   falls back to comma-separated format for backward compatibility.
+#   When validating, rules are split by ||| separator.
 #   Special case: Single "values:" rule is not split (comma is part of value).
 #
 # Note:
@@ -612,7 +611,7 @@ validate_critical_config_vars() {
 		# Get schema for this variable
 		schema=$(get_config_schema "$var_name" 2>/dev/null || echo "")
 		if [[ -z "$schema" ]]; then
-			# Variable not in schema - skip (for backward compatibility)
+			# Variable not in schema - skip (defensive programming: schema inconsistency edge case)
 			continue
 		fi
 
@@ -674,57 +673,6 @@ handle_fatal_config_error() {
 	fi
 	# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 	# This line is unreachable but included for clarity
-}
-
-# Apply backward compatibility migrations for deprecated config parameters
-#
-# Migrates deprecated configuration parameters to their new equivalents:
-#   - MAX_RESTARTS_PER_HOUR -> MAX_RESTARTS_PER_WINDOW + RATE_LIMIT_WINDOW_MINUTES
-#   - COOLDOWN_MINUTES -> MIN_RESTART_INTERVAL_SECONDS
-#
-# Arguments:
-#   None
-#
-# Returns:
-#   0: Always succeeds
-#
-# Side effects:
-#   - Sets migrated variables if old ones are present
-#   - Logs migration messages using handle_error
-#
-# Note:
-#   This function should be called after config file parsing to ensure
-#   both old and new parameters are available for migration logic.
-apply_backward_compatibility_migrations() {
-	# Backward compatibility: Migrate MAX_RESTARTS_PER_HOUR to new parameters
-	# If MAX_RESTARTS_PER_HOUR is set but MAX_RESTARTS_PER_WINDOW is not, migrate it
-	if [[ -n "${MAX_RESTARTS_PER_HOUR:-}" ]] &&
-		[[ "${MAX_RESTARTS_PER_HOUR}" =~ ^[0-9]+$ ]] &&
-		[[ -z "${MAX_RESTARTS_PER_WINDOW:-}" ]]; then
-		MAX_RESTARTS_PER_WINDOW="$MAX_RESTARTS_PER_HOUR"
-		# Set RATE_LIMIT_WINDOW_MINUTES to 60 if not already set (maintains "per hour" behavior)
-		if [[ -z "${RATE_LIMIT_WINDOW_MINUTES:-}" ]]; then
-			RATE_LIMIT_WINDOW_MINUTES=60
-		fi
-		handle_error "INFO" "SYSTEM" "Migrated MAX_RESTARTS_PER_HOUR=$MAX_RESTARTS_PER_HOUR to MAX_RESTARTS_PER_WINDOW=$MAX_RESTARTS_PER_WINDOW with RATE_LIMIT_WINDOW_MINUTES=$RATE_LIMIT_WINDOW_MINUTES (deprecated parameter, please update config)"
-	fi
-
-	# Backward compatibility: Migrate COOLDOWN_MINUTES to MIN_RESTART_INTERVAL_SECONDS
-	# If COOLDOWN_MINUTES is set, migrate it to MIN_RESTART_INTERVAL_SECONDS
-	# Conversion: 1 minute = 60 seconds
-	# Note: MIN_RESTART_INTERVAL_SECONDS max is 300 seconds (5 minutes), so values > 5 minutes are capped
-	# This ensures backward compatibility - old configs with COOLDOWN_MINUTES will work
-	if [[ -n "${COOLDOWN_MINUTES:-}" ]] && [[ "${COOLDOWN_MINUTES}" =~ ^[0-9]+$ ]]; then
-		local migrated_interval=$((COOLDOWN_MINUTES * 60))
-		local max_interval=300
-		# Cap migrated value at max (300 seconds = 5 minutes)
-		if [[ $migrated_interval -gt $max_interval ]]; then
-			handle_error "WARNING" "SYSTEM" "COOLDOWN_MINUTES=$COOLDOWN_MINUTES converts to ${migrated_interval}s, but MIN_RESTART_INTERVAL_SECONDS max is ${max_interval}s. Capping at ${max_interval}s."
-			migrated_interval=$max_interval
-		fi
-		MIN_RESTART_INTERVAL_SECONDS=$migrated_interval
-		handle_error "INFO" "SYSTEM" "Migrated COOLDOWN_MINUTES=$COOLDOWN_MINUTES to MIN_RESTART_INTERVAL_SECONDS=$MIN_RESTART_INTERVAL_SECONDS (deprecated parameter, please update config)"
-	fi
 }
 
 # Update state-dependent paths after config loading
@@ -1004,7 +952,4 @@ load_config() {
 	if [[ $config_loaded -eq 1 ]]; then
 		log_message "INFO" "SYSTEM" "Configuration loaded from: $config_file"
 	fi
-
-	# Apply backward compatibility migrations
-	apply_backward_compatibility_migrations
 }

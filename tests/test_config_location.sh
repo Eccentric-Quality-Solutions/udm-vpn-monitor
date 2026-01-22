@@ -552,3 +552,253 @@ declare -gA LOCATIONS
 	run get_location_internal_ips "INVALID"
 	assert_failure
 }
+
+# ============================================================================
+# DNS RESOLUTION TESTS FOR LOCATION CONFIG
+# ============================================================================
+
+# bats test_tags=category:high-risk,priority:high
+@test "get_location_external_ip_resolved - DNS name resolves to IP" {
+	# Purpose: Test that get_location_external_ip_resolved() resolves DNS names to IPs
+	# Expected: Function returns 0 and outputs resolved IP address
+	# Importance: Core functionality for DNS name support in location config
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	local test_hostname="vpn-gateway.example.com"
+	local expected_ip="192.168.1.100"
+
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${test_hostname}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
+
+	setup_location_config_and_load "$config_file"
+	parse_location_config
+
+	# Mock DNS resolution
+	mock_getent "1" "$expected_ip" "$test_hostname"
+	add_mock_to_path
+
+	# Source detection functions for resolve_dns
+	# shellcheck source=../lib/detection.sh
+	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+
+	run get_location_external_ip_resolved "NYC"
+	assert_success
+	assert_output "$expected_ip"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "get_location_external_ip_resolved - IP address returns unchanged" {
+	# Purpose: Test that get_location_external_ip_resolved() returns IP addresses unchanged
+	# Expected: Function returns 0 and outputs the same IP address
+	# Importance: Backward compatibility - IP addresses must still work
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	local test_ip="203.0.113.1"
+
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${test_ip}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
+
+	setup_location_config_and_load "$config_file"
+	parse_location_config
+
+	# Source detection functions for resolve_dns
+	# shellcheck source=../lib/detection.sh
+	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+
+	run get_location_external_ip_resolved "NYC"
+	assert_success
+	assert_output "$test_ip"
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "get_location_external_ip_resolved - DNS resolution failure handled gracefully" {
+	# Purpose: Test that get_location_external_ip_resolved() handles DNS resolution failures
+	# Expected: Function returns 1 when DNS resolution fails
+	# Importance: Error handling for DNS resolution failures
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	local test_hostname="nonexistent.example.com"
+
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${test_hostname}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
+
+	setup_location_config_and_load "$config_file"
+	parse_location_config
+
+	# Mock DNS resolution to fail
+	mock_getent "0" "" "$test_hostname"
+	mock_host "0" "" "$test_hostname"
+	add_mock_to_path
+
+	# Source detection functions for resolve_dns
+	# shellcheck source=../lib/detection.sh
+	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+
+	run get_location_external_ip_resolved "NYC"
+	assert_failure
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "get_location_internal_ips_resolved - DNS names resolve to IPs" {
+	# Purpose: Test that get_location_internal_ips_resolved() resolves DNS names to IPs
+	# Expected: Function returns 0 and outputs resolved IP addresses
+	# Importance: Core functionality for DNS name support in internal IPs
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	local test_hostname1="internal1.example.com"
+	local test_hostname2="internal2.example.com"
+	local expected_ip1="192.168.1.10"
+	local expected_ip2="192.168.1.20"
+
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"LOCATION_NYC_INTERNAL=\"${test_hostname1} ${test_hostname2}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
+
+	setup_location_config_and_load "$config_file"
+	parse_location_config
+
+	# Mock DNS resolution for both hostnames
+	# Create a single mock that handles both hostnames
+	local mock_getent="${TEST_DIR}/getent"
+	cat >"$mock_getent" <<EOF
+#!/bin/bash
+# getent ahostsv4 hostname
+if [[ "\$1" == "ahostsv4" ]]; then
+	if [[ "\$2" == "$test_hostname1" ]]; then
+		echo "$expected_ip1 STREAM \$2"
+		exit 0
+	elif [[ "\$2" == "$test_hostname2" ]]; then
+		echo "$expected_ip2 STREAM \$2"
+		exit 0
+	fi
+	exit 2
+fi
+# For other getent commands, pass through to real getent if available
+if command -v /usr/bin/getent >/dev/null 2>&1; then
+	exec /usr/bin/getent "\$@"
+else
+	exit 1
+fi
+EOF
+	chmod +x "$mock_getent"
+	add_mock_to_path
+
+	# Source detection functions for resolve_dns
+	# shellcheck source=../lib/detection.sh
+	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+
+	run get_location_internal_ips_resolved "NYC"
+	assert_success
+	assert_output "${expected_ip1} ${expected_ip2}"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "get_location_internal_ips_resolved - mixed IPs and DNS names" {
+	# Purpose: Test that get_location_internal_ips_resolved() handles mixed IPs and DNS names
+	# Expected: Function returns 0, IPs unchanged, DNS names resolved
+	# Importance: Backward compatibility - supports gradual migration from IPs to DNS names
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	local test_ip="192.168.1.50"
+	local test_hostname="internal.example.com"
+	local expected_ip="10.0.0.5"
+
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"LOCATION_NYC_INTERNAL=\"${test_ip} ${test_hostname}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
+
+	setup_location_config_and_load "$config_file"
+	parse_location_config
+
+	# Mock DNS resolution for hostname only
+	mock_getent "1" "$expected_ip" "$test_hostname"
+	add_mock_to_path
+
+	# Source detection functions for resolve_dns
+	# shellcheck source=../lib/detection.sh
+	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+
+	run get_location_internal_ips_resolved "NYC"
+	assert_success
+	assert_output "${test_ip} ${expected_ip}"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "get_location_internal_ips_resolved - IP addresses return unchanged" {
+	# Purpose: Test that get_location_internal_ips_resolved() returns IP addresses unchanged
+	# Expected: Function returns 0 and outputs the same IP addresses
+	# Importance: Backward compatibility - IP addresses must still work
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	local test_ip1="192.168.1.10"
+	local test_ip2="192.168.1.20"
+
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"LOCATION_NYC_INTERNAL=\"${test_ip1} ${test_ip2}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
+
+	setup_location_config_and_load "$config_file"
+	parse_location_config
+
+	# Source detection functions for resolve_dns
+	# shellcheck source=../lib/detection.sh
+	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+
+	run get_location_internal_ips_resolved "NYC"
+	assert_success
+	assert_output "${test_ip1} ${test_ip2}"
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "get_location_internal_ips_resolved - DNS resolution failure in list fails gracefully" {
+	# Purpose: Test that get_location_internal_ips_resolved() fails if any DNS name fails to resolve
+	# Expected: Function returns 1 when one DNS name in list fails to resolve
+	# Importance: Strict error handling ensures all DNS names are valid
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	local test_ip="192.168.1.50"
+	local test_hostname="nonexistent.example.com"
+
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"LOCATION_NYC_INTERNAL=\"${test_ip} ${test_hostname}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
+
+	setup_location_config_and_load "$config_file"
+	parse_location_config
+
+	# Mock DNS resolution to fail for hostname
+	mock_getent "0" "" "$test_hostname"
+	mock_host "0" "" "$test_hostname"
+	add_mock_to_path
+
+	# Source detection functions for resolve_dns
+	# shellcheck source=../lib/detection.sh
+	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" || true
+
+	run get_location_internal_ips_resolved "NYC"
+	assert_failure
+
+	remove_mock_from_path
+}

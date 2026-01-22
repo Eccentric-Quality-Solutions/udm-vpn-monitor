@@ -1,0 +1,1 @@
+use anonymizer script on vpn-monitor.log then analyze the anonymized results in vpn-monitor-anonymized.log

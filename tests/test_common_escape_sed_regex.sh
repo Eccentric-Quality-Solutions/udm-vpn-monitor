@@ -285,21 +285,6 @@ line3\\^value"
 }
 
 # bats test_tags=category:unit
-@test "escape_sed_regex: preserves function return code" {
-	# Purpose: Test that escape_sed_regex always returns success (0)
-	# Expected: Function returns 0 even for edge cases
-	# Importance: Ensures function doesn't fail unexpectedly
-	run escape_sed_regex ""
-	assert_success
-
-	run escape_sed_regex "test"
-	assert_success
-
-	run escape_sed_regex "test[.\\*^\$()+?{|"
-	assert_success
-}
-
-# bats test_tags=category:unit
 @test "escape_sed_regex: works with command substitution" {
 	# Purpose: Test that escape_sed_regex works correctly in command substitution context
 	# Expected: Returns escaped value when used in variable assignment

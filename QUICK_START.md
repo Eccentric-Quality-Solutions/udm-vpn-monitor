@@ -8,9 +8,9 @@
 
 1. **Create install package and transfer to UDM**:
    ```bash
-   ./prepare_install_package.sh              # Creates zip file
+   ./scripts/prepare_install_package.sh      # Creates zip file
    # Or create tar.gz:
-   # ./prepare_install_package.sh --tar       # Creates tar.gz file
+   # ./scripts/prepare_install_package.sh --tar # Creates tar.gz file
    scp udm-vpn-monitor.zip root@<UDM_IP>:/tmp/
    # Or for tar.gz:
    # scp udm-vpn-monitor.tar.gz root@<UDM_IP>:/tmp/

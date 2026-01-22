@@ -44,6 +44,13 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Low priority: current code works correctly, this is a style consistency improvement
     - See `lib/config.sh` lines 1108, 1154, 1179, 1212, 1405 for examples that could be refactored
 
+- DNS resolution enhancements
+    - Add DNS cache TTL support to handle DNS changes during long-running scripts
+    - Add IPv6 resolution support (currently only IPv4 via `ahostsv4` and `host -t A`)
+    - Consider partial resolution for multiple internal IPs (continue with successfully resolved IPs instead of failing entirely)
+    - Add DNS resolution retry logic for transient DNS failures
+    - Note: Basic DNS support completed 2026-01-27, these are enhancements for edge cases
+
 - Standardize non-critical state write error handling
     - Currently 28+ instances of `atomic_write_file ... 2>/dev/null || true` silently ignore errors
     - Pattern used for non-critical statistics/logging state files (ping summaries, resource monitoring stats, network partition stats, etc.)
@@ -209,3 +216,35 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Priority: LOW - fallbacks don't hurt and provide safety net for edge cases (file not found, syntax errors)
     - Note: Fallbacks are harmless but redundant. Consider removing if prioritizing code simplification.
     - See: Code review 2026-01-27 for constants.sh idempotency fix
+
+- Consider helper functions for array size checks to reduce set +u/set -u verbosity
+    - Current pattern: `set +u; if [[ ${#ARRAY[@]} -gt 0 ]]; then ...; fi; set -u` used 55+ times across anonymization scripts
+    - Issue: Verbose pattern required due to `set -euo pipefail` and empty array handling
+    - Proposed: Create helper function like `is_array_empty ARRAY_NAME` that handles `set +u`/`set -u` internally
+    - Benefit: Reduces code verbosity, improves readability, centralizes array checking logic
+    - Cost: LOW - simple helper function, but requires updating 55+ call sites
+    - Priority: LOW - current pattern works correctly, just verbose
+    - Note: Pattern established during unified anonymization refactoring (2026-01-20)
+
+- Consider extracting sed script building into shared functions if duplication increases
+    - Current state: Similar sed script building patterns exist across anonymize-firewall.sh, anonymize-ip-rules.sh, anonymize-logs.sh, anonymize-ipset.sh
+    - Issue: Each script builds sed scripts for IP/interface/set name replacements with similar logic
+    - Proposed: Extract common sed script building into helper functions in lib/anonymize.sh
+    - Benefit: Reduces duplication, centralizes sed script building logic, easier to maintain
+    - Cost: MEDIUM - requires refactoring multiple scripts, but pattern is well-established
+    - Priority: LOW - current duplication is acceptable, scripts are readable and maintainable
+    - Note: Pattern established during unified anonymization refactoring (2026-01-20)
+
+- Enhance network address normalization for `/8` and `/16` networks
+    - Current state: Network normalization only normalizes the last octet (works correctly for `/24` networks)
+    - Issue: `/8` and `/16` networks should normalize more octets for proper network address semantics:
+      - `/8` networks should normalize last 3 octets: `10.0.0.0/8` (currently only normalizes last octet)
+      - `/16` networks should normalize last 2 octets: `10.199.0.0/16` (currently only normalizes last octet)
+      - `/24` networks work correctly: `172.31.22.0/24` ✓
+    - Example: `172.16.0.0/16` currently maps to `10.199.248.0/16` but should map to `10.199.0.0/16`
+    - Proposed: Add CIDR-specific normalization logic based on prefix length
+    - Benefit: More realistic anonymized network addresses, better readability
+    - Cost: MEDIUM - requires parsing CIDR prefix length and normalizing appropriate octets
+    - Priority: LOW - current implementation is acceptable for most use cases, `/24` networks (most common) work correctly
+    - Note: `/12` and other non-octet-boundary CIDR lengths are more complex to handle
+    - See: CODE_REVIEW_COMBINED.md section 6 for detailed analysis (2025-01-20)

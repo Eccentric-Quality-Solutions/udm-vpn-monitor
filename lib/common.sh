@@ -1047,7 +1047,7 @@ update_config_value() {
 #   Sets global variable via declare -g + printf -v
 #
 # Examples:
-#   safe_set_variable "VPN_NAME" "Site-to-Site VPN"
+#   safe_set_variable "PING_COUNT" "5"
 #   safe_set_variable "$var_name" "$var_value"
 #
 # Note:
@@ -1190,8 +1190,20 @@ get_command_path() {
 	local cmd="$1"
 	local cmd_path=""
 
-	# Check common system directories directly (without relying on PATH or command -v)
-	# This is the primary method since we always run in PATH-restricted environments
+	# First try PATH lookup via command -v
+	# This allows:
+	# - Tests: Mock commands in PATH override system commands
+	# - Production: Commands in PATH are found
+	# - Restricted PATH (cron/systemd): Falls through to system directory check
+	cmd_path=$(command -v "$cmd" 2>/dev/null || echo "")
+	if [[ -n "$cmd_path" ]]; then
+		echo "$cmd_path"
+		return 0
+	fi
+
+	# Check common system directories directly if not found in PATH
+	# This handles PATH-restricted environments (cron/systemd) where PATH doesn't include
+	# standard system directories like /usr/sbin and /sbin
 	# Order matters: check /usr/sbin and /sbin first (where ip, ipsec typically live)
 	local system_dirs=("/usr/sbin" "/sbin" "/usr/bin" "/bin")
 	for dir in "${system_dirs[@]}"; do
@@ -1201,16 +1213,8 @@ get_command_path() {
 		fi
 	done
 
-	# Fallback: Try command -v only if we're not in a restricted environment
-	# (This is unlikely to succeed in cron/systemd, but provides fallback for manual execution)
-	cmd_path=$(command -v "$cmd" 2>/dev/null || echo "")
-	if [[ -n "$cmd_path" ]]; then
-		echo "$cmd_path"
-		return 0
-	fi
-
 	# Path not found - return command name (will rely on PATH at execution time)
-	# This should be rare since we check standard directories first
+	# This should be rare since we check both PATH and standard directories
 	# Caller should have checked availability with check_command_available first
 	echo "$cmd"
 	return 0
@@ -1285,11 +1289,11 @@ check_command_or_warn() {
 #   $2: Internal peer IP address(es) (optional, can be single IP or space-separated string)
 #
 # Returns:
-#   Prints formatted IP string to stdout: "($internal_peer_ip $external_peer_ip)" or "($external_peer_ip)"
+#   Prints formatted IP string to stdout: "($internal_peer_ip, $external_peer_ip)" or "($external_peer_ip)"
 #
 # Examples:
 #   ip_display=$(format_peer_ip_display "203.0.113.1" "192.168.1.1")
-#   # Output: "(192.168.1.1 203.0.113.1)"
+#   # Output: "(192.168.1.1, 203.0.113.1)"
 #   ip_display=$(format_peer_ip_display "203.0.113.1" "")
 #   # Output: "(203.0.113.1)"
 #
@@ -1313,7 +1317,7 @@ format_peer_ip_display() {
 
 	# Format IPs: include internal IP if available, otherwise just external IP
 	if [[ -n "$internal_peer_ip" ]]; then
-		echo "($internal_peer_ip $external_peer_ip)"
+		echo "($internal_peer_ip, $external_peer_ip)"
 	else
 		echo "($external_peer_ip)"
 	fi
@@ -1454,4 +1458,39 @@ resolve_lib_dir() {
 	# Set LIB_DIR to resolved path
 	LIB_DIR="$resolved_dir"
 	return 0
+}
+
+# Log error when module loading fails
+#
+# Used during module loading when log_message may not be available yet.
+# Gracefully falls back to echo if log_message is not defined.
+# This function consolidates duplicate logging helper functions used during
+# module initialization across detection.sh and state.sh.
+#
+# Arguments:
+#   $1: Error message to log
+#
+# Returns:
+#   0: Always succeeds (logging never fails)
+#
+# Output:
+#   - If log_message is available: logs via log_message to LOG_FILE and stderr
+#   - Otherwise: prints error message to stderr
+#
+# Examples:
+#   log_module_error "Failed to source detection/network_validation.sh"
+#   log_module_error "Failed to source state_paths.sh"
+#
+# Note:
+#   This function is used during module loading when log_message may not be available yet.
+#   It gracefully falls back to echo if log_message is not defined.
+log_module_error() {
+	local message="$1"
+	if type log_message >/dev/null 2>&1; then
+		# log_message is available - use it (it will handle LOG_FILE not being set)
+		log_message "ERROR" "SYSTEM" "$message"
+	else
+		# Fallback to echo if log_message not available
+		echo "Error: $message" >&2
+	fi
 }

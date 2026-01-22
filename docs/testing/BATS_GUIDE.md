@@ -193,6 +193,17 @@ load bats-assert/load.bash
 - `assert_file_contains` (regex matching)
 - `assert_symlink_to` / `assert_not_symlink_to`
 
+**Important Limitation**: `assert_file_contains` from bats-file uses `grep` internally and will fail if the pattern starts with `-` or `--` because grep interprets these as command-line options. For patterns starting with dashes, use direct `grep` with `--` to stop option parsing:
+
+```bash
+# ❌ Wrong: Will fail with "grep: invalid option"
+assert_file_contains "$file" "-i lo"
+
+# ✅ Correct: Use grep directly with --
+run grep -F -- "-i lo" "$file"
+assert_success
+```
+
 **Temporary Directories**:
 - `temp_make`: Create temporary directory
 - `temp_del`: Delete temporary directory

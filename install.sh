@@ -120,6 +120,8 @@ create_install_dir() {
 #   Uses read -p to prompt user
 #   Empty input (Enter) uses default value
 prompt_config_value() {
+	# shellcheck disable=SC2034
+	# param_name is used for documentation/reference purposes
 	local param_name="$1"
 	local default_value="$2"
 	local description="$3"
@@ -127,9 +129,9 @@ prompt_config_value() {
 
 	# Display prompt with default
 	if [[ -n "$default_value" ]]; then
-		read -p "${description} [${default_value}]: " user_input
+		read -rp "${description} [${default_value}]: " user_input
 	else
-		read -p "${description}: " user_input
+		read -rp "${description}: " user_input
 	fi
 
 	# Use default if empty
@@ -179,31 +181,29 @@ prompt_and_set_config() {
 # Sets variables in global scope using declare -g, making them accessible to the caller.
 #
 # Arguments:
-#   Default values are passed as parameters (16 total):
+#   Default values are passed as parameters (14 total):
 #     $1: default_peer_ips
-#     $2: default_vpn_name
-#     $3: default_tier1
-#     $4: default_tier2
-#     $5: default_tier3
-#     $6: default_cooldown
-#     $7: default_max_restarts
-#     $8: default_cron_schedule
-#     $9: default_lockfile_timeout
-#     ${10}: default_enable_ping
-#     ${11}: default_ping_count
-#     ${12}: default_ping_timeout
-#     ${13}: default_debug
-#     ${14}: default_enable_keepalive
-#     ${15}: default_keepalive_interval
-#     ${16}: default_keepalive_ping_count
+#     $2: default_tier1
+#     $3: default_tier2
+#     $4: default_tier3
+#     $5: default_max_restarts
+#     $6: default_cron_schedule
+#     $7: default_lockfile_timeout
+#     $8: default_enable_ping
+#     $9: default_ping_count
+#     ${10}: default_ping_timeout
+#     ${11}: default_debug
+#     ${12}: default_enable_keepalive
+#     ${13}: default_keepalive_interval
+#     ${14}: default_keepalive_ping_count
 #
 # Returns:
 #   0: Always succeeds
 #
 # Side effects:
 #   Sets the following variables in global scope:
-#     external_peer_ips, internal_peer_ips, vpn_name, tier1, tier2, tier3,
-#     cooldown, max_restarts, cron_schedule, lockfile_timeout, enable_ping,
+#     external_peer_ips, internal_peer_ips, tier1, tier2, tier3,
+#     max_restarts, cron_schedule, lockfile_timeout, enable_ping,
 #     ping_count, ping_timeout, debug, enable_keepalive, keepalive_interval,
 #     keepalive_ping_count
 #
@@ -214,21 +214,19 @@ prompt_and_set_config() {
 #   persist beyond that function's execution.
 prompt_all_config_values() {
 	local default_peer_ips="$1"
-	local default_vpn_name="$2"
-	local default_tier1="$3"
-	local default_tier2="$4"
-	local default_tier3="$5"
-	local default_cooldown="$6"
-	local default_max_restarts="$7"
-	local default_cron_schedule="$8"
-	local default_lockfile_timeout="$9"
-	local default_enable_ping="${10}"
-	local default_ping_count="${11}"
-	local default_ping_timeout="${12}"
-	local default_debug="${13}"
-	local default_enable_keepalive="${14}"
-	local default_keepalive_interval="${15}"
-	local default_keepalive_ping_count="${16}"
+	local default_tier1="$2"
+	local default_tier2="$3"
+	local default_tier3="$4"
+	local default_max_restarts="$5"
+	local default_cron_schedule="$6"
+	local default_lockfile_timeout="$7"
+	local default_enable_ping="${8}"
+	local default_ping_count="${9}"
+	local default_ping_timeout="${10}"
+	local default_debug="${11}"
+	local default_enable_keepalive="${12}"
+	local default_keepalive_interval="${13}"
+	local default_keepalive_ping_count="${14}"
 
 	# Prompt for location-based configuration
 	# Prompt for at least one location
@@ -237,12 +235,10 @@ prompt_all_config_values() {
 	local current_location_name="${location_name}"
 	prompt_and_set_config "external_peer_ips" "$default_peer_ips" "External/Public IP address for location ${current_location_name} (external/public IP of remote VPN gateway)"
 	prompt_and_set_config "internal_peer_ips" "" "Internal/Private IP address(es) for location ${current_location_name} (optional, space-separated, for ping checks, empty to skip)"
-	prompt_and_set_config "vpn_name" "$default_vpn_name" "VPN connection identifier/name"
 	prompt_and_set_config "tier1" "$default_tier1" "Tier 1 threshold (failures before logging)"
 	prompt_and_set_config "tier2" "$default_tier2" "Tier 2 threshold (failures before surgical cleanup)"
 	prompt_and_set_config "tier3" "$default_tier3" "Tier 3 threshold (failures before full restart)"
-	prompt_and_set_config "cooldown" "$default_cooldown" "Cooldown period after restart (minutes)"
-	prompt_and_set_config "max_restarts" "$default_max_restarts" "Maximum restarts per hour"
+	prompt_and_set_config "max_restarts" "$default_max_restarts" "Maximum restarts per window"
 	prompt_and_set_config "cron_schedule" "$default_cron_schedule" "Cron schedule (e.g., '*/1 * * * *' for every minute)"
 	prompt_and_set_config "lockfile_timeout" "$default_lockfile_timeout" "Lockfile timeout (seconds)"
 	prompt_and_set_config "enable_ping" "$default_enable_ping" "Enable ping connectivity check (0 or 1)"
@@ -252,6 +248,60 @@ prompt_all_config_values() {
 	prompt_and_set_config "enable_keepalive" "$default_enable_keepalive" "Enable VPN keepalive daemon (0 or 1)"
 	prompt_and_set_config "keepalive_interval" "$default_keepalive_interval" "Keepalive ping interval (seconds)"
 	prompt_and_set_config "keepalive_ping_count" "$default_keepalive_ping_count" "Keepalive ping count (packets)"
+}
+
+# Sanitize location name for config variable names
+#
+# Sanitizes a location name for use in config variable names (e.g., LOCATION_NYC_EXTERNAL).
+# Replaces invalid characters with underscores, converts to uppercase, removes leading
+# underscores, and ensures a valid identifier format.
+#
+# Arguments:
+#   $1: Location name to sanitize (e.g., "NYC", "New York", "DC-Office")
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints sanitized location name to stdout (e.g., "NYC", "NEW_YORK", "DC_OFFICE")
+#   Prints "LOCATION" if input is empty or becomes empty after sanitization
+#
+# Examples:
+#   sanitized=$(sanitize_location_name_for_config "NYC")
+#   # Returns: "NYC"
+#
+#   sanitized=$(sanitize_location_name_for_config "New York")
+#   # Returns: "NEW_YORK"
+#
+#   sanitized=$(sanitize_location_name_for_config "_Office")
+#   # Returns: "OFFICE" (leading underscore removed)
+#
+#   sanitized=$(sanitize_location_name_for_config "")
+#   # Returns: "LOCATION" (default for empty input)
+#
+# Note:
+#   - Used specifically for config variable names (LOCATION_*_EXTERNAL format)
+#   - Differs from sanitize_location_name() in lib/common.sh which is for filenames
+#   - Config variable names can't start with underscores, so they are removed
+sanitize_location_name_for_config() {
+	local location_name="$1"
+	local sanitized
+
+	# Replace invalid chars with underscore and convert to uppercase
+	sanitized=$(echo "$location_name" | sed 's/[^A-Za-z0-9_]/_/g' | tr '[:lower:]' '[:upper:]')
+
+	# Remove all leading underscores (config variable names can't start with underscore)
+	while [[ "$sanitized" =~ ^_ ]]; do
+		sanitized="${sanitized#_}"
+	done
+
+	# If empty after sanitization, use default (matches library function behavior)
+	if [[ -z "$sanitized" ]]; then
+		sanitized="LOCATION"
+	fi
+
+	echo "$sanitized"
+	return 0
 }
 
 # Create config file interactively
@@ -275,11 +325,9 @@ create_interactive_config() {
 
 	# Default values
 	local default_peer_ips=""
-	local default_vpn_name="Site-to-Site VPN"
 	local default_tier1=1
 	local default_tier2=3
 	local default_tier3=5
-	local default_cooldown=15
 	local default_max_restarts=3
 	local default_log_file="${INSTALL_DIR}/logs/vpn-monitor.log"
 	local default_state_dir="${INSTALL_DIR}/state"
@@ -297,11 +345,9 @@ create_interactive_config() {
 	# Variables will be set in global scope by prompt_all_config_values
 	prompt_all_config_values \
 		"$default_peer_ips" \
-		"$default_vpn_name" \
 		"$default_tier1" \
 		"$default_tier2" \
 		"$default_tier3" \
-		"$default_cooldown" \
 		"$default_max_restarts" \
 		"$default_cron_schedule" \
 		"$default_lockfile_timeout" \
@@ -316,15 +362,9 @@ create_interactive_config() {
 	# Create config file
 	# shellcheck disable=SC2154
 	# Variables are set in global scope by prompt_all_config_values() via declare -g
-	# Sanitize location name for use in variable name (uppercase, replace invalid chars with underscore)
+	# Sanitize location name for use in variable name
 	local sanitized_location_name
-	sanitized_location_name=$(echo "${location_name}" | sed 's/[^A-Za-z0-9_]/_/g' | tr '[:lower:]' '[:upper:]')
-	# Ensure it doesn't start with underscore
-	sanitized_location_name=$(echo "$sanitized_location_name" | sed 's/^_*//')
-	# If empty after sanitization, use default (matches library function behavior)
-	if [[ -z "$sanitized_location_name" ]]; then
-		sanitized_location_name="LOCATION"
-	fi
+	sanitized_location_name=$(sanitize_location_name_for_config "${location_name}")
 
 	cat >"${INSTALL_DIR}/${CONFIG_NAME}" <<EOF
 # UDM VPN Monitor Configuration
@@ -335,22 +375,19 @@ create_interactive_config() {
 # Format: LOCATION_<NAME>_INTERNAL="internal_ip1 internal_ip2 ..."
 # Location names are automatically extracted from variable names (text between LOCATION_ and _EXTERNAL)
 # For locations with multiple internal IPs, VPN is considered healthy if ≥30% respond to pings
+# shellcheck disable=SC2154
+# Variables are set in global scope by prompt_all_config_values() via declare -g
 LOCATION_${sanitized_location_name}_EXTERNAL="${external_peer_ips}"
 LOCATION_${sanitized_location_name}_INTERNAL="${internal_peer_ips}"
-
-# VPN connection identifier/name (optional, for logging)
-VPN_NAME="${vpn_name}"
 
 # Failure threshold: number of consecutive failures before taking action
 TIER1_THRESHOLD=${tier1}
 TIER2_THRESHOLD=${tier2}
 TIER3_THRESHOLD=${tier3}
 
-# Cooldown period after restart (minutes)
-COOLDOWN_MINUTES=${cooldown}
-
-# Maximum restarts per hour (rate limiting)
-MAX_RESTARTS_PER_HOUR=${max_restarts}
+# Rate limiting configuration
+MAX_RESTARTS_PER_WINDOW=${max_restarts}
+RATE_LIMIT_WINDOW_MINUTES=60
 
 # Log file location (must be in /data/ for persistence)
 LOG_FILE="${default_log_file}"
@@ -440,12 +477,11 @@ install_config_file() {
 #   LOCATION_DC_INTERNAL="192.168.10.1 192.168.10.254"
 LOCATION_NYC_EXTERNAL=""
 LOCATION_NYC_INTERNAL=""
-VPN_NAME="Site-to-Site VPN"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
-COOLDOWN_MINUTES=15
-MAX_RESTARTS_PER_HOUR=3
+MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60
 LOG_FILE="${INSTALL_DIR}/logs/vpn-monitor.log"
 STATE_DIR="${INSTALL_DIR}/state"
 CRON_SCHEDULE="*/1 * * * *"
@@ -746,7 +782,7 @@ install_scripts() {
 			# Non-interactive, non-silent mode: ask user
 			echo ""
 			log_warn "Config file already exists: ${INSTALL_DIR}/${CONFIG_NAME}"
-			read -p "Overwrite existing config file? (yes/no) [no]: " -r
+			read -rp "Overwrite existing config file? (yes/no) [no]: " REPLY
 			echo ""
 			if [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
 				install_config_file "Overwriting existing config file"
@@ -1517,26 +1553,24 @@ validate_config_after_install() {
 		echo ""
 		if [[ $INTERACTIVE -eq 0 ]]; then
 			# Not in interactive mode, but config is empty - prompt user
-			read -p "Configure a location now? (yes/no) [yes]: " -r
+			read -rp "Configure a location now? (yes/no) [yes]: " REPLY
 			echo ""
 			if [[ -z "$REPLY" ]] || [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]] || [[ $REPLY =~ ^[Yy]$ ]]; then
 				local location_name
 				local external_peer_ip
-				read -p "Location name (e.g., NYC, DC, OFFICE): " location_name
-				read -p "External/Public IP address: " external_peer_ip
+				read -rp "Location name (e.g., NYC, DC, OFFICE): " location_name
+				read -rp "External/Public IP address: " external_peer_ip
 				if [[ -n "$location_name" ]] && [[ -n "$external_peer_ip" ]]; then
-					# Sanitize location name
+					# Sanitize location name for config variable name
 					local sanitized_name
-					sanitized_name=$(echo "$location_name" | sed 's/[^A-Za-z0-9_]/_/g' | tr '[:lower:]' '[:upper:]' | sed 's/^_*//')
-					# If empty after sanitization, use default (matches library function behavior)
-					if [[ -z "$sanitized_name" ]]; then
-						sanitized_name="LOCATION"
-					fi
+					sanitized_name=$(sanitize_location_name_for_config "$location_name")
 					# Add location config to file
-					echo "" >>"$config_file"
-					echo "# Location configuration" >>"$config_file"
-					echo "LOCATION_${sanitized_name}_EXTERNAL=\"${external_peer_ip}\"" >>"$config_file"
-					echo "LOCATION_${sanitized_name}_INTERNAL=\"\"" >>"$config_file"
+					{
+						echo ""
+						echo "# Location configuration"
+						echo "LOCATION_${sanitized_name}_EXTERNAL=\"${external_peer_ip}\""
+						echo "LOCATION_${sanitized_name}_INTERNAL=\"\""
+					} >>"$config_file"
 					log_info "Location configuration added to ${config_file}"
 					log_info "Note: IP addresses will be validated when the monitor runs"
 					return 0
@@ -1854,9 +1888,11 @@ main() {
 		else
 			# Add setting if not present
 			log_info "Adding ENABLE_KEEPALIVE=1 to config file..."
-			echo "" >>"${INSTALL_DIR}/${CONFIG_NAME}"
-			echo "# VPN Keepalive Daemon" >>"${INSTALL_DIR}/${CONFIG_NAME}"
-			echo "ENABLE_KEEPALIVE=1" >>"${INSTALL_DIR}/${CONFIG_NAME}"
+			{
+				echo ""
+				echo "# VPN Keepalive Daemon"
+				echo "ENABLE_KEEPALIVE=1"
+			} >>"${INSTALL_DIR}/${CONFIG_NAME}"
 		fi
 
 		# Install systemd service

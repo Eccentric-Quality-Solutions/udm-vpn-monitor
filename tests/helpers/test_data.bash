@@ -149,7 +149,7 @@ generate_config_file() {
 		generate_config_multiple_locations "${template_args[@]}" >"$output_file"
 		;;
 	cooldown_rate_limit)
-		generate_config_cooldown_rate_limit "${template_args[@]}" >"$output_file"
+		generate_config_rate_limit "${template_args[@]}" >"$output_file"
 		;;
 	*)
 		echo "Unknown template type: $template_type" >&2

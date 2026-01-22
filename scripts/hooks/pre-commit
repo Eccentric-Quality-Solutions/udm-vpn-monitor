@@ -161,20 +161,20 @@ if [[ ${#STAGED_SH_FILES[@]} -gt 0 ]]; then
 fi
 
 # Check if prepare_install_package.sh exists
-if [[ ! -f "${REPO_ROOT}/prepare_install_package.sh" ]]; then
+if [[ ! -f "${REPO_ROOT}/scripts/prepare_install_package.sh" ]]; then
 	echo "Error: prepare_install_package.sh not found" >&2
 	exit 1
 fi
 
 # Check if prepare_install_package.sh is executable
-if [[ ! -x "${REPO_ROOT}/prepare_install_package.sh" ]]; then
-	chmod +x "${REPO_ROOT}/prepare_install_package.sh"
+if [[ ! -x "${REPO_ROOT}/scripts/prepare_install_package.sh" ]]; then
+	chmod +x "${REPO_ROOT}/scripts/prepare_install_package.sh"
 fi
 
 echo "Running prepare_install_package.sh..."
 
 # Run prepare_install_package.sh
-if ! "${REPO_ROOT}/prepare_install_package.sh"; then
+if ! "${REPO_ROOT}/scripts/prepare_install_package.sh"; then
 	echo "Error: prepare_install_package.sh failed" >&2
 	exit 1
 fi
