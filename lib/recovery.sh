@@ -3,7 +3,7 @@
 # Recovery actions for UDM VPN Monitor
 # Implements tiered recovery: logging → surgical cleanup → full restart
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 # This file now serves as a compatibility layer that sources the decomposed
 # recovery modules. All recovery functionality has been moved to lib/recovery/

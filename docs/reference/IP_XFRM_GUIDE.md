@@ -852,6 +852,85 @@ ip xfrm policy show | grep "reqid"
 ip xfrm state show | grep "reqid"
 ```
 
+**5. xfrm commands hanging or timing out**
+
+**Problem:** `ip xfrm state` commands can hang indefinitely under certain conditions, making detection appear as if xfrm is unavailable.
+
+**Root causes:**
+- **Netlink socket timeouts**: Netlink operations can hang for 12-13 seconds during system stress
+- **XFRM lock contention**: High system load can cause lock contention in the XFRM subsystem
+- **Network stack congestion**: Network stack issues can delay netlink socket operations
+- **Soft lockups**: Kernel soft lockups in XFRM modules can block all operations
+
+**Symptoms:**
+- Commands appear to hang indefinitely (no response)
+- Script execution becomes unresponsive
+- Detection falls back to `ipsec status` unexpectedly
+- Logs show "Connection found via ipsec status" instead of "SA exists, bytes=X"
+
+**Solution: Always use timeout protection**
+
+The VPN Monitor application uses `XFRM_STATE_TIMEOUT=5` seconds to prevent indefinite hangs. Always wrap xfrm commands with timeout:
+
+```bash
+# Wrap xfrm commands with timeout (recommended: 5 seconds)
+if command -v timeout >/dev/null 2>&1; then
+    output=$(timeout 5 ip xfrm state show 2>&1)
+    exit_code=$?
+    
+    # Check for timeout (exit code 124)
+    if [[ $exit_code -eq 124 ]]; then
+        echo "WARNING: ip xfrm state timed out after 5 seconds"
+        # Fall back to alternative detection method (e.g., ipsec status)
+    fi
+else
+    # Fallback if timeout command unavailable (shouldn't happen on UDM)
+    output=$(ip xfrm state show 2>&1)
+    exit_code=$?
+fi
+```
+
+**Investigation when timeouts occur:**
+
+```bash
+# Check system resources
+uptime
+top
+vmstat
+
+# Check network stack statistics
+ss -s
+netstat -s
+
+# Check for kernel issues (soft lockups, xfrm/netlink problems)
+dmesg | grep -i "soft lockup\|xfrm\|netlink"
+journalctl -k | grep -i "soft lockup\|xfrm\|netlink"
+
+# Check XFRM error counters
+cat /proc/net/xfrm_stat
+
+# Monitor XFRM events in real-time
+ip xfrm monitor
+```
+
+**Correlation with network issues:**
+
+There is a documented correlation between xfrm unavailability and network connectivity issues (ping failures). This occurs because:
+- Both xfrm operations and network connectivity depend on shared kernel subsystems
+- System load can cause XFRM lock contention, affecting both xfrm commands and packet processing
+- Network stack congestion affects both ping operations and netlink socket operations
+
+**When xfrm is unavailable:**
+- Detection falls back to `ipsec status` (which only confirms SA existence, not traffic flow)
+- Byte counter tracking is lost (cannot detect idle/stuck connections)
+- Routing issues may go undetected longer
+
+**Monitoring recommendations:**
+- Track timeout frequency in logs (should be low: 0-1/hour under normal conditions)
+- Alert on high timeout frequency (>5/hour) - may indicate system issues
+- Correlate timeouts with system resource metrics (CPU, memory, network stack)
+- If timeouts are frequent but commands complete in 6-10 seconds, consider increasing timeout to 8-10 seconds
+
 ### Diagnostic Commands
 
 **Check XFRM statistics:**

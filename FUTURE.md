@@ -2,6 +2,17 @@ Considerations for the future, but want to avoid overarchitecting and premature 
 
 **Note:** Items marked with ✅ COMPLETED have been finished and can be considered resolved.
 
+- Consider routing issue detection during ipsec status fallback periods
+  - Current state: When xfrm unavailable, system falls back to ipsec status (no byte counters)
+  - Issue: Routing issues (ping failures) may go undetected longer when byte counters unavailable
+  - Gap: During ipsec status fallback, routing_issue is detected but silently ignored if primary_check_passed=1
+  - Proposed: Consider treating persistent ping failures (e.g., 3+ consecutive) as VPN failures even when SA exists and byte counters unavailable
+  - Benefit: Better detection of routing issues during fallback periods
+  - Cost: MEDIUM - requires tracking ping failure duration and adjusting failure detection logic
+  - Priority: LOW - current design is reasonable trade-off, routing issues often resolve themselves
+  - Note: Identified during Seattle-Dallas outage analysis (2026-01-23) - see analyze/ping-check-outage-analysis.md
+  - See: ADR-0014 already documents "May Miss Some Issues" but this is a more specific gap during fallback periods
+
 - Consider additional state keys in cleanup_peer_state()
   - Currently cleans up: failure_count, last_bytes, spi, idle_detected, connection_name
   - Missing: last_status_log, failure_type, recovery_method

@@ -5,6 +5,7 @@
 # including valid/invalid variable names, file operations, and error handling
 
 load test_helper
+load helpers/config
 
 # Source the common library functions
 # shellcheck source=/dev/null
@@ -20,7 +21,7 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
 	# Expected: Function succeeds and updates config file
 	# Importance: Core functionality - most common variable name format
 	local config_file="${TEST_DIR}/test_config.conf"
-	echo "# Test config" >"$config_file"
+	create_test_config "$config_file"
 
 	run update_config_value "$config_file" "VALID_NAME" "test_value"
 	assert_success
@@ -34,7 +35,7 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
 	# Expected: Function succeeds and updates config file
 	# Importance: Underscore is valid first character for shell variables
 	local config_file="${TEST_DIR}/test_config.conf"
-	echo "# Test config" >"$config_file"
+	create_test_config "$config_file"
 
 	run update_config_value "$config_file" "_valid_name" "test_value"
 	assert_success
@@ -48,7 +49,7 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
 	# Expected: Function succeeds and updates config file
 	# Importance: Numbers are valid in variable names after first character
 	local config_file="${TEST_DIR}/test_config.conf"
-	echo "# Test config" >"$config_file"
+	create_test_config "$config_file"
 
 	run update_config_value "$config_file" "VAR123" "test_value"
 	assert_success
@@ -62,7 +63,7 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
 	# Expected: Function succeeds and updates config file
 	# Importance: Single character variables are valid shell identifiers
 	local config_file="${TEST_DIR}/test_config.conf"
-	echo "# Test config" >"$config_file"
+	create_test_config "$config_file"
 
 	run update_config_value "$config_file" "a" "test_value"
 	assert_success
@@ -76,7 +77,7 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
 	# Expected: Function succeeds and updates config file
 	# Importance: Single underscore is a valid shell variable name
 	local config_file="${TEST_DIR}/test_config.conf"
-	echo "# Test config" >"$config_file"
+	create_test_config "$config_file"
 
 	run update_config_value "$config_file" "_" "test_value"
 	assert_success
@@ -90,7 +91,7 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
 	# Expected: Function succeeds and updates config file
 	# Importance: Mixed case is common in shell variable naming conventions
 	local config_file="${TEST_DIR}/test_config.conf"
-	echo "# Test config" >"$config_file"
+	create_test_config "$config_file"
 
 	run update_config_value "$config_file" "ValidVarName" "test_value"
 	assert_success
@@ -108,7 +109,7 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
 	# Expected: Function fails (returns 1) without modifying config file
 	# Importance: Shell variables cannot start with numbers
 	local config_file="${TEST_DIR}/test_config.conf"
-	echo "# Test config" >"$config_file"
+	create_test_config "$config_file"
 	local original_content
 	original_content=$(cat "$config_file")
 
@@ -123,7 +124,7 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
 	# Expected: Function fails (returns 1) without modifying config file
 	# Importance: Hyphens are not valid in shell variable names
 	local config_file="${TEST_DIR}/test_config.conf"
-	echo "# Test config" >"$config_file"
+	create_test_config "$config_file"
 	local original_content
 	original_content=$(cat "$config_file")
 
@@ -138,7 +139,7 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
 	# Expected: Function fails (returns 1) without modifying config file
 	# Importance: Spaces are not valid in shell variable names
 	local config_file="${TEST_DIR}/test_config.conf"
-	echo "# Test config" >"$config_file"
+	create_test_config "$config_file"
 	local original_content
 	original_content=$(cat "$config_file")
 
@@ -153,7 +154,7 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
 	# Expected: Function fails (returns 1) without modifying config file
 	# Importance: Empty string is not a valid variable name
 	local config_file="${TEST_DIR}/test_config.conf"
-	echo "# Test config" >"$config_file"
+	create_test_config "$config_file"
 	local original_content
 	original_content=$(cat "$config_file")
 
@@ -168,7 +169,7 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
 	# Expected: Function fails (returns 1) without modifying config file
 	# Importance: Special characters like @, #, $ are not valid in shell variable names
 	local config_file="${TEST_DIR}/test_config.conf"
-	echo "# Test config" >"$config_file"
+	create_test_config "$config_file"
 	local original_content
 	original_content=$(cat "$config_file")
 
@@ -191,7 +192,7 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
 	# Expected: Function fails (returns 1) without modifying config file
 	# Importance: Dots are not valid in shell variable names
 	local config_file="${TEST_DIR}/test_config.conf"
-	echo "# Test config" >"$config_file"
+	create_test_config "$config_file"
 	local original_content
 	original_content=$(cat "$config_file")
 
@@ -259,7 +260,7 @@ EOF
 	# Expected: Value is properly escaped and quoted in config file
 	# Importance: Config values may contain special characters that need escaping
 	local config_file="${TEST_DIR}/test_config.conf"
-	echo "# Test config" >"$config_file"
+	create_test_config "$config_file"
 
 	run update_config_value "$config_file" "TEST_VAR" "value/with/slashes"
 	assert_success
@@ -272,7 +273,7 @@ EOF
 	# Expected: Variable is set with empty quoted value
 	# Importance: Empty values are valid and should be handled correctly
 	local config_file="${TEST_DIR}/test_config.conf"
-	echo "# Test config" >"$config_file"
+	create_test_config "$config_file"
 
 	run update_config_value "$config_file" "EMPTY_VAR" ""
 	assert_success
@@ -301,7 +302,7 @@ EOF
 	# Expected: Invalid variable name causes immediate failure even if file exists
 	# Importance: Fail-fast behavior improves error detection
 	local config_file="${TEST_DIR}/test_config.conf"
-	echo "# Test config" >"$config_file"
+	create_test_config "$config_file"
 
 	# Even though file exists, invalid variable name should fail immediately
 	run update_config_value "$config_file" "INVALID-NAME" "test_value"
@@ -314,7 +315,7 @@ EOF
 	# Expected: Function fails (returns 1) without modifying config file
 	# Importance: Should handle permission errors gracefully and prevent hangs
 	local config_file="${TEST_DIR}/test_config_unreadable.conf"
-	echo "# Test config" >"$config_file"
+	create_test_config "$config_file"
 	local original_content
 	original_content=$(cat "$config_file")
 

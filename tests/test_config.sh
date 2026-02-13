@@ -1701,7 +1701,7 @@ EOF
 	# Generate xfrm state output using test data helper
 	local test_peer_ip="192.168.1.1"
 	local xfrm_state_output
-	xfrm_state_output=$(generate_xfrm_state_output "healthy" "$test_peer_ip" "0x12345678" 1000 10)
+	xfrm_state_output=$(generate_xfrm_state_for_scenario "healthy" "$test_peer_ip" "0x12345678" 1000 10)
 	local xfrm_state_file="${TEST_DIR}/xfrm_state_output_config"
 	echo "$xfrm_state_output" >"$xfrm_state_file"
 	local mock_ip="${TEST_DIR}/ip"

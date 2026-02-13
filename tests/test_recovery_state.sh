@@ -3,7 +3,7 @@
 # Tests for Recovery State Management Functions
 # Tests recovery method tracking and peer display formatting
 #
-# Version: 0.6.0
+# Version: 0.7.0
 
 load test_helper
 load helpers/test_data

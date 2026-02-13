@@ -210,6 +210,8 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `RATE_LIMIT_WINDOW_MINUTES` | Time window for rate limit (sliding window) | 60 |
 | `MIN_RESTART_INTERVAL_SECONDS` | Minimum time between Tier 3 restarts | 40 |
 | `CRON_SCHEDULE` | Cron schedule for check frequency (cron format) | "*/1 * * * *" |
+| `ENABLE_MONITOR_WRAPPER` | Use wrapper for sub-minute execution (0 or 1). When 1, cron runs vpn-monitor-wrapper.sh which checks every MONITOR_INTERVAL seconds. | 1 |
+| `MONITOR_INTERVAL` | Seconds between checks when ENABLE_MONITOR_WRAPPER=1 (range: 10-60) | 20 |
 | `LOCKFILE_TIMEOUT` | Lockfile timeout in seconds (detects hung processes) | 300 |
 | `ENABLE_PING_CHECK` | Enable ping connectivity verification (0 or 1) | 1 |
 | `PING_COUNT` | Number of ping packets to send | 3 |
@@ -242,6 +244,12 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 - `"*/10 * * * *"` - Every 10 minutes
 - `"*/15 * * * *"` - Every 15 minutes
 - `"0 * * * *"` - Every hour (on the hour)
+
+**Sub-Minute Execution (Monitor Wrapper):**
+
+Enabled by default for faster failure detection. The installer configures cron to run vpn-monitor-wrapper.sh, which runs checks every `MONITOR_INTERVAL` seconds (default: 20). You get checks at :00, :20, and :40 within each minute instead of once per minute.
+
+To disable, set `ENABLE_MONITOR_WRAPPER=0` in vpn-monitor.conf and re-run `./install.sh`. With 20-second intervals and default thresholds (TIER2_THRESHOLD=3), Tier 2 triggers after ~1 minute instead of ~2-3 minutes.
 
 ### Keepalive Daemon
 

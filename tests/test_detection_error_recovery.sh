@@ -1047,7 +1047,7 @@ EOF
 	# Mock ip command - xfrm check finds SA with byte counters
 	# Generate xfrm output using test data helpers
 	local xfrm_output
-	xfrm_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
+	xfrm_output=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
 	local xfrm_output_file="${TEST_DIR}/xfrm_output"
 	echo "$xfrm_output" >"$xfrm_output_file"
 

@@ -4,7 +4,7 @@
 # Detects when all (or majority of) VPNs fail simultaneously
 # and triggers different recovery strategy for infrastructure-level issues
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 # Get system-wide failure state file path

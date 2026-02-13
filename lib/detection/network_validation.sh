@@ -3,7 +3,7 @@
 # Network validation functions for UDM VPN Monitor
 # Handles IP validation (IPv4/IPv6) and route checks
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 # Source constants for magic numbers
@@ -364,7 +364,7 @@ validate_ip_address() {
 			if validate_ipv4 "$ipv4_part"; then
 				return 0
 			fi
-		elif [[ "$after_prefix" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+		else
 			# Format: ::ffff:x.x.x.x - validate IPv4 part directly
 			if validate_ipv4 "$after_prefix"; then
 				return 0
@@ -822,7 +822,7 @@ get_route_info() {
 
 	# Get full path to ip command for reliable execution in PATH-restricted environments (cron/systemd)
 	local ip_cmd
-	ip_cmd=$(get_command_path "ip")
+	ip_cmd=$(get_ip_command_path)
 
 	# Get route information
 	# Format: "172.31.13.239 via 192.168.1.1 dev eth0 src 192.168.1.100"
@@ -917,7 +917,7 @@ check_default_route() {
 
 	# Get full path to ip command for reliable execution in PATH-restricted environments (cron/systemd)
 	local ip_cmd
-	ip_cmd=$(get_command_path "ip")
+	ip_cmd=$(get_ip_command_path)
 
 	# Check if default route exists
 	# ip route show default returns 0 if route exists, 1 if not found

@@ -171,9 +171,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local original_perms="644"
 
 	# Ensure cleanup happens even if test is killed
-	# shellcheck disable=SC2064 # We want variable expansion at trap definition time
 	# Trap multiple signals to ensure cleanup happens even if test is killed externally
-	trap "restore_permissions_after_test \"\$failure_counter\" \"\$original_perms\" 2>/dev/null || true" EXIT INT TERM QUIT HUP
+	trap 'restore_permissions_after_test "$failure_counter" "$original_perms" 2>/dev/null || true' EXIT INT TERM QUIT HUP
 
 	add_mock_to_path
 	# Use timeout to prevent test from hanging if script doesn't handle unreadable file gracefully
@@ -345,10 +344,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Create multiple corrupted files
 	local failure_counter
 	failure_counter=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "failure_count")
-	local bytes_file
-	bytes_file=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "last_bytes")
-	local spi_file
-	spi_file=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "spi")
+	create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "last_bytes" >/dev/null
+	create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "spi" >/dev/null
 	local cooldown_file="${STATE_DIR}/cooldown_until"
 
 	echo "invalid-value" >"$cooldown_file"
@@ -390,7 +387,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	original_dir_perms=$(stat -c %a "${STATE_DIR}")
 	chmod 555 "${STATE_DIR}"
 	# Use trap to ensure cleanup even on errors
-	trap "chmod $original_dir_perms \"\${STATE_DIR}\" 2>/dev/null || true" EXIT
+	trap 'chmod $original_dir_perms "${STATE_DIR}" 2>/dev/null || true' EXIT
 
 	# Source state functions to test directly
 	# shellcheck source=../lib/state.sh
@@ -464,7 +461,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	original_perms=$(stat -c %a "$failure_counter")
 	chmod 000 "$failure_counter"
 	# Use trap to ensure cleanup even on errors
-	trap "chmod $original_perms \"\$failure_counter\" 2>/dev/null || true" EXIT
+	trap 'chmod $original_perms "$failure_counter" 2>/dev/null || true' EXIT
 
 	# Source state functions to test directly
 	# shellcheck source=../lib/state.sh
@@ -507,7 +504,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	original_dir_perms=$(stat -c %a "${STATE_DIR}")
 	chmod 555 "${STATE_DIR}"
 	# Use trap to ensure cleanup even on errors
-	trap "chmod $original_dir_perms \"\${STATE_DIR}\" 2>/dev/null || true" EXIT
+	trap 'chmod $original_dir_perms "${STATE_DIR}" 2>/dev/null || true' EXIT
 
 	# Source state functions to test directly
 	# shellcheck source=../lib/state.sh
@@ -596,10 +593,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Create corrupted per-peer files
 	local failure_counter
 	failure_counter=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "failure_count")
-	local bytes_file
-	bytes_file=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "last_bytes")
-	local spi_file
-	spi_file=$(create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "spi")
+	create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "last_bytes" >/dev/null
+	create_corrupted_state_file "TEST" "${TEST_PEER_IP}" "spi" >/dev/null
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
@@ -822,7 +817,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	original_dir_perms=$(stat -c %a "$readonly_dir")
 	chmod 555 "$readonly_dir"
 	# Use trap to ensure cleanup even on errors
-	trap "chmod $original_dir_perms \"\$readonly_dir\" 2>/dev/null || true" EXIT
+	trap 'chmod $original_dir_perms "$readonly_dir" 2>/dev/null || true' EXIT
 
 	# Try to write to read-only directory (should fail gracefully)
 	local original_state_dir="$STATE_DIR"
@@ -1309,7 +1304,7 @@ EOF
 	original_perms=$(stat -c %a "$file2" 2>/dev/null || echo "644")
 	chmod 000 "$file2"
 	# Use trap to ensure cleanup even on errors
-	trap "chmod $original_perms \"\$file2\" 2>/dev/null || true" EXIT
+	trap 'chmod $original_perms "$file2" 2>/dev/null || true' EXIT
 
 	# Verify permissions were set correctly
 	assert_file_permission 000 "$file2"
@@ -1375,7 +1370,7 @@ EOF
 	chmod 000 "$file1"
 	chmod 000 "$file2"
 	# Use trap to ensure cleanup even on errors
-	trap "chmod $original_perms1 \"\$file1\" 2>/dev/null || true; chmod $original_perms2 \"\$file2\" 2>/dev/null || true" EXIT
+	trap 'chmod $original_perms1 "$file1" 2>/dev/null || true; chmod $original_perms2 "$file2" 2>/dev/null || true' EXIT
 
 	# Verify permissions were set correctly
 	assert_file_permission 000 "$file1"
@@ -1434,7 +1429,7 @@ EOF
 	original_perms=$(stat -c %a "$file2" 2>/dev/null || echo "644")
 	chmod 000 "$file2"
 	# Use trap to ensure cleanup even on errors
-	trap "chmod $original_perms \"\$file2\" 2>/dev/null || true" EXIT
+	trap 'chmod $original_perms "$file2" 2>/dev/null || true' EXIT
 
 	# Call validate_state with timeout to prevent hangs
 	# This should call validate_state_files_by_pattern internally

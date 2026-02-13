@@ -3,7 +3,7 @@
 # Tests for Test Data Generator Functions
 #
 # Tests the test data generator functions in tests/helpers/test_data.bash:
-# - generate_xfrm_state_output() - all scenarios and formats
+# - generate_xfrm_state_for_scenario() - all scenarios and formats
 # - generate_config_file() - all template types
 # - load_test_data_file() - success and error handling
 
@@ -11,17 +11,17 @@ load test_helper
 load helpers/test_data
 
 # ============================================================================
-# generate_xfrm_state_output() Tests
+# generate_xfrm_state_for_scenario() Tests
 # ============================================================================
 
 # bats test_tags=category:test-infrastructure,priority:low
-@test "generate_xfrm_state_output - healthy scenario with defaults" {
-	# Purpose: Verify generate_xfrm_state_output produces correct output for healthy scenario with default values
+@test "generate_xfrm_state_for_scenario - healthy scenario with defaults" {
+	# Purpose: Verify generate_xfrm_state_for_scenario produces correct output for healthy scenario with default values
 	# Expected: Output contains peer IP, SPI, and default healthy byte/packet counters
 	local peer_ip="${TEST_PEER_IP}"
 	local spi="0x12345678"
 	local output
-	output=$(generate_xfrm_state_output "healthy" "$peer_ip" "$spi")
+	output=$(generate_xfrm_state_for_scenario "healthy" "$peer_ip" "$spi")
 
 	# Verify output contains expected elements
 	assert_output --partial "src ${peer_ip} dst ${peer_ip}"
@@ -32,15 +32,15 @@ load helpers/test_data
 }
 
 # bats test_tags=category:test-infrastructure,priority:low
-@test "generate_xfrm_state_output - healthy scenario with overridden values" {
-	# Purpose: Verify generate_xfrm_state_output allows overriding default values for healthy scenario
+@test "generate_xfrm_state_for_scenario - healthy scenario with overridden values" {
+	# Purpose: Verify generate_xfrm_state_for_scenario allows overriding default values for healthy scenario
 	# Expected: Output uses provided byte and packet counters instead of defaults
 	local peer_ip="${TEST_PEER_IP}"
 	local spi="0x12345678"
 	local custom_bytes=5000
 	local custom_packets=50
 	local output
-	output=$(generate_xfrm_state_output "healthy" "$peer_ip" "$spi" "$custom_bytes" "$custom_packets")
+	output=$(generate_xfrm_state_for_scenario "healthy" "$peer_ip" "$spi" "$custom_bytes" "$custom_packets")
 
 	# Verify output uses custom values
 	assert_output --partial "${custom_bytes} bytes"
@@ -48,13 +48,13 @@ load helpers/test_data
 }
 
 # bats test_tags=category:test-infrastructure,priority:low
-@test "generate_xfrm_state_output - idle scenario with defaults" {
-	# Purpose: Verify generate_xfrm_state_output produces correct output for idle scenario
+@test "generate_xfrm_state_for_scenario - idle scenario with defaults" {
+	# Purpose: Verify generate_xfrm_state_for_scenario produces correct output for idle scenario
 	# Expected: Output contains zero byte and packet counters
 	local peer_ip="${TEST_PEER_IP}"
 	local spi="0x12345678"
 	local output
-	output=$(generate_xfrm_state_output "idle" "$peer_ip" "$spi")
+	output=$(generate_xfrm_state_for_scenario "idle" "$peer_ip" "$spi")
 
 	# Verify output contains zero counters (or from env var)
 	assert_output --regexp "(0|${XFRM_STATE_IDLE_BYTES:-0}) bytes"
@@ -62,15 +62,15 @@ load helpers/test_data
 }
 
 # bats test_tags=category:test-infrastructure,priority:low
-@test "generate_xfrm_state_output - idle scenario with overridden values" {
-	# Purpose: Verify generate_xfrm_state_output allows overriding values for idle scenario
+@test "generate_xfrm_state_for_scenario - idle scenario with overridden values" {
+	# Purpose: Verify generate_xfrm_state_for_scenario allows overriding values for idle scenario
 	# Expected: Output uses provided values even for idle scenario
 	local peer_ip="${TEST_PEER_IP}"
 	local spi="0x12345678"
 	local custom_bytes=100
 	local custom_packets=5
 	local output
-	output=$(generate_xfrm_state_output "idle" "$peer_ip" "$spi" "$custom_bytes" "$custom_packets")
+	output=$(generate_xfrm_state_for_scenario "idle" "$peer_ip" "$spi" "$custom_bytes" "$custom_packets")
 
 	# Verify output uses custom values
 	assert_output --partial "${custom_bytes} bytes"
@@ -78,13 +78,13 @@ load helpers/test_data
 }
 
 # bats test_tags=category:test-infrastructure,priority:low
-@test "generate_xfrm_state_output - failing scenario with defaults" {
-	# Purpose: Verify generate_xfrm_state_output produces correct output for failing scenario
+@test "generate_xfrm_state_for_scenario - failing scenario with defaults" {
+	# Purpose: Verify generate_xfrm_state_for_scenario produces correct output for failing scenario
 	# Expected: Output contains default failing byte/packet counters
 	local peer_ip="${TEST_PEER_IP}"
 	local spi="0x12345678"
 	local output
-	output=$(generate_xfrm_state_output "failing" "$peer_ip" "$spi")
+	output=$(generate_xfrm_state_for_scenario "failing" "$peer_ip" "$spi")
 
 	# Verify output contains expected counters (or from env var)
 	assert_output --regexp "(1000|${XFRM_STATE_FAILING_BYTES:-1000}) bytes"
@@ -92,15 +92,15 @@ load helpers/test_data
 }
 
 # bats test_tags=category:test-infrastructure,priority:low
-@test "generate_xfrm_state_output - failing scenario with overridden values" {
-	# Purpose: Verify generate_xfrm_state_output allows overriding values for failing scenario
+@test "generate_xfrm_state_for_scenario - failing scenario with overridden values" {
+	# Purpose: Verify generate_xfrm_state_for_scenario allows overriding values for failing scenario
 	# Expected: Output uses provided values
 	local peer_ip="${TEST_PEER_IP}"
 	local spi="0x12345678"
 	local custom_bytes=2000
 	local custom_packets=20
 	local output
-	output=$(generate_xfrm_state_output "failing" "$peer_ip" "$spi" "$custom_bytes" "$custom_packets")
+	output=$(generate_xfrm_state_for_scenario "failing" "$peer_ip" "$spi" "$custom_bytes" "$custom_packets")
 
 	# Verify output uses custom values
 	assert_output --partial "${custom_bytes} bytes"
@@ -108,13 +108,13 @@ load helpers/test_data
 }
 
 # bats test_tags=category:test-infrastructure,priority:low
-@test "generate_xfrm_state_output - custom scenario with defaults" {
-	# Purpose: Verify generate_xfrm_state_output produces correct output for custom scenario with defaults
+@test "generate_xfrm_state_for_scenario - custom scenario with defaults" {
+	# Purpose: Verify generate_xfrm_state_for_scenario produces correct output for custom scenario with defaults
 	# Expected: Output uses default custom values (1000 bytes, 10 packets)
 	local peer_ip="${TEST_PEER_IP}"
 	local spi="0x12345678"
 	local output
-	output=$(generate_xfrm_state_output "custom" "$peer_ip" "$spi")
+	output=$(generate_xfrm_state_for_scenario "custom" "$peer_ip" "$spi")
 
 	# Verify output contains default custom values
 	assert_output --partial "1000 bytes"
@@ -122,15 +122,15 @@ load helpers/test_data
 }
 
 # bats test_tags=category:test-infrastructure,priority:low
-@test "generate_xfrm_state_output - custom scenario with provided values" {
-	# Purpose: Verify generate_xfrm_state_output uses provided values for custom scenario
+@test "generate_xfrm_state_for_scenario - custom scenario with provided values" {
+	# Purpose: Verify generate_xfrm_state_for_scenario uses provided values for custom scenario
 	# Expected: Output uses provided byte and packet counters
 	local peer_ip="${TEST_PEER_IP}"
 	local spi="0x12345678"
 	local custom_bytes=7500
 	local custom_packets=75
 	local output
-	output=$(generate_xfrm_state_output "custom" "$peer_ip" "$spi" "$custom_bytes" "$custom_packets")
+	output=$(generate_xfrm_state_for_scenario "custom" "$peer_ip" "$spi" "$custom_bytes" "$custom_packets")
 
 	# Verify output uses provided values
 	assert_output --partial "${custom_bytes} bytes"
@@ -138,12 +138,12 @@ load helpers/test_data
 }
 
 # bats test_tags=category:test-infrastructure,priority:low
-@test "generate_xfrm_state_output - unknown scenario returns error" {
-	# Purpose: Verify generate_xfrm_state_output handles unknown scenario correctly
+@test "generate_xfrm_state_for_scenario - unknown scenario returns error" {
+	# Purpose: Verify generate_xfrm_state_for_scenario handles unknown scenario correctly
 	# Expected: Function returns error code and prints error message
 	local peer_ip="${TEST_PEER_IP}"
 	local spi="0x12345678"
-	run generate_xfrm_state_output "unknown_scenario" "$peer_ip" "$spi"
+	run generate_xfrm_state_for_scenario "unknown_scenario" "$peer_ip" "$spi"
 
 	# Verify function fails
 	assert_failure
@@ -152,13 +152,13 @@ load helpers/test_data
 }
 
 # bats test_tags=category:test-infrastructure,priority:low
-@test "generate_xfrm_state_output - full format (default)" {
-	# Purpose: Verify generate_xfrm_state_output produces full format output by default
+@test "generate_xfrm_state_for_scenario - full format (default)" {
+	# Purpose: Verify generate_xfrm_state_for_scenario produces full format output by default
 	# Expected: Output includes all fields (replay-window, auth-trunc, enc, lifetime details)
 	local peer_ip="${TEST_PEER_IP}"
 	local spi="0x12345678"
 	local output
-	output=$(generate_xfrm_state_output "healthy" "$peer_ip" "$spi" "" "" "full")
+	output=$(generate_xfrm_state_for_scenario "healthy" "$peer_ip" "$spi" "" "" "full")
 
 	# Verify full format includes additional fields
 	assert_output --partial "replay-window"
@@ -170,13 +170,13 @@ load helpers/test_data
 }
 
 # bats test_tags=category:test-infrastructure,priority:low
-@test "generate_xfrm_state_output - minimal format" {
-	# Purpose: Verify generate_xfrm_state_output produces minimal format output when requested
+@test "generate_xfrm_state_for_scenario - minimal format" {
+	# Purpose: Verify generate_xfrm_state_for_scenario produces minimal format output when requested
 	# Expected: Output contains only essential fields (no replay-window, auth-trunc, etc.)
 	local peer_ip="${TEST_PEER_IP}"
 	local spi="0x12345678"
 	local output
-	output=$(generate_xfrm_state_output "healthy" "$peer_ip" "$spi" "" "" "minimal")
+	output=$(generate_xfrm_state_for_scenario "healthy" "$peer_ip" "$spi" "" "" "minimal")
 
 	# Verify minimal format excludes extra fields
 	assert_output --partial "src ${peer_ip} dst ${peer_ip}"
@@ -192,15 +192,15 @@ load helpers/test_data
 }
 
 # bats test_tags=category:test-infrastructure,priority:low
-@test "generate_xfrm_state_output - environment variable defaults" {
-	# Purpose: Verify generate_xfrm_state_output respects environment variable defaults
+@test "generate_xfrm_state_for_scenario - environment variable defaults" {
+	# Purpose: Verify generate_xfrm_state_for_scenario respects environment variable defaults
 	# Expected: Output uses environment variable values when set
 	local peer_ip="${TEST_PEER_IP}"
 	local spi="0x12345678"
 	export XFRM_STATE_HEALTHY_BYTES=2500
 	export XFRM_STATE_HEALTHY_PACKETS=25
 	local output
-	output=$(generate_xfrm_state_output "healthy" "$peer_ip" "$spi")
+	output=$(generate_xfrm_state_for_scenario "healthy" "$peer_ip" "$spi")
 
 	# Verify output uses environment variable values
 	assert_output --partial "2500 bytes"

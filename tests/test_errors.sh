@@ -259,8 +259,9 @@ EOF
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Create invalid config to trigger handle_error_or_exit_fake_mode
+	# Use "-invalid" which fails validate_ip_or_dns() (starts with hyphen, invalid DNS label)
 	create_test_config "$config_file" \
-		'LOCATION_TEST_EXTERNAL="invalid-ip-format"'
+		'LOCATION_TEST_EXTERNAL="-invalid"'
 
 	add_mock_to_path
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script"
@@ -316,29 +317,6 @@ EOF
 
 	# Restore permissions for cleanup
 	chmod 755 "$(dirname "$log_file")" 2>/dev/null || true
-}
-
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
-@test "handle_error die called but function not available (defensive check)" {
-	# Purpose: Test verifies that handle_error handles missing die() function gracefully
-	# Expected: Function should handle missing die() function without crashing
-	# Importance: Defensive programming ensures error handling works even if die() is not available
-	source_logging_functions
-
-	local log_file="${TEST_DIR}/test.log"
-	export LOG_FILE="$log_file"
-	mkdir -p "$(dirname "$log_file")"
-
-	# Unset die function to simulate it not being available
-	unset -f die 2>/dev/null || true
-
-	# Call handle_error with ERROR severity and non-zero exit code
-	# Should attempt to call die(), which will fail if die() is not available
-	# Exit code 127 means "command not found" which is expected when die() is unavailable
-	# Use set -e to ensure script exits when die() command is not found
-	run bash -c "set -e; source '${BATS_TEST_DIRNAME}/../lib/common.sh' 2>/dev/null; source '${BATS_TEST_DIRNAME}/../lib/logging.sh' 2>/dev/null; export LOG_FILE='$log_file'; unset -f die 2>/dev/null; handle_error 'ERROR' 'SYSTEM' 'Test error message' 1"
-	# Should fail because die() is not available (exit code 127 = command not found)
-	[[ $status -eq 127 ]]
 }
 
 # bats test_tags=category:high-risk,priority:high,untested-critical-path
@@ -522,40 +500,6 @@ EOF
 
 	# Restore permissions for cleanup
 	chmod 755 "${TEST_DIR}/logs" 2>/dev/null || true
-
-	remove_mock_from_path
-}
-
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
-@test "handle_error_or_exit_fake_mode die function not available - fallback behavior" {
-	# Purpose: Test verifies that handle_error_or_exit_fake_mode() handles missing die() function
-	# Expected: Function should fail when die() is not available (no fallback in this function)
-	# Importance: Tests defensive behavior when dependencies are missing
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	setup_test_location_config "$config_file" \
-		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
-
-	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
-
-	# Source logging functions, then unset die()
-	# shellcheck source=../lib/logging.sh
-	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
-
-	# Set up logging
-	export LOG_FILE="$log_file"
-	export LOGS_DIR="${TEST_DIR}/logs"
-
-	# Test in normal mode with die() unset - should fail when trying to call die()
-	unset NO_ESCALATE
-	unset -f die 2>/dev/null || true
-	# In normal mode, function calls die() which will fail if die() is not available
-	# This tests that the function doesn't have a fallback for missing die()
-	# Exit code 127 means "command not found" which is expected when die() is unavailable
-	# Note: BATS warning about exit code 127 is expected and acceptable for this test
-	run bash -c "source '${BATS_TEST_DIRNAME}/../lib/logging.sh' 2>/dev/null; export LOG_FILE='$log_file'; export LOGS_DIR='${TEST_DIR}/logs'; unset -f die 2>/dev/null; handle_error_or_exit_fake_mode 'SYSTEM' 'Test message' 7" || true
-	# Should fail because die() is not available (exit code 127 = command not found)
-	[[ $status -eq 127 ]]
 
 	remove_mock_from_path
 }

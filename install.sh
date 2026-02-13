@@ -5,7 +5,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 set -euo pipefail
@@ -398,6 +398,10 @@ STATE_DIR="${default_state_dir}"
 # Cron schedule (cron format: minute hour day month weekday)
 CRON_SCHEDULE="${cron_schedule}"
 
+# Monitor wrapper (sub-minute execution) - set to 1 for checks every MONITOR_INTERVAL seconds
+ENABLE_MONITOR_WRAPPER=1
+MONITOR_INTERVAL=20
+
 # Lockfile timeout (seconds)
 LOCKFILE_TIMEOUT=${lockfile_timeout}
 
@@ -485,6 +489,8 @@ RATE_LIMIT_WINDOW_MINUTES=60
 LOG_FILE="${INSTALL_DIR}/logs/vpn-monitor.log"
 STATE_DIR="${INSTALL_DIR}/state"
 CRON_SCHEDULE="*/1 * * * *"
+ENABLE_MONITOR_WRAPPER=1
+MONITOR_INTERVAL=20
 LOCKFILE_TIMEOUT=300
 ENABLE_PING_CHECK=1
 PING_COUNT=3
@@ -726,6 +732,13 @@ install_scripts() {
 		log_info "Installed vpn-keepalive.sh"
 	fi
 
+	# Copy monitor wrapper script (for sub-minute execution when ENABLE_MONITOR_WRAPPER=1)
+	if [[ -f "${INSTALL_SCRIPT_DIR}/vpn-monitor-wrapper.sh" ]]; then
+		cp "${INSTALL_SCRIPT_DIR}/vpn-monitor-wrapper.sh" "${INSTALL_DIR}/vpn-monitor-wrapper.sh"
+		chmod 755 "${INSTALL_DIR}/vpn-monitor-wrapper.sh"
+		log_info "Installed vpn-monitor-wrapper.sh (sub-minute execution)"
+	fi
+
 	# Copy log analysis script (optional utility)
 	if [[ -f "${INSTALL_SCRIPT_DIR}/analyze-logs.sh" ]]; then
 		cp "${INSTALL_SCRIPT_DIR}/analyze-logs.sh" "${INSTALL_DIR}/analyze-logs.sh"
@@ -924,27 +937,46 @@ setup_cron() {
 		log_info "Using default cron schedule: $cron_schedule"
 	fi
 
+	# Check if wrapper mode is enabled
+	local enable_wrapper=0
+	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
+		local val
+		val=$(grep -E "^ENABLE_MONITOR_WRAPPER=" "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "1")
+		[[ "$val" == "1" ]] && enable_wrapper=1
+	fi
+
 	local cron_entry
-	cron_entry="${cron_schedule} ${INSTALL_DIR}/${SCRIPT_NAME} >> ${INSTALL_DIR}/logs/cron.log 2>&1"
+	if [[ $enable_wrapper -eq 1 ]]; then
+		# Wrapper runs in background; cron starts it every minute for resurrection
+		cron_entry="${cron_schedule} ${INSTALL_DIR}/vpn-monitor-wrapper.sh >> ${INSTALL_DIR}/logs/cron.log 2>&1 &"
+		log_info "Using monitor wrapper (sub-minute execution via MONITOR_INTERVAL)"
+	else
+		cron_entry="${cron_schedule} ${INSTALL_DIR}/${SCRIPT_NAME} >> ${INSTALL_DIR}/logs/cron.log 2>&1"
+	fi
 
 	# Note: cron.log will be created automatically on first cron run in the logs directory.
 	# Log rotation is configured via logrotate (see install_logrotate_config function).
 
-	# Check if cron entry already exists
-	if crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
-		log_warn "Cron job already exists, skipping..."
-		log_info "To update the cron schedule:"
-		log_info "  1. Edit ${INSTALL_DIR}/${CONFIG_NAME} and set CRON_SCHEDULE"
-		log_info "  2. Remove old cron entry: crontab -e"
-		log_info "  3. Re-run install.sh to install new schedule"
-	else
-		# Add cron entry
-		(
-			crontab -l 2>/dev/null || true
-			echo "$cron_entry"
-		) | crontab -
-		log_info "Cron job installed with schedule: $cron_schedule"
+	# Remove existing vpn-monitor cron entry (direct or wrapper) so we can add/update
+	local crontab_content
+	crontab_content=$(crontab -l 2>/dev/null || echo "")
+	if echo "$crontab_content" | grep -q "vpn-monitor"; then
+		local filtered_content
+		filtered_content=$(echo "$crontab_content" | grep -v "vpn-monitor")
+		if [[ -n "$filtered_content" ]]; then
+			echo "$filtered_content" | crontab -
+		else
+			crontab -r 2>/dev/null || true
+		fi
+		log_info "Removed existing vpn-monitor cron entry"
 	fi
+
+	# Add cron entry
+	(
+		crontab -l 2>/dev/null || true
+		echo "$cron_entry"
+	) | crontab -
+	log_info "Cron job installed: $([ $enable_wrapper -eq 1 ] && echo 'wrapper (sub-minute)' || echo "direct ($cron_schedule)")"
 
 	# Display current cron entries
 	log_info "Current cron entries:"

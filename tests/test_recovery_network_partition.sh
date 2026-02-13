@@ -343,14 +343,42 @@ EOF
 	local partition_state_file="${STATE_DIR}/network_partition_state"
 	echo "1" >"$partition_state_file"
 
-	# Mock network partition check to succeed (partition cleared)
-	mock_ip_interfaces_up "br0,eth0" "1" >/dev/null
+	# Create combined mock ip command that handles route, link, and xfrm state
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+# Handle route commands
+if [[ "$1" == "route" ]] && [[ "$2" == "show" ]] && [[ "$3" == "default" ]]; then
+    echo "default via 192.168.1.1 dev eth0"
+    exit 0
+fi
+# Handle link commands
+if [[ "$1" == "link" ]] && [[ "$2" == "show" ]]; then
+    echo "1: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default"
+    echo "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default"
+    exit 0
+fi
+# Handle xfrm state commands
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    echo "src 192.168.1.1 dst 192.168.1.1"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: 1000 bytes, 10 packets"
+    exit 0
+fi
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "src 192.168.1.1 dst 192.168.1.1"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: 1000 bytes, 10 packets"
+    exit 0
+fi
+# Handle other ip commands
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+
+	# Mock dig for DNS check
 	mock_dig 1 "8.8.8.8"
 	add_mock_to_path
-
-	# Mock VPN as healthy
-	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" "0x12345678" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 
 	# Source required functions
 	source_recovery_module

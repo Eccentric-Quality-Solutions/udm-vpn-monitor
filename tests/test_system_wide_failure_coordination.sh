@@ -12,7 +12,8 @@
 
 load test_helper
 
-# Path to the VPN monitor script
+# Path to the VPN monitor script (used by setup functions when creating test scripts)
+# shellcheck disable=SC2034
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # ============================================================================
@@ -874,6 +875,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	failure_statuses["TEST5"]=0
 
 	# Detect system-wide failure (call directly to get global variables)
+	# Arrays passed by name to detect_system_wide_failure
+	[[ "${#location_names[@]}" -eq 5 ]] || fail "location_names not populated"
+	[[ "${#failure_statuses[@]}" -eq 5 ]] || fail "failure_statuses not populated"
 	detect_system_wide_failure "location_names" "failure_statuses"
 	local result=$?
 	assert_equal "$result" "0"

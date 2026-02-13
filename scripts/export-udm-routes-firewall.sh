@@ -45,13 +45,16 @@ Options:
   --help                    Show this help message
 
 Output Files:
-  The script creates four timestamped files in the output directory:
-  - routes-ipv4-<timestamp>.txt    IPv4 routes from 'ip route'
-  - routes-ipv6-<timestamp>.txt    IPv6 routes from 'ip -6 route'
-  - firewall-rules-<timestamp>.txt All iptables rules from 'iptables-save'
-  - ipset-sets-<timestamp>.txt     All ipset sets and their members from 'ipset save'
+  The script creates timestamped files organized into subdirectories:
+  - routes-ipv4-<timestamp>.txt              IPv4 routes from 'ip route' (in output directory root)
+  - routes-ipv6-<timestamp>.txt              IPv6 routes from 'ip -6 route' (in output directory root)
+  - firewall-rules/firewall-rules-<timestamp>.txt  All iptables rules from 'iptables-save'
+  - firewall-rules/ipset-sets-<timestamp>.txt      All ipset sets and their members from 'ipset save'
 
   Timestamp format: YYYY-MM-DD-HH-MM-SS (e.g., 2026-01-20-14-30-00)
+  
+  Firewall-related files (firewall-rules and ipset-sets) are automatically
+  organized into a 'firewall-rules' subdirectory for better organization.
 
   Note: ipset export may be skipped if the 'ipset' command is not available
         or if it requires root privileges that are not available.
@@ -170,7 +173,7 @@ capture_ipv4_routes() {
 	local ip_cmd
 
 	# Get full path to ip command
-	ip_cmd=$(get_command_path "ip")
+	ip_cmd=$(get_ip_command_path)
 
 	[[ $VERBOSE -eq 1 ]] && log_info "Capturing IPv4 routes..."
 
@@ -199,7 +202,7 @@ capture_ipv6_routes() {
 	local ip_cmd
 
 	# Get full path to ip command
-	ip_cmd=$(get_command_path "ip")
+	ip_cmd=$(get_ip_command_path)
 
 	[[ $VERBOSE -eq 1 ]] && log_info "Capturing IPv6 routes..."
 
@@ -325,11 +328,20 @@ main() {
 	# Generate timestamp
 	timestamp=$(generate_timestamp)
 
+	# Create firewall-rules subdirectory if it doesn't exist
+	local firewall_rules_dir="${OUTPUT_DIR}/firewall-rules"
+	if ! mkdir -p "$firewall_rules_dir" 2>/dev/null; then
+		log_error "Failed to create firewall-rules subdirectory: $firewall_rules_dir"
+		exit 1
+	fi
+
 	# Set output file paths
+	# Routes stay in the root output directory
 	routes_ipv4_file="${OUTPUT_DIR}/routes-ipv4-${timestamp}.txt"
 	routes_ipv6_file="${OUTPUT_DIR}/routes-ipv6-${timestamp}.txt"
-	firewall_rules_file="${OUTPUT_DIR}/firewall-rules-${timestamp}.txt"
-	ipset_sets_file="${OUTPUT_DIR}/ipset-sets-${timestamp}.txt"
+	# Firewall-related files go into firewall-rules subdirectory
+	firewall_rules_file="${firewall_rules_dir}/firewall-rules-${timestamp}.txt"
+	ipset_sets_file="${firewall_rules_dir}/ipset-sets-${timestamp}.txt"
 
 	log_info "Exporting UDM routes, firewall rules, and ipset sets..."
 	log_info "Output directory: $OUTPUT_DIR"

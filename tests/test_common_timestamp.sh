@@ -19,33 +19,23 @@ readonly CURRENT_TIMESTAMP=$(date +%s)
 # ============================================================================
 
 # bats test_tags=category:unit
-@test "validate_timestamp: accepts valid current timestamp" {
-	# Purpose: Test that validate_timestamp accepts a valid current timestamp
-	# Expected: Returns success (0) for valid timestamp
+@test "validate_timestamp: accepts valid timestamps" {
+	# Purpose: Test that validate_timestamp accepts various valid timestamps
+	# Expected: Returns success (0) for all valid timestamps
+	# Importance: Ensures function accepts valid inputs across the valid range
+	# Test current timestamp
 	run validate_timestamp "$CURRENT_TIMESTAMP"
 	assert_success
-}
 
-# bats test_tags=category:unit
-@test "validate_timestamp: accepts valid zero timestamp" {
-	# Purpose: Test that validate_timestamp accepts zero (epoch start)
-	# Expected: Returns success (0) for zero timestamp
+	# Test zero (epoch start)
 	run validate_timestamp "0"
 	assert_success
-}
 
-# bats test_tags=category:unit
-@test "validate_timestamp: accepts valid maximum timestamp (year 2100)" {
-	# Purpose: Test that validate_timestamp accepts the maximum allowed timestamp
-	# Expected: Returns success (0) for maximum timestamp
+	# Test maximum timestamp (year 2100)
 	run validate_timestamp "$MAX_TIMESTAMP"
 	assert_success
-}
 
-# bats test_tags=category:unit
-@test "validate_timestamp: accepts valid timestamp just below maximum" {
-	# Purpose: Test that validate_timestamp accepts timestamp just below maximum
-	# Expected: Returns success (0) for timestamp one second before maximum
+	# Test timestamp just below maximum
 	local test_timestamp=$((MAX_TIMESTAMP - 1))
 	run validate_timestamp "$test_timestamp"
 	assert_success
@@ -181,18 +171,16 @@ readonly CURRENT_TIMESTAMP=$(date +%s)
 }
 
 # bats test_tags=category:unit
-@test "safe_timestamp_subtract: detects underflow (result would be negative)" {
-	# Purpose: Test that safe_timestamp_subtract detects underflow
+@test "safe_timestamp_subtract: detects underflow" {
+	# Purpose: Test that safe_timestamp_subtract detects underflow in various scenarios
 	# Expected: Returns failure (3) when result would be negative
+	# Importance: Prevents invalid negative timestamps
+	# Test underflow with positive base
 	run safe_timestamp_subtract "100" "200"
 	assert_failure
 	assert [ "$status" -eq 3 ]
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_subtract: detects underflow with zero base" {
-	# Purpose: Test that safe_timestamp_subtract detects underflow from zero
-	# Expected: Returns failure (3) when subtracting from zero
+	# Test underflow with zero base
 	run safe_timestamp_subtract "0" "1"
 	assert_failure
 	assert [ "$status" -eq 3 ]
@@ -313,19 +301,17 @@ readonly CURRENT_TIMESTAMP=$(date +%s)
 }
 
 # bats test_tags=category:unit
-@test "safe_timestamp_add: detects overflow with large addition" {
-	# Purpose: Test that safe_timestamp_add detects overflow with large addition
+@test "safe_timestamp_add: detects overflow" {
+	# Purpose: Test that safe_timestamp_add detects overflow in various scenarios
 	# Expected: Returns failure (3) when result exceeds maximum
+	# Importance: Prevents invalid timestamps beyond maximum
+	# Test overflow with large addition
 	local base_timestamp=$((MAX_TIMESTAMP - 100))
 	run safe_timestamp_add "$base_timestamp" "200"
 	assert_failure
 	assert [ "$status" -eq 3 ]
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_add: detects overflow at exact boundary" {
-	# Purpose: Test that safe_timestamp_add detects overflow at exact boundary
-	# Expected: Returns failure (3) when adding 1 to maximum
+	# Test overflow at exact boundary
 	run safe_timestamp_add "$MAX_TIMESTAMP" "1"
 	assert_failure
 	assert [ "$status" -eq 3 ]
@@ -452,22 +438,20 @@ readonly CURRENT_TIMESTAMP=$(date +%s)
 }
 
 # bats test_tags=category:unit
-@test "safe_timestamp_diff: handles very large negative difference" {
-	# Purpose: Test that safe_timestamp_diff handles very large negative differences
-	# Expected: Returns success (0) and outputs large negative value
+@test "safe_timestamp_diff: handles very large differences" {
+	# Purpose: Test that safe_timestamp_diff handles very large positive and negative differences
+	# Expected: Returns success (0) and outputs correct large difference values
+	# Importance: Ensures function works correctly with large timestamp differences
+	# Test very large negative difference
 	local timestamp1=1000
 	local timestamp2=1000000
 	run safe_timestamp_diff "$timestamp1" "$timestamp2"
 	assert_success
 	assert_output "-999000"
-}
 
-# bats test_tags=category:unit
-@test "safe_timestamp_diff: handles very large positive difference" {
-	# Purpose: Test that safe_timestamp_diff handles very large positive differences
-	# Expected: Returns success (0) and outputs large positive value
-	local timestamp1=1000000
-	local timestamp2=1000
+	# Test very large positive difference
+	timestamp1=1000000
+	timestamp2=1000
 	run safe_timestamp_diff "$timestamp1" "$timestamp2"
 	assert_success
 	assert_output "999000"

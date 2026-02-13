@@ -3,7 +3,7 @@
 # Per-peer state operations
 # Handles state management for individual VPN peers
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 # Get peer state value
@@ -72,7 +72,7 @@ get_peer_state() {
 			;;
 		spi)
 			# SPI can be hex (0x...), decimal format, or empty
-			if [[ -n "$value" ]] && [[ ! "$value" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+			if [[ -n "$value" ]] && ! validate_spi_format "$value"; then
 				handle_error "WARNING" "SYSTEM" "Corrupted peer state file (recovering): $state_file" 0
 				recover_corrupted_state_file "$state_file" "$default_value" "integer"
 				echo "$default_value"
@@ -139,7 +139,7 @@ set_peer_state() {
 		;;
 	spi)
 		# SPI can be hex (0x...), decimal format, or empty
-		if [[ ! "$value" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]] && [[ -n "$value" ]]; then
+		if [[ -n "$value" ]] && ! validate_spi_format "$value"; then
 			handle_error "ERROR" "SYSTEM" "Invalid value for $key (expected SPI format): $value" 0
 			return 1
 		fi

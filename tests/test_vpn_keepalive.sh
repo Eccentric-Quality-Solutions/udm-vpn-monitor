@@ -172,7 +172,7 @@ cleanup_keepalive_daemon() {
 
 	assert_success
 	assert_output --partial "UDM VPN Keepalive"
-	assert_output --partial "0.6.0"
+	assert_output --partial "0.7.0"
 }
 
 # bats test_tags=category:unit
@@ -562,7 +562,6 @@ EOF
 	wait_for_file "$pidfile" 2 || true
 
 	# Log file should exist (may be created by daemon)
-	local log_file="${MOCK_INSTALL_DIR}/logs/vpn-keepalive.log"
 	# Note: Log file may not exist immediately, so we don't assert it exists
 	# Just verify the directory exists
 	assert_dir_exist "${MOCK_INSTALL_DIR}/logs"

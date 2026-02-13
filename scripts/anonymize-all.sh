@@ -10,6 +10,14 @@ set -euo pipefail
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Source anonymization library for location mapping
+# shellcheck source=../lib/anonymize.sh
+source "${PROJECT_ROOT}/lib/anonymize.sh" 2>/dev/null || {
+	echo "Error: Could not source lib/anonymize.sh" >&2
+	exit 1
+}
 
 # Default values
 FIREWALL_FILE=""
@@ -262,6 +270,84 @@ parse_args() {
 	fi
 }
 
+# Generate anonymized output filename for log files
+#
+# Extracts location name from input filename (if present) and replaces it with
+# anonymized location name in the output filename.
+# Pattern: vpn-monitor-<location>.log -> vpn-monitor-<anonymized_location>-anonymized.log
+#
+# Arguments:
+#   $1: Input log file path
+#   $2: Output directory
+#   $3: Mapping file path (for loading existing mappings)
+#
+# Returns:
+#   0: Success
+#
+# Output:
+#   Prints anonymized output filename to stdout
+generate_anonymized_log_output_filename() {
+	local input_file="$1"
+	local output_dir="$2"
+	local mapping_file="$3"
+
+	# Load mapping file if it exists (to get existing location mappings)
+	if [[ -f "$mapping_file" ]]; then
+		load_mapping_file "$mapping_file" >/dev/null 2>&1 || true
+	fi
+
+	# Extract basename from input file
+	local input_basename
+	input_basename=$(basename "$input_file")
+
+	# Check if input filename matches pattern: vpn-monitor-<location>.log
+	# Accept both uppercase and lowercase location names
+	local location=""
+	if [[ "$input_basename" =~ ^vpn-monitor-([A-Za-z][A-Za-z0-9_]+)\.log$ ]]; then
+		location="${BASH_REMATCH[1]}"
+		# Convert to uppercase for consistency (location names in logs are uppercase)
+		location=$(echo "$location" | tr '[:lower:]' '[:upper:]')
+	fi
+
+	# If no location found in filename, use default name
+	if [[ -z "$location" ]]; then
+		echo "${output_dir}/vpn-monitor-anonymized.log"
+		return 0
+	fi
+
+	# Get anonymized location name
+	# First check if mapping already exists
+	local anonymized_location=""
+	if [[ -n "${ANON_LOCATION_MAP[$location]:-}" ]]; then
+		anonymized_location="${ANON_LOCATION_MAP[$location]}"
+	else
+		# Location not yet mapped - extract from log file to create mapping
+		# This ensures we have the anonymized location before generating filename
+		if [[ -f "$input_file" ]]; then
+			# Extract location from log file to create mapping
+			while IFS= read -r loc || [[ -n "$loc" ]]; do
+				[[ -z "$loc" ]] && continue
+				# Create mapping for this location
+				get_or_create_location_mapping "$loc" >/dev/null
+				# If this is the location from filename, get its anonymized version
+				if [[ "$loc" == "$location" ]]; then
+					anonymized_location="${ANON_LOCATION_MAP[$location]}"
+					break
+				fi
+			done < <(extract_locations_from_log "$input_file" 2>/dev/null || true)
+		fi
+
+		# If still no mapping, create one directly for the location from filename
+		if [[ -z "$anonymized_location" ]]; then
+			get_or_create_location_mapping "$location" >/dev/null
+			anonymized_location="${ANON_LOCATION_MAP[$location]}"
+		fi
+	fi
+
+	# Generate output filename
+	echo "${output_dir}/vpn-monitor-${anonymized_location}-anonymized.log"
+}
+
 # Run anonymization script with error handling
 #
 # Runs an anonymization script and handles errors gracefully.
@@ -367,7 +453,9 @@ main() {
 	# Anonymize logs
 	if [[ -n "$LOG_FILE" ]]; then
 		[[ $VERBOSE -eq 1 ]] && echo "Anonymizing VPN monitor logs..." >&2
-		local log_output="${OUTPUT_DIR}/vpn-monitor-anonymized.log"
+		# Generate output filename with anonymized location name
+		local log_output
+		log_output=$(generate_anonymized_log_output_filename "$LOG_FILE" "$OUTPUT_DIR" "$MAPPING_FILE")
 		if ! run_anonymize_script "${SCRIPT_DIR}/anonymize-logs.sh" "$LOG_FILE" "$log_output" "$MAPPING_FILE" "$VERBOSE"; then
 			errors=$((errors + 1))
 		else

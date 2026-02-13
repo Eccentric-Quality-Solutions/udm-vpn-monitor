@@ -3,7 +3,7 @@
 # Lockfile management for UDM VPN Monitor
 # Handles flock-based and fallback lockfile mechanisms to prevent concurrent execution
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 # shellcheck source=lib/common.sh

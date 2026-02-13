@@ -1277,62 +1277,6 @@ EOF
 }
 
 # bats test_tags=category:high-risk,priority:medium,untested-critical-path
-@test "file_exists_and_readable fails (defensive check)" {
-	# Purpose: Test verifies that validate_args() handles file_exists_and_readable() failures gracefully
-	# Expected: Script should handle file_exists_and_readable() failures without crashing
-	# Importance: Defensive programming ensures argument validation doesn't fail if helper functions fail
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "${TEST_DIR}/vpn-monitor.conf" "${TEST_DIR}" "${TEST_DIR}/logs/vpn-monitor.log")
-
-	# Create config file
-	mkdir -p "${TEST_DIR}"
-	echo "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" >"${TEST_DIR}/vpn-monitor.conf"
-	echo "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" >>"${TEST_DIR}/vpn-monitor.conf"
-
-	# Create a file that exists
-	local test_file="${TEST_DIR}/test.conf"
-	echo "test" >"$test_file"
-
-	# Unset file_exists_and_readable to simulate it not being available
-	# This is difficult to test directly, so we just verify script doesn't crash
-	# In practice, file_exists_and_readable should always be available
-	run bash "$test_script" --fake "$test_file"
-	# Should either succeed or fail gracefully
-	[[ $status -ge 0 ]] # Any exit code is acceptable
-
-	# Clean up
-	rm -f "$test_file" 2>/dev/null || true
-}
-
-# bats test_tags=category:high-risk,priority:medium,untested-critical-path
-@test "directory_exists fails (defensive check)" {
-	# Purpose: Test verifies that validate_args() handles directory_exists() failures gracefully
-	# Expected: Script should handle directory_exists() failures without crashing
-	# Importance: Defensive programming ensures argument validation doesn't fail if helper functions fail
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "${TEST_DIR}/vpn-monitor.conf" "${TEST_DIR}" "${TEST_DIR}/logs/vpn-monitor.log")
-
-	# Create config file
-	mkdir -p "${TEST_DIR}"
-	echo "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" >"${TEST_DIR}/vpn-monitor.conf"
-	echo "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" >>"${TEST_DIR}/vpn-monitor.conf"
-
-	# Create a directory that exists
-	local test_dir="${TEST_DIR}/test-dir"
-	mkdir -p "$test_dir"
-
-	# Unset directory_exists to simulate it not being available
-	# This is difficult to test directly, so we just verify script doesn't crash
-	# In practice, directory_exists should always be available
-	run bash "$test_script" --fake "$test_dir"
-	# Should either succeed or fail gracefully
-	[[ $status -ge 0 ]] # Any exit code is acceptable
-
-	# Clean up
-	rm -rf "$test_dir" 2>/dev/null || true
-}
-
-# bats test_tags=category:high-risk,priority:medium,untested-critical-path
 @test "multiple unknown arguments - all should be reported" {
 	# Purpose: Test verifies that validate_args() reports all unknown arguments, not just the first one
 	# Expected: Script should collect all unknown arguments and report them together
@@ -1353,26 +1297,4 @@ EOF
 	# Should contain information about unknown arguments
 	# Note: The actual behavior may vary, but script should handle multiple unknown args
 	[[ $status -ne 0 ]] # Should fail
-}
-
-# bats test_tags=category:high-risk,priority:medium,untested-critical-path
-@test "validate_args die called but function not available (fallback behavior)" {
-	# Purpose: Test verifies that validate_args() handles missing die() function gracefully
-	# Expected: Script should handle missing die() function without crashing, possibly using fallback
-	# Importance: Defensive programming ensures argument validation works even if die() is not available
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "${TEST_DIR}/vpn-monitor.conf" "${TEST_DIR}" "${TEST_DIR}/logs/vpn-monitor.log")
-
-	# Create config file
-	mkdir -p "${TEST_DIR}"
-	echo "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" >"${TEST_DIR}/vpn-monitor.conf"
-	echo "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" >>"${TEST_DIR}/vpn-monitor.conf"
-
-	# Use invalid file path argument
-	# Unset die() function to simulate it not being available
-	# This is difficult to test directly, so we just verify script doesn't crash
-	run bash -c "unset -f die 2>/dev/null; bash '$test_script' --fake /invalid/path/that/does/not/exist"
-	# Should either exit with error or handle gracefully
-	# The important thing is it doesn't hang or crash
-	[[ $status -ge 0 ]] # Any exit code is acceptable
 }

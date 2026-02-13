@@ -42,5 +42,9 @@ coverage/
 # Generated reports
 /reports/vpn-monitor-report.txt
 /reports/vpn-monitor-analysis.csv
+/analyze/vpn-log-map.txt
+/docs/code-diagrams
+/analyze/firewall-rules/
+/analyze/vpn-monitor-logs/
 
 architecture-docs/tests/.bats/

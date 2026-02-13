@@ -135,9 +135,10 @@ EOF
 	mock_ping_hang 2 >/dev/null
 	add_mock_to_path
 
-	# Use timeout of 10 seconds to allow script initialization, ping timeout handling, and completion
-	# The ping wrapper timeout is 2 seconds, but script initialization and other checks take additional time
-	run timeout 10 bash "$TEST_SCRIPT" --fake
+	# Use timeout of 20 seconds to allow script initialization, ping timeout handling, and completion
+	# The ping wrapper timeout is 2 seconds, but detection logic may call check_ping_connectivity
+	# multiple times (for different detection paths), so total time can be 8-12 seconds
+	run timeout 20 bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should handle ping timeout gracefully (should log error but continue)

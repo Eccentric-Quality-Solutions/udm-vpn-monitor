@@ -120,6 +120,7 @@ copy_files_with_validation() {
 # Main script files
 MAIN_FILES=(
 	"vpn-monitor.sh"
+	"vpn-monitor-wrapper.sh"
 	"vpn-keepalive.sh"
 	"install.sh"
 	"uninstall.sh"

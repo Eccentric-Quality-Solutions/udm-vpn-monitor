@@ -295,9 +295,9 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	assert_success
 
 	# Check cron entry uses custom schedule
-	# Filter to only vpn-monitor entries to avoid false positives from other cron jobs
+	# Filter to only vpn-monitor entries (matches both vpn-monitor.sh and vpn-monitor-wrapper.sh)
 	local cron_output
-	cron_output=$(crontab -l 2>/dev/null | grep "vpn-monitor.sh" || true)
+	cron_output=$(crontab -l 2>/dev/null | grep "vpn-monitor" || true)
 	if [[ -n "$cron_output" ]]; then
 		# vpn-monitor cron entry exists - check it uses the custom schedule
 		if echo "$cron_output" | grep -q "*/5 * * * *"; then
@@ -315,7 +315,49 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	fi
 
 	# Clean up
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+}
+
+# bats test_tags=category:unit
+@test "install.sh uses wrapper when ENABLE_MONITOR_WRAPPER=1" {
+	# Purpose: Test verifies that install uses vpn-monitor-wrapper.sh for cron when ENABLE_MONITOR_WRAPPER=1
+	# Expected: Cron entry invokes vpn-monitor-wrapper.sh (for sub-minute execution)
+	# Importance: Sub-minute execution enables faster failure detection and recovery
+	cd "$TEST_DIR"
+
+	# Create source files with install.sh, lib, and wrapper
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
+	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
+	load helpers/config
+	create_test_config "${TEST_DIR}/source/vpn-monitor.conf" \
+		'LOCATION_TEST_EXTERNAL=""' \
+		'CRON_SCHEDULE="*/1 * * * *"' \
+		'ENABLE_MONITOR_WRAPPER=1' \
+		'MONITOR_INTERVAL=30'
+	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+
+	# Remove any existing cron entries first
+	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+
+	run bash "$test_install" --dev --silent
+	assert_success
+
+	# Check cron entry uses wrapper
+	local cron_output
+	cron_output=$(crontab -l 2>/dev/null | grep "vpn-monitor" || true)
+	if [[ -n "$cron_output" ]]; then
+		assert_output --partial "wrapper (sub-minute)"
+		if ! echo "$cron_output" | grep -q "vpn-monitor-wrapper.sh"; then
+			echo "Expected vpn-monitor-wrapper.sh in cron, found: $cron_output" >&2
+			return 1
+		fi
+	else
+		skip "Cron entry not found (test requires crontab access)"
+	fi
+
+	# Clean up
+	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
 }
 
 # bats test_tags=category:unit
@@ -567,7 +609,7 @@ EOF
 	# Now create a new version in source
 	cat >"${TEST_DIR}/source/vpn-monitor.sh" <<'EOF'
 #!/bin/bash
-SCRIPT_VERSION="0.6.0"
+SCRIPT_VERSION="0.7.0"
 EOF
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
@@ -580,7 +622,7 @@ EOF
 	assert_output --partial "Current version:"
 	assert_output --partial "New version:"
 	assert_output --partial "0.5.0"
-	assert_output --partial "0.6.0"
+	assert_output --partial "0.7.0"
 }
 
 # bats test_tags=category:unit
@@ -774,22 +816,19 @@ EOF
 		local cron_count
 		cron_count=$(crontab -l 2>/dev/null | grep -c "vpn-monitor.sh" || echo "0")
 
-		# Re-run install - should detect existing entry
+		# Re-run install - should remove existing and re-add (update to match config)
 		run bash "$test_install" --dev --silent
 		assert_success
 
-		# Verify warning about existing cron entry
-		assert_output --partial "Cron job already exists"
-		assert_output --partial "skipping"
+		# Verify existing entry was removed and replaced
+		assert_output --partial "Removed existing vpn-monitor cron entry"
+		assert_output --partial "Cron job installed"
 
-		# Verify no duplicate was created
+		# Verify only one entry exists (no duplicates)
 		local new_cron_count
-		new_cron_count=$(crontab -l 2>/dev/null | grep -c "vpn-monitor.sh" || echo "0")
-		if [[ $cron_count -gt 0 ]] && [[ $new_cron_count -eq $cron_count ]]; then
-			# Count didn't increase - no duplicate created
-			:
-		else
-			echo "Expected cron count to remain $cron_count, but found $new_cron_count" >&2
+		new_cron_count=$(crontab -l 2>/dev/null | grep -c "vpn-monitor" || echo "0")
+		if [[ $new_cron_count -ne 1 ]]; then
+			echo "Expected exactly 1 cron entry, but found $new_cron_count" >&2
 			return 1
 		fi
 	else
@@ -833,19 +872,19 @@ EOF
 		skip "Could not create multiple cron entries for test (requires crontab access)"
 	fi
 
-	# Run install - should detect existing entries
+	# Run install - should remove existing entries and add single entry
 	run bash "$test_install" --dev --silent
 	assert_success
 
-	# Verify warning about existing cron entry
-	assert_output --partial "Cron job already exists"
-	assert_output --partial "skipping"
+	# Verify existing entries were removed and single entry installed
+	assert_output --partial "Removed existing vpn-monitor cron entry"
+	assert_output --partial "Cron job installed"
 
-	# Verify no additional entry was created
+	# Verify exactly one entry exists (consolidated from multiple)
 	local final_count
-	final_count=$(crontab -l 2>/dev/null | grep -c "vpn-monitor.sh" || echo "0")
-	if [[ $final_count -gt $initial_count ]]; then
-		echo "Expected cron count to remain $initial_count, but found $final_count (duplicate created)" >&2
+	final_count=$(crontab -l 2>/dev/null | grep -c "vpn-monitor" || echo "0")
+	if [[ $final_count -ne 1 ]]; then
+		echo "Expected exactly 1 cron entry after install, but found $final_count" >&2
 		return 1
 	fi
 
@@ -920,7 +959,7 @@ EOF
 	local test_install
 	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
 	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "SCRIPT_VERSION=\"0.6.0\"" >>"${TEST_DIR}/source/vpn-monitor.sh"
+	echo "SCRIPT_VERSION=\"0.7.0\"" >>"${TEST_DIR}/source/vpn-monitor.sh"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
 

@@ -301,19 +301,6 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 # ============================================================================
 
 # bats test_tags=category:unit
-@test "ensure_file_exists: works with command substitution" {
-	# Purpose: Test that ensure_file_exists works correctly in command substitution context
-	# Expected: Returns success (0) when used in if statement
-	# Importance: Common usage pattern in scripts
-	local test_file="${BATS_TEST_TMPDIR}/substitution_test.txt"
-	if ensure_file_exists "$test_file" "test"; then
-		assert_file_exist "$test_file"
-	else
-		fail "ensure_file_exists should return success"
-	fi
-}
-
-# bats test_tags=category:unit
 @test "ensure_file_exists: can be called multiple times idempotently" {
 	# Purpose: Test that ensure_file_exists can be called multiple times without side effects
 	# Expected: Multiple calls succeed and file content remains unchanged after first call

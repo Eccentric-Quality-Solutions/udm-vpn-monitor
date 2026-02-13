@@ -4,6 +4,43 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 
 ## [Unreleased]
 
+## 0.7.0 - 2026-02-13
+
+### Added
+- **xfrm Command Timeout Protection**: Added timeout protection to `ip xfrm state` commands to prevent indefinite hanging:
+  - `ip xfrm state` commands are now wrapped with `timeout` command (default: 5 seconds, matching `IPSEC_STATUS_TIMEOUT`)
+  - Prevents detection from hanging when xfrm commands hang due to netlink socket timeouts or lock contention
+  - Timeout events are logged with WARNING level for diagnostics
+  - Falls back gracefully to ipsec status when xfrm commands timeout
+  - Addresses issue where xfrm appeared "unavailable" when commands were actually hanging
+  - **Related**: See `analyze/xfrm-issue-resolution-summary.md` and `docs/research/XFRM_TIMEOUT_ISSUE_RESEARCH.md` for details
+- **Unified Anonymization System**: Added comprehensive anonymization system for network data exports:
+  - New shared library `lib/anonymize.sh` providing core anonymization functions and unified mapping management
+  - Unified mapping file ensures consistent anonymization across all file types (same IP → same anonymized IP)
+  - Individual anonymization scripts: `anonymize-firewall.sh`, `anonymize-ip-rules.sh`, `anonymize-ipset.sh`, `anonymize-logs.sh`
+  - Unified command `anonymize-all.sh` for batch anonymization with shared mapping
+  - Supports IPv4, IPv6, interface names, location names, ipset set names, MAC addresses, and hostnames
+  - Deterministic anonymization ensures same input always produces same output
+  - **Related**: See `docs/scripts/UNIFIED_ANONYMIZATION.md` for comprehensive documentation
+- **Developer Troubleshooting Documentation**: Added `docs/reference/DEV_TROUBLESHOOTING.md` with troubleshooting guidance for developers:
+  - xfrm-specific troubleshooting information
+  - Keepalive service restart instructions
+  - Common development issues and solutions
+- **Research Documentation**: Added research documents in `docs/research/`:
+  - `XFRM_TIMEOUT_ISSUE_RESEARCH.md` - Comprehensive research findings on xfrm timeout issue and resolution
+  - Additional research documents for deployment analysis and recommendations
+- **Test Suite Documentation Enhancements**: Added comprehensive test suite documentation:
+  - `docs/testing/COVERAGE_ANALYSIS_GUIDE.md` - Guide for analyzing test coverage and identifying gaps
+  - `docs/testing/TEST_SUITE_REVIEW.md` - Pragmatic engineering review of test suite with recommendations
+  - Includes coverage analysis, test organization assessment, and improvement recommendations
+  - VPN monitor log analysis documents
+- **Monitor Wrapper for Sub-minute Execution**: Added `vpn-monitor-wrapper.sh` for configurable sub-minute VPN checks:
+  - When `ENABLE_MONITOR_WRAPPER=1` (default), cron runs the wrapper instead of vpn-monitor.sh directly
+  - Wrapper runs checks every `MONITOR_INTERVAL` seconds (default: 20, range: 10-60) for faster failure detection
+  - Uses PID file to prevent duplicate wrapper instances; cron resurrects wrapper every minute if needed
+  - New config options: `ENABLE_MONITOR_WRAPPER`, `MONITOR_INTERVAL`
+  - Installer configures cron for wrapper when enabled; interactive install includes these options by default
+
 ### Removed
 - **BREAKING**: Removed `MAX_RESTARTS_PER_HOUR` configuration variable
   - This parameter has been fully replaced by `MAX_RESTARTS_PER_WINDOW` and `RATE_LIMIT_WINDOW_MINUTES`

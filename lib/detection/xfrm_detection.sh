@@ -3,7 +3,7 @@
 # XFRM detection functions for UDM VPN Monitor
 # Handles xfrm state parsing, byte counter detection, and SA checking
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 # Source constants for magic numbers
@@ -23,6 +23,7 @@ if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	[[ -z "${PING_CEIL_ADJUSTMENT:-}" ]] && readonly PING_CEIL_ADJUSTMENT=0.999
 	[[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && readonly XFRM_OUTPUT_CONTEXT_LINES=10
 	[[ -z "${IPSEC_STATUS_TIMEOUT:-}" ]] && readonly IPSEC_STATUS_TIMEOUT=5
+	[[ -z "${XFRM_STATE_TIMEOUT:-}" ]] && readonly XFRM_STATE_TIMEOUT=5
 fi
 
 # shellcheck source=lib/common.sh
@@ -239,7 +240,7 @@ extract_spi() {
 	fi
 
 	# Validate format: must be hex (0x...) or decimal (all digits)
-	if [[ ! "$spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+	if ! validate_spi_format "$spi"; then
 		return 1
 	fi
 
@@ -278,11 +279,11 @@ execute_xfrm_state_command() {
 
 	# Get full path to ip command for reliable execution in PATH-restricted environments (cron/systemd)
 	local ip_cmd
-	ip_cmd=$(get_command_path "ip")
+	ip_cmd=$(get_ip_command_path)
 
 	# Validate that we got a valid command path
 	if [[ -z "$ip_cmd" ]]; then
-		log_message "ERROR" "SYSTEM" "get_command_path returned empty string for 'ip' command"
+		log_message "ERROR" "SYSTEM" "get_ip_command_path returned empty string for 'ip' command"
 		return 2
 	fi
 
@@ -308,20 +309,43 @@ execute_xfrm_state_command() {
 	# Capture both stdout and stderr to distinguish command failure from empty output
 	# Note: ip xfrm state returns exit code 0 even when no SAs exist (just empty output)
 	# So we need to check stderr for actual command errors
-	full_xfrm_output=$("$ip_cmd" -s xfrm state 2>&1)
-	xfrm_exit_code=$?
+	# Wrap with timeout to prevent hanging (netlink socket timeouts, lock contention, etc.)
+	if check_command_available "timeout"; then
+		full_xfrm_output=$(timeout "${XFRM_STATE_TIMEOUT:-5}" "$ip_cmd" -s xfrm state 2>&1)
+		xfrm_exit_code=$?
+	else
+		# Fallback without timeout (shouldn't happen on UDM, but graceful degradation)
+		full_xfrm_output=$("$ip_cmd" -s xfrm state 2>&1)
+		xfrm_exit_code=$?
+	fi
 
 	# Log diagnostic information for debugging
 	log_message "DEBUG" "SYSTEM" "Executed '$ip_cmd -s xfrm state' - exit code: $xfrm_exit_code, output length: ${#full_xfrm_output}"
 
+	# Handle timeout (exit code 124 from timeout command)
+	if [[ $xfrm_exit_code -eq 124 ]]; then
+		log_message "WARNING" "SYSTEM" "ip -s xfrm state timed out after ${XFRM_STATE_TIMEOUT:-5} seconds (command path: '$ip_cmd') - xfrm subsystem may be under load or experiencing lock contention"
+		# Echo output (if any) for caller to analyze, even on timeout
+		if [[ -n "${full_xfrm_output//[[:space:]]/}" ]]; then
+			echo "$full_xfrm_output"
+		fi
+		return 2
 	# Handle specific exit codes that indicate command execution problems
-	if [[ $xfrm_exit_code -eq 127 ]]; then
+	elif [[ $xfrm_exit_code -eq 127 ]]; then
 		# Command not found - log the path we tried to use
 		log_message "ERROR" "SYSTEM" "ip command not found at path: '$ip_cmd' (exit code 127)"
+		# Echo output (if any) for caller to analyze
+		if [[ -n "${full_xfrm_output//[[:space:]]/}" ]]; then
+			echo "$full_xfrm_output"
+		fi
 		return 2
 	elif [[ $xfrm_exit_code -eq 126 ]]; then
 		# Command not executable
 		log_message "ERROR" "SYSTEM" "ip command not executable at path: '$ip_cmd' (exit code 126)"
+		# Echo output (if any) for caller to analyze
+		if [[ -n "${full_xfrm_output//[[:space:]]/}" ]]; then
+			echo "$full_xfrm_output"
+		fi
 		return 2
 	elif [[ $xfrm_exit_code -eq 0 ]]; then
 		# Command succeeded - check if output contains error messages in stderr
@@ -329,6 +353,8 @@ execute_xfrm_state_command() {
 		# by looking for error patterns that are more specific to actual error messages
 		if echo "$full_xfrm_output" | grep -qE "^(error|Error|ERROR):|Permission denied|No such (file|device|resource)|Operation not permitted"; then
 			log_message "WARNING" "SYSTEM" "ip -s xfrm state returned exit code 0 but contains error messages (command path: '$ip_cmd')"
+			# Echo output for caller to analyze error patterns
+			echo "$full_xfrm_output"
 			return 2
 		fi
 		# Check if we have actual output (not just empty/whitespace)
@@ -346,25 +372,50 @@ execute_xfrm_state_command() {
 			local output_preview
 			output_preview=$(echo "$full_xfrm_output" | head -5 | tr '\n' '; ' || echo "<output formatting failed>")
 			log_message "WARNING" "SYSTEM" "ip -s xfrm state failed with exit code $xfrm_exit_code (command path: '$ip_cmd', output preview: $output_preview)"
+			# Echo output for caller to analyze error patterns
+			echo "$full_xfrm_output"
 		fi
 		return 2
 	fi
 
 	# Fall back to regular ip xfrm state (without -s)
-	full_xfrm_output=$("$ip_cmd" xfrm state 2>&1)
-	xfrm_exit_code=$?
+	# Wrap with timeout to prevent hanging (netlink socket timeouts, lock contention, etc.)
+	if check_command_available "timeout"; then
+		full_xfrm_output=$(timeout "${XFRM_STATE_TIMEOUT:-5}" "$ip_cmd" xfrm state 2>&1)
+		xfrm_exit_code=$?
+	else
+		# Fallback without timeout (shouldn't happen on UDM, but graceful degradation)
+		full_xfrm_output=$("$ip_cmd" xfrm state 2>&1)
+		xfrm_exit_code=$?
+	fi
 
 	# Log diagnostic information for debugging (fallback attempt)
 	log_message "DEBUG" "SYSTEM" "Executed '$ip_cmd xfrm state' (fallback) - exit code: $xfrm_exit_code, output length: ${#full_xfrm_output}"
 
+	# Handle timeout (exit code 124 from timeout command)
+	if [[ $xfrm_exit_code -eq 124 ]]; then
+		log_message "WARNING" "SYSTEM" "ip xfrm state timed out after ${XFRM_STATE_TIMEOUT:-5} seconds (command path: '$ip_cmd') - xfrm subsystem may be under load or experiencing lock contention - fallback attempt"
+		# Echo output (if any) for caller to analyze, even on timeout
+		if [[ -n "${full_xfrm_output//[[:space:]]/}" ]]; then
+			echo "$full_xfrm_output"
+		fi
+		return 2
 	# Handle specific exit codes that indicate command execution problems
-	if [[ $xfrm_exit_code -eq 127 ]]; then
+	elif [[ $xfrm_exit_code -eq 127 ]]; then
 		# Command not found - log the path we tried to use
 		log_message "ERROR" "SYSTEM" "ip command not found at path: '$ip_cmd' (exit code 127) - fallback attempt"
+		# Echo output (if any) for caller to analyze
+		if [[ -n "${full_xfrm_output//[[:space:]]/}" ]]; then
+			echo "$full_xfrm_output"
+		fi
 		return 2
 	elif [[ $xfrm_exit_code -eq 126 ]]; then
 		# Command not executable
 		log_message "ERROR" "SYSTEM" "ip command not executable at path: '$ip_cmd' (exit code 126) - fallback attempt"
+		# Echo output (if any) for caller to analyze
+		if [[ -n "${full_xfrm_output//[[:space:]]/}" ]]; then
+			echo "$full_xfrm_output"
+		fi
 		return 2
 	elif [[ $xfrm_exit_code -eq 0 ]]; then
 		# Command succeeded - check if output contains error messages
@@ -372,6 +423,8 @@ execute_xfrm_state_command() {
 		# by looking for error patterns that are more specific to actual error messages
 		if echo "$full_xfrm_output" | grep -qE "^(error|Error|ERROR):|Permission denied|No such (file|device|resource)|Operation not permitted"; then
 			log_message "WARNING" "SYSTEM" "ip xfrm state returned exit code 0 but contains error messages (command path: '$ip_cmd') - fallback attempt"
+			# Echo output for caller to analyze error patterns
+			echo "$full_xfrm_output"
 			return 2
 		fi
 		# Check if we have actual output
@@ -389,6 +442,8 @@ execute_xfrm_state_command() {
 			local output_preview
 			output_preview=$(echo "$full_xfrm_output" | head -5 | tr '\n' '; ' || echo "<output formatting failed>")
 			log_message "WARNING" "SYSTEM" "ip xfrm state failed with exit code $xfrm_exit_code (command path: '$ip_cmd', output preview: $output_preview) - fallback attempt"
+			# Echo output for caller to analyze error patterns
+			echo "$full_xfrm_output"
 		fi
 		return 2
 	fi
@@ -501,14 +556,14 @@ deduplicate_sa_blocks() {
 get_xfrm_state_for_peer() {
 	local external_peer_ip="$1"
 	local context_lines="${2:-${XFRM_OUTPUT_CONTEXT_LINES:-10}}"
-	local error_msg_var="${3:-}"
+	local _error_msg_varname="${3:-}"
 
 	# Validate peer IP format to prevent regex injection and ensure safe matching
 	# This is a defense-in-depth measure - IPs should be validated at configuration load time,
 	# but we validate here to prevent regex injection if invalid IPs reach this function
 	if [[ -z "$external_peer_ip" ]] || ! validate_ip_address "$external_peer_ip"; then
-		if [[ -n "$error_msg_var" ]]; then
-			printf -v "$error_msg_var" "%s" "Invalid peer IP address: ${external_peer_ip:-<empty>}"
+		if [[ -n "$_error_msg_varname" ]]; then
+			printf -v "$_error_msg_varname" "%s" "Invalid peer IP address: ${external_peer_ip:-<empty>}"
 		fi
 		return 1
 	fi
@@ -519,9 +574,20 @@ get_xfrm_state_for_peer() {
 	full_xfrm_output=$(execute_xfrm_state_command)
 	xfrm_result=$?
 
+	# Log diagnostic information for debugging timeout scenarios
+	local output_empty_check
+	if [[ -z "${full_xfrm_output//[[:space:]]/}" ]]; then
+		output_empty_check="yes"
+	else
+		output_empty_check="no"
+	fi
+	log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: xfrm_result=$xfrm_result, output_length=${#full_xfrm_output}, output_empty=$output_empty_check"
+
 	# Handle different failure types
 	if [[ $xfrm_result -eq 2 ]]; then
-		# Command failed - extract and log error information
+		log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Entering xfrm_result==2 block (timeout/failure)"
+		# Command failed or timed out - extract and log error information
+		# Note: Timeout is already logged in execute_xfrm_state_command, so we don't duplicate it here
 		# This helps debug xfrm command failures without exposing sensitive information
 		local xfrm_error_msg=""
 		if [[ -n "$full_xfrm_output" ]]; then
@@ -553,65 +619,87 @@ get_xfrm_state_for_peer() {
 				log_message "WARNING" "SYSTEM" "xfrm command failed for peer $external_peer_ip - xfrm output (first 10 lines): $xfrm_output_formatted"
 			fi
 		else
-			# No output at all - command may have failed silently
-			log_message "WARNING" "SYSTEM" "xfrm command failed for peer $external_peer_ip - no output received (command may have failed silently)"
+			# No output at all - command may have failed silently or timed out
+			# (Timeout is already logged in execute_xfrm_state_command, so we don't duplicate it)
+			log_message "WARNING" "SYSTEM" "xfrm command failed for peer $external_peer_ip - no output received (command may have failed silently or timed out)"
 		fi
 
-		# Command failed - try alternative method (ipsec status) to confirm tunnel state
+		# Command failed or timed out - try alternative method (ipsec status) to confirm tunnel state
+		# Determine if this was a command error (has error output) or timeout (no output)
+		local is_command_error=false
+		if [[ -n "$full_xfrm_output" ]]; then
+			# Check if output contains error patterns indicating command failure
+			if echo "$full_xfrm_output" | grep -qE "(Permission denied|permission denied|No such|no such|Operation not permitted|operation not permitted|^(error|Error|ERROR):)"; then
+				is_command_error=true
+			fi
+		fi
+
 		local ipsec_status_output
 		local ipsec_status_result
 		ipsec_status_output=$(get_ipsec_status_for_peer "$external_peer_ip" 2>/dev/null || true)
 		ipsec_status_result=$?
 
 		if [[ -n "$ipsec_status_output" ]]; then
-			# ipsec status shows connection exists - xfrm query failed but tunnel may be up
-			if [[ -n "$error_msg_var" ]]; then
-				printf -v "$error_msg_var" "%s" "xfrm command failed (command error), but ipsec status shows connection exists for $external_peer_ip - xfrm query may be unavailable"
+			# ipsec status shows connection exists - xfrm query failed/timed out but tunnel may be up
+			log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: ipsec shows connection exists, returning 2"
+			if [[ -n "$_error_msg_varname" ]]; then
+				if [[ "$is_command_error" == "true" ]]; then
+					printf -v "$_error_msg_varname" "%s" "xfrm command failed (command error), but ipsec status shows connection exists for $external_peer_ip - xfrm query may be unavailable"
+				else
+					printf -v "$_error_msg_varname" "%s" "xfrm command failed or timed out, but ipsec status shows connection exists for $external_peer_ip - xfrm query may be unavailable"
+				fi
 			fi
 			return 2
 		else
 			# Both xfrm and ipsec status failed - tunnel is likely down
-			if [[ -n "$error_msg_var" ]]; then
-				printf -v "$error_msg_var" "%s" "xfrm command failed (command error) and ipsec status shows no connection for $external_peer_ip - tunnel appears to be down"
+			log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: ipsec shows no connection, returning 2"
+			if [[ -n "$_error_msg_varname" ]]; then
+				if [[ "$is_command_error" == "true" ]]; then
+					printf -v "$_error_msg_varname" "%s" "xfrm command failed (command error) and ipsec status shows no connection for $external_peer_ip - tunnel appears to be down"
+				else
+					printf -v "$_error_msg_varname" "%s" "xfrm command failed or timed out and ipsec status shows no connection for $external_peer_ip - tunnel appears to be down"
+				fi
 			fi
 			return 2
 		fi
 	elif [[ $xfrm_result -ne 0 ]]; then
+		log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Entering xfrm_result!=0 block (result=$xfrm_result)"
 		# Empty output - no SAs found in kernel, try ipsec status to confirm
 		local ipsec_status_output
 		ipsec_status_output=$(get_ipsec_status_for_peer "$external_peer_ip" 2>/dev/null || true)
 
 		if [[ -n "$ipsec_status_output" ]]; then
 			# ipsec status shows connection exists - SAs may exist but not in xfrm state
-			if [[ -n "$error_msg_var" ]]; then
-				printf -v "$error_msg_var" "%s" "No SAs found in xfrm state for $external_peer_ip, but ipsec status shows connection exists - SAs may not be in kernel state"
+			if [[ -n "$_error_msg_varname" ]]; then
+				printf -v "$_error_msg_varname" "%s" "No SAs found in xfrm state for $external_peer_ip, but ipsec status shows connection exists - SAs may not be in kernel state"
 			fi
 			return 1
 		else
 			# Both show no connection - tunnel is down
-			if [[ -n "$error_msg_var" ]]; then
-				printf -v "$error_msg_var" "%s" "No SAs found in xfrm state for $external_peer_ip and ipsec status shows no connection - tunnel is down"
+			if [[ -n "$_error_msg_varname" ]]; then
+				printf -v "$_error_msg_varname" "%s" "No SAs found in xfrm state for $external_peer_ip and ipsec status shows no connection - tunnel is down"
 			fi
 			return 1
 		fi
-	fi
-
-	if [[ -z "$full_xfrm_output" ]]; then
-		# Empty output after successful command - try ipsec status to confirm
+	elif [[ -z "$full_xfrm_output" ]]; then
+		# Empty output after successful command (xfrm_result == 0) - try ipsec status to confirm
+		log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Entering empty output block (xfrm_result=$xfrm_result)"
 		local ipsec_status_output
 		ipsec_status_output=$(get_ipsec_status_for_peer "$external_peer_ip" 2>/dev/null || true)
 
 		if [[ -n "$ipsec_status_output" ]]; then
-			if [[ -n "$error_msg_var" ]]; then
-				printf -v "$error_msg_var" "%s" "xfrm state query returned empty output for $external_peer_ip, but ipsec status shows connection exists"
+			if [[ -n "$_error_msg_varname" ]]; then
+				printf -v "$_error_msg_varname" "%s" "xfrm state query returned empty output for $external_peer_ip, but ipsec status shows connection exists"
 			fi
 			return 1
 		else
-			if [[ -n "$error_msg_var" ]]; then
-				printf -v "$error_msg_var" "%s" "No SAs found in xfrm state for $external_peer_ip and ipsec status shows no connection - tunnel is down"
+			if [[ -n "$_error_msg_varname" ]]; then
+				printf -v "$_error_msg_varname" "%s" "No SAs found in xfrm state for $external_peer_ip and ipsec status shows no connection - tunnel is down"
 			fi
 			return 1
 		fi
+	else
+		log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Processing non-empty output (xfrm_result=$xfrm_result, output_length=${#full_xfrm_output})"
 	fi
 
 	# Increase context lines to ensure we capture lifetime current section which may appear after lifetime config
@@ -621,12 +709,14 @@ get_xfrm_state_for_peer() {
 	local reverse_output=""
 
 	# Find forward SAs (dst=$external_peer_ip) - matches forward SA header lines "src <local_ip> dst $external_peer_ip"
+	log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Searching for SAs in output (length=${#full_xfrm_output})"
 	forward_output=$(echo "$full_xfrm_output" | grep -F "dst ${external_peer_ip}" -A "${extended_context}" 2>/dev/null || true)
 	# Find reverse SAs (src=$external_peer_ip) - matches reverse SA header lines "src $external_peer_ip dst <local_ip>"
 	# Use grep -E with anchored pattern to match lines starting with "src $external_peer_ip"
 	# Safe because external_peer_ip is validated above to prevent regex injection
 	# The pattern "^[[:space:]]*src $external_peer_ip[[:space:]]" matches SA header lines for reverse SAs
 	reverse_output=$(echo "$full_xfrm_output" | grep -E "^[[:space:]]*src ${external_peer_ip}[[:space:]]" -A "${extended_context}" 2>/dev/null || true)
+	log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: forward_output length=${#forward_output}, reverse_output length=${#reverse_output}"
 
 	# Combine outputs if both exist (they represent different SAs in a bidirectional tunnel)
 	# If only one exists, use it (asymmetric SA state)
@@ -637,13 +727,16 @@ get_xfrm_state_for_peer() {
 		# Both exist - combine them, but deduplicate SA blocks
 		# Multiple SAs can have the same src/dst but different SPI values
 		# So we need to include SPI in the uniqueness check, not just the header line
+		log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Found both forward and reverse SAs, returning 0"
 		local combined="${forward_output}"$'\n'"${reverse_output}"
 		echo "$combined" | deduplicate_sa_blocks
 		return 0
 	elif [[ -n "$forward_output" ]]; then
+		log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Found forward SA only, returning 0"
 		echo "$forward_output"
 		return 0
 	elif [[ -n "$reverse_output" ]]; then
+		log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Found reverse SA only, returning 0"
 		echo "$reverse_output"
 		return 0
 	fi
@@ -654,14 +747,14 @@ get_xfrm_state_for_peer() {
 
 	if [[ -n "$ipsec_status_output" ]]; then
 		# ipsec status shows connection exists but xfrm doesn't - SAs may exist but not match our query
-		if [[ -n "$error_msg_var" ]]; then
-			printf -v "$error_msg_var" "%s" "No SAs found in xfrm state for $external_peer_ip (no matching src/dst), but ipsec status shows connection exists - SAs may exist with different addresses"
+		if [[ -n "$_error_msg_varname" ]]; then
+			printf -v "$_error_msg_varname" "%s" "No SAs found in xfrm state for $external_peer_ip (no matching src/dst), but ipsec status shows connection exists - SAs may exist with different addresses"
 		fi
 		return 1
 	else
 		# Both show no connection - tunnel is down
-		if [[ -n "$error_msg_var" ]]; then
-			printf -v "$error_msg_var" "%s" "No SAs found in xfrm state for $external_peer_ip and ipsec status shows no connection - tunnel is down"
+		if [[ -n "$_error_msg_varname" ]]; then
+			printf -v "$_error_msg_varname" "%s" "No SAs found in xfrm state for $external_peer_ip and ipsec status shows no connection - tunnel is down"
 		fi
 		return 1
 	fi
@@ -750,7 +843,7 @@ check_sa_rekey_occurred() {
 	local location_name="$3"
 
 	# Validate SPI format
-	if [[ -z "$current_spi" ]] || [[ ! "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+	if [[ -z "$current_spi" ]] || ! validate_spi_format "$current_spi"; then
 		return 1
 	fi
 
@@ -840,7 +933,7 @@ detect_sa_rekey() {
 	local location_name="$3"
 
 	# Validate SPI format
-	if [[ -z "$current_spi" ]] || [[ ! "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+	if [[ -z "$current_spi" ]] || ! validate_spi_format "$current_spi"; then
 		return 1
 	fi
 
@@ -864,7 +957,7 @@ detect_sa_rekey() {
 	last_spi=$(get_peer_state "$location_name" "$external_peer_ip" "spi" "")
 
 	# Validate stored SPI format - if corrupted, recover by storing current SPI
-	if [[ -n "$last_spi" ]] && [[ "$last_spi" != "0" ]] && [[ ! "$last_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+	if [[ -n "$last_spi" ]] && [[ "$last_spi" != "0" ]] && ! validate_spi_format "$last_spi"; then
 		# Stored SPI is corrupted - store current SPI (already normalized by extract_spi())
 		set_peer_state_non_critical "$location_name" "$external_peer_ip" "spi" "$current_spi"
 		return 1
@@ -1123,8 +1216,8 @@ check_byte_counters() {
 		else
 			# Ping check disabled - cannot determine if healthy idle or broken
 			# Mark as suspect since we can't verify health without ping check
-			# Return success (0) to avoid false positives on healthy idle VPNs, but populate diagnostic
-			# so that routing_issue can still be detected in determine_vpn_status
+			# Return failure (1) so that primary_check_passed=0, allowing routing_issue to be
+			# properly detected and logged in determine_vpn_status
 			local warning_msg="bytes not increasing (current=$current_bytes, last=$last_bytes, ping check disabled)"
 			# Always populate diagnostic variable if provided (for failure type detection)
 			if [[ -n "$diagnostic_var" ]]; then
@@ -1134,7 +1227,7 @@ check_byte_counters() {
 			handle_error "WARNING" "$location_name" "VPN suspect: SA exists but $warning_msg for $ip_display"
 			# Update state but don't mark as idle (ping check required for idle detection)
 			set_peer_state_non_critical "$location_name" "$external_peer_ip" "last_bytes" "$current_bytes"
-			return 0
+			return 1
 		fi
 	fi
 

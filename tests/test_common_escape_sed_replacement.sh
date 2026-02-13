@@ -6,6 +6,7 @@
 # empty strings, and multi-line values
 
 load test_helper
+load helpers/assertions
 
 # Source the common library functions
 # shellcheck source=../lib/common.sh
@@ -70,9 +71,7 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 	# Purpose: Test that escape_sed_replacement handles empty string correctly
 	# Expected: Returns empty string
 	# Importance: Prevents errors when processing empty input
-	run escape_sed_replacement ""
-	assert_success
-	assert_output ""
+	test_empty_string "escape_sed_replacement"
 }
 
 # bats test_tags=category:unit
@@ -90,20 +89,16 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 # ============================================================================
 
 # bats test_tags=category:unit,priority:high
-@test "escape_sed_replacement: escapes custom delimiter (forward slash)" {
-	# Purpose: Test that escape_sed_replacement escapes custom delimiter correctly
-	# Expected: Forward slash is escaped as backslash-forward-slash
-	# Importance: Custom delimiters are used to avoid conflicts with path separators
+@test "escape_sed_replacement: escapes custom delimiters" {
+	# Purpose: Test that escape_sed_replacement escapes various custom delimiters correctly
+	# Expected: Custom delimiters are escaped as backslash-delimiter
+	# Importance: Custom delimiters are used to avoid conflicts with path separators and other characters
+	# Test forward slash delimiter
 	run escape_sed_replacement "test/value" "/"
 	assert_success
 	assert_output "test\\/value"
-}
 
-# bats test_tags=category:unit
-@test "escape_sed_replacement: escapes custom delimiter (hash)" {
-	# Purpose: Test that escape_sed_replacement escapes hash delimiter correctly
-	# Expected: Hash is escaped as backslash-hash
-	# Importance: Hash is sometimes used as delimiter in sed commands
+	# Test hash delimiter
 	run escape_sed_replacement "test#value" "#"
 	assert_success
 	assert_output "test\\#value"
@@ -218,16 +213,6 @@ line3\\|value"
 
 	assert_file_exist "$test_file"
 	grep -q '^VAR="test/value/here"$' "$test_file"
-}
-
-# bats test_tags=category:unit
-@test "escape_sed_replacement: works with command substitution" {
-	# Purpose: Test that escape_sed_replacement works correctly in command substitution context
-	# Expected: Returns escaped value when used in variable assignment
-	# Importance: Common usage pattern in scripts
-	local result
-	result=$(escape_sed_replacement "test\\value")
-	assert [ "$result" == "test\\\\value" ]
 }
 
 # ============================================================================

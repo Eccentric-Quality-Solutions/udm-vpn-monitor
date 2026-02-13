@@ -1866,7 +1866,100 @@ PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
 - Use `--fake` flag for main script execution
 - Ensure mocks are in PATH before running scripts
 
-### 15. Testing Configuration Validation and Early-Exit Scenarios
+### 15. Running Functions in Subshells with Error Message Capture
+
+**Pattern**: Use `bash -c` subshell when functions use output variables set via `printf -v` that won't be available in parent shell
+
+**When to use**: When testing functions that set output variables via `printf -v` (like error message variables) and you need to capture those values in the test. Since `printf -v` sets variables in the current shell scope, they won't be available in the parent shell when using `run`.
+
+**Key requirements**:
+1. Source all required libraries inside the subshell (they're not available in new bash process)
+2. Export environment variables needed by functions (PATH, LOG_FILE, etc.)
+3. Use file-based communication to pass values from subshell to parent shell
+4. Ensure mocks are available (PATH is inherited from parent if exported)
+
+**Example**:
+```bash
+@test "function with error message variable" {
+    setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+    source_logging_functions
+    export LOG_FILE="${TEST_DIR}/test.log"
+    
+    # Set up mocks
+    local mock_ip="${TEST_DIR}/ip"
+    cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+# Mock implementation
+EOF
+    chmod +x "$mock_ip"
+    add_mock_to_path  # Exports PATH with TEST_DIR first
+    
+    # Source function in parent (for reference, but won't be available in subshell)
+    source_function "get_xfrm_state_for_peer"
+    
+    # Run in subshell to capture error message variable
+    local error_msg_file="${TEST_DIR}/error_msg"
+    local output_file="${TEST_DIR}/xfrm_output"
+    set +e
+    run timeout 10 bash -c "
+        # PATH is inherited from parent (already exported by add_mock_to_path)
+        # Source required libraries in subshell (needed since we're in a new bash process)
+        source '${BATS_TEST_DIRNAME}/../lib/common.sh' || true
+        source '${BATS_TEST_DIRNAME}/../lib/logging.sh' || true
+        source '${BATS_TEST_DIRNAME}/../lib/detection.sh' || true
+        # Export environment variables needed by functions
+        export LOG_FILE='${LOG_FILE}'
+        export XFRM_STATE_TIMEOUT='${XFRM_STATE_TIMEOUT:-5}'
+        export SCRIPT_DIR='${BATS_TEST_DIRNAME}/..'
+        # Force use of mock if needed (get_ip_command_path checks this first)
+        export _RECOVERY_IP_PATH='${TEST_DIR}/ip'
+        # Run function and capture error message to file
+        local error_msg_var=''
+        get_xfrm_state_for_peer '${peer_ip}' '' 'error_msg_var' >'${output_file}' 2>&1
+        local exit_code=\$?
+        # Write error message to file so parent shell can read it
+        if [[ -n \"\$error_msg_var\" ]]; then
+            printf '%s\n' \"\$error_msg_var\" >'${error_msg_file}'
+        fi
+        exit \$exit_code
+    "
+    local exit_code=$status
+    set -e
+    
+    # Read error message from file
+    local error_msg=""
+    if [[ -f "$error_msg_file" ]]; then
+        error_msg=$(cat "$error_msg_file")
+    fi
+    
+    # Verify results
+    assert [ $exit_code -eq 2 ]
+    assert [ -n "$error_msg" ]
+}
+```
+
+**Important notes**:
+- PATH is inherited from parent if exported (no need to re-export unless modifying it)
+- All libraries must be sourced inside the subshell
+- Use files to communicate values from subshell to parent (variables won't persist)
+- Use `_RECOVERY_IP_PATH` to force use of mock if PATH resolution might fail
+- Always use `timeout` wrapper to prevent tests from hanging
+- Export all environment variables needed by functions
+
+**Common mistakes**:
+- ❌ Forgetting to source libraries in subshell (functions won't be available)
+- ❌ Not exporting environment variables (functions may fail or use wrong values)
+- ❌ Trying to read output variables directly (they're in subshell scope)
+- ❌ Re-exporting PATH unnecessarily (already inherited if exported)
+
+**Standard**:
+- Use file-based communication for output variables
+- Source all dependencies inside subshell
+- Export required environment variables
+- Use timeout wrapper for safety
+- Verify mocks are found (check `get_command_path` or use `_RECOVERY_IP_PATH`)
+
+### 16. Testing Configuration Validation and Early-Exit Scenarios
 
 **Pattern**: Be aware of execution order when testing configuration validation failures
 
@@ -1918,7 +2011,7 @@ EOF
 - Tests for configuration validation should verify the script exits with the expected validation error message
 - Be aware that other early-exit conditions (network partition, cooldown, etc.) happen after configuration validation
 
-### 16. DRY Improvements During Bug Fixes
+### 17. DRY Improvements During Bug Fixes
 
 **Pattern**: When fixing bugs, look for redundant code and improve DRY (Don't Repeat Yourself)
 
@@ -1962,7 +2055,7 @@ process_locations() {
 - Update documentation to reflect new execution flow
 - Keep defensive checks that verify expected state
 
-### 17. Stateful Mocks for Testing State Transitions
+### 18. Stateful Mocks for Testing State Transitions
 
 **Pattern**: Use file-based counters or log file checks to create mocks that change behavior based on call count or execution phase
 
@@ -2065,7 +2158,7 @@ EOF
 - Remove fixture mocks before creating custom mocks if needed
 - Never use `local` keyword at top level of mock scripts
 
-### 18. Mock All Commands Used by Recovery Verification
+### 19. Mock All Commands Used by Recovery Verification
 
 **Pattern**: When testing recovery actions, mock all commands used by verification functions, not just the recovery command itself.
 
@@ -2989,7 +3082,7 @@ load helpers/test_data
 
 # Generate xfrm state output using test data helper
 local xfrm_state_output
-xfrm_state_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
+xfrm_state_output=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
 local xfrm_state_file="${TEST_DIR}/xfrm_state_initial"
 echo "$xfrm_state_output" >"$xfrm_state_file"
 
@@ -3016,7 +3109,7 @@ For xfrm state output with marks or other attributes not directly supported by h
 ```bash
 # Generate base output
 local xfrm_state_with_mark
-xfrm_state_with_mark=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
+xfrm_state_with_mark=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
 # Add mark attribute after proto line using sed
 xfrm_state_with_mark=$(echo "$xfrm_state_with_mark" | sed '/proto esp/a\    mark 0x12000000/0xfe000000')
 local xfrm_state_file="${TEST_DIR}/xfrm_state_with_mark"
@@ -3027,7 +3120,7 @@ For modifying generated output (e.g., changing reqid):
 ```bash
 # Generate output
 local xfrm_state
-xfrm_state=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x87654321" 2000 20 "minimal")
+xfrm_state=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x87654321" 2000 20 "minimal")
 # Update reqid using bash parameter expansion (preferred over sed for simple replacements)
 xfrm_state="${xfrm_state//reqid 1/reqid 2}"
 ```
@@ -3307,5 +3400,5 @@ EOF
 - Old pattern manual mock setup → Use `setup_mock_vpn_environment()` or fixtures
 - Old pattern missing cleanup → Always use `remove_mock_from_path()`
 - Old pattern manual location name extraction → Use `get_failure_counter_path_for_location_var()` or `get_location_name_from_config_var()`
-- Old pattern embedded xfrm/ipsec output in mock scripts → Use `generate_xfrm_state_output()` or `generate_ipsec_status_output()` with placeholder pattern
+- Old pattern embedded xfrm/ipsec output in mock scripts → Use `generate_xfrm_state_for_scenario()` or `generate_ipsec_status_output()` with placeholder pattern
 - Old pattern manual date/sleep mock setup → Use `setup_date_sleep_mocks_with_increment()` helper function

@@ -3,7 +3,7 @@
 # Recovery verification functions for UDM VPN Monitor
 # Verifies that recovery actions succeeded by checking SA state, byte counters, and IPsec connections
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 # Source recovery constants for magic numbers
@@ -88,10 +88,8 @@ count_sas_for_peer() {
 
 	# Get full path to ip command for reliable execution in PATH-restricted environments (cron/systemd)
 	# Use _RECOVERY_IP_PATH if available (set by recovery orchestration), otherwise resolve via get_command_path()
-	local ip_cmd="${_RECOVERY_IP_PATH:-}"
-	if [[ -z "$ip_cmd" ]]; then
-		ip_cmd=$(get_command_path "ip")
-	fi
+	local ip_cmd
+	ip_cmd=$(get_ip_command_path)
 
 	local xfrm_output
 	xfrm_output=$("$ip_cmd" xfrm state 2>/dev/null)

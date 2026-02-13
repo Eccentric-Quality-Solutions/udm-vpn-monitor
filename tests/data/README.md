@@ -34,7 +34,7 @@ load_config_template "minimal" "${TEST_PEER_IP}"
 
 The `helpers/test_data.bash` module provides generators for common patterns:
 
-- `generate_xfrm_state_output()` - Generate xfrm state output with configurable parameters
+- `generate_xfrm_state_for_scenario()` - Generate xfrm state output with configurable parameters
 - `generate_ipsec_status_output()` - Generate ipsec status output in different formats
 - `generate_config_template()` - Generate configuration file templates
 

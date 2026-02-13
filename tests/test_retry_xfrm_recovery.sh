@@ -36,7 +36,7 @@
 #     - XFRM_RECOVERY_VERIFY_INTERVAL - Base interval for exponential backoff
 #     - XFRM_RECOVERY_MAX_INTERVAL - Maximum interval cap for exponential backoff
 #
-# Version: 0.6.0
+# Version: 0.7.0
 
 load test_helper
 load helpers/test_data
@@ -182,6 +182,8 @@ EOF
 	source_recovery_module
 
 	# Override check_ipsec_phase2 to return success after 5 attempts
+	# Arguments: $1 external_peer_ip
+	# Returns: 0 when SA re-established (after 5 attempts), 1 otherwise
 	check_ipsec_phase2() {
 		local external_peer_ip="$1"
 		local calls
@@ -197,6 +199,8 @@ EOF
 	}
 
 	# Override verify_byte_counters_increment to always return success (bytes are incrementing)
+	# Arguments: $1 external_peer_ip, $2 initial_bytes, $3 location_name
+	# Returns: 0 always (success for this test)
 	verify_byte_counters_increment() {
 		local external_peer_ip="$1"
 		local initial_bytes="$2"
@@ -320,6 +324,8 @@ EOF
 
 	# Override check_ipsec_phase2 to always return failure (SA never re-establishes)
 	# This is the key for testing timeout behavior
+	# Arguments: $1 external_peer_ip
+	# Returns: 1 always (SA never re-establishes)
 	check_ipsec_phase2() {
 		local external_peer_ip="$1"
 		# Always return failure - SA never re-establishes, should timeout
@@ -424,6 +430,8 @@ EOF
 	source_recovery_module
 
 	# Override check_ipsec_phase2 to return success after 2 attempts
+	# Arguments: $1 external_peer_ip
+	# Returns: 0 when SA re-established (after 2 attempts), 1 otherwise
 	check_ipsec_phase2() {
 		local external_peer_ip="$1"
 		local calls
@@ -439,6 +447,8 @@ EOF
 	}
 
 	# Override verify_byte_counters_increment to always return success (bytes are incrementing)
+	# Arguments: $1 external_peer_ip, $2 initial_bytes, $3 location_name
+	# Returns: 0 always (success for this test)
 	verify_byte_counters_increment() {
 		local external_peer_ip="$1"
 		local initial_bytes="$2"
@@ -530,6 +540,8 @@ EOF
 	source_recovery_module
 
 	# Override check_ipsec_phase2 to always return failure (SA never re-establishes)
+	# Arguments: $1 external_peer_ip
+	# Returns: 1 always (SA never re-establishes)
 	check_ipsec_phase2() {
 		local external_peer_ip="$1"
 		return 1
@@ -581,51 +593,6 @@ EOF
 	local time_increment_file="${TEST_DIR}/time_increment"
 	echo "0" >"$time_increment_file"
 
-	# Mock count_sas_for_peer to return 1 (but we deleted 2, so mismatch)
-	local mock_count_sas="${TEST_DIR}/count_sas_for_peer"
-	cat >"$mock_count_sas" <<'EOF'
-#!/bin/bash
-echo "1"
-EOF
-	chmod +x "$mock_count_sas"
-
-	# Mock get_xfrm_state_for_peer to return xfrm output with incrementing byte counters
-	# Use a call counter to ensure byte counters increment on each call (needed for verify_byte_counters_increment)
-	# Increment by 200 per call to ensure there's always a clear increment between initial capture and verification
-	local xfrm_call_file="${TEST_DIR}/xfrm_calls"
-	echo "0" >"$xfrm_call_file"
-	local mock_get_xfrm="${TEST_DIR}/get_xfrm_state_for_peer"
-	cat >"$mock_get_xfrm" <<EOF
-#!/bin/bash
-# Increment call counter to ensure byte counters increment on each call
-calls=\$(cat "${xfrm_call_file}" 2>/dev/null || echo "0")
-calls=\$((calls + 1))
-echo "\$calls" > "${xfrm_call_file}"
-# Return xfrm output with incrementing byte counters (increment by 200 per call for clear increments)
-byte_count=\$((1000 + calls * 200))
-echo "src 192.168.1.1 dst 192.168.1.1"
-echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
-echo "    lifetime current:"
-echo "      \${byte_count}(bytes), 10(packets)"
-EOF
-	chmod +x "$mock_get_xfrm"
-
-	# Mock extract_byte_counter
-	local mock_extract_byte="${TEST_DIR}/extract_byte_counter"
-	cat >"$mock_extract_byte" <<'EOF'
-#!/bin/bash
-grep -oE '[0-9]+\(bytes\)' | head -1 | grep -oE '[0-9]+' || echo "0"
-EOF
-	chmod +x "$mock_extract_byte"
-
-	# Mock verify_byte_counters_increment
-	local mock_verify_bytes="${TEST_DIR}/verify_byte_counters_increment"
-	cat >"$mock_verify_bytes" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-	chmod +x "$mock_verify_bytes"
-
 	# Set up date and sleep mocks with time increment file
 	setup_date_sleep_mocks_with_increment "$base_time" "$time_increment_file"
 
@@ -637,7 +604,35 @@ EOF
 	# Source recovery module
 	source_recovery_module
 
+	# Override count_sas_for_peer to return 1 (but we deleted 2, so mismatch)
+	# Arguments: $1 external_peer_ip, $2 location_name
+	# Returns: 0 always. Prints "1" to stdout.
+	count_sas_for_peer() {
+		echo "1"
+		return 0
+	}
+
+	local xfrm_call_file="${TEST_DIR}/xfrm_calls"
+	echo "0" >"$xfrm_call_file"
+	# Override get_xfrm_state_for_peer to return xfrm output with incrementing byte counters
+	# Arguments: $1 external_peer_ip, $2 location_name
+	# Returns: 0 always. Prints xfrm state with incrementing byte counters to stdout.
+	get_xfrm_state_for_peer() {
+		local calls
+		calls=$(cat "${xfrm_call_file}" 2>/dev/null || echo "0")
+		calls=$((calls + 1))
+		echo "$calls" >"${xfrm_call_file}"
+		local byte_count=$((1000 + calls * 200))
+		echo "src 192.168.1.1 dst 192.168.1.1"
+		echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+		echo "    lifetime current:"
+		echo "      ${byte_count}(bytes), 10(packets)"
+		return 0
+	}
+
 	# Override check_ipsec_phase2 to return success after 2 attempts
+	# Arguments: $1 external_peer_ip
+	# Returns: 0 when SA re-established (after 2 attempts), 1 otherwise
 	check_ipsec_phase2() {
 		local external_peer_ip="$1"
 		local calls
@@ -653,6 +648,8 @@ EOF
 	}
 
 	# Override verify_byte_counters_increment to always return success (bytes are incrementing)
+	# Arguments: $1 external_peer_ip, $2 initial_bytes, $3 location_name
+	# Returns: 0 always (success for this test)
 	verify_byte_counters_increment() {
 		local external_peer_ip="$1"
 		local initial_bytes="$2"
@@ -786,6 +783,8 @@ EOF
 	source_recovery_module
 
 	# Override check_ipsec_phase2 to return success after 2 attempts
+	# Arguments: $1 external_peer_ip
+	# Returns: 0 when SA re-established (after 2 attempts), 1 otherwise
 	check_ipsec_phase2() {
 		local external_peer_ip="$1"
 		local calls
@@ -801,6 +800,8 @@ EOF
 	}
 
 	# Override verify_byte_counters_increment to return failure (byte counters don't verify)
+	# Arguments: $1 external_peer_ip, $2 initial_bytes, $3 location_name
+	# Returns: 1 always (failure for this test)
 	verify_byte_counters_increment() {
 		local external_peer_ip="$1"
 		local initial_bytes="$2"
@@ -916,6 +917,8 @@ EOF
 	source_recovery_module
 
 	# Override check_ipsec_phase2 to return success after 2 attempts
+	# Arguments: $1 external_peer_ip
+	# Returns: 0 when SA re-established (after 2 attempts), 1 otherwise
 	check_ipsec_phase2() {
 		local external_peer_ip="$1"
 		local calls
@@ -931,6 +934,8 @@ EOF
 	}
 
 	# Override count_sas_for_peer to return increasing SA count
+	# Arguments: $1 external_peer_ip, $2 location_name
+	# Returns: 0 always. Prints "1" then "2" as SA count increases to stdout.
 	count_sas_for_peer() {
 		local external_peer_ip="$1"
 		local location_name="$2"
@@ -947,10 +952,10 @@ EOF
 		return 0
 	}
 
-	# Override verify_byte_counters_increment to delay success
-	# This allows multiple SA count checks to occur before function exits
-	# We want to see SA count increase from 1 to 2, so delay byte counter verification
 	local byte_counter_verify_calls=0
+	# Override verify_byte_counters_increment to delay success (allows SA count to increase 1->2)
+	# Arguments: $1 external_peer_ip, $2 initial_bytes, $3 location_name
+	# Returns: 0 after 3 calls, 1 otherwise
 	verify_byte_counters_increment() {
 		local external_peer_ip="$1"
 		local initial_bytes="$2"
@@ -1035,10 +1040,11 @@ EOF
 	# Source recovery module
 	source_recovery_module
 
-	# Override check_ipsec_phase2 to return success after 2 attempts (SA re-establishes)
-	# But verify_byte_counters_increment will fail, causing timeout
 	local phase2_call_file="${TEST_DIR}/phase2_calls"
 	echo "0" >"$phase2_call_file"
+	# Override check_ipsec_phase2 to return success after 2 attempts (SA re-establishes)
+	# Arguments: $1 external_peer_ip
+	# Returns: 0 when SA re-established (after 2 attempts), 1 otherwise
 	check_ipsec_phase2() {
 		local external_peer_ip="$1"
 		local calls
@@ -1054,6 +1060,8 @@ EOF
 	}
 
 	# Override count_sas_for_peer to return 1 (mismatch with deleted_count=2)
+	# Arguments: $1 external_peer_ip, $2 location_name
+	# Returns: 0 always. Prints "1" to stdout.
 	count_sas_for_peer() {
 		local external_peer_ip="$1"
 		local location_name="$2"
@@ -1067,6 +1075,8 @@ EOF
 	}
 
 	# Override verify_byte_counters_increment to always return failure (causes timeout)
+	# Arguments: $1 external_peer_ip, $2 initial_bytes, $3 location_name
+	# Returns: 1 always (failure for this test)
 	verify_byte_counters_increment() {
 		local external_peer_ip="$1"
 		local initial_bytes="$2"

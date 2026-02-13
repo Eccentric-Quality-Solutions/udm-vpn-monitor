@@ -6,6 +6,7 @@
 # and strings with no trimming needed
 
 load test_helper
+load helpers/assertions
 
 # Source the common library functions
 # shellcheck source=../lib/common.sh
@@ -30,9 +31,7 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 	# Purpose: Test that trim handles empty string correctly
 	# Expected: Returns empty string
 	# Importance: Prevents errors when processing empty input
-	run trim ""
-	assert_success
-	assert_output ""
+	test_empty_string "trim"
 }
 
 # bats test_tags=category:unit
@@ -74,10 +73,10 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 # ============================================================================
 
 # bats test_tags=category:unit
-@test "trim: handles various whitespace characters" {
-	# Purpose: Test that trim removes leading and trailing whitespace including tabs, newlines, carriage returns, and mixed combinations
+@test "trim: handles various whitespace characters and patterns" {
+	# Purpose: Test that trim removes leading and trailing whitespace including tabs, newlines, carriage returns, mixed combinations, and multiple consecutive spaces
 	# Expected: Returns string with all types of whitespace removed from both ends
-	# Importance: Real-world input contains various whitespace characters (tabs, newlines, carriage returns, spaces)
+	# Importance: Real-world input contains various whitespace characters and patterns
 	# Test tabs
 	run trim $'\t'hello$'\t'
 	assert_success
@@ -97,17 +96,12 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 	run trim $'\t\n 'hello$' \n\t'
 	assert_success
 	assert_output "hello"
-}
 
-# ============================================================================
-# EDGE CASES
-# ============================================================================
+	# Test multiple consecutive spaces
+	run trim "     hello     "
+	assert_success
+	assert_output "hello"
 
-# bats test_tags=category:unit
-@test "trim: handles strings with only leading or trailing whitespace" {
-	# Purpose: Test that trim removes whitespace from one end when the other end has none
-	# Expected: Returns string with leading or trailing whitespace removed appropriately
-	# Importance: Common cases when processing left-aligned or right-aligned text
 	# Test leading-only whitespace
 	run trim "  hello"
 	assert_success
@@ -119,15 +113,9 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 	assert_output "hello"
 }
 
-# bats test_tags=category:unit
-@test "trim: handles string with multiple consecutive spaces" {
-	# Purpose: Test that trim removes all leading/trailing spaces, not just one
-	# Expected: Returns string with all leading/trailing spaces removed
-	# Importance: Ensures function removes all whitespace, not just first/last character
-	run trim "     hello     "
-	assert_success
-	assert_output "hello"
-}
+# ============================================================================
+# EDGE CASES
+# ============================================================================
 
 # bats test_tags=category:unit
 @test "trim: handles string starting and ending with same character" {
@@ -160,16 +148,6 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 # ============================================================================
 # INTEGRATION TESTS
 # ============================================================================
-
-# bats test_tags=category:unit
-@test "trim: works with command substitution" {
-	# Purpose: Test that trim works correctly in command substitution context
-	# Expected: Returns trimmed value when used in variable assignment
-	# Importance: Common usage pattern in scripts
-	local result
-	result=$(trim "  test  ")
-	assert [ "$result" == "test" ]
-}
 
 # bats test_tags=category:unit
 @test "trim: works with empty result" {

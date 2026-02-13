@@ -444,7 +444,7 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	original_perms=$(stat -c %a "$logrotate_config")
 	chmod 444 "$logrotate_config"
 	# Use trap to ensure cleanup even on errors
-	trap "chmod $original_perms \"\$logrotate_config\" 2>/dev/null || true" EXIT
+	trap 'chmod $original_perms "$logrotate_config" 2>/dev/null || true' EXIT
 
 	run bash "$UNINSTALL_SCRIPT" --yes
 	# Script should still succeed but verification should detect the issue

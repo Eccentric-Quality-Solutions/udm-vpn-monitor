@@ -76,7 +76,7 @@ load fixtures/vpn_at_tier
 	local recovery_started_flag="${TEST_DIR}/recovery_started"
 	# Generate xfrm state output using test data helper
 	local xfrm_state_output
-	xfrm_state_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
+	xfrm_state_output=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'MOCK_IP_EOF'
 #!/bin/bash
@@ -196,7 +196,7 @@ MOCK_IP_EOF
 	# Use higher byte count (2000) to ensure bytes are increasing from any previous state
 	# Generate xfrm state output using test data helper
 	local xfrm_state_output
-	xfrm_state_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 2000 20)
+	xfrm_state_output=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 2000 20)
 	local xfrm_state_file="${TEST_DIR}/xfrm_state_output_2"
 	echo "$xfrm_state_output" >"$xfrm_state_file"
 	local mock_ip="${TEST_DIR}/ip"

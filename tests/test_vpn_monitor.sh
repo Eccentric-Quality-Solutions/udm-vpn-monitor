@@ -58,10 +58,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create state directory and ensure log directory exists
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 
 	# Create test version of script with custom paths
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$LOG_FILE")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
 
 	run bash "$test_script"
 
@@ -91,13 +92,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: State files are required for tracking restart history and rate limiting.
 	# Note: Per-peer failure counters are created on-demand, not during initialization.
 	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
+	local state_dir="${TEST_DIR}"
 
 	run bash "$TEST_SCRIPT" --fake
 
 	# State files should be created in logs directory
 	# Note: Per-peer failure counters are created on-demand, not during initialization
 	# Only restart_count is created during initialization
-	assert_file_exist "${STATE_DIR}/restart_count"
+	assert_file_exist "${state_dir}/restart_count"
 }
 
 # bats test_tags=category:unit
@@ -106,11 +108,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Log file is created in the logs directory.
 	# Importance: Logging is essential for troubleshooting and monitoring script behavior.
 	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 
 	run bash "$TEST_SCRIPT" --fake
 
 	# Log file should be created
-	assert_file_exist "$LOG_FILE"
+	assert_file_exist "$log_file"
 }
 
 # bats test_tags=category:unit
@@ -167,7 +170,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	run bash "$TEST_SCRIPT" --fake
 
 	# Should reject invalid IP format (new validation function checks format, not just dangerous chars)
-	assert_file_contains "$LOG_FILE" "Invalid external IP format"
+	assert_file_contains "$LOG_FILE" "Invalid external IP or DNS name format"
 }
 
 # bats test_tags=slow,category:unit
@@ -355,7 +358,6 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script logs warning about missing config file and continues with default values.
 	# Importance: Ensures script can run even if config file is accidentally deleted or misconfigured.
 	mkdir -p "${TEST_DIR}"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local config_file="${TEST_DIR}/nonexistent.conf"
 
 	# Don't create config file - create test script pointing to non-existent config

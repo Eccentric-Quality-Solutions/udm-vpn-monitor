@@ -257,6 +257,7 @@ flowchart TD
 
 **Note**:
 - **Execution Order**: The actual execution flow includes more steps than shown in simplified form above. Full order: Directory creation (state, logs) → Log file initialization → Config loading → Config validation → Lockfile acquisition → Initialize monitor (parse args, log start, init state) → State validation → Resource check → Network partition check → Cooldown check → Cron persistence check → Location processing.
+- **Sub-minute Execution (Optional)**: When `ENABLE_MONITOR_WRAPPER=1` (default), cron runs `vpn-monitor-wrapper.sh` instead of `vpn-monitor.sh` directly. The wrapper loops with `MONITOR_INTERVAL`-second sleeps (default: 20s), running checks at :00, :20, :40 within each minute. Cron resurrects the wrapper every minute if it exits. See `vpn-monitor-wrapper.sh` and config options `ENABLE_MONITOR_WRAPPER`, `MONITOR_INTERVAL`.
 
 - **State Validation**: State files are validated for format correctness (integer, timestamp, timestamp_list) early in execution (after state initialization). Corrupted files are automatically detected, backed up, and recovered with safe defaults. This validation step ensures state file integrity before proceeding.
 
@@ -1060,7 +1061,7 @@ The system uses a modular library architecture where functionality is organized 
 
 **Module Structure**: The detection functionality is organized into focused modules in the `lib/detection/` subdirectory:
 - **`lib/detection/network_validation.sh`**: IP validation (IPv4/IPv6), route checks, DNS resolution, interface state checks
-- **`lib/detection/xfrm_detection.sh`**: xfrm state checks, byte counter detection, SA rekey detection, IPsec status fallback
+- **`lib/detection/xfrm_detection.sh`**: xfrm state checks, byte counter detection, SA rekey detection, IPsec status fallback. Includes timeout protection (`XFRM_STATE_TIMEOUT=5`) to prevent indefinite hangs during system stress (netlink socket timeouts, XFRM lock contention).
 - **`lib/detection/ping_detection.sh`**: Ping-based connectivity verification, multiple IP support, ping summary logging
 - **`lib/detection/failure_analysis.sh`**: Failure type classification, VPN status determination, network partition detection
 - **`lib/detection/system_wide_failure.sh`**: System-wide failure detection and coordination (detects when all/majority of VPNs fail simultaneously)
@@ -1282,6 +1283,8 @@ The following improvements have been implemented to enhance system reliability a
 
 - **False Positive Recovery Messages Fix** (Issue #17): Recovery messages are now only logged when `failure_count > 0`, preventing false positive recovery messages from stale state files.
 
+- **XFRM Command Timeout Protection** (2026-01-23): Added timeout protection for `ip xfrm state` commands to prevent indefinite hangs during system stress. Commands now timeout after 5 seconds (`XFRM_STATE_TIMEOUT=5`) and gracefully fall back to `ipsec status` when timeouts occur. This prevents detection from appearing as if xfrm is unavailable when commands are actually hanging due to netlink socket timeouts or XFRM lock contention. See "Network Command Timeout Handling" in Error Handling Strategy section and [XFRM_TIMEOUT_ISSUE_RESEARCH.md](../../docs/research/XFRM_TIMEOUT_ISSUE_RESEARCH.md) for details.
+
 ## Key Design Decisions
 
 ### 1. Cron-Based Execution
@@ -1426,10 +1429,12 @@ The following improvements have been implemented to enhance system reliability a
    - **Exit Code Handling**: Detect timeout exit code (124) and provide specific error messages
    - **Fallback**: If `timeout` command unavailable, run command without wrapper (shouldn't happen on UDM)
    - **Examples**:
+     - `ip xfrm state` wrapped with `XFRM_STATE_TIMEOUT` (5 seconds) in `lib/detection/xfrm_detection.sh`. This prevents indefinite hangs during system stress when netlink sockets timeout (12-13 seconds documented) or XFRM lock contention occurs. When timeout occurs, the system logs a warning and gracefully falls back to `ipsec status` for detection.
      - `ipsec status` wrapped with `IPSEC_STATUS_TIMEOUT` (5 seconds) in `lib/detection/xfrm_detection.sh` and `lib/recovery.sh`
      - `ping` commands wrapped with calculated timeout in `check_ping_connectivity()` (`lib/detection/ping_detection.sh`)
      - `dig` and `nslookup` wrapped with DNS timeout in `check_dns_resolution()` (`lib/detection/network_validation.sh`)
-   - **Benefit**: Prevents script from hanging indefinitely when network commands hang due to network issues
+   - **Benefit**: Prevents script from hanging indefinitely when network commands hang due to network issues, system stress, or kernel subsystem lock contention. Ensures predictable execution time and enables graceful fallback to alternative detection methods.
+   - **Related**: See [XFRM_TIMEOUT_ISSUE_RESEARCH.md](../../docs/research/XFRM_TIMEOUT_ISSUE_RESEARCH.md) for detailed analysis of xfrm timeout issues and resolution.
 
 ## Performance Considerations
 

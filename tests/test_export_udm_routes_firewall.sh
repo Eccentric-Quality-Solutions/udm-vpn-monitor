@@ -15,6 +15,9 @@ EXPORT_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/export-udm-routes-firewall.sh"
 # Arguments:
 #   $1: IPv4 route output (default: sample route output)
 #   $2: IPv6 route output (default: sample IPv6 route output)
+#
+# Returns:
+#   0: Always succeeds. Prints mock script path to stdout.
 create_mock_ip() {
 	local ipv4_output="${1:-default via 192.168.1.1 dev eth0}"
 	local ipv6_output="${2:-default via fe80::1 dev eth0}"
@@ -49,6 +52,9 @@ EOF
 #
 # Arguments:
 #   $1: Output content (default: sample iptables output)
+#
+# Returns:
+#   0: Always succeeds. Prints mock script path to stdout.
 create_mock_iptables_save() {
 	local output="${1:-*filter
 :INPUT ACCEPT [0:0]
@@ -80,6 +86,9 @@ EOF
 #
 # Arguments:
 #   $1: Output content for 'ipset save' (default: sample ipset output)
+#
+# Returns:
+#   0: Always succeeds. Prints mock script path to stdout.
 create_mock_ipset() {
 	local output="${1:-create UBIOS_ALL_ADDRv4_eth8 hash:ip family inet hashsize 1024 maxelem 65536
 add UBIOS_ALL_ADDRv4_eth8 192.168.1.1
@@ -229,7 +238,8 @@ EOF
 # bats test_tags=category:unit
 @test "export-udm-routes-firewall.sh creates output files with correct names" {
 	# Purpose: Test verifies that the export script creates output files with expected timestamped names
-	# Expected: Script creates three files: routes-ipv4-<timestamp>.txt, routes-ipv6-<timestamp>.txt, firewall-rules-<timestamp>.txt
+	# Expected: Script creates files: routes-ipv4-<timestamp>.txt, routes-ipv6-<timestamp>.txt in root,
+	#           and firewall-rules-<timestamp>.txt, ipset-sets-<timestamp>.txt in firewall-rules/ subdirectory
 	# Importance: Ensures output files follow expected naming convention for easy identification
 	local output_dir="${TEST_DIR}/output"
 	mkdir -p "$output_dir"
@@ -254,17 +264,17 @@ EOF
 	assert [ "${#lines[@]}" -eq 1 ]
 
 	# Firewall file may or may not be created depending on iptables-save permissions
-	# But if it exists, it should have the correct pattern
-	if ls "$output_dir"/firewall-rules-*.txt >/dev/null 2>&1; then
-		run ls -1 "$output_dir"/firewall-rules-*.txt
+	# But if it exists, it should have the correct pattern in firewall-rules subdirectory
+	if ls "$output_dir"/firewall-rules/firewall-rules-*.txt >/dev/null 2>&1; then
+		run ls -1 "$output_dir"/firewall-rules/firewall-rules-*.txt
 		assert_success
 		assert [ "${#lines[@]}" -eq 1 ]
 	fi
 
 	# Ipset file may or may not be created depending on ipset availability/permissions
-	# But if it exists, it should have the correct pattern
-	if ls "$output_dir"/ipset-sets-*.txt >/dev/null 2>&1; then
-		run ls -1 "$output_dir"/ipset-sets-*.txt
+	# But if it exists, it should have the correct pattern in firewall-rules subdirectory
+	if ls "$output_dir"/firewall-rules/ipset-sets-*.txt >/dev/null 2>&1; then
+		run ls -1 "$output_dir"/firewall-rules/ipset-sets-*.txt
 		assert_success
 		assert [ "${#lines[@]}" -eq 1 ]
 	fi
@@ -360,7 +370,7 @@ EOF
 
 	# If firewall file was created (iptables-save succeeded), verify it contains expected content
 	local firewall_file
-	firewall_file=$(ls -1 "$output_dir"/firewall-rules-*.txt 2>/dev/null | head -1)
+	firewall_file=$(ls -1 "$output_dir"/firewall-rules/firewall-rules-*.txt 2>/dev/null | head -1)
 	if [[ -n "$firewall_file" ]] && [[ -f "$firewall_file" ]] && [[ -s "$firewall_file" ]]; then
 		assert_file_exist "$firewall_file"
 		# Real iptables-save output should contain filter table marker or rules
@@ -392,7 +402,7 @@ EOF
 
 	# If ipset file was created (ipset save succeeded), verify it contains expected content
 	local ipset_file
-	ipset_file=$(ls -1 "$output_dir"/ipset-sets-*.txt 2>/dev/null | head -1)
+	ipset_file=$(ls -1 "$output_dir"/firewall-rules/ipset-sets-*.txt 2>/dev/null | head -1)
 	if [[ -n "$ipset_file" ]] && [[ -f "$ipset_file" ]] && [[ -s "$ipset_file" ]]; then
 		assert_file_exist "$ipset_file"
 		# Mock ipset output should contain create/add commands
@@ -427,7 +437,7 @@ EOF
 	run ls -1 "$output_dir"/routes-ipv6-*.txt
 	assert_success
 	# Ipset file should not exist since ipset command is not available
-	run ls -1 "$output_dir"/ipset-sets-*.txt 2>/dev/null || true
+	run ls -1 "$output_dir"/firewall-rules/ipset-sets-*.txt 2>/dev/null || true
 	assert_failure
 }
 
@@ -521,7 +531,7 @@ EOF
 	# IPv6 and firewall files should still be created
 	run ls -1 "$output_dir"/routes-ipv6-*.txt
 	assert_success
-	run ls -1 "$output_dir"/firewall-rules-*.txt
+	run ls -1 "$output_dir"/firewall-rules/firewall-rules-*.txt
 	assert_success
 }
 
@@ -641,7 +651,7 @@ EOF
 
 	# If ipset file was created, summary should mention it
 	local ipset_file
-	ipset_file=$(ls -1 "$output_dir"/ipset-sets-*.txt 2>/dev/null | head -1)
+	ipset_file=$(ls -1 "$output_dir"/firewall-rules/ipset-sets-*.txt 2>/dev/null | head -1)
 	if [[ -n "$ipset_file" ]] && [[ -f "$ipset_file" ]]; then
 		assert_output --partial "ipset-sets"
 	fi

@@ -117,13 +117,15 @@ if [[ ${#STAGED_SH_FILES[@]} -gt 0 ]]; then
 		echo "  Linux: sudo apt-get install shellcheck" >&2
 		echo "  See DEVELOPER.md for more installation options" >&2
 	else
-		# Run ShellCheck on staged files
+		# Run ShellCheck on staged files (per-file to reduce peak memory usage)
 		echo "Running ShellCheck..."
-		if ! "$SHELLCHECK_CMD" --severity=error "${STAGED_SH_FILES[@]}"; then
-			echo "Error: ShellCheck found errors. Please fix them before committing." >&2
-			echo "Run 'shellcheck *.sh lib/*.sh tests/*.sh' to see all issues." >&2
-			exit 1
-		fi
+		for file in "${STAGED_SH_FILES[@]}"; do
+			if ! "$SHELLCHECK_CMD" --severity=error "$file"; then
+				echo "Error: ShellCheck found errors in $file. Please fix them before committing." >&2
+				echo "Run 'shellcheck *.sh lib/*.sh tests/*.sh' to see all issues." >&2
+				exit 1
+			fi
+		done
 	fi
 
 	# Find shfmt

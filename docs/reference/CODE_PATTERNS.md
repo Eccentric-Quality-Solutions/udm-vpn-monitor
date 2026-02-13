@@ -796,7 +796,56 @@ Some state files are intentionally **not** managed by `get_peer_state_file_path(
      - Per-location partition state would be redundant and confusing
    - **Usage**: Use `get_network_partition_state_file()` function or `NETWORK_PARTITION_STATE_FILE` variable
 
-4. **`LOCKFILE`** (`${STATE_DIR}/vpn-monitor.lock`)
+3. **Network Partition Statistics Files**
+   - **Files**: 
+     - `${STATE_DIR}/network_partition_dns_success_count` - DNS check success counter
+     - `${STATE_DIR}/network_partition_dns_fail_count` - DNS check failure counter
+     - `${STATE_DIR}/network_partition_route_success_count` - Route check success counter
+     - `${STATE_DIR}/network_partition_route_fail_count` - Route check failure counter
+     - `${STATE_DIR}/network_partition_interface_success_count` - Interface check success counter
+     - `${STATE_DIR}/network_partition_interface_fail_count` - Interface check failure counter
+     - `${STATE_DIR}/network_partition_summary_last_time` - Timestamp of last statistics summary
+   - **Purpose**: Track statistics for network partition checks (hourly summaries)
+   - **Scope**: System-wide network partition check statistics
+   - **Why Outside**: 
+     - Network partition checks are system-wide (affect all locations)
+     - Statistics are aggregated across all checks, not per-location
+     - Used for hourly summary logging of system-wide network health
+   - **Usage**: Direct path construction (e.g., `${STATE_DIR}/network_partition_dns_success_count`)
+
+4. **Ping Summary Statistics Files**
+   - **Files**:
+     - `${STATE_DIR}/ping_summary_last_time` - Timestamp of last ping summary
+     - `${STATE_DIR}/ping_summary_count` - Ping check counter
+   - **Purpose**: Track ping check statistics for periodic summary logging
+   - **Scope**: System-wide ping check statistics (aggregated across all locations)
+   - **Why Outside**: 
+     - Ping checks are performed across multiple locations but statistics are aggregated globally
+     - Summary logging provides system-wide visibility, not per-location breakdown
+     - Used for periodic summary logging (7-minute interval, configurable)
+   - **Usage**: Direct path construction (e.g., `${STATE_DIR}/ping_summary_last_time`)
+
+5. **Resource Monitoring Statistics Files**
+   - **Files**:
+     - `${STATE_DIR}/resource_cpu_check_success_count` - CPU check success counter
+     - `${STATE_DIR}/resource_cpu_check_fail_count` - CPU check failure counter
+     - `${STATE_DIR}/resource_ram_check_success_count` - RAM check success counter
+     - `${STATE_DIR}/resource_ram_check_fail_count` - RAM check failure counter
+     - `${STATE_DIR}/resource_disk_check_success_count` - Disk check success counter
+     - `${STATE_DIR}/resource_disk_check_fail_count` - Disk check failure counter
+     - `${STATE_DIR}/resource_cpu_constrained_count` - CPU constrained event counter
+     - `${STATE_DIR}/resource_ram_constrained_count` - RAM constrained event counter
+     - `${STATE_DIR}/resource_disk_critical_count` - Disk critical event counter
+     - `${STATE_DIR}/resource_monitoring_summary_last_time` - Timestamp of last resource monitoring summary
+   - **Purpose**: Track statistics for resource monitoring checks (hourly summaries)
+   - **Scope**: System-wide resource monitoring statistics
+   - **Why Outside**: 
+     - Resource monitoring checks are system-wide (CPU, RAM, disk affect entire system)
+     - Statistics are aggregated across all checks, not per-location
+     - Used for hourly summary logging of system resource health
+   - **Usage**: Direct path construction (e.g., `${STATE_DIR}/resource_cpu_check_success_count`)
+
+6. **`LOCKFILE`** (`${STATE_DIR}/vpn-monitor.lock`)
    - **Purpose**: Prevents concurrent script execution
    - **Scope**: System-wide lock
    - **Why Outside**: 
@@ -805,7 +854,7 @@ Some state files are intentionally **not** managed by `get_peer_state_file_path(
      - Per-location lockfiles would allow concurrent execution, causing conflicts
    - **Usage**: Use `LOCKFILE` variable directly
 
-5. **`PIDFILE`** (`${STATE_DIR}/vpn-keepalive.pid`)
+7. **`PIDFILE`** (`${STATE_DIR}/vpn-keepalive.pid`)
    - **Purpose**: PID file for VPN keepalive daemon
    - **Scope**: Single daemon process
    - **Why Outside**: 
@@ -813,6 +862,27 @@ Some state files are intentionally **not** managed by `get_peer_state_file_path(
      - Not a per-peer or per-location concept
      - Standard Unix daemon pattern (single PID file)
    - **Usage**: Use `PIDFILE` variable directly
+
+**Pattern for Global State Files:**
+
+When working with global state files (files outside the abstraction layer), use direct path construction with `${STATE_DIR}`:
+
+```bash
+# ✅ GOOD: Direct path construction for global state files
+local last_time_file="${STATE_DIR}/ping_summary_last_time"
+local count_file="${STATE_DIR}/ping_summary_count"
+local cpu_success_file="${STATE_DIR}/resource_cpu_check_success_count"
+
+# ✅ GOOD: Use constants when available
+local restart_count_file="${RESTART_COUNT_FILE}"
+local lockfile="${LOCKFILE}"
+```
+
+**Rationale:**
+- Global state files represent system-wide state, not per-peer or per-location state
+- They don't need location/peer sanitization or abstraction layer complexity
+- Direct path construction is simpler and more appropriate for global files
+- If more global state files are added, consider creating helper functions or constants for consistency
 
 **When to Add to Abstraction Layer:**
 - If a new state file is **per-peer** or **per-location**, add it to `get_peer_state_file_path()`
@@ -912,9 +982,14 @@ These files track state per peer IP only, without location context. Format: `<ke
 
 These files are intentionally outside the abstraction layer because they represent global system state:
 
-- `${STATE_DIR}/cooldown_until` - Cooldown expiration timestamp
+**System Control Files:**
 - `${STATE_DIR}/restart_count` - Unix timestamps of Tier 3 recovery actions
 - `${STATE_DIR}/network_partition_state` - Network partition status (0=healthy, 1=partitioned)
+- `${STATE_DIR}/vpn-monitor.lock` - Lockfile for execution control
+- `${STATE_DIR}/vpn-keepalive.pid` - PID file for VPN keepalive daemon
+- `${STATE_DIR}/.cron_checked` - Flag file for cron check
+
+**Network Partition Statistics:**
 - `${STATE_DIR}/network_partition_dns_success_count` - DNS check success counter
 - `${STATE_DIR}/network_partition_dns_fail_count` - DNS check failure counter
 - `${STATE_DIR}/network_partition_route_success_count` - Route check success counter
@@ -922,9 +997,24 @@ These files are intentionally outside the abstraction layer because they represe
 - `${STATE_DIR}/network_partition_interface_success_count` - Interface check success counter
 - `${STATE_DIR}/network_partition_interface_fail_count` - Interface check failure counter
 - `${STATE_DIR}/network_partition_summary_last_time` - Timestamp of last statistics summary
-- `${STATE_DIR}/vpn-monitor.lock` - Lockfile for execution control
-- `${STATE_DIR}/vpn-keepalive.pid` - PID file for VPN keepalive daemon
-- `${STATE_DIR}/.cron_checked` - Flag file for cron check
+
+**Ping Summary Statistics:**
+- `${STATE_DIR}/ping_summary_last_time` - Timestamp of last ping summary
+- `${STATE_DIR}/ping_summary_count` - Ping check counter
+
+**Resource Monitoring Statistics:**
+- `${STATE_DIR}/resource_cpu_check_success_count` - CPU check success counter
+- `${STATE_DIR}/resource_cpu_check_fail_count` - CPU check failure counter
+- `${STATE_DIR}/resource_ram_check_success_count` - RAM check success counter
+- `${STATE_DIR}/resource_ram_check_fail_count` - RAM check failure counter
+- `${STATE_DIR}/resource_disk_check_success_count` - Disk check success counter
+- `${STATE_DIR}/resource_disk_check_fail_count` - Disk check failure counter
+- `${STATE_DIR}/resource_cpu_constrained_count` - CPU constrained event counter
+- `${STATE_DIR}/resource_ram_constrained_count` - RAM constrained event counter
+- `${STATE_DIR}/resource_disk_critical_count` - Disk critical event counter
+- `${STATE_DIR}/resource_monitoring_summary_last_time` - Timestamp of last resource monitoring summary
+
+**Note:** These files use direct path construction (e.g., `${STATE_DIR}/ping_summary_last_time`) rather than the abstraction layer because they represent global system state, not per-peer or per-location state. See the "Files Intentionally Outside the Abstraction Layer" section above for detailed rationale.
 
 **Usage Guidelines:**
 
@@ -2857,13 +2947,15 @@ fi
 - Calculate timeout dynamically based on command parameters (e.g., ping count * timeout)
 
 **Timeout Constants:**
+- `XFRM_STATE_TIMEOUT=5` - Timeout for `ip xfrm state` command (5 seconds)
 - `IPSEC_STATUS_TIMEOUT=5` - Timeout for `ipsec status` command (5 seconds)
 - `XFRM_RECOVERY_VERIFY_TIMEOUT=30` - Timeout for xfrm recovery verification (30 seconds)
 - `LOCKFILE_TIMEOUT=300` - Timeout for lockfile staleness detection (300 seconds)
 
 **Commands That Should Be Wrapped:**
+- `ip xfrm state` - Wrapped with `XFRM_STATE_TIMEOUT` (5 seconds) in `lib/detection/xfrm_detection.sh`
 - `ipsec status` - Wrapped with `IPSEC_STATUS_TIMEOUT` (5 seconds)
-  - **Helper function**: Use `get_ipsec_status_for_peer()` in `lib/detection.sh` for ipsec status queries
+  - **Helper function**: Use `get_ipsec_status_for_peer()` in `lib/detection/xfrm_detection.sh` for ipsec status queries
 - `ping` commands - Wrapped with calculated timeout based on ping count and timeout
 - `dig` and `nslookup` - Wrapped with DNS timeout in network partition checks
 

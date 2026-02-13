@@ -30,59 +30,6 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
 }
 
 # bats test_tags=category:unit,priority:high
-@test "get_command_path: checks system directories in correct order" {
-	# Purpose: Test that get_command_path checks directories in order: /usr/sbin, /sbin, /usr/bin, /bin
-	# Expected: Returns first directory where command is found
-	# Importance: Order matters - /usr/sbin and /sbin should be checked before /usr/bin and /bin
-
-	# Create temporary test directories to simulate system directories
-	local test_base
-	test_base=$(mktemp -d)
-	local test_usr_sbin="${test_base}/usr_sbin"
-	local test_sbin="${test_base}/sbin"
-	local test_usr_bin="${test_base}/usr_bin"
-	local test_bin="${test_base}/bin"
-
-	mkdir -p "$test_usr_sbin" "$test_sbin" "$test_usr_bin" "$test_bin"
-
-	# Create mock command in each directory (with different content to identify which was found)
-	echo '#!/bin/bash' >"${test_usr_sbin}/testcmd"
-	echo 'echo "usr_sbin"' >>"${test_usr_sbin}/testcmd"
-	chmod +x "${test_usr_sbin}/testcmd"
-
-	echo '#!/bin/bash' >"${test_sbin}/testcmd"
-	echo 'echo "sbin"' >>"${test_sbin}/testcmd"
-	chmod +x "${test_sbin}/testcmd"
-
-	echo '#!/bin/bash' >"${test_usr_bin}/testcmd"
-	echo 'echo "usr_bin"' >>"${test_usr_bin}/testcmd"
-	chmod +x "${test_usr_bin}/testcmd"
-
-	echo '#!/bin/bash' >"${test_bin}/testcmd"
-	echo 'echo "bin"' >>"${test_bin}/testcmd"
-	chmod +x "${test_bin}/testcmd"
-
-	# Save original PATH
-	local original_path="$PATH"
-
-	# Set restricted PATH (doesn't include our test directories)
-	export PATH="/bin:/usr/bin"
-
-	# We can't easily override the hardcoded system directories in get_command_path,
-	# so we'll test the behavior differently - verify it checks standard locations
-	# by testing with a command that might exist in different locations
-
-	# Test: If a command exists in multiple standard locations, it should find the first one
-	# Since we can't modify /usr/sbin, we'll verify the logic by checking real commands
-
-	# Restore PATH
-	export PATH="$original_path"
-
-	# Cleanup
-	rm -rf "$test_base"
-}
-
-# bats test_tags=category:unit,priority:high
 @test "get_command_path: works in PATH-restricted environment" {
 	# Purpose: Test that get_command_path finds commands even when PATH doesn't include system directories
 	# Expected: Returns full path to command found in system directories, even with restricted PATH

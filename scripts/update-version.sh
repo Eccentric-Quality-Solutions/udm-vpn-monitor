@@ -19,6 +19,9 @@
 #   - vpn-monitor.sh and vpn-keepalive.sh (SCRIPT_VERSION variables)
 #   - All lib/*.sh files (# Version: comments)
 #   - Utility scripts (# Version: comments)
+#
+# When the only change in a file is the version update, the file is
+# automatically staged with git add.
 
 set -euo pipefail
 
@@ -267,6 +270,79 @@ update_version_in_file() {
 	return 0
 }
 
+# Check if the only changes in a file are version number updates
+#
+# Uses git diff to verify that every changed line is a version update
+# (old_version -> new_version). If the diff contains any other changes,
+# returns 1. Only runs when in a git repo and file is tracked.
+#
+# Arguments:
+#   $1: Path to the file to check
+#   $2: Old version number that was replaced
+#   $3: New version number that was set
+#
+# Returns:
+#   0: Only version changes in the diff; safe to stage
+#   1: Other changes present, not a git repo, or file not tracked
+#
+# Side effects:
+#   None
+is_only_version_change_in_file() {
+	local file="$1"
+	local old_version="$2"
+	local new_version="$3"
+
+	# Must be in a git repo
+	if ! git -C "${PROJECT_ROOT}" rev-parse --git-dir >/dev/null 2>&1; then
+		return 1
+	fi
+
+	# File must be tracked
+	if ! git -C "${PROJECT_ROOT}" ls-files --error-unmatch "$file" >/dev/null 2>&1; then
+		return 1
+	fi
+
+	# Get diff lines that are additions or removals (exclude --- and +++ headers)
+	local diff_lines
+	diff_lines=$(git -C "${PROJECT_ROOT}" diff --no-color "$file" 2>/dev/null | grep -E '^[\+\-]' | grep -v -E '^[\+\-]{3}' || true)
+
+	# No diff means nothing to stage
+	[[ -z "$diff_lines" ]] && return 1
+
+	# Every removed line must contain old_version, every added line must contain new_version
+	local line
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+		if [[ "$line" == \-* ]]; then
+			[[ "$line" == *"$old_version"* ]] || return 1
+		elif [[ "$line" == \+* ]]; then
+			[[ "$line" == *"$new_version"* ]] || return 1
+		fi
+	done <<<"$diff_lines"
+
+	return 0
+}
+
+# Stage a file with git add
+#
+# Arguments:
+#   $1: Path to the file to stage
+#
+# Returns:
+#   0: Success
+#   1: Failure (e.g., not in git repo)
+#
+# Side effects:
+#   Stages the file in the git index
+stage_file() {
+	local file="$1"
+	if git -C "${PROJECT_ROOT}" add "$file" 2>/dev/null; then
+		echo -e "  ${GREEN}Staged${NC} $file"
+		return 0
+	fi
+	return 1
+}
+
 # Find all files in the project that contain version numbers
 #
 # Discovers all files that should have version numbers updated, including:
@@ -302,12 +378,15 @@ update_version_in_file() {
 find_files_with_versions() {
 	local files=()
 
-	# Main scripts with SCRIPT_VERSION
+	# Main scripts with SCRIPT_VERSION or # Version:
 	if [[ -f "${PROJECT_ROOT}/vpn-monitor.sh" ]]; then
 		files+=("${PROJECT_ROOT}/vpn-monitor.sh")
 	fi
 	if [[ -f "${PROJECT_ROOT}/vpn-keepalive.sh" ]]; then
 		files+=("${PROJECT_ROOT}/vpn-keepalive.sh")
+	fi
+	if [[ -f "${PROJECT_ROOT}/vpn-monitor-wrapper.sh" ]]; then
+		files+=("${PROJECT_ROOT}/vpn-monitor-wrapper.sh")
 	fi
 
 	# Installation scripts
@@ -351,6 +430,7 @@ find_files_with_versions() {
 #
 # Side effects:
 #   - Modifies version numbers in multiple project files (unless dry run)
+#   - Stages files with git add when the only change is the version update
 #   - Prints progress and results to stdout (colored output)
 #   - Prints warnings/errors to stderr
 #   - Exits script with appropriate exit code
@@ -421,6 +501,14 @@ main() {
 		if [[ -n "$file_version" ]]; then
 			if update_version_in_file "$file" "$file_version" "$NEW_VERSION" "$DRY_RUN"; then
 				((updated_count++)) || true
+				# If we actually updated (version changed) and the only diff is the version change, stage the file
+				if [[ $DRY_RUN -eq 0 ]] && [[ "$file_version" != "$NEW_VERSION" ]]; then
+					local current_after
+					current_after=$(get_current_version_from_file "$file" || echo "")
+					if [[ "$current_after" == "$NEW_VERSION" ]] && is_only_version_change_in_file "$file" "$file_version" "$NEW_VERSION"; then
+						stage_file "$file" || true
+					fi
+				fi
 			else
 				((failed_count++)) || true
 			fi

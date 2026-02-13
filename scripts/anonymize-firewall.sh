@@ -484,10 +484,10 @@ anonymize_firewall_file() {
 			# Replace interface names in various contexts
 			# Pattern 1: -i interface or -o interface
 			# In extended regex (-E), use + for one or more (not \+)
-			# Use | as delimiter to avoid issues with / in interface names
-			printf 's|-([io]) +([!]?)%s( |$)|-\\1 \\2%s\\3|g\n' "$escaped_iface" "$escaped_anon_iface" >>"$interface_sed_script"
+			# Use @ as delimiter (| is alternation in extended regex, / may appear in interface names)
+			printf 's@-([io]) +([!]?)%s( |$)@-\\1 \\2%s\\3@g\n' "$escaped_iface" "$escaped_anon_iface" >>"$interface_sed_script"
 			# Pattern 2: --in-interface interface or --out-interface interface
-			printf 's|--(in|out)-interface +([!]?)%s( |$)|--\\1-interface \\2%s\\3|g\n' "$escaped_iface" "$escaped_anon_iface" >>"$interface_sed_script"
+			printf 's@--(in|out)-interface +([!]?)%s( |$)@--\\1-interface \\2%s\\3@g\n' "$escaped_iface" "$escaped_anon_iface" >>"$interface_sed_script"
 		done
 	fi
 	set -u
@@ -515,12 +515,12 @@ anonymize_firewall_file() {
 
 			# Replace chain names in various contexts
 			# Pattern 1: Chain declaration :CHAIN_NAME [policy] [packets:bytes]
-			# Use | as delimiter to avoid issues with / in chain names
-			printf 's|^:%s |:%s |g\n' "$escaped_chain" "$escaped_anon_chain" >>"$chain_name_sed_script"
+			# Use @ as delimiter (| is alternation in extended regex)
+			printf 's@^:%s @:%s @g\n' "$escaped_chain" "$escaped_anon_chain" >>"$chain_name_sed_script"
 			# Pattern 2: Chain reference -A CHAIN_NAME (followed by space or end of line)
-			printf 's|-A %s( |$)|-A %s\\1|g\n' "$escaped_chain" "$escaped_anon_chain" >>"$chain_name_sed_script"
+			printf 's@-A %s( |$)@-A %s\\1@g\n' "$escaped_chain" "$escaped_anon_chain" >>"$chain_name_sed_script"
 			# Pattern 3: Jump to chain -j CHAIN_NAME (followed by space or end of line)
-			printf 's|-j %s( |$)|-j %s\\1|g\n' "$escaped_chain" "$escaped_anon_chain" >>"$chain_name_sed_script"
+			printf 's@-j %s( |$)@-j %s\\1@g\n' "$escaped_chain" "$escaped_anon_chain" >>"$chain_name_sed_script"
 		done
 	fi
 	set -u
@@ -544,8 +544,8 @@ anonymize_firewall_file() {
 
 			# Replace set names in --match-set pattern
 			# Pattern: --match-set SET_NAME [src|dst|...]
-			# Use | as delimiter to avoid issues with / in set names
-			printf 's|--match-set %s |--match-set %s |g\n' "$escaped_set" "$escaped_anon_set" >>"$set_name_sed_script"
+			# Use @ as delimiter (| is alternation in extended regex)
+			printf 's@--match-set %s @--match-set %s @g\n' "$escaped_set" "$escaped_anon_set" >>"$set_name_sed_script"
 		done
 	fi
 	set -u

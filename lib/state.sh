@@ -3,7 +3,7 @@
 # State file management for UDM VPN Monitor
 # Handles failure counters, cooldown periods, rate limiting, and restart tracking
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 # This file sources modular state management components:
 #   - state_paths.sh: Path generation and sanitization

@@ -3,7 +3,7 @@
 # IPsec-based recovery functions for UDM VPN Monitor
 # Implements IPsec reload and restart recovery actions
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 # shellcheck source=lib/recovery/constants.sh

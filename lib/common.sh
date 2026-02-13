@@ -3,15 +3,16 @@
 # Common functions for UDM VPN Monitor
 # Shared logging and utility functions for installation/uninstallation scripts and main monitor
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 # This module provides shared utility functions used throughout the codebase to reduce duplication:
 # - File operations: file_exists_and_readable(), ensure_file_exists(), atomic_write_file(), read_counter_file()
 # - Directory operations: directory_exists(), directory_writable()
-# - Timestamp operations: get_unix_timestamp(), validate_timestamp(), safe_timestamp_subtract(), safe_timestamp_add(), safe_timestamp_diff(), calculate_duration()
+# - Timestamp operations: get_unix_timestamp(), validate_timestamp(), safe_timestamp_subtract(), safe_timestamp_add(), safe_timestamp_diff(), calculate_duration(), start_timer(), stop_timer()
 # - String escaping: escape_sed_replacement(), escape_sed_regex()
 # - String sanitization: sanitize_location_name()
 # - String trimming: trim()
+# - Validation: validate_spi_format()
 # - Config file operations: update_config_value()
 # - Logging: log_info(), log_warn(), log_error()
 # - System checks: check_root()
@@ -336,7 +337,7 @@ ensure_file_exists() {
 				return 1
 			fi
 		fi
-		if ! echo "$default_content" >"$file" 2>/dev/null; then
+		if ! atomic_write_file "$file" "$default_content"; then
 			return 1
 		fi
 	fi
@@ -603,6 +604,66 @@ calculate_duration() {
 		duration=0
 	fi
 	echo "$duration"
+	return 0
+}
+
+# Start a timer
+#
+# Returns a timer identifier (timestamp) that can be used with stop_timer()
+# to measure command execution duration. Handles errors gracefully by
+# returning "0" if timestamp retrieval fails.
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints timer identifier (Unix timestamp) to stdout, or "0" if measurement failed
+#
+# Example:
+#   timer=$(start_timer)
+#   # ... execute command ...
+#   duration=$(stop_timer "$timer")
+#
+# Note:
+#   Requires get_unix_timestamp() to be available
+#   Returns "0" on failure, which stop_timer() handles gracefully
+start_timer() {
+	get_unix_timestamp 2>/dev/null || echo "0"
+}
+
+# Stop a timer and calculate duration
+#
+# Calculates the duration between a timer start time (from start_timer())
+# and the current time. Handles errors gracefully by returning "0" if
+# measurement fails.
+#
+# Arguments:
+#   $1: Timer identifier from start_timer() (Unix timestamp)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints duration in seconds to stdout, or "0" if measurement failed
+#
+# Example:
+#   timer=$(start_timer)
+#   # ... execute command ...
+#   duration=$(stop_timer "$timer")
+#
+# Note:
+#   Requires get_unix_timestamp() and calculate_duration() to be available
+#   Returns "0" if start_time is "0" or if measurement fails
+stop_timer() {
+	local start_time="$1"
+	local end_time
+	end_time=$(get_unix_timestamp 2>/dev/null || echo "0")
+
+	if [[ "$start_time" != "0" ]] && [[ "$end_time" != "0" ]]; then
+		calculate_duration "$start_time" "$end_time" 2>/dev/null || echo "0"
+	else
+		echo "0"
+	fi
 	return 0
 }
 
@@ -905,6 +966,39 @@ sanitize_location_name() {
 
 	echo "$sanitized"
 	return 0
+}
+
+# Validate SPI format (hex or decimal)
+#
+# Validates that a Security Parameter Index (SPI) value is in a valid format.
+# SPI values can be in hex format (0x12345678) or decimal format (305419896).
+# This function provides a single source of truth for SPI format validation
+# across the codebase.
+#
+# Arguments:
+#   $1: SPI value to validate
+#
+# Returns:
+#   0: Valid SPI format (hex or decimal)
+#   1: Invalid SPI format (empty, malformed, or contains invalid characters)
+#
+# Examples:
+#   if validate_spi_format "$spi"; then
+#       echo "SPI is valid"
+#   fi
+#
+#   if ! validate_spi_format "$current_spi"; then
+#       return 1
+#   fi
+#
+# Note:
+#   - Accepts hex format: 0x[0-9a-fA-F]+ (e.g., "0x12345678", "0xABC")
+#   - Accepts decimal format: [0-9]+ (e.g., "305419896", "123")
+#   - Empty strings are considered invalid (return 1)
+#   - This function only validates format, not value ranges or semantics
+validate_spi_format() {
+	local spi="$1"
+	[[ "$spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]
 }
 
 # Trim leading and trailing whitespace from a string
@@ -1217,6 +1311,45 @@ get_command_path() {
 	# This should be rare since we check both PATH and standard directories
 	# Caller should have checked availability with check_command_available first
 	echo "$cmd"
+	return 0
+}
+
+# Get IP command path with recovery context support
+#
+# Returns the full path to the 'ip' command, preferring _RECOVERY_IP_PATH
+# if available (set by recovery orchestration), otherwise resolving via
+# get_command_path(). Falls back to "ip" if resolution fails.
+#
+# This function consolidates the common pattern of resolving the IP command
+# path used throughout the codebase, especially in recovery and detection code.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints command path to stdout (full path or "ip" as fallback)
+#
+# Examples:
+#   ip_cmd=$(get_ip_command_path)
+#   "$ip_cmd" xfrm state delete ...
+#
+# Note:
+#   Uses _RECOVERY_IP_PATH if available (set by recovery orchestration for
+#   consistency in PATH-restricted environments like cron/systemd).
+#   Falls back to get_command_path() if _RECOVERY_IP_PATH is not set.
+#   Final fallback is "ip" command name (relies on PATH at execution time).
+get_ip_command_path() {
+	local ip_cmd="${_RECOVERY_IP_PATH:-}"
+	if [[ -z "$ip_cmd" ]] && command -v get_command_path >/dev/null 2>&1; then
+		ip_cmd=$(get_command_path "ip")
+	fi
+	if [[ -z "$ip_cmd" ]]; then
+		ip_cmd="ip" # Fallback to command name
+	fi
+	echo "$ip_cmd"
 	return 0
 }
 

@@ -1,7 +1,7 @@
 # Code Review Lessons Learned
 
 **Date:** 2025-01-15
-**Last Updated:** 2026-01-11
+**Last Updated:** 2026-01-23
 **Context:** Comprehensive codebase review for errors, bugs, DRY violations, and bad practices
 
 **Note:** For a pragmatic assessment of this document's value and recommendations for improvement, see `CODE_REVIEW_LESSONS_LEARNED_ASSESSMENT.md`.
@@ -2993,3 +2993,5 @@ These lessons should be applied systematically in future development and code re
 37. **Process cleanup in parallel test execution requires defensive programming** - When running tests in parallel with coverage tools (e.g., kcov), orphan processes can accumulate if cleanup is not handled properly. The `timeout` command with `--kill-after` helps, but additional defensive cleanup is needed. Use process group cleanup (`kill -TERM -pgid` followed by `kill -KILL -pgid`) to ensure all child processes are terminated. Add cleanup traps in parallel runner functions and explicit cleanup calls after timeout execution. This prevents resource leaks and ensures CI stability. Example: Added `cleanup_test_processes()` function that kills process groups, integrated into `run_single_test_with_timeout()` and `parallel_test_runner_with_coverage()` with cleanup traps to handle interruptions and timeouts.
 
 38. **Signal handlers can be triggered by cleanup code, not just user interrupts** - When cleanup functions send signals (e.g., `kill -TERM`), those signals can trigger signal handlers (traps) that were set up to handle user interrupts. This causes false "interrupted" messages even when no user interruption occurred. **Always temporarily disable signal traps before calling cleanup functions that send signals**, then re-enable them immediately after. Only call cleanup functions when actually needed (e.g., on timeout), not after every operation. Example: Fixed `run_single_test_with_timeout()` to only call `cleanup_test_processes()` on timeout (exit codes 124 or 143), and to temporarily disable TERM/INT traps before cleanup to prevent false "Interrupted by user (Ctrl+C)" messages.
+
+39. **`local` keyword cannot be used at top level of `bash -c` subshells** - The `local` keyword in bash can only be used inside functions, not at the top level of scripts or subshells. When using `bash -c "..."` to run code in a subshell (e.g., for test isolation or capturing output variables via `printf -v`), **never use `local` for variable declarations**. Use regular variable assignments instead. This bug manifests as variables appearing empty even after assignment, causing silent failures. Example: Fixed test in `test_detection_xfrm_edge_cases.sh` where `local func_exit=$?` and `local exit_code=$func_exit` in a `bash -c` subshell left variables empty, preventing exit code capture. Changed to `func_exit=$?` and `exit_code=$func_exit` (without `local`).

@@ -3,7 +3,7 @@
 # Global state operations
 # Handles rate limiting, restart tracking, and state validation
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 # Get file modification time as timestamp

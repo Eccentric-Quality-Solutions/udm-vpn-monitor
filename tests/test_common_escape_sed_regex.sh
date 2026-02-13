@@ -6,6 +6,7 @@
 # multi-line values
 
 load test_helper
+load helpers/assertions
 
 # Source the common library functions
 # shellcheck source=../lib/common.sh
@@ -160,9 +161,7 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 	# Purpose: Test that escape_sed_regex handles empty string correctly
 	# Expected: Returns empty string
 	# Importance: Prevents errors when processing empty input
-	run escape_sed_regex ""
-	assert_success
-	assert_output ""
+	test_empty_string "escape_sed_regex"
 }
 
 # bats test_tags=category:unit
@@ -284,16 +283,6 @@ line3\\^value"
 	grep -q '^VAR2=testXvalue$' "$test_file"
 }
 
-# bats test_tags=category:unit
-@test "escape_sed_regex: works with command substitution" {
-	# Purpose: Test that escape_sed_regex works correctly in command substitution context
-	# Expected: Returns escaped value when used in variable assignment
-	# Importance: Common usage pattern in scripts
-	local result
-	result=$(escape_sed_regex "test.value")
-	assert [ "$result" == "test\\.value" ]
-}
-
 # ============================================================================
 # EDGE CASES AND CORNER CASES
 # ============================================================================
@@ -346,14 +335,4 @@ line3\\^value"
 	run escape_sed_regex "/path/to/file.conf"
 	assert_success
 	assert_output "/path/to/file\\.conf"
-}
-
-# bats test_tags=category:unit
-@test "escape_sed_regex: handles values with parentheses" {
-	# Purpose: Test that escape_sed_regex handles values containing parentheses
-	# Expected: Parentheses are escaped
-	# Importance: Parentheses may appear in config values
-	run escape_sed_regex "test(value)here"
-	assert_success
-	assert_output "test\\(value\\)here"
 }

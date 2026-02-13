@@ -933,8 +933,9 @@ cat /proc/net/xfrm_stat
 
 **1. Command Timeout Handling:**
 
-The `ipsec status` command can hang indefinitely. Always use timeouts:
+Network commands that interact with the kernel (via netlink sockets) can hang indefinitely. Always use timeouts:
 
+**ipsec status:**
 ```bash
 IPSEC_STATUS_TIMEOUT=5  # Default in codebase
 
@@ -954,6 +955,30 @@ else
     ipsec_output=$(ipsec status 2>/dev/null || true)
 fi
 ```
+
+**ip xfrm state:**
+```bash
+XFRM_STATE_TIMEOUT=5  # Default in codebase
+
+if check_command_available "timeout"; then
+    xfrm_output=$(timeout "${XFRM_STATE_TIMEOUT:-5}" ip -s xfrm state 2>&1)
+    exit_code=$?
+    
+    # Timeout exit code is 124
+    if [[ $exit_code -eq 124 ]]; then
+        echo "ip xfrm state timed out after ${XFRM_STATE_TIMEOUT} seconds"
+        # Handle timeout appropriately (fall back to ipsec status)
+    elif [[ $exit_code -ne 0 ]]; then
+        echo "ip xfrm state failed with exit code: $exit_code"
+    fi
+else
+    # Fallback if timeout not available (shouldn't happen on UDM)
+    xfrm_output=$(ip -s xfrm state 2>&1)
+    exit_code=$?
+fi
+```
+
+**Note:** Both `ipsec status` and `ip xfrm state` use netlink sockets which can hang during system stress (netlink socket timeouts, lock contention). Timeout protection is essential for production reliability.
 
 **2. Reload with Restart Fallback:**
 

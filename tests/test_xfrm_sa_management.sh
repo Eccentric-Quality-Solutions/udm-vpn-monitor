@@ -382,7 +382,6 @@ EOF
 	source_recovery_module
 
 	# Create mock ip command that fails for specific SPI
-	local delete_call_count=0
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'EOF'
 #!/bin/bash
@@ -593,7 +592,6 @@ EOF
 	source_recovery_module
 
 	# Create mock ip command that succeeds for policy delete
-	local policy_delete_called=0
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'EOF'
 #!/bin/bash

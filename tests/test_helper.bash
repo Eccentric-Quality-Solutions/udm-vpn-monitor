@@ -495,6 +495,12 @@ create_test_install_setup() {
 	# Copy lib directory
 	cp -r "${project_root}/lib" "${test_install_dir}/lib"
 
+	# Copy vpn-monitor-wrapper.sh (for sub-minute execution tests)
+	if [[ -f "${project_root}/vpn-monitor-wrapper.sh" ]]; then
+		cp "${project_root}/vpn-monitor-wrapper.sh" "${test_install_dir}/vpn-monitor-wrapper.sh"
+		chmod +x "${test_install_dir}/vpn-monitor-wrapper.sh"
+	fi
+
 	echo "${test_install_dir}/install.sh"
 }
 

@@ -4,7 +4,7 @@
 # Provides shared anonymization functions for IP addresses, interfaces, locations,
 # MAC addresses, hostnames, and ipset set names with unified mapping support.
 #
-# Version: 0.1.0
+# Version: 0.7.0
 #
 # This library provides:
 # - Core anonymization functions (hash_string, anonymize_*)
@@ -378,10 +378,31 @@ get_or_create_interface_mapping() {
 	fi
 }
 
+# Check if a city name is already used as a value in ANON_LOCATION_MAP.
+# ANON_LOCATION_MAP keys are original location names; values are anonymized city names.
+# We must check values, not keys, to avoid hash collisions (different originals → same city).
+#
+# Arguments:
+#   $1: City name to check (e.g. "CHICAGO")
+#
+# Returns:
+#   0: City is already used as a value
+#   1: City is not used
+_is_location_city_used() {
+	local city="$1"
+	local orig
+	for orig in "${!ANON_LOCATION_MAP[@]}"; do
+		if [[ "${ANON_LOCATION_MAP[$orig]}" == "$city" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
 # Get or create location mapping
 #
 # Returns existing mapping if available, otherwise creates new one and stores it.
-# Tracks used city names to ensure uniqueness.
+# Tracks used city names to ensure uniqueness (checks VALUES in map, not keys).
 #
 # Arguments:
 #   $1: Original location name
@@ -405,7 +426,8 @@ get_or_create_location_mapping() {
 		local attempts=0
 
 		# Find next available city name (with safety limit)
-		while [[ -n "${ANON_LOCATION_MAP[${CITY_NAMES[$city_index]}]:-}" ]] && [[ $attempts -lt ${#CITY_NAMES[@]} ]]; do
+		# Must check if city is already used as a VALUE, not as a key
+		while _is_location_city_used "${CITY_NAMES[$city_index]}" && [[ $attempts -lt ${#CITY_NAMES[@]} ]]; do
 			city_index=$(((city_index + 1) % ${#CITY_NAMES[@]}))
 			attempts=$((attempts + 1))
 		done
@@ -413,10 +435,15 @@ get_or_create_location_mapping() {
 		# If all cities are used, append number for uniqueness
 		if [[ $attempts -ge ${#CITY_NAMES[@]} ]]; then
 			local suffix=1
-			while [[ -n "${ANON_LOCATION_MAP[${CITY_NAMES[$start_index]}_${suffix}]:-}" ]]; do
+			local candidate
+			while true; do
+				candidate="${CITY_NAMES[$start_index]}_${suffix}"
+				if ! _is_location_city_used "$candidate"; then
+					break
+				fi
 				suffix=$((suffix + 1))
 			done
-			anonymized_city="${CITY_NAMES[$start_index]}_${suffix}"
+			anonymized_city="$candidate"
 		else
 			anonymized_city="${CITY_NAMES[$city_index]}"
 		fi

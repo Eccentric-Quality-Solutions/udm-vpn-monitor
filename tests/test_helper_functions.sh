@@ -1552,7 +1552,7 @@ EOF
 	run get_config_default "PING_COUNT"
 
 	assert_success
-	assert_output "Site-to-Site VPN"
+	assert_output "3"
 }
 
 # bats test_tags=category:unit
@@ -2295,7 +2295,7 @@ EOF
 		source "${LIB_DIR}/config.sh" 2>/dev/null || true
 	fi
 
-	run validate_config_rules "TEST_VAR" "5" "integer" "required" "" "min:1,max:10"
+	run validate_config_rules "TEST_VAR" "5" "integer" "required" "" "min:1|||max:10"
 
 	assert_success
 	assert_output "5"
@@ -2347,7 +2347,7 @@ EOF
 		return 1
 	}
 
-	run validate_config_rules "TEST_VAR" "3" "integer" "required" "" "min:5,max:10"
+	run validate_config_rules "TEST_VAR" "3" "integer" "required" "" "min:5|||max:10"
 
 	assert_failure
 }

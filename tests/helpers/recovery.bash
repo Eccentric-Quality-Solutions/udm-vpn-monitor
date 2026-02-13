@@ -11,7 +11,7 @@
 #   load helpers/recovery
 #
 #   # Generate xfrm state output for recovery testing
-#   generate_xfrm_state_output 1
+#   generate_xfrm_state_for_recovery 1
 
 # Generate xfrm state output for recovery testing
 #
@@ -41,19 +41,19 @@
 #
 # Example:
 #   # Use directly in test code
-#   generate_xfrm_state_output 1
+#   generate_xfrm_state_for_recovery 1
 #   # Output: SA exists with initial counters
 #
-#   generate_xfrm_state_output 2
+#   generate_xfrm_state_for_recovery 2
 #   # Output: (empty - SA deleted)
 #
-#   generate_xfrm_state_output 4
+#   generate_xfrm_state_for_recovery 4
 #   # Output: SA re-established with byte counter 2000
 #
 # Note:
 #   This function uses TEST_PEER_IP which must be set in the test environment.
 #   For mock scripts, define the function inline with escaped variables as needed.
-generate_xfrm_state_output() {
+generate_xfrm_state_for_recovery() {
 	local verify_attempts="$1"
 	# First call: SA exists (before deletion)
 	if [[ $verify_attempts -eq 1 ]]; then

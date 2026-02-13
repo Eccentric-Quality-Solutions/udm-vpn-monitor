@@ -3,7 +3,7 @@
 # Resource monitoring statistics tracking
 # Handles success/failure counting and hourly summary logging for resource monitoring checks
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 # Internal helper to increment a counter file

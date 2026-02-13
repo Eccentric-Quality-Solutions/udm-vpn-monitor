@@ -3,7 +3,7 @@
 # Configuration schema definition for UDM VPN Monitor
 # Defines validation rules for all configuration variables
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 # Configuration schema definition
@@ -112,6 +112,8 @@ declare -gA CONFIG_SCHEMA=(
 	["STATE_DIR"]="optional|string||default:"
 	["LOGS_DIR"]="optional|string||default:"
 	["CRON_SCHEDULE"]="optional|string||default:*/1 * * * *"
+	["ENABLE_MONITOR_WRAPPER"]="optional|integer|values:0,1|default:1"
+	["MONITOR_INTERVAL"]="optional|integer|min:10|max:60|default:20"
 	# Network partition detection (enabled by default)
 	["ENABLE_NETWORK_PARTITION_CHECK"]="optional|integer|values:0,1|default:1"
 	["NETWORK_PARTITION_DNS_SERVER"]="optional|string||default:8.8.8.8"

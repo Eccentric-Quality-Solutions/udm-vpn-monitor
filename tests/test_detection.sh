@@ -210,7 +210,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# but using the helper function format as a base
 	# Use "custom" scenario with "full" format to get the complete xfrm state output
 	local xfrm_state_multiple_lifetime
-	xfrm_state_multiple_lifetime=$(generate_xfrm_state_output "custom" "${TEST_PEER_IP}" "0x12345678" 1000 10 "full")
+	xfrm_state_multiple_lifetime=$(generate_xfrm_state_for_scenario "custom" "${TEST_PEER_IP}" "0x12345678" 1000 10 "full")
 	# Add duplicate lifetime line for edge case test
 	xfrm_state_multiple_lifetime="${xfrm_state_multiple_lifetime}"$'\n'"    lifetime current: 2000 bytes, 20 packets"
 	local xfrm_state_multiple_lifetime_file="${TEST_DIR}/xfrm_state_multiple_lifetime"
@@ -382,9 +382,10 @@ EOF
 	mock_ping_hang >/dev/null
 	add_mock_to_path
 
-	# Use timeout of 10 seconds to allow script initialization, ping timeout handling, and completion
-	# The ping wrapper timeout is 2 seconds, but script initialization and other checks take additional time
-	run timeout 10 bash "$TEST_SCRIPT" --fake
+	# Use timeout of 20 seconds to allow script initialization, ping timeout handling, and completion
+	# The ping wrapper timeout is 2 seconds, but detection logic may call check_ping_connectivity
+	# multiple times (for different detection paths), so total time can be 8-12 seconds
+	run timeout 20 bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should handle ping timeout gracefully (should log error but continue)

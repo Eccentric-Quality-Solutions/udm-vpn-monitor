@@ -3,7 +3,7 @@
 # xfrm-based recovery functions for UDM VPN Monitor
 # Implements per-connection recovery using Linux kernel xfrm framework
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 # Source recovery constants for magic numbers
@@ -121,6 +121,52 @@ source "${RECOVERY_DIR}/recovery_verification.sh" 2>/dev/null || {
 	# Note:
 	#   This is a fallback stub. The real implementation is in recovery_verification.sh.
 	verify_byte_counters_increment() { return 1; }
+}
+
+# Extract SA block from xfrm output
+#
+# Extracts the Security Association (SA) block for a specific src/dst pair from xfrm output.
+# The SA block includes the header line (src ... dst ...) and all continuation lines until
+# the next SA block starts (indicated by a new line starting with "src").
+#
+# Arguments:
+#   $1: xfrm output text (read from stdin if not provided)
+#   $2: Source IP address (required)
+#   $3: Destination IP address (required)
+#   $4: Maximum number of lines to extract (optional, default: 20)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the extracted SA block to stdout
+#
+# Example:
+#   sa_block=$(extract_sa_block "$xfrm_output" "192.0.2.1" "192.0.2.2" 15)
+extract_sa_block() {
+	local xfrm_output="${1:-}"
+	local sa_src="$2"
+	local sa_dst="$3"
+	local max_lines="${4:-20}"
+
+	if [[ -z "$sa_src" ]] || [[ -z "$sa_dst" ]]; then
+		return 0
+	fi
+
+	# If xfrm_output is provided as argument, use it; otherwise read from stdin
+	if [[ -n "$xfrm_output" ]]; then
+		echo "$xfrm_output" | awk '
+			/^src '"$sa_src"'[[:space:]]+dst '"$sa_dst"'/ {found=1; print; next}
+			found && /^src/ {found=0}
+			found {print}
+		' | head -"$max_lines"
+	else
+		awk '
+			/^src '"$sa_src"'[[:space:]]+dst '"$sa_dst"'/ {found=1; print; next}
+			found && /^src/ {found=0}
+			found {print}
+		' | head -"$max_lines"
+	fi
 }
 
 # Delete Security Associations for a specific peer using xfrm
@@ -398,7 +444,7 @@ parse_xfrm_output_to_sa_list() {
 					# Validate selectors before adding to list
 					# Proto must be "esp" or "ah" (case-insensitive, already normalized)
 					# SPI must be hex (0x...) or decimal format
-					if [[ "$current_proto" =~ ^(esp|ah)$ ]] && [[ "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+					if [[ "$current_proto" =~ ^(esp|ah)$ ]] && validate_spi_format "$current_spi"; then
 						# Store complete SA as delimited string for later processing
 						# Format: "src|dst|proto|spi|mark" (pipe separator avoids IP address conflicts)
 						# Mark is optional - may be empty for SAs without mark selectors
@@ -481,7 +527,7 @@ parse_xfrm_output_to_sa_list() {
 		# Accept both forward SAs (dst=$external_peer_ip) and reverse SAs (src=$external_peer_ip) to handle asymmetric SA state
 		if [[ "$current_dst" == "$external_peer_ip" ]] || [[ "$current_src" == "$external_peer_ip" ]]; then
 			# Validate selectors before adding to list (same validation as in main loop)
-			if [[ "$current_proto" =~ ^(esp|ah)$ ]] && [[ "$current_spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+			if [[ "$current_proto" =~ ^(esp|ah)$ ]] && validate_spi_format "$current_spi"; then
 				sa_list_ref+=("$current_src|$current_dst|$current_proto|$current_spi|${current_mark:-}")
 				log_message "DEBUG" "$location_name" "xfrm recovery: Parsed SA: src=$current_src dst=$current_dst proto=$current_proto spi=$current_spi mark=${current_mark:-<none>} for $ip_display"
 			else
@@ -552,13 +598,8 @@ delete_sas_from_list() {
 
 	# Get full path to ip command for reliable execution in PATH-restricted environments (cron/systemd)
 	# Use _RECOVERY_IP_PATH if available (set by recovery orchestration), otherwise resolve via get_command_path()
-	local ip_cmd="${_RECOVERY_IP_PATH:-}"
-	if [[ -z "$ip_cmd" ]] && command -v get_command_path >/dev/null 2>&1; then
-		ip_cmd=$(get_command_path "ip")
-	fi
-	if [[ -z "$ip_cmd" ]]; then
-		ip_cmd="ip" # Fallback to command name
-	fi
+	local ip_cmd
+	ip_cmd=$(get_ip_command_path)
 
 	# Use namerefs for output variables (cleaner than eval)
 	local -n deleted_count_ref="$deleted_count_var_name"
@@ -653,11 +694,7 @@ delete_sas_from_list() {
 					# Extract the exact SA block for this specific SA to see what the kernel sees
 					# This helps identify if there are additional attributes we're missing
 					local exact_sa_block
-					exact_sa_block=$(echo "$pre_delete_xfrm_output" | awk '
-						/^src '"$sa_src"'[[:space:]]+dst '"$sa_dst"'/ {found=1; print; next}
-						found && /^src/ {found=0}
-						found {print}
-					' | head -20)
+					exact_sa_block=$(extract_sa_block "$pre_delete_xfrm_output" "$sa_src" "$sa_dst" 20)
 					# Enhanced diagnostics: Always log full SA block (not just DEBUG mode)
 					# This is critical for debugging deletion failures
 					if [[ -n "$sa_mark" ]]; then
@@ -707,18 +744,12 @@ delete_sas_from_list() {
 		local get_sa_output=""
 		local get_sa_stderr=""
 		local get_sa_exit_code=0
-		local get_sa_start_time
-		get_sa_start_time=$(get_unix_timestamp 2>/dev/null || echo "0")
+		local get_sa_timer
+		get_sa_timer=$(start_timer)
 		# Use || to prevent set -e from triggering on command failure
 		get_sa_output=$("${get_sa_cmd_args[@]}" 2>&1) || get_sa_exit_code=$?
-		local get_sa_duration=0
-		if [[ "$get_sa_start_time" != "0" ]]; then
-			local get_sa_end_time
-			get_sa_end_time=$(get_unix_timestamp 2>/dev/null || echo "0")
-			if [[ "$get_sa_end_time" != "0" ]]; then
-				get_sa_duration=$(calculate_duration "$get_sa_start_time" "$get_sa_end_time" 2>/dev/null || echo "0")
-			fi
-		fi
+		local get_sa_duration
+		get_sa_duration=$(stop_timer "$get_sa_timer")
 		# Separate stdout from stderr based on exit code
 		if [[ $get_sa_exit_code -ne 0 ]]; then
 			# On failure, the captured output is stderr
@@ -747,18 +778,12 @@ delete_sas_from_list() {
 		# Enhanced diagnostics: Add timing information for deletion operations
 		local delete_stderr=""
 		local delete_exit_code=0
-		local delete_start_time
-		delete_start_time=$(get_unix_timestamp 2>/dev/null || echo "0")
+		local delete_timer
+		delete_timer=$(start_timer)
 		# Use || to prevent set -e from triggering on command failure
 		delete_stderr=$("${delete_cmd_args[@]}" 2>&1) || delete_exit_code=$?
-		local delete_duration=0
-		if [[ "$delete_start_time" != "0" ]]; then
-			local delete_end_time
-			delete_end_time=$(get_unix_timestamp 2>/dev/null || echo "0")
-			if [[ "$delete_end_time" != "0" ]]; then
-				delete_duration=$(calculate_duration "$delete_start_time" "$delete_end_time" 2>/dev/null || echo "0")
-			fi
-		fi
+		local delete_duration
+		delete_duration=$(stop_timer "$delete_timer")
 
 		if [[ $delete_exit_code -eq 0 ]]; then
 			# Enhanced diagnostics: Include timing information in success messages
@@ -810,11 +835,7 @@ delete_sas_from_list() {
 							# If SA exists but deletion failed, extract the exact SA block for detailed logging
 							# This helps identify if there are additional attributes we're missing
 							local sa_block_details
-							sa_block_details=$(echo "$peer_xfrm_output" | awk '
-								/^src '"$sa_src"'[[:space:]]+dst '"$sa_dst"'/ {found=1; print; next}
-								found && /^src/ {found=0}
-								found {print}
-							' | head -15)
+							sa_block_details=$(extract_sa_block "$peer_xfrm_output" "$sa_src" "$sa_dst" 15)
 							# Log the exact SA block separately to avoid breaking log message formatting
 							# Only log if we have block details (avoids empty logs)
 							if [[ -n "$sa_block_details" ]]; then
@@ -904,13 +925,8 @@ delete_xfrm_policies() {
 
 	# Get full path to ip command for reliable execution in PATH-restricted environments (cron/systemd)
 	# Use _RECOVERY_IP_PATH if available (set by recovery orchestration), otherwise resolve via get_command_path()
-	local ip_cmd="${_RECOVERY_IP_PATH:-}"
-	if [[ -z "$ip_cmd" ]] && command -v get_command_path >/dev/null 2>&1; then
-		ip_cmd=$(get_command_path "ip")
-	fi
-	if [[ -z "$ip_cmd" ]]; then
-		ip_cmd="ip" # Fallback to command name
-	fi
+	local ip_cmd
+	ip_cmd=$(get_ip_command_path)
 
 	# Also delete policies for this peer (less critical, but helps cleanup)
 	# Policies require DIR (direction) parameter for deletion: in, out, or fwd
@@ -978,21 +994,15 @@ delete_xfrm_policies() {
 	for policy_dir in "${policy_directions[@]}"; do
 		local policy_stderr=""
 		local policy_exit_code=0
-		local policy_start_time
-		policy_start_time=$(get_unix_timestamp 2>/dev/null || echo "0")
+		local policy_timer
+		policy_timer=$(start_timer)
 		# Use full path to ip command for reliable execution in PATH-restricted environments
 		local policy_cmd_args=("$ip_cmd" "xfrm" "policy" "delete" "dst" "$external_peer_ip" "dir" "$policy_dir")
 		log_message "INFO" "$location_name" "xfrm recovery: Executing policy deletion command: ${policy_cmd_args[*]}"
 		# Use || to prevent set -e from triggering on command failure
 		policy_stderr=$("${policy_cmd_args[@]}" 2>&1) || policy_exit_code=$?
-		local policy_duration=0
-		if [[ "$policy_start_time" != "0" ]]; then
-			local policy_end_time
-			policy_end_time=$(get_unix_timestamp 2>/dev/null || echo "0")
-			if [[ "$policy_end_time" != "0" ]]; then
-				policy_duration=$(calculate_duration "$policy_start_time" "$policy_end_time" 2>/dev/null || echo "0")
-			fi
-		fi
+		local policy_duration
+		policy_duration=$(stop_timer "$policy_timer")
 
 		if [[ $policy_exit_code -eq 0 ]]; then
 			policy_deleted_count=$((policy_deleted_count + 1))
@@ -1176,7 +1186,7 @@ retry_xfrm_recovery() {
 
 	log_message "INFO" "$location_name" "xfrm recovery: Waiting for SA re-establishment for $ip_display (timeout: ${verify_timeout}s)"
 	local verify_start_time
-	verify_start_time=$(get_unix_timestamp)
+	verify_start_time=$(start_timer)
 	local sa_reestablished=0
 	local verify_attempt=0
 	local iteration=0
@@ -1200,7 +1210,7 @@ retry_xfrm_recovery() {
 		fi
 
 		# Calculate elapsed time at start of each iteration
-		elapsed_time=$(calculate_duration "$verify_start_time" 2>/dev/null || echo "0")
+		elapsed_time=$(stop_timer "$verify_start_time")
 
 		# Check timeout condition
 		if [[ $elapsed_time -ge $verify_timeout ]]; then
@@ -1366,7 +1376,7 @@ retry_xfrm_recovery() {
 	fi
 
 	if [[ $sa_reestablished -eq 0 ]]; then
-		elapsed_time=$(calculate_duration "$verify_start_time" 2>/dev/null || echo "0")
+		elapsed_time=$(stop_timer "$verify_start_time")
 		handle_error "WARNING" "$location_name" "xfrm recovery: SA did not re-establish within ${verify_timeout}s for $ip_display (verification duration: ${elapsed_time}s, attempts: $verify_attempt, iterations: $iteration)"
 		handle_error "WARNING" "$location_name" "xfrm recovery: Partial success - deleted SAs but re-establishment timeout for $ip_display, will fall back to alternative recovery"
 		# Clear recovery method since verification failed (prevents stale recovery method from being logged if VPN recovers naturally later)
@@ -1378,7 +1388,7 @@ retry_xfrm_recovery() {
 
 	# SA was re-established - check if byte counters were verified
 	if [[ "$byte_counter_status" != "resumed" ]]; then
-		elapsed_time=$(calculate_duration "$verify_start_time" 2>/dev/null || echo "0")
+		elapsed_time=$(stop_timer "$verify_start_time")
 		handle_error "WARNING" "$location_name" "xfrm recovery: SA re-established but byte counter verification failed within ${verify_timeout}s for $ip_display (verification duration: ${elapsed_time}s, attempts: $verify_attempt, iterations: $iteration)"
 		# Byte counter verification failed - clear recovery method and return error to trigger fallback recovery
 		# This prevents stale recovery method from being logged if VPN recovers naturally later
@@ -1446,13 +1456,8 @@ attempt_xfrm_recovery() {
 	fi
 	# Get full path to ip command for reliable execution in PATH-restricted environments (cron/systemd)
 	# Use _RECOVERY_IP_PATH if available (set by recovery orchestration), otherwise resolve via get_command_path()
-	local ip_cmd="${_RECOVERY_IP_PATH:-}"
-	if [[ -z "$ip_cmd" ]] && command -v get_command_path >/dev/null 2>&1; then
-		ip_cmd=$(get_command_path "ip")
-	fi
-	if [[ -z "$ip_cmd" ]]; then
-		ip_cmd="ip" # Fallback to command name
-	fi
+	local ip_cmd
+	ip_cmd=$(get_ip_command_path)
 	if ip_version=$("$ip_cmd" -Version 2>&1 | head -1); then
 		log_message "INFO" "$location_name" "xfrm recovery: ip command version: $ip_version"
 	fi

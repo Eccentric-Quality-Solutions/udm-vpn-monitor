@@ -355,9 +355,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Generate initial xfrm state output for multiple SAs using test data helpers
 	local xfrm_state_sa1_initial
-	xfrm_state_sa1_initial=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
+	xfrm_state_sa1_initial=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
 	local xfrm_state_sa2_initial
-	xfrm_state_sa2_initial=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x23456789" 2000 20 "minimal")
+	xfrm_state_sa2_initial=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x23456789" 2000 20 "minimal")
 	local xfrm_state_multiple_initial="${xfrm_state_sa1_initial}"$'\n'"${xfrm_state_sa2_initial}"
 	local xfrm_state_multiple_initial_file="${TEST_DIR}/xfrm_state_multiple_initial"
 	echo "$xfrm_state_multiple_initial" >"$xfrm_state_multiple_initial_file"
@@ -469,7 +469,7 @@ EOF
 
 	# Generate xfrm state output using test data helpers
 	local xfrm_state_get_output
-	xfrm_state_get_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
+	xfrm_state_get_output=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
 	local xfrm_state_get_file="${TEST_DIR}/xfrm_state_get_output"
 	echo "$xfrm_state_get_output" >"$xfrm_state_get_file"
 
@@ -650,7 +650,7 @@ EOF
 
 	# Generate xfrm state output using test data helper
 	local xfrm_state_output
-	xfrm_state_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
+	xfrm_state_output=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
 	local xfrm_state_file="${TEST_DIR}/xfrm_state_initial"
 	echo "$xfrm_state_output" >"$xfrm_state_file"
 
@@ -1087,14 +1087,14 @@ EOF
 	# Generate xfrm state outputs using test data helpers
 	# Note: These SAs have marks, so we generate base format and add mark manually
 	local xfrm_state_with_mark
-	xfrm_state_with_mark=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
+	xfrm_state_with_mark=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
 	# Add mark attribute after proto line
 	xfrm_state_with_mark=$(echo "$xfrm_state_with_mark" | sed '/proto esp/a\    mark 0x12000000/0xfe000000')
 	local xfrm_state_with_mark_file="${TEST_DIR}/xfrm_state_with_mark"
 	echo "$xfrm_state_with_mark" >"$xfrm_state_with_mark_file"
 
 	local xfrm_state_without_mark
-	xfrm_state_without_mark=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x87654321" 2000 20 "minimal")
+	xfrm_state_without_mark=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x87654321" 2000 20 "minimal")
 	# Update reqid to 2
 	xfrm_state_without_mark="${xfrm_state_without_mark//reqid 1/reqid 2}"
 	local xfrm_state_without_mark_file="${TEST_DIR}/xfrm_state_without_mark"
