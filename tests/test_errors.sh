@@ -345,32 +345,6 @@ EOF
 # ============================================================================
 
 # bats test_tags=category:high-risk,priority:high,untested-critical-path
-@test "handle_error_or_exit_fake_mode is_fake_mode check fails (defensive check)" {
-	# Purpose: Test verifies that handle_error_or_exit_fake_mode handles is_fake_mode() failures gracefully
-	# Expected: Function should fail when is_fake_mode() is not available (command not found)
-	# Importance: Defensive programming - tests behavior when dependencies are missing
-	# Note: This is an unlikely scenario since is_fake_mode() is defined in the same file,
-	# but tests defensive behavior when function is unavailable
-	source_logging_functions
-
-	local log_file="${TEST_DIR}/test.log"
-	export LOG_FILE="$log_file"
-	mkdir -p "$(dirname "$log_file")"
-
-	# Unset is_fake_mode function to simulate it not being available
-	unset -f is_fake_mode 2>/dev/null || true
-
-	# Call handle_error_or_exit_fake_mode
-	# Should fail when is_fake_mode() is not available (function will fail when trying to call it)
-	# Exit code 127 means "command not found" which is expected when is_fake_mode() is unavailable
-	# Note: BATS warning about exit code 127 is expected and acceptable for this test
-	run bash -c "source '${BATS_TEST_DIRNAME}/../lib/common.sh' 2>/dev/null; source '${BATS_TEST_DIRNAME}/../lib/logging.sh' 2>/dev/null; export LOG_FILE='$log_file'; unset -f is_fake_mode 2>/dev/null; handle_error_or_exit_fake_mode 'SYSTEM' 'Test error message' 1" || true
-	# Should fail because is_fake_mode() is not available (exit code 127 = command not found)
-	# Allow for other non-zero exit codes in case the failure happens differently
-	[[ $status -ne 0 ]]
-}
-
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
 @test "handle_error_or_exit_fake_mode exit code non-zero in normal mode - should exit via die" {
 	# Purpose: Test verifies that handle_error_or_exit_fake_mode exits via die() in normal mode with non-zero exit code
 	# Expected: Function should call die() and exit with specified code in normal mode

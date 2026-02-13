@@ -179,13 +179,13 @@ check_lockfile_stale() {
 
 	# Check for clock skew: lockfile mtime significantly in the future
 	# This can happen if system clock moved backward (NTP adjustment, VM restore)
-	# We log a warning but don't treat as stale (safer to keep lockfile than remove valid one)
+	# We log info but don't treat as stale (safer to keep lockfile than remove valid one)
 	if [[ $lockfile_mtime -gt $now ]]; then
 		local future_diff=$((lockfile_mtime - now))
 		if [[ $future_diff -gt $clock_skew_threshold ]]; then
 			# Significant clock skew detected - log warning but don't treat as stale
 			if type log_message >/dev/null 2>&1; then
-				log_message "WARNING" "SYSTEM" "Clock skew detected: lockfile mtime is ${future_diff}s in the future (lockfile: $lockfile_mtime, now: $now). Not treating as stale."
+				log_message "INFO" "SYSTEM" "Clock skew detected: lockfile mtime is ${future_diff}s in the future (lockfile: $lockfile_mtime, now: $now). Not treating as stale."
 			fi
 			return 1 # Not stale (future-dated due to clock skew)
 		fi
@@ -243,13 +243,13 @@ remove_stale_lockfile_if_needed() {
 	local stale_pid
 	stale_pid=$(extract_lockfile_pid "$LOCKFILE" || echo "unknown")
 	rm -f "$LOCKFILE"
-	log_message "WARNING" "SYSTEM" "Removed stale lockfile (timeout exceeded, PID was: $stale_pid)"
+	log_message "INFO" "SYSTEM" "Removed stale lockfile (timeout exceeded, PID was: $stale_pid)"
 	return 0
 }
 
 # Log lockfile conflict and exit
 #
-# Logs a warning message about lockfile conflict and exits the script gracefully.
+# Logs an info message about lockfile conflict and exits the script gracefully.
 # Handles both log file write and stderr output consistently.
 # Exits with code 0 (success) to avoid cron job failures.
 #
@@ -261,8 +261,8 @@ remove_stale_lockfile_if_needed() {
 #   Never returns (exits script with code 0)
 #
 # Side effects:
-#   - Writes warning message to log file (if possible, errors ignored)
-#   - Outputs warning message to stderr
+#   - Writes info message to log file (if possible, errors ignored)
+#   - Outputs info message to stderr
 #   - Exits script with code 0 (success, to avoid cron failures)
 #
 # Examples:
@@ -289,8 +289,8 @@ log_and_exit_lockfile_conflict() {
 	fi
 
 	# Use log_message() for consistent logging (handles file write failures gracefully)
-	# log_message() will output to stderr for WARNING level messages
-	log_message "WARNING" "SYSTEM" "$message"
+	# log_message() will output to stderr for INFO level messages
+	log_message "INFO" "SYSTEM" "$message"
 
 	exit "${EXIT_SUCCESS:-0}"
 }
@@ -432,7 +432,7 @@ acquire_lockfile_flock() {
 				# This is the proper sequence: we must close and reopen to get a new inode
 				exec 9>&- 2>/dev/null || true
 				rm -f "$LOCKFILE"
-				log_message "WARNING" "SYSTEM" "Removed stale lockfile (timeout exceeded, previous PID was: ${existing_pid:-unknown})"
+				log_message "INFO" "SYSTEM" "Removed stale lockfile (timeout exceeded, previous PID was: ${existing_pid:-unknown})"
 
 				# Reopen fd to new file
 				exec 9>"$LOCKFILE"
@@ -549,7 +549,7 @@ acquire_lockfile_fallback() {
 			else
 				# PID is not running - stale lockfile, remove it and try again
 				rm -f "$LOCKFILE"
-				log_message "WARNING" "SYSTEM" "Removed stale lockfile (PID $lock_pid not running), retrying"
+				log_message "INFO" "SYSTEM" "Removed stale lockfile (PID $lock_pid not running), retrying"
 				# Retry lockfile creation (limited to FALLBACK_MAX_RETRIES attempts)
 				if create_lockfile_atomically "$LOCKFILE"; then
 					lock_acquired=1

@@ -87,8 +87,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Should log success messages
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "xfrm-based recovery completed successfully"
-	assert_file_contains "$LOG_FILE" "Surgical cleanup completed"
+	assert_file_contains "$LOG_FILE" "xfrm-based surgical cleanup completed successfully"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -246,6 +245,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	}
 
 	# Mock select_recovery_strategy to succeed (fallback available)
+	# Arguments: $1 peer_ip, $2 tier, $3 result nameref. Returns: 0 success.
 	select_recovery_strategy() {
 		echo "called" >"$select_strategy_called"
 		local result_ref_name="$3"
@@ -323,6 +323,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	}
 
 	# Mock select_recovery_strategy to capture arguments
+	# Arguments: $1 peer_ip, $2 tier, $3 result nameref. Returns: 0 success.
 	select_recovery_strategy() {
 		local peer_ip="$1"
 		local tier="$2"
@@ -415,6 +416,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	}
 
 	# Mock select_recovery_strategy to fail (no fallback available)
+	# Arguments: $1 peer_ip, $2 tier, $3 result nameref. Returns: 1 no fallback.
 	select_recovery_strategy() {
 		echo "called" >"$select_strategy_called"
 		local result_ref_name="$3"
@@ -485,6 +487,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	}
 
 	# Mock select_recovery_strategy to succeed (fallback available)
+	# Arguments: $1 peer_ip, $2 tier, $3 result nameref. Returns: 0 success.
 	select_recovery_strategy() {
 		echo "called" >"$select_strategy_called"
 		local result_ref_name="$3"
@@ -573,6 +576,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	}
 
 	# Mock select_recovery_strategy to fail (no fallback available)
+	# Arguments: $1 peer_ip, $2 tier, $3 result nameref. Returns: 1 no fallback.
 	select_recovery_strategy() {
 		echo "called" >"$select_strategy_called"
 		local result_ref_name="$3"
@@ -748,6 +752,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	}
 
 	# Mock select_recovery_strategy to succeed
+	# Arguments: $1 peer_ip, $2 tier, $3 result nameref. Returns: 0 success.
 	select_recovery_strategy() {
 		local result_ref_name="$3"
 		local -n result="$result_ref_name"
@@ -851,6 +856,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	}
 
 	# Mock select_recovery_strategy to succeed
+	# Arguments: $1 peer_ip, $2 tier, $3 result nameref. Returns: 0 success.
 	select_recovery_strategy() {
 		local result_ref_name="$3"
 		local -n result="$result_ref_name"

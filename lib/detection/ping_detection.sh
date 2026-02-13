@@ -105,11 +105,9 @@ log_ping_summary_if_due() {
 	if [[ $time_since_last -ge $summary_interval_seconds ]] || [[ $last_time -eq 0 ]]; then
 		# Time to log summary
 		if [[ $ping_count -gt 0 ]]; then
-			if [[ -n "$local_ip" ]]; then
-				log_message "INFO" "SYSTEM" "Ping check summary: $ping_count successful checks in the last ${summary_interval_minutes} minutes (target: $target_ip from $local_ip)"
-			else
-				log_message "INFO" "SYSTEM" "Ping check summary: $ping_count successful checks in the last ${summary_interval_minutes} minutes (target: $target_ip)"
-			fi
+			local source_info=""
+			[[ -n "$local_ip" ]] && source_info=" from $local_ip"
+			log_message "INFO" "SYSTEM" "Ping check summary: $ping_count successful checks in the last ${summary_interval_minutes} minutes (target: $target_ip${source_info})"
 		fi
 
 		# Reset count and update last time (use atomic writes per ADR-0012)
@@ -312,22 +310,17 @@ check_ping_connectivity() {
 			packet_loss="0"
 		fi
 
+		local source_info=""
+		[[ -n "$local_ip" ]] && source_info=" from $local_ip"
+
 		if [[ "$packet_loss" -lt $PING_PACKET_LOSS_THRESHOLD ]]; then
 			# Log successful ping at DEBUG level
-			if [[ -n "$local_ip" ]]; then
-				log_message "DEBUG" "${location_name:-SYSTEM}" "Ping check OK: $target_ip from $local_ip (${packet_loss}% packet loss)"
-			else
-				log_message "DEBUG" "${location_name:-SYSTEM}" "Ping check OK: $target_ip (${packet_loss}% packet loss)"
-			fi
+			log_message "DEBUG" "${location_name:-SYSTEM}" "Ping check OK: $target_ip${source_info} (${packet_loss}% packet loss)"
 			# Log periodic summary at configured interval at INFO level
 			log_ping_summary_if_due "$target_ip" "$local_ip"
 			return 0
 		else
-			if [[ -n "$local_ip" ]]; then
-				handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check failed: $target_ip from $local_ip (${packet_loss}% packet loss)"
-			else
-				handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check failed: $target_ip (${packet_loss}% packet loss)"
-			fi
+			handle_error "WARNING" "${location_name:-SYSTEM}" "Ping check failed: $target_ip${source_info} (${packet_loss}% packet loss)"
 			return 1
 		fi
 	else

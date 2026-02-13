@@ -1,0 +1,9 @@
+---
+description: UDM has limited tooling; do not add new runtimes or tools
+alwaysApply: true
+---
+
+# No New Dependencies
+
+- **UDM OS** has limited tooling. Do not suggest or add **python3**, **jq**, **node**, or similar; they are not available and we are not adding them.
+- Prefer **shell** and utilities that exist on UDM OS 4.3+. If unsure, assume a minimal environment (sh, grep, awk, coreutils).

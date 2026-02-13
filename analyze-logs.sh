@@ -428,7 +428,7 @@ analyze_logs() {
 		*"Tier 2:"*"surgical"* | *"Tier 2:"*"cleanup"* | *"Tier 2:"*"Attempting"*)
 			TIER2_ACTIONS+=("${timestamp}|${peer_ip}|${level}")
 			;;
-		*"Surgical cleanup completed"* | *"Recovery completed"*"via ipsec fallback"*)
+		*"surgical cleanup completed successfully"* | *"Surgical cleanup completed"* | *"Recovery completed"*"via ipsec fallback"*)
 			TIER2_COMPLETED+=("${timestamp}|${peer_ip}|${level}")
 			;;
 		*"Tier 3:"*"Full IPsec restart completed"* | *"Full IPsec restart completed"*)
@@ -787,7 +787,7 @@ generate_text_report() {
 				echo "[$timestamp] TIER 2: Surgical cleanup started for peer $peer_ip"
 				;;
 			TIER2_COMPLETE)
-				echo "[$timestamp] TIER 2: Surgical cleanup completed for peer $peer_ip"
+				echo "[$timestamp] TIER 2: xfrm-based surgical cleanup completed for peer $peer_ip"
 				;;
 			TIER3_START)
 				echo "[$timestamp] TIER 3: Full restart started for peer $peer_ip"

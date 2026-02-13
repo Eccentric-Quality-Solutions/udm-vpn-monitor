@@ -67,8 +67,7 @@ check_udm() {
 	fi
 
 	if [[ ! -d "/data" ]]; then
-		log_error "This script is designed for UniFi Dream Machines"
-		log_error "/data directory not found"
+		log_error "Is this a UniFi Dream Machine? This script is designed for UniFi Dream Machines - /data directory not found"
 		exit 1
 	fi
 
@@ -791,8 +790,7 @@ install_scripts() {
 		cp -r "${INSTALL_SCRIPT_DIR}/lib"/* "${INSTALL_DIR}/lib/"
 		log_info "Installed lib/ directory (library modules)"
 	else
-		log_error "Library directory not found: ${INSTALL_SCRIPT_DIR}/lib"
-		log_error "vpn-monitor.sh requires library files to function"
+		log_error "Library directory not found: ${INSTALL_SCRIPT_DIR}/lib - vpn-monitor.sh requires library files to function"
 		exit 1
 	fi
 
@@ -1084,15 +1082,13 @@ install_keepalive_service() {
 
 	# Check if systemd is available
 	if ! command -v systemctl >/dev/null 2>&1; then
-		log_warn "systemctl not found, skipping systemd service installation"
-		log_warn "Keepalive daemon must be started manually: ${INSTALL_DIR}/vpn-keepalive.sh start"
+		log_warn "systemctl not found, skipping systemd service installation. Keepalive daemon must be started manually: ${INSTALL_DIR}/vpn-keepalive.sh start"
 		return 0
 	fi
 
 	# Check if we have write access to /etc/systemd/system
 	if [[ ! -w /etc/systemd/system ]]; then
-		log_warn "Cannot write to /etc/systemd/system, skipping systemd service installation"
-		log_warn "Keepalive daemon must be started manually: ${INSTALL_DIR}/vpn-keepalive.sh start"
+		log_warn "Cannot write to /etc/systemd/system, skipping systemd service installation. Keepalive daemon must be started manually: ${INSTALL_DIR}/vpn-keepalive.sh start"
 		return 0
 	fi
 

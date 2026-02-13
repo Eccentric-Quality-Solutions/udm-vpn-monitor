@@ -1,0 +1,10 @@
+---
+description: Shell linting and formatting (shellcheck, shfmt)
+globs: "**/*.sh"
+alwaysApply: false
+---
+
+# Linting and Formatting
+
+- **shellcheck** and **shfmt** are installed via Homebrew.
+- Use `shellcheck --severity=error` and `shfmt -d` / `shfmt -w` for checks and formatting (see CLAUDE.md for exact commands).

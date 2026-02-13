@@ -10,23 +10,7 @@ Considerations for the future, but want to avoid overarchitecting and premature 
   - Benefit: Better detection of routing issues during fallback periods
   - Cost: MEDIUM - requires tracking ping failure duration and adjusting failure detection logic
   - Priority: LOW - current design is reasonable trade-off, routing issues often resolve themselves
-  - Note: Identified during Seattle-Dallas outage analysis (2026-01-23) - see analyze/ping-check-outage-analysis.md
   - See: ADR-0014 already documents "May Miss Some Issues" but this is a more specific gap during fallback periods
-
-- Consider additional state keys in cleanup_peer_state()
-  - Currently cleans up: failure_count, last_bytes, spi, idle_detected, connection_name
-  - Missing: last_status_log, failure_type, recovery_method
-  - Note: These keys may be intentionally excluded (cleared on recovery, not peer removal)
-  - Low priority: Only relevant if cleanup_peer_state() is used in production (currently only in tests)
-  - Decision needed: Should these be cleaned up when peers are removed, or are they intentionally location-scoped?
-
-- Optimize detection module sourcing (optional)
-  - Currently, modules source dependencies even when already sourced by parent `detection.sh`
-  - Could add checks to avoid redundant sourcing: `if ! type validate_ipv4 >/dev/null 2>&1; then source ...; fi`
-  - Low priority: bash sourcing is fast and idempotent, redundancy is minimal overhead
-  - Benefit: Slightly faster sourcing, cleaner dependency graph
-  - Effort: LOW (add type checks before sourcing)
-  - Note: Split completed 2026-01-15, this is a post-split optimization opportunity
 
 - Enhanced recovery type analysis in log reports
     - Add recovery type breakdown to report summary statistics (app-managed vs self-healed percentages)
@@ -37,8 +21,6 @@ Considerations for the future, but want to avoid overarchitecting and premature 
 - Log rate limiting
     - e.g., for duplicate messages occurring within x time span we only log once, then log again sum of messages received within timeframe at expiration of window
     - or we retroactively clean up logs when we notice there is a pattern of log entries recurring continuously or the same log entry repeatedly
-    - Note: Partial fix implemented - `check_vpn_status()` combines diagnostic messages when both xfrm and ipsec checks fail (see `lib/detection.sh:2410,2474`)
-    - Still needed: General message combining across codebase for related events (recovery sequences, detection failures, verification steps)
 
 - Standardize output parameter passing patterns
     - Currently uses mixed patterns: namerefs for arrays, eval for scalars
@@ -53,7 +35,7 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Other places call it and then always `return 1` with a comment (works but inconsistent)
     - Standardize to explicit check pattern for consistency and clarity
     - Low priority: current code works correctly, this is a style consistency improvement
-    - See `lib/config.sh` lines 1108, 1154, 1179, 1212, 1405 for examples that could be refactored
+    - See `lib/config/` modules (config_loading.sh, config_validation.sh, location_parsing.sh, config_defaults.sh) for examples that could be refactored
 
 - DNS resolution enhancements
     - Add DNS cache TTL support to handle DNS changes during long-running scripts
@@ -63,16 +45,16 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Note: Basic DNS support completed 2026-01-27, these are enhancements for edge cases
 
 - Standardize non-critical state write error handling
-    - Currently 28+ instances of `atomic_write_file ... 2>/dev/null || true` silently ignore errors
+    - Multiple instances of `atomic_write_file ... 2>/dev/null || true` silently ignore errors (lib/state/, lib/detection/, lib/resources.sh)
     - Pattern used for non-critical statistics/logging state files (ping summaries, resource monitoring stats, network partition stats, etc.)
     - Issue: Silent failures can mask real problems (permission errors, disk full conditions)
     - Proposed: Add DEBUG-level logging for state file write failures in non-critical paths
     - Pattern: `if ! atomic_write_file "$file" "$value" 2>/dev/null; then log_message "DEBUG" "SYSTEM" "Failed to update state file: $file (non-fatal)"; fi`
     - Benefit: Better diagnostic visibility without cluttering logs (DEBUG level only visible when DEBUG=1)
-    - Cost: MEDIUM - requires updating 28+ instances across codebase for consistency
+    - Cost: MEDIUM - requires updating multiple instances across codebase for consistency
     - Priority: LOW - current pattern works, failures are non-fatal, but diagnostic value would be helpful
     - Note: Pilot implementation added to `log_ping_summary_if_due()` in `ping_detection.sh` (2026-01-18)
-    - See: `docs/reviews/ping_detection_review.md` issue #7 for detailed analysis
+    - See: `docs/CODEBASE_REVIEW.md` for related analysis
 
 - System-wide failure detection enhancements
   - Consider making coordinator selection more robust (e.g., use location order instead of first-check-wins)
@@ -80,43 +62,12 @@ Considerations for the future, but want to avoid overarchitecting and premature 
   - Consider alerting integration for system-wide failures (e.g., email, webhook, syslog)
   - Consider different recovery strategies for system-wide failures (e.g., infrastructure-level recovery like restarting IPsec daemon, checking kernel state)
   - Consider rate limiting exceptions for system-wide failures (allow more restarts during system-wide failures)
-  - Note: Basic system-wide failure detection implemented 2026-01-12
-
-- Continue migrating test data to use test data helpers
-    - Many test files still have embedded xfrm state output, ipsec status output, and config files
-    - Files with significant embedded data include: `test_recovery.sh`, `test_detection.sh`, `test_integration_location.sh`, and others
-    - Pattern is established: use `generate_xfrm_state_output()`, `generate_config_file()`, etc. from `helpers/test_data`
-    - Benefits: Centralized maintenance, consistency, easier to update test data formats
-    - Note: Migration started 2026-01-11 with `test_recovery_partial_failures.sh` and `test_config.sh`
-    - Note: Key instances migrated 2026-01-27 in `test_recovery.sh`, `test_detection.sh`, and `test_integration_location.sh`
-    - Pattern for mock scripts: Generate output using helpers, store in file, use placeholders in mock script, replace with sed after creation
-    - Note: Additional migrations completed 2026-01-28: Migrated 2 more test cases in `test_recovery.sh`:
-      - "xfrm recovery - Verification timeout exceeded" - migrated static xfrm state outputs
-      - "xfrm recovery - Mixed SAs with and without marks" - migrated static outputs (including mark handling via sed post-processing)
-    - Remaining: ~110 embedded instances in `test_recovery.sh` (mostly complex dynamic cases with calculated counters, marks, or state transitions), can be migrated gradually
 
 - Rate limiting enhancements
   - Consider per-location rate limiting (currently global)
   - Add rate limit metrics tracking (track rate limit hits for monitoring)
   - Dynamic rate limiting (adjust limits based on failure patterns)
   - Note: Basic rate limiting refactored 2026-01-12 to remove cooldown and add configurable window + minimum interval
-
-- Migrate more tests to use test data helpers
-    - Many test files still have embedded test data (xfrm state, ipsec status, config templates)
-    - Gradual migration as tests are updated or refactored
-    - See `MOCK_REFACTORING_OPPORTUNITIES.md` for candidates (file does not exist)
-    - Test data helpers available in `helpers/test_data.bash` and `tests/data/`
-    - Low priority: existing tests work fine, migration is optional improvement
-    - Status: Test data management infrastructure completed 2026-01-11
-    - Current state: Migration in progress - significant progress made 2026-01-27:
-      - `test_detection_error_recovery.sh`: Migrated static xfrm outputs to use helpers
-      - `test_recovery_tier2.sh`: Migrated ipsec status outputs to use helpers
-      - `test_detection.sh`: Already uses helpers for most cases (some edge cases remain with special formats)
-      - `test_recovery.sh`: Still has many embedded outputs, mostly in dynamic contexts or with special fields (e.g., "mark" attribute)
-        - Many tests already use helpers for static initial states (pattern established)
-        - Remaining embedded outputs are mostly in dynamic mock scripts that generate different outputs based on state
-        - Some embedded outputs include special fields (e.g., "mark") that helpers don't currently support
-    - Note: This is a gradual, ongoing migration task. Dynamic outputs and special fields may require helper extensions in the future.
 
 - Add module-level unit tests for recovery modules
   - Each recovery module (`recovery_verification.sh`, `recovery_state.sh`, `recovery_orchestration.sh`, `ipsec_recovery.sh`, `xfrm_recovery.sh`) could have focused unit tests
@@ -155,7 +106,7 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Investigation ongoing: Monitor diagnostic output to understand why only 1 SA exists in some cases vs 2 bidirectional SAs
     - Possible causes: Timing issue (second SA takes longer to establish), counting logic bug, incomplete re-establishment, or asymmetric SA state
     - Current status: Enhanced diagnostics in place to track SA state and direction; verification checks multiple times to catch second SA if it appears later
-    - See: `analyze/LOG_ANALYSIS_ISSUES.md` Issue #15 for detailed analysis
+    - See: `docs/reference/CODE_REVIEW_LESSONS_LEARNED.md` for related analysis
 
 - Investigate CHICAGO routing issue
     - Issue: CHICAGO location has routing issue where VPN tunnel is established (SA exists, bytes increasing) but ping checks timeout
@@ -168,7 +119,7 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Action priority: Investigate SA state first (why only 1 SA exists vs 2 bidirectional), then network config
     - Likely root cause: Network configuration issue or asymmetric SA state, not code bug, but understanding SA state may enable proper recovery
     - Code changes may be needed: Possibly SA discovery/recovery logic if asymmetric state is the issue
-    - See: `analyze/LOG_ANALYSIS_ISSUES.md` Issue #3 for detailed analysis
+    - See: `docs/reference/CODE_REVIEW_LESSONS_LEARNED.md` for related analysis
 
 - Improve lockfile removal failure test reliability
     - Current test "lockfile cleanup fails - lockfile removal fails" attempts to make directory read-only during script execution
@@ -176,7 +127,7 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Consider finding a better way to simulate lockfile removal failures (e.g., mock `rm` command, use filesystem that doesn't support removal, etc.)
     - Low priority: Current test still verifies that script doesn't crash, which is the important behavior
     - Note: Test includes comment acknowledging limitation - "Note: This may not work on all systems, but tests the error handling path"
-    - See: `tests/test_lockfile.sh:1031-1063` for current implementation
+    - See: `tests/test_lockfile.sh:966-1010` for current implementation
 
 - Make network partition summary interval configurable
     - Currently fixed at 1 hour (3600 seconds)
@@ -187,7 +138,7 @@ Considerations for the future, but want to avoid overarchitecting and premature 
 
 - Review and fix ip xfrm state mock patterns in tests
     - Issue: Many test mocks only handle `ip xfrm state` but not `ip -s xfrm state` (with -s flag)
-    - `execute_xfrm_state_command` calls `ip -s xfrm state` first, then falls back to `ip xfrm state`
+    - `execute_xfrm_state_command()` in `lib/detection/xfrm_detection.sh` calls `ip -s xfrm state` first, then falls back to `ip xfrm state`
     - Tests that mock `ip` command need to handle both formats to work correctly
     - Found 43+ instances of old pattern `if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]` that may need updating
     - Helper functions like `mock_ip_xfrm_state()` already handle both formats correctly
@@ -196,14 +147,14 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Note: Fixed in `test_detection_ping_optional.sh` 2026-01-28
 
 - Refactor error handling argument parsing to use explicit argument order
-    - Current pattern: `handle_error "ERROR" "SYSTEM" "message" 2` (last arg is optional exit code)
-    - Issue: Ambiguous when message ends with a number (e.g., "Retry count: 3" vs exit code "3")
-    - Proposed: `handle_error "ERROR" "SYSTEM" "message" 2` (explicit 4th argument for exit code)
+    - Current: 3 or 4 args; last arg is optional exit code. Example: `handle_error "ERROR" "SYSTEM" "message"` or `handle_error "ERROR" "SYSTEM" "message" 2`. Parser cannot tell whether a 4th token is exit code or part of the message.
+    - Issue: Ambiguous when message ends with a number (e.g., `"Retry count: 3"` parsed as exit code 3).
+    - Proposed: Always 4 arguments; 4th is always exit code. Example: `handle_error "ERROR" "SYSTEM" "message" 2`. No optional 4th arg—callers must pass exit code (or a sentinel for "use default"), so message can safely contain numbers.
     - Benefit: Eliminates ambiguity, clearer API, easier to understand
     - Cost: Breaking change - requires updating all call sites across codebase
     - Priority: LOW - current pattern works, just has edge case limitations
     - Note: Duplication issue resolved 2026-01-27, but ambiguous design remains
-    - See: `docs/reviews/logging_review.md` issue #2 for detailed analysis
+    - See: `docs/reference/CODE_REVIEW_LESSONS_LEARNED.md` for related analysis
 
 - Improve error handling for file sourcing (stderr suppression refactor)
     - Current pattern: `source "${LIB_DIR}/constants.sh" 2>/dev/null || { fallback }` used in 47+ places
@@ -215,10 +166,10 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Cost: MEDIUM - requires updating 47+ instances across codebase for consistency
     - Priority: LOW - current pattern works, fallback values are correct, issue is rare
     - Note: Review identified issue in `config.sh` but pattern is widespread; consider codebase-wide refactor if prioritizing
-    - See: `docs/reviews/config_sh_review.md` issue #2 for detailed analysis
+    - See: `docs/CODEBASE_REVIEW.md` for related analysis
 
 - Remove redundant defensive fallbacks in state.sh and config.sh
-    - Current state: `lib/state.sh` (lines 22-34) and `lib/config.sh` (lines 32-50) have defensive fallback constants
+    - Current state: `lib/state.sh` (lines 21-33) and `lib/config.sh` (lines 31-50) have defensive fallback constants
     - Issue: These fallbacks were needed to avoid "readonly variable already set" errors when constants.sh was sourced multiple times
     - Status: Now redundant since `lib/constants.sh` was made idempotent (2026-01-27)
     - Proposed: Remove fallback blocks, simplify to: `source "${LIB_DIR}/constants.sh" 2>/dev/null || { echo "ERROR: Failed to source constants.sh" >&2; exit 1; }`
@@ -258,4 +209,4 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Cost: MEDIUM - requires parsing CIDR prefix length and normalizing appropriate octets
     - Priority: LOW - current implementation is acceptable for most use cases, `/24` networks (most common) work correctly
     - Note: `/12` and other non-octet-boundary CIDR lengths are more complex to handle
-    - See: CODE_REVIEW_COMBINED.md section 6 for detailed analysis (2025-01-20)
+    - See: `docs/reference/CODE_REVIEW_LESSONS_LEARNED.md` for related analysis

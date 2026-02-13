@@ -70,7 +70,7 @@ ADDITIONAL_EOF
 	# Should skip VPN checks due to network partition (optimization: checks skipped before recovery)
 	assert_file_exist "$LOG_FILE"
 	# Should log that VPN checks are skipped (new optimization) or recovery is skipped (fallback)
-	assert_log_contains_any "$LOG_FILE" "Skipping VPN checks" "Skipping VPN recovery" "network is partitioned" "network partitioned"
+	assert_log_contains_any "$LOG_FILE" "Network partition" "Skipping VPN checks" "Skipping VPN recovery" "network is partitioned" "network partitioned"
 	# Should NOT attempt recovery actions
 	refute_file_contains "$LOG_FILE" "Tier 2" || refute_file_contains "$LOG_FILE" "surgical cleanup" || refute_file_contains "$LOG_FILE" "reload"
 
@@ -141,7 +141,7 @@ EOF
 	# Should detect partition and skip VPN checks (optimization) or recovery
 	assert_file_exist "$LOG_FILE"
 	# Should log that VPN checks are skipped (new optimization) or recovery is skipped (fallback)
-	assert_log_contains_any "$LOG_FILE" "Skipping VPN checks" "Skipping VPN recovery" "network is partitioned" "network partitioned"
+	assert_log_contains_any "$LOG_FILE" "Network partition" "Skipping VPN checks" "Skipping VPN recovery" "network is partitioned" "network partitioned"
 	# Should NOT attempt recovery actions
 	refute_file_contains "$LOG_FILE" "ipsec reload should not be called"
 
