@@ -4,7 +4,7 @@
 # Compares template config file with existing user config file
 # Shows new fields in template and deprecated fields in existing config
 #
-# Version: 0.4.3
+# Version: 0.4.4
 #
 
 set -euo pipefail
@@ -13,6 +13,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_CONFIG=""
 EXISTING_CONFIG=""
+LIST_MISSING_WITH_VALUES=0
 
 # Source common functions for trim() helper
 # shellcheck source=lib/common.sh
@@ -31,6 +32,10 @@ while [[ $# -gt 0 ]]; do
 		EXISTING_CONFIG="$2"
 		shift 2
 		;;
+	--list-missing-with-values)
+		LIST_MISSING_WITH_VALUES=1
+		shift
+		;;
 	-h | --help)
 		cat <<EOF
 Usage: $0 [OPTIONS]
@@ -43,6 +48,7 @@ Compares template config file with existing user config file to show:
 Options:
   -t, --template FILE   Path to template config file (default: auto-detect)
   -e, --existing FILE   Path to existing user config file (default: auto-detect)
+  --list-missing-with-values  Output only lines to append (VAR=value format, one per line)
   -h, --help            Show this help message
 
 Examples:
@@ -236,10 +242,12 @@ main() {
 	local var_name
 	local has_differences=0
 
-	echo "Comparing configuration files:"
-	echo "  Template:  $TEMPLATE_CONFIG"
-	echo "  Existing:  $EXISTING_CONFIG"
-	echo ""
+	if [[ $LIST_MISSING_WITH_VALUES -eq 0 ]]; then
+		echo "Comparing configuration files:"
+		echo "  Template:  $TEMPLATE_CONFIG"
+		echo "  Existing:  $EXISTING_CONFIG"
+		echo ""
+	fi
 
 	# Check if template config file exists
 	if [[ ! -f "$TEMPLATE_CONFIG" ]]; then
@@ -381,6 +389,24 @@ main() {
 		# Variable is not in existing config and doesn't match a pattern that already exists
 		new_vars+=("$var_name")
 	done
+
+	# Machine-readable output: list missing variables with template values (for install append)
+	if [[ $LIST_MISSING_WITH_VALUES -eq 1 ]]; then
+		for var_name in "${new_vars[@]}"; do
+			local default_val
+			default_val=$(get_config_value "$TEMPLATE_CONFIG" "$var_name" 2>/dev/null || echo "")
+			if [[ -n "$default_val" ]]; then
+				if [[ "$default_val" =~ [[:space:]] ]] || [[ "$default_val" =~ [\"\'] ]]; then
+					echo "${var_name}=\"${default_val}\""
+				else
+					echo "${var_name}=${default_val}"
+				fi
+			else
+				echo "${var_name}=\"\""
+			fi
+		done
+		return 0
+	fi
 
 	# Find deprecated variables (in existing but not in template)
 	# Iterate through unique existing variables only (use map keys to avoid duplicates)

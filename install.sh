@@ -679,6 +679,77 @@ compare_template_with_existing_config() {
 	return 0
 }
 
+# Offer to append missing config values to existing config file
+#
+# When an existing config is preserved, checks for variables in the template that
+# are missing from the existing config. If any are found, asks the user if they
+# want to append them to the end of the config file with template default values.
+# Paths containing /data/vpn-monitor are substituted with the actual INSTALL_DIR.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Completed (appended or user declined)
+#
+# Side effects:
+#   - May append lines to existing config file
+#   - Prompts user when run in non-silent mode and missing values exist
+offer_append_missing_config_values() {
+	local existing_config="${INSTALL_DIR}/${CONFIG_NAME}"
+	local template_config="${INSTALL_SCRIPT_DIR}/${CONFIG_NAME}"
+	local compare_script="${INSTALL_DIR}/compare-config.sh"
+	local missing_lines
+	local line
+
+	# Skip in silent mode (no user interaction)
+	if [[ $SILENT -eq 1 ]]; then
+		return 0
+	fi
+
+	# Skip if config or compare script doesn't exist
+	if [[ ! -f "$existing_config" ]] || [[ ! -f "$template_config" ]] ||
+		[[ ! -f "$compare_script" ]] || [[ ! -x "$compare_script" ]]; then
+		return 0
+	fi
+
+	missing_lines=$("$compare_script" --template "$template_config" --existing "$existing_config" --list-missing-with-values 2>/dev/null) || true
+
+	if [[ -z "${missing_lines//[[:space:]]/}" ]]; then
+		return 0
+	fi
+
+	echo ""
+	log_warn "Missing configuration values were found in the template."
+	log_info "The following settings are not in your existing config:"
+	echo ""
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		[[ -z "$line" ]] && continue
+		log_info "  $line"
+	done <<<"$missing_lines"
+	echo ""
+	read -rp "Append these values to the end of your config file? (yes/no) [no]: " REPLY
+	echo ""
+	if [[ ! "$REPLY" =~ ^[Yy][Ee][Ss]$ ]]; then
+		log_info "Skipping append (user declined)"
+		return 0
+	fi
+
+	# Substitute /data/vpn-monitor with actual INSTALL_DIR in paths
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		[[ -z "$line" ]] && continue
+		line="${line//\/data\/vpn-monitor/$INSTALL_DIR}"
+		if echo "$line" >>"$existing_config"; then
+			log_info "Appended: $line"
+		else
+			log_error "Failed to append: $line"
+		fi
+	done <<<"$missing_lines"
+
+	log_info "Missing values appended to ${existing_config}"
+	return 0
+}
+
 # Install scripts
 #
 # Copies the main VPN monitor script, library files, and configuration file to the installation directory.
@@ -790,6 +861,8 @@ install_scripts() {
 				log_info "Config file already exists, preserving: ${INSTALL_DIR}/${CONFIG_NAME}"
 				# Compare template with existing config to show what's new
 				compare_template_with_existing_config
+				# Offer to append missing values (skipped in silent mode)
+				offer_append_missing_config_values
 			fi
 		else
 			# Non-interactive, non-silent mode: ask user
@@ -803,6 +876,8 @@ install_scripts() {
 				log_info "Preserving existing config file: ${INSTALL_DIR}/${CONFIG_NAME}"
 				# Compare template with existing config to show what's new
 				compare_template_with_existing_config
+				# Offer to append missing values
+				offer_append_missing_config_values
 			fi
 		fi
 	else

@@ -501,6 +501,12 @@ create_test_install_setup() {
 		chmod +x "${test_install_dir}/vpn-monitor-wrapper.sh"
 	fi
 
+	# Copy compare-config.sh (for config comparison and append-missing-values tests)
+	if [[ -f "${project_root}/compare-config.sh" ]]; then
+		cp "${project_root}/compare-config.sh" "${test_install_dir}/compare-config.sh"
+		chmod +x "${test_install_dir}/compare-config.sh"
+	fi
+
 	echo "${test_install_dir}/install.sh"
 }
 

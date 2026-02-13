@@ -80,6 +80,36 @@ RATE_LIMIT_WINDOW_MINUTES=60'
 }
 
 # bats test_tags=category:unit
+@test "compare-config.sh --list-missing-with-values outputs VAR=value lines only" {
+	# Purpose: Test verifies that --list-missing-with-values outputs only missing variable lines for machine parsing
+	# Expected: One VAR=value line per missing variable, no headers or other output
+	# Importance: Enables install script to append missing values to existing config
+	local test_dir="${TEST_DIR}/test-compare"
+	mkdir -p "$test_dir"
+
+	local template_config="${test_dir}/template.conf"
+	local existing_config="${test_dir}/existing.conf"
+
+	create_test_config "$template_config" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3' \
+		'NO_ESCALATE=0'
+
+	create_test_config "$existing_config" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		'TIER1_THRESHOLD=1' \
+		'TIER2_THRESHOLD=3'
+
+	run bash "$COMPARE_CONFIG_SCRIPT" --template "$template_config" --existing "$existing_config" --list-missing-with-values
+
+	assert_success
+	assert_output --partial "NO_ESCALATE=0"
+	refute_output --partial "Comparing configuration"
+	refute_output --partial "New Settings"
+}
+
+# bats test_tags=category:unit
 @test "compare-config.sh detects deprecated fields in existing config" {
 	# Purpose: Test verifies that the script identifies fields in existing config that aren't in template
 	# Expected: Script reports deprecated settings that should be removed
