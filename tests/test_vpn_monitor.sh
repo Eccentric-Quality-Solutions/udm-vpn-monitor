@@ -4,10 +4,11 @@
 # Tests monitoring functionality, tier escalation, and recovery actions
 
 load test_helper
+load helpers/config
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
-load fixtures/vpn_cooldown
 
 # Path to the VPN monitor script
 VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
@@ -50,15 +51,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Prevents script from running with invalid configuration that would cause runtime errors.
 	# Create temporary config without LOCATION_*_EXTERNAL
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-VPN_NAME="Test VPN"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
 	# Create state directory and ensure log directory exists
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 
 	# Create test version of script with custom paths
@@ -93,13 +92,14 @@ EOF
 	# Importance: State files are required for tracking restart history and rate limiting.
 	# Note: Per-peer failure counters are created on-demand, not during initialization.
 	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
+	local state_dir="${TEST_DIR}"
 
 	run bash "$TEST_SCRIPT" --fake
 
 	# State files should be created in logs directory
 	# Note: Per-peer failure counters are created on-demand, not during initialization
 	# Only restart_count is created during initialization
-	assert_file_exist "${STATE_DIR}/restart_count"
+	assert_file_exist "${state_dir}/restart_count"
 }
 
 # bats test_tags=category:unit
@@ -108,11 +108,12 @@ EOF
 	# Expected: Log file is created in the logs directory.
 	# Importance: Logging is essential for troubleshooting and monitoring script behavior.
 	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 
 	run bash "$TEST_SCRIPT" --fake
 
 	# Log file should be created
-	assert_file_exist "$LOG_FILE"
+	assert_file_exist "$log_file"
 }
 
 # bats test_tags=category:unit
@@ -169,7 +170,7 @@ EOF
 	run bash "$TEST_SCRIPT" --fake
 
 	# Should reject invalid IP format (new validation function checks format, not just dangerous chars)
-	assert_file_contains "$LOG_FILE" "Invalid external IP format"
+	assert_file_contains "$LOG_FILE" "Invalid external IP or DNS name format"
 }
 
 # bats test_tags=slow,category:unit
@@ -255,7 +256,7 @@ EOF
 
 	# Per-peer failure counter should be incremented
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -275,8 +276,8 @@ EOF
 	# Set initial failure count using location-based state functions
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "" "${TEST_PEER_IP}" "failure_count" "5" || true
-	set_peer_state "" "${TEST_PEER_IP}" "last_bytes" "1000" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "5" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "last_bytes" "1000" || true
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
@@ -286,7 +287,7 @@ EOF
 
 	# Per-peer failure counter should be reset (if script ran successfully)
 	local failure_counter
-	failure_counter=$(get_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	failure_counter=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -296,19 +297,6 @@ EOF
 	fi
 
 	remove_mock_from_path
-}
-
-# bats test_tags=category:unit
-@test "vpn-monitor.sh respects cooldown period - should exit early when active" {
-	# Purpose: Test verifies that the script exits early when a cooldown period is active after recovery actions.
-	# Expected: Script detects cooldown period and exits without performing checks or actions.
-	# Importance: Cooldown prevents excessive recovery actions and allows time for VPN to stabilize.
-	setup_vpn_cooldown_fixture "${TEST_PEER_IP}" 0 900 'COOLDOWN_MINUTES=15'
-
-	run bash "$TEST_SCRIPT" --fake
-
-	# Should exit early due to cooldown
-	assert_file_contains "$LOG_FILE" "cooldown period"
 }
 
 # bats test_tags=category:unit
@@ -356,7 +344,7 @@ EOF
 	# Purpose: Test verifies that the script successfully loads configuration variables from the config file.
 	# Expected: Script reads config file and logs successful configuration load message.
 	# Importance: Configuration loading is essential for script customization and proper operation.
-	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'VPN_NAME="Custom VPN Name"' 'DEBUG=1'
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'DEBUG=1'
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -370,20 +358,19 @@ EOF
 	# Expected: Script logs warning about missing config file and continues with default values.
 	# Importance: Ensures script can run even if config file is accidentally deleted or misconfigured.
 	mkdir -p "${TEST_DIR}"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local config_file="${TEST_DIR}/nonexistent.conf"
 
 	# Don't create config file - create test script pointing to non-existent config
 	# Ensure logs directory exists for log file
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$TEST_DIR" "$LOG_FILE")
 
 	# Don't create config file - test should handle missing config gracefully
 	run bash "$test_script" --fake
 
 	# Should use defaults and warn
-	assert_file_contains "$log_file" "Configuration file not found"
+	assert_file_contains "$LOG_FILE" "Configuration file not found"
 }
 
 # bats test_tags=category:unit
@@ -496,45 +483,6 @@ EOF
 }
 
 # bats test_tags=category:unit
-@test "vpn-monitor.sh validate_monitor_state exits when in cooldown period - should exit early" {
-	# Purpose: Test verifies that validate_monitor_state function detects active cooldown and exits early.
-	# Expected: Script exits early with success status and logs cooldown period message.
-	# Importance: Cooldown mechanism prevents excessive recovery actions and allows VPN stabilization time.
-	setup_vpn_cooldown_fixture "${TEST_PEER_IP}" 0 900 'COOLDOWN_MINUTES=15'
-
-	run bash "$TEST_SCRIPT" --fake
-
-	assert_success
-	# Should exit early due to cooldown
-	assert_file_contains "$LOG_FILE" "in cooldown period"
-	assert_file_contains "$LOG_FILE" "Script exiting"
-}
-
-# bats test_tags=category:unit
-@test "vpn-monitor.sh validate_monitor_state continues when not in cooldown - should continue execution" {
-	# Purpose: Test verifies that validate_monitor_state function allows script execution when cooldown period has expired.
-	# Expected: Script continues normal execution without cooldown-related exit messages.
-	# Importance: Ensures script resumes normal monitoring after cooldown period expires.
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'COOLDOWN_MINUTES=15'
-
-	# Set expired cooldown timestamp using location-based state functions
-	# shellcheck source=../lib/state.sh
-	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "" "${TEST_PEER_IP}" "last_bytes" "1000" || true
-	local cooldown_file="${STATE_DIR}/cooldown_until"
-	echo $(($(date +%s) - 900)) >"$cooldown_file"
-
-	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
-
-	assert_success
-	# Should continue execution (not exit early)
-	refute_output --partial "in cooldown period"
-	refute_output --partial "Script exiting: in cooldown"
-
-	remove_mock_from_path
-}
-
-# bats test_tags=category:unit
 @test "vpn-monitor.sh validate_monitor_state checks cron persistence on first run - should verify cron entry" {
 	# Purpose: Test verifies that validate_monitor_state function checks for cron job persistence on first execution.
 	# Expected: Script verifies cron entry exists and may warn if missing, only checking once per installation.
@@ -586,7 +534,7 @@ EOF
 	assert_file_exist "$LOG_FILE"
 	# Log should contain location processing (check for VPN status check)
 	# Check for location name or external IP in log
-	assert_file_contains "$LOG_FILE" "NYC" || assert_file_contains "$LOG_FILE" "203.0.113.1"
+	assert_log_contains_any "$LOG_FILE" "NYC" "203.0.113.1"
 
 	remove_mock_from_path
 }

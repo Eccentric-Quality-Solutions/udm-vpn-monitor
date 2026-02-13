@@ -71,7 +71,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that vpn_at_tier fixture correctly sets up Tier 3 scenario
 	# Expected: Failure count is 5, tier thresholds are set correctly
 	# Importance: Ensures fixture works correctly for Tier 3 tests
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10'
 
 	# Verify state file has correct failure count
 	ensure_state_functions_loaded
@@ -84,7 +84,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_file_contains "$TEST_CONFIG_FILE" "TIER3_THRESHOLD=5"
 
 	# Verify custom config was applied
-	assert_file_contains "$TEST_CONFIG_FILE" "MAX_RESTARTS_PER_HOUR=10"
+	assert_file_contains "$TEST_CONFIG_FILE" "MAX_RESTARTS_PER_WINDOW=10"
 
 	add_mock_to_path
 	remove_mock_from_path

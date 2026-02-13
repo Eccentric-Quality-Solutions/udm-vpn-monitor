@@ -99,6 +99,16 @@ TEST_TIMEOUT="${TEST_TIMEOUT:-120}"
 # Set INDIVIDUAL_MODE=1 or use --individual flag to enable
 INDIVIDUAL_MODE="${INDIVIDUAL_MODE:-0}"
 
+# Process monitoring settings
+# Monitor for hanging processes during test execution
+# Set MONITOR_PROCESSES=1 or use --monitor-processes flag to enable
+MONITOR_PROCESSES="${MONITOR_PROCESSES:-0}"
+# Interval in seconds between process checks (default: 10 seconds)
+MONITOR_INTERVAL="${MONITOR_INTERVAL:-10}"
+# Maximum expected runtime for test processes in seconds (default: TEST_TIMEOUT + 60)
+# Processes running longer than this are considered hanging
+MONITOR_MAX_RUNTIME="${MONITOR_MAX_RUNTIME:-$((TEST_TIMEOUT + 60))}"
+
 # Resume from checkpoint
 # Resume tests from last checkpoint (only works in individual mode)
 # Set RESUME_MODE=1 or use --resume flag to enable
@@ -696,8 +706,195 @@ get_kcov_args() {
 	)
 }
 
-# Run a single test case with timeout
+# Cleanup function for test processes
 #
+# Ensures proper cleanup of all child processes in a process group.
+# Kills the entire process group to ensure all children (timeout, kcov, bats, etc.)
+# are terminated, preventing orphan processes.
+#
+# Arguments:
+#   $1: Process group ID (PGID) to kill, or current process group if not provided
+#
+# Returns:
+#   0: Always succeeds
+#
+cleanup_test_processes() {
+	local pgid="${1:-$$}"
+	# Kill entire process group to ensure all children are terminated
+	# Send SIGTERM first to allow graceful shutdown
+	kill -TERM -"$pgid" 2>/dev/null || true
+	sleep 0.1
+	# Force kill if still running
+	kill -KILL -"$pgid" 2>/dev/null || true
+}
+
+# Start process monitoring
+#
+# Starts background process monitoring if enabled.
+# Stores monitor PID in variable passed by reference.
+#
+# Arguments:
+#   $1: Variable name to store monitor PID (by reference)
+#
+# Returns:
+#   0: Monitoring started or disabled
+#
+start_process_monitoring() {
+	local -n monitor_pid_ref="$1"
+	monitor_pid_ref=""
+
+	if [[ "$MONITOR_PROCESSES" -eq 1 ]]; then
+		echo -e "${BLUE}Starting process monitoring...${NC}" >&2
+		monitor_hanging_processes $$ "$MONITOR_MAX_RUNTIME" "$MONITOR_INTERVAL" &
+		monitor_pid_ref=$!
+	fi
+}
+
+# Stop process monitoring
+#
+# Stops background process monitoring if running.
+#
+# Arguments:
+#   $1: Monitor PID (empty if not running)
+#
+# Returns:
+#   0: Always succeeds
+#
+stop_process_monitoring() {
+	local monitor_pid="${1:-}"
+	if [[ -n "$monitor_pid" ]] && kill -0 "$monitor_pid" 2>/dev/null; then
+		kill "$monitor_pid" 2>/dev/null || true
+		wait "$monitor_pid" 2>/dev/null || true
+	fi
+}
+
+# Cleanup monitor on signal
+#
+# Signal handler for cleaning up process monitor.
+# This function is used in trap handlers to ensure proper cleanup.
+#
+# Arguments:
+#   $1: Monitor PID to clean up
+#
+# Returns:
+#   None (exits or returns)
+#
+cleanup_monitor_on_signal() {
+	local monitor_pid="${1:-}"
+	stop_process_monitoring "$monitor_pid"
+}
+
+# Monitor for hanging processes during test execution
+#
+# Runs in the background to detect orphaned or hanging test processes.
+# Monitors for processes (timeout, kcov, bats, parallel) that exceed expected runtime.
+# Reports findings to stderr for visibility.
+#
+# This is a simplified approach that checks all processes matching patterns
+# without complex parent-child tree walking, which is more pragmatic and sufficient
+# for detecting hanging test processes.
+#
+# Arguments:
+#   $1: Parent process ID to monitor (default: current process)
+#   $2: Maximum expected runtime in seconds (default: MONITOR_MAX_RUNTIME)
+#   $3: Check interval in seconds (default: MONITOR_INTERVAL)
+#
+# Returns:
+#   0: Always succeeds (runs in background)
+#
+# Environment Variables:
+#   MONITOR_PROCESSES: If set to 1, enables process monitoring
+#
+# Examples:
+#   monitor_hanging_processes $$ 180 10
+#   MONITOR_PROCESSES=1 monitor_hanging_processes
+#
+monitor_hanging_processes() {
+	local parent_pid="${1:-$$}"
+	local max_runtime="${2:-${MONITOR_MAX_RUNTIME:-180}}"
+	local check_interval="${3:-${MONITOR_INTERVAL:-10}}"
+	local monitor_pid_file="${TMPDIR:-/tmp}/test_monitor_$$.pid"
+
+	# Store monitor PID for cleanup
+	echo $$ >"$monitor_pid_file"
+
+	# Processes to monitor (patterns to match in ps output)
+	local process_patterns=("timeout" "kcov" "bats" "parallel")
+
+	# Track reported processes to avoid duplicate reports
+	local -A reported_processes
+
+	while kill -0 "$parent_pid" 2>/dev/null; do
+		# Check each process pattern
+		for pattern in "${process_patterns[@]}"; do
+			# Find processes matching pattern that are descendants of parent
+			# Use ps to find processes, then check if they're children of parent_pid
+			local pids
+			pids=$(ps -eo pid,etime,cmd --no-headers 2>/dev/null | grep -E "\b${pattern}\b" | grep -v grep | awk '{print $1}' 2>/dev/null || true)
+
+			if [[ -n "$pids" ]]; then
+				for pid in $pids; do
+					# Skip if already reported
+					if [[ -n "${reported_processes[$pid]:-}" ]]; then
+						continue
+					fi
+
+					# Skip if process doesn't exist (may have exited)
+					if ! kill -0 "$pid" 2>/dev/null; then
+						continue
+					fi
+
+					# Get process runtime (in seconds)
+					local etime_str
+					etime_str=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ' || echo "")
+					if [[ -z "$etime_str" ]]; then
+						continue
+					fi
+
+					# Parse etime (format: [[DD-]HH:]MM:SS or MM:SS)
+					# Use 10# prefix to force base-10 interpretation (prevents octal interpretation of leading zeros)
+					local runtime_seconds=0
+					if [[ "$etime_str" =~ ^([0-9]+)-([0-9]+):([0-9]+):([0-9]+)$ ]]; then
+						# DD-HH:MM:SS format
+						local days=$((10#${BASH_REMATCH[1]}))
+						local hours=$((10#${BASH_REMATCH[2]}))
+						local minutes=$((10#${BASH_REMATCH[3]}))
+						local seconds=$((10#${BASH_REMATCH[4]}))
+						runtime_seconds=$((days * 86400 + hours * 3600 + minutes * 60 + seconds))
+					elif [[ "$etime_str" =~ ^([0-9]+):([0-9]+):([0-9]+)$ ]]; then
+						# HH:MM:SS format
+						local hours=$((10#${BASH_REMATCH[1]}))
+						local minutes=$((10#${BASH_REMATCH[2]}))
+						local seconds=$((10#${BASH_REMATCH[3]}))
+						runtime_seconds=$((hours * 3600 + minutes * 60 + seconds))
+					elif [[ "$etime_str" =~ ^([0-9]+):([0-9]+)$ ]]; then
+						# MM:SS format
+						local minutes=$((10#${BASH_REMATCH[1]}))
+						local seconds=$((10#${BASH_REMATCH[2]}))
+						runtime_seconds=$((minutes * 60 + seconds))
+					fi
+
+					# Check if process has been running longer than expected
+					if [[ $runtime_seconds -gt $max_runtime ]]; then
+						# Get process command line for reporting
+						local cmd
+						cmd=$(ps -o cmd= -p "$pid" 2>/dev/null | head -c 80 | tr -d '\n' || echo "unknown")
+						echo -e "${YELLOW}[PROCESS MONITOR] Warning: Process ${pid} (${pattern}) has been running for ${runtime_seconds}s (exceeds max ${max_runtime}s)${NC}" >&2
+						echo -e "${YELLOW}[PROCESS MONITOR] Command: ${cmd}${NC}" >&2
+						reported_processes[$pid]=1
+					fi
+				done
+			fi
+		done
+
+		# Sleep before next check
+		sleep "$check_interval"
+	done
+
+	# Cleanup
+	rm -f "$monitor_pid_file"
+}
+
 # Runs an individual test by name with timeout, skipping if it exceeds the limit.
 # Supports coverage reporting when enabled.
 #
@@ -776,12 +973,20 @@ run_single_test_with_timeout() {
 	local exit_code=0
 	if [[ $use_coverage -eq 1 ]] && [[ -n "$coverage_dir" ]]; then
 		# Run with coverage and timeout
-		# Note: Use timeout without --preserve-status for kcov to ensure it exits cleanly
+		# Use timeout with --kill-after to ensure kcov and all its children are killed
 		# kcov can hang if the test process exits unexpectedly, so we need timeout to kill it
 		if command -v stdbuf >/dev/null 2>&1; then
-			timeout "$timeout_seconds" stdbuf -oL -eL -i0 kcov "${kcov_args[@]}" "$coverage_dir" bats "${bats_args[@]}" 2>&1 || exit_code=$?
+			timeout --kill-after=5 "$timeout_seconds" stdbuf -oL -eL -i0 kcov "${kcov_args[@]}" "$coverage_dir" bats "${bats_args[@]}" 2>&1 || exit_code=$?
 		else
-			timeout "$timeout_seconds" kcov "${kcov_args[@]}" "$coverage_dir" bats "${bats_args[@]}" 2>&1 || exit_code=$?
+			timeout --kill-after=5 "$timeout_seconds" kcov "${kcov_args[@]}" "$coverage_dir" bats "${bats_args[@]}" 2>&1 || exit_code=$?
+		fi
+		# Explicit cleanup only if timeout occurred (not for normal test failures)
+		# This handles cases where timeout may not have cleaned up all processes
+		# Temporarily disable trap to prevent false "interrupted" messages
+		if [[ $exit_code -eq 124 ]] || [[ $exit_code -eq 143 ]]; then
+			trap '' TERM INT
+			cleanup_test_processes
+			trap cleanup_on_signal INT TERM
 		fi
 	else
 		# Run without coverage, with timeout
@@ -792,6 +997,13 @@ run_single_test_with_timeout() {
 		else
 			# Fallback without stdbuf
 			timeout --preserve-status "$timeout_seconds" bats "${bats_args[@]}" 2>&1 || exit_code=$?
+		fi
+		# Explicit cleanup only if timeout occurred (not for normal test failures)
+		# Temporarily disable trap to prevent false "interrupted" messages
+		if [[ $exit_code -eq 124 ]] || [[ $exit_code -eq 143 ]]; then
+			trap '' TERM INT
+			cleanup_test_processes
+			trap cleanup_on_signal INT TERM
 		fi
 	fi
 
@@ -922,6 +1134,16 @@ run_tests_sequential() {
 	local failed_tests=0
 	local timed_out_tests=0
 
+	# Start process monitoring if enabled
+	local monitor_pid=""
+	start_process_monitoring monitor_pid
+	if [[ -n "$monitor_pid" ]]; then
+		# Cleanup function for monitor - use function reference to avoid expansion issues
+		# Export monitor_pid so cleanup function can access it
+		export MONITOR_PID_CLEANUP="$monitor_pid"
+		trap 'cleanup_monitor_on_signal "$MONITOR_PID_CLEANUP"' EXIT TERM INT
+	fi
+
 	for test_file in "${test_files[@]}"; do
 		# Check if interrupted
 		if [[ $INTERRUPTED -eq 1 ]]; then
@@ -956,6 +1178,12 @@ run_tests_sequential() {
 		fi
 		echo ""
 	done
+
+	# Stop process monitoring if enabled
+	stop_process_monitoring "${monitor_pid:-}"
+	if [[ -n "${monitor_pid:-}" ]]; then
+		trap - EXIT TERM INT
+	fi
 
 	# Return results via global variables (bash limitation)
 	export SEQUENTIAL_FAILED=$failed_tests
@@ -995,15 +1223,32 @@ run_tests_parallel() {
 	: >"$failed_file"
 	: >"$timeout_file"
 
+	# Start process monitoring if enabled
+	local monitor_pid=""
+	start_process_monitoring monitor_pid
+	if [[ -n "$monitor_pid" ]]; then
+		# Cleanup function for monitor - use function reference to avoid expansion issues
+		# Export monitor_pid so cleanup function can access it
+		export MONITOR_PID_CLEANUP="$monitor_pid"
+		trap 'cleanup_monitor_on_signal "$MONITOR_PID_CLEANUP"' EXIT TERM INT
+	fi
+
 	# Export function and variables for parallel execution
 	export -f run_test_file_with_timeout
 	export -f run_single_test_with_timeout
 	export -f extract_test_names
 	export -f escape_test_name_for_filter
+	export -f monitor_hanging_processes
+	export -f start_process_monitoring
+	export -f stop_process_monitoring
+	export -f cleanup_monitor_on_signal
 	export TEST_TIMEOUT
 	export RERUN_FAILED
 	export FILTER_TAGS
 	export PROJECT_ROOT
+	export MONITOR_PROCESSES
+	export MONITOR_MAX_RUNTIME
+	export MONITOR_INTERVAL
 
 	# Create a function that parallel can call
 	#
@@ -1082,6 +1327,12 @@ run_tests_parallel() {
 			fi
 	fi
 
+	# Stop process monitoring if enabled
+	stop_process_monitoring "${monitor_pid:-}"
+	if [[ -n "${monitor_pid:-}" ]]; then
+		trap - EXIT TERM INT
+	fi
+
 	# Count results
 	if [[ -f "$failed_file" ]]; then
 		failed_tests=$(wc -l <"$failed_file" | tr -d ' ')
@@ -1136,6 +1387,16 @@ run_tests_individual() {
 
 	# Initialize checkpoint tracking
 	declare -gA CHECKPOINT_PASSED
+
+	# Start process monitoring if enabled
+	local monitor_pid=""
+	start_process_monitoring monitor_pid
+	if [[ -n "$monitor_pid" ]]; then
+		# Cleanup function for monitor - use function reference to avoid expansion issues
+		# Export monitor_pid so cleanup function can access it
+		export MONITOR_PID_CLEANUP="$monitor_pid"
+		trap 'cleanup_monitor_on_signal "$MONITOR_PID_CLEANUP"' EXIT TERM INT
+	fi
 
 	# Load checkpoint if resuming
 	local checkpoint_file
@@ -1206,6 +1467,10 @@ run_tests_individual() {
 		mkdir -p "$COVERAGE_DIR"
 		echo -e "${BLUE}Coverage output directory: ${COVERAGE_DIR}${NC}"
 	fi
+
+	# Track start time for total execution time
+	local execution_start_time
+	execution_start_time=$(date +%s)
 
 	# Process each test file
 	local should_stop=0
@@ -1353,19 +1618,13 @@ run_tests_individual() {
 		echo ""
 	done
 
+	# Calculate total execution time
+	local execution_end_time
+	execution_end_time=$(date +%s)
+	local total_duration=$((execution_end_time - execution_start_time))
+
 	# Print summary
-	echo ""
-	echo -e "${GREEN}========================================${NC}"
-	echo -e "${GREEN}Test Execution Summary${NC}"
-	echo -e "${GREEN}========================================${NC}"
-	echo -e "Total tests: ${total_tests}"
-	echo -e "${GREEN}Passed: ${passed_count}${NC}"
-	echo -e "${RED}Failed: ${failed_count}${NC}"
-	echo -e "${YELLOW}Timed out: ${timed_out_count}${NC}"
-	if [[ $skipped_count -gt 0 ]]; then
-		echo -e "${BLUE}Skipped (from checkpoint): ${skipped_count}${NC}"
-	fi
-	echo ""
+	print_test_summary "$total_tests" "$passed_count" "$failed_count" "$timed_out_count" "$skipped_count" "$total_duration"
 
 	# Write detailed summary to results file
 	{
@@ -1453,6 +1712,12 @@ run_tests_individual() {
 			echo -e "${YELLOW}Warning: Coverage reports not found${NC}" >&2
 			echo "kcov may have encountered an error. Check kcov output above." >&2
 		fi
+	fi
+
+	# Stop process monitoring if enabled
+	stop_process_monitoring "${monitor_pid:-}"
+	if [[ -n "${monitor_pid:-}" ]]; then
+		trap - EXIT TERM INT
 	fi
 
 	# Exit with error if any tests failed or timed out
@@ -1559,8 +1824,7 @@ run_tests() {
 	fi
 }
 
-# Note: run_test_file_with_coverage_timeout() has been removed.
-# Coverage is now handled by run_test_file_with_timeout() with use_coverage flag.
+# Coverage is handled by run_test_file_with_timeout() with use_coverage flag.
 # This ensures consistent per-test timeout behavior for both coverage and non-coverage runs.
 
 # Run tests sequentially (with coverage)
@@ -1591,6 +1855,16 @@ run_tests_sequential_with_coverage() {
 	local failed_tests=0
 	local timed_out_tests=0
 
+	# Start process monitoring if enabled
+	local monitor_pid=""
+	start_process_monitoring monitor_pid
+	if [[ -n "$monitor_pid" ]]; then
+		# Cleanup function for monitor - use function reference to avoid expansion issues
+		# Export monitor_pid so cleanup function can access it
+		export MONITOR_PID_CLEANUP="$monitor_pid"
+		trap 'cleanup_monitor_on_signal "$MONITOR_PID_CLEANUP"' EXIT TERM INT
+	fi
+
 	for test_file in "${test_files[@]}"; do
 		echo -e "${BLUE}Running with coverage: $(basename "$test_file")${NC}"
 
@@ -1620,6 +1894,12 @@ run_tests_sequential_with_coverage() {
 		fi
 		echo ""
 	done
+
+	# Stop process monitoring if enabled
+	stop_process_monitoring "${monitor_pid:-}"
+	if [[ -n "${monitor_pid:-}" ]]; then
+		trap - EXIT TERM INT
+	fi
 
 	# Return results via global variables
 	export SEQUENTIAL_COV_FAILED=$failed_tests
@@ -1653,6 +1933,7 @@ run_tests_parallel_with_coverage() {
 	done
 	# Remaining arguments are test files
 	local test_files=("$@")
+	local total_tests=${#test_files[@]}
 	local failed_tests=0
 	local timed_out_tests=0
 	local temp_dir
@@ -1669,17 +1950,39 @@ run_tests_parallel_with_coverage() {
 	: >"$failed_file"
 	: >"$timeout_file"
 
+	# Track start time for total execution time
+	local execution_start_time
+	execution_start_time=$(date +%s)
+
+	# Start process monitoring if enabled
+	local monitor_pid=""
+	start_process_monitoring monitor_pid
+	if [[ -n "$monitor_pid" ]]; then
+		# Cleanup function for monitor - use function reference to avoid expansion issues
+		# Export monitor_pid so cleanup function can access it
+		export MONITOR_PID_CLEANUP="$monitor_pid"
+		trap 'cleanup_monitor_on_signal "$MONITOR_PID_CLEANUP"' EXIT TERM INT
+	fi
+
 	# Export function and variables for parallel execution
 	export -f run_test_file_with_timeout
 	export -f run_single_test_with_timeout
 	export -f extract_test_names
 	export -f escape_test_name_for_filter
 	export -f get_kcov_args
+	export -f cleanup_test_processes
+	export -f monitor_hanging_processes
+	export -f start_process_monitoring
+	export -f stop_process_monitoring
+	export -f cleanup_monitor_on_signal
 	export TEST_TIMEOUT
 	export RERUN_FAILED
 	export FILTER_TAGS
 	export PROJECT_ROOT
 	export COVERAGE_DIR="$coverage_dir"
+	export MONITOR_PROCESSES
+	export MONITOR_MAX_RUNTIME
+	export MONITOR_INTERVAL
 
 	# Create a function that parallel can call
 	#
@@ -1698,6 +2001,11 @@ run_tests_parallel_with_coverage() {
 		local test_file="$1"
 		local test_name
 		test_name=$(basename "$test_file")
+
+		# Set up cleanup trap to ensure all child processes are terminated
+		# This handles cases where test execution is interrupted or times out
+		trap 'cleanup_test_processes $$' EXIT TERM INT
+
 		echo -e "${BLUE}Running with coverage: ${test_name}${NC}" >&2
 
 		# Reconstruct kcov_args array (bash limitation with parallel)
@@ -1711,6 +2019,19 @@ run_tests_parallel_with_coverage() {
 		if ! run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT" "1" "$COVERAGE_DIR" "${kcov_args_array[@]}"; then
 			test_result=$?
 		fi
+
+		# Explicit cleanup only if timeout occurred (not for normal test failures)
+		# Temporarily disable trap to prevent false "interrupted" messages
+		# The EXIT trap will handle cleanup on normal exit
+		if [[ $test_result -eq 2 ]]; then
+			trap '' TERM INT
+			cleanup_test_processes $$
+			trap 'cleanup_test_processes $$' EXIT TERM INT
+		fi
+		# Remove trap before return
+		# If timeout occurred, cleanup was already done explicitly above
+		# If normal exit, EXIT trap will handle cleanup before this line executes
+		trap - EXIT TERM INT
 
 		# Write result to file
 		echo "${test_file}:${test_result}" >>"$results_file"
@@ -1765,6 +2086,23 @@ run_tests_parallel_with_coverage() {
 	if [[ -f "$timeout_file" ]]; then
 		timed_out_tests=$(wc -l <"$timeout_file" | tr -d ' ')
 	fi
+
+	# Calculate passed tests (total - failed - timed_out)
+	local passed_tests=$((total_tests - failed_tests - timed_out_tests))
+
+	# Calculate total execution time
+	local execution_end_time
+	execution_end_time=$(date +%s)
+	local total_duration=$((execution_end_time - execution_start_time))
+
+	# Stop process monitoring if enabled
+	stop_process_monitoring "${monitor_pid:-}"
+	if [[ -n "${monitor_pid:-}" ]]; then
+		trap - EXIT TERM INT
+	fi
+
+	# Print test summary
+	print_test_summary "$total_tests" "$passed_tests" "$failed_tests" "$timed_out_tests" "0" "$total_duration"
 
 	# Cleanup
 	rm -rf "$temp_dir"
@@ -1868,6 +2206,45 @@ run_tests_with_coverage() {
 	if [[ $failed_tests -gt 0 ]]; then
 		exit 1
 	fi
+}
+
+# Print test summary
+#
+# Prints a formatted summary of test execution results including total tests,
+# passed/failed/timeout/skipped counts, and total execution time.
+#
+# Arguments:
+#   $1: Total tests run
+#   $2: Passed tests count
+#   $3: Failed tests count
+#   $4: Timed out tests count
+#   $5: Skipped tests count (optional, defaults to 0)
+#   $6: Total execution time in seconds
+#
+# Returns:
+#   None (outputs summary to stdout)
+#
+print_test_summary() {
+	local total_tests="${1:-0}"
+	local passed_tests="${2:-0}"
+	local failed_tests="${3:-0}"
+	local timed_out_tests="${4:-0}"
+	local skipped_tests="${5:-0}"
+	local duration="${6:-0}"
+
+	echo ""
+	echo "=========================================="
+	echo "Test Summary"
+	echo "=========================================="
+	echo "Total tests: $total_tests"
+	echo -e "${GREEN}Passed: $passed_tests${NC}"
+	echo -e "${RED}Failed: $failed_tests${NC}"
+	echo -e "${YELLOW}Timed out: $timed_out_tests${NC}"
+	if [[ $skipped_tests -gt 0 ]]; then
+		echo -e "${BLUE}Skipped: $skipped_tests${NC}"
+	fi
+	echo "Total time: ${duration}s"
+	echo "=========================================="
 }
 
 # Print coverage summary from kcov report
@@ -2019,6 +2396,10 @@ parse_args() {
 			PARALLEL_JOBS=0
 			shift
 			;;
+		--monitor-processes | -m)
+			MONITOR_PROCESSES=1
+			shift
+			;;
 		--help | -h)
 			show_help
 			exit 0
@@ -2062,6 +2443,8 @@ Options:
                            Results saved to logs/test_results_TIMESTAMP.txt
     --resume, -r           Resume tests from last checkpoint (only works in individual mode)
                            Skips tests that already passed in the checkpoint
+    --monitor-processes, -m Monitor for hanging processes during test execution
+                           Reports processes (timeout, kcov, bats, parallel) that exceed expected runtime
     --help, -h             Show this help message
 
 Examples:
@@ -2084,6 +2467,8 @@ Examples:
     $0 --individual --slow         Run all tests individually including slow tests
     $0 --individual --resume       Resume tests from checkpoint (skips already passed tests)
     $0 --individual --resume --slow Resume all tests including slow tests from checkpoint
+    $0 --monitor-processes         Enable process monitoring to detect hanging processes
+    $0 --coverage --monitor-processes  Run with coverage and process monitoring
 
 Test Behavior:
     By default, tests run all tests regardless of failures (fast-fail disabled).
@@ -2150,6 +2535,16 @@ Test Timeout:
     Tests that exceed 2 minutes (120 seconds) will be automatically skipped.
     This prevents slow or hanging tests from blocking test execution.
     Set TEST_TIMEOUT environment variable to change the timeout (in seconds).
+
+Process Monitoring:
+    Use --monitor-processes to enable background monitoring for hanging processes.
+    The monitor checks for processes (timeout, kcov, bats, parallel) that exceed
+    expected runtime and reports them to stderr. This helps identify orphan processes
+    that may not be properly cleaned up.
+    
+    Monitoring runs in the background during test execution and automatically stops
+    when tests complete. Set MONITOR_INTERVAL to change check interval (default: 10s).
+    Set MONITOR_MAX_RUNTIME to change maximum expected runtime (default: TEST_TIMEOUT + 60s).
 
 Performance Tips:
     - Install GNU parallel for faster test execution: brew install parallel

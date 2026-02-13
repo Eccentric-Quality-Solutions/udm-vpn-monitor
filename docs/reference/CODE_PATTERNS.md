@@ -23,25 +23,27 @@ These patterns should be followed consistently when writing or modifying code in
 3. [State Management Patterns](#state-management-patterns)
 4. [Validation Patterns](#validation-patterns)
 5. [Function Documentation Patterns](#function-documentation-patterns)
-6. [Configuration Patterns](#configuration-patterns)
-7. [Logging Patterns](#logging-patterns)
-8. [Module Organization Patterns](#module-organization-patterns)
-9. [Testing Patterns](#testing-patterns)
-10. [Variable and Naming Patterns](#variable-and-naming-patterns)
-11. [Arithmetic and Calculation Patterns](#arithmetic-and-calculation-patterns)
-12. [Process Management Patterns](#process-management-patterns)
-13. [Network Command Timeout Patterns](#network-command-timeout-patterns)
-14. [Command Availability Patterns](#command-availability-patterns)
-15. [String Parsing and Manipulation Patterns](#string-parsing-and-manipulation-patterns)
-16. [Loop and Iteration Patterns](#loop-and-iteration-patterns)
-17. [Associative Array Patterns](#associative-array-patterns)
-18. [Variable Initialization Patterns](#variable-initialization-patterns)
-19. [Bash Strict Mode and Safety Patterns](#bash-strict-mode-and-safety-patterns)
+6. [Function Design Patterns](#function-design-patterns)
+7. [Configuration Patterns](#configuration-patterns)
+8. [Logging Patterns](#logging-patterns)
+9. [Module Organization Patterns](#module-organization-patterns)
+10. [Testing Patterns](#testing-patterns)
+11. [Variable and Naming Patterns](#variable-and-naming-patterns)
+12. [Arithmetic and Calculation Patterns](#arithmetic-and-calculation-patterns)
+13. [Process Management Patterns](#process-management-patterns)
+14. [Network Command Timeout Patterns](#network-command-timeout-patterns)
+15. [Command Availability Patterns](#command-availability-patterns)
+16. [String Parsing and Manipulation Patterns](#string-parsing-and-manipulation-patterns)
+17. [Loop and Iteration Patterns](#loop-and-iteration-patterns)
+18. [Associative Array Patterns](#associative-array-patterns)
+19. [Variable Initialization Patterns](#variable-initialization-patterns)
+20. [Bash Strict Mode and Safety Patterns](#bash-strict-mode-and-safety-patterns)
     - [Validate Paths Before Deletion Operations](#pattern-validate-paths-before-deletion-operations)
     - [Protect Against Symlink Attacks in Deletion Operations](#pattern-protect-against-symlink-attacks-in-deletion-operations)
     - [Defense-in-Depth for Critical Operations](#pattern-defense-in-depth-for-critical-operations)
-20. [Quoting and Variable Expansion Patterns](#quoting-and-variable-expansion-patterns)
-21. [UDM-Specific Constraints](#udm-specific-constraints)
+21. [Quoting and Variable Expansion Patterns](#quoting-and-variable-expansion-patterns)
+22. [Script-Specific Patterns](#script-specific-patterns)
+23. [UDM-Specific Constraints](#udm-specific-constraints)
 
 ---
 
@@ -95,8 +97,8 @@ check_vpn_status() {
     
     # ... check logic ...
     
-    if [[ $vpn_ok -eq 0 ]]; then
-        return 1  # VPN check failed
+    if [[ $primary_check_passed -eq 0 ]]; then
+        return 1  # Primary check failed
     fi
     
     return 0  # VPN is healthy
@@ -166,7 +168,28 @@ fi
 - Standardizes fake mode handling across codebase
 - Fake mode (NO_ESCALATE=1): Logs error and returns 1 (allows caller to decide exit behavior)
 - Normal mode: Logs error and exits with specified exit code
-- **See `docs/FAKE_MODE_EXIT_BEHAVIOR.md` for detailed guidance on when to exit with error code vs. code 0 in fake mode**
+
+#### Fake Mode Exit Behavior (when to fail vs succeed)
+
+- Execution-blocking and failure-focused (validation failures, route setup failures, permission errors): exit with the appropriate error code in both normal and fake mode so tests can `assert_failure`.
+- Logging-focused (config parse errors, directory creation failures when testing log format): exit with the error code in normal mode but exit `0` in fake mode so tests can `assert_success` and check log output.
+- Both categories are functionally blocking; the difference is what the test asserts. Document the intent in code comments when the choice is non-obvious.
+
+**Patterns**
+```bash
+# Execution-blocking: fail in fake mode too
+if ! validate_config; then
+    exit "${EXIT_VALIDATION_ERROR:-3}"
+fi
+
+# Logging-focused: succeed in fake mode to inspect logs
+if ! load_config "$CONFIG_FILE"; then
+    if is_fake_mode; then
+        exit "${EXIT_SUCCESS:-0}"
+    fi
+    exit "${EXIT_VALIDATION_ERROR:-3}"
+fi
+```
 
 **Pattern: Checking Return Value in Functions**
 
@@ -242,6 +265,36 @@ fi
 - Fall back to alternative if primary fails
 - Log warnings when falling back
 - Return error codes, don't die
+
+### Pattern: Error Capture for Actionable Failures Only
+
+**When to Use:** Distinguish between failures that need detailed error messages (actionable) vs failures that can use simple fallbacks (non-actionable)
+
+**Pattern:**
+```bash
+# ✅ GOOD: Capture errors for actionable failures (mkdir, source syntax)
+local mkdir_error
+mkdir_error=$(mkdir -p "$dir" 2>&1)
+if [[ $? -ne 0 ]]; then
+    local error_msg="Cannot create directory: $dir"
+    if [[ -n "$mkdir_error" ]]; then
+        error_msg="${error_msg} (error: ${mkdir_error})"
+    fi
+    handle_error_or_exit_fake_mode "SYSTEM" "$error_msg" || return 1
+fi
+
+# ✅ GOOD: Simple fallback for non-actionable failures (readlink, optional commands)
+if ! command_that_might_fail 2>/dev/null; then
+    # Use fallback - no need to log (error is rare, already handled)
+    use_fallback_approach
+fi
+```
+
+**Key Points:**
+- Capture error output (`2>&1`) for failures where the error message helps diagnose the problem (mkdir failures, source syntax errors, etc.)
+- Use simple fallbacks (`2>/dev/null`) for optional operations where failure is expected and already handled (readlink, optional commands)
+- Only capture errors when the error message provides actionable information
+- For non-actionable failures, suppress stderr and use the fallback approach without logging
 
 ### Pattern: Early Returns and Guard Clauses
 
@@ -556,6 +609,33 @@ mv "$file.tmp" "$file"  # Can hang if $file is unreadable (chmod 000) or unwrita
 - Use `rm -f` which can remove unreadable/unwritable files safely
 - **See "Check Readability Before File Operations" pattern** for general guidance on file readability checks
 
+### Pattern: Remove Unwritable Files Before mv Operations
+
+**When to Use:** Before `mv` operations when target file may be unreadable or unwritable
+
+**Pattern:**
+```bash
+# ✅ GOOD: Remove unwritable file before mv operation
+# If target file exists but is unreadable or unwritable, remove it first to avoid potential hangs
+# This can happen if file permissions were changed (e.g., chmod 000 or chmod 444)
+# Removing unwritable files prevents mv from hanging when trying to overwrite them
+if [[ -f "$target_file" ]] && (! file_exists_and_readable "$target_file" || ! [[ -w "$target_file" ]]); then
+    rm -f "$target_file" 2>/dev/null || true
+fi
+mv "$temp_file" "$target_file"
+
+# ❌ BAD: mv can hang on unreadable or unwritable target
+mv "$temp_file" "$target_file"  # Can hang if $target_file is unreadable (chmod 000) or unwritable (chmod 444)!
+```
+
+**Key Points:**
+- Remove unreadable or unwritable target files before `mv` operations
+- Prevents hangs when overwriting unreadable files (chmod 000) or unwritable files (chmod 444)
+- Use `rm -f` which can remove unreadable/unwritable files safely
+- Similar to "Remove Before Atomic Write" pattern but applies to `mv` operations
+- **See "Check Readability Before File Operations" pattern** for general guidance on file readability checks
+- This pattern is especially important for migration scripts and file replacement operations
+
 ### Pattern: Clean Up Leftover .tmp Files
 
 **When to Use:** Before atomic writes to prevent hangs from leftover temp files
@@ -706,17 +786,7 @@ Some state files are intentionally **not** managed by `get_peer_state_file_path(
      - Even though xfrm recovery is per-connection, it's tracked globally for rate limiting
    - **Usage**: Use `RESTART_COUNT_FILE` variable directly
 
-2. **`COOLDOWN_UNTIL_FILE`** (`${STATE_DIR}/cooldown_until`)
-   - **Purpose**: Prevents immediate re-restarts after a recovery action
-   - **Scope**: Set after Tier 3 recovery actions
-   - **Why Outside**: 
-     - Cooldown applies to the entire monitoring system
-     - Full restarts (`ipsec restart`) affect all tunnels, so the entire system needs stabilization time
-     - Even if triggered by one location, the entire system needs cooldown
-     - Prevents cascading recovery attempts across locations
-   - **Usage**: Use `COOLDOWN_UNTIL_FILE` variable directly
-
-3. **`NETWORK_PARTITION_STATE_FILE`** (`${STATE_DIR}/network_partition_state`)
+2. **`NETWORK_PARTITION_STATE_FILE`** (`${STATE_DIR}/network_partition_state`)
    - **Purpose**: Tracks network connectivity status (0 = healthy, 1 = partitioned)
    - **Scope**: System-wide network condition
    - **Why Outside**: 
@@ -726,7 +796,56 @@ Some state files are intentionally **not** managed by `get_peer_state_file_path(
      - Per-location partition state would be redundant and confusing
    - **Usage**: Use `get_network_partition_state_file()` function or `NETWORK_PARTITION_STATE_FILE` variable
 
-4. **`LOCKFILE`** (`${STATE_DIR}/vpn-monitor.lock`)
+3. **Network Partition Statistics Files**
+   - **Files**: 
+     - `${STATE_DIR}/network_partition_dns_success_count` - DNS check success counter
+     - `${STATE_DIR}/network_partition_dns_fail_count` - DNS check failure counter
+     - `${STATE_DIR}/network_partition_route_success_count` - Route check success counter
+     - `${STATE_DIR}/network_partition_route_fail_count` - Route check failure counter
+     - `${STATE_DIR}/network_partition_interface_success_count` - Interface check success counter
+     - `${STATE_DIR}/network_partition_interface_fail_count` - Interface check failure counter
+     - `${STATE_DIR}/network_partition_summary_last_time` - Timestamp of last statistics summary
+   - **Purpose**: Track statistics for network partition checks (hourly summaries)
+   - **Scope**: System-wide network partition check statistics
+   - **Why Outside**: 
+     - Network partition checks are system-wide (affect all locations)
+     - Statistics are aggregated across all checks, not per-location
+     - Used for hourly summary logging of system-wide network health
+   - **Usage**: Direct path construction (e.g., `${STATE_DIR}/network_partition_dns_success_count`)
+
+4. **Ping Summary Statistics Files**
+   - **Files**:
+     - `${STATE_DIR}/ping_summary_last_time` - Timestamp of last ping summary
+     - `${STATE_DIR}/ping_summary_count` - Ping check counter
+   - **Purpose**: Track ping check statistics for periodic summary logging
+   - **Scope**: System-wide ping check statistics (aggregated across all locations)
+   - **Why Outside**: 
+     - Ping checks are performed across multiple locations but statistics are aggregated globally
+     - Summary logging provides system-wide visibility, not per-location breakdown
+     - Used for periodic summary logging (7-minute interval, configurable)
+   - **Usage**: Direct path construction (e.g., `${STATE_DIR}/ping_summary_last_time`)
+
+5. **Resource Monitoring Statistics Files**
+   - **Files**:
+     - `${STATE_DIR}/resource_cpu_check_success_count` - CPU check success counter
+     - `${STATE_DIR}/resource_cpu_check_fail_count` - CPU check failure counter
+     - `${STATE_DIR}/resource_ram_check_success_count` - RAM check success counter
+     - `${STATE_DIR}/resource_ram_check_fail_count` - RAM check failure counter
+     - `${STATE_DIR}/resource_disk_check_success_count` - Disk check success counter
+     - `${STATE_DIR}/resource_disk_check_fail_count` - Disk check failure counter
+     - `${STATE_DIR}/resource_cpu_constrained_count` - CPU constrained event counter
+     - `${STATE_DIR}/resource_ram_constrained_count` - RAM constrained event counter
+     - `${STATE_DIR}/resource_disk_critical_count` - Disk critical event counter
+     - `${STATE_DIR}/resource_monitoring_summary_last_time` - Timestamp of last resource monitoring summary
+   - **Purpose**: Track statistics for resource monitoring checks (hourly summaries)
+   - **Scope**: System-wide resource monitoring statistics
+   - **Why Outside**: 
+     - Resource monitoring checks are system-wide (CPU, RAM, disk affect entire system)
+     - Statistics are aggregated across all checks, not per-location
+     - Used for hourly summary logging of system resource health
+   - **Usage**: Direct path construction (e.g., `${STATE_DIR}/resource_cpu_check_success_count`)
+
+6. **`LOCKFILE`** (`${STATE_DIR}/vpn-monitor.lock`)
    - **Purpose**: Prevents concurrent script execution
    - **Scope**: System-wide lock
    - **Why Outside**: 
@@ -735,7 +854,7 @@ Some state files are intentionally **not** managed by `get_peer_state_file_path(
      - Per-location lockfiles would allow concurrent execution, causing conflicts
    - **Usage**: Use `LOCKFILE` variable directly
 
-5. **`PIDFILE`** (`${STATE_DIR}/vpn-keepalive.pid`)
+7. **`PIDFILE`** (`${STATE_DIR}/vpn-keepalive.pid`)
    - **Purpose**: PID file for VPN keepalive daemon
    - **Scope**: Single daemon process
    - **Why Outside**: 
@@ -743,6 +862,27 @@ Some state files are intentionally **not** managed by `get_peer_state_file_path(
      - Not a per-peer or per-location concept
      - Standard Unix daemon pattern (single PID file)
    - **Usage**: Use `PIDFILE` variable directly
+
+**Pattern for Global State Files:**
+
+When working with global state files (files outside the abstraction layer), use direct path construction with `${STATE_DIR}`:
+
+```bash
+# ✅ GOOD: Direct path construction for global state files
+local last_time_file="${STATE_DIR}/ping_summary_last_time"
+local count_file="${STATE_DIR}/ping_summary_count"
+local cpu_success_file="${STATE_DIR}/resource_cpu_check_success_count"
+
+# ✅ GOOD: Use constants when available
+local restart_count_file="${RESTART_COUNT_FILE}"
+local lockfile="${LOCKFILE}"
+```
+
+**Rationale:**
+- Global state files represent system-wide state, not per-peer or per-location state
+- They don't need location/peer sanitization or abstraction layer complexity
+- Direct path construction is simpler and more appropriate for global files
+- If more global state files are added, consider creating helper functions or constants for consistency
 
 **When to Add to Abstraction Layer:**
 - If a new state file is **per-peer** or **per-location**, add it to `get_peer_state_file_path()`
@@ -773,7 +913,7 @@ state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "failure_type"
 - All state operations use location name and peer IP
 - State files use sanitized location names and IPs in filenames
 - Each location's state files are completely independent
-- Format: `<key>_<location>_<peer_ip>` (e.g., `failure_counter_NYC_203_0_113_1`)
+- Format: `<key>_<location>_<peer_ip>` (e.g., `failure_count_NYC_203_0_113_1`)
 
 ### Pattern: State File Naming Conventions
 
@@ -788,8 +928,8 @@ All state files managed by the abstraction layer follow consistent naming patter
 These files track state for a specific location and peer IP combination. Format: `<key>_<sanitized_location>_<sanitized_peer_ip>`
 
 **Supported Keys:**
-1. **`failure_count`** → `failure_counter_<location>_<peer_ip>`
-   - Example: `failure_counter_NYC_203_0_113_1`
+1. **`failure_count`** → `failure_count_<location>_<peer_ip>`
+   - Example: `failure_count_NYC_203_0_113_1`
    - Tracks consecutive failure count per location
 
 2. **`last_bytes`** → `last_bytes_<location>_<peer_ip>`
@@ -842,12 +982,39 @@ These files track state per peer IP only, without location context. Format: `<ke
 
 These files are intentionally outside the abstraction layer because they represent global system state:
 
-- `${STATE_DIR}/cooldown_until` - Cooldown expiration timestamp
+**System Control Files:**
 - `${STATE_DIR}/restart_count` - Unix timestamps of Tier 3 recovery actions
 - `${STATE_DIR}/network_partition_state` - Network partition status (0=healthy, 1=partitioned)
 - `${STATE_DIR}/vpn-monitor.lock` - Lockfile for execution control
 - `${STATE_DIR}/vpn-keepalive.pid` - PID file for VPN keepalive daemon
 - `${STATE_DIR}/.cron_checked` - Flag file for cron check
+
+**Network Partition Statistics:**
+- `${STATE_DIR}/network_partition_dns_success_count` - DNS check success counter
+- `${STATE_DIR}/network_partition_dns_fail_count` - DNS check failure counter
+- `${STATE_DIR}/network_partition_route_success_count` - Route check success counter
+- `${STATE_DIR}/network_partition_route_fail_count` - Route check failure counter
+- `${STATE_DIR}/network_partition_interface_success_count` - Interface check success counter
+- `${STATE_DIR}/network_partition_interface_fail_count` - Interface check failure counter
+- `${STATE_DIR}/network_partition_summary_last_time` - Timestamp of last statistics summary
+
+**Ping Summary Statistics:**
+- `${STATE_DIR}/ping_summary_last_time` - Timestamp of last ping summary
+- `${STATE_DIR}/ping_summary_count` - Ping check counter
+
+**Resource Monitoring Statistics:**
+- `${STATE_DIR}/resource_cpu_check_success_count` - CPU check success counter
+- `${STATE_DIR}/resource_cpu_check_fail_count` - CPU check failure counter
+- `${STATE_DIR}/resource_ram_check_success_count` - RAM check success counter
+- `${STATE_DIR}/resource_ram_check_fail_count` - RAM check failure counter
+- `${STATE_DIR}/resource_disk_check_success_count` - Disk check success counter
+- `${STATE_DIR}/resource_disk_check_fail_count` - Disk check failure counter
+- `${STATE_DIR}/resource_cpu_constrained_count` - CPU constrained event counter
+- `${STATE_DIR}/resource_ram_constrained_count` - RAM constrained event counter
+- `${STATE_DIR}/resource_disk_critical_count` - Disk critical event counter
+- `${STATE_DIR}/resource_monitoring_summary_last_time` - Timestamp of last resource monitoring summary
+
+**Note:** These files use direct path construction (e.g., `${STATE_DIR}/ping_summary_last_time`) rather than the abstraction layer because they represent global system state, not per-peer or per-location state. See the "Files Intentionally Outside the Abstraction Layer" section above for detailed rationale.
 
 **Usage Guidelines:**
 
@@ -872,7 +1039,7 @@ These files are intentionally outside the abstraction layer because they represe
 ```bash
 # ✅ GOOD: Use abstraction layer
 state_file=$(get_peer_state_file_path "NYC" "203.0.113.1" "failure_count")
-# Returns: ${STATE_DIR}/failure_counter_NYC_203_0_113_1
+# Returns: ${STATE_DIR}/failure_count_NYC_203_0_113_1
 
 # ✅ GOOD: Use state accessor functions
 count=$(get_peer_state "NYC" "203.0.113.1" "failure_count" "0")
@@ -883,13 +1050,80 @@ conn_file=$(get_peer_state_file_path "" "203.0.113.1" "connection_name")
 # Returns: ${STATE_DIR}/connection_name_203_0_113_1
 
 # ❌ BAD: Direct path construction
-state_file="${STATE_DIR}/failure_counter_${location}_${ip}"
+state_file="${STATE_DIR}/failure_count_${location}_${ip}"
 # Problems: No sanitization, inconsistent format, breaks if naming changes
 ```
 
 **Key Points:**
 - All per-peer/per-location state files use the abstraction layer
 - Sanitization ensures safe filenames across different location names and IP formats
+
+### Pattern: Statistics Tracking with Periodic Summary Logging
+
+**When to Use:** Operations that run frequently and need visibility into success/failure rates without cluttering logs
+
+**Pattern:**
+```bash
+# Track individual check result
+track_network_partition_check "dns" 1    # success
+track_network_partition_check "dns" 0    # failure
+
+# Log summary if interval elapsed (called periodically)
+log_network_partition_summary_if_due
+```
+
+**Implementation Pattern:**
+1. **Tracking Function**: Increments appropriate counter in state file
+   - Uses atomic writes (ADR-0012) for state file integrity
+   - Handles missing STATE_DIR gracefully
+   - Validates input (check type, success flag)
+
+2. **Summary Function**: Logs aggregated statistics when interval elapses
+   - Checks if configured interval has elapsed since last summary
+   - Reads all counters using `read_counter_file()` helper (validates numeric, handles errors)
+   - Logs summary message with success/failure counts
+   - Resets counters to 0 after logging
+
+**State Files:**
+- Success/failure counters: `${STATE_DIR}/<check_type>_success_count`, `${STATE_DIR}/<check_type>_fail_count`
+- Last summary timestamp: `${STATE_DIR}/<check_type>_summary_last_time`
+- Resource monitoring counters: `${STATE_DIR}/resource_<cpu|ram|disk>_check_success_count`, `${STATE_DIR}/resource_<cpu|ram|disk>_check_fail_count`, `${STATE_DIR}/resource_<cpu_constrained|ram_constrained|disk_critical>_count`
+- Resource monitoring summary timestamp: `${STATE_DIR}/resource_monitoring_summary_last_time`
+
+**Counter Reading Pattern:**
+```bash
+# ✅ GOOD: Use shared helper for reading counter files
+local count=$(read_counter_file "$counter_file")
+# Handles: missing files, unreadable files, corruption (all return "0")
+
+# ❌ BAD: Duplicate pattern manually
+local count
+if file_exists_and_readable "$counter_file"; then
+    count=$(cat "$counter_file" 2>/dev/null || echo "0")
+else
+    count="0"
+fi
+[[ "$count" =~ ^[0-9]+$ ]] || count=0
+```
+
+**Examples:**
+- Ping check summary: `log_ping_summary_if_due()` (7-minute interval, configurable)
+- Network partition check summary: `log_network_partition_summary_if_due()` (1-hour interval, fixed)
+- Resource monitoring summary: `log_resource_monitoring_summary_if_due()` (1-hour interval, fixed)
+
+**Key Points:**
+- Use atomic writes for all state file operations (per ADR-0012)
+- Handle missing STATE_DIR gracefully (return early, don't fail)
+- Validate numeric values to handle corruption
+- Only log summary when interval has elapsed (prevents log spam)
+- Reset counters after logging (start fresh for next interval)
+- Track both successes and failures for complete visibility
+- Similar pattern can be reused for other frequent checks
+
+**Related Patterns:**
+- Atomic File Operations (ADR-0012)
+- State File Management
+- Periodic Status Logging
 - Global state files use constants, not the abstraction layer
 - Naming conventions are enforced by `get_peer_state_file_path()`
 - Never construct state file paths directly - always use the abstraction layer
@@ -981,7 +1215,7 @@ get_peer_state() {
 **Pattern:**
 ```bash
 # Validate all state files matching a pattern
-validate_state_files_by_pattern "failure_counter_*" "integer" "0" "Failure counter file" || validation_failed=1
+validate_state_files_by_pattern "failure_count_*" "integer" "0" "Failure counter file" || validation_failed=1
 validate_state_files_by_pattern "last_bytes_*" "integer" "0" "Byte counter file" || validation_failed=1
 ```
 
@@ -1089,14 +1323,14 @@ validate_config_var() {
 ```bash
 # ✅ GOOD: Pass state explicitly when needed for accurate behavior
 check_ping_optional() {
-    local vpn_ok="$1"
+    local primary_check_passed="$1"
     local external_peer_ip="$2"
     local internal_peer_ip="${3:-}"
     local location_name="${4:-}"
 
     # Check SA existence directly to ensure accurate messages
-    # DESIGN NOTE: We check SA existence here rather than reusing vpn_ok because:
-    # 1. vpn_ok=0 can mean "no SA" OR "SA exists but validation failed"
+    # DESIGN NOTE: We check SA existence here rather than reusing primary_check_passed because:
+    # 1. primary_check_passed=0 can mean "no SA" OR "SA exists but validation failed"
     # 2. We need accurate SA status for logging messages to avoid contradictions
     # 3. This ensures messages reflect actual SA state, not inferred state
     # Performance: This adds one additional SA check per cycle (~5-10ms on UDM),
@@ -1120,14 +1354,14 @@ check_ping_if_enabled() {
 
 # ❌ BAD: Infer state from ambiguous return value
 check_ping_if_enabled() {
-    local vpn_ok="$1"  # Ambiguous: could mean "no SA" or "SA exists but failed validation"
+    local primary_check_passed="$1"  # Ambiguous: could mean "no SA" or "SA exists but failed validation"
     # ... incorrect assumption leads to contradictory log messages ...
 }
 ```
 
 **When to Pass State Explicitly:**
 - **When state is needed for accurate behavior:** If the function's behavior (especially logging) depends on accurate state information
-- **When return values are ambiguous:** If a return value can mean multiple things (e.g., `vpn_ok=0` could mean "no SA" or "SA exists but validation failed")
+- **When return values are ambiguous:** If a return value can mean multiple things (e.g., `primary_check_passed=0` could mean "no SA" or "SA exists but validation failed")
 - **When state is expensive to check:** If checking state is expensive and you already have the information
 - **When state changes are unlikely:** If state is unlikely to change between function calls in the same execution cycle
 
@@ -1252,6 +1486,7 @@ fi
 **XFRM Output Format Handling:**
 - UDM OS uses `ip -s xfrm state` format where byte counters appear as `  39492(bytes)` on a separate line
 - Always try `ip -s xfrm state` first (provides more detail), fall back to `ip xfrm state` if needed
+- If xfrm command errors or returns empty but `ipsec status` shows a connection, log the diagnostic and continue; do not assume recovery until SAs appear in xfrm state
 - Increase context lines when parsing to ensure `lifetime current:` section is captured (appears after `lifetime config:`)
 - Handle both formats:
   - Single-line: `lifetime current: 123456 bytes, 789 packets`
@@ -1340,6 +1575,384 @@ check_vpn_status() {
 
 ---
 
+## Function Design Patterns
+
+### Pattern: Extract Helper Functions for Complexity Reduction
+
+**When to Use:** When a function becomes too complex (high cyclomatic complexity, deep nesting, multiple responsibilities) and extracting helper functions would improve readability and maintainability, even if the helpers are only used once.
+
+**Pattern:**
+```bash
+# ✅ GOOD: Extract helper functions to reduce complexity
+detect_failure_type() {
+	local external_peer_ip="$1"
+	local internal_peer_ip="${2:-}"
+	local location_name="$3"
+	local primary_check_passed="$4"
+	local xfrm_output="${5:-}"
+
+	# Use helper functions for complex logic
+	if check_sa_existence_for_failure_type "$external_peer_ip" "$primary_check_passed"; then
+		ipsec_phase2_up=1
+	fi
+
+	if check_rekey_for_failure_type "$current_spi" "$external_peer_ip" "$location_name"; then
+		echo "rekey"
+		return 0
+	fi
+
+	if routing_flags=$(check_routing_issue_for_failure_type "$current_bytes" "$location_name" "$external_peer_ip" "$internal_peer_ip"); then
+		has_routing_issue=1
+	fi
+
+	diagnostic_msg=$(build_failure_diagnostic_message "$xfrm_output" "$byte_counters_available" "$current_bytes" "$last_bytes" "$internal_peer_ip" "$ping_checked" "$ping_failed")
+	# ... rest of function ...
+}
+
+# Helper functions (each has single responsibility)
+check_sa_existence_for_failure_type() {
+	# ... focused logic for SA existence checking ...
+}
+
+check_rekey_for_failure_type() {
+	# ... focused logic for rekey detection ...
+}
+
+check_routing_issue_for_failure_type() {
+	# ... focused logic for routing issue detection ...
+}
+
+build_failure_diagnostic_message() {
+	# ... focused logic for diagnostic message building ...
+}
+```
+
+**Key Points:**
+- **Extract even for single-use functions** when they significantly reduce complexity
+- **Benefits**: Reduced cyclomatic complexity, improved readability, easier maintenance, better testability
+- **When to extract**: Function exceeds ~10 cyclomatic complexity, has deep nesting (4+ levels), or handles multiple distinct responsibilities
+- **Naming**: Use descriptive names that clearly indicate the helper's purpose
+- **Documentation**: All helper functions must be documented (see Function Documentation Patterns)
+- **Trade-off**: Slight increase in function count is acceptable when complexity reduction is significant
+
+**Example from Codebase:**
+- `detect_failure_type()` was refactored from ~210 lines to 122 lines (42% reduction) by extracting 4 helper functions
+- Complexity reduced from ~15 to ~8 (47% reduction)
+- Each helper function has a single, clear responsibility
+
+**Related Patterns:**
+- See `CODE_REVIEW_failure_analysis_refactoring.md` for detailed refactoring example
+- See Function Documentation Patterns for documenting helper functions
+
+### Pattern: Return Code + Stdout for Multiple Return Values
+
+**When to Use:** When a function needs to return both a status (success/failure) and multiple data values, and using namerefs or global variables would be less clear or more complex.
+
+**Pattern:**
+```bash
+# ✅ GOOD: Return code for status, stdout for data
+check_routing_issue_for_failure_type() {
+	local current_bytes="$1"
+	local location_name="$2"
+	local external_peer_ip="$3"
+	local internal_peer_ip="${4:-}"
+	local byte_counters_available=0
+	local ping_checked=0
+	local ping_failed=0
+	local has_routing_issue=0
+
+	# ... logic to determine routing issue and flags ...
+
+	# Output flags for caller (space-separated)
+	echo "$byte_counters_available $ping_checked $ping_failed"
+
+	# Return routing issue status
+	if [[ $has_routing_issue -eq 1 ]]; then
+		return 0  # Routing issue detected
+	fi
+	return 1  # No routing issue
+}
+
+# Caller usage: Capture both return code and stdout
+local routing_flags
+local has_routing_issue=0
+if routing_flags=$(check_routing_issue_for_failure_type "$current_bytes" "$location_name" "$external_peer_ip" "$internal_peer_ip"); then
+	has_routing_issue=1
+fi
+
+# Parse stdout into individual variables
+local byte_counters_available ping_checked ping_failed
+read -r byte_counters_available ping_checked ping_failed <<<"$routing_flags"
+```
+
+**Key Points:**
+- **Return code**: Use for status/success-failure (0 = success/true, non-zero = failure/false)
+- **Stdout**: Use for data values (space-separated for multiple values)
+- **Documentation**: Must clearly document both return code meanings and stdout format
+- **Parsing**: Use `read -r` with here-string (`<<<`) to parse space-separated values
+- **When to use**: When you need both status and data, and the pattern is clearer than alternatives
+- **Alternatives**: Consider namerefs for complex data structures, command substitution for single values
+
+**Documentation Requirements:**
+```bash
+# Check routing issue for failure type
+#
+# Determines if a routing issue exists and returns diagnostic flags.
+#
+# Arguments:
+#   $1: Current byte counter value
+#   $2: Location name
+#   $3: External peer IP address
+#   $4: Internal peer IP address (optional)
+#
+# Returns:
+#   0: Routing issue detected
+#   1: No routing issue detected
+#
+# Output:
+#   Prints space-separated flags to stdout: "byte_counters_available ping_checked ping_failed"
+#   Each flag is 0 or 1 (0 = false, 1 = true)
+#
+# Example:
+#   flags=$(check_routing_issue_for_failure_type "$bytes" "$loc" "$ip" "$int_ip")
+#   read -r byte_counters_available ping_checked ping_failed <<< "$flags"
+check_routing_issue_for_failure_type() {
+	# ... implementation ...
+}
+```
+
+**When NOT to Use:**
+- Single return value: Use command substitution with `echo` (no return code needed)
+- Complex data structures: Use namerefs for arrays/associative arrays
+- When pattern would be confusing: Prefer clearer alternatives
+
+**Example from Codebase:**
+- `check_routing_issue_for_failure_type()` uses this pattern to return routing issue status (return code) and diagnostic flags (stdout)
+- Caller captures both: `if routing_flags=$(check_routing_issue_for_failure_type ...); then`
+- Flags are parsed: `read -r byte_counters_available ping_checked ping_failed <<<"$routing_flags"`
+
+**Related Patterns:**
+- See `lib/detection/failure_analysis.sh:check_routing_issue_for_failure_type()` for implementation
+- See Function Documentation Patterns for documenting functions using this pattern
+- See "Returning Data from Functions" in `BASH_CODING_GUIDE.md` for alternative patterns
+- See "Using Namerefs to Return Multiple Values" pattern below for preferred alternative
+
+---
+
+### Pattern: Refactoring Large Functions
+
+**When to Use:** When a function becomes too long (>200-300 lines) or handles multiple distinct responsibilities. Breaking large functions into smaller, focused functions improves maintainability, testability, and readability.
+
+**Pattern:**
+```bash
+# ❌ BAD: Monolithic function handling multiple responsibilities
+delete_stale_sas() {
+    # 698 lines of code including:
+    # - Parsing state machine
+    # - SA validation and filtering  
+    # - SA deletion loop
+    # - Policy deletion
+    # - Error handling throughout
+}
+
+# ✅ GOOD: Break into focused functions
+delete_stale_sas() {
+    local peer_ip="$1"
+    local location_name="$2"
+    local xfrm_output="$3"
+    local deleted_count_var="$4"
+    local failed_count_var="$5"
+    
+    # Parse xfrm output into SA list
+    local sa_list=()
+    if ! parse_xfrm_output_to_sa_list "$xfrm_output" "$peer_ip" "$location_name" "sa_list"; then
+        eval "$deleted_count_var=0"
+        eval "$failed_count_var=0"
+        return 1
+    fi
+    
+    # Delete SAs
+    local deleted_count=0
+    local failed_count=0
+    delete_sas_from_list "${sa_list[@]}" "$peer_ip" "$location_name" deleted_count failed_count
+    local delete_result=$?
+    
+    # Delete policies
+    delete_xfrm_policies "$peer_ip" "$location_name"
+    
+    # Set output variables
+    eval "$deleted_count_var=$deleted_count"
+    eval "$failed_count_var=$failed_count"
+    
+    return 0
+}
+
+# Focused parsing function
+parse_xfrm_output_to_sa_list() {
+    local xfrm_output="$1"
+    local peer_ip="$2"
+    local location_name="$3"
+    local -n sa_list_ref="$4"
+    # ... parsing logic ...
+}
+
+# Focused deletion function
+delete_sas_from_list() {
+    # ... deletion logic ...
+}
+
+# Focused policy deletion function
+delete_xfrm_policies() {
+    # ... policy deletion logic ...
+}
+```
+
+**Key Points:**
+- **Single Responsibility**: Each extracted function should have one clear purpose
+- **Clear Interfaces**: Use descriptive function names and clear parameter lists
+- **Preserve Functionality**: Ensure all original behavior is maintained
+- **Use Namerefs for Arrays**: When returning arrays, use namerefs (`local -n`) for clean interfaces
+- **Use Namerefs or Eval for Scalars**: For scalar output parameters, use namerefs (preferred) or eval pattern
+- **Maintain Error Handling**: Ensure error handling is preserved in refactored code
+- **Update Tests**: Verify tests still pass after refactoring (may need mock updates)
+
+**Benefits:**
+- Improved maintainability: Easier to understand and modify individual components
+- Better testability: Functions can be tested independently
+- Reduced cognitive load: Smaller functions are easier to reason about
+- Easier code reviews: Changes are isolated to specific functions
+
+**Example from Codebase:**
+- `delete_stale_sas()` refactored from 698 lines into 3 focused functions (2026-01-18)
+- See `lib/recovery/xfrm_recovery.sh` for implementation
+
+---
+
+### Pattern: Using Namerefs to Return Multiple Values
+
+**When to Use:** When a function needs to return multiple related values and you want to avoid global variables. This is the preferred pattern for returning multiple values (better than global variables or stdout parsing).
+
+**Pattern:**
+```bash
+# ✅ GOOD: Use nameref associative array to return multiple values
+select_recovery_strategy() {
+	local peer_ip="${1:-}"
+	local tier="${2:-2}"
+	local result_ref_name="${3:-}"
+
+	# Validate nameref parameter (must be done before declaring nameref)
+	if [[ -z "$result_ref_name" ]]; then
+		handle_error "ERROR" "SYSTEM" "select_recovery_strategy: nameref parameter is required" 0
+		return 1
+	fi
+
+	local -n result="$result_ref_name"
+
+	# Initialize return values in nameref array
+	result["strategy"]=""
+	result["command"]=""
+	result["impact"]=""
+	result["available"]=0
+
+	# ... logic to determine strategy ...
+
+	# Set return values
+	result["strategy"]="xfrm"
+	result["command"]="attempt_xfrm_recovery"
+	result["impact"]="per-connection"
+	result["available"]=1
+
+	return 0
+}
+
+# Caller usage:
+declare -A recovery_info
+if select_recovery_strategy "$peer_ip" 2 "recovery_info"; then
+	echo "Strategy: ${recovery_info[strategy]}"
+	echo "Command: ${recovery_info[command]}"
+	echo "Impact: ${recovery_info[impact]}"
+fi
+```
+
+**Key Points:**
+- **Validate nameref parameter first**: Check that the parameter is provided before declaring the nameref
+- **Declare nameref after validation**: Use `local -n result="$result_ref_name"` after validating the parameter name
+- **Initialize array values**: Set default values in the nameref array at the start of the function
+- **Use descriptive key names**: Choose clear, consistent key names (e.g., `strategy`, `command`, `impact`)
+- **Caller declares array**: The caller must declare the associative array before calling the function
+- **Return code for status**: Use return code (0 = success, non-zero = failure) to indicate function success/failure
+- **Array values for data**: Use the nameref array to return actual data values
+
+**Documentation Requirements:**
+```bash
+# Select recovery strategy based on peer IP and tier
+#
+# Centralizes recovery strategy selection logic, determining the best recovery
+# approach based on configuration, peer IP availability, and tier level.
+# Returns recovery plan information via nameref associative array.
+#
+# Arguments:
+#   $1: Peer IP address (optional, required for per-connection recovery)
+#   $2: Tier level (2 for surgical cleanup, 3 for full restart)
+#   $3: Nameref to associative array to store strategy information (required)
+#
+# Returns:
+#   0: Strategy selected successfully
+#   1: Invalid tier or no strategy available
+#
+# Output (via nameref associative array):
+#   result["strategy"]: Strategy name ("xfrm", "ipsec_reload", "ipsec_restart", or "unavailable")
+#   result["command"]: Command to execute (function name or command string)
+#   result["impact"]: Impact description ("per-connection" or "all-tunnels")
+#   result["available"]: Whether recovery is available (1) or not (0)
+#
+# Examples:
+#   declare -A recovery_info
+#   select_recovery_strategy "203.0.113.1" 2 "recovery_info"
+#   # Result: recovery_info["strategy"]="xfrm", recovery_info["command"]="attempt_xfrm_recovery"
+#   #         recovery_info["impact"]="per-connection", recovery_info["available"]=1
+select_recovery_strategy() {
+	# ... implementation ...
+}
+```
+
+**When to Use This Pattern:**
+- ✅ Returning multiple related values (2-5 values)
+- ✅ When you want to avoid global variables (improves testability)
+- ✅ When values have semantic meaning (better than positional stdout parsing)
+- ✅ When you need to return both status and data
+
+**When NOT to Use:**
+- ❌ Single return value: Use command substitution with `echo`
+- ❌ Very simple cases: Consider return code + stdout if only 2-3 simple values
+- ❌ When caller needs to parse stdout anyway: Return code + stdout might be simpler
+
+**Advantages Over Global Variables:**
+- ✅ **Better testability**: No global state pollution
+- ✅ **Explicit interface**: Clear what values are returned
+- ✅ **No side effects**: Function doesn't modify global namespace
+- ✅ **Thread-safe**: Each call uses its own array (if that matters)
+- ✅ **Follows best practices**: Recommended in `BASH_CODING_GUIDE.md`
+
+**Advantages Over Return Code + Stdout:**
+- ✅ **Type safety**: No need to parse strings
+- ✅ **Named values**: Keys are self-documenting
+- ✅ **No parsing errors**: Can't misparse space-separated values
+- ✅ **Extensible**: Easy to add more return values later
+
+**Example from Codebase:**
+- `select_recovery_strategy()` in `lib/recovery/recovery_orchestration.sh` uses this pattern to return strategy selection information
+- Replaces previous global variable pattern (`RECOVERY_STRATEGY`, `RECOVERY_COMMAND`, etc.)
+- All call sites updated to use `declare -A recovery_info` pattern
+
+**Related Patterns:**
+- See "Pass Arrays by Reference Using Namerefs" for modifying existing arrays
+- See "Return Code + Stdout for Multiple Return Values" for simpler cases
+- See "Returning Data from Functions" in `BASH_CODING_GUIDE.md` for overview
+- See `lib/recovery/recovery_orchestration.sh:select_recovery_strategy()` for implementation
+
+---
+
 ## Configuration Patterns
 
 ### Pattern: Extract External IP from LOCATIONS Using Helper Function
@@ -1348,28 +1961,26 @@ check_vpn_status() {
 
 **Pattern:**
 ```bash
-# ✅ GOOD: Use helper function with fallback
-local external_ip=""
-if command -v get_location_external_ip >/dev/null 2>&1; then
-    external_ip=$(get_location_external_ip "$location_name" 2>/dev/null || echo "")
+# ✅ GOOD: Use helper function directly
+local external_peer_ip
+if external_peer_ip=$(get_location_external_ip "$location_name" 2>/dev/null); then
+    # Use external_peer_ip
 else
-    # Fallback: extract from LOCATIONS format directly
-    local location_data="${LOCATIONS[$location_name]:-}"
-    if [[ "$location_data" =~ external:([^|]+) ]]; then
-        external_ip="${BASH_REMATCH[1]}"
-    fi
+    # Handle error: location not found or extraction failed
+    handle_error "WARNING" "$location_name" "Failed to get external IP"
+    continue  # or return, depending on context
 fi
 
 # ❌ BAD: Direct array access (gets full delimited string)
-local external_ip="${LOCATIONS[$location_name]}"
+local external_peer_ip="${LOCATIONS[$location_name]}"
 ```
 
 **Key Points:**
 - The `LOCATIONS` array stores values in format: `"external:IP|internal:IPs"` (not just the IP)
 - Always use `get_location_external_ip()` helper function to extract external IP from `LOCATIONS` array
-- If helper function unavailable, use regex fallback: `external:([^|]+)`
+- The helper function is always available when `parse_location_config()` is available (they're in the same module)
 - Never assume `LOCATIONS[$name]` contains just the IP address
-- Always validate extracted IP is non-empty before use
+- Always check the return value of `get_location_external_ip()` and handle errors appropriately
 - Direct array access returns the full delimited string, which will cause validation failures
 
 **Related Patterns:**
@@ -1471,6 +2082,45 @@ log_message "ERROR" "NYC" "Failed to restart VPN for NYC"
 - DEBUG messages only output if DEBUG=1
 - INFO messages output to stderr when running interactively (TTY attached)
 
+### Pattern: Logging Errors During Early Initialization
+
+**When to Use:** Error handling when sourcing modules fails during early initialization, before logging infrastructure is fully available
+
+**Pattern:**
+```bash
+# Helper function to log errors when sourcing modules fails
+# Uses log_message if available (from logging.sh), otherwise falls back to echo
+# This ensures errors are logged consistently when possible
+log_state_error() {
+    local message="$1"
+    if type log_message >/dev/null 2>&1; then
+        # log_message is available - use it (it will handle LOG_FILE not being set)
+        log_message "ERROR" "SYSTEM" "$message"
+    else
+        # Fallback to echo if log_message not available
+        echo "Error: $message" >&2
+    fi
+}
+
+# Use the helper when sourcing modules
+source "${MODULE_DIR}/module.sh" 2>/dev/null || {
+    log_state_error "Failed to source module.sh"
+    exit 1
+}
+```
+
+**Key Points:**
+- Check if `log_message` is available using `type log_message`
+- Use `log_message` if available (even if `LOG_FILE` isn't set yet - it will output to stderr)
+- Fall back to `echo` if `log_message` isn't available (e.g., during very early initialization)
+- This pattern is useful for library files that are sourced early in the initialization sequence
+- Ensures errors are logged through centralized logging when possible, but still work if logging isn't available
+
+**Example:**
+- `lib/state.sh` uses this pattern when sourcing state module files fails
+- When `vpn-monitor.sh` sources `state.sh` (after `logging.sh`), errors are logged via `log_message`
+- If `state.sh` is sourced independently (e.g., in tests), it falls back to `echo`
+
 ### Pattern: Don't Log Success When Operations Fail
 
 **When to Use:** Functions that check operation success but log success messages
@@ -1478,27 +2128,25 @@ log_message "ERROR" "NYC" "Failed to restart VPN for NYC"
 **Pattern:**
 ```bash
 # ✅ GOOD: Return early on error, only log success when operation succeeds
-set_cooldown() {
-    local minutes="$1"
-    local cooldown_until
-    cooldown_until=$(get_timestamp_plus_minutes "$minutes")
-    if ! atomic_write_file "$COOLDOWN_UNTIL_FILE" "$cooldown_until"; then
-        handle_error "ERROR" "SYSTEM" "Failed to set cooldown period (file: $COOLDOWN_UNTIL_FILE)" 0
+record_restart() {
+    local timestamp
+    timestamp=$(get_unix_timestamp)
+    if ! atomic_write_file "$RESTART_COUNT_FILE" "$timestamp" "append"; then
+        handle_error "ERROR" "SYSTEM" "Failed to record restart (file: $RESTART_COUNT_FILE)" 0
         return 0  # Return early - don't log success
     fi
-    log_message "INFO" "SYSTEM" "Cooldown period set for $minutes minutes"  # Only logs on success
+    log_message "INFO" "SYSTEM" "Restart recorded at $timestamp"  # Only logs on success
 }
 
 # ❌ BAD: Logs success even when write fails
-set_cooldown() {
-    local minutes="$1"
-    local cooldown_until
-    cooldown_until=$(get_timestamp_plus_minutes "$minutes")
-    if ! atomic_write_file "$COOLDOWN_UNTIL_FILE" "$cooldown_until"; then
-        handle_error "ERROR" "SYSTEM" "Failed to set cooldown period" 0
+record_restart() {
+    local timestamp
+    timestamp=$(get_unix_timestamp)
+    if ! atomic_write_file "$RESTART_COUNT_FILE" "$timestamp" "append"; then
+        handle_error "ERROR" "SYSTEM" "Failed to record restart" 0
         # Bug: Function continues and logs success below!
     fi
-    log_message "INFO" "SYSTEM" "Cooldown period set for $minutes minutes"  # Wrong! Logs even on failure
+    log_message "INFO" "SYSTEM" "Restart recorded at $timestamp"  # Wrong! Logs even on failure
 }
 ```
 
@@ -1621,7 +2269,7 @@ source "${RECOVERY_DIR}/recovery_state.sh" 2>/dev/null || {
 2. **Dependency Order**: Source modules in dependency order (dependencies first)
 3. **Backward Compatibility**: Main module file serves as compatibility layer
 4. **Independent Sourceability**: Each module should be independently sourceable (useful for testing)
-5. **Fallback Handling**: Use `2>/dev/null || { ... }` for graceful degradation if modules can't be loaded
+5. **Fail Fast**: Modules should fail fast if dependencies can't be sourced - this is better than silent degradation
 
 **Module Organization Example:**
 ```
@@ -1647,135 +2295,136 @@ lib/
 - Source modules in dependency order
 - Use descriptive module names
 - Each module should be independently sourceable
-- Provide fallback handling for missing modules
-- Use centralized fallback functions from `lib/fallbacks.sh` instead of inline fallback definitions
+- Modules fail fast if dependencies can't be sourced (better than silent degradation)
 - Document module structure in ARCHITECTURE.md
 
-### Pattern: Centralized Fallback Functions
+**Note on Standalone Scripts:**
+- Scripts in the `scripts/` subdirectory are generally **standalone utility scripts** and do not need the full module sourcing infrastructure
+- They should be able to run independently without sourcing `lib/config.sh`, `lib/detection.sh`, etc., unless they specifically need that functionality
+- Keep scripts in `scripts/` as standalone as possible - only source what's actually needed
+- See "Command Availability Patterns" section for guidance on command checking in standalone scripts
 
-**When to Use:** When modules need fallback functions if dependencies fail to source
+### Pattern: Fallback Function Definitions in Standalone Scripts
 
-**Overview:**
-All fallback function definitions are centralized in `lib/fallbacks.sh` to eliminate code duplication and ensure consistent fallback behavior across modules. This pattern replaces inline fallback definitions with standardized, reusable fallback functions.
+**When to Use:** Standalone scripts that source library modules but need to work even if libraries fail to load
 
-**Pattern - Standard Usage:**
+**Pattern:**
 ```bash
-# Source module with fallback
-source "${LIB_DIR}/common.sh" 2>/dev/null || {
-    # Fallback if common.sh not found - use centralized fallbacks
-    # shellcheck source=lib/fallbacks.sh
-    if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-        source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
-    fi
-}
+# ✅ GOOD: Define fallback function if library function not available
+# Source library modules
+source "${PROJECT_ROOT}/lib/common.sh" 2>/dev/null || true
+
+# Fallback function if library failed to load
+if ! command -v sanitize_location_name >/dev/null 2>&1; then
+    # Fallback implementation
+    sanitize_location_name() {
+        local location_name="$1"
+        local sanitized
+        # ... fallback implementation ...
+        echo "$sanitized"
+    }
+fi
+
+# ✅ GOOD: Check function availability before use
+if ! command -v validate_ip_address >/dev/null 2>&1; then
+    echo "ERROR: validate_ip_address function not available. detection.sh library is required." >&2
+    return 1
+fi
+
+# ❌ BAD: Assume library functions are always available
+source "${PROJECT_ROOT}/lib/common.sh" 2>/dev/null || true
+# No check - script fails if function not available
+sanitize_location_name "$name"  # May fail!
 ```
-
-**Pattern - Defensive Check (Critical Paths):**
-For critical paths where `fallbacks.sh` itself might fail to source, check function existence before calling:
-```bash
-# Source fallbacks.sh first (may fail silently)
-if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-    source "${LIB_DIR}/fallbacks.sh" 2>/dev/null || true
-fi
-
-# Later, when module fails to source, check function exists before calling
-if ! source "${LIB_DIR}/config_schema.sh" 2>/dev/null; then
-    # Check if function exists before calling (fallbacks.sh may have failed to source)
-    if declare -f define_schema_fallbacks >/dev/null 2>&1; then
-        define_schema_fallbacks
-    fi
-fi
-```
-
-**Centralized Fallback Functions:**
-
-1. **`define_schema_fallbacks()`** - Schema-related fallbacks
-   - Functions: `get_config_schema`, `is_config_required`, `get_config_default`
-   - Used by: `lib/config/config_loading.sh`
-
-2. **`define_logging_fallbacks()`** - Logging fallbacks
-   - Functions: `log_message`, `handle_error`
-   - Used by: `lib/detection/*.sh` (failure_analysis, network_validation, ping_detection, xfrm_detection)
-
-3. **`define_common_fallbacks()`** - Common utility fallbacks
-   - Functions: `ensure_file_exists`, `try_ensure_directory_exists`, `safe_source_lib`, `get_unix_timestamp`, `check_command_available`, `atomic_write_file`
-   - Used by: `lib/logging.sh`, `lib/state.sh`, `lib/lockfile.sh`, `lib/resources.sh`
-
-4. **`define_logging_timestamp_fallback()`** - Timestamp fallback
-   - Functions: `get_formatted_timestamp`
-   - Used by: `lib/lockfile.sh` (when logging.sh unavailable but timestamp needed)
-
-**Module Usage Examples:**
-
-```bash
-# Example 1: Simple pattern (most modules)
-# lib/logging.sh, lib/state.sh, lib/resources.sh
-source "${LIB_DIR}/common.sh" 2>/dev/null || {
-    if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-        source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
-    fi
-}
-
-# Example 2: Detection modules (logging fallbacks)
-# lib/detection/ping_detection.sh, lib/detection/xfrm_detection.sh, etc.
-source "${LIB_DIR}/logging.sh" 2>/dev/null || {
-    if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-        source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_logging_fallbacks
-    fi
-}
-
-# Example 3: Config loading (defensive check pattern)
-# lib/config/config_loading.sh
-if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-    source "${LIB_DIR}/fallbacks.sh" 2>/dev/null || true
-fi
-# ... later when schema fails to source ...
-if declare -f define_schema_fallbacks >/dev/null 2>&1; then
-    define_schema_fallbacks
-fi
-
-# Example 4: Multiple fallbacks (lockfile.sh)
-# lib/lockfile.sh needs both common and timestamp fallbacks
-source "${LIB_DIR}/common.sh" 2>/dev/null || {
-    if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-        source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
-    fi
-}
-source "${LIB_DIR}/logging.sh" 2>/dev/null || {
-    if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-        source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_logging_timestamp_fallback
-    fi
-}
-```
-
-**Benefits:**
-- **Single source of truth:** All fallback implementations in one file (`lib/fallbacks.sh`)
-- **Consistency:** Same fallback behavior across all modules using the same fallback type
-- **Maintainability:** Update fallback logic in one place, affects all modules
-- **DRY principle:** Eliminates ~200+ lines of duplicate fallback code
-- **Standardization:** Clear pattern for when and how to use fallbacks
 
 **Key Points:**
-- ✅ **Always use centralized fallbacks** from `lib/fallbacks.sh` instead of inline definitions
-- ✅ **Check file existence and readability** before sourcing: `[[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]`
-- ✅ **Use `&&` operator** to only call define function if sourcing succeeds: `source ... && define_*_fallbacks`
-- ✅ **For critical paths**, check function existence before calling: `declare -f define_*_fallbacks >/dev/null 2>&1`
-- ✅ **Fallback functions are intentionally minimal** - they provide basic functionality when modules are unavailable
-- ✅ **Handle fallbacks.sh failure gracefully** - it may fail to source, so check function existence before calling
-- ❌ **Don't define fallbacks inline** - always use centralized functions
-- ❌ **Don't assume fallbacks.sh exists** - always check before sourcing
+- Check function availability with `command -v function_name` before using
+- Define fallback functions when libraries might not be available
+- Fallback functions should match the original function's interface (arguments, return codes, output)
+- Document fallback functions with same documentation format as library functions
+- Use `2>/dev/null || true` when sourcing to prevent errors from breaking script
+- Provide clear error messages when required functions are missing
+- Fallback functions should provide minimal functionality needed for script to work
 
-**Implementation Details:**
-- Fallback functions are defined as functions (not just aliases) to allow proper function replacement
-- Each `define_*_fallbacks()` function defines multiple related fallback functions
-- Fallback implementations are minimal but functional - they provide basic behavior, not full feature parity
-- The `safe_source_lib()` fallback is simpler than the real implementation (intentional - fallbacks are minimal)
+**When to Use:**
+- Standalone utility scripts that should work even if libraries fail to load
+- Scripts that need to work in environments where libraries might not be available
+- Migration scripts or one-off utilities that need to be self-contained
 
-**Related Patterns:**
-- See `ARCHITECTURE.md` for module structure documentation
-- See `lib/fallbacks.sh` for all fallback implementations
-- See `lib/config/config_loading.sh` for defensive check pattern example
-- See `CODE_REVIEW_CONSOLIDATED.md` for review findings and lessons learned
+**When NOT to Use:**
+- Main application scripts (should fail fast if libraries unavailable)
+- Library modules themselves (should not define fallbacks for their own dependencies)
+
+### Pattern: Module-Level Validation for Critical Dependencies
+
+**When to Use:** When a module has critical dependencies (like `STATE_DIR`, `LOGS_DIR`, etc.) that must be set before functions are called, but the module is sourced early in initialization.
+
+**Overview:**
+This pattern provides fail-fast detection of missing critical dependencies at module load time, rather than discovering the issue when functions are called. It logs a warning but doesn't exit, allowing the caller to decide how to handle the missing dependency.
+
+**Pattern:**
+```bash
+# At end of module file, after all functions are defined
+# Module-level validation: Check that STATE_DIR is set
+# This provides fail-fast detection if STATE_DIR is unset when the module loads.
+# In normal operation, STATE_DIR is set during config loading before state modules are sourced.
+# This check logs a warning but does not exit, allowing the caller to decide how to handle it.
+if [[ -z "${STATE_DIR:-}" ]]; then
+    # Use handle_error if available (from logging.sh), otherwise fall back to echo
+    # This allows the module to be sourced even if logging isn't fully initialized
+    if type handle_error >/dev/null 2>&1; then
+        handle_error "WARNING" "SYSTEM" "STATE_DIR is not set when loading state_paths.sh - state path functions may produce invalid paths" 0
+    else
+        echo "Warning: STATE_DIR is not set when loading state_paths.sh" >&2
+    fi
+fi
+```
+
+**Key Points:**
+- **Fail-fast**: Validates at module load time, not when functions are called
+- **Non-breaking**: Logs warning but doesn't exit (allows caller to decide)
+- **Graceful degradation**: Falls back to `echo` if logging functions not available
+- **Documentation**: Document the assumption in function documentation
+- **Placement**: Place validation at end of module file, after all functions are defined
+
+**Benefits:**
+- Catches issues early (at module load, not runtime)
+- More efficient than per-function validation (one check vs many)
+- Maintains function contracts (functions can still "always succeed")
+- Better architecture (fail-fast at boundary, not defensive everywhere)
+
+**Example Usage:**
+```bash
+# In lib/state/state_paths.sh
+# ... function definitions ...
+
+# Module-level validation: Check that STATE_DIR is set
+if [[ -z "${STATE_DIR:-}" ]]; then
+    if type handle_error >/dev/null 2>&1; then
+        handle_error "WARNING" "SYSTEM" "STATE_DIR is not set when loading state_paths.sh" 0
+    else
+        echo "Warning: STATE_DIR is not set when loading state_paths.sh" >&2
+    fi
+fi
+```
+
+**Documentation in Functions:**
+Functions that depend on the validated variable should document the assumption:
+```bash
+# Note:
+#   Requires STATE_DIR to be set (validated during module load and state initialization).
+#   If STATE_DIR is unset, this function will produce invalid absolute paths starting with "/".
+#   The module logs a warning if STATE_DIR is unset when state_paths.sh is sourced.
+```
+
+**When NOT to Use:**
+- Don't use for optional dependencies (only for critical ones)
+- Don't use if the dependency is always set before module load (redundant check)
+- Don't use if validation would break legitimate use cases (e.g., test environments)
+
+**See Also:**
+- `lib/state/state_paths.sh` - Example implementation
+- `docs/reviews/state_paths_validation_review.md` - Review of this pattern
 
 ---
 
@@ -1954,6 +2603,53 @@ get_peer_state_file_path() { }
 - Use `lowercase_with_underscores` for function names
 - Use descriptive names: `failure_count` not `fc`
 - Use `readonly` for constants that shouldn't change
+
+### Pattern: Peer IP Variable Naming
+
+**When to Use:** Functions that accept peer IP addresses as parameters
+
+**Standard Naming Convention:**
+- Use `external_peer_ip` for the external/public IP address of the remote VPN gateway (standard for all functions)
+- Use `internal_peer_ip` or `internal_peer_ips` for internal IP addresses (single IP or space-separated string)
+- Both internal and external IPs are technically "peer IPs", so being explicit about which one improves clarity
+
+**Pattern:**
+```bash
+# ✅ GOOD: Use external_peer_ip for external peer IP (standard)
+format_peer_ip_display() {
+    local external_peer_ip="$1"
+    local internal_peer_ips="${2:-}"
+    # ... function logic ...
+}
+
+# ✅ GOOD: Use external_peer_ip when distinguishing between external and internal IPs
+check_vpn_status() {
+    local external_peer_ip="$1"
+    local internal_peer_ips="${2:-}"
+    local location_name="$3"
+    # ... function logic that explicitly uses both external and internal IPs ...
+}
+
+# ✅ GOOD: Recovery functions use external_peer_ip (consistent standard)
+execute_ipsec_reload() {
+    local external_peer_ip="$1"
+    local location_name="$2"
+    # ... function logic ...
+}
+```
+
+**Rationale:**
+- Both internal and external IPs are technically "peer IPs", so using `external_peer_ip` makes it explicit which one is being used
+- This improves clarity and reduces confusion when reading code
+- Consistency across all functions improves readability
+- Display/formatting functions use `external_peer_ip` to match the standard
+
+**Examples from Codebase:**
+- `format_peer_ip_display()` - Uses `external_peer_ip` (standard)
+- `format_peer_display()` - Uses `external_peer_ip` (standard)
+- `check_vpn_status()` - Uses `external_peer_ip` (explicitly handles both external and internal IPs)
+- `detect_failure_type()` - Uses `external_peer_ip` (explicitly handles both external and internal IPs)
+- Recovery functions (`execute_ipsec_reload()`, `delete_stale_sas()`, `surgical_cleanup()`, etc.) - Use `external_peer_ip` (consistent standard)
 
 ### Pattern: Safe Variable Assignment
 
@@ -2137,6 +2833,39 @@ fi
 - INT signal should exit with 130, TERM signal should exit with 143
 - EXIT trap will run even after explicit cleanup, so idempotency is critical
 
+**Clearing EXIT Traps After Successful Completion:**
+
+When cleanup is only needed on error, you can clear the EXIT trap after successful completion:
+
+```bash
+# ✅ GOOD: Clear trap after successful completion
+temp_file=$(mktemp)
+cleanup_temp_file() {
+    rm -f "${temp_file:-}"
+}
+trap cleanup_temp_file EXIT
+
+# ... perform operations ...
+
+# If successful, clear trap (cleanup not needed)
+trap - EXIT
+
+# ❌ BAD: Cleanup runs even on success (unnecessary)
+temp_file=$(mktemp)
+cleanup_temp_file() {
+    rm -f "${temp_file:-}"
+}
+trap cleanup_temp_file EXIT
+# ... perform operations ...
+# Cleanup always runs, even when not needed
+```
+
+**Key Points for Clearing Traps:**
+- Clear trap with `trap - EXIT` after successful completion when cleanup is only needed on error
+- Useful when temporary files are only needed during processing and should be cleaned up on error
+- If cleanup should always run (e.g., lockfile removal), don't clear the trap
+- Always use `${var:-}` syntax in cleanup functions to handle cases where trap wasn't cleared
+
 **Common Mistakes:**
 ```bash
 # ❌ BAD: Loses exit code from main function
@@ -2185,12 +2914,15 @@ fi
 
 # ✅ GOOD: Calculate timeout based on command parameters
 # For ping: min(ping_timeout + 1, min(ping_count * ping_timeout + 1, 5))
-local ping_wrapper_timeout
+# This ensures we catch hanging commands quickly while allowing normal pings to complete
 local quick_timeout=$((ping_timeout + 1))
 local normal_timeout=$((ping_count * ping_timeout + 1))
+# Cap normal timeout at 5 seconds for responsiveness
 if [[ $normal_timeout -gt 5 ]]; then
     normal_timeout=5
 fi
+# Use the smaller timeout to catch hangs quickly
+local ping_wrapper_timeout
 if [[ $quick_timeout -lt $normal_timeout ]]; then
     ping_wrapper_timeout=$quick_timeout
 else
@@ -2215,13 +2947,15 @@ fi
 - Calculate timeout dynamically based on command parameters (e.g., ping count * timeout)
 
 **Timeout Constants:**
+- `XFRM_STATE_TIMEOUT=5` - Timeout for `ip xfrm state` command (5 seconds)
 - `IPSEC_STATUS_TIMEOUT=5` - Timeout for `ipsec status` command (5 seconds)
 - `XFRM_RECOVERY_VERIFY_TIMEOUT=30` - Timeout for xfrm recovery verification (30 seconds)
 - `LOCKFILE_TIMEOUT=300` - Timeout for lockfile staleness detection (300 seconds)
 
 **Commands That Should Be Wrapped:**
+- `ip xfrm state` - Wrapped with `XFRM_STATE_TIMEOUT` (5 seconds) in `lib/detection/xfrm_detection.sh`
 - `ipsec status` - Wrapped with `IPSEC_STATUS_TIMEOUT` (5 seconds)
-  - **Helper function**: Use `get_ipsec_status_for_peer()` in `lib/detection.sh` for ipsec status queries
+  - **Helper function**: Use `get_ipsec_status_for_peer()` in `lib/detection/xfrm_detection.sh` for ipsec status queries
 - `ping` commands - Wrapped with calculated timeout based on ping count and timeout
 - `dig` and `nslookup` - Wrapped with DNS timeout in network partition checks
 
@@ -2263,6 +2997,20 @@ fi
 # Functions are always in the same shell context, so PATH restrictions don't apply
 if command -v parse_location_config >/dev/null 2>&1; then
     config=$(parse_location_config "$location")
+    # If parse_location_config is available, other functions from the same module are also available
+    external_peer_ip=$(get_location_external_ip "$location_name" 2>/dev/null || echo "")
+fi
+
+# ✅ GOOD: Only check one function from a module (others in same module are also available)
+# parse_location_config, get_location_external_ip, and get_location_internal_ips are all in location_parsing.sh
+if command -v parse_location_config >/dev/null 2>&1; then
+    external_peer_ip=$(get_location_external_ip "$location_name" 2>/dev/null || echo "")
+    internal_ips=$(get_location_internal_ips "$location_name" 2>/dev/null || echo "")
+fi
+
+# ❌ BAD: Redundant checks for functions from the same module
+if command -v get_location_external_ip >/dev/null 2>&1 && command -v parse_location_config >/dev/null 2>&1; then
+    # Unnecessary: if parse_location_config is available, get_location_external_ip is also available
 fi
 
 # ❌ BAD: Direct command -v for binary commands in cron/systemd contexts
@@ -2278,6 +3026,9 @@ ipsec_output=$(ipsec status 2>/dev/null)  # May fail if ipsec not available
 - Always check command availability before executing optional commands
 - **For binary commands in cron/systemd contexts: Use helper functions (`check_command_available()` or `check_command_or_warn()`)**
 - **For function availability checks: Direct `command -v` is acceptable** (functions are in same shell context, PATH restrictions don't apply)
+- **When checking functions from the same module: Only check one representative function** (if one function from a module is available, all functions from that module are available)
+  - Example: `parse_location_config`, `get_location_external_ip`, and `get_location_internal_ips` are all in `lib/config/location_parsing.sh`
+  - If `parse_location_config` is available, the other functions are also available - no need to check each one
 - Use `check_command_available()` helper for silent checks
 - Use `check_command_or_warn()` for optional commands that should log warnings
 - Provide fallback mechanisms when commands are unavailable
@@ -2292,7 +3043,9 @@ ipsec_output=$(ipsec status 2>/dev/null)  # May fail if ipsec not available
   - Wraps `check_command_available()` and adds logging
   - **Use this for optional binary commands that should log warnings when unavailable**
 - `get_command_path()` - Returns full path to command, or command name if not found
-  - Uses same fallback logic as `check_command_available()` but returns path
+  - **Checks standard system directories first** (`/usr/sbin`, `/sbin`, `/usr/bin`, `/bin`) without relying on PATH or `command -v`
+  - This ensures reliable path resolution in PATH-restricted cron/systemd environments
+  - Falls back to `command -v` only if system directories don't contain the command
   - Returns command name if path cannot be determined (fallback to PATH at execution time)
   - **Use this when you need the full path for reliable command execution in PATH-restricted environments**
   - Example: `ipsec_cmd=$(get_command_path "ipsec"); "$ipsec_cmd" reload`
@@ -2317,6 +3070,16 @@ ipsec_output=$(ipsec status 2>/dev/null)  # May fail if ipsec not available
 - **Function availability (parse_location_config, get_location_external_ip, etc.)**: Direct `command -v` is acceptable
 - **Required commands**: Use `check_command_available()` and return early if unavailable
 - **Optional commands**: Use `check_command_or_warn()` and handle gracefully if unavailable
+
+**Standalone Scripts in `scripts/` Subdirectory:**
+- Scripts in the `scripts/` subdirectory are generally **standalone utility scripts** that should be able to run independently
+- They **do not need** the full sourcing infrastructure (sourcing `lib/config.sh`, `lib/detection.sh`, etc.) unless they specifically need that functionality
+- They can use simpler patterns:
+  - Direct `command -v` for binary commands is acceptable (scripts run in normal shell context, not cron/systemd)
+  - Direct `command -v` for function availability checks is acceptable
+  - No need for `check_command_available()` helper unless the script specifically runs in PATH-restricted environments
+- **Exception**: If a script in `scripts/` is called by the main program or needs library functionality, it should source the appropriate modules
+- **Guideline**: Keep scripts in `scripts/` as standalone as possible - only source what's actually needed
 
 ### Pattern: Fallback Command Execution
 
@@ -2636,6 +3399,47 @@ done
 - Use `IFS` to split delimited strings within loops
 - Quote array expansions to handle spaces correctly
 
+### Pattern: Process Substitution for Reading Function Output
+
+**When to Use:** Reading function output line by line into arrays or processing with loops
+
+**Pattern:**
+```bash
+# ✅ GOOD: Use process substitution to read function output into array
+local -a location_names
+while IFS= read -r name; do
+    location_names+=("$name")
+done < <(generate_location_names "$count" "$mode" "$csv_file")
+
+# ✅ GOOD: Use process substitution with mapfile for reading into array
+mapfile -t test_files < <(find tests -name "*.sh" -type f | sort)
+
+# ✅ GOOD: Use process substitution with readarray
+readarray -t sorted_locations < <(printf '%s\n' "${!location_map[@]}" | sort)
+
+# ❌ BAD: Using command substitution with echo (loses newlines, harder to process)
+names=$(generate_location_names "$count")
+# Problem: All names in single string, harder to split correctly
+```
+
+**Key Points:**
+- Use `< <(command)` process substitution to read command/function output line by line
+- Process substitution creates a file descriptor that can be read like a file
+- Works well with `while read` loops for line-by-line processing
+- Works well with `mapfile` or `readarray` for reading into arrays
+- Preserves newlines and handles multi-line output correctly
+- More efficient than command substitution (`$(command)`) when processing line by line
+- Process substitution runs in a subshell, so variable modifications won't affect parent shell
+
+**When to Use:**
+- Reading function output that produces multiple lines
+- Processing command output line by line
+- Reading into arrays from commands that output multiple items
+
+**When NOT to Use:**
+- Single-line output: Use command substitution `$(command)` instead
+- When you need to capture exit code: Process substitution doesn't provide exit code directly
+
 ### Pattern: Process Until Condition Met
 
 **When to Use:** Loops that continue until a condition is met (timeouts, retries, state changes)
@@ -2694,7 +3498,9 @@ done
 
 ### Pattern: Pass Arrays by Reference Using Namerefs
 
-**When to Use:** Functions that need to modify associative arrays or return multiple values
+**When to Use:** Functions that need to modify existing associative arrays or populate arrays with data
+
+**Note:** For returning multiple values from functions (as an alternative to global variables), see "Using Namerefs to Return Multiple Values" pattern above. This pattern focuses on modifying/populating arrays.
 
 **Pattern:**
 ```bash
@@ -2796,22 +3602,22 @@ done
 ```bash
 # ✅ GOOD: Check if variable is set before making it readonly
 # Prevents "readonly variable already set" errors when sourcing multiple times
+# Use this pattern in constants files that may be sourced from multiple modules
 [[ -z "${SECONDS_PER_MINUTE:-}" ]] && readonly SECONDS_PER_MINUTE=60
 [[ -z "${IPSEC_STATUS_TIMEOUT:-}" ]] && readonly IPSEC_STATUS_TIMEOUT=5
-
-# ✅ GOOD: In constants file, set directly (only sourced once)
-readonly EXIT_SUCCESS=0
-readonly SECONDS_PER_MINUTE=60
+[[ -z "${XFRM_RECOVERY_SLEEP_SECONDS:-}" ]] && readonly XFRM_RECOVERY_SLEEP_SECONDS=3
 
 # ❌ BAD: Setting readonly without check (fails if sourced twice)
 readonly SECONDS_PER_MINUTE=60  # Error if already set!
+readonly XFRM_RECOVERY_SLEEP_SECONDS=3  # Error if already set!
 ```
 
 **Key Points:**
 - Use conditional readonly (`[[ -z "${VAR:-}" ]] && readonly VAR=value`) when modules may be sourced multiple times
-- Use direct `readonly` in constants files that are only sourced once
+- **Constants files should be idempotent** - use conditional readonly even in constants files, as they may be sourced from multiple modules
 - Prevents "readonly variable already set" errors
 - Allows modules to have fallback constants if constants.sh isn't available
+- Example: `lib/recovery/constants.sh` uses conditional readonly because it's sourced by multiple recovery modules
 
 ### Pattern: Default Parameter Values
 
@@ -3364,6 +4170,110 @@ EOF
 
 ---
 
+## Script-Specific Patterns
+
+This section covers patterns specific to standalone scripts and script execution. Some related patterns may also appear in other sections (e.g., "Process Substitution" in Loop and Iteration Patterns, "Fallback Function Definitions" in Module Organization Patterns).
+
+### Pattern: Command-Line Argument Parsing
+
+**When to Use:** Scripts that accept command-line arguments with options and flags
+
+**Pattern:**
+```bash
+# ✅ GOOD: Standard argument parsing with while loop and case statement
+parse_args() {
+    local mode="interactive"
+    local csv_file=""
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --interactive | -i)
+            mode="interactive"
+            shift
+            ;;
+        --auto | -a)
+            mode="auto"
+            shift
+            ;;
+        --csv)
+            mode="csv"
+            csv_file="$2"
+            shift 2  # Shift past both option and value
+            ;;
+        --help | -h)
+            show_usage
+            exit 0
+            ;;
+        *)
+            echo "ERROR: Unknown option: $1" >&2
+            show_usage
+            exit 1
+            ;;
+        esac
+    done
+}
+
+# ✅ GOOD: Validate arguments before processing
+parse_args() {
+    # Validate first, then process
+    validate_args "$@"
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --fake)
+            NO_ESCALATE=1
+            shift
+            ;;
+        *)
+            # Unknown arguments already handled by validate_args
+            shift
+            ;;
+        esac
+    done
+}
+
+# ✅ GOOD: Handle both short and long options
+case "$1" in
+-h | --help)
+    show_usage
+    exit 0
+    ;;
+-v | --verbose)
+    VERBOSE=1
+    shift
+    ;;
+*)
+    echo "ERROR: Unknown option: $1" >&2
+    exit 1
+    ;;
+esac
+```
+
+**Key Points:**
+- Use `while [[ $# -gt 0 ]]` to iterate through all arguments
+- Use `case` statement for option matching
+- Support both short (`-h`) and long (`--help`) options in same case
+- Use `shift` to remove processed arguments (use `shift 2` for options with values)
+- Always handle unknown arguments with error message and usage display
+- Redirect error messages to stderr (`>&2`)
+- Exit with appropriate code (0 for help, 1 for errors)
+- Validate arguments before processing when possible
+- Use descriptive variable names for flags and options
+
+**Common Patterns:**
+- **Flags (no value):** `shift` after setting flag
+- **Options with values:** `shift 2` after reading value
+- **Help/Usage:** Display help and `exit 0`
+- **Unknown options:** Display error, show usage, `exit 1`
+
+**Related Patterns:**
+- See "Interactive User Input" in UDM-Specific Constraints for handling user prompts
+- See "Error Handling Patterns" for error handling in argument parsing
+- See "Process Substitution for Reading Function Output" in Loop and Iteration Patterns
+- See "Fallback Function Definitions in Standalone Scripts" in Module Organization Patterns
+
+---
+
 ## UDM-Specific Constraints
 
 ### Pattern: UDM OS Compatibility
@@ -3500,6 +4410,107 @@ read -r -p "Location name: " name  # Prompt text may be read as input
 
 **Why This Matters:**
 - When stdin is redirected (e.g., `script.sh <<EOF\ninput\nEOF`), any output to stdout before `read` can be consumed as input
+
+---
+
+## Comment Patterns
+
+### Pattern: Remove Useless Comments
+
+**When to Use:** When reviewing code for cleanup and maintainability
+
+**Pattern:**
+```bash
+# ❌ BAD: Comment just restates what the code does
+local variable=""
+# Set variable to empty string
+
+# ❌ BAD: Obvious comment
+if [[ $value -eq 0 ]]; then
+    # Return 0 if value is zero
+    return 0
+fi
+
+# ❌ BAD: Comment that's obvious from code structure
+# Extract first internal IP if multiple provided (space-separated)
+local internal_peer_ip=""
+if [[ -n "$internal_peer_ips" ]]; then
+    # ... code that extracts first IP
+fi
+
+# ✅ GOOD: Comment explains WHY, not WHAT
+# Use provided SA existence state if available, otherwise check SA existence
+# This optimization eliminates duplicate SA checks by reusing state from check_xfrm_status()
+local ipsec_phase2_up=0
+if [[ -n "$sa_exists" ]]; then
+    ipsec_phase2_up=$sa_exists
+fi
+
+# ✅ GOOD: Comment provides context about non-obvious behavior
+# Note: ip xfrm state returns exit code 0 even when no SAs exist (just empty output)
+# So we need to check stderr for actual command errors
+full_xfrm_output=$(ip -s xfrm state 2>&1)
+
+# ✅ GOOD: Comment explains edge case or important detail
+# Use fixed-string matching to prevent regex pattern injection
+# Match on "dst $external_peer_ip" pattern which appears at the start of each SA entry
+xfrm_output=$(get_xfrm_state_for_peer "$external_peer_ip")
+```
+
+**Key Points:**
+- **Remove comments that just restate the code** - They add noise without value
+- **Keep comments that explain WHY** - They provide context and reasoning
+- **Keep comments about non-obvious behavior** - Edge cases, platform-specific behavior, etc.
+- **Keep function documentation blocks** - Per ADR-0007, comprehensive function documentation is valuable
+- **Keep shellcheck source comments** - They're necessary for linting
+- **Remove obvious comments** - Comments like "# Set variable", "# Return 0", "# Check if X" that just describe what the code does
+
+**What to Remove:**
+- Comments that just restate variable assignments
+- Comments that describe obvious control flow
+- Comments that repeat function names or obvious operations
+- Redundant comments before shellcheck directives (the shellcheck comment already identifies what's being sourced)
+
+**What to Keep:**
+- Comments explaining optimization decisions
+- Comments about non-obvious platform behavior
+- Comments explaining why a particular approach was chosen
+- Function documentation blocks (per ADR-0007)
+- Shellcheck source comments (required for linting)
+- Comments that provide context about edge cases or important details
+
+**Examples of Useless Comments to Remove:**
+```bash
+# ❌ Remove: Just restates the code
+local diagnostic_parts=()
+# Build diagnostic message explaining why we couldn't determine the type
+
+# ❌ Remove: Obvious from code structure
+# Extract first internal IP if multiple provided (space-separated)
+local internal_peer_ip=""
+
+# ❌ Remove: Just describes what the code does
+# Check if we have actual output (not just empty/whitespace)
+if [[ -n "${full_xfrm_output//[[:space:]]/}" ]]; then
+
+# ❌ Remove: Redundant with shellcheck comment
+# Source common utility functions
+# shellcheck source=lib/common.sh
+source "${LIB_DIR}/common.sh"
+```
+
+**Examples of Useful Comments to Keep:**
+```bash
+# ✅ Keep: Explains optimization
+# Use provided SA existence state if available, otherwise check SA existence
+# This optimization eliminates duplicate SA checks by reusing state from check_xfrm_status()
+
+# ✅ Keep: Explains non-obvious behavior
+# Note: ip xfrm state returns exit code 0 even when no SAs exist (just empty output)
+# So we need to check stderr for actual command errors
+
+# ✅ Keep: Explains security consideration
+# Use fixed-string matching to prevent regex pattern injection
 - Redirecting prompts to stderr keeps them visible to users while preventing them from interfering with input redirection
 - This is critical for testability - tests can provide input via heredoc without the prompt text being read as input
 
@@ -3527,11 +4538,13 @@ This document consolidates code patterns used throughout the UDM VPN Monitor cod
 16. **Loops**: Read files line by line properly, iterate over arrays correctly
 17. **Associative Arrays**: Use namerefs to pass arrays by reference, initialize properly
 18. **Variable Initialization**: Use conditional readonly for multi-source modules, provide default parameter values, pre-declare arrays (use `declare -gA` for global arrays to avoid scoping issues)
-19. **Bash Strict Mode**: Use `set -euo pipefail` in main scripts, handle errors explicitly in library modules
+19. **Comment Patterns**: Remove useless comments that just restate code, keep comments that explain why or provide context
+20. **Bash Strict Mode**: Use `set -euo pipefail` in main scripts, handle errors explicitly in library modules
     - **Deletion Safety**: Validate paths before deletion operations, protect against symlink attacks, use defense-in-depth
-20. **Quoting**: Always quote variable expansions, use `$()` for command substitution, quote heredoc delimiters appropriately
-21. **UDM Constraints**: Target UDM OS 4.3+, use `/data` for persistent storage, check command availability, provide fallbacks
-22. **Interactive Input**: Redirect prompts to stderr (`>&2`) before `read` to prevent interference with stdin redirection in tests
+21. **Quoting**: Always quote variable expansions, use `$()` for command substitution, quote heredoc delimiters appropriately
+22. **UDM Constraints**: Target UDM OS 4.3+, use `/data` for persistent storage, check command availability, provide fallbacks
+23. **Interactive Input**: Redirect prompts to stderr (`>&2`) before `read` to prevent interference with stdin redirection in tests
+24. **Script-Specific**: Parse command-line arguments with while/case pattern, use process substitution for reading function output, define fallback functions in standalone scripts
 
 For more detailed information about specific patterns, see:
 - `CODE_REVIEW_LESSONS_LEARNED.md` - Historical lessons learned from code reviews (includes bug context and how patterns were discovered)

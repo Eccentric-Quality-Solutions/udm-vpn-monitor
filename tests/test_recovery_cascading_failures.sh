@@ -10,6 +10,7 @@
 # - Recovery succeeds but restart record fails
 
 load test_helper
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -28,12 +29,12 @@ load fixtures/vpn_at_tier
 
 	# Mock ip command - xfrm recovery fails (can't delete SAs)
 	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
+	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "delete" ]]; then
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
     # xfrm delete fails
     exit 1
-elif [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     # Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
     # Return SAs so recovery is attempted
     # Include zero byte counters to ensure VPN is detected as DOWN
@@ -41,7 +42,7 @@ elif [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
     echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
     echo "    lifetime current: 0 bytes, 0 packets"
     exit 0
-elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     # Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
     # Return SAs so recovery is attempted
     # Include zero byte counters to ensure VPN is detected as DOWN
@@ -50,12 +51,13 @@ elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
     echo "    lifetime current: 0 bytes, 0 packets"
     exit 0
 fi
-exec /usr/bin/ip "$@"
+exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
 
 	# Mock ipsec - both reload and restart fail
-	mock_ipsec_reload_restart 1 1
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 1 1 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -65,10 +67,10 @@ EOF
 	assert_file_exist "$LOG_FILE"
 
 	# Should attempt xfrm recovery
-	assert_file_contains "$LOG_FILE" "xfrm" || assert_file_contains "$LOG_FILE" "xfrm-based"
+	assert_log_contains_any "$LOG_FILE" "xfrm" "xfrm-based"
 
 	# Should fall back to ipsec reload
-	assert_file_contains "$LOG_FILE" "reload" || assert_file_contains "$LOG_FILE" "fallback"
+	assert_log_contains_any "$LOG_FILE" "reload" "fallback"
 
 	# Note: Restart may not be attempted if failure count doesn't reach Tier 3 threshold (5)
 	# In this test, failure count starts at 3 (Tier 2), increments to 4 on VPN failure,
@@ -174,7 +176,7 @@ EOF
 		assert_file_exist "$LOG_FILE"
 
 		# Should log recovery success
-		assert_file_contains "$LOG_FILE" "reload" || assert_file_contains "$LOG_FILE" "recovery"
+		assert_log_contains_any "$LOG_FILE" "reload" "recovery"
 
 		# Restore permissions
 		restore_permissions_after_test "$state_file" "$original_perms"
@@ -221,10 +223,8 @@ EOF
 	# 2. Making just the file unwritable doesn't work (atomic_write_file removes it first)
 	# 3. Making file immutable requires root privileges
 	#
-	# The fix ensures set_cooldown returns early on error instead of logging success.
-	# The unit test in test_state_atomic_write_failures.sh verifies set_cooldown handles
-	# atomic write failures correctly. This integration test verifies the script succeeds
-	# when recovery works, demonstrating that cooldown failures don't crash the script.
+	# This integration test verifies the script succeeds when recovery works,
+	# demonstrating that state file write failures don't crash the script.
 
 	run bash "$TEST_SCRIPT"
 
@@ -233,12 +233,7 @@ EOF
 	assert_file_exist "$LOG_FILE"
 
 	# Should log recovery success
-	assert_file_contains "$LOG_FILE" "restart" || assert_file_contains "$LOG_FILE" "recovery"
-
-	# Note: The specific cooldown failure case is tested in test_state_atomic_write_failures.sh
-	# which tests set_cooldown directly with an unwritable directory. This test verifies
-	# the integration: script completes successfully when recovery succeeds, even if cooldown
-	# would fail (the fix ensures set_cooldown doesn't log success on failure).
+	assert_log_contains_any "$LOG_FILE" "restart" "recovery"
 
 	remove_mock_from_path
 }
@@ -289,7 +284,7 @@ EOF
 		assert_file_exist "$LOG_FILE"
 
 		# Should log recovery success
-		assert_file_contains "$LOG_FILE" "restart" || assert_file_contains "$LOG_FILE" "recovery"
+		assert_log_contains_any "$LOG_FILE" "restart" "recovery"
 
 		# Restore permissions
 		restore_permissions_after_test "$restart_count_file" "$original_perms"
@@ -335,10 +330,8 @@ EOF
 
 	# Make failure count file unwritable to simulate increment failure
 	local state_dir="${STATE_DIR:-${TEST_DIR}}"
-	mkdir -p "$state_dir"
+	setup_test_environment "$state_dir" "${TEST_DIR}/logs"
 	export STATE_DIR="$state_dir"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
 
 	# Source state functions to get file path
 	# shellcheck source=../lib/state.sh
@@ -384,9 +377,8 @@ EOF
 
 	# Set failure count to simulate recovery scenario
 	local state_dir="${STATE_DIR:-${TEST_DIR}}"
+	setup_test_environment "$state_dir" "${TEST_DIR}/logs"
 	export STATE_DIR="$state_dir"
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${TEST_DIR}/logs"
 
 	# Source state functions to get file path
 	# shellcheck source=../lib/state.sh
@@ -411,7 +403,7 @@ EOF
 		assert_file_exist "$LOG_FILE"
 
 		# Should log recovery (VPN is healthy)
-		assert_file_contains "$LOG_FILE" "recovered" || assert_file_contains "$LOG_FILE" "healthy" || assert_file_contains "$LOG_FILE" "OK"
+		assert_log_contains_any "$LOG_FILE" "recovered" "healthy" "OK"
 
 		# Restore permissions
 		restore_permissions_after_test "$failure_count_file" "$original_perms"

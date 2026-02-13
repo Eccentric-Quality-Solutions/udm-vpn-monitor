@@ -4,9 +4,14 @@
 # Validates that all functions have proper documentation blocks according to ADR-0007
 #
 # This script checks staged shell script files for function documentation compliance:
-# - All functions must have documentation blocks before them
-# - Documentation must include required sections: Arguments, Returns
+# - All functions must have documentation blocks before them (at least a brief description)
+# - Non-trivial functions must include required sections: Arguments, Returns
+# - Trivial functions (1-3 lines of code, simple wrappers) only need a brief description
 # - Optional but recommended: Side effects, Examples, Notes
+#
+# Documentation requirements:
+#   - Trivial functions: Brief description only (Arguments/Returns optional)
+#   - Non-trivial functions: Brief description + Arguments + Returns sections required
 #
 # Usage:
 #   check-documentation.sh [file1.sh] [file2.sh] ...
@@ -22,11 +27,93 @@ NC='\033[0m' # No Color
 # Track if any errors were found
 ERRORS_FOUND=0
 
+# Check if a function is trivial (simple enough to allow minimal documentation)
+#
+# Determines if a function is trivial enough to allow minimal documentation
+# (brief description only, without Arguments/Returns sections). A function is
+# considered trivial if it:
+# - Has a very short body (1-3 lines of actual code, excluding braces/comments)
+# - Is a simple wrapper, one-liner, or self-explanatory utility
+#
+# Arguments:
+#   $1: Path to the file containing the function
+#   $2: Line number where the function is defined
+#
+# Returns:
+#   0: Function is trivial (allows minimal documentation)
+#   1: Function is not trivial (requires full documentation)
+#
+# Side effects:
+#   None
+#
+# Note:
+#   Reads the function body to count non-comment, non-blank, non-brace lines
+#   Functions with 3 or fewer lines of actual code are considered trivial
+is_trivial_function() {
+	local file="$1"
+	local func_line="$2"
+
+	# Find the end of the function (next function definition or end of file)
+	local total_lines
+	total_lines=$(wc -l <"$file")
+	local line_num=$func_line
+	local brace_count=0
+	local code_lines=0
+
+	# Read forward from function definition
+	while [[ $line_num -le $total_lines ]]; do
+		local line_content
+		line_content=$(sed -n "${line_num}p" "$file")
+
+		# Count opening braces
+		if [[ "$line_content" =~ \{ ]]; then
+			brace_count=$((brace_count + 1))
+		fi
+
+		# Count closing braces
+		if [[ "$line_content" =~ \} ]]; then
+			brace_count=$((brace_count - 1))
+			# If we've closed all braces, we've reached the end of the function
+			if [[ $brace_count -le 0 ]]; then
+				break
+			fi
+		fi
+
+		# Count non-comment, non-blank, non-brace-only lines as code
+		if [[ $line_num -gt $func_line ]]; then
+			# Skip lines that are only braces, whitespace, or comments
+			local stripped_line="${line_content// /}"
+			stripped_line="${stripped_line//\t/}"
+			if [[ -n "$stripped_line" ]] &&
+				[[ ! "$stripped_line" =~ ^# ]] &&
+				[[ ! "$stripped_line" =~ ^\{?[[:space:]]*\}?$ ]]; then
+				code_lines=$((code_lines + 1))
+			fi
+		fi
+
+		line_num=$((line_num + 1))
+
+		# Safety limit: if we haven't found the end after 50 lines, assume it's not trivial
+		if [[ $((line_num - func_line)) -gt 50 ]]; then
+			return 1
+		fi
+	done
+
+	# Functions with 3 or fewer lines of actual code are considered trivial
+	if [[ $code_lines -le 3 ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
 # Check if a function has proper documentation according to ADR-0007
 #
-# Validates that a function has a documentation block before its definition
-# and that the documentation includes required sections (Arguments and Returns).
-# Reads backwards from the function definition line to find documentation comments.
+# Validates that a function has a documentation block before its definition.
+# For non-trivial functions, also requires Arguments and Returns sections.
+# For trivial functions (simple one-liners, wrappers), only a brief description
+# is required. Reads backwards from the function definition line to find
+# documentation comments.
 #
 # Arguments:
 #   $1: Path to the file containing the function
@@ -34,7 +121,7 @@ ERRORS_FOUND=0
 #   $3: Name of the function to check
 #
 # Returns:
-#   0: Function has proper documentation with required sections
+#   0: Function has proper documentation
 #   1: Function is missing documentation or required sections
 #
 # Side effects:
@@ -50,10 +137,17 @@ ERRORS_FOUND=0
 #   (indicating another function or code block)
 #   Looks for "Arguments:" and "Returns:" sections in documentation comments
 #   Documentation must be in comment blocks (lines starting with #)
+#   Trivial functions (1-3 lines of code) only need a brief description
 check_function_documentation() {
 	local file="$1"
 	local func_line="$2"
 	local func_name="$3"
+
+	# Check if this is a trivial function
+	local is_trivial=false
+	if is_trivial_function "$file" "$func_line"; then
+		is_trivial=true
+	fi
 
 	# Read lines before the function definition
 	# Look for documentation block (comments starting with #)
@@ -61,6 +155,7 @@ check_function_documentation() {
 	local has_arguments=false
 	local has_returns=false
 	local doc_lines=()
+	local has_description=false
 
 	# Read backwards from function definition to find documentation
 	local line_num=$func_line
@@ -76,8 +171,25 @@ check_function_documentation() {
 
 		# Collect documentation lines
 		if [[ "$line_content" =~ ^[[:space:]]*# ]]; then
+			# Skip shebang lines (#!/bin/bash, etc.) - they're not function documentation
+			if [[ "$line_content" =~ ^#! ]]; then
+				break
+			fi
+
 			has_doc=true
 			doc_lines=("$line_content" "${doc_lines[@]}")
+
+			# Check for description (any non-empty comment that's not just a section header)
+			# A description should have some actual text content, not just punctuation/symbols
+			local stripped="${line_content#\#}"
+			stripped="${stripped// /}"
+			# Remove common punctuation/symbols to see if there's actual content
+			local content_only="${stripped//[!a-zA-Z0-9]/}"
+			if [[ -n "$content_only" ]] &&
+				[[ ${#content_only} -ge 3 ]] &&
+				[[ ! "$stripped" =~ ^(Arguments|Returns|Sideeffects|Examples|Note): ]]; then
+				has_description=true
+			fi
 
 			# Check for required sections
 			# Arguments section can be "Arguments:" or "Arguments: None" or similar
@@ -93,12 +205,24 @@ check_function_documentation() {
 	# Check if documentation exists
 	if [[ "$has_doc" == false ]]; then
 		echo -e "${RED}ERROR${NC}: Function '${func_name}' at line ${func_line} in ${file} is missing documentation block"
-		echo "  All functions must have documentation blocks before their definition"
+		echo "  All functions must have at least a brief description before their definition"
 		ERRORS_FOUND=1
 		return 1
 	fi
 
-	# Check for required sections
+	# For trivial functions, only require a brief description
+	if [[ "$is_trivial" == true ]]; then
+		if [[ "$has_description" == false ]]; then
+			echo -e "${RED}ERROR${NC}: Function '${func_name}' at line ${func_line} in ${file} is missing a brief description"
+			echo "  Trivial functions must have at least a brief description comment"
+			ERRORS_FOUND=1
+			return 1
+		fi
+		# Trivial functions don't require Arguments/Returns sections
+		return 0
+	fi
+
+	# For non-trivial functions, require Arguments and Returns sections
 	local missing_sections=()
 	if [[ "$has_arguments" == false ]]; then
 		missing_sections+=("Arguments")
@@ -112,6 +236,7 @@ check_function_documentation() {
 		for section in "${missing_sections[@]}"; do
 			echo "  - ${section}"
 		done
+		echo "  Non-trivial functions require Arguments and Returns sections"
 		ERRORS_FOUND=1
 		return 1
 	fi

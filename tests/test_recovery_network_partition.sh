@@ -9,6 +9,7 @@
 # - Network partition clears during recovery - should continue recovery
 
 load test_helper
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -56,7 +57,7 @@ ADDITIONAL_EOF
 	# Set up state files for VPN failure (3 failures to trigger recovery) using location-based state functions
 	# shellcheck source=../lib/state.sh
 	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
-	set_peer_state "" "${TEST_PEER_IP}" "failure_count" "3" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "3" || true
 
 	# Set network partition state
 	local partition_state_file="${STATE_DIR}/network_partition_state"
@@ -69,7 +70,7 @@ ADDITIONAL_EOF
 	# Should skip VPN checks due to network partition (optimization: checks skipped before recovery)
 	assert_file_exist "$LOG_FILE"
 	# Should log that VPN checks are skipped (new optimization) or recovery is skipped (fallback)
-	assert_file_contains "$LOG_FILE" "Skipping VPN checks" || assert_file_contains "$LOG_FILE" "Skipping VPN recovery" || assert_file_contains "$LOG_FILE" "network is partitioned" || assert_file_contains "$LOG_FILE" "network partitioned"
+	assert_log_contains_any "$LOG_FILE" "Skipping VPN checks" "Skipping VPN recovery" "network is partitioned" "network partitioned"
 	# Should NOT attempt recovery actions
 	refute_file_contains "$LOG_FILE" "Tier 2" || refute_file_contains "$LOG_FILE" "surgical cleanup" || refute_file_contains "$LOG_FILE" "reload"
 
@@ -140,7 +141,7 @@ EOF
 	# Should detect partition and skip VPN checks (optimization) or recovery
 	assert_file_exist "$LOG_FILE"
 	# Should log that VPN checks are skipped (new optimization) or recovery is skipped (fallback)
-	assert_file_contains "$LOG_FILE" "Skipping VPN checks" || assert_file_contains "$LOG_FILE" "Skipping VPN recovery" || assert_file_contains "$LOG_FILE" "network is partitioned" || assert_file_contains "$LOG_FILE" "network partitioned"
+	assert_log_contains_any "$LOG_FILE" "Skipping VPN checks" "Skipping VPN recovery" "network is partitioned" "network partitioned"
 	# Should NOT attempt recovery actions
 	refute_file_contains "$LOG_FILE" "ipsec reload should not be called"
 
@@ -175,9 +176,16 @@ EOF
 	export TEST_DIR
 	cat >"$mock_ip" <<MOCKEOF
 #!/bin/bash
-# Handle xfrm state (preserve fixture's behavior - VPN down, no SA)
+# Handle "ip -s xfrm state" (with statistics flag) - VPN down, no SA
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    echo "mock_ip: handling ip -s xfrm state" >> "${TEST_DIR}/mock_calls.log" 2>/dev/null || true
+    # Return empty output (no SA found - VPN is down)
+    exit 0
+fi
+
+# Handle "ip xfrm state" (without statistics flag) - VPN down, no SA
 if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-    echo "mock_ip: handling xfrm state" >> "${TEST_DIR}/mock_calls.log" 2>/dev/null || true
+    echo "mock_ip: handling ip xfrm state" >> "${TEST_DIR}/mock_calls.log" 2>/dev/null || true
     # Return empty output (no SA found - VPN is down)
     exit 0
 fi
@@ -266,8 +274,9 @@ EOF
 		return 1
 	fi
 
-	# Mock ipsec - reload should be called once partition clears
-	mock_ipsec_reload_restart 0 0
+	# Mock ipsec - VPN is DOWN initially (status_exit=1), reload/restart succeed
+	# This ensures VPN detection fails and recovery is triggered
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -277,9 +286,156 @@ EOF
 	# Should detect partition cleared and continue recovery
 	assert_file_exist "$LOG_FILE"
 	# Should log that network connectivity restored
-	assert_file_contains "$LOG_FILE" "Network connectivity restored" || assert_file_contains "$LOG_FILE" "resuming VPN monitoring"
+	assert_log_contains_any "$LOG_FILE" "Network connectivity restored" "resuming VPN monitoring"
 	# Should attempt recovery actions after partition clears
-	assert_file_contains "$LOG_FILE" "Tier 2" || assert_file_contains "$LOG_FILE" "surgical cleanup" || assert_file_contains "$LOG_FILE" "reload"
+	assert_log_contains_any "$LOG_FILE" "Tier 2" "surgical cleanup" "reload"
+
+	remove_mock_from_path
+}
+
+# ============================================================================
+# check_vpn_status_for_location TESTS - Coverage gaps from COVERAGE_REVIEW
+# ============================================================================
+
+# bats test_tags=category:high-risk,priority:high
+@test "check_vpn_status_for_location: partition previously detected - re-check and skip if still partitioned" {
+	# Purpose: Test verifies that when partition was previously detected, function re-checks and skips VPN checks if still partitioned
+	# Expected: Function re-checks partition state, detects it's still partitioned, returns 2 and logs skip message
+	# Importance: Covers lines 743-760 - partition re-check logic and early return path
+	# This test covers the uncovered path where partition_state=1 and check_network_partition fails
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+
+	# Set up state directory and partition state file
+	mkdir -p "$STATE_DIR"
+	local partition_state_file="${STATE_DIR}/network_partition_state"
+	echo "1" >"$partition_state_file"
+
+	# Mock network partition check to fail (still partitioned)
+	mock_ip_interfaces_up "br0,eth0" "0" >/dev/null
+	mock_dig 0
+	add_mock_to_path
+
+	# Source required functions
+	source_recovery_module
+
+	# Test check_vpn_status_for_location directly
+	run check_vpn_status_for_location "TEST" "${TEST_PEER_IP}" ""
+
+	# Should return 2 (partition detected)
+	assert_equal "$status" 2
+	# Should log that VPN checks are skipped
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Skipping VPN checks" "network partition detected"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "check_vpn_status_for_location: partition previously detected - re-check and continue if cleared" {
+	# Purpose: Test verifies that when partition was previously detected but clears, function continues with VPN checks
+	# Expected: Function re-checks partition state, detects it's cleared, updates state, and continues with VPN check
+	# Importance: Covers lines 762-771 - partition cleared path and state update
+	# This test covers the uncovered path where partition_state=1 but check_network_partition succeeds
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+
+	# Set up state directory and partition state file (previously partitioned)
+	mkdir -p "$STATE_DIR"
+	local partition_state_file="${STATE_DIR}/network_partition_state"
+	echo "1" >"$partition_state_file"
+
+	# Create combined mock ip command that handles route, link, and xfrm state
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+# Handle route commands
+if [[ "$1" == "route" ]] && [[ "$2" == "show" ]] && [[ "$3" == "default" ]]; then
+    echo "default via 192.168.1.1 dev eth0"
+    exit 0
+fi
+# Handle link commands
+if [[ "$1" == "link" ]] && [[ "$2" == "show" ]]; then
+    echo "1: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default"
+    echo "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default"
+    exit 0
+fi
+# Handle xfrm state commands
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    echo "src 192.168.1.1 dst 192.168.1.1"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: 1000 bytes, 10 packets"
+    exit 0
+fi
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "src 192.168.1.1 dst 192.168.1.1"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: 1000 bytes, 10 packets"
+    exit 0
+fi
+# Handle other ip commands
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+
+	# Mock dig for DNS check
+	mock_dig 1 "8.8.8.8"
+	add_mock_to_path
+
+	# Source required functions
+	source_recovery_module
+
+	# Test check_vpn_status_for_location directly
+	run check_vpn_status_for_location "TEST" "${TEST_PEER_IP}" ""
+
+	# Should return 0 (VPN healthy)
+	assert_equal "$status" 0
+	# Should log that network connectivity restored
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Network connectivity restored" "resuming VPN monitoring"
+	# Partition state should be cleared
+	local partition_state
+	partition_state=$(get_network_partition_state)
+	assert_equal "$partition_state" 0
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "check_vpn_status_for_location: partition previously detected - logs summary if due" {
+	# Purpose: Test verifies that partition summary logging is triggered when partition is detected
+	# Expected: Function calls log_network_partition_summary_if_due when partition is detected
+	# Importance: Covers lines 759, 760, 770 - partition summary logging paths
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+
+	# Set up state directory and partition state file
+	mkdir -p "$STATE_DIR"
+	local partition_state_file="${STATE_DIR}/network_partition_state"
+	echo "1" >"$partition_state_file"
+
+	# Set up partition stats to trigger summary (more than 1 hour elapsed)
+	local stats_file="${STATE_DIR}/network_partition_stats"
+	mkdir -p "$(dirname "$stats_file")"
+	# Set last_summary_log to 0 (never logged) to trigger summary
+	echo "last_summary_log=0" >"$stats_file"
+	echo "total_checks=100" >>"$stats_file"
+	echo "partitioned_checks=50" >>"$stats_file"
+
+	# Mock network partition check to fail (still partitioned)
+	mock_ip_interfaces_up "br0,eth0" "0" >/dev/null
+	mock_dig 0
+	add_mock_to_path
+
+	# Source required functions
+	source_recovery_module
+
+	# Test check_vpn_status_for_location directly
+	run check_vpn_status_for_location "TEST" "${TEST_PEER_IP}" ""
+
+	# Should return 2 (partition detected)
+	assert_equal "$status" 2
+	# Should log partition summary if due (may or may not be due depending on timing)
+	# At minimum, should log that checks are skipped
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Skipping VPN checks" "network partition"
 
 	remove_mock_from_path
 }

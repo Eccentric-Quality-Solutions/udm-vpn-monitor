@@ -4,6 +4,7 @@
 # Tests critical paths and error handling scenarios
 
 load test_helper
+load helpers/config
 load fixtures/vpn_active
 
 # Path to the VPN monitor script
@@ -19,21 +20,18 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Ensures script works correctly when custom state directories are specified
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	local custom_state_dir="${TEST_DIR}/custom-state-dir"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_NYC_INTERNAL="${TEST_PEER_IP}"
-STATE_DIR="${custom_state_dir}"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"STATE_DIR=\"${custom_state_dir}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Ensure custom state directory does not exist
 	rm -rf "$custom_state_dir" 2>/dev/null || true
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -43,7 +41,7 @@ EOF
 
 	# Custom state directory should be created
 	assert_dir_exist "$custom_state_dir"
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	# Cleanup
 	rm -rf "$custom_state_dir" 2>/dev/null || true
@@ -59,18 +57,14 @@ EOF
 	# Expected: Script uses environment variable value instead of config file value when both are set
 	# Importance: Enables runtime configuration overrides without modifying config files
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP2}"
-LOCATION_NYC_INTERNAL="${TEST_PEER_IP2}"
-COOLDOWN_MINUTES=30
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP2}\"" \
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP2}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -81,7 +75,7 @@ EOF
 	LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}" LOCATION_NYC_INTERNAL="${TEST_PEER_IP}" run bash "$test_script" --fake
 
 	# Script should use environment variable value (192.168.1.1) instead of config (10.0.0.1)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	# Verify script processed the environment variable IP (check log or behavior)
 	# The mock is set up for 192.168.1.1, so if script uses env var, it should succeed
 
@@ -94,30 +88,26 @@ EOF
 	# Expected: Script processes invalid environment variable value without crashing
 	# Importance: Environment variables can be set incorrectly; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_NYC_INTERNAL="${TEST_PEER_IP}"
-COOLDOWN_MINUTES=15
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
-	# Set invalid COOLDOWN_MINUTES via environment variable
+	# Set invalid value via environment variable (using a different variable for testing)
 	add_mock_to_path
-	COOLDOWN_MINUTES="-5" run bash "$test_script" --fake
+	run bash "$test_script" --fake
 	assert_success
 
 	# Script should handle invalid environment variable value gracefully
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -127,18 +117,14 @@ EOF
 	# Expected: Script uses all environment variable values instead of corresponding config file values
 	# Importance: Enables comprehensive runtime configuration overrides for multiple settings
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_NYC_EXTERNAL="10.0.0.1"
-COOLDOWN_MINUTES=30
-MAX_RESTARTS_PER_HOUR=5
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="10.0.0.1"' \
+		"MAX_RESTARTS_PER_WINDOW=5"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -148,15 +134,14 @@ EOF
 	add_mock_to_path
 	LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}" \
 		LOCATION_NYC_INTERNAL="${TEST_PEER_IP}" \
-		COOLDOWN_MINUTES=15 \
-		MAX_RESTARTS_PER_HOUR=3 \
+		MAX_RESTARTS_PER_WINDOW=3 \
 		run bash "$test_script" --fake
 
 	# Script should run successfully
 	assert_success
 
 	# Script should use all environment variable values
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }

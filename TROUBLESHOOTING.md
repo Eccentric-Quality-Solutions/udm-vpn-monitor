@@ -239,15 +239,18 @@ service cron status
 - Check system logs: `dmesg | tail -50`
 
 **If rate limited**:
-- Too many restarts in last hour (default: max 3)
-- Wait for rate limit to expire (1 hour)
-- Or increase `MAX_RESTARTS_PER_HOUR` in config
+- Too many Tier 3 restarts in configured window (default: max 20 per 60 minutes)
+- Wait for rate limit to expire (window duration from oldest restart)
+- Or adjust rate limiting configuration:
+  - `MAX_RESTARTS_PER_WINDOW` (default: 20, range: 1-20)
+  - `RATE_LIMIT_WINDOW_MINUTES` (default: 60, range: 5-1440)
+  - `MIN_RESTART_INTERVAL_SECONDS` (default: 40, range: 0-300)
 - **Note**: If you see "Tier 3: Attempting..." messages but no actual restart, rate limiting is working as designed. The log message appears before the rate limit check, but the restart only executes if allowed.
 
-**If in cooldown**:
-- Cooldown period after restart (default: 15 minutes)
-- Wait for cooldown to expire
-- Or reduce `COOLDOWN_MINUTES` in config
+**If minimum restart interval not met**:
+- Restart attempted too soon after previous restart (default: minimum 40 seconds)
+- Wait for minimum interval to elapse
+- Or adjust `MIN_RESTART_INTERVAL_SECONDS` in config (set to 0 to disable)
 
 **If recovery actions fail**:
 - Check if `ipsec` command works manually:
@@ -731,7 +734,7 @@ cat /data/vpn-monitor/reports/vpn-monitor-analysis.csv
 
 **Recovery Action**:
 ```
-[WARNING] Tier 2: Attempting surgical SA cleanup for 203.0.113.1
+[INFO] Tier 2: Attempting surgical SA cleanup for 203.0.113.1
 [INFO] Surgical cleanup completed for 203.0.113.1
 ```
 

@@ -2,6 +2,24 @@ Considerations for the future, but want to avoid overarchitecting and premature 
 
 **Note:** Items marked with ✅ COMPLETED have been finished and can be considered resolved.
 
+- Consider routing issue detection during ipsec status fallback periods
+  - Current state: When xfrm unavailable, system falls back to ipsec status (no byte counters)
+  - Issue: Routing issues (ping failures) may go undetected longer when byte counters unavailable
+  - Gap: During ipsec status fallback, routing_issue is detected but silently ignored if primary_check_passed=1
+  - Proposed: Consider treating persistent ping failures (e.g., 3+ consecutive) as VPN failures even when SA exists and byte counters unavailable
+  - Benefit: Better detection of routing issues during fallback periods
+  - Cost: MEDIUM - requires tracking ping failure duration and adjusting failure detection logic
+  - Priority: LOW - current design is reasonable trade-off, routing issues often resolve themselves
+  - Note: Identified during Seattle-Dallas outage analysis (2026-01-23) - see analyze/ping-check-outage-analysis.md
+  - See: ADR-0014 already documents "May Miss Some Issues" but this is a more specific gap during fallback periods
+
+- Consider additional state keys in cleanup_peer_state()
+  - Currently cleans up: failure_count, last_bytes, spi, idle_detected, connection_name
+  - Missing: last_status_log, failure_type, recovery_method
+  - Note: These keys may be intentionally excluded (cleared on recovery, not peer removal)
+  - Low priority: Only relevant if cleanup_peer_state() is used in production (currently only in tests)
+  - Decision needed: Should these be cleaned up when peers are removed, or are they intentionally location-scoped?
+
 - Optimize detection module sourcing (optional)
   - Currently, modules source dependencies even when already sourced by parent `detection.sh`
   - Could add checks to avoid redundant sourcing: `if ! type validate_ipv4 >/dev/null 2>&1; then source ...; fi`
@@ -22,11 +40,13 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Note: Partial fix implemented - `check_vpn_status()` combines diagnostic messages when both xfrm and ipsec checks fail (see `lib/detection.sh:2410,2474`)
     - Still needed: General message combining across codebase for related events (recovery sequences, detection failures, verification steps)
 
-- Automate mock cleanup verification in CI/CD
-    - Run `scripts/audit_mock_cleanup.sh` as part of CI/CD pipeline to catch missing cleanup calls early
-    - Could be integrated into pre-commit hooks or as a CI check
-    - Prevents regression of mock cleanup issues
-    - Note: Audit script already exists and works well, just needs integration
+- Standardize output parameter passing patterns
+    - Currently uses mixed patterns: namerefs for arrays, eval for scalars
+    - Consider standardizing on namerefs for all output parameters (scalars and arrays)
+    - Would improve consistency and reduce reliance on eval
+    - Note: Refactoring of `delete_stale_sas()` uses namerefs for scalars, which is a step in this direction
+    - Benefit: More consistent codebase, easier to understand
+    - Effort: MEDIUM (requires updating multiple functions)
 
 - Standardize `handle_error_or_exit_fake_mode()` return value checking pattern
     - Some places check return value explicitly: `if ! handle_error_or_exit_fake_mode() ... then return 1`
@@ -35,18 +55,51 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Low priority: current code works correctly, this is a style consistency improvement
     - See `lib/config.sh` lines 1108, 1154, 1179, 1212, 1405 for examples that could be refactored
 
+- DNS resolution enhancements
+    - Add DNS cache TTL support to handle DNS changes during long-running scripts
+    - Add IPv6 resolution support (currently only IPv4 via `ahostsv4` and `host -t A`)
+    - Consider partial resolution for multiple internal IPs (continue with successfully resolved IPs instead of failing entirely)
+    - Add DNS resolution retry logic for transient DNS failures
+    - Note: Basic DNS support completed 2026-01-27, these are enhancements for edge cases
+
+- Standardize non-critical state write error handling
+    - Currently 28+ instances of `atomic_write_file ... 2>/dev/null || true` silently ignore errors
+    - Pattern used for non-critical statistics/logging state files (ping summaries, resource monitoring stats, network partition stats, etc.)
+    - Issue: Silent failures can mask real problems (permission errors, disk full conditions)
+    - Proposed: Add DEBUG-level logging for state file write failures in non-critical paths
+    - Pattern: `if ! atomic_write_file "$file" "$value" 2>/dev/null; then log_message "DEBUG" "SYSTEM" "Failed to update state file: $file (non-fatal)"; fi`
+    - Benefit: Better diagnostic visibility without cluttering logs (DEBUG level only visible when DEBUG=1)
+    - Cost: MEDIUM - requires updating 28+ instances across codebase for consistency
+    - Priority: LOW - current pattern works, failures are non-fatal, but diagnostic value would be helpful
+    - Note: Pilot implementation added to `log_ping_summary_if_due()` in `ping_detection.sh` (2026-01-18)
+    - See: `docs/reviews/ping_detection_review.md` issue #7 for detailed analysis
+
+- System-wide failure detection enhancements
+  - Consider making coordinator selection more robust (e.g., use location order instead of first-check-wins)
+  - Consider adding metrics/statistics for system-wide failures (e.g., count, duration, frequency)
+  - Consider alerting integration for system-wide failures (e.g., email, webhook, syslog)
+  - Consider different recovery strategies for system-wide failures (e.g., infrastructure-level recovery like restarting IPsec daemon, checking kernel state)
+  - Consider rate limiting exceptions for system-wide failures (allow more restarts during system-wide failures)
+  - Note: Basic system-wide failure detection implemented 2026-01-12
+
 - Continue migrating test data to use test data helpers
     - Many test files still have embedded xfrm state output, ipsec status output, and config files
     - Files with significant embedded data include: `test_recovery.sh`, `test_detection.sh`, `test_integration_location.sh`, and others
     - Pattern is established: use `generate_xfrm_state_output()`, `generate_config_file()`, etc. from `helpers/test_data`
     - Benefits: Centralized maintenance, consistency, easier to update test data formats
-    - Note: Migration started 2026-01-11 with `test_recovery_partial_failures.sh`, `test_recovery_cooldown_rate_limit_interaction.sh`, and `test_config.sh`
+    - Note: Migration started 2026-01-11 with `test_recovery_partial_failures.sh` and `test_config.sh`
     - Note: Key instances migrated 2026-01-27 in `test_recovery.sh`, `test_detection.sh`, and `test_integration_location.sh`
     - Pattern for mock scripts: Generate output using helpers, store in file, use placeholders in mock script, replace with sed after creation
     - Note: Additional migrations completed 2026-01-28: Migrated 2 more test cases in `test_recovery.sh`:
       - "xfrm recovery - Verification timeout exceeded" - migrated static xfrm state outputs
       - "xfrm recovery - Mixed SAs with and without marks" - migrated static outputs (including mark handling via sed post-processing)
     - Remaining: ~110 embedded instances in `test_recovery.sh` (mostly complex dynamic cases with calculated counters, marks, or state transitions), can be migrated gradually
+
+- Rate limiting enhancements
+  - Consider per-location rate limiting (currently global)
+  - Add rate limit metrics tracking (track rate limit hits for monitoring)
+  - Dynamic rate limiting (adjust limits based on failure patterns)
+  - Note: Basic rate limiting refactored 2026-01-12 to remove cooldown and add configurable window + minimum interval
 
 - Migrate more tests to use test data helpers
     - Many test files still have embedded test data (xfrm state, ipsec status, config templates)
@@ -124,3 +177,85 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Low priority: Current test still verifies that script doesn't crash, which is the important behavior
     - Note: Test includes comment acknowledging limitation - "Note: This may not work on all systems, but tests the error handling path"
     - See: `tests/test_lockfile.sh:1031-1063` for current implementation
+
+- Make network partition summary interval configurable
+    - Currently fixed at 1 hour (3600 seconds)
+    - Could be made configurable similar to `PING_SUMMARY_INTERVAL_MINUTES` if users want different intervals
+    - Example: `NETWORK_PARTITION_SUMMARY_INTERVAL_MINUTES=60` (default: 60, range: 1-1440)
+    - Low priority: Current 1-hour interval meets requirements
+    - Note: Pattern established 2026-01-15 with network partition statistics tracking
+
+- Review and fix ip xfrm state mock patterns in tests
+    - Issue: Many test mocks only handle `ip xfrm state` but not `ip -s xfrm state` (with -s flag)
+    - `execute_xfrm_state_command` calls `ip -s xfrm state` first, then falls back to `ip xfrm state`
+    - Tests that mock `ip` command need to handle both formats to work correctly
+    - Found 43+ instances of old pattern `if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]` that may need updating
+    - Helper functions like `mock_ip_xfrm_state()` already handle both formats correctly
+    - Low priority: Tests may still work if they don't call `check_ipsec_phase2` or if fallback path is used
+    - Action: Review tests that use inline `ip xfrm state` mocks and update to handle `-s` flag or use helper functions
+    - Note: Fixed in `test_detection_ping_optional.sh` 2026-01-28
+
+- Refactor error handling argument parsing to use explicit argument order
+    - Current pattern: `handle_error "ERROR" "SYSTEM" "message" 2` (last arg is optional exit code)
+    - Issue: Ambiguous when message ends with a number (e.g., "Retry count: 3" vs exit code "3")
+    - Proposed: `handle_error "ERROR" "SYSTEM" "message" 2` (explicit 4th argument for exit code)
+    - Benefit: Eliminates ambiguity, clearer API, easier to understand
+    - Cost: Breaking change - requires updating all call sites across codebase
+    - Priority: LOW - current pattern works, just has edge case limitations
+    - Note: Duplication issue resolved 2026-01-27, but ambiguous design remains
+    - See: `docs/reviews/logging_review.md` issue #2 for detailed analysis
+
+- Improve error handling for file sourcing (stderr suppression refactor)
+    - Current pattern: `source "${LIB_DIR}/constants.sh" 2>/dev/null || { fallback }` used in 47+ places
+    - Issue: Suppressing stderr hides syntax errors and other real problems, making debugging harder
+    - Impact: Low probability (files are stable), but medium impact if syntax errors occur silently
+    - Proposed: Add simple error reporting when sourcing fails (echo to stderr directly, or use helper function)
+    - Pattern example: `if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then echo "WARNING: Failed to source constants.sh, using fallback" >&2; fallback; fi`
+    - Benefit: Better error visibility without complex process substitution or dependency on logging infrastructure
+    - Cost: MEDIUM - requires updating 47+ instances across codebase for consistency
+    - Priority: LOW - current pattern works, fallback values are correct, issue is rare
+    - Note: Review identified issue in `config.sh` but pattern is widespread; consider codebase-wide refactor if prioritizing
+    - See: `docs/reviews/config_sh_review.md` issue #2 for detailed analysis
+
+- Remove redundant defensive fallbacks in state.sh and config.sh
+    - Current state: `lib/state.sh` (lines 22-34) and `lib/config.sh` (lines 32-50) have defensive fallback constants
+    - Issue: These fallbacks were needed to avoid "readonly variable already set" errors when constants.sh was sourced multiple times
+    - Status: Now redundant since `lib/constants.sh` was made idempotent (2026-01-27)
+    - Proposed: Remove fallback blocks, simplify to: `source "${LIB_DIR}/constants.sh" 2>/dev/null || { echo "ERROR: Failed to source constants.sh" >&2; exit 1; }`
+    - Benefit: Reduces code duplication, simplifies maintenance, removes ~20 lines of redundant code
+    - Cost: LOW - simple removal, but removes safety net if constants.sh file is missing/corrupted
+    - Priority: LOW - fallbacks don't hurt and provide safety net for edge cases (file not found, syntax errors)
+    - Note: Fallbacks are harmless but redundant. Consider removing if prioritizing code simplification.
+    - See: Code review 2026-01-27 for constants.sh idempotency fix
+
+- Consider helper functions for array size checks to reduce set +u/set -u verbosity
+    - Current pattern: `set +u; if [[ ${#ARRAY[@]} -gt 0 ]]; then ...; fi; set -u` used 55+ times across anonymization scripts
+    - Issue: Verbose pattern required due to `set -euo pipefail` and empty array handling
+    - Proposed: Create helper function like `is_array_empty ARRAY_NAME` that handles `set +u`/`set -u` internally
+    - Benefit: Reduces code verbosity, improves readability, centralizes array checking logic
+    - Cost: LOW - simple helper function, but requires updating 55+ call sites
+    - Priority: LOW - current pattern works correctly, just verbose
+    - Note: Pattern established during unified anonymization refactoring (2026-01-20)
+
+- Consider extracting sed script building into shared functions if duplication increases
+    - Current state: Similar sed script building patterns exist across anonymize-firewall.sh, anonymize-ip-rules.sh, anonymize-logs.sh, anonymize-ipset.sh
+    - Issue: Each script builds sed scripts for IP/interface/set name replacements with similar logic
+    - Proposed: Extract common sed script building into helper functions in lib/anonymize.sh
+    - Benefit: Reduces duplication, centralizes sed script building logic, easier to maintain
+    - Cost: MEDIUM - requires refactoring multiple scripts, but pattern is well-established
+    - Priority: LOW - current duplication is acceptable, scripts are readable and maintainable
+    - Note: Pattern established during unified anonymization refactoring (2026-01-20)
+
+- Enhance network address normalization for `/8` and `/16` networks
+    - Current state: Network normalization only normalizes the last octet (works correctly for `/24` networks)
+    - Issue: `/8` and `/16` networks should normalize more octets for proper network address semantics:
+      - `/8` networks should normalize last 3 octets: `10.0.0.0/8` (currently only normalizes last octet)
+      - `/16` networks should normalize last 2 octets: `10.199.0.0/16` (currently only normalizes last octet)
+      - `/24` networks work correctly: `172.31.22.0/24` ✓
+    - Example: `172.16.0.0/16` currently maps to `10.199.248.0/16` but should map to `10.199.0.0/16`
+    - Proposed: Add CIDR-specific normalization logic based on prefix length
+    - Benefit: More realistic anonymized network addresses, better readability
+    - Cost: MEDIUM - requires parsing CIDR prefix length and normalizing appropriate octets
+    - Priority: LOW - current implementation is acceptable for most use cases, `/24` networks (most common) work correctly
+    - Note: `/12` and other non-octet-boundary CIDR lengths are more complex to handle
+    - See: CODE_REVIEW_COMBINED.md section 6 for detailed analysis (2025-01-20)

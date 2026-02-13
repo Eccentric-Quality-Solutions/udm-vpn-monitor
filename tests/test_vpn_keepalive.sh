@@ -4,6 +4,9 @@
 # Tests keepalive daemon functionality: start, stop, status, restart
 
 load test_helper
+load helpers/config
+load helpers/assertions
+load helpers/mocks
 
 # Path to the vpn-keepalive script
 KEEPALIVE_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-keepalive.sh"
@@ -69,16 +72,32 @@ setup_keepalive_test() {
 		cp "${BATS_TEST_DIRNAME}/../lib/detection.sh" "${lib_dir}/detection.sh"
 	fi
 
+	# Copy config subdirectory files (required by config.sh)
+	local config_subdir="${lib_dir}/config"
+	mkdir -p "${config_subdir}"
+	if [[ -d "${BATS_TEST_DIRNAME}/../lib/config" ]]; then
+		cp -r "${BATS_TEST_DIRNAME}/../lib/config/"* "${config_subdir}/" 2>/dev/null || true
+	fi
+
+	# Copy detection subdirectory files (required by detection.sh)
+	local detection_subdir="${lib_dir}/detection"
+	mkdir -p "${detection_subdir}"
+	if [[ -d "${BATS_TEST_DIRNAME}/../lib/detection" ]]; then
+		cp -r "${BATS_TEST_DIRNAME}/../lib/detection/"* "${detection_subdir}/" 2>/dev/null || true
+	fi
+
 	# Create config file with location-based format
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP2}"
-ENABLE_KEEPALIVE=1
-KEEPALIVE_INTERVAL=30
-KEEPALIVE_PING_COUNT=1
-PING_TIMEOUT=2
-${config_overrides}
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP2}\"" \
+		"ENABLE_KEEPALIVE=1" \
+		"KEEPALIVE_INTERVAL=30" \
+		"KEEPALIVE_PING_COUNT=1" \
+		"PING_TIMEOUT=2"
+	# Add config overrides if provided
+	if [[ -n "$config_overrides" ]]; then
+		echo "$config_overrides" >>"$config_file"
+	fi
 
 	# Create symlink to script in test directory so it can find lib/
 	ln -sf "$KEEPALIVE_SCRIPT" "${MOCK_INSTALL_DIR}/vpn-keepalive.sh"
@@ -153,7 +172,7 @@ cleanup_keepalive_daemon() {
 
 	assert_success
 	assert_output --partial "UDM VPN Keepalive"
-	assert_output --partial "0.5.0"
+	assert_output --partial "0.7.0"
 }
 
 # bats test_tags=category:unit
@@ -310,12 +329,8 @@ cleanup_keepalive_daemon() {
 
 			assert_success
 			# Wait for PID file to be removed (indicates daemon stopped)
-			# Use timeout to prevent hanging if daemon doesn't stop
-			local wait_count=0
-			while [[ -f "$pidfile" ]] && [[ $wait_count -lt 20 ]]; do
-				sleep 0.05
-				wait_count=$((wait_count + 1))
-			done
+			# Using file-based synchronization helper instead of custom polling loop
+			wait_for_file_removed "$pidfile" 1 || true
 
 			# Verify process is stopped (with timeout protection)
 			if [[ -n "$pid" ]]; then
@@ -437,13 +452,8 @@ cleanup_keepalive_daemon() {
 	# Importance: Ensures keepalive works with IPv6 VPN tunnels.
 	setup_keepalive_test 'LOCATION_TEST_EXTERNAL="2001:db8::1"'
 
-	# Mock ping6 command
-	local mock_ping6="${TEST_DIR}/ping6"
-	cat >"$mock_ping6" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-	chmod +x "$mock_ping6"
+	# Mock ping6 command (just succeeds)
+	create_mock_output "ping6" "" >/dev/null
 
 	# Mock ping command (should support -6 flag)
 	local mock_ping="${TEST_DIR}/ping"
@@ -552,7 +562,6 @@ EOF
 	wait_for_file "$pidfile" 2 || true
 
 	# Log file should exist (may be created by daemon)
-	local log_file="${MOCK_INSTALL_DIR}/logs/vpn-keepalive.log"
 	# Note: Log file may not exist immediately, so we don't assert it exists
 	# Just verify the directory exists
 	assert_dir_exist "${MOCK_INSTALL_DIR}/logs"
@@ -598,7 +607,7 @@ EOF
 	if [[ -f "$keepalive_log" ]]; then
 		# Keepalive log should contain keepalive-specific messages
 		# (e.g., "Starting VPN keepalive daemon" or "Keepalive:")
-		assert_file_contains "$keepalive_log" "keepalive" || assert_file_contains "$keepalive_log" "Keepalive"
+		assert_log_contains_any "$keepalive_log" "keepalive" "Keepalive"
 	fi
 
 	# Verify monitor log file does NOT contain keepalive messages

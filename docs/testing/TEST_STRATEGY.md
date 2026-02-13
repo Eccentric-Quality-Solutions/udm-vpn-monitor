@@ -1,7 +1,7 @@
 # Test Strategy and Approach
 
 **Date**: 2026-01-02  
-**Last Updated**: 2026-01-02  
+**Last Updated**: 2026-01-19  
 **Status**: Active
 
 ---
@@ -122,7 +122,7 @@ For detailed information about test structure, file organization, test categorie
 - **[Test Categories](../docs/BATS_GUIDE.md#test-categories)** - Fast vs. slow tests, test categorization, and test counts
 - **[Test Environment Requirements](../docs/BATS_GUIDE.md#test-environment-requirements)** - System requirements and tool installation
 
-**Summary**: The test suite consists of ~900 tests organized by functionality (configuration, detection, recovery, integration, etc.) and categorized as fast (~605 tests, run by default) or slow (~295 tests, excluded by default for faster development feedback).
+**Summary**: The test suite consists of ~1530 tests across 77 test files organized by functionality (configuration, detection, recovery, integration, etc.) and categorized as fast (~605 tests, run by default) or slow (~925 tests, excluded by default for faster development feedback).
 
 ## Testing Approach
 
@@ -312,6 +312,84 @@ For current test metrics including test counts, execution times, and quality ind
 - Flaky test detection and fixing
 - Test documentation review
 
+## Industry Best Practices
+
+### Test Pyramid
+
+Our test suite follows the test pyramid principle:
+
+1. **Unit Tests** (Base - Most Tests): Fast, isolated tests of individual functions
+   - ~605 fast tests covering unit-level functionality
+   - High isolation with mocked dependencies
+   - Fast execution (< 1 second per test)
+
+2. **Integration Tests** (Middle): Tests of component interactions
+   - ~925 slow tests covering integration scenarios
+   - Tests interactions between modules
+   - Moderate execution time (1-5 seconds per test)
+
+3. **End-to-End Tests** (Top - Fewest Tests): Full system tests
+   - Critical path tests covering complete workflows
+   - Slower execution but comprehensive coverage
+   - Focus on high-risk scenarios
+
+### Test Quality Standards
+
+**Test Reliability**:
+- **Isolation**: Complete test isolation (each test gets fresh environment)
+- **Determinism**: Tests produce consistent results
+- **No Flakiness**: Target 0% flaky test rate
+- **Fast Feedback**: Fast tests run by default for quick feedback
+
+**Test Maintainability**:
+- **Clear Names**: Descriptive test names explaining what is tested
+- **Documentation**: Purpose, expected behavior, and importance comments
+- **Patterns**: Consistent use of established patterns
+- **Fixtures**: Reusable fixtures for common scenarios
+
+**Test Coverage**:
+- **Critical Paths**: High coverage of critical functionality
+- **Error Paths**: Comprehensive error handling coverage
+- **Edge Cases**: Edge cases and boundary conditions tested
+- **Current Coverage**: 46.9% overall (target: 60%)
+
+### Test Organization Best Practices
+
+**File Organization**:
+- Group related tests in same file
+- Use consistent naming: `test_<module>_<feature>.sh`
+- Keep files focused (< 500 lines when possible)
+- Split large files into smaller, focused files
+
+**Test Categorization**:
+- Use test tags for filtering and categorization
+- Fast vs. slow test separation for development speed
+- Category tags: `category:high-risk`, `category:integration`, `category:unit`
+- Priority tags: `priority:high`, `priority:medium`, `priority:low`
+
+### Test Execution Best Practices
+
+**Local Development**:
+- Run fast tests by default for quick feedback
+- Include slow tests before committing
+- Use parallel execution when available
+- Generate coverage reports regularly
+
+**CI/CD Integration**:
+- Fast tests on every commit
+- Slow tests on pull requests
+- Coverage reports generated and uploaded
+- Flaky test detection enabled
+- Test failures block merges
+
+### Test Data Management
+
+**Best Practices**:
+- Use test fixtures for common scenarios
+- Extract reusable test data to `tests/data/` directory
+- Use constants for test values (e.g., `TEST_PEER_IP`)
+- Avoid hardcoding values that should be configurable
+
 ## Continuous Improvement
 
 ### Test Suite Evolution
@@ -337,6 +415,6 @@ This test strategy should be reviewed and updated:
 
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: 2026-01-02  
-**Next Review**: 2026-04-02
+**Document Version**: 1.1  
+**Last Updated**: 2026-01-19  
+**Next Review**: 2026-04-19

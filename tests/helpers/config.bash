@@ -78,8 +78,8 @@ create_valid_config() {
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'COOLDOWN_MINUTES=15' \
-		'MAX_RESTARTS_PER_HOUR=3'
+		'MAX_RESTARTS_PER_WINDOW=20' \
+		'RATE_LIMIT_WINDOW_MINUTES=60'
 }
 
 # Create a test lib directory with config_schema.sh
@@ -117,9 +117,8 @@ declare -A CONFIG_SCHEMA=(
 	["TIER1_THRESHOLD"]="required|integer|min:1|default:1"
 	["TIER2_THRESHOLD"]="required|integer|min:TIER1_THRESHOLD|default:3"
 	["TIER3_THRESHOLD"]="required|integer|min:TIER2_THRESHOLD|default:5"
-	["COOLDOWN_MINUTES"]="required|integer|min:1|max:1440|default:15"
-	["MAX_RESTARTS_PER_HOUR"]="required|integer|min:1|max:60|default:3"
-	["VPN_NAME"]="optional|string||default:Site-to-Site VPN"
+	["MAX_RESTARTS_PER_WINDOW"]="required|integer|min:1|max:20|default:20"
+	["RATE_LIMIT_WINDOW_MINUTES"]="required|integer|min:5|max:1440|default:60"
 	["NO_ESCALATE"]="optional|integer|values:0,1|default:0"
 	["RECOVERY_VERIFY_TIMEOUT"]="optional|integer|min:10|max:300|default:30"
 	["LOGS_DIR"]="optional|string||default:"
@@ -141,11 +140,12 @@ get_config_schema() {
 		return 0
 	fi
 	# Check pattern matches for location-based variables
-	if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+	# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
+	if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
 		# LOCATION_*_EXTERNAL pattern: required, string, non-empty
 		echo "required|string|non-empty"
 		return 0
-	elif [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+	elif [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_INTERNAL$ ]]; then
 		# LOCATION_*_INTERNAL pattern: optional, string
 		echo "optional|string"
 		return 0
@@ -176,5 +176,44 @@ get_config_default() {
 	return 0
 }
 EOF
+	fi
+}
+
+# Copy compare-config.sh script and its dependencies to test directory
+#
+# Copies the compare-config.sh script to the test directory along with
+# lib/common.sh which it depends on. This allows the script to run
+# from the test directory and find its dependencies.
+#
+# Arguments:
+#   $1: Test directory where script should be copied
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Copies compare-config.sh to test directory
+#   - Creates lib directory in test directory
+#   - Copies lib/common.sh to test directory
+#   - Makes script executable
+#
+# Example:
+#   copy_compare_config_script "${TEST_DIR}/test-compare"
+#   # Script is now at ${TEST_DIR}/test-compare/compare-config.sh
+#   # lib/common.sh is at ${TEST_DIR}/test-compare/lib/common.sh
+copy_compare_config_script() {
+	local test_dir="$1"
+	local script_path="${BATS_TEST_DIRNAME}/../compare-config.sh"
+
+	# Copy script to test directory
+	if [[ -f "$script_path" ]]; then
+		cp "$script_path" "${test_dir}/compare-config.sh"
+		chmod +x "${test_dir}/compare-config.sh"
+	fi
+
+	# Copy lib directory so script can find lib/common.sh
+	mkdir -p "${test_dir}/lib"
+	if [[ -f "${BATS_TEST_DIRNAME}/../lib/common.sh" ]]; then
+		cp "${BATS_TEST_DIRNAME}/../lib/common.sh" "${test_dir}/lib/common.sh"
 	fi
 }

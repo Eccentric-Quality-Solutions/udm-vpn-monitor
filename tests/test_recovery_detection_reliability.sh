@@ -8,6 +8,7 @@
 # is "unknown", preventing false recovery actions.
 
 load test_helper
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -25,7 +26,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that recovery escalation is blocked when both detection tools are unavailable
 	# Expected: Script logs error about unreliable detection and skips Tier 2/3 recovery escalation
 	# Importance: Prevents false recovery actions when detection is unreliable
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_NETWORK_PARTITION_CHECK=0'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10
+RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	# Remove ip mock (make it unavailable)
 	# setup_vpn_at_tier_fixture creates a mock ip, but we need to remove it
@@ -60,7 +62,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_log_not_contains "$LOG_FILE" "Tier 3: Would attempt full IPsec restart"
 
 	# Should still log Tier 1 failure (monitoring continues)
-	assert_file_contains "$LOG_FILE" "Tier 1" || assert_file_contains "$LOG_FILE" "VPN check failed"
+	assert_log_contains_any "$LOG_FILE" "Tier 1" "VPN check failed"
 
 	# Restore PATH
 	export PATH="$original_path"
@@ -72,13 +74,15 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that recovery escalation proceeds when at least one detection tool is available
 	# Expected: Script proceeds with recovery escalation when ip command is available (even if ipsec unavailable)
 	# Importance: Ensures recovery works when at least one detection method is available
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10
+RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Keep ip mock (available) - setup_vpn_at_tier_fixture creates it
 	# Don't create ipsec mock (unavailable)
 
 	# Mock ipsec for recovery (even though detection can't use it, recovery needs it)
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -91,7 +95,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should proceed with Tier 3 recovery (ip is available, so detection is reliable)
 	assert_file_exist "$LOG_FILE"
 	# Should attempt Tier 3 recovery
-	assert_file_contains "$LOG_FILE" "Tier 3" || assert_file_contains "$LOG_FILE" "Would attempt"
+	assert_log_contains_any "$LOG_FILE" "Tier 3" "Would attempt"
 
 	# Should NOT log detection unreliable error
 	assert_log_not_contains "$LOG_FILE" "Detection unreliable"
@@ -104,7 +108,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that recovery escalation proceeds when at least one detection tool is available
 	# Expected: Script proceeds with recovery escalation when ipsec command is available (even if ip unavailable)
 	# Importance: Ensures recovery works when at least one detection method is available
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10
+RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Remove ip mock (unavailable)
 	rm -f "${TEST_DIR}/ip"
@@ -135,7 +140,7 @@ EOF
 	# Should proceed with Tier 3 recovery (ipsec is available, so detection is reliable)
 	assert_file_exist "$LOG_FILE"
 	# Should attempt Tier 3 recovery
-	assert_file_contains "$LOG_FILE" "Tier 3" || assert_file_contains "$LOG_FILE" "Would attempt"
+	assert_log_contains_any "$LOG_FILE" "Tier 3" "Would attempt"
 
 	# Should NOT log detection unreliable error
 	assert_log_not_contains "$LOG_FILE" "Detection unreliable"
@@ -148,7 +153,8 @@ EOF
 	# Purpose: Test verifies that failures are still logged even when recovery escalation is blocked
 	# Expected: Script logs VPN failure and Tier 1 message even when recovery is blocked
 	# Importance: Ensures monitoring continues even when recovery is unavailable
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_NETWORK_PARTITION_CHECK=0'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10
+RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	# Remove ip mock (unavailable)
 	rm -f "${TEST_DIR}/ip"
@@ -175,7 +181,7 @@ EOF
 	assert_file_contains "$LOG_FILE" "VPN check failed"
 
 	# Should log Tier 1 message (monitoring continues)
-	assert_file_contains "$LOG_FILE" "Tier 1" || assert_file_contains "$LOG_FILE" "Logging.*failure"
+	assert_log_contains_any "$LOG_FILE" "Tier 1" "Logging.*failure"
 
 	# Should log that recovery was skipped
 	assert_file_contains "$LOG_FILE" "recovery skipped - detection unreliable"
@@ -190,14 +196,16 @@ EOF
 	# Purpose: Test verifies that safeguard only applies when failure type is "unknown"
 	# Expected: Recovery proceeds normally when failure type is known (e.g., "tunnel_down") even if detection tools limited
 	# Importance: Ensures safeguard doesn't block recovery when we can reliably determine failure type
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_HOUR=10' 'COOLDOWN_MINUTES=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10
+RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Keep ip mock (available) - needed to detect tunnel_down failure type
 	# setup_vpn_at_tier_fixture creates mock ip that returns empty (VPN down)
 	# This will result in "tunnel_down" failure type, not "unknown"
 
 	# Mock ipsec for recovery
-	mock_ipsec_reload_restart 0 0
+	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT" --fake
@@ -210,7 +218,7 @@ EOF
 	# Should proceed with Tier 3 recovery (failure type is known, not unknown)
 	assert_file_exist "$LOG_FILE"
 	# Should attempt Tier 3 recovery
-	assert_file_contains "$LOG_FILE" "Tier 3" || assert_file_contains "$LOG_FILE" "Would attempt"
+	assert_log_contains_any "$LOG_FILE" "Tier 3" "Would attempt"
 
 	# Should NOT log detection unreliable error (failure type is known)
 	assert_log_not_contains "$LOG_FILE" "Detection unreliable"

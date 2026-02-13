@@ -11,6 +11,7 @@
 
 load test_helper
 load helpers/test_data
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -62,18 +63,20 @@ load fixtures/vpn_at_tier
 	mock_check_ipsec_phase2 1
 
 	# Mock ipsec for fallback reload (Tier 2 falls back to reload, not restart)
-	mock_ipsec_reload_restart 0 0
+	# Third parameter (status_exit=1) makes ipsec status return empty (VPN down) so recovery is triggered
+	# This is needed because VPN detection falls back to ipsec status when xfrm returns empty
+	mock_ipsec_reload_restart 0 0 1
 
 	# Mock ip command - stateful: return SAs during recovery, empty after deletion
 	# Uses log file content to determine recovery phase (more robust than counter-based approach)
 	# Note: get_xfrm_state_for_peer tries "ip -s xfrm state" first, then falls back to "ip xfrm state"
 	# Ensure log directory exists and get log file path
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file_path="${LOG_FILE:-${TEST_DIR}/logs/vpn-monitor.log}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file_path="${LOG_FILE}"
 	local recovery_started_flag="${TEST_DIR}/recovery_started"
 	# Generate xfrm state output using test data helper
 	local xfrm_state_output
-	xfrm_state_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
+	xfrm_state_output=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'MOCK_IP_EOF'
 #!/bin/bash
@@ -157,9 +160,9 @@ MOCK_IP_EOF
 	# Should attempt xfrm recovery, detect re-establishment failure, fall back to restart
 	assert_file_exist "$LOG_FILE"
 	# Verify xfrm recovery was attempted
-	assert_file_contains "$LOG_FILE" "xfrm recovery" || assert_file_contains "$LOG_FILE" "xfrm"
+	assert_log_contains_any "$LOG_FILE" "xfrm recovery" "xfrm"
 	# Verify fallback to reload was attempted (Tier 2 falls back to reload, not restart)
-	assert_file_contains "$LOG_FILE" "falling back" || assert_file_contains "$LOG_FILE" "fallback" || assert_file_contains "$LOG_FILE" "reload"
+	assert_log_contains_any "$LOG_FILE" "falling back" "fallback" "reload"
 
 	remove_mock_from_path
 }
@@ -193,7 +196,7 @@ MOCK_IP_EOF
 	# Use higher byte count (2000) to ensure bytes are increasing from any previous state
 	# Generate xfrm state output using test data helper
 	local xfrm_state_output
-	xfrm_state_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 2000 20)
+	xfrm_state_output=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 2000 20)
 	local xfrm_state_file="${TEST_DIR}/xfrm_state_output_2"
 	echo "$xfrm_state_output" >"$xfrm_state_file"
 	local mock_ip="${TEST_DIR}/ip"
@@ -223,7 +226,7 @@ EOF
 	assert_file_exist "$LOG_FILE"
 	# Should detect VPN recovery on second check
 	# Note: Message may say "recovered" (no recovery method) or "restored" (with recovery method)
-	assert_file_contains "$LOG_FILE" "recovered" || assert_file_contains "$LOG_FILE" "restored" || assert_file_contains "$LOG_FILE" "healthy"
+	assert_log_contains_any "$LOG_FILE" "recovered" "restored" "healthy"
 
 	remove_mock_from_path
 }
@@ -256,7 +259,7 @@ EOF
 	# Verify that lockfile prevented concurrent execution
 	assert_file_exist "$LOG_FILE"
 	# Should have lockfile-related messages
-	assert_file_contains "$LOG_FILE" "lockfile" || assert_file_contains "$LOG_FILE" "already running" || assert_file_contains "$LOG_FILE" "stale"
+	assert_log_contains_any "$LOG_FILE" "lockfile" "already running" "stale"
 
 	remove_mock_from_path
 }

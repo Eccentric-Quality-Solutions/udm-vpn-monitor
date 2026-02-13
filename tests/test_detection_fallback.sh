@@ -4,6 +4,7 @@
 # Tests critical paths and error handling scenarios
 
 load test_helper
+load helpers/config
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -47,17 +48,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script falls back to alternative detection methods or fails gracefully when command -v fails.
 	# Importance: Tool availability detection can fail due to system issues; script must handle this without crashing.
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock command to fail (simulates command -v failure)
 	local mock_command="${TEST_DIR}/command"
@@ -81,7 +79,7 @@ EOF
 	assert_success
 
 	# Should handle missing ip command gracefully (should fall back to ipsec or fail gracefully)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	# Restore
 	mv "${TEST_DIR}/ip_backup" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -137,9 +135,10 @@ EOF
 	mock_ping_hang 2 >/dev/null
 	add_mock_to_path
 
-	# Use timeout of 10 seconds to allow script initialization, ping timeout handling, and completion
-	# The ping wrapper timeout is 2 seconds, but script initialization and other checks take additional time
-	run timeout 10 bash "$TEST_SCRIPT" --fake
+	# Use timeout of 20 seconds to allow script initialization, ping timeout handling, and completion
+	# The ping wrapper timeout is 2 seconds, but detection logic may call check_ping_connectivity
+	# multiple times (for different detection paths), so total time can be 8-12 seconds
+	run timeout 20 bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should handle ping timeout gracefully (should log error but continue)
@@ -198,7 +197,13 @@ EOF
 	# Run with timeout to prevent test from hanging
 	# Test timeout should be longer than IPSEC_STATUS_TIMEOUT to allow script to complete
 	# Allow extra time for script initialization and other operations
-	run timeout 10 bash "$TEST_SCRIPT" --fake
+	# Note: In VPN down scenarios, ipsec status may be called multiple times (via xfrm fallbacks),
+	# each taking IPSEC_STATUS_TIMEOUT (5s) to timeout, so we need sufficient buffer
+	# When VPN is down, ipsec status is called at least twice:
+	# 1. Once in get_xfrm_state_for_peer when no SAs are found (line 486)
+	# 2. Once in check_ipsec_fallback when xfrm check fails
+	# Each call takes 5 seconds to timeout = 10 seconds minimum, plus script initialization
+	run timeout 30 bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should handle ipsec status hang gracefully (should timeout and continue)

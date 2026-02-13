@@ -3,26 +3,19 @@
 # Logging functions for UDM VPN Monitor
 # Provides centralized logging functionality with timestamp and level support
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 # Source common utility functions
 # shellcheck source=lib/common.sh
 # Determine lib directory (where this file is located)
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${LIB_DIR}/common.sh" 2>/dev/null || {
-	# Fallback if common.sh not found - use centralized fallbacks
-	# shellcheck source=lib/fallbacks.sh
-	if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-		source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
-	fi
-}
+source "${LIB_DIR}/common.sh"
 
 # Get formatted timestamp
 #
 # Returns a formatted timestamp string suitable for log entries.
 # Format: YYYY-MM-DD HH:MM:SS (e.g., "2025-01-15 14:30:45")
-# Handles date command failures gracefully with fallback.
 #
 # Arguments:
 #   None
@@ -39,10 +32,8 @@ source "${LIB_DIR}/common.sh" 2>/dev/null || {
 #
 # Note:
 #   Uses date '+%Y-%m-%d %H:%M:%S' command
-#   Fallback repeats same command (handles edge cases)
 get_formatted_timestamp() {
-	# Try date command with fallback
-	date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S'
+	date '+%Y-%m-%d %H:%M:%S'
 }
 
 # Logging function
@@ -120,14 +111,17 @@ log_message() {
 	fi
 
 	# Write to log file (append, create if doesn't exist)
+	# Skip DEBUG messages unless DEBUG=1 to prevent log file spam
 	# Try to write, but don't fail the script if it doesn't work
-	{
-		echo "$log_entry" >>"$LOG_FILE" 2>&1
-	} || {
-		# If write failed, at least we tried - output to stderr
-		echo "$log_entry" >&2
-		echo "[$timestamp] [ERROR] SYSTEM: Failed to write to log file: $LOG_FILE" >&2
-	}
+	if [[ "$level" != "DEBUG" ]] || [[ "${DEBUG:-0}" == "1" ]]; then
+		{
+			echo "$log_entry" >>"$LOG_FILE" 2>&1
+		} || {
+			# If write failed, at least we tried - output to stderr
+			echo "$log_entry" >&2
+			echo "[$timestamp] [ERROR] SYSTEM: Failed to write to log file: $LOG_FILE" >&2
+		}
+	fi
 
 	# Determine if running interactively (TTY attached to stderr)
 	# This allows INFO messages to be shown when running manually
@@ -210,6 +204,71 @@ die() {
 	exit "$exit_code"
 }
 
+# Parse message and optional exit code from arguments
+#
+# Helper function to extract message and optional exit code from variable arguments.
+# Checks if the last argument is numeric (exit code) and separates it from the message.
+# This function eliminates code duplication between handle_error() and handle_error_or_exit_fake_mode().
+#
+# Arguments:
+#   $@ - Message arguments, optionally ending with numeric exit code
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints pipe-delimited values to stdout: "message|exit_code|exit_code_provided"
+#   - message: The parsed message (may be empty)
+#   - exit_code: The exit code ("0" if no exit code provided and last arg is non-numeric,
+#                the provided exit code if last arg is numeric, "1" if no args provided)
+#   - exit_code_provided: "1" if exit code was explicitly provided (last arg was numeric), "0" otherwise
+#
+# Examples:
+#   parsed=$(_parse_message_and_exit_code "Failed to parse config" "2")
+#   IFS='|' read -r message exit_code exit_code_provided <<< "$parsed"
+#
+#   parsed=$(_parse_message_and_exit_code "Retry count: 3")
+#   IFS='|' read -r message exit_code exit_code_provided <<< "$parsed"
+#
+# Note:
+#   Uses pipe delimiter (|) to separate values since messages may contain spaces
+#   If last argument is numeric, it's treated as exit code and removed from message
+#   If no arguments provided, returns empty message with default exit code
+_parse_message_and_exit_code() {
+	local arg_count=$#
+	local exit_code="1" # Default exit code
+	local exit_code_provided=0
+	local message=""
+
+	if [[ $arg_count -gt 0 ]]; then
+		# Use array indexing to get last argument (shellcheck SC2124)
+		local args_array=("$@")
+		local last_arg="${args_array[$((arg_count - 1))]}"
+		if [[ "$last_arg" =~ ^[0-9]+$ ]]; then
+			# Last argument is numeric - treat as exit code
+			exit_code="$last_arg"
+			exit_code_provided=1
+			# Remove last arg from message
+			set -- "${args_array[@]:0:$((arg_count - 1))}"
+			message="$*"
+		else
+			# Non-numeric last argument is treated as part of message
+			# Set exit_code to 0 to prevent accidental exits when exit code parsing fails
+			message="$*"
+			exit_code="0"
+			exit_code_provided=0
+		fi
+	else
+		# No arguments provided
+		message=""
+		exit_code="1" # Default
+		exit_code_provided=0
+	fi
+
+	# Output pipe-delimited: message|exit_code|exit_code_provided
+	echo "${message}|${exit_code}|${exit_code_provided}"
+}
+
 # Handle error with consistent logging and optional exit
 #
 # Provides a unified interface for error handling that logs messages
@@ -253,36 +312,11 @@ handle_error() {
 	local severity="$1"
 	local prefix="$2"
 	shift 2
-	local message="$*"
-	local exit_code="1"
-	local exit_code_provided=0
 
-	# Parse arguments: prefix message [exit_code]
-	# Prefix is REQUIRED - must be provided explicitly
-	# Exit code is optional and must be numeric (last argument if present)
-
-	local arg_count=$#
-
-	# Check if last argument is numeric (exit code)
-	if [[ $arg_count -gt 0 ]]; then
-		# Use array indexing to get last argument (shellcheck SC2124)
-		local args_array=("$@")
-		local last_arg="${args_array[$((arg_count - 1))]}"
-		if [[ "$last_arg" =~ ^[0-9]+$ ]]; then
-			exit_code="$last_arg"
-			exit_code_provided=1
-			# Remove last arg from message
-			set -- "${args_array[@]:0:$((arg_count - 1))}"
-			message="$*"
-		else
-			# Non-numeric last argument is treated as part of message
-			# Set exit_code to 0 to prevent accidental exits when exit code parsing fails
-			message="$*"
-			exit_code="0"
-		fi
-	else
-		message=""
-	fi
+	# Parse message and optional exit code from remaining arguments
+	local parsed
+	parsed=$(_parse_message_and_exit_code "$@")
+	IFS='|' read -r message exit_code exit_code_provided <<<"$parsed"
 
 	# Require prefix - no default fallback
 	if [[ -z "$prefix" ]]; then
@@ -348,30 +382,16 @@ handle_error() {
 handle_error_or_exit_fake_mode() {
 	local prefix="$1"
 	shift
-	local message="$*"
-	local exit_code="1"
 
-	# Parse arguments: prefix message [exit_code]
-	# Prefix is REQUIRED - must be provided explicitly
-	# Exit code is optional and must be numeric (last argument if present)
+	# Parse message and optional exit code from remaining arguments
+	local parsed
+	parsed=$(_parse_message_and_exit_code "$@")
+	IFS='|' read -r message exit_code exit_code_provided <<<"$parsed"
 
-	local arg_count=$#
-
-	# Check if last argument is numeric (exit code)
-	if [[ $arg_count -gt 0 ]]; then
-		# Use array indexing to get last argument (shellcheck SC2124)
-		local args_array=("$@")
-		local last_arg="${args_array[$((arg_count - 1))]}"
-		if [[ "$last_arg" =~ ^[0-9]+$ ]]; then
-			exit_code="$last_arg"
-			# Remove last arg from message
-			set -- "${args_array[@]:0:$((arg_count - 1))}"
-			message="$*"
-		else
-			message="$*"
-		fi
-	else
-		message=""
+	# Fix inconsistency: handle_error_or_exit_fake_mode should default to exit_code=1
+	# when no exit code is provided (unlike handle_error which uses 0 to prevent accidental exits)
+	if [[ $exit_code_provided -eq 0 ]]; then
+		exit_code="1"
 	fi
 
 	# Require prefix - no default fallback

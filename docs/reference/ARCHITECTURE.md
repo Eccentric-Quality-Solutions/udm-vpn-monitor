@@ -63,7 +63,7 @@ This document describes the architecture and design of the UDM VPN Monitor syste
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  State Files (${SCRIPT_DIR}/state/)                       │  │
-│  │  • failure_counter_<location>_<peer_ip>  # Per-location │  │
+│  │  • failure_count_<location>_<peer_ip>  # Per-location │  │
 │  │  • last_bytes_<location>_<peer_ip>  # Per-location     │  │
 │  │  • failure_type_<location>_<peer_ip>  # Per-location   │  │
 │  │  • spi_<location>_<peer_ip>  # Per-location            │  │
@@ -74,8 +74,12 @@ This document describes the architecture and design of the UDM VPN Monitor syste
 │  │  • cooldown_until  # System-wide                        │  │
 │  │  • restart_count  # System-wide                          │  │
 │  │  • network_partition_state  # System-wide               │  │
+│  │  • system_wide_failure_state  # System-wide            │  │
+│  │  • system_wide_failure_timestamp  # System-wide        │  │
+│  │  • system_wide_failure_coordinator  # System-wide     │  │
 │  │  • vpn-monitor.lock  # System-wide                      │  │
 │  │  • .cron_checked  # System-wide                        │  │
+│  │  • .last_run_timestamp  # System-wide                  │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
@@ -110,7 +114,6 @@ graph TB
         RecoveryLib[lib/recovery.sh<br/>Recovery Actions<br/>Compatibility Layer]
         CommonLib[lib/common.sh<br/>Shared Utilities]
         ConstantsLib[lib/constants.sh<br/>Named Constants]
-        FallbacksLib[lib/fallbacks.sh<br/>Fallback Functions]
     end
 
     subgraph "Detection Layer"
@@ -144,8 +147,6 @@ graph TB
     MainScript --> RecoveryLib
     MainScript --> CommonLib
     MainScript --> ConstantsLib
-    ConfigLib --> FallbacksLib
-    DetectionLib --> FallbacksLib
 
     DetectionLib --> XfrmCheck
     XfrmCheck -->|No SA| IpsecCheck
@@ -238,7 +239,15 @@ flowchart TD
 
     NextLocation --> MoreLocations{More<br/>Locations?}
     MoreLocations -->|Yes| ForEachLocation
-    MoreLocations -->|No| ReleaseLock[Release Lockfile]
+    MoreLocations -->|No| SystemWideFailureCheck{System-Wide<br/>Failure<br/>Detection<br/>Enabled?}
+    SystemWideFailureCheck -->|Yes| CheckSystemWideFailure[Check System-Wide<br/>Failure Status<br/>Compare Failure Counts<br/>to Threshold]
+    SystemWideFailureCheck -->|No| ReleaseLock[Release Lockfile]
+    CheckSystemWideFailure -->|System-Wide<br/>Failure<br/>Detected| SetSystemWideFailureState[Set System-Wide<br/>Failure State<br/>Designate Coordinator]
+    CheckSystemWideFailure -->|No System-Wide<br/>Failure| ClearSystemWideFailureState{Previous<br/>System-Wide<br/>Failure?}
+    ClearSystemWideFailureState -->|Yes| ClearSystemWideState[Clear System-Wide<br/>Failure State<br/>Clear Coordinator]
+    ClearSystemWideFailureState -->|No| ReleaseLock
+    SetSystemWideFailureState --> ReleaseLock
+    ClearSystemWideState --> ReleaseLock
     ReleaseLock --> End([End])
 
     Exit1 --> End
@@ -248,6 +257,7 @@ flowchart TD
 
 **Note**:
 - **Execution Order**: The actual execution flow includes more steps than shown in simplified form above. Full order: Directory creation (state, logs) → Log file initialization → Config loading → Config validation → Lockfile acquisition → Initialize monitor (parse args, log start, init state) → State validation → Resource check → Network partition check → Cooldown check → Cron persistence check → Location processing.
+- **Sub-minute Execution (Optional)**: When `ENABLE_MONITOR_WRAPPER=1` (default), cron runs `vpn-monitor-wrapper.sh` instead of `vpn-monitor.sh` directly. The wrapper loops with `MONITOR_INTERVAL`-second sleeps (default: 20s), running checks at :00, :20, :40 within each minute. Cron resurrects the wrapper every minute if it exits. See `vpn-monitor-wrapper.sh` and config options `ENABLE_MONITOR_WRAPPER`, `MONITOR_INTERVAL`.
 
 - **State Validation**: State files are validated for format correctness (integer, timestamp, timestamp_list) early in execution (after state initialization). Corrupted files are automatically detected, backed up, and recovered with safe defaults. This validation step ensures state file integrity before proceeding.
 
@@ -256,6 +266,135 @@ flowchart TD
 - **Network Partition Check**: (if enabled via `ENABLE_NETWORK_PARTITION_CHECK`) occurs before cooldown check to ensure partition detection works even during cooldown periods. This timing is intentional - if the network is partitioned, VPN checks should be skipped regardless of cooldown status. When network is partitioned, the script updates partition state and continues execution (does not exit early). Recovery actions later check partition state and skip recovery if network is partitioned, allowing VPN checks to proceed but preventing unnecessary recovery actions.
 
 - **Cron Persistence Check**: Performed once per run (tracked via `.cron_checked` file) after cooldown check. Detects if cron jobs were removed during system upgrades (common after UniFi OS updates). Logs warnings but doesn't fail execution - this is a diagnostic check to help users detect configuration loss.
+
+- **System-Wide Failure Detection**: (if enabled via `ENABLE_SYSTEM_WIDE_FAILURE_DETECTION`) occurs after all locations are checked but before recovery attempts. The system checks all locations' VPN status (read-only, doesn't update state) and compares failure count to configured threshold. If threshold exceeded, system-wide failure state is set and recovery coordination is enabled. Only the designated coordinator location attempts recovery during system-wide failures, preventing cascades and rate limiting issues. System-wide failure state is cleared when failures drop below threshold. This detection happens in `process_locations()` before individual location recovery attempts in `monitor_location()`. See the "System-Wide Failure Detection" section below for detailed documentation.
+
+## System-Wide Failure Detection
+
+System-wide failure detection identifies infrastructure-level issues when multiple VPN locations fail simultaneously. This feature prevents recovery cascades and rate limiting by coordinating recovery attempts during infrastructure outages.
+
+### Overview
+
+When all (or a configured majority) of VPN locations fail at the same time, this typically indicates an infrastructure-level problem (ISP outage, router issues, network-wide connectivity problems) rather than individual VPN tunnel failures. In such scenarios, attempting recovery for each location independently would:
+- Create recovery cascades (all locations attempting recovery simultaneously)
+- Trigger rate limiting mechanisms
+- Waste system resources (recovery cannot succeed during infrastructure outages)
+- Generate excessive log noise
+
+System-wide failure detection addresses these issues by:
+1. **Detecting** when multiple locations fail simultaneously
+2. **Coordinating** recovery so only one location (the coordinator) attempts recovery
+3. **Preventing** cascades and rate limiting during infrastructure outages
+4. **Resuming** normal per-location recovery when infrastructure is restored
+
+### Detection Mechanism
+
+System-wide failure detection occurs in `process_locations()` after all locations have been checked but before individual recovery attempts:
+
+1. **Failure Status Collection**: The system collects failure status for all locations from existing state (failure counts from previous cycle)
+   - Uses existing failure counts rather than re-checking VPNs (avoids double work)
+   - One-cycle delay is acceptable for coordination purposes
+   - Conservative approach: better to coordinate unnecessarily than miss a real system-wide failure
+
+2. **Threshold Comparison**: Compares failed location percentage to configured threshold
+   - Default threshold: 100% (all locations must fail)
+   - Configurable via `SYSTEM_WIDE_FAILURE_THRESHOLD` (range: 50-100%)
+   - Requires at least 2 locations to detect system-wide failure (single location failure is not "system-wide")
+
+3. **State Management**: Updates system-wide failure state and timestamp
+   - Sets system-wide failure state to 1 when threshold exceeded
+   - Records timestamp when failure first detected
+   - Clears state when failures drop below threshold
+
+### Recovery Coordination
+
+When system-wide failure is detected, recovery is coordinated using a "first location wins" approach:
+
+1. **Coordinator Designation**: First location to check during system-wide failure becomes the coordinator
+   - Uses atomic file write (`set -C` noclobber mode) to safely designate coordinator
+   - Coordinator designation stored in `system_wide_failure_coordinator` state file
+   - Coordinator persists until system-wide failure is resolved
+
+2. **Recovery Attempts**: Only the coordinator location attempts recovery
+   - Coordinator attempts recovery normally (Tier 1, 2, 3 as appropriate)
+   - Non-coordinator locations skip recovery actions but continue monitoring
+   - Recovery coordination checked in `monitor_location()` before Tier 2/3 recovery attempts
+
+3. **Coordination Check**: Each location checks `should_location_attempt_recovery()` before recovery
+   - Returns 0 (attempt recovery) if:
+     - System-wide failure detection is disabled, OR
+     - No system-wide failure detected, OR
+     - Current location is the coordinator
+   - Returns 1 (skip recovery) if:
+     - System-wide failure detected AND current location is not coordinator
+
+4. **Automatic Cleanup**: Coordinator is automatically cleared when system-wide failure is resolved
+   - When failures drop below threshold, system-wide failure state is cleared
+   - Coordinator file is automatically removed
+   - Per-location recovery resumes normally
+
+### Configuration
+
+System-wide failure detection is controlled by three configuration options:
+
+- **`ENABLE_SYSTEM_WIDE_FAILURE_DETECTION`** (default: 1, enabled)
+  - Enable/disable system-wide failure detection
+  - When disabled, all locations attempt recovery independently
+
+- **`SYSTEM_WIDE_FAILURE_THRESHOLD`** (default: 100, range: 50-100)
+  - Percentage of locations that must fail to trigger detection
+  - 100 = all locations must fail (default)
+  - 80 = 80% of locations must fail
+  - Lower thresholds detect system-wide failures earlier but may trigger on partial outages
+
+- **`COORDINATE_SYSTEM_WIDE_RECOVERY`** (default: 1, enabled)
+  - Enable/disable recovery coordination during system-wide failures
+  - When disabled, all locations attempt recovery independently even during system-wide failures
+  - When enabled, only coordinator attempts recovery during system-wide failures
+
+### State Files
+
+System-wide failure detection uses three system-wide state files (not per-peer, since infrastructure issues affect all peers):
+
+- **`system_wide_failure_state`**: System-wide failure status (0 = no failure, 1 = failure detected)
+- **`system_wide_failure_timestamp`**: Unix timestamp when failure was first detected
+- **`system_wide_failure_coordinator`**: Location name of recovery coordinator
+
+See the "State Management" section above for detailed state file documentation.
+
+### Integration Points
+
+1. **Detection** (`vpn-monitor.sh` → `process_locations()`):
+   - Runs after all locations are checked
+   - Collects failure status from existing state
+   - Updates system-wide failure state and timestamp
+   - Logs system-wide failure events
+
+2. **Recovery Actions** (`lib/recovery/recovery_orchestration.sh` → `monitor_location()`):
+   - Checks `should_location_attempt_recovery()` before Tier 2/3 recovery attempts
+   - Coordinator attempts recovery normally
+   - Non-coordinator locations skip recovery actions
+   - Logs informative messages about skipped recovery
+
+### Design Rationale
+
+The "first location wins" coordination approach was chosen over alternatives for:
+
+- **Simplicity**: No complex leader election or consensus algorithms needed
+- **Effectiveness**: Handles common case (infrastructure outages) very well
+- **Minimal Overhead**: Atomic file writes are fast and reliable
+- **Acceptable Race Condition**: If two locations check simultaneously, worst case is both attempt recovery (still better than all locations)
+- **No Additional Infrastructure**: Works with existing state file system
+
+See ADR-0031 for detailed design rationale and alternative approaches considered.
+
+### Related Documentation
+
+- **ADR-0031**: System-Wide Failure Detection and Coordination (detailed design rationale)
+- **Code Diagram**: `docs/code-diagrams/system-wide-failure-flow.md` (function flow diagrams)
+- **Implementation**: `lib/detection/system_wide_failure.sh` (detection and coordination functions)
+- **Integration**: `vpn-monitor.sh` → `process_locations()` (detection integration)
+- **Recovery Integration**: `lib/recovery/recovery_orchestration.sh` → `monitor_location()` (coordination integration)
 
 ## Detection Method Flow
 
@@ -377,9 +516,17 @@ stateDiagram-v2
 
     Monitoring --> SkipRecovery: Network Partitioned
     SkipRecovery --> Monitoring: Continue Monitoring
+
+    Monitoring --> CheckSystemWideFailure: VPN Failed
+    CheckSystemWideFailure --> SkipRecoverySystemWide: System-Wide Failure<br/>& Not Coordinator
+    CheckSystemWideFailure --> AttemptRecovery: System-Wide Failure<br/>& Coordinator<br/>OR<br/>No System-Wide Failure
+    SkipRecoverySystemWide --> Monitoring: Continue Monitoring
+    AttemptRecovery --> Tier1
 ```
 
 **Note**: Network partition check also occurs after VPN check fails. When a VPN failure is detected, the failure counter is incremented first (to track the failure even if recovery is skipped), then network partition state is checked. If network is partitioned when a VPN failure is detected, recovery actions are skipped to avoid unnecessary disruption, but the failure count is still incremented for tracking purposes.
+
+**System-Wide Failure Coordination**: When system-wide failure is detected (all or majority of locations failing simultaneously), recovery is coordinated to prevent cascades and rate limiting. Before attempting Tier 2 or Tier 3 recovery actions, the system checks if system-wide failure is active and if the current location is the designated coordinator. Only the coordinator location attempts recovery during system-wide failures; non-coordinator locations skip recovery actions but continue monitoring. This coordination prevents multiple simultaneous recovery attempts that could overwhelm the system or trigger rate limiting during infrastructure-level outages.
 
 ## Data Flow
 
@@ -397,7 +544,7 @@ graph LR
     end
 
     subgraph "State Storage"
-        FailureCounter[failure_counter_<location>_<peer_ip>]
+        FailureCounter[failure_count_<location>_<peer_ip>]
         ByteFiles[last_bytes_<location>_<peer_ip>]
         FailureType[failure_type_<location>_<peer_ip>]
         SPI[spi_<location>_<peer_ip>]
@@ -453,7 +600,7 @@ The system uses file-based state management to track VPN health, failure counts,
 State files are organized into two categories:
 
 **Per-Location State Files** (tracked independently for each VPN location):
-- `${STATE_DIR}/failure_counter_<location>_<peer_ip>`: Consecutive failure count per location (sanitized location name and IP in filename).
+- `${STATE_DIR}/failure_count_<location>_<peer_ip>`: Consecutive failure count per location (sanitized location name and IP in filename).
 - `${STATE_DIR}/last_bytes_<location>_<peer_ip>`: Last known byte counter value per location (sanitized location name and IP in filename)
 - `${STATE_DIR}/failure_type_<location>_<peer_ip>`: Tracks failure type for diagnostic purposes (cleared on recovery)
 - `${STATE_DIR}/spi_<location>_<peer_ip>`: Stores SPI (Security Parameter Index) for location connection tracking
@@ -468,8 +615,26 @@ State files are organized into two categories:
 - `${STATE_DIR}/cooldown_until`: Cooldown expiration timestamp (prevents immediate re-restarts)
 - `${STATE_DIR}/restart_count`: Unix timestamps of Tier 3 recovery actions (one timestamp per line, for rate limiting) - see [Rate Limiting](#rate-limiting-staterestart_count) section below for details
 - `${STATE_DIR}/network_partition_state`: Network partition status (0 = healthy, 1 = partitioned) - used to detect network connectivity issues that affect all peers
+- `${STATE_DIR}/network_partition_dns_success_count`: DNS resolution check success counter (for hourly statistics summary)
+- `${STATE_DIR}/network_partition_dns_fail_count`: DNS resolution check failure counter (for hourly statistics summary)
+- `${STATE_DIR}/network_partition_route_success_count`: Default route check success counter (for hourly statistics summary)
+- `${STATE_DIR}/network_partition_route_fail_count`: Default route check failure counter (for hourly statistics summary)
+- `${STATE_DIR}/network_partition_interface_success_count`: Interface state check success counter (for hourly statistics summary)
+- `${STATE_DIR}/network_partition_interface_fail_count`: Interface state check failure counter (for hourly statistics summary)
+- `${STATE_DIR}/network_partition_summary_last_time`: Timestamp of last hourly statistics summary (for throttling summary logging)
+- `${STATE_DIR}/resource_cpu_check_success_count`: CPU check success counter (resource monitoring statistics)
+- `${STATE_DIR}/resource_cpu_check_fail_count`: CPU check failure counter (resource monitoring statistics)
+- `${STATE_DIR}/resource_ram_check_success_count`: RAM check success counter (resource monitoring statistics)
+- `${STATE_DIR}/resource_ram_check_fail_count`: RAM check failure counter (resource monitoring statistics)
+- `${STATE_DIR}/resource_disk_check_success_count`: Disk check success counter (resource monitoring statistics)
+- `${STATE_DIR}/resource_disk_check_fail_count`: Disk check failure counter (resource monitoring statistics)
+- `${STATE_DIR}/resource_cpu_constrained_count`: CPU constrained event counter (resource monitoring statistics)
+- `${STATE_DIR}/resource_ram_constrained_count`: RAM constrained event counter (resource monitoring statistics)
+- `${STATE_DIR}/resource_disk_critical_count`: Disk critical event counter (resource monitoring statistics)
+- `${STATE_DIR}/resource_monitoring_summary_last_time`: Timestamp of last resource monitoring summary (for hourly summary logging)
 - `${STATE_DIR}/vpn-monitor.lock`: Lockfile for execution control (format: `timestamp:pid` for timeout detection)
 - `${STATE_DIR}/.cron_checked`: Flag file to prevent repeated cron persistence checks
+- `${STATE_DIR}/.last_run_timestamp`: Timestamp file to track last script execution (for startup grace period detection)
 
 **Note**: `STATE_DIR` defaults to `${SCRIPT_DIR}/state` and `LOGS_DIR` defaults to `${SCRIPT_DIR}/logs`. These can be overridden via configuration. When installed to `/data/vpn-monitor`, these resolve to `/data/vpn-monitor/state` and `/data/vpn-monitor/logs` respectively.
 
@@ -488,12 +653,12 @@ VPNs are configured using location-based variables:
 All per-location state files use sanitized location names and peer IP addresses in their filenames:
 - Location names are sanitized: invalid characters replaced with underscores, max 64 chars
 - IP addresses are sanitized: dots and colons replaced with underscores (e.g., `192.168.1.1` becomes `192_168_1_1`)
-- Format: `<key>_<location>_<peer_ip>` (e.g., `failure_counter_NYC_203_0_113_1`)
+- Format: `<key>_<location>_<peer_ip>` (e.g., `failure_count_NYC_203_0_113_1`)
 - This ensures safe filenames while maintaining uniqueness per location
 
 **Per-Location State Files**:
 
-1. **Failure Counters** (`state/failure_counter_<location>_<peer_ip>`)
+1. **Failure Counters** (`state/failure_count_<location>_<peer_ip>`)
    - **Purpose**: Tracks consecutive failure count for each location independently
    - **Creation**: Created on-demand when a location first fails
    - **Usage**: Used to determine which recovery tier to trigger (Tier 1, 2, or 3)
@@ -524,9 +689,9 @@ All per-location state files use sanitized location names and peer IP addresses 
    - **Purpose**: Stores the SPI value extracted from `ip xfrm state` output for each location
    - **Creation**: Created on-demand when SPI is first extracted from xfrm state
    - **Usage**: Used to detect SA (Security Association) rekeys - when SPI changes, it indicates the SA was rekeyed and byte counters may have been reset
-   - **Format**: Can be stored in hex format (0x12345678) or decimal format (12345678), matching the format from xfrm output
+   - **Format**: Stored in normalized hex format (0x12345678) for consistent comparison. SPI values are normalized from either hex or decimal format to 8-digit lowercase hex (0x...) to prevent false rekey detection when format differs between reads
    - **Independence**: Each location has its own SPI file, allowing independent SA rekey detection
-   - **Update**: Updated when SPI is read from xfrm state
+   - **Update**: Updated when SPI is read from xfrm state (normalized to hex format)
    - **Location**: Stored in `${STATE_DIR}` directory
 
 5. **Idle Detection** (`idle_detected_<location>_<peer_ip>`)
@@ -622,9 +787,9 @@ The classification logic uses a hierarchical pattern matching approach:
 
 **Example Scenario**:
 If monitoring three VPN locations (NYC, DC, Chicago), the monitor creates separate state files for each location:
-- `state/failure_counter_NYC_203_0_113_1` - tracks failures for NYC location
-- `state/failure_counter_DC_198_51_100_1` - tracks failures for DC location
-- `state/failure_counter_CHICAGO_192_0_2_1` - tracks failures for Chicago location
+- `state/failure_count_NYC_203_0_113_1` - tracks failures for NYC location
+- `state/failure_count_DC_198_51_100_1` - tracks failures for DC location
+- `state/failure_count_CHICAGO_192_0_2_1` - tracks failures for Chicago location
 - `state/last_bytes_NYC_203_0_113_1` - tracks byte counters for NYC location
 - `state/last_bytes_DC_198_51_100_1` - tracks byte counters for DC location
 - `state/last_bytes_CHICAGO_192_0_2_1` - tracks byte counters for Chicago location
@@ -637,21 +802,21 @@ Each peer's monitoring and recovery actions operate completely independently.
 
 ### System-Wide State Files
 
-**Cooldown Period** (`cooldown_until`):
-- **Purpose**: Prevents immediate re-restarts after a recovery action
-- **Mechanism**: After Tier 3 recovery (full restart), a cooldown period is set
-- **Duration**: Configurable via `COOLDOWN_MINUTES` (default: 15 minutes)
-- **Behavior**: During cooldown, monitoring continues but recovery actions are skipped
-
 **Rate Limiting** (`state/restart_count`):
-- **Purpose**: Prevents restart loops if VPN has persistent issues
+- **Purpose**: Prevents restart loops and excessive restarts if VPN has persistent issues
 - **Mechanism**: Tracks Unix timestamps (one per line) of Tier 3 recovery actions only
   - Records full IPsec restarts (`ipsec restart`) that affect all tunnels
   - Also records successful xfrm-based per-connection recovery (when enabled)
   - Does NOT record Tier 1 (logging) or Tier 2 (surgical cleanup) actions
   - Automatically cleans up entries older than 24 hours
-- **Limit**: Configurable via `MAX_RESTARTS_PER_HOUR` (default: 3 restarts per hour)
-- **Behavior**: If limit exceeded, Tier 3 recovery actions are skipped until rate limit window expires
+- **Configuration**: Three parameters work together:
+  - `MAX_RESTARTS_PER_WINDOW`: Maximum number of restarts allowed (default: 20, range: 1-20)
+  - `RATE_LIMIT_WINDOW_MINUTES`: Time window for rate limit (default: 60, range: 5-1440)
+  - `MIN_RESTART_INTERVAL_SECONDS`: Minimum time between restarts (default: 40, range: 0-300)
+- **Behavior**: 
+  - Uses sliding window: counts restarts in last N minutes from current time
+  - Checks minimum interval first (prevents rapid-fire restarts)
+  - If limit exceeded, Tier 3 recovery actions are skipped until rate limit window expires
 
 **Network Partition State** (`network_partition_state`):
 - **Purpose**: Tracks network connectivity status to distinguish VPN failures from network partition issues
@@ -660,6 +825,31 @@ Each peer's monitoring and recovery actions operate completely independently.
 - **Detection**: Network partition check uses DNS queries to external servers (configurable via `NETWORK_PARTITION_DNS_SERVER`, `NETWORK_PARTITION_DNS_HOSTNAME`)
 - **Behavior**: When network is partitioned, recovery actions are skipped to avoid unnecessary disruption
 - **Configuration**: Controlled via `ENABLE_NETWORK_PARTITION_CHECK` (default: 1, enabled)
+
+**System-Wide Failure State** (`system_wide_failure_state`):
+- **Purpose**: Tracks system-wide failure status when all (or majority of) VPN locations fail simultaneously, indicating infrastructure-level issues
+- **Mechanism**: Stores a single integer value (0 = no system-wide failure, 1 = system-wide failure detected)
+- **Usage**: Used by recovery coordination logic to prevent cascading recovery attempts when multiple locations fail simultaneously
+- **Detection**: System-wide failure is detected when the percentage of failing locations exceeds a configured threshold (default: 100%, all locations must fail)
+- **Behavior**: When system-wide failure is detected, recovery is coordinated so only one location (the coordinator) attempts recovery, preventing cascades and rate limiting issues
+- **Configuration**: Controlled via `ENABLE_SYSTEM_WIDE_FAILURE_DETECTION` (default: 1, enabled) and `SYSTEM_WIDE_FAILURE_THRESHOLD` (default: 100, range: 50-100, percentage of locations that must fail)
+- **Coordination**: Uses `system_wide_failure_coordinator` file to designate which location should attempt recovery (first location to check becomes coordinator)
+
+**System-Wide Failure Timestamp** (`system_wide_failure_timestamp`):
+- **Purpose**: Tracks when system-wide failure was first detected (Unix timestamp)
+- **Mechanism**: Stores a single integer value (Unix timestamp in seconds since epoch)
+- **Usage**: Used to calculate duration of system-wide failure events for logging and analysis
+- **Behavior**: Set when system-wide failure is first detected, cleared when system-wide failure is resolved
+- **Format**: Unix timestamp (integer, seconds since epoch)
+
+**System-Wide Failure Coordinator** (`system_wide_failure_coordinator`):
+- **Purpose**: Designates which location should attempt recovery during system-wide failure events
+- **Mechanism**: Stores location name (string) of the designated coordinator
+- **Usage**: Used by recovery coordination logic to ensure only one location attempts recovery during system-wide failures
+- **Behavior**: First location to check during system-wide failure becomes the coordinator (via atomic file write). Coordinator persists until system-wide failure is resolved. Non-coordinator locations skip recovery actions during system-wide failures
+- **Coordination Logic**: Uses `should_location_attempt_recovery()` function to check if current location is the coordinator before attempting recovery
+- **Configuration**: Controlled via `COORDINATE_SYSTEM_WIDE_RECOVERY` (default: 1, enabled). If disabled, all locations attempt recovery independently even during system-wide failures
+- **Race Condition Mitigation**: Uses atomic check-and-create pattern (noclobber mode, `set -C`) to prevent race conditions. Only the first location to successfully create the coordinator file becomes the coordinator, ensuring true atomicity
 
 **Lockfile** (`vpn-monitor.lock`):
 - **Purpose**: Prevents concurrent script execution
@@ -712,8 +902,8 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │   │   ├── network_validation.sh  # IP validation, route checks
 │   │   ├── xfrm_detection.sh      # xfrm state and byte counter detection
 │   │   ├── ping_detection.sh      # Ping-based detection
-│   │   └── failure_analysis.sh    # Failure type classification
-│   ├── fallbacks.sh            # Centralized fallback function definitions
+│   │   ├── failure_analysis.sh    # Failure type classification
+│   │   └── system_wide_failure.sh # System-wide failure detection and coordination
 │   ├── lockfile.sh             # Lockfile management (flock/atomic)
 │   ├── logging.sh              # Centralized logging functionality
 │   ├── recovery.sh             # Tiered recovery actions (compatibility layer)
@@ -731,7 +921,9 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │       ├── peer_state.sh          # Per-peer state operations
 │       ├── location_state.sh      # Per-location state operations
 │       ├── global_state.sh         # Global state operations
-│       └── state_init.sh           # State initialization and validation
+│       ├── state_init.sh           # State initialization and validation
+│       ├── network_partition_stats.sh # Network partition check statistics tracking
+│       └── resource_monitoring_stats.sh # Resource monitoring statistics tracking
 │
 ├── logs/                       # Logs directory
 │   ├── vpn-monitor.log         # Main monitor log file
@@ -741,10 +933,14 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
     ├── cooldown_until          # Cooldown expiration timestamp
     ├── restart_count           # Unix timestamps of Tier 3 recovery actions (one per line)
     ├── network_partition_state # Network partition status (0=healthy, 1=partitioned)
+    ├── system_wide_failure_state      # System-wide failure status (0=no failure, 1=failure detected)
+    ├── system_wide_failure_timestamp  # System-wide failure detection timestamp
+    ├── system_wide_failure_coordinator # Recovery coordinator location name
     ├── vpn-monitor.lock        # Lockfile (timestamp:pid format)
     ├── .cron_checked           # Flag file for cron check
-    ├── failure_counter_NYC_203_0_113_1  # Per-location failure counters
-    ├── failure_counter_DC_198_51_100_1   # (sanitized location name and IP in filename)
+    ├── .last_run_timestamp     # Timestamp file for startup grace period detection
+    ├── failure_count_NYC_203_0_113_1  # Per-location failure counters
+    ├── failure_count_DC_198_51_100_1   # (sanitized location name and IP in filename)
     ├── last_bytes_NYC_203_0_113_1  # Per-location byte counters
     ├── last_bytes_DC_198_51_100_1  # (sanitized location name and IP in filename)
     ├── failure_type_NYC_203_0_113_1 # Per-location failure type tracking
@@ -865,9 +1061,10 @@ The system uses a modular library architecture where functionality is organized 
 
 **Module Structure**: The detection functionality is organized into focused modules in the `lib/detection/` subdirectory:
 - **`lib/detection/network_validation.sh`**: IP validation (IPv4/IPv6), route checks, DNS resolution, interface state checks
-- **`lib/detection/xfrm_detection.sh`**: xfrm state checks, byte counter detection, SA rekey detection, IPsec status fallback
+- **`lib/detection/xfrm_detection.sh`**: xfrm state checks, byte counter detection, SA rekey detection, IPsec status fallback. Includes timeout protection (`XFRM_STATE_TIMEOUT=5`) to prevent indefinite hangs during system stress (netlink socket timeouts, XFRM lock contention).
 - **`lib/detection/ping_detection.sh`**: Ping-based connectivity verification, multiple IP support, ping summary logging
 - **`lib/detection/failure_analysis.sh`**: Failure type classification, VPN status determination, network partition detection
+- **`lib/detection/system_wide_failure.sh`**: System-wide failure detection and coordination (detects when all/majority of VPNs fail simultaneously)
 
 **Key Functions**:
 - `check_vpn_status()` - Main detection function (in `failure_analysis.sh`)
@@ -876,6 +1073,10 @@ The system uses a modular library architecture where functionality is organized 
 - `check_ping_connectivity()` - Optional ping-based connectivity verification (in `ping_detection.sh`)
 - `validate_ip_address()` - IP address validation (in `network_validation.sh`)
 - `detect_failure_type()` - Failure type classification (in `failure_analysis.sh`)
+- `detect_system_wide_failure()` - Detects system-wide failure across all locations (in `system_wide_failure.sh`)
+- `should_location_attempt_recovery()` - Determines if location should attempt recovery during system-wide failure (in `system_wide_failure.sh`)
+- `get_system_wide_failure_state()` - Retrieves current system-wide failure state (in `system_wide_failure.sh`)
+- `set_system_wide_failure_state()` - Sets system-wide failure state (in `system_wide_failure.sh`)
 
 **State Passing Pattern**: The detection system uses a state passing pattern to optimize performance and ensure consistency. Expensive system state checks (like SA existence) are performed once at the source (`check_xfrm_status()`) and passed explicitly to downstream functions (`check_ping_optional()`, `detect_failure_type()`) via function parameters. This eliminates duplicate system calls, reducing `ip xfrm state` calls by 66-75% (from 3 calls to 1 per VPN check cycle) and ensures all functions use the same state snapshot, eliminating temporal inconsistencies. See Design Decision #12 and ADR-0028 for details.
 
@@ -885,7 +1086,14 @@ The system uses a modular library architecture where functionality is organized 
 
 **Dependency Handling**: `detection.sh` sources `logging.sh` conditionally with fallback functions (`log_message`, `handle_error`) to ensure it works when sourced independently (e.g., during installation by `install.sh`). The fallback functions output to stderr only and provide basic error handling.
 
-**Note**: See Design Decision #5 for detection strategy details. The module split (completed 2026-01-15) decomposes the original 3005-line monolithic file into 4 focused modules for better organization and maintainability.
+**System-Wide Failure Detection**: The system includes system-wide failure detection to identify infrastructure-level issues when multiple VPN locations fail simultaneously. Detection occurs before individual location recovery attempts, allowing coordinated recovery to prevent cascades. The detection mechanism:
+- Checks all locations' VPN status before recovery attempts
+- Compares failure count to configured threshold (default: 100% of locations)
+- Sets system-wide failure state when threshold exceeded
+- Coordinates recovery so only one location (coordinator) attempts recovery
+- Clears system-wide failure state when failures drop below threshold
+
+**Note**: See Design Decision #5 for detection strategy details. The module split (completed 2026-01-15) decomposes the original 3005-line monolithic file into 4 focused modules for better organization and maintainability. System-wide failure detection was added in 2026-01-12.
 
 #### `lib/lockfile.sh`
 **Purpose**: Lockfile management to prevent concurrent script execution.
@@ -913,25 +1121,6 @@ The system uses a modular library architecture where functionality is organized 
 - File and console output support
 
 **Used By**: All modules for consistent logging
-
-#### `lib/fallbacks.sh`
-**Purpose**: Centralized fallback function definitions for when modules cannot be sourced.
-
-**Key Functions**:
-- `define_schema_fallbacks()` - Defines fallback implementations for schema-related functions
-- `define_logging_fallbacks()` - Defines fallback implementations for logging functions
-- `define_common_fallbacks()` - Defines fallback implementations for common utility functions
-- `define_logging_timestamp_fallback()` - Defines fallback timestamp formatting function
-
-**Usage Pattern**: Modules that may be sourced independently (e.g., during installation) source `lib/fallbacks.sh` and call appropriate fallback definition functions when dependencies cannot be loaded. This ensures graceful degradation when modules are used in isolation.
-
-**Benefits**:
-- Single source of truth for fallback implementations
-- Consistent fallback behavior across all modules
-- Easier maintenance (all fallbacks in one place)
-- Prevents code duplication of fallback definitions
-
-**Used By**: `lib/config.sh`, `lib/detection.sh`, and other modules that need fallback functions
 
 #### `lib/recovery.sh`
 **Purpose**: Tiered recovery actions (logging → surgical cleanup → full restart). Compatibility layer that sources all recovery modules.
@@ -970,24 +1159,29 @@ The system uses a modular library architecture where functionality is organized 
 **Module Structure**: The state management functionality is organized into focused modules in the `lib/state/` subdirectory:
 - **`lib/state/state_paths.sh`**: State file path generation, sanitization, and path management utilities
 - **`lib/state/peer_state.sh`**: Per-peer state operations (connection name caching)
-- **`lib/state/location_state.sh`**: Per-location state operations (failure counters, byte counters, SPI, failure type, idle detection, status logging, recovery method tracking)
+- **`lib/state/location_state.sh`**: Per-location state operations (currently placeholder - reserved for future location-specific state operations not tied to individual peers)
 - **`lib/state/global_state.sh`**: Global state operations (cooldown, restart count, network partition state)
 - **`lib/state/state_init.sh`**: State initialization and validation functions
+- **`lib/state/network_partition_stats.sh`**: Network partition check statistics tracking (success/failure counting, hourly summary logging)
+- **`lib/state/resource_monitoring_stats.sh`**: Resource monitoring statistics tracking (success/failure counting, hourly summary logging for CPU, RAM, and disk checks)
 
 **Key Functions** (distributed across modules):
-- `increment_failure()` - Increments per-location failure counter (in `location_state.sh`)
-- `reset_failure_count()` - Resets per-location failure counter (in `location_state.sh`)
-- `get_failure_count()` - Retrieves current failure count for a location (in `location_state.sh`)
-- `check_cooldown()` - Checks if system is in cooldown period (in `global_state.sh`)
-- `set_cooldown()` - Sets cooldown period after restart (in `global_state.sh`)
+- `increment_failure()` - Increments per-location failure counter (in `peer_state.sh`)
+- `reset_failure_count()` - Resets per-location failure counter (in `peer_state.sh`)
+- `get_failure_count()` - Retrieves current failure count for a location (in `peer_state.sh`)
 - `check_rate_limit()` - Validates restart rate limiting (in `global_state.sh`)
 - `record_restart()` - Records restart timestamp (in `global_state.sh`)
-- `set_peer_state()` - Updates per-location state (byte counters, SPI, etc.) (in `location_state.sh`)
-- `get_peer_state()` - Retrieves per-location state values (in `location_state.sh`)
+- `set_peer_state()` - Updates per-location state (byte counters, SPI, etc.) (in `peer_state.sh`)
+- `get_peer_state()` - Retrieves per-location state values (in `peer_state.sh`)
 - `get_peer_state_file_path()` - Generates state file path with proper sanitization (in `state_paths.sh`)
 - `sanitize_peer_ip()` - Sanitizes IP addresses for use in filenames (in `state_paths.sh`)
 - `sanitize_location_name()` - Sanitizes location names for use in filenames (in `state_paths.sh`)
 - `validate_state_file()` - Validates state file format and detects corruption (in `state_init.sh`)
+- `track_network_partition_check()` - Tracks success/failure statistics for network partition checks (in `network_partition_stats.sh`)
+- `log_network_partition_summary_if_due()` - Logs hourly summary of network partition check statistics (in `network_partition_stats.sh`)
+- `track_resource_check()` - Tracks success/failure statistics for resource monitoring checks (in `resource_monitoring_stats.sh`)
+- `track_resource_constraint()` - Tracks resource constraint events (CPU constrained, RAM constrained, disk critical) (in `resource_monitoring_stats.sh`)
+- `log_resource_monitoring_summary_if_due()` - Logs hourly summary of resource monitoring statistics (in `resource_monitoring_stats.sh`)
 
 **Features**:
 - Atomic file operations (write-tmp-move pattern)
@@ -1002,7 +1196,7 @@ The system uses a modular library architecture where functionality is organized 
 
 **Dependencies**: `lib/logging.sh`, `lib/common.sh`
 
-**Note**: See File Structure section and Design Decision #4 for state file details. The module split (completed 2026-01-11) decomposes the original 1404-line monolithic file into 5 focused modules for better organization and maintainability.
+**Note**: See File Structure section and Design Decision #4 for state file details. The module split (completed 2026-01-11) decomposes the original 1404-line monolithic file into 7 focused modules for better organization and maintainability. Network partition statistics tracking and resource monitoring statistics tracking were added as separate modules to handle success/failure counting and hourly summary logging for network partition checks and resource monitoring checks respectively.
 
 ## VPN Keepalive Daemon
 
@@ -1042,7 +1236,7 @@ graph TB
     subgraph "Library Modules"
         DetectionLib[lib/detection.sh<br/>check_vpn_status]
         RecoveryLib[lib/recovery.sh<br/>surgical_cleanup<br/>full_restart<br/>monitor_location]
-        StateLib[lib/state.sh<br/>check_rate_limit<br/>check_cooldown]
+        StateLib[lib/state.sh<br/>check_rate_limit]
         LockfileLib[lib/lockfile.sh<br/>acquire_lockfile]
         ConfigLib[lib/config.sh<br/>load_config<br/>parse_location_config]
         LoggingLib[lib/logging.sh<br/>log_message]
@@ -1089,6 +1283,8 @@ The following improvements have been implemented to enhance system reliability a
 
 - **False Positive Recovery Messages Fix** (Issue #17): Recovery messages are now only logged when `failure_count > 0`, preventing false positive recovery messages from stale state files.
 
+- **XFRM Command Timeout Protection** (2026-01-23): Added timeout protection for `ip xfrm state` commands to prevent indefinite hangs during system stress. Commands now timeout after 5 seconds (`XFRM_STATE_TIMEOUT=5`) and gracefully fall back to `ipsec status` when timeouts occur. This prevents detection from appearing as if xfrm is unavailable when commands are actually hanging due to netlink socket timeouts or XFRM lock contention. See "Network Command Timeout Handling" in Error Handling Strategy section and [XFRM_TIMEOUT_ISSUE_RESEARCH.md](../../docs/research/XFRM_TIMEOUT_ISSUE_RESEARCH.md) for details.
+
 ## Key Design Decisions
 
 ### 1. Cron-Based Execution
@@ -1125,7 +1321,7 @@ The following improvements have been implemented to enhance system reliability a
 ### 4. Per-Location State Tracking
 - **Why**: Multiple locations need independent monitoring and recovery
 - **Implementation**: Separate state files per location (sanitized location name and IP)
-  - Per-location failure counters: `state/failure_counter_<location>_<peer_ip>`
+  - Per-location failure counters: `state/failure_count_<location>_<peer_ip>`
   - Per-location byte counters: `last_bytes_<location>_<peer_ip>`
 - **Benefit**: Accurate detection and independent recovery for multi-location setups
 - **Note**: Both failure counters and byte counters are tracked per-location, allowing independent failure tracking and recovery actions. Location names are extracted from configuration variable names and sanitized for use in filenames.
@@ -1233,10 +1429,12 @@ The following improvements have been implemented to enhance system reliability a
    - **Exit Code Handling**: Detect timeout exit code (124) and provide specific error messages
    - **Fallback**: If `timeout` command unavailable, run command without wrapper (shouldn't happen on UDM)
    - **Examples**:
+     - `ip xfrm state` wrapped with `XFRM_STATE_TIMEOUT` (5 seconds) in `lib/detection/xfrm_detection.sh`. This prevents indefinite hangs during system stress when netlink sockets timeout (12-13 seconds documented) or XFRM lock contention occurs. When timeout occurs, the system logs a warning and gracefully falls back to `ipsec status` for detection.
      - `ipsec status` wrapped with `IPSEC_STATUS_TIMEOUT` (5 seconds) in `lib/detection/xfrm_detection.sh` and `lib/recovery.sh`
      - `ping` commands wrapped with calculated timeout in `check_ping_connectivity()` (`lib/detection/ping_detection.sh`)
      - `dig` and `nslookup` wrapped with DNS timeout in `check_dns_resolution()` (`lib/detection/network_validation.sh`)
-   - **Benefit**: Prevents script from hanging indefinitely when network commands hang due to network issues
+   - **Benefit**: Prevents script from hanging indefinitely when network commands hang due to network issues, system stress, or kernel subsystem lock contention. Ensures predictable execution time and enables graceful fallback to alternative detection methods.
+   - **Related**: See [XFRM_TIMEOUT_ISSUE_RESEARCH.md](../../docs/research/XFRM_TIMEOUT_ISSUE_RESEARCH.md) for detailed analysis of xfrm timeout issues and resolution.
 
 ## Performance Considerations
 

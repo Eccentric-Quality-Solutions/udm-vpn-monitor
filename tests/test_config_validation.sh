@@ -4,6 +4,7 @@
 # Tests critical paths and error handling scenarios
 
 load test_helper
+load helpers/assertions
 load fixtures/vpn_active
 
 # Path to the VPN monitor script
@@ -14,22 +15,20 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # ============================================================================
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid COOLDOWN_MINUTES (negative)" {
-	# Purpose: Test verifies that the script handles negative COOLDOWN_MINUTES values gracefully
+@test "invalid MAX_RESTARTS_PER_WINDOW (negative)" {
+	# Purpose: Test verifies that the script handles negative MAX_RESTARTS_PER_WINDOW values gracefully
 	# Expected: Script processes negative value without crashing, either using default or failing gracefully
 	# Importance: Negative values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		'COOLDOWN_MINUTES=-1'
+		'MAX_RESTARTS_PER_WINDOW=-1'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -37,29 +36,26 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	run bash "$test_script" --fake
 
-	# Script should handle invalid value (either use default or fail gracefully)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid COOLDOWN_MINUTES (zero)" {
-	# Purpose: Test verifies that the script handles zero COOLDOWN_MINUTES values gracefully
+@test "invalid MAX_RESTARTS_PER_WINDOW (zero)" {
+	# Purpose: Test verifies that the script handles zero MAX_RESTARTS_PER_WINDOW values gracefully
 	# Expected: Script processes zero value without crashing, either using default or failing gracefully
 	# Importance: Zero values can occur from manual editing errors; script must handle them robustly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		'COOLDOWN_MINUTES=0'
+		'MAX_RESTARTS_PER_WINDOW=0'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -67,65 +63,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
-
-	remove_mock_from_path
-}
-
-# bats test_tags=category:high-risk,priority:high
-@test "invalid MAX_RESTARTS_PER_HOUR (negative)" {
-	# Purpose: Test verifies that the script handles negative MAX_RESTARTS_PER_HOUR values gracefully
-	# Expected: Script processes negative value without crashing, either using default or failing gracefully
-	# Importance: Negative values can occur from manual editing errors; script must handle them robustly
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	setup_test_location_config "$config_file" \
-		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		'MAX_RESTARTS_PER_HOUR=-1'
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
-	add_mock_to_path
-
-	run bash "$test_script" --fake
-
-	assert_file_exist "$log_file"
-
-	remove_mock_from_path
-}
-
-# bats test_tags=category:high-risk,priority:high
-@test "invalid MAX_RESTARTS_PER_HOUR (zero)" {
-	# Purpose: Test verifies that the script handles zero MAX_RESTARTS_PER_HOUR values gracefully
-	# Expected: Script processes zero value without crashing, either using default or failing gracefully
-	# Importance: Zero values can occur from manual editing errors; script must handle them robustly
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	setup_test_location_config "$config_file" \
-		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		'MAX_RESTARTS_PER_HOUR=0'
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
-
-	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
-	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
-	add_mock_to_path
-
-	run bash "$test_script" --fake
-
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -141,12 +79,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'LOCKFILE_TIMEOUT=-1'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -154,7 +90,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -170,12 +106,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'LOCKFILE_TIMEOUT=0'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -183,7 +117,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -199,12 +133,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'PING_COUNT=-1'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -212,7 +144,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -228,12 +160,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'PING_COUNT=0'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -241,7 +171,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -257,12 +187,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'PING_TIMEOUT=-1'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -270,7 +198,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -286,12 +214,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'PING_TIMEOUT=0'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -299,7 +225,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	run bash "$test_script" --fake
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -320,9 +246,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		'ENABLE_PING_CHECK=1' \
 		'LOCAL_UDM_IP="10.0.0.1"'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Track calls to route setup functions
 	local route_check_log="${TEST_DIR}/route_check_log"
@@ -357,7 +281,7 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Run script - should call route setup during validation
 	run bash "$test_script" --fake
@@ -386,9 +310,7 @@ EOF
 		'ENABLE_PING_CHECK=1' \
 		'LOCAL_UDM_IP="10.0.0.1"'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create mock ip command that simulates route setup failure
 	local mock_ip="${TEST_DIR}/ip"
@@ -415,7 +337,7 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Run script - should fail validation because route setup fails
 	# In main execution path (log_message available), validation should fail
@@ -424,7 +346,7 @@ EOF
 	# Should fail validation (exit code 3 = EXIT_VALIDATION_ERROR)
 	assert_failure
 	# Should contain route setup error message
-	assert_file_contains "$log_file" "Route setup failed" || assert_file_contains "$log_file" "Failed to add route"
+	assert_log_contains_any "$LOG_FILE" "Route setup failed" "Failed to add route"
 
 	remove_mock_from_path
 }
@@ -453,9 +375,7 @@ EOF
 		'ENABLE_PING_CHECK=1' \
 		'LOCAL_UDM_IP="10.0.0.1"'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create mock ip command that allows route setup to succeed
 	local mock_ip="${TEST_DIR}/ip"
@@ -482,7 +402,7 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Run script - should succeed because route setup succeeds
 	run bash "$test_script" --fake
@@ -505,9 +425,7 @@ EOF
 		'ENABLE_PING_CHECK=1' \
 		'LOCAL_UDM_IP="10.0.0.1"'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Track calls to route setup functions
 	local route_check_log="${TEST_DIR}/route_check_log"
@@ -542,7 +460,7 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Run script - should call route setup during validation
 	run bash "$test_script" --fake
@@ -571,9 +489,7 @@ EOF
 		'ENABLE_PING_CHECK=1' \
 		'LOCAL_UDM_IP="10.0.0.1"'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Source config.sh functions to test setup_routes_if_needed directly
 	# Note: We intentionally do NOT source detection.sh to simulate the scenario where
@@ -587,8 +503,8 @@ EOF
 
 	# Set up minimal environment
 	export CONFIG_FILE="$config_file"
-	export STATE_DIR="$state_dir"
-	export LOG_FILE="$log_file"
+	export STATE_DIR="$STATE_DIR"
+	export LOG_FILE="$LOG_FILE"
 	export ENABLE_PING_CHECK=1
 	export LOCAL_UDM_IP="10.0.0.1"
 	enable_fake_mode
@@ -631,9 +547,7 @@ EOF
 		'ENABLE_PING_CHECK=1' \
 		'LOCAL_UDM_IP="10.0.0.1"'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create mock ip command that simulates route setup failure
 	local mock_ip="${TEST_DIR}/ip"
@@ -660,7 +574,7 @@ EOF
 	add_mock_to_path
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Run script - should fail validation because route setup fails
 	# In main execution path (log_message available), validation should fail
@@ -669,7 +583,7 @@ EOF
 	# Should fail validation (exit code 3 = EXIT_VALIDATION_ERROR)
 	assert_failure
 	# Should contain route setup error message
-	assert_file_contains "$log_file" "Route setup failed" || assert_file_contains "$log_file" "Failed to add route"
+	assert_log_contains_any "$LOG_FILE" "Route setup failed" "Failed to add route"
 
 	remove_mock_from_path
 }
@@ -686,9 +600,7 @@ EOF
 		'ENABLE_PING_CHECK=1' \
 		'LOCAL_UDM_IP="10.0.0.1"'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Create mock ip command that simulates route setup failure
 	local mock_ip="${TEST_DIR}/ip"
@@ -726,8 +638,8 @@ EOF
 
 	# Set up environment
 	export CONFIG_FILE="$config_file"
-	export STATE_DIR="$state_dir"
-	export LOG_FILE="$log_file"
+	export STATE_DIR="$STATE_DIR"
+	export LOG_FILE="$LOG_FILE"
 	export ENABLE_PING_CHECK=1
 	export LOCAL_UDM_IP="10.0.0.1"
 	enable_fake_mode
@@ -929,9 +841,8 @@ EOF
 	# (They should be missing)
 
 	# Set up log file to capture error messages
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	export LOG_FILE="$log_file"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	export LOG_FILE="$LOG_FILE"
 
 	# Call validate_critical_config_vars - should fail and report all missing variables
 	run validate_critical_config_vars
@@ -941,13 +852,13 @@ EOF
 
 	# Verify error message contains all missing required variables
 	# Error message format: "Missing required configuration variables: VAR1 VAR2 VAR3"
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "Missing required configuration variables"
-	assert_file_contains "$log_file" "REQUIRED_VAR1"
-	assert_file_contains "$log_file" "REQUIRED_VAR2"
-	assert_file_contains "$log_file" "REQUIRED_VAR3"
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "Missing required configuration variables"
+	assert_file_contains "$LOG_FILE" "REQUIRED_VAR1"
+	assert_file_contains "$LOG_FILE" "REQUIRED_VAR2"
+	assert_file_contains "$LOG_FILE" "REQUIRED_VAR3"
 	# Optional variable should not be in error message
-	run grep -q "OPTIONAL_VAR" "$log_file" || true
+	run grep -q "OPTIONAL_VAR" "$LOG_FILE" || true
 	assert_failure
 
 	# Cleanup
@@ -980,9 +891,8 @@ EOF
 	# So if declare -p fails, the condition is true and variable is added to missing_required
 
 	# Set up log file to capture error messages
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	export LOG_FILE="$log_file"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	export LOG_FILE="$LOG_FILE"
 
 	# Call validate_critical_config_vars - should fail because variable is not declared
 	run validate_critical_config_vars
@@ -991,11 +901,186 @@ EOF
 	assert_failure
 
 	# Verify error message contains the missing variable
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "Missing required configuration variables"
-	assert_file_contains "$log_file" "TEST_REQUIRED_VAR"
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "Missing required configuration variables"
+	assert_file_contains "$LOG_FILE" "TEST_REQUIRED_VAR"
 
 	# Cleanup
 	unset CONFIG_SCHEMA
 	unset LOG_FILE
+}
+
+# ============================================================================
+# SPLIT_RULES_STRING FUNCTION TESTS
+# ============================================================================
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - empty rules string" {
+	# Purpose: Test that split_rules_string handles empty rules string correctly
+	# Expected: Function returns success and produces empty array
+	# Importance: Edge case handling - empty input should not cause errors
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "" "result_array"
+	local status=$?
+
+	# Should succeed and produce empty array
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 0 ]
+}
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - ||| separator with multiple rules" {
+	# Purpose: Test that split_rules_string correctly splits rules using ||| separator
+	# Expected: Function splits rules by ||| separator into array elements
+	# Importance: Core functionality - new format for rule separation
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "min:1|||max:10" "result_array"
+	local status=$?
+
+	# Should succeed and split into two rules
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 2 ]
+	assert_equal "${result_array[0]}" "min:1"
+	assert_equal "${result_array[1]}" "max:10"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - ||| separator with three rules" {
+	# Purpose: Test that split_rules_string handles multiple ||| separators correctly
+	# Expected: Function splits all rules separated by ||| into array elements
+	# Importance: Ensures function works with more than two rules
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "min:1|||max:10|||step:2" "result_array"
+	local status=$?
+
+	# Should succeed and split into three rules
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 3 ]
+	assert_equal "${result_array[0]}" "min:1"
+	assert_equal "${result_array[1]}" "max:10"
+	assert_equal "${result_array[2]}" "step:2"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - values: prefix special case (single rule)" {
+	# Purpose: Test that split_rules_string does not split values: rules (comma is part of value)
+	# Expected: Function returns single-element array containing the entire values: rule
+	# Importance: Special case handling - commas in values: rules are part of the value, not separators
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "values:0,1" "result_array"
+	local status=$?
+
+	# Should succeed and return single rule (not split by comma)
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 1 ]
+	assert_equal "${result_array[0]}" "values:0,1"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - values: prefix with multiple values" {
+	# Purpose: Test that split_rules_string handles values: rules with multiple comma-separated values
+	# Expected: Function returns single-element array containing the entire values: rule
+	# Importance: Ensures commas in values: rules are preserved as part of the value
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "values:0,1,2,3" "result_array"
+	local status=$?
+
+	# Should succeed and return single rule (not split by comma)
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 1 ]
+	assert_equal "${result_array[0]}" "values:0,1,2,3"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - single rule without separator" {
+	# Purpose: Test that split_rules_string handles single rule without any separator
+	# Expected: Function returns single-element array containing the rule
+	# Importance: Edge case - single rule should work correctly
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "min:1" "result_array"
+	local status=$?
+
+	# Should succeed and return single rule
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 1 ]
+	assert_equal "${result_array[0]}" "min:1"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - ||| separator with comma in rule value" {
+	# Purpose: Test that ||| separator correctly splits rules even when comma is present in rule values
+	# Expected: Function uses ||| separator to split, preserving commas within individual rules
+	# Importance: Ensures ||| separator works correctly with complex rule values
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "min:1|||max:10,step:2" "result_array"
+	local status=$?
+
+	# Should succeed and split by ||| (preserving comma in second rule)
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 2 ]
+	assert_equal "${result_array[0]}" "min:1"
+	assert_equal "${result_array[1]}" "max:10,step:2"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "split_rules_string - values: rule preserves commas" {
+	# Purpose: Test that values: rules are not split (comma is part of the value)
+	# Expected: Function does not split values: rules even when comma is present
+	# Importance: Special case handling - values: should not be split by comma
+	# Source required modules
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	local -a result_array
+	split_rules_string "values:0,1,2" "result_array"
+	local status=$?
+
+	# Should succeed and return single rule (not split by comma)
+	assert [ $status -eq 0 ]
+	assert [ ${#result_array[@]} -eq 1 ]
+	assert_equal "${result_array[0]}" "values:0,1,2"
 }

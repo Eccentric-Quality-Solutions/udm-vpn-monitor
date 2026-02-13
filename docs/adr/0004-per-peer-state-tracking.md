@@ -18,7 +18,7 @@ A shared failure counter would:
 
 ## Decision
 We will track state independently for each configured peer IP, including:
-- Per-location, per-peer failure counters (`failure_counter_<location>_<peer_ip>`)
+- Per-location, per-peer failure counters (`failure_count_<location>_<peer_ip>`)
 - Per-location, per-peer byte counters (`last_bytes_<location>_<peer_ip>`)
 - Independent recovery actions per location and peer
 - Separate state files with location names and sanitized IP addresses in filenames
@@ -38,7 +38,7 @@ We will track state independently for each configured peer IP, including:
 - **Filename Sanitization**: Need to sanitize IP addresses for safe filenames (dots/colons → underscores)
 
 ## Implementation Details
-- **Failure Counters**: Stored in `state/failure_counter_<location>_<sanitized_ip>` (e.g., `failure_counter_NYC_192_168_1_1`)
+- **Failure Counters**: Stored in `state/failure_count_<location>_<sanitized_ip>` (e.g., `failure_count_NYC_192_168_1_1`)
 - **Byte Counters**: Stored in `state/last_bytes_<location>_<sanitized_ip>` (e.g., `last_bytes_NYC_192_168_1_1`)
 - **IP Sanitization**: Dots and colons replaced with underscores (IPv4: `192.168.1.1` → `192_168_1_1`, IPv6: `2001:db8::1` → `2001_db8__1`)
 - **Independent Tracking**: Each peer's failure count and byte counters tracked separately

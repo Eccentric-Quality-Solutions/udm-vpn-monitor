@@ -301,3 +301,550 @@ clear_mock_tracking() {
 
 	rm -f "$tracking_file"
 }
+
+# ============================================================================
+# Complex XFRM State Mock Helpers
+# ============================================================================
+#
+# These helpers simplify creating complex xfrm state mocks for testing SA
+# count mismatches, asymmetric states, timing issues, and bidirectional SAs.
+# They handle state tracking, file-based flags, and complex conditional logic
+# internally, making tests more maintainable and readable.
+#
+# Mock Behavior:
+# - All mocks handle both "ip -s xfrm state" (with statistics) and "ip xfrm state"
+# - Mocks track state via file-based flags (e.g., deletion flags)
+# - Mocks support SA deletion via "ip xfrm state delete" command
+# - Mocks pass through other ip commands to the real /usr/bin/ip
+#
+# State Tracking:
+# - Deletion flags: Track when SAs have been deleted
+# - Call counters: Track verification attempts for timing scenarios
+# - SA re-establishment: Track when SAs re-establish after deletion
+#
+# ============================================================================
+
+# Create mock ip command for bidirectional SA scenarios
+#
+# Creates a mock 'ip' command that simulates bidirectional SAs (forward and
+# reverse). The mock handles SA deletion and re-establishment with proper
+# state tracking.
+#
+# Mock Behavior:
+# - Before deletion: Returns 2 SAs (forward: local→peer, reverse: peer→local)
+# - After deletion: Returns SAs based on re-establishment state
+# - Deletion: Handles "ip xfrm state delete" and sets deletion flag
+# - Supports both "ip -s xfrm state" and "ip xfrm state" formats
+#
+# Arguments:
+#   $1: Local IP address (default: ${TEST_LOCAL_IP})
+#   $2: Peer IP address (default: ${TEST_PEER_IP})
+#   $3: Forward SPI value (default: 0x12345678)
+#   $4: Reverse SPI value (default: 0x87654321)
+#   $5: Path to deletion flag file (default: ${TEST_DIR}/sas_deleted)
+#   $6: Bytes before deletion (default: 0)
+#   $7: Bytes after re-establishment (default: 1000)
+#   $8: Optional path to mock ip file (default: ${TEST_DIR}/ip)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints path to created mock script
+#
+# Side effects:
+#   - Creates executable mock ip script
+#   - Creates deletion flag file when SAs are deleted
+#
+# Example:
+#   # Basic bidirectional SA mock
+#   mock_ip_xfrm_bidirectional_sa "${TEST_LOCAL_IP}" "${TEST_PEER_IP}"
+#   add_mock_to_path
+#
+#   # Custom SPIs and bytes
+#   mock_ip_xfrm_bidirectional_sa "${TEST_LOCAL_IP}" "${TEST_PEER_IP}" \
+#       "0xabcdef12" "0x21fedcba" "${TEST_DIR}/deleted" 0 2000
+#   add_mock_to_path
+mock_ip_xfrm_bidirectional_sa() {
+	local local_ip="${1:-${TEST_LOCAL_IP}}"
+	local peer_ip="${2:-${TEST_PEER_IP}}"
+	local forward_spi="${3:-0x12345678}"
+	local reverse_spi="${4:-0x87654321}"
+	local deletion_flag="${5:-${TEST_DIR}/sas_deleted}"
+	local bytes_before="${6:-0}"
+	local bytes_after="${7:-1000}"
+	local mock_ip="${8:-${TEST_DIR}/ip}"
+
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
+    # SA deletion succeeds - set flag
+    touch "${deletion_flag}" 2>/dev/null || true
+    touch "${TEST_DIR}/MOCK_SAS_DELETED_FILE" 2>/dev/null || true
+    exit 0
+elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag)
+    if [[ -f "${deletion_flag}" ]]; then
+        # After deletion: return SAs with re-established bytes
+        # Forward SA (local→peer)
+        echo "src ${local_ip} dst ${peer_ip}"
+        echo "    proto esp spi ${forward_spi} reqid 1 mode tunnel"
+        echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+        # Reverse SA (peer→local)
+        echo "src ${peer_ip} dst ${local_ip}"
+        echo "    proto esp spi ${reverse_spi} reqid 1 mode tunnel"
+        echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+    else
+        # Before deletion: return 2 SAs with initial bytes
+        # Forward SA (local→peer)
+        echo "src ${local_ip} dst ${peer_ip}"
+        echo "    proto esp spi ${forward_spi} reqid 1 mode tunnel"
+        echo "    lifetime current: ${bytes_before} bytes, 0 packets"
+        # Reverse SA (peer→local)
+        echo "src ${peer_ip} dst ${local_ip}"
+        echo "    proto esp spi ${reverse_spi} reqid 1 mode tunnel"
+        echo "    lifetime current: ${bytes_before} bytes, 0 packets"
+    fi
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Handle "ip xfrm state" (without statistics flag)
+    if [[ -f "${deletion_flag}" ]]; then
+        # After deletion: return SAs with re-established bytes
+        # Forward SA (local→peer)
+        echo "src ${local_ip} dst ${peer_ip}"
+        echo "    proto esp spi ${forward_spi} reqid 1 mode tunnel"
+        echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+        # Reverse SA (peer→local)
+        echo "src ${peer_ip} dst ${local_ip}"
+        echo "    proto esp spi ${reverse_spi} reqid 1 mode tunnel"
+        echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+    else
+        # Before deletion: return 2 SAs with initial bytes
+        # Forward SA (local→peer)
+        echo "src ${local_ip} dst ${peer_ip}"
+        echo "    proto esp spi ${forward_spi} reqid 1 mode tunnel"
+        echo "    lifetime current: ${bytes_before} bytes, 0 packets"
+        # Reverse SA (peer→local)
+        echo "src ${peer_ip} dst ${local_ip}"
+        echo "    proto esp spi ${reverse_spi} reqid 1 mode tunnel"
+        echo "    lifetime current: ${bytes_before} bytes, 0 packets"
+    fi
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	echo "$mock_ip"
+}
+
+# Create mock ip command for SA count mismatch scenarios
+#
+# Creates a mock 'ip' command that simulates SA count mismatches during
+# recovery. The mock returns 2 SAs before deletion, but only 1 SA after
+# deletion (simulating a mismatch where only one SA re-establishes).
+#
+# Mock Behavior:
+# - Before deletion: Returns 2 SAs (bidirectional)
+# - After deletion: Returns only 1 SA (forward or reverse, based on direction)
+# - Deletion: Handles "ip xfrm state delete" and sets deletion flag
+# - Supports both "ip -s xfrm state" and "ip xfrm state" formats
+#
+# Arguments:
+#   $1: Local IP address (default: ${TEST_LOCAL_IP})
+#   $2: Peer IP address (default: ${TEST_PEER_IP})
+#   $3: Direction of remaining SA after deletion ("forward" or "reverse", default: "forward")
+#   $4: Forward SPI value (default: 0x12345678)
+#   $5: Reverse SPI value (default: 0x87654321)
+#   $6: Path to deletion flag file (default: ${TEST_DIR}/sas_deleted)
+#   $7: Bytes before deletion (default: 0)
+#   $8: Bytes after re-establishment (default: 1000)
+#   $9: Optional path to mock ip file (default: ${TEST_DIR}/ip)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints path to created mock script
+#
+# Side effects:
+#   - Creates executable mock ip script
+#   - Creates deletion flag file when SAs are deleted
+#
+# Example:
+#   # SA count mismatch: deleted 2, only forward re-establishes
+#   mock_ip_xfrm_sa_count_mismatch "${TEST_LOCAL_IP}" "${TEST_PEER_IP}" "forward"
+#   add_mock_to_path
+#
+#   # SA count mismatch: deleted 2, only reverse re-establishes
+#   mock_ip_xfrm_sa_count_mismatch "${TEST_LOCAL_IP}" "${TEST_PEER_IP}" "reverse"
+#   add_mock_to_path
+mock_ip_xfrm_sa_count_mismatch() {
+	local local_ip="${1:-${TEST_LOCAL_IP}}"
+	local peer_ip="${2:-${TEST_PEER_IP}}"
+	local direction="${3:-forward}"
+	local forward_spi="${4:-0x12345678}"
+	local reverse_spi="${5:-0x87654321}"
+	local deletion_flag="${6:-${TEST_DIR}/sas_deleted}"
+	local bytes_before="${7:-0}"
+	local bytes_after="${8:-1000}"
+	local mock_ip="${9:-${TEST_DIR}/ip}"
+
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
+    # SA deletion succeeds - set flag
+    touch "${deletion_flag}" 2>/dev/null || true
+    touch "${TEST_DIR}/MOCK_SAS_DELETED_FILE" 2>/dev/null || true
+    exit 0
+elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag)
+    if [[ -f "${deletion_flag}" ]]; then
+        # After deletion: return only 1 SA (mismatch - deleted 2, only 1 re-established)
+        if [[ "${direction}" == "forward" ]]; then
+            # Return forward SA only (local→peer)
+            echo "src ${local_ip} dst ${peer_ip}"
+            echo "    proto esp spi ${forward_spi} reqid 1 mode tunnel"
+            echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+        else
+            # Return reverse SA only (peer→local)
+            echo "src ${peer_ip} dst ${local_ip}"
+            echo "    proto esp spi ${reverse_spi} reqid 1 mode tunnel"
+            echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+        fi
+    else
+        # Before deletion: return 2 SAs (bidirectional)
+        # Forward SA (local→peer)
+        echo "src ${local_ip} dst ${peer_ip}"
+        echo "    proto esp spi ${forward_spi} reqid 1 mode tunnel"
+        echo "    lifetime current: ${bytes_before} bytes, 0 packets"
+        # Reverse SA (peer→local)
+        echo "src ${peer_ip} dst ${local_ip}"
+        echo "    proto esp spi ${reverse_spi} reqid 1 mode tunnel"
+        echo "    lifetime current: ${bytes_before} bytes, 0 packets"
+    fi
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Handle "ip xfrm state" (without statistics flag)
+    if [[ -f "${deletion_flag}" ]]; then
+        # After deletion: return only 1 SA (mismatch - deleted 2, only 1 re-established)
+        if [[ "${direction}" == "forward" ]]; then
+            # Return forward SA only (local→peer)
+            echo "src ${local_ip} dst ${peer_ip}"
+            echo "    proto esp spi ${forward_spi} reqid 1 mode tunnel"
+            echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+        else
+            # Return reverse SA only (peer→local)
+            echo "src ${peer_ip} dst ${local_ip}"
+            echo "    proto esp spi ${reverse_spi} reqid 1 mode tunnel"
+            echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+        fi
+    else
+        # Before deletion: return 2 SAs (bidirectional)
+        # Forward SA (local→peer)
+        echo "src ${local_ip} dst ${peer_ip}"
+        echo "    proto esp spi ${forward_spi} reqid 1 mode tunnel"
+        echo "    lifetime current: ${bytes_before} bytes, 0 packets"
+        # Reverse SA (peer→local)
+        echo "src ${peer_ip} dst ${local_ip}"
+        echo "    proto esp spi ${reverse_spi} reqid 1 mode tunnel"
+        echo "    lifetime current: ${bytes_before} bytes, 0 packets"
+    fi
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	echo "$mock_ip"
+}
+
+# Create mock ip command for asymmetric SA state scenarios
+#
+# Creates a mock 'ip' command that simulates asymmetric SA states (only
+# forward or only reverse SA present). The mock always returns only one SA,
+# never bidirectional.
+#
+# Mock Behavior:
+# - Always returns only 1 SA (forward or reverse, based on direction)
+# - Deletion: Handles "ip xfrm state delete" and sets deletion flag
+# - After deletion: Returns SA with re-established bytes
+# - Supports both "ip -s xfrm state" and "ip xfrm state" formats
+#
+# Arguments:
+#   $1: Local IP address (default: ${TEST_LOCAL_IP})
+#   $2: Peer IP address (default: ${TEST_PEER_IP})
+#   $3: Direction of SA ("forward" or "reverse", default: "forward")
+#   $4: SPI value (default: 0x12345678 for forward, 0x87654321 for reverse)
+#   $5: Path to deletion flag file (default: ${TEST_DIR}/sas_deleted)
+#   $6: Bytes before deletion (default: 0)
+#   $7: Bytes after re-establishment (default: 1000)
+#   $8: Optional path to mock ip file (default: ${TEST_DIR}/ip)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints path to created mock script
+#
+# Side effects:
+#   - Creates executable mock ip script
+#   - Creates deletion flag file when SAs are deleted
+#
+# Example:
+#   # Asymmetric: only forward SA present
+#   mock_ip_xfrm_asymmetric_sa "${TEST_LOCAL_IP}" "${TEST_PEER_IP}" "forward"
+#   add_mock_to_path
+#
+#   # Asymmetric: only reverse SA present
+#   mock_ip_xfrm_asymmetric_sa "${TEST_LOCAL_IP}" "${TEST_PEER_IP}" "reverse"
+#   add_mock_to_path
+mock_ip_xfrm_asymmetric_sa() {
+	local local_ip="${1:-${TEST_LOCAL_IP}}"
+	local peer_ip="${2:-${TEST_PEER_IP}}"
+	local direction="${3:-forward}"
+	local spi="${4:-}"
+	local deletion_flag="${5:-${TEST_DIR}/sas_deleted}"
+	local bytes_before="${6:-0}"
+	local bytes_after="${7:-1000}"
+	local mock_ip="${8:-${TEST_DIR}/ip}"
+
+	# Set default SPI based on direction
+	if [[ -z "$spi" ]]; then
+		if [[ "$direction" == "forward" ]]; then
+			spi="0x12345678"
+		else
+			spi="0x87654321"
+		fi
+	fi
+
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
+    # SA deletion succeeds - set flag
+    touch "${deletion_flag}" 2>/dev/null || true
+    touch "${TEST_DIR}/MOCK_SAS_DELETED_FILE" 2>/dev/null || true
+    exit 0
+elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag)
+    # Always return only one SA (asymmetric - no bidirectional)
+    if [[ "${direction}" == "forward" ]]; then
+        # Forward SA (local→peer)
+        echo "src ${local_ip} dst ${peer_ip}"
+        echo "    proto esp spi ${spi} reqid 1 mode tunnel"
+        if [[ -f "${deletion_flag}" ]]; then
+            # After deletion: return with re-established bytes
+            echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+        else
+            # Before deletion: return with zero byte counters
+            echo "    lifetime current: ${bytes_before} bytes, 0 packets"
+        fi
+    else
+        # Reverse SA (peer→local)
+        echo "src ${peer_ip} dst ${local_ip}"
+        echo "    proto esp spi ${spi} reqid 1 mode tunnel"
+        if [[ -f "${deletion_flag}" ]]; then
+            # After deletion: return with re-established bytes
+            echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+        else
+            # Before deletion: return with zero byte counters
+            echo "    lifetime current: ${bytes_before} bytes, 0 packets"
+        fi
+    fi
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Handle "ip xfrm state" (without statistics flag)
+    # Always return only one SA (asymmetric - no bidirectional)
+    if [[ "${direction}" == "forward" ]]; then
+        # Forward SA (local→peer)
+        echo "src ${local_ip} dst ${peer_ip}"
+        echo "    proto esp spi ${spi} reqid 1 mode tunnel"
+        if [[ -f "${deletion_flag}" ]]; then
+            # After deletion: return with re-established bytes
+            echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+        else
+            # Before deletion: return with zero byte counters
+            echo "    lifetime current: ${bytes_before} bytes, 0 packets"
+        fi
+    else
+        # Reverse SA (peer→local)
+        echo "src ${peer_ip} dst ${local_ip}"
+        echo "    proto esp spi ${spi} reqid 1 mode tunnel"
+        if [[ -f "${deletion_flag}" ]]; then
+            # After deletion: return with re-established bytes
+            echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+        else
+            # Before deletion: return with zero byte counters
+            echo "    lifetime current: ${bytes_before} bytes, 0 packets"
+        fi
+    fi
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	echo "$mock_ip"
+}
+
+# Create mock ip command for timing delay scenarios
+#
+# Creates a mock 'ip' command that simulates timing issues where the second
+# SA appears after a delay. The mock returns 1 SA initially after deletion,
+# then 2 SAs after a specified number of verification attempts.
+#
+# Mock Behavior:
+# - Before deletion: Returns 2 SAs (bidirectional)
+# - After deletion: Returns 1 SA for first N attempts, then 2 SAs
+# - Deletion: Handles "ip xfrm state delete" and sets deletion flag
+# - Tracks verification attempts via call counter file
+# - Supports both "ip -s xfrm state" and "ip xfrm state" formats
+#
+# Arguments:
+#   $1: Local IP address (default: ${TEST_LOCAL_IP})
+#   $2: Peer IP address (default: ${TEST_PEER_IP})
+#   $3: Delay in verification attempts before second SA appears (default: 3)
+#   $4: Forward SPI value (default: 0x12345678)
+#   $5: Reverse SPI value (default: 0x87654321)
+#   $6: Path to deletion flag file (default: ${TEST_DIR}/sas_deleted)
+#   $7: Path to call counter file (default: ${TEST_DIR}/check_count)
+#   $8: Bytes before deletion (default: 0)
+#   $9: Bytes after re-establishment (default: 1000)
+#   $10: Optional path to mock ip file (default: ${TEST_DIR}/ip)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints path to created mock script
+#
+# Side effects:
+#   - Creates executable mock ip script
+#   - Creates deletion flag file when SAs are deleted
+#   - Creates/initializes call counter file
+#
+# Example:
+#   # Timing delay: second SA appears after 3 attempts
+#   mock_ip_xfrm_timing_delay "${TEST_LOCAL_IP}" "${TEST_PEER_IP}" 3
+#   add_mock_to_path
+#
+#   # Timing delay: second SA appears after 5 attempts
+#   mock_ip_xfrm_timing_delay "${TEST_LOCAL_IP}" "${TEST_PEER_IP}" 5 \
+#       "0x12345678" "0x87654321" "${TEST_DIR}/deleted" "${TEST_DIR}/counter"
+#   add_mock_to_path
+mock_ip_xfrm_timing_delay() {
+	local local_ip="${1:-${TEST_LOCAL_IP}}"
+	local peer_ip="${2:-${TEST_PEER_IP}}"
+	local delay="${3:-3}"
+	local forward_spi="${4:-0x12345678}"
+	local reverse_spi="${5:-0x87654321}"
+	local deletion_flag="${6:-${TEST_DIR}/sas_deleted}"
+	local check_count_file="${7:-${TEST_DIR}/check_count}"
+	local bytes_before="${8:-0}"
+	local bytes_after="${9:-1000}"
+	local mock_ip="${10:-${TEST_DIR}/ip}"
+
+	# Initialize call counter
+	echo "0" >"$check_count_file" 2>/dev/null || true
+
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
+    # SA deletion succeeds - set flag and reset counter
+    touch "${deletion_flag}" 2>/dev/null || true
+    touch "${TEST_DIR}/MOCK_SAS_DELETED_FILE" 2>/dev/null || true
+    echo "0" > "${check_count_file}" 2>/dev/null || true
+    exit 0
+elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Handle "ip -s xfrm state" (with statistics flag)
+    if [[ -f "${deletion_flag}" ]]; then
+        # After deletion: simulate timing issue - return 1 SA initially, then 2 SAs after delay
+        local check_count=0
+        if [[ -f "${check_count_file}" ]]; then
+            check_count=\$(cat "${check_count_file}" 2>/dev/null || echo "0")
+        fi
+        # Use current counter value to decide what to return (before incrementing)
+        local should_return_two=0
+        if [[ \$check_count -ge ${delay} ]]; then
+            should_return_two=1
+        fi
+        # Now increment the counter for next call
+        check_count=\$((check_count + 1))
+        echo "\$check_count" > "${check_count_file}" 2>/dev/null || true
+
+        if [[ \$should_return_two -eq 0 ]]; then
+            # Initial checks: return only 1 SA (first SA re-established)
+            echo "src ${local_ip} dst ${peer_ip}"
+            echo "    proto esp spi ${forward_spi} reqid 1 mode tunnel"
+            echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+        else
+            # Later checks: return 2 SAs (second SA appears after delay)
+            # Forward SA (local→peer)
+            echo "src ${local_ip} dst ${peer_ip}"
+            echo "    proto esp spi ${forward_spi} reqid 1 mode tunnel"
+            echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+            # Reverse SA (peer→local) - appears after delay
+            echo "src ${peer_ip} dst ${local_ip}"
+            echo "    proto esp spi ${reverse_spi} reqid 1 mode tunnel"
+            echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+        fi
+    else
+        # Before deletion: return 2 SAs (bidirectional)
+        # Forward SA (local→peer)
+        echo "src ${local_ip} dst ${peer_ip}"
+        echo "    proto esp spi ${forward_spi} reqid 1 mode tunnel"
+        echo "    lifetime current: ${bytes_before} bytes, 0 packets"
+        # Reverse SA (peer→local)
+        echo "src ${peer_ip} dst ${local_ip}"
+        echo "    proto esp spi ${reverse_spi} reqid 1 mode tunnel"
+        echo "    lifetime current: ${bytes_before} bytes, 0 packets"
+    fi
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Handle "ip xfrm state" (without statistics flag)
+    if [[ -f "${deletion_flag}" ]]; then
+        # After deletion: simulate timing issue - return 1 SA initially, then 2 SAs after delay
+        local check_count=0
+        if [[ -f "${check_count_file}" ]]; then
+            check_count=\$(cat "${check_count_file}" 2>/dev/null || echo "0")
+        fi
+        # Use current counter value to decide what to return (before incrementing)
+        local should_return_two=0
+        if [[ \$check_count -ge ${delay} ]]; then
+            should_return_two=1
+        fi
+        # Now increment the counter for next call
+        check_count=\$((check_count + 1))
+        echo "\$check_count" > "${check_count_file}" 2>/dev/null || true
+
+        if [[ \$should_return_two -eq 0 ]]; then
+            # Initial checks: return only 1 SA (first SA re-established)
+            echo "src ${local_ip} dst ${peer_ip}"
+            echo "    proto esp spi ${forward_spi} reqid 1 mode tunnel"
+            echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+        else
+            # Later checks: return 2 SAs (second SA appears after delay)
+            # Forward SA (local→peer)
+            echo "src ${local_ip} dst ${peer_ip}"
+            echo "    proto esp spi ${forward_spi} reqid 1 mode tunnel"
+            echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+            # Reverse SA (peer→local) - appears after delay
+            echo "src ${peer_ip} dst ${local_ip}"
+            echo "    proto esp spi ${reverse_spi} reqid 1 mode tunnel"
+            echo "    lifetime current: ${bytes_after} bytes, 10 packets"
+        fi
+    else
+        # Before deletion: return 2 SAs (bidirectional)
+        # Forward SA (local→peer)
+        echo "src ${local_ip} dst ${peer_ip}"
+        echo "    proto esp spi ${forward_spi} reqid 1 mode tunnel"
+        echo "    lifetime current: ${bytes_before} bytes, 0 packets"
+        # Reverse SA (peer→local)
+        echo "src ${peer_ip} dst ${local_ip}"
+        echo "    proto esp spi ${reverse_spi} reqid 1 mode tunnel"
+        echo "    lifetime current: ${bytes_before} bytes, 0 packets"
+    fi
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
+EOF
+	chmod +x "$mock_ip"
+	echo "$mock_ip"
+}

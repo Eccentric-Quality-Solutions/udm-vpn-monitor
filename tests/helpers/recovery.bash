@@ -11,7 +11,7 @@
 #   load helpers/recovery
 #
 #   # Generate xfrm state output for recovery testing
-#   generate_xfrm_state_output 1
+#   generate_xfrm_state_for_recovery 1
 
 # Generate xfrm state output for recovery testing
 #
@@ -41,19 +41,19 @@
 #
 # Example:
 #   # Use directly in test code
-#   generate_xfrm_state_output 1
+#   generate_xfrm_state_for_recovery 1
 #   # Output: SA exists with initial counters
 #
-#   generate_xfrm_state_output 2
+#   generate_xfrm_state_for_recovery 2
 #   # Output: (empty - SA deleted)
 #
-#   generate_xfrm_state_output 4
+#   generate_xfrm_state_for_recovery 4
 #   # Output: SA re-established with byte counter 2000
 #
 # Note:
 #   This function uses TEST_PEER_IP which must be set in the test environment.
 #   For mock scripts, define the function inline with escaped variables as needed.
-generate_xfrm_state_output() {
+generate_xfrm_state_for_recovery() {
 	local verify_attempts="$1"
 	# First call: SA exists (before deletion)
 	if [[ $verify_attempts -eq 1 ]]; then
@@ -79,4 +79,214 @@ generate_xfrm_state_output() {
 		echo "      ${byte_counter}(bytes), ${packet_counter}(packets)"
 		echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
 	fi
+}
+
+# Override calculate_duration to use time_increment_file for time-based testing
+#
+# Overrides the calculate_duration function after sourcing recovery module to use
+# a time increment file for deterministic time-based testing. This allows tests
+# to control elapsed time by incrementing a value in a file.
+#
+# Arguments:
+#   $1: Path to time increment file (file should contain elapsed seconds as integer)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Overrides calculate_duration function in current shell
+#   - Function reads from time_increment_file to determine elapsed time
+#
+# Example:
+#   local time_increment_file="${TEST_DIR}/time_increment"
+#   echo "0" >"$time_increment_file"
+#   source_recovery_module
+#   override_calculate_duration_with_increment "$time_increment_file"
+#   # Now calculate_duration will return value from time_increment_file
+#
+# Note:
+#   Must be called after source_recovery_module since it overrides a function
+#   from the sourced module.
+override_calculate_duration_with_increment() {
+	local time_increment_file="$1"
+	# shellcheck disable=SC2329,SC2034
+	# This function overrides calculate_duration in test context (not called here)
+	# Variables match original function signature but we use time_increment_file instead
+	calculate_duration() {
+		local start_time="$1"
+		local end_time="${2:-$(get_unix_timestamp)}"
+		local increment
+		increment=$(cat "${time_increment_file}" 2>/dev/null || echo "0")
+		local elapsed=$((increment))
+		if [[ $elapsed -lt 0 ]]; then
+			elapsed=0
+		fi
+		echo "$elapsed"
+		return 0
+	}
+}
+
+# Override calculate_duration to always return 0 (simulates time calculation failure)
+#
+# Overrides the calculate_duration function to always return 0, simulating a
+# time calculation failure. This is useful for testing iteration limits when
+# time calculation fails.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Overrides calculate_duration function in current shell
+#
+# Example:
+#   source_recovery_module
+#   override_calculate_duration_always_zero
+#   # Now calculate_duration always returns 0
+#
+# Note:
+#   Must be called after source_recovery_module since it overrides a function
+#   from the sourced module.
+override_calculate_duration_always_zero() {
+	# shellcheck disable=SC2329
+	# This function overrides calculate_duration in test context (not called here)
+	calculate_duration() {
+		# Always return 0 (time calculation failed)
+		echo "0"
+		return 0
+	}
+}
+
+# Set up common mocks for retry_xfrm_recovery tests
+#
+# Creates common mock commands needed for testing retry_xfrm_recovery function.
+# This includes mocks for format_peer_ip_display, log_message, handle_error,
+# and clear_recovery_method.
+#
+# Arguments:
+#   $1: Optional path to log file (default: ${TEST_DIR}/vpn-monitor.log)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints path to log file (for use in tests)
+#
+# Side effects:
+#   - Creates mock commands in TEST_DIR
+#   - Mocks are not added to PATH (call add_mock_to_path after this)
+#
+# Example:
+#   local log_file
+#   log_file=$(setup_retry_xfrm_recovery_mocks)
+#   add_mock_to_path
+#   # Now mocks are available in PATH
+setup_retry_xfrm_recovery_mocks() {
+	local log_file="${1:-${TEST_DIR}/vpn-monitor.log}"
+
+	# Mock format_peer_ip_display
+	local mock_format_ip="${TEST_DIR}/format_peer_ip_display"
+	cat >"$mock_format_ip" <<'EOF'
+#!/bin/bash
+echo "$1"
+EOF
+	chmod +x "$mock_format_ip"
+
+	# Mock log_message
+	local mock_log="${TEST_DIR}/log_message"
+	cat >"$mock_log" <<EOF
+#!/bin/bash
+echo "\$*" >> "${log_file}"
+EOF
+	sed -i "s|log_file|${log_file}|g" "$mock_log"
+	chmod +x "$mock_log"
+
+	# Mock handle_error
+	local mock_handle_error="${TEST_DIR}/handle_error"
+	cat >"$mock_handle_error" <<EOF
+#!/bin/bash
+echo "\$*" >> "${log_file}"
+EOF
+	sed -i "s|log_file|${log_file}|g" "$mock_handle_error"
+	chmod +x "$mock_handle_error"
+
+	# Mock clear_recovery_method
+	local mock_clear_recovery="${TEST_DIR}/clear_recovery_method"
+	cat >"$mock_clear_recovery" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+	chmod +x "$mock_clear_recovery"
+
+	echo "$log_file"
+}
+
+# Set up date and sleep mocks with time increment file support
+#
+# Creates date and sleep mocks that work together to simulate time progression
+# during retry_xfrm_recovery tests. The date mock reads from time_increment_file
+# to return dynamic timestamps, and the sleep mock increments the file.
+#
+# Arguments:
+#   $1: Base timestamp in Unix seconds (default: 1609459200 = 2021-01-01 00:00:00 UTC)
+#   $2: Path to time increment file (file should contain elapsed seconds as integer)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Creates mock date and sleep commands in TEST_DIR
+#   - Date mock handles +%s (Unix timestamp) and formatted timestamps (for logging)
+#   - Sleep mock increments time_increment_file by sleep duration
+#
+# Example:
+#   local time_increment_file="${TEST_DIR}/time_increment"
+#   echo "0" >"$time_increment_file"
+#   setup_date_sleep_mocks_with_increment 1609459200 "$time_increment_file"
+#   add_mock_to_path
+#   # Now date and sleep work together for time-based testing
+#
+# Note:
+#   Must be called before add_mock_to_path to ensure mocks are in PATH
+#   The date mock handles formatted timestamps to avoid permission issues with /bin/date fallback
+setup_date_sleep_mocks_with_increment() {
+	local base_time="${1:-1609459200}"
+	local time_increment_file="${2:-${TEST_DIR}/time_increment}"
+
+	# Create date mock that handles both Unix timestamps and formatted timestamps
+	local mock_date="${TEST_DIR}/date"
+	cat >"$mock_date" <<EOF
+#!/bin/bash
+if [[ "\$1" == "+%s" ]]; then
+    # Unix timestamp format - read from time_increment_file
+    increment=\$(cat "${time_increment_file}" 2>/dev/null || echo "0")
+    echo $((base_time + increment))
+    exit 0
+elif [[ "\$1" == "+%Y-%m-%d %H:%M:%S" ]] || [[ "\$1" == '+%Y-%m-%d %H:%M:%S' ]]; then
+    # Formatted timestamp format (used by logging) - return simple fixed format
+    # Test doesn't care about exact timestamp, just that logging works
+    echo "2021-01-01 00:00:00"
+    exit 0
+fi
+# For other date formats, return error rather than falling back (prevents permission issues)
+echo "Mock date: unsupported format: \$*" >&2
+exit 1
+EOF
+	sed -i "s|base_time|${base_time}|g" "$mock_date"
+	chmod +x "$mock_date"
+
+	# Create sleep mock that increments time_increment_file
+	local mock_sleep="${TEST_DIR}/sleep"
+	cat >"$mock_sleep" <<EOF
+#!/bin/bash
+# Increment time by sleep duration
+increment=\$(cat "${time_increment_file}" 2>/dev/null || echo "0")
+increment=\$((increment + \$1))
+echo "\$increment" > "${time_increment_file}"
+# Use real sleep for actual delays (but short for testing)
+/usr/bin/sleep 0.1
+EOF
+	chmod +x "$mock_sleep"
 }

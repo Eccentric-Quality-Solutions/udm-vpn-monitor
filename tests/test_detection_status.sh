@@ -6,6 +6,9 @@
 # for better organization and maintainability.
 
 load test_helper
+load helpers/config
+load helpers/state
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -23,14 +26,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Function detects bytes=0 as suspect condition and may mark VPN as failed
 	# Importance: Zero byte counter indicates VPN tunnel is established but not passing traffic, a failure condition
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Mock ip command - SA exists but bytes=0
 	mock_ip_xfrm_state "${TEST_PEER_IP}" 0 >/dev/null
@@ -38,13 +38,13 @@ EOF
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	run bash "$test_script" --fake
 
 	# Should detect bytes=0 as suspect (may fail VPN check)
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "bytes=0" || assert_file_contains "$log_file" "suspect"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "bytes=0" "suspect"
 
 	remove_mock_from_path
 }
@@ -55,20 +55,15 @@ EOF
 	# Expected: Function detects bytes not increasing and may mark VPN as suspect or failed
 	# Importance: Decreasing byte counters indicate abnormal VPN state that requires investigation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
-	# Source state functions to get correct file path
-	export STATE_DIR="${state_dir}"
-	ensure_state_functions_loaded
+	# Get state file path using helper
 	local last_bytes_file
-	last_bytes_file=$(get_peer_state_file_path "NYC" "${TEST_PEER_IP}" "last_bytes")
+	last_bytes_file=$(get_state_file_path "NYC" "${TEST_PEER_IP}" "last_bytes")
 
 	# Set initial byte count (high value)
 	echo "10000" >"$last_bytes_file"
@@ -79,13 +74,13 @@ EOF
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	run bash "$test_script" --fake
 
 	# Should detect bytes not increasing (may fail VPN check)
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "bytes not increasing" || assert_file_contains "$log_file" "suspect"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "bytes not increasing" "suspect"
 
 	remove_mock_from_path
 }
@@ -103,7 +98,7 @@ EOF
 
 	# Should detect bytes not increasing
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "bytes not increasing" || assert_file_contains "$LOG_FILE" "suspect"
+	assert_log_contains_any "$LOG_FILE" "bytes not increasing" "suspect"
 
 	remove_mock_from_path
 }
@@ -115,11 +110,10 @@ EOF
 	# Importance: File corruption can occur due to disk errors or manual editing; script must handle it robustly
 	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
-	# Source state functions to get correct file path
-	ensure_state_functions_loaded
+	# Get state file path using helper
 	# Create corrupted byte counter file (non-numeric)
 	local last_bytes_file
-	last_bytes_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
+	last_bytes_file=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
 	echo "invalid-value" >"$last_bytes_file"
 
 	add_mock_to_path
@@ -139,11 +133,10 @@ EOF
 	# Importance: Negative values can occur from file corruption or manual editing; script must handle them robustly
 	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
-	# Source state functions to get correct file path
-	ensure_state_functions_loaded
+	# Get state file path using helper
 	# Create byte counter file with negative number
 	local last_bytes_file
-	last_bytes_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
+	last_bytes_file=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
 	echo "-1000" >"$last_bytes_file"
 
 	add_mock_to_path
@@ -163,11 +156,10 @@ EOF
 	# Importance: Empty files can occur from file deletion or initialization; script must handle them robustly
 	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
 
-	# Source state functions to get correct file path
-	ensure_state_functions_loaded
+	# Get state file path using helper
 	# Clear byte counter file to test empty file handling
 	local last_bytes_file
-	last_bytes_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
+	last_bytes_file=$(get_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
 	# Remove file if it exists (from fixture setup), then create empty file
 	rm -f "$last_bytes_file"
 	touch "$last_bytes_file"
@@ -199,21 +191,18 @@ EOF
 	# Expected: Script handles missing detection tools gracefully, may log warnings or exit early
 	# Importance: Ensures script fails gracefully in environments where required tools are missing
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Don't create any mock commands (all unavailable)
 	# PATH will not include mocks, so real commands won't be found in test environment
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Create minimal PATH with only essential commands
 	# Use a PATH that doesn't include ip or ipsec
@@ -222,8 +211,8 @@ EOF
 
 	# Should handle all methods unavailable gracefully
 	# Script may exit early, but if log file exists, it should contain error messages
-	if [[ -f "$log_file" ]]; then
-		assert_file_contains "$log_file" "suspect" || assert_file_contains "$log_file" "failed" || assert_file_contains "$log_file" "WARNING"
+	if [[ -f "$LOG_FILE" ]]; then
+		assert_log_contains_any "$LOG_FILE" "suspect" "failed" "WARNING"
 	else
 		# If log file doesn't exist, script likely exited very early - this is acceptable
 		# The important thing is it didn't crash
@@ -237,14 +226,11 @@ EOF
 	# Expected: Script extracts the first lifetime line correctly and uses it for byte counter detection
 	# Importance: xfrm output can contain multiple lifetime entries; script must parse them correctly
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"
-ENABLE_NETWORK_PARTITION_CHECK=0
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"ENABLE_NETWORK_PARTITION_CHECK=0"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Mock ip command with multiple lifetime lines
 	local mock_ip="${TEST_DIR}/ip"
@@ -263,13 +249,13 @@ EOF
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	run bash "$test_script" --fake
 
 	# Should extract first lifetime line correctly
 	assert_success
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }

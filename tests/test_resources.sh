@@ -2,12 +2,55 @@
 #
 # Tests for lib/resources.sh
 # Tests resource monitoring functionality: CPU, RAM, disk usage and throttling
+# and integration with resource statistics tracking.
 
 load test_helper
 load helpers/resources
+load helpers/detection
 
 # Path to resources library
 RESOURCES_LIB="${BATS_TEST_DIRNAME}/../lib/resources.sh"
+
+# Shared setup for resource tracking integration tests
+#
+# Sets up test environment for resource tracking integration tests.
+# Initializes state and log directories, sources required libraries,
+# and prepares the environment for testing resource monitoring statistics.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   - Creates TEST_DIR/state and TEST_DIR/logs directories
+#   - Sources state.sh, logging.sh, and resources.sh libraries
+#   - Sets STATE_DIR, LOGS_DIR, and LOG_FILE environment variables
+#
+# Note:
+#   This is a test helper function. Requires setup_resources_test() and
+#   standard_setup() to be available from test helpers.
+setup_resource_tracking_integration() {
+	setup_resources_test
+	standard_setup
+
+	export STATE_DIR="${TEST_DIR}/state"
+	mkdir -p "$STATE_DIR"
+
+	export LOGS_DIR="${TEST_DIR}/logs"
+	mkdir -p "$LOGS_DIR"
+	export LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
+
+	# Source state and logging (provides tracking + summary functions)
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh"
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
+
+	# Source resources library after helpers are ready
+	source_resources_lib
+}
 
 # bats test_tags=category:unit
 @test "resources.sh library file exists" {
@@ -360,51 +403,199 @@ EOF
 # bats test_tags=category:unit
 @test "manage_log_files_on_low_disk rotates large log files" {
 	# Purpose: Test verifies that manage_log_files_on_low_disk rotates log files when they're large.
-	# Expected: Function rotates log files larger than threshold to free disk space.
+	# Expected: Function rotates ALL log files larger than threshold in LOGS_DIR (not just LOG_FILE).
 	# Importance: Log rotation prevents log files from consuming excessive disk space.
 	setup_resources_test
+	standard_setup
+
+	# Source logging library (required for handle_error and log_message)
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
+
 	source_resources_lib
 
 	local logs_dir="${TEST_DIR}/logs"
 	mkdir -p "$logs_dir"
 
-	# Create large log file (>10MB)
-	local log_file="${logs_dir}/vpn-monitor.log"
-	dd if=/dev/zero of="$log_file" bs=1024 count=10241 2>/dev/null || {
+	export LOGS_DIR="$logs_dir"
+
+	# Create large log files (>10MB) - both monitor and keepalive
+	local monitor_log="${logs_dir}/vpn-monitor.log"
+	local keepalive_log="${logs_dir}/vpn-keepalive.log"
+
+	# Create large monitor log file (>10MB = 10240KB)
+	dd if=/dev/zero of="$monitor_log" bs=1024 count=10241 2>/dev/null || {
 		# Fallback: create file with content
-		for i in {1..1000}; do
-			echo "Log line $i: $(head -c 1024 </dev/zero | tr '\0' 'A')" >>"$log_file"
+		for i in {1..11000}; do
+			echo "Monitor log line $i: $(head -c 1024 </dev/zero | tr '\0' 'A')" >>"$monitor_log" 2>/dev/null || break
 		done
 	}
 
-	# Set LOG_FILE and LOGS_DIR
-	export LOG_FILE="$log_file"
+	# Create large keepalive log file (>10MB)
+	dd if=/dev/zero of="$keepalive_log" bs=1024 count=10241 2>/dev/null || {
+		# Fallback: create file with content
+		for i in {1..11000}; do
+			echo "Keepalive log line $i: $(head -c 1024 </dev/zero | tr '\0' 'A')" >>"$keepalive_log" 2>/dev/null || break
+		done
+	}
+
+	# Create a small log file that should NOT be rotated
+	local small_log="${logs_dir}/small.log"
+	echo "Small log content" >"$small_log"
+
+	# Verify files exist and monitor/keepalive are large
+	[[ -f "$monitor_log" ]]
+	[[ -f "$keepalive_log" ]]
+	[[ -f "$small_log" ]]
+
+	# Call function with non-critical disk space (should only rotate, not remove old files)
+	run manage_log_files_on_low_disk "${TEST_DIR}" 15
+	assert_success
+
+	# Verify both large log files were rotated
+	[[ -f "${monitor_log}.old" ]]
+	[[ -f "${keepalive_log}.old" ]]
+
+	# Verify new empty log files were created
+	[[ -f "$monitor_log" ]]
+	[[ -f "$keepalive_log" ]]
+
+	# Verify small log file was NOT rotated
+	[[ -f "$small_log" ]]
+	[[ ! -f "${small_log}.old" ]]
+
+	# Verify rotated files are not empty (should contain original content)
+	[[ -s "${monitor_log}.old" ]]
+	[[ -s "${keepalive_log}.old" ]]
+}
+
+# bats test_tags=category:unit
+@test "manage_log_files_on_low_disk truncates logs when rotation fails" {
+	# Purpose: Test verifies that manage_log_files_on_low_disk falls back to truncation when rotation fails (disk full).
+	# Expected: Function truncates log files when mv fails, freeing space immediately.
+	# Importance: Ensures log management works even when disk is full and rotation is impossible.
+	setup_resources_test
+	standard_setup
+
+	# Source logging library (required for handle_error and log_message)
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
+
+	source_resources_lib
+
+	local logs_dir="${TEST_DIR}/logs"
+	mkdir -p "$logs_dir"
+
 	export LOGS_DIR="$logs_dir"
 
-	# Test log rotation
-	# Note: Actual test depends on function implementation
+	# Create large log file (>10MB)
+	local monitor_log="${logs_dir}/vpn-monitor.log"
+	dd if=/dev/zero of="$monitor_log" bs=1024 count=10241 2>/dev/null || {
+		# Fallback: create file with content
+		for i in {1..11000}; do
+			echo "Monitor log line $i: $(head -c 1024 </dev/zero | tr '\0' 'A')" >>"$monitor_log" 2>/dev/null || break
+		done
+	}
+
+	# Verify file exists and is large
+	[[ -f "$monitor_log" ]]
+	local original_size
+	original_size=$(stat -c%s "$monitor_log" 2>/dev/null || echo "0")
+	[[ $original_size -gt 10240000 ]] # >10MB
+
+	# Create mock mv command that fails (simulates disk full scenario)
+	local mock_mv="${TEST_DIR}/mv"
+	cat >"$mock_mv" <<'EOF'
+#!/bin/bash
+# Mock mv that fails to simulate disk full
+exit 1
+EOF
+	chmod +x "$mock_mv"
+
+	# Add mock to PATH
+	local original_path="$PATH"
+	export PATH="${TEST_DIR}:${PATH}"
+
+	# Call function - rotation should fail, fallback to truncation
+	run manage_log_files_on_low_disk "${TEST_DIR}" 15
+	assert_success
+
+	# Restore PATH
+	export PATH="$original_path"
+
+	# Verify log file was truncated (not rotated, since rotation failed)
+	# File should exist but be empty or very small
+	[[ -f "$monitor_log" ]]
+	local new_size
+	new_size=$(stat -c%s "$monitor_log" 2>/dev/null || echo "0")
+	[[ $new_size -lt $original_size ]] # File should be smaller (truncated)
+	[[ $new_size -eq 0 ]]              # File should be empty after truncation
+
+	# Verify rotation did NOT happen (since it failed)
+	# The .old file should not exist because mv failed
+	[[ ! -f "${monitor_log}.old" ]]
 }
 
 # bats test_tags=category:unit
 @test "manage_log_files_on_low_disk removes old log files when space critical" {
 	# Purpose: Test verifies that manage_log_files_on_low_disk removes old log files when disk space is critical.
-	# Expected: Function removes .old log files when free space is below 10%.
-	# Importance: Aggressive cleanup prevents disk from filling completely.
+	# Expected: Function removes .old log files when free space is below 10%, keeping 2 most recent.
+	# Importance: Aggressive cleanup prevents disk from filling completely while preserving some history.
 	setup_resources_test
+	standard_setup
+
+	# Source logging library (required for handle_error and log_message)
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
+
 	source_resources_lib
 
 	local logs_dir="${TEST_DIR}/logs"
 	mkdir -p "$logs_dir"
 
-	# Create old log files
-	touch "${logs_dir}/vpn-monitor.log.old"
-	touch "${logs_dir}/vpn-monitor.log.old.1"
-
-	export LOG_FILE="${logs_dir}/vpn-monitor.log"
 	export LOGS_DIR="$logs_dir"
 
-	# Test old file removal
-	# Note: Actual test depends on function implementation
+	# Create multiple old log files with explicit modification times
+	# Use touch -d to set explicit timestamps (more reliable than sleep)
+	# Note: Files must end in .old to match the function's find pattern (*.old)
+	local old1="${logs_dir}/vpn-monitor.log.1.old"
+	local old2="${logs_dir}/vpn-keepalive.log.1.old"
+	local old3="${logs_dir}/vpn-monitor.log.2.old"
+	local old4="${logs_dir}/vpn-keepalive.log.2.old"
+
+	# Create files with explicit timestamps (oldest to newest)
+	local base_time=$(($(date +%s) - 3600)) # 1 hour ago
+	echo "Old log 1" >"$old1"
+	touch -d "@$base_time" "$old1" 2>/dev/null || true
+
+	echo "Old log 2" >"$old2"
+	touch -d "@$((base_time + 60))" "$old2" 2>/dev/null || true
+
+	echo "Old log 3" >"$old3"
+	touch -d "@$((base_time + 120))" "$old3" 2>/dev/null || true
+
+	echo "Old log 4" >"$old4"
+	touch -d "@$((base_time + 180))" "$old4" 2>/dev/null || true
+
+	# Verify all old files exist
+	[[ -f "$old1" ]]
+	[[ -f "$old2" ]]
+	[[ -f "$old3" ]]
+	[[ -f "$old4" ]]
+
+	# Call function with critical disk space (<10%)
+	run manage_log_files_on_low_disk "${TEST_DIR}" 8
+	assert_success
+
+	# Verify that only 2 most recent .old files are kept
+	# (old3 and old4 should be the most recent, old1 and old2 should be removed)
+	# Verify oldest files are removed
+	[[ ! -f "$old1" ]] # Oldest should be removed
+	[[ ! -f "$old2" ]] # Second oldest should be removed
+
+	# Verify newest files are kept
+	[[ -f "$old3" ]] # Third newest should be kept
+	[[ -f "$old4" ]] # Newest should be kept
 }
 
 # bats test_tags=category:unit
@@ -445,6 +636,241 @@ EOF
 
 	# Test path checking
 	# Note: Actual test depends on function implementation
+}
+
+# bats test_tags=category:unit
+@test "check_system_resources tracks successful checks" {
+	setup_resource_tracking_integration
+
+	# Mock healthy usage values
+	# Mock function for get_cpu_usage
+	#
+	# Returns mock CPU usage value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "10" (mock CPU usage percentage)
+	get_cpu_usage() {
+		echo "10"
+		return 0
+	}
+	# Mock function for get_memory_usage
+	#
+	# Returns mock memory usage value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "20" (mock memory usage percentage)
+	get_memory_usage() {
+		echo "20"
+		return 0
+	}
+	# Mock function for get_free_disk_space
+	#
+	# Returns mock free disk space value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "50" (mock free disk space percentage)
+	get_free_disk_space() {
+		echo "50"
+		return 0
+	}
+
+	run check_system_resources "$STATE_DIR"
+	assert_success
+
+	local cpu_success
+	cpu_success=$(cat "${STATE_DIR}/resource_cpu_check_success_count" 2>/dev/null || echo "0")
+	assert_equal "$cpu_success" "1"
+
+	local ram_success
+	ram_success=$(cat "${STATE_DIR}/resource_ram_check_success_count" 2>/dev/null || echo "0")
+	assert_equal "$ram_success" "1"
+
+	local disk_success
+	disk_success=$(cat "${STATE_DIR}/resource_disk_check_success_count" 2>/dev/null || echo "0")
+	assert_equal "$disk_success" "1"
+}
+
+# bats test_tags=category:unit
+@test "check_system_resources tracks CPU constraint and constraint event" {
+	setup_resource_tracking_integration
+
+	# Simulate sustained high CPU (state file indicates constrained for > duration)
+	echo "0" >"${STATE_DIR}/resource_cpu_constrained"
+	# Mock function for get_cpu_usage
+	#
+	# Returns mock high CPU usage value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "95" (mock CPU usage percentage)
+	get_cpu_usage() {
+		echo "95"
+		return 0
+	}
+	# Mock function for get_memory_usage
+	#
+	# Returns mock memory usage value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "20" (mock memory usage percentage)
+	get_memory_usage() {
+		echo "20"
+		return 0
+	}
+	# Mock function for get_free_disk_space
+	#
+	# Returns mock free disk space value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "50" (mock free disk space percentage)
+	get_free_disk_space() {
+		echo "50"
+		return 0
+	}
+
+	run check_system_resources "$STATE_DIR"
+	assert_failure
+
+	local cpu_constraint
+	cpu_constraint=$(cat "${STATE_DIR}/resource_cpu_constrained_count" 2>/dev/null || echo "0")
+	assert_equal "$cpu_constraint" "1"
+}
+
+# bats test_tags=category:unit
+@test "check_system_resources tracks CPU check failures" {
+	setup_resource_tracking_integration
+
+	# CPU check fails, others succeed
+	# Mock function for get_cpu_usage
+	#
+	# Returns failure to simulate CPU check error.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   1: Always fails (simulates CPU check error)
+	get_cpu_usage() { return 1; }
+	# Mock function for get_memory_usage
+	#
+	# Returns mock memory usage value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "30" (mock memory usage percentage)
+	get_memory_usage() {
+		echo "30"
+		return 0
+	}
+	# Mock function for get_free_disk_space
+	#
+	# Returns mock free disk space value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "60" (mock free disk space percentage)
+	get_free_disk_space() {
+		echo "60"
+		return 0
+	}
+
+	run check_system_resources "$STATE_DIR"
+	assert_success
+
+	local cpu_fail
+	cpu_fail=$(cat "${STATE_DIR}/resource_cpu_check_fail_count" 2>/dev/null || echo "0")
+	assert_equal "$cpu_fail" "1"
+}
+
+# bats test_tags=category:unit
+@test "check_system_resources with stats logs hourly summary via tracking" {
+	setup_resource_tracking_integration
+
+	# Healthy run populates success counters
+	# Mock function for get_cpu_usage
+	#
+	# Returns mock CPU usage value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "15" (mock CPU usage percentage)
+	get_cpu_usage() {
+		echo "15"
+		return 0
+	}
+	# Mock function for get_memory_usage
+	#
+	# Returns mock memory usage value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "25" (mock memory usage percentage)
+	get_memory_usage() {
+		echo "25"
+		return 0
+	}
+	# Mock function for get_free_disk_space
+	#
+	# Returns mock free disk space value for testing.
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#   Outputs: "70" (mock free disk space percentage)
+	get_free_disk_space() {
+		echo "70"
+		return 0
+	}
+
+	# Initialize last summary time to force hourly window
+	echo "1000" >"${STATE_DIR}/resource_monitoring_summary_last_time"
+	setup_mock_timestamp 4600
+
+	run check_system_resources "$STATE_DIR"
+	assert_success
+
+	# Log summary and verify message
+	log_resource_monitoring_summary_if_due
+	assert_file_contains "$LOG_FILE" "Resource monitoring summary (past hour)"
+	assert_file_contains "$LOG_FILE" "CPU checks succeeded 1 times"
+	assert_file_contains "$LOG_FILE" "Disk checks succeeded 1 times"
 }
 
 # bats test_tags=category:unit

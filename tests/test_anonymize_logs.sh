@@ -14,6 +14,9 @@ ANONYMIZE_LOGS_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize-logs.sh"
 #
 # Arguments:
 #   $1: Log file path
+#
+# Returns:
+#   0: Always succeeds
 create_sample_log_file() {
 	local log_file="$1"
 
@@ -232,7 +235,7 @@ EOF
 
 	assert_success
 	# Verify verbose messages are present (sent to stderr)
-	assert_line --partial "Extracting IP addresses..."
+	assert_line --partial "Extracting IPv4 addresses..."
 	assert_line --partial "Extracting location names..."
 	assert_line --partial "Anonymizing log file..."
 	assert_line --partial "Anonymization complete!"
@@ -380,14 +383,14 @@ EOF
 # bats test_tags=category:unit
 @test "anonymize-logs.sh anonymizes location names in comma-separated lists" {
 	# Purpose: Test verifies that the anonymize-logs script anonymizes location names in comma-separated lists
-	# Expected: Script replaces location names in patterns like "Found 11 location(s): PHOENIX, SEATTLE..."
-	# Importance: Ensures location names are anonymized in configuration summary messages
+	# Expected: Script replaces location names in patterns like "Found 11 location(s): PHOENIX (IP, IP), SEATTLE (IP)..."
+	# Importance: Ensures location names are anonymized in configuration summary messages (with or without IPs in parentheses)
 	local input_file="${TEST_DIR}/logs/vpn-monitor.log"
 	local output_file="${TEST_DIR}/anonymized.log"
 	mkdir -p "$(dirname "$input_file")"
 	cat >"$input_file" <<EOF
-[2025-01-15 10:00:00] [INFO] Found 3 location(s): NYC, DC, CHICAGO
-[2025-01-15 10:01:00] [INFO] Found 2 location(s): NYC, DC
+[2025-01-15 10:00:00] [INFO] Found 3 location(s): NYC (203.0.113.1, 192.168.1.1), DC (198.51.100.1), CHICAGO (192.0.2.1)
+[2025-01-15 10:01:00] [INFO] Found 2 location(s): NYC (203.0.113.1), DC (198.51.100.1)
 EOF
 
 	run bash "$ANONYMIZE_LOGS_SCRIPT" -i "$input_file" -o "$output_file"
@@ -401,6 +404,44 @@ EOF
 	# Verify anonymized location names are present in the list
 	run grep -E 'location\(s\): [A-Z][A-Z0-9_]+' "$output_file"
 	assert_success
+}
+
+# bats test_tags=category:unit
+@test "anonymize-logs.sh produces unique anonymized names when many locations hash to same city" {
+	# Purpose: Regression test for get_or_create_location_mapping collision bug.
+	# Bug: Different original locations could map to same anonymized city (e.g. CHICAGO twice).
+	# Fix: _is_location_city_used checks VALUES in map, not keys.
+	# Expected: "Found N location(s):" line has N unique anonymized names (no duplicates).
+	local input_file="${TEST_DIR}/logs/many-locations.log"
+	local output_file="${TEST_DIR}/many-anonymized.log"
+	mkdir -p "$(dirname "$input_file")"
+	# 12 unique locations - enough to trigger hash collisions in 40-city pool
+	cat >"$input_file" <<'EOF'
+[2025-01-15 10:00:00] [INFO] Found 12 location(s): SITE_A (1.1.1.1), SITE_B (1.1.1.2), SITE_C (1.1.1.3), SITE_D (1.1.1.4), SITE_E (1.1.1.5), SITE_F (1.1.1.6), SITE_G (1.1.1.7), SITE_H (1.1.1.8), SITE_I (1.1.1.9), SITE_J (1.1.1.10), SITE_K (1.1.1.11), SITE_L (1.1.1.12)
+EOF
+
+	run bash "$ANONYMIZE_LOGS_SCRIPT" -i "$input_file" -o "$output_file"
+
+	assert_success
+	# Extract the location list from "Found 12 location(s): X, Y, Z..."
+	local found_line
+	found_line=$(grep -o 'Found 12 location(s): .*' "$output_file")
+	local location_list="${found_line#Found 12 location(s): }"
+	# Split by comma, trim, count unique
+	local -a locations=()
+	IFS=',' read -ra parts <<<"$location_list"
+	for p in "${parts[@]}"; do
+		p="${p#"${p%%[![:space:]]*}"}"
+		p="${p%"${p##*[![:space:]]}"}"
+		# Extract location name (part before space/paren)
+		p="${p%% *}"
+		p="${p%%(*}"
+		[[ -n "$p" ]] && locations+=("$p")
+	done
+	# Count unique
+	local unique_count
+	unique_count=$(printf '%s\n' "${locations[@]}" | sort -u | wc -l)
+	assert_equal 12 "$unique_count" "Expected 12 unique anonymized location names, got $unique_count (duplicates indicate collision bug)"
 }
 
 # bats test_tags=category:unit

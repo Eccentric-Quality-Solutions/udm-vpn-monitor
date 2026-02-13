@@ -3,7 +3,20 @@
 # Location-based configuration parsing for UDM VPN Monitor
 # Handles parsing and accessing location-based configuration variables
 #
-# Version: 0.6.0
+# Version: 0.7.0
+
+# Validate required dependencies at module load time
+# These functions must be available when this module is sourced
+# Note: handle_error and handle_error_or_exit_fake_mode are expected to be available
+# when functions are called (after logging.sh is sourced), not during module sourcing
+if ! declare -f sanitize_location_name >/dev/null 2>&1; then
+	echo "ERROR: location_parsing.sh requires sanitize_location_name from common.sh" >&2
+	return 1 2>/dev/null || exit 1
+fi
+if ! declare -f parse_assignment >/dev/null 2>&1; then
+	echo "ERROR: location_parsing.sh requires parse_assignment from config_loading.sh" >&2
+	return 1 2>/dev/null || exit 1
+fi
 
 # Extract location name from variable name
 #
@@ -83,8 +96,8 @@ parse_single_location() {
 	local seen_locations_ref="$3"
 	local location_name
 	local sanitized_name
-	local external_ip
-	local internal_ip
+	local external_peer_ip
+	local internal_peer_ip
 	local internal_var_name
 
 	# Step 1: Extract location name from variable name
@@ -120,12 +133,12 @@ parse_single_location() {
 	# Store reference name in temp variable to avoid expansion issues with set -u
 	local loc_vars_ref_name="$location_vars_ref"
 	local -n loc_vars_ref="$loc_vars_ref_name"
-	external_ip="${loc_vars_ref[$var_name]}"
+	external_peer_ip="${loc_vars_ref[$var_name]}"
 
 	# Step 5: Validate external IP is non-empty (required field)
 	# Empty external IP means no peer to monitor, so skip this location
 	# This is a non-critical error: log warning but don't fail entire config
-	if [[ -z "$external_ip" ]]; then
+	if [[ -z "$external_peer_ip" ]]; then
 		handle_error "WARNING" "$sanitized_name" "EXTERNAL IP is empty (skipping empty peer)"
 		return 1
 	fi
@@ -135,12 +148,12 @@ parse_single_location() {
 	# Use empty string if INTERNAL variable doesn't exist (it's optional)
 	# Example: For LOCATION_NYC_EXTERNAL, look up LOCATION_NYC_INTERNAL
 	internal_var_name="LOCATION_${location_name}_INTERNAL"
-	internal_ip="${loc_vars_ref[$internal_var_name]:-}" # Default to empty if not found
+	internal_peer_ip="${loc_vars_ref[$internal_var_name]:-}" # Default to empty if not found
 
 	# Step 7: Store location data in global LOCATIONS array
 	# Format: "external:<ip>|internal:<ips>" (pipe separator avoids IP conflicts)
 	# Example: "external:203.0.113.1|internal:192.168.1.1 192.168.1.2"
-	LOCATIONS["$sanitized_name"]="external:$external_ip|internal:$internal_ip"
+	LOCATIONS["$sanitized_name"]="external:$external_peer_ip|internal:$internal_peer_ip"
 
 	return 0
 }
@@ -407,7 +420,8 @@ parse_location_config() {
 	for var_name in "${!location_vars[@]}"; do
 		# Filter: Only process EXTERNAL variables (they define locations)
 		# INTERNAL variables are looked up later when processing their corresponding EXTERNAL
-		if [[ ! "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+		# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
+		if [[ ! "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
 			continue
 		fi
 
@@ -496,5 +510,114 @@ get_location_internal_ips() {
 
 	# No internal IPs set - return empty string
 	echo ""
+	return 0
+}
+
+# Get external IP for a location (resolved from DNS if needed)
+#
+# Retrieves the external IP address for a given location name, resolving DNS names to IP addresses.
+# If the stored value is already an IP address, returns it unchanged.
+# If the stored value is a DNS name, resolves it to an IP address.
+#
+# Arguments:
+#   $1: Location name (sanitized)
+#
+# Returns:
+#   0: External IP found and resolved
+#   1: Location not found or DNS resolution failed
+#
+# Output:
+#   Prints resolved IP address to stdout
+#
+# Side effects:
+#   - May perform DNS resolution (cached for performance)
+#   - Logs warnings on DNS resolution failures
+#
+# Note:
+#   Requires parse_location_config() to be called first
+#   Requires resolve_dns() function from network_validation.sh (available when detection.sh is sourced)
+get_location_external_ip_resolved() {
+	local location_name="$1"
+	local external_value
+	local resolved_ip
+
+	# Get original value (IP or DNS name)
+	if ! external_value=$(get_location_external_ip "$location_name"); then
+		return 1
+	fi
+
+	# Resolve DNS name to IP if needed
+	if ! resolved_ip=$(resolve_dns "$external_value" 2>/dev/null); then
+		handle_error "WARNING" "$location_name" "Failed to resolve external DNS name: $external_value"
+		return 1
+	fi
+
+	echo "$resolved_ip"
+	return 0
+}
+
+# Get internal IPs for a location (resolved from DNS if needed)
+#
+# Retrieves the internal IP addresses (space-separated) for a given location name, resolving DNS names to IP addresses.
+# If stored values are already IP addresses, returns them unchanged.
+# If stored values are DNS names, resolves them to IP addresses.
+#
+# Arguments:
+#   $1: Location name (sanitized)
+#
+# Returns:
+#   0: Internal IPs found and resolved (may be empty string)
+#   1: Location not found or DNS resolution failed
+#
+# Output:
+#   Prints resolved IP addresses (space-separated) to stdout, or empty string if not set
+#
+# Side effects:
+#   - May perform DNS resolution (cached for performance)
+#   - Logs warnings on DNS resolution failures
+#
+# Note:
+#   Requires parse_location_config() to be called first
+#   Requires resolve_dns() function from network_validation.sh (available when detection.sh is sourced)
+get_location_internal_ips_resolved() {
+	local location_name="$1"
+	local internal_values
+	local IFS=' '
+	local -a values_array
+	local -a resolved_ips_array
+	local resolved_ip
+
+	# Get original values (IPs or DNS names)
+	if ! internal_values=$(get_location_internal_ips "$location_name"); then
+		return 1
+	fi
+
+	# If empty, return empty string
+	if [[ -z "$internal_values" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Split into array and resolve each value
+	read -ra values_array <<<"$internal_values"
+	resolved_ips_array=()
+
+	for value in "${values_array[@]}"; do
+		# Skip empty values
+		if [[ -z "$value" ]]; then
+			continue
+		fi
+
+		# Resolve DNS name to IP if needed
+		if ! resolved_ip=$(resolve_dns "$value" 2>/dev/null); then
+			handle_error "WARNING" "$location_name" "Failed to resolve internal DNS name: $value"
+			return 1
+		fi
+
+		resolved_ips_array+=("$resolved_ip")
+	done
+
+	# Join resolved IPs with spaces
+	echo "${resolved_ips_array[*]}"
 	return 0
 }

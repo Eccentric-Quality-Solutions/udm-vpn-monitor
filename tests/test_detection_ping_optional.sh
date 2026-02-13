@@ -6,6 +6,7 @@
 
 load test_helper
 load helpers/detection
+load helpers/assertions
 
 # Source the detection library functions
 # shellcheck source=../lib/detection.sh
@@ -39,8 +40,17 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 	local location_name="TEST"
 
 	# Mock ip command to return SA exists (for check_ipsec_phase2)
+	# Note: execute_xfrm_state_command calls "ip -s xfrm state", so we need to handle the -s flag
 	cat >"${TEST_DIR}/ip" <<'EOF'
 #!/bin/bash
+# Handle "ip -s xfrm state" (with -s flag)
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+	# Return SA exists for external_peer_ip
+	echo "src 203.0.113.1 dst 203.0.113.1"
+	echo "	proto esp spi 0x12345678 reqid 1 mode tunnel"
+	exit 0
+fi
+# Handle "ip xfrm state" (without -s flag, fallback case)
 if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
 	# Return SA exists for external_peer_ip
 	echo "src 203.0.113.1 dst 203.0.113.1"
@@ -90,7 +100,7 @@ EOF
 
 	# Should log that SA exists (not "no SA found")
 	# The message format is "VPN SA exists but ping check failed" or "VPN connectivity verified"
-	assert_file_contains "$LOG_FILE" "VPN SA exists" || assert_file_contains "$LOG_FILE" "VPN connectivity verified"
+	assert_log_contains_any "$LOG_FILE" "VPN SA exists" "VPN connectivity verified"
 	assert_file_contains "$LOG_FILE" "ping check"
 
 	# Should NOT log contradictory "no SA found" message
@@ -112,8 +122,15 @@ EOF
 	local location_name="TEST"
 
 	# Mock ip command to return no SA (for check_ipsec_phase2)
+	# Note: execute_xfrm_state_command calls "ip -s xfrm state", so we need to handle the -s flag
 	cat >"${TEST_DIR}/ip" <<'EOF'
 #!/bin/bash
+# Handle "ip -s xfrm state" (with -s flag)
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+	# Return empty (no SA)
+	exit 0
+fi
+# Handle "ip xfrm state" (without -s flag, fallback case)
 if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
 	# Return empty (no SA)
 	exit 0
@@ -178,8 +195,16 @@ EOF
 	local location_name="TEST"
 
 	# Mock ip command to return SA exists
+	# Note: execute_xfrm_state_command calls "ip -s xfrm state", so we need to handle the -s flag
 	cat >"${TEST_DIR}/ip" <<'EOF'
 #!/bin/bash
+# Handle "ip -s xfrm state" (with -s flag)
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+	echo "src 203.0.113.1 dst 203.0.113.1"
+	echo "	proto esp spi 0x12345678 reqid 1 mode tunnel"
+	exit 0
+fi
+# Handle "ip xfrm state" (without -s flag, fallback case)
 if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
 	echo "src 203.0.113.1 dst 203.0.113.1"
 	echo "	proto esp spi 0x12345678 reqid 1 mode tunnel"
@@ -279,7 +304,7 @@ EOF
 # bats test_tags=category:unit,category:high-risk,priority:high
 @test "check_ping_if_enabled - sa_exists=1, ping succeeds - logs connectivity verified" {
 	# Purpose: Test that check_ping_if_enabled correctly handles sa_exists=1 with successful ping
-	# Expected: Should log "VPN connectivity verified: ping check passed"
+	# Expected: Should log "VPN connectivity verified: ping check passed from local_udm_ip to internal_peer_ip"
 	# Importance: Validates function works correctly with explicit SA status
 	setup_ping_optional_test
 
@@ -525,6 +550,124 @@ EOF
 		# Log file doesn't exist - that's fine for early return
 		# This is expected when ENABLE_PING_CHECK=0
 		assert_success
+	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:unit
+@test "ping timeout wrapper calculation - verifies correct timeout values for different inputs" {
+	# Purpose: Test that the ping timeout wrapper calculation works correctly
+	# Expected: Timeout wrapper should be min(ping_timeout + 1, min(ping_count * ping_timeout + 1, 5))
+	# Importance: Validates the refactored timeout calculation logic
+	setup_ping_optional_test
+
+	local location_name="TEST"
+	local timeout_log="${TEST_DIR}/timeout_values.log"
+
+	# Create mock timeout command that logs the timeout value used
+	cat >"${TEST_DIR}/timeout" <<EOF
+#!/bin/bash
+# Log the timeout value (first argument) to verify calculation
+echo "\$1" >> "${timeout_log}"
+# Then execute the real timeout command if available, or just execute the command
+if command -v /usr/bin/timeout >/dev/null 2>&1; then
+	exec /usr/bin/timeout "\$@"
+else
+	# If timeout not available, just execute the command (skip timeout wrapper)
+	shift
+	exec "\$@"
+fi
+EOF
+	chmod +x "${TEST_DIR}/timeout"
+	add_mock_to_path
+
+	# Mock ping to succeed quickly
+	mock_ping_success >/dev/null
+	add_mock_to_path
+
+	# Mock route check
+	# Mock function to simulate route existence check
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds (route exists)
+	check_route_exists() {
+		return 0
+	}
+	export -f check_route_exists
+
+	# Mock function to build route message
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	#
+	# Outputs:
+	#   Empty string to stdout
+	build_route_message() {
+		echo ""
+	}
+	export -f build_route_message
+
+	# Test case 1: ping_timeout=1, ping_count=1
+	# Expected: quick_timeout=2, normal_timeout=2, result=2
+	rm -f "${timeout_log}"
+	export PING_TIMEOUT=1
+	export PING_COUNT=1
+	run check_ping_connectivity "${TEST_PEER_IP}" "" "$location_name"
+	assert_success
+	if [[ -f "${timeout_log}" ]]; then
+		local logged_timeout
+		logged_timeout=$(head -n1 "${timeout_log}" 2>/dev/null || echo "")
+		# Timeout should be 2 (min(2, 2) = 2)
+		assert_equal "$logged_timeout" "2"
+	fi
+
+	# Test case 2: ping_timeout=2, ping_count=10
+	# Expected: quick_timeout=3, normal_timeout=21 (capped at 5), result=3
+	rm -f "${timeout_log}"
+	export PING_TIMEOUT=2
+	export PING_COUNT=10
+	run check_ping_connectivity "${TEST_PEER_IP}" "" "$location_name"
+	assert_success
+	if [[ -f "${timeout_log}" ]]; then
+		local logged_timeout
+		logged_timeout=$(head -n1 "${timeout_log}" 2>/dev/null || echo "")
+		# Timeout should be 3 (min(3, 5) = 3)
+		assert_equal "$logged_timeout" "3"
+	fi
+
+	# Test case 3: ping_timeout=1, ping_count=5
+	# Expected: quick_timeout=2, normal_timeout=6 (capped at 5), result=2
+	rm -f "${timeout_log}"
+	export PING_TIMEOUT=1
+	export PING_COUNT=5
+	run check_ping_connectivity "${TEST_PEER_IP}" "" "$location_name"
+	assert_success
+	if [[ -f "${timeout_log}" ]]; then
+		local logged_timeout
+		logged_timeout=$(head -n1 "${timeout_log}" 2>/dev/null || echo "")
+		# Timeout should be 2 (min(2, 5) = 2)
+		assert_equal "$logged_timeout" "2"
+	fi
+
+	# Test case 4: ping_timeout=3, ping_count=1
+	# Expected: quick_timeout=4, normal_timeout=4, result=4
+	rm -f "${timeout_log}"
+	export PING_TIMEOUT=3
+	export PING_COUNT=1
+	run check_ping_connectivity "${TEST_PEER_IP}" "" "$location_name"
+	assert_success
+	if [[ -f "${timeout_log}" ]]; then
+		local logged_timeout
+		logged_timeout=$(head -n1 "${timeout_log}" 2>/dev/null || echo "")
+		# Timeout should be 4 (min(4, 4) = 4)
+		assert_equal "$logged_timeout" "4"
 	fi
 
 	remove_mock_from_path

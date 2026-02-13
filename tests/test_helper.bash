@@ -96,19 +96,24 @@ standard_setup() {
 	local var_name
 	for var_name in \
 		CONFIG_FILE STATE_DIR LOGS_DIR LOCKFILE LOG_FILE \
-		RESTART_COUNT_FILE COOLDOWN_UNTIL_FILE \
+		RESTART_COUNT_FILE \
 		MOCK_IP MOCK_PING MOCK_IPSEC \
 		NO_ESCALATE DEBUG BASE_TIME \
 		TEST_CONFIG_FILE TEST_SCRIPT \
 		MOCK_DATA_DIR MOCK_INSTALL_DIR; do
+		local original_var="ORIGINAL_${var_name}"
+		# Determine value: use actual value if variable was set, otherwise use sentinel
+		local value_to_save
 		if [[ -v "$var_name" ]]; then
 			# Variable was set (even if empty), save its value
-			printf -v "ORIGINAL_${var_name}" '%s' "${!var_name}"
+			value_to_save="${!var_name}"
 		else
 			# Variable was not set, use sentinel value
-			printf -v "ORIGINAL_${var_name}" '%s' "__UNSET__"
+			value_to_save="__UNSET__"
 		fi
-		export "ORIGINAL_${var_name}"
+		# Use declare -gx to declare and export, then printf -v for safe assignment
+		declare -gx "$original_var"
+		printf -v "$original_var" '%s' "$value_to_save"
 	done
 
 	# Export saved values so they're available in teardown even if test fails
@@ -210,7 +215,6 @@ standard_teardown() {
 	restore_env_var LOCKFILE
 	restore_env_var LOG_FILE
 	restore_env_var RESTART_COUNT_FILE
-	restore_env_var COOLDOWN_UNTIL_FILE
 	restore_env_var MOCK_IP
 	restore_env_var MOCK_PING
 	restore_env_var MOCK_IPSEC
@@ -317,12 +321,11 @@ LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
 LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
 LOCATION_TEST2_EXTERNAL="${TEST_PEER_IP2}"
 LOCATION_TEST2_INTERNAL="${TEST_PEER_IP2}"
-VPN_NAME="Test VPN"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
-COOLDOWN_MINUTES=15
-MAX_RESTARTS_PER_HOUR=3
+MAX_RESTARTS_PER_WINDOW=20
+RATE_LIMIT_WINDOW_MINUTES=60
 LOG_FILE="/data/vpn-monitor/logs/vpn-monitor.log"
 STATE_DIR="/data/vpn-monitor"
 CRON_SCHEDULE="*/1 * * * *"
@@ -492,6 +495,12 @@ create_test_install_setup() {
 	# Copy lib directory
 	cp -r "${project_root}/lib" "${test_install_dir}/lib"
 
+	# Copy vpn-monitor-wrapper.sh (for sub-minute execution tests)
+	if [[ -f "${project_root}/vpn-monitor-wrapper.sh" ]]; then
+		cp "${project_root}/vpn-monitor-wrapper.sh" "${test_install_dir}/vpn-monitor-wrapper.sh"
+		chmod +x "${test_install_dir}/vpn-monitor-wrapper.sh"
+	fi
+
 	echo "${test_install_dir}/install.sh"
 }
 
@@ -582,7 +591,6 @@ create_test_vpn_monitor_script() {
 	if [[ -n "$escaped_state" ]]; then
 		sed_script="${sed_script}s|^STATE_DIR=.*|STATE_DIR=\"${escaped_state}\"|;"
 		sed_script="${sed_script}s|^LOCKFILE=.*|LOCKFILE=\"${escaped_state}/vpn-monitor.lock\"|;"
-		sed_script="${sed_script}s|^COOLDOWN_UNTIL_FILE=.*|COOLDOWN_UNTIL_FILE=\"${escaped_state}/cooldown_until\"|;"
 		sed_script="${sed_script}s|^RESTART_COUNT_FILE=.*|RESTART_COUNT_FILE=\"${escaped_state}/restart_count\"|;"
 	fi
 	if [[ -n "$escaped_log" ]]; then
@@ -817,7 +825,23 @@ mock_ip_xfrm_state() {
 		src_ip="$peer_ip"
 	fi
 
-	cat >"$mock_ip" <<EOF
+	# If peer_ip is empty, return empty output (no SA exists)
+	if [[ -z "$peer_ip" ]]; then
+		cat >"$mock_ip" <<EOF
+#!/bin/bash
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    exit 0
+fi
+# Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    exit 0
+fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
+EOF
+	else
+		cat >"$mock_ip" <<EOF
 #!/bin/bash
 # Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
 if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
@@ -836,6 +860,127 @@ fi
 # Handle other ip commands
 exec /usr/bin/ip "\$@"
 EOF
+	fi
+	chmod +x "$mock_ip"
+	echo "$mock_ip"
+}
+
+# Create mock ip command for multiple peers
+#
+# Creates a mock 'ip' command that returns fake xfrm state output for multiple peers.
+# Used to simulate VPN tunnel states for multiple peers in tests without requiring actual IPsec.
+# Handles both "ip xfrm state" and "ip -s xfrm state" (with statistics flag) formats.
+#
+# Arguments:
+#   $1: Space-separated list of peer IP addresses to include in mock output
+#   $2: Byte counter value for all peers (default: 1000)
+#   $3: SPI value for all peers (default: 0x12345678)
+#   $4: Optional path to mock ip file (default: ${TEST_DIR}/ip)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script at specified path (default: ${TEST_DIR}/ip)
+#
+# Example:
+#   # Basic usage - three peers with default values
+#   mock_ip_xfrm_state_multiple_peers "${TEST_PEER_IP} ${TEST_PEER_IP2} 172.16.0.1"
+#   add_mock_to_path
+#
+#   # Custom bytes and SPI
+#   mock_ip_xfrm_state_multiple_peers "192.168.1.1 10.0.0.1" 5000 "0xabcdef12"
+mock_ip_xfrm_state_multiple_peers() {
+	local peer_ips="$1"
+	local bytes="${2:-1000}"
+	local spi="${3:-0x12345678}"
+	local mock_ip="${4:-${TEST_DIR}/ip}"
+
+	local mock_content
+	mock_content=$(
+		cat <<EOF
+#!/bin/bash
+# Handle both "ip -s xfrm state" and "ip xfrm state"
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Return SA for all configured peers based on grep filter
+    # The detection code uses "grep -F dst \$peer_ip", so we need to output
+    # matching lines for each peer IP when queried
+    # Since we can't know which IP is being queried, output all SAs
+EOF
+	)
+
+	# Add SA output for each peer
+	local reqid=1
+	for peer_ip in $peer_ips; do
+		# Skip empty IPs (from multiple spaces)
+		[[ -z "$peer_ip" ]] && continue
+		mock_content+=$(
+			cat <<EOF
+
+    echo "src ${peer_ip} dst ${peer_ip}"
+    echo "    proto esp spi ${spi} reqid ${reqid} mode tunnel"
+    echo "    replay-window 0"
+    echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
+    echo "    enc cbc(aes) 0x1234567890abcdef"
+    echo "    lifetime current: ${bytes} bytes, 10 packets"
+    echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
+    echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
+    echo "    current use: 1"
+    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+EOF
+		)
+		reqid=$((reqid + 1))
+	done
+
+	mock_content+=$(
+		cat <<EOF
+
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Return SA for all configured peers based on grep filter
+    # The detection code uses "grep -F dst \$peer_ip", so we need to output
+    # matching lines for each peer IP when queried
+    # Since we can't know which IP is being queried, output all SAs
+EOF
+	)
+
+	# Add SA output for each peer (same as above)
+	reqid=1
+	for peer_ip in $peer_ips; do
+		# Skip empty IPs (from multiple spaces)
+		[[ -z "$peer_ip" ]] && continue
+		mock_content+=$(
+			cat <<EOF
+
+    echo "src ${peer_ip} dst ${peer_ip}"
+    echo "    proto esp spi ${spi} reqid ${reqid} mode tunnel"
+    echo "    replay-window 0"
+    echo "    auth-trunc hmac(sha256) 0x1234567890abcdef 96"
+    echo "    enc cbc(aes) 0x1234567890abcdef"
+    echo "    lifetime current: ${bytes} bytes, 10 packets"
+    echo "    lifetime hard: 3600s, 0 bytes, 0 packets"
+    echo "    lifetime soft: 2880s, 0 bytes, 0 packets"
+    echo "    current use: 1"
+    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+EOF
+		)
+		reqid=$((reqid + 1))
+	done
+
+	mock_content+=$(
+		cat <<EOF
+
+    exit 0
+fi
+# Handle other ip commands
+exec /usr/bin/ip "\$@"
+EOF
+	)
+
+	echo "$mock_content" >"$mock_ip"
 	chmod +x "$mock_ip"
 	echo "$mock_ip"
 }
@@ -944,7 +1089,11 @@ mock_ip_xfrm_with_incrementing_bytes() {
 
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+# Handle "ip xfrm state delete" (deletion command) - must come before "ip xfrm state" check
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
+	# Deletion always succeeds in this mock
+	exit 0
+elif [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
 	# Handle "ip -s xfrm state" (with statistics flag)
 	verify_attempts=\$(cat "$state_file" 2>/dev/null || echo "0")
 	verify_attempts=\$((verify_attempts + 1))
@@ -1024,60 +1173,107 @@ mock_ip_xfrm_state_transition() {
 	local verify_attempt_file="${8:-${TEST_DIR}/verify_attempts}"
 	local mock_ip="${9:-${TEST_DIR}/ip}"
 
-	# Initialize verify attempt counter
+	# State tracking files:
+	# - verify_attempt_file: counts verification attempts AFTER deletion (for re-establishment)
+	# - deleted_file: tracks whether SA has been deleted (0=exists, 1=deleted)
+	local deleted_file="${verify_attempt_file}.deleted"
+
+	# Initialize state: SA exists, no verification attempts yet
 	echo "0" >"$verify_attempt_file"
+	echo "0" >"$deleted_file"
 
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
-# Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
-if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
-	verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
-	verify_attempts=\$((verify_attempts + 1))
-	echo "\$verify_attempts" > "$verify_attempt_file"
+# State files for tracking SA lifecycle:
+# - deleted_file: 0=SA exists, 1=SA deleted (set by delete command)
+# - verify_attempt_file: counts queries after deletion (for re-establishment timing)
 
-	# First call: SA exists with initial SPI and byte counter
-	if [[ \$verify_attempts -le 1 ]]; then
+# Handle "ip xfrm state delete" - MUST come first to set deleted state
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
+	# Mark SA as deleted
+	echo "1" > "$deleted_file"
+	# Reset verify counter for re-establishment tracking
+	echo "0" > "$verify_attempt_file"
+	# Deletion always succeeds in this mock
+	exit 0
+fi
+
+# Handle "ip xfrm state get" (diagnostics) - check deleted state
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "get" ]]; then
+	is_deleted=\$(cat "$deleted_file" 2>/dev/null || echo "0")
+	if [[ "\$is_deleted" == "0" ]]; then
+		# SA still exists with initial SPI
 		echo "src ${peer_ip} dst ${peer_ip}"
 		echo "    proto esp spi ${initial_spi} reqid 1 mode tunnel"
-		echo "    lifetime current: ${initial_bytes} bytes, 10 packets"
 		exit 0
-	# Next few calls: SA deleted (no output)
-	elif [[ \$verify_attempts -le ${reestablishment_attempt} ]]; then
-		exit 0  # Return empty output (SA deleted)
-	# After re-establishment threshold: SA re-established with new SPI and incrementing byte counters
 	else
-		local call_count=\$((verify_attempts - ${reestablishment_attempt}))
-		local byte_count=\$((initial_bytes + (call_count - 1) * ${increment}))
-		echo "src ${peer_ip} dst ${peer_ip}"
-		echo "    proto esp spi ${final_spi} reqid 1 mode tunnel"
-		echo "    lifetime current: \${byte_count} bytes, 10 packets"
-		exit 0
-	fi
-# Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
-elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
-	verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
-	verify_attempts=\$((verify_attempts + 1))
-	echo "\$verify_attempts" > "$verify_attempt_file"
-
-	# First call: SA exists with initial SPI and byte counter
-	if [[ \$verify_attempts -le 1 ]]; then
-		echo "src ${peer_ip} dst ${peer_ip}"
-		echo "    proto esp spi ${initial_spi} reqid 1 mode tunnel"
-		echo "    lifetime current: ${initial_bytes} bytes, 10 packets"
-		exit 0
-	# Next few calls: SA deleted (no output)
-	elif [[ \$verify_attempts -le ${reestablishment_attempt} ]]; then
-		exit 0  # Return empty output (SA deleted)
-	# After re-establishment threshold: SA re-established with new SPI and incrementing byte counters
-	else
-		local call_count=\$((verify_attempts - ${reestablishment_attempt}))
-		local byte_count=\$((initial_bytes + (call_count - 1) * ${increment}))
-		echo "src ${peer_ip} dst ${peer_ip}"
-		echo "    proto esp spi ${final_spi} reqid 1 mode tunnel"
-		echo "    lifetime current: \${byte_count} bytes, 10 packets"
-		exit 0
+		# SA deleted - get fails
+		exit 1
 	fi
 fi
+
+# Handle "ip -s xfrm state" (with statistics flag) - primary query path
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+	is_deleted=\$(cat "$deleted_file" 2>/dev/null || echo "0")
+
+	if [[ "\$is_deleted" == "0" ]]; then
+		# SA exists - return initial state
+		echo "src ${peer_ip} dst ${peer_ip}"
+		echo "    proto esp spi ${initial_spi} reqid 1 mode tunnel"
+		echo "    lifetime current: ${initial_bytes} bytes, 10 packets"
+		exit 0
+	else
+		# SA deleted - count verification attempts for re-establishment
+		verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+		verify_attempts=\$((verify_attempts + 1))
+		echo "\$verify_attempts" > "$verify_attempt_file"
+
+		if [[ \$verify_attempts -lt ${reestablishment_attempt} ]]; then
+			# Still waiting for re-establishment
+			exit 0  # Return empty output
+		else
+			# SA re-established with new SPI and incrementing byte counters
+			local call_count=\$((verify_attempts - ${reestablishment_attempt} + 1))
+			local byte_count=\$((${initial_bytes} + (call_count - 1) * ${increment}))
+			echo "src ${peer_ip} dst ${peer_ip}"
+			echo "    proto esp spi ${final_spi} reqid 1 mode tunnel"
+			echo "    lifetime current: \${byte_count} bytes, 10 packets"
+			exit 0
+		fi
+	fi
+fi
+
+# Handle "ip xfrm state" (without -s flag) - fallback query path
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+	is_deleted=\$(cat "$deleted_file" 2>/dev/null || echo "0")
+
+	if [[ "\$is_deleted" == "0" ]]; then
+		# SA exists - return initial state
+		echo "src ${peer_ip} dst ${peer_ip}"
+		echo "    proto esp spi ${initial_spi} reqid 1 mode tunnel"
+		echo "    lifetime current: ${initial_bytes} bytes, 10 packets"
+		exit 0
+	else
+		# SA deleted - count verification attempts for re-establishment
+		verify_attempts=\$(cat "$verify_attempt_file" 2>/dev/null || echo "0")
+		verify_attempts=\$((verify_attempts + 1))
+		echo "\$verify_attempts" > "$verify_attempt_file"
+
+		if [[ \$verify_attempts -lt ${reestablishment_attempt} ]]; then
+			# Still waiting for re-establishment
+			exit 0  # Return empty output
+		else
+			# SA re-established with new SPI and incrementing byte counters
+			local call_count=\$((verify_attempts - ${reestablishment_attempt} + 1))
+			local byte_count=\$((${initial_bytes} + (call_count - 1) * ${increment}))
+			echo "src ${peer_ip} dst ${peer_ip}"
+			echo "    proto esp spi ${final_spi} reqid 1 mode tunnel"
+			echo "    lifetime current: \${byte_count} bytes, 10 packets"
+			exit 0
+		fi
+	fi
+fi
+
 # Handle other ip commands
 exec /usr/bin/ip "\$@"
 EOF
@@ -1696,7 +1892,7 @@ fi
 if [[ "\$1" == "status" ]]; then
     if [[ ${status_exit} -eq 0 ]]; then
         echo "IPsec connections:"
-        echo "  ${conn_name}: ESTABLISHED"
+        echo "  ${conn_name}: ESTABLISHED, ${peer_ip}...192.168.1.2"
     fi
     exit ${status_exit}
 elif [[ "\$1" == "--help" ]] || [[ "\$1" == "--version" ]]; then
@@ -2023,6 +2219,60 @@ wait_for_file() {
 	done
 }
 
+# Wait for a file to be removed (not exist)
+#
+# Waits for a file to be removed/not exist, using the same pattern as wait_for_file().
+# This provides file-based synchronization for process completion by waiting for
+# cleanup files (like lockfiles) to be removed.
+#
+# Arguments:
+#   $1: Path to file to wait for removal
+#   $2: Timeout in seconds (default: 5)
+#
+# Returns:
+#   0: File was removed within timeout
+#   1: Timeout exceeded, file still exists
+wait_for_file_removed() {
+	local file="$1"
+	local timeout="${2:-5}"
+	local start_time
+	local elapsed_time
+	local sleep_interval=0.01 # Same as wait_for_file for consistency
+
+	# Get start time in seconds since epoch
+	start_time=$(date +%s 2>/dev/null || echo "0")
+
+	# If date command failed, use iteration-based fallback
+	if [[ "$start_time" == "0" ]]; then
+		# Fallback: use iteration counting (less accurate but works without date)
+		local max_iterations=$((timeout * 100)) # timeout * (1 / sleep_interval)
+		local iterations=0
+		while [[ $iterations -lt $max_iterations ]]; do
+			if [[ ! -f "$file" ]]; then
+				return 0
+			fi
+			sleep "$sleep_interval"
+			iterations=$((iterations + 1))
+		done
+		return 1
+	fi
+
+	# Normal path: use time-based checking
+	while true; do
+		if [[ ! -f "$file" ]]; then
+			return 0
+		fi
+
+		# Calculate elapsed time
+		elapsed_time=$(($(date +%s) - start_time))
+		if [[ $elapsed_time -ge $timeout ]]; then
+			return 1
+		fi
+
+		sleep "$sleep_interval"
+	done
+}
+
 # ============================================================================
 # Test Setup Helper Functions - Reduce Duplication Across Tests
 # ============================================================================
@@ -2048,7 +2298,7 @@ wait_for_file() {
 # Example:
 #   setup_location_vpn_monitor "192.168.1.1" "${TEST_DIR}" 'TIER1_THRESHOLD=1'
 setup_location_vpn_monitor() {
-	local external_ip="${1:-${TEST_PEER_IP}}"
+	local external_peer_ip="${1:-${TEST_PEER_IP}}"
 	local state_dir="${2:-${TEST_DIR}}"
 	shift 2 || true
 	local extra_config=("$@")
@@ -2070,9 +2320,9 @@ setup_location_vpn_monitor() {
 	done
 
 	# Only set LOCATION_TEST_INTERNAL if not already provided
-	local config_args=("LOCATION_TEST_EXTERNAL=\"${external_ip}\"")
+	local config_args=("LOCATION_TEST_EXTERNAL=\"${external_peer_ip}\"")
 	if [[ $has_internal -eq 0 ]]; then
-		config_args+=("LOCATION_TEST_INTERNAL=\"${external_ip}\"")
+		config_args+=("LOCATION_TEST_INTERNAL=\"${external_peer_ip}\"")
 	fi
 	config_args+=("${extra_config[@]}")
 
@@ -2103,7 +2353,7 @@ setup_location_vpn_monitor() {
 #
 # Side effects:
 #   - Creates directories
-#   - Exports LOGS_DIR, STATE_DIR, LOCKFILE, LOG_FILE, RESTART_COUNT_FILE (in STATE_DIR), COOLDOWN_UNTIL_FILE
+#   - Exports LOGS_DIR, STATE_DIR, LOCKFILE, LOG_FILE, RESTART_COUNT_FILE (in STATE_DIR)
 setup_test_environment() {
 	local state_dir="${1:-${TEST_DIR}}"
 	local logs_dir="${2:-${state_dir}/logs}"
@@ -2116,7 +2366,6 @@ setup_test_environment() {
 	export LOCKFILE="${state_dir}/vpn-monitor.lock"
 	export LOG_FILE="${logs_dir}/vpn-monitor.log"
 	export RESTART_COUNT_FILE="${state_dir}/restart_count"
-	export COOLDOWN_UNTIL_FILE="${state_dir}/cooldown_until"
 }
 
 # Common detection test setup
@@ -2317,12 +2566,12 @@ setup_test_location_config() {
 	mkdir -p "$(dirname "$config_file")"
 
 	cat >"$config_file" <<EOF
-VPN_NAME="Test VPN"
 TIER1_THRESHOLD=1
 TIER2_THRESHOLD=3
 TIER3_THRESHOLD=5
-COOLDOWN_MINUTES=15
-MAX_RESTARTS_PER_HOUR=3
+MIN_RESTART_INTERVAL_SECONDS=30
+MAX_RESTARTS_PER_WINDOW=3
+RATE_LIMIT_WINDOW_MINUTES=60
 LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
 STATE_DIR="${TEST_DIR}"
 CRON_SCHEDULE="*/1 * * * *"
@@ -2928,6 +3177,112 @@ EOF
 	echo "$mock_nslookup"
 }
 
+# Create mock getent command for DNS resolution
+#
+# Creates a mock 'getent' command that simulates DNS resolution via getent ahostsv4.
+# Used for testing resolve_dns() function.
+#
+# Arguments:
+#   $1: Success flag ("1" for success, "0" for failure, default: "1")
+#   $2: IP address to return (default: "192.168.1.1")
+#   $3: Hostname to match (optional, if provided only matches that hostname)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "getent"
+#
+# Note:
+#   getent ahostsv4 returns format: "IP STREAM HOSTNAME"
+#   The mock outputs this format when successful
+mock_getent() {
+	local success="${1:-1}"
+	local ip_address="${2:-192.168.1.1}"
+	local hostname="${3:-}"
+
+	local mock_getent="${TEST_DIR}/getent"
+	cat >"$mock_getent" <<EOF
+#!/bin/bash
+# getent ahostsv4 hostname
+if [[ "\$1" == "ahostsv4" ]]; then
+	if [[ "$success" == "1" ]]; then
+		# Check if hostname matches (if specified)
+		if [[ -z "$hostname" ]] || [[ "\$2" == "$hostname" ]]; then
+			echo "$ip_address STREAM \$2"
+			exit 0
+		fi
+	fi
+	# Failure case
+	exit 2
+fi
+# For other getent commands, pass through to real getent if available
+if command -v /usr/bin/getent >/dev/null 2>&1; then
+	exec /usr/bin/getent "\$@"
+else
+	exit 1
+fi
+EOF
+	chmod +x "$mock_getent"
+	echo "$mock_getent"
+}
+
+# Create mock host command for DNS resolution
+#
+# Creates a mock 'host' command that simulates DNS resolution.
+# Used for testing resolve_dns() function fallback.
+#
+# Arguments:
+#   $1: Success flag ("1" for success, "0" for failure, default: "1")
+#   $2: IP address to return (default: "192.168.1.1")
+#   $3: Hostname to match (optional, if provided only matches that hostname)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints the path to the created mock script
+#
+# Side effects:
+#   Creates mock script in TEST_DIR as "host"
+#
+# Note:
+#   host -t A returns format: "hostname has address IP"
+#   The mock outputs this format when successful
+mock_host() {
+	local success="${1:-1}"
+	local ip_address="${2:-192.168.1.1}"
+	local hostname="${3:-}"
+
+	local mock_host="${TEST_DIR}/host"
+	cat >"$mock_host" <<EOF
+#!/bin/bash
+# host -t A hostname
+if [[ "\$1" == "-t" ]] && [[ "\$2" == "A" ]]; then
+	if [[ "$success" == "1" ]]; then
+		# Check if hostname matches (if specified)
+		if [[ -z "$hostname" ]] || [[ "\$3" == "$hostname" ]]; then
+			echo "\$3 has address $ip_address"
+			exit 0
+		fi
+	fi
+	# Failure case
+	exit 1
+fi
+# For other host commands, pass through to real host if available
+if command -v /usr/bin/host >/dev/null 2>&1; then
+	exec /usr/bin/host "\$@"
+else
+	exit 1
+fi
+EOF
+	chmod +x "$mock_host"
+	echo "$mock_host"
+}
+
 # Create mock check_ipsec_phase2 command
 #
 # Creates a mock 'check_ipsec_phase2' command for testing SA re-establishment checks.
@@ -3079,7 +3434,7 @@ EOF
 # Create mock date command with controllable time
 #
 # Creates a mock 'date' command that returns a controllable timestamp.
-# Used for time-based testing of cooldowns, rate limiting, and time-sensitive operations.
+# Used for time-based testing of rate limiting and time-sensitive operations.
 # Allows tests to simulate time passing by calling this function multiple times with
 # different increment values.
 #
@@ -3316,7 +3671,6 @@ run_with_mocks() {
 #   - fixtures/vpn_active.bash: VPN is active and healthy
 #   - fixtures/vpn_down.bash: VPN is down (no SA found)
 #   - fixtures/vpn_failing.bash: VPN has recorded failures
-#   - fixtures/vpn_cooldown.bash: VPN is in cooldown period
 #   - fixtures/vpn_rekey.bash: VPN has undergone a rekey (SPI change)
 #   - fixtures/vpn_multiple_peers.bash: Multiple VPN peers scenario
 #   - fixtures/vpn_recovery_disabled.bash: VPN with recovery actions disabled
@@ -3358,6 +3712,12 @@ source_recovery_module() {
 	LOG_FILE="${LOG_FILE:-${LOGS_DIR}/vpn-monitor.log}"
 	export LOG_FILE
 	mkdir -p "$LOGS_DIR"
+
+	# Source config file if set (needed for ENABLE_XFRM_RECOVERY and other config vars)
+	if [[ -n "${TEST_CONFIG_FILE:-}" ]] && [[ -f "$TEST_CONFIG_FILE" ]]; then
+		# shellcheck source=/dev/null
+		source "$TEST_CONFIG_FILE" 2>/dev/null || true
+	fi
 
 	# Source dependencies in order
 	# shellcheck source=../lib/constants.sh
@@ -3459,8 +3819,6 @@ source_function() {
 					export LOG_FILE
 					RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
 					export RESTART_COUNT_FILE
-					COOLDOWN_UNTIL_FILE="${COOLDOWN_UNTIL_FILE:-${STATE_DIR}/cooldown_until}"
-					export COOLDOWN_UNTIL_FILE
 					CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
 					export CONFIG_FILE
 					DEBUG="${DEBUG:-0}"
@@ -3525,8 +3883,6 @@ source_function() {
 					export LOG_FILE
 					RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
 					export RESTART_COUNT_FILE
-					COOLDOWN_UNTIL_FILE="${COOLDOWN_UNTIL_FILE:-${STATE_DIR}/cooldown_until}"
-					export COOLDOWN_UNTIL_FILE
 					CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
 					export CONFIG_FILE
 					DEBUG="${DEBUG:-0}"
@@ -3564,6 +3920,7 @@ source_function() {
 					"${LIB_DIR}/detection/xfrm_detection.sh"
 					"${LIB_DIR}/detection/ping_detection.sh"
 					"${LIB_DIR}/detection/failure_analysis.sh"
+					"${LIB_DIR}/detection/system_wide_failure.sh"
 				)
 				local found_in_module=0
 				for detection_module in "${detection_modules[@]}"; do
@@ -3591,8 +3948,6 @@ source_function() {
 					export LOG_FILE
 					RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
 					export RESTART_COUNT_FILE
-					COOLDOWN_UNTIL_FILE="${COOLDOWN_UNTIL_FILE:-${STATE_DIR}/cooldown_until}"
-					export COOLDOWN_UNTIL_FILE
 					CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
 					export CONFIG_FILE
 					DEBUG="${DEBUG:-0}"
@@ -3624,6 +3979,80 @@ source_function() {
 					fi
 				fi
 			fi
+			# Special handling for recovery.sh: functions are in module files
+			# Since recovery.sh sources module files, we should source the entire recovery.sh
+			# when looking for any function that might be from recovery.sh
+			if [[ "$module" == "${LIB_DIR}/recovery.sh" ]]; then
+				# Check if function exists in any recovery module file
+				local recovery_modules=(
+					"${LIB_DIR}/recovery/constants.sh"
+					"${LIB_DIR}/recovery/recovery_verification.sh"
+					"${LIB_DIR}/recovery/recovery_state.sh"
+					"${LIB_DIR}/recovery/xfrm_recovery.sh"
+					"${LIB_DIR}/recovery/ipsec_recovery.sh"
+					"${LIB_DIR}/recovery/recovery_orchestration.sh"
+				)
+				local found_in_module=0
+				for recovery_module in "${recovery_modules[@]}"; do
+					if [[ -f "$recovery_module" ]]; then
+						func_def=$(sed -n "/^${func_name}(/,/^}/p" "$recovery_module" 2>/dev/null)
+						if [[ -n "$func_def" ]]; then
+							found_in_module=1
+							break
+						fi
+					fi
+				done
+				# If function found in module files, source entire recovery.sh module
+				if [[ $found_in_module -eq 1 ]]; then
+					# Set minimal required variables for functions that need them
+					# Export these so they're available in subshells created by 'run'
+					SCRIPT_DIR="${SCRIPT_DIR:-${BATS_TEST_DIRNAME}/..}"
+					export SCRIPT_DIR
+					STATE_DIR="${STATE_DIR:-${TEST_DIR:-/tmp}}"
+					export STATE_DIR
+					LOGS_DIR="${LOGS_DIR:-${STATE_DIR}/logs}"
+					export LOGS_DIR
+					LOCKFILE="${LOCKFILE:-${STATE_DIR}/vpn-monitor.lock}"
+					export LOCKFILE
+					LOG_FILE="${LOG_FILE:-${LOGS_DIR}/vpn-monitor.log}"
+					export LOG_FILE
+					RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
+					export RESTART_COUNT_FILE
+					CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
+					export CONFIG_FILE
+					DEBUG="${DEBUG:-0}"
+					export DEBUG
+					# recovery.sh needs logging.sh, state.sh, detection.sh, and common.sh
+					# Source entire recovery.sh module since functions depend on each other
+					if [[ -f "${LIB_DIR}/constants.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/constants.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/common.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/common.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/state.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+					fi
+					if [[ -f "${LIB_DIR}/detection.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/detection.sh" 2>/dev/null || true
+					fi
+					# Source entire recovery.sh to make all functions available
+					if [[ -f "${LIB_DIR}/recovery.sh" ]]; then
+						# shellcheck source=/dev/null
+						source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
+						# Function already sourced, skip eval below
+						return 0
+					fi
+				fi
+			fi
 			# Extract function using sed, matching from function start to closing brace
 			func_def=$(sed -n "/^${func_name}(/,/^}/p" "$module" 2>/dev/null)
 			if [[ -n "$func_def" ]]; then
@@ -3641,8 +4070,6 @@ source_function() {
 				export LOG_FILE
 				RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
 				export RESTART_COUNT_FILE
-				COOLDOWN_UNTIL_FILE="${COOLDOWN_UNTIL_FILE:-${STATE_DIR}/cooldown_until}"
-				export COOLDOWN_UNTIL_FILE
 				CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
 				export CONFIG_FILE
 				DEBUG="${DEBUG:-0}"
@@ -3829,185 +4256,6 @@ restore_permissions_after_test() {
 	local original_perms="$2"
 
 	chmod "$original_perms" "$path" 2>/dev/null || true
-}
-
-# Get state file path with common defaults
-#
-# Helper function that wraps get_peer_state_file_path with sensible defaults
-# to reduce repetition in tests. Uses TEST_PEER_IP as default peer IP and
-# empty string for location (backward compatibility).
-#
-# Arguments:
-#   $1: Optional location name (defaults to "" for backward compatibility)
-#   $2: Optional peer IP address (defaults to TEST_PEER_IP)
-#   $3: Optional state key (defaults to "failure_count")
-#
-# Returns:
-#   Outputs the state file path
-#   Returns 0 on success, 1 on failure
-#
-# Side effects:
-#   Sources get_peer_state_file_path function if not available
-#
-# Example:
-#   source_function "get_peer_state_file_path"
-#   local failure_counter
-#   failure_counter=$(get_state_file_path)
-#   # or with custom values:
-#   failure_counter=$(get_state_file_path "NYC" "${TEST_PEER_IP}" "last_bytes")
-#
-# Note:
-#   Requires get_peer_state_file_path function to be available.
-#   Automatically sources it if not already loaded.
-# Note: This function is now provided by helpers/state.bash
-# It is kept here for backward compatibility.
-get_state_file_path() {
-	local location="${1:-}"
-	local peer_ip="${2:-${TEST_PEER_IP}}"
-	local key="${3:-failure_count}"
-
-	# Ensure get_peer_state_file_path is available
-	if ! command -v get_peer_state_file_path >/dev/null 2>&1; then
-		source_function "get_peer_state_file_path" || return 1
-	fi
-
-	get_peer_state_file_path "$location" "$peer_ip" "$key"
-}
-
-# Create a corrupted state file
-#
-# Helper function that creates a state file with an invalid value to test
-# corruption handling. Reduces repetition of the common pattern of creating
-# corrupted state files in tests.
-#
-# Arguments:
-#   $1: Optional location name (defaults to "" for backward compatibility)
-#   $2: Optional peer IP address (defaults to TEST_PEER_IP)
-#   $3: Optional state key (defaults to "failure_count")
-#   $4: Optional invalid value to write (defaults to "invalid-value")
-#
-# Returns:
-#   Outputs the state file path
-#   Returns 0 on success, 1 on failure
-#
-# Side effects:
-#   Creates or overwrites the state file with invalid content
-#   Sources get_peer_state_file_path function if not available
-#
-# Example:
-#   source_function "get_peer_state_file_path"
-#   local failure_counter
-#   failure_counter=$(create_corrupted_state_file)
-#   # or with custom values:
-#   local bytes_file
-#   bytes_file=$(create_corrupted_state_file "NYC" "${TEST_PEER_IP}" "last_bytes" "not-a-number")
-#
-# Note:
-#   Requires get_peer_state_file_path function to be available.
-#   Automatically sources it if not already loaded.
-# Note: This function is now provided by helpers/state.bash
-# It is kept here for backward compatibility.
-create_corrupted_state_file() {
-	local location="${1:-}"
-	local peer_ip="${2:-${TEST_PEER_IP}}"
-	local key="${3:-failure_count}"
-	local invalid_value="${4:-invalid-value}"
-
-	# Get the state file path
-	local state_file
-	state_file=$(get_state_file_path "$location" "$peer_ip" "$key") || return 1
-
-	# Create corrupted file
-	echo "$invalid_value" >"$state_file"
-
-	# Return the path for use in tests
-	echo "$state_file"
-}
-
-# Setup a read-only state file with automatic cleanup
-#
-# Helper function that creates a state file, sets it to read-only, and sets up
-# a trap to restore permissions on EXIT. Reduces repetition of the common pattern
-# of testing read-only state file handling.
-#
-# Arguments:
-#   $1: Optional location name (defaults to "" for backward compatibility)
-#   $2: Optional peer IP address (defaults to TEST_PEER_IP)
-#   $3: Optional state key (defaults to "failure_count")
-#   $4: Optional initial value to write (defaults to "3")
-#   $5: Optional permissions to set (defaults to "444" for read-only)
-#
-# Returns:
-#   Outputs the state file path
-#   Returns 0 on success, 1 on failure
-#
-# Side effects:
-#   Creates the state file with initial value
-#   Sets file permissions to read-only (or specified permissions)
-#   Sets up EXIT trap to restore original permissions
-#   Sources get_peer_state_file_path function if not available
-#
-# Example:
-#   source_function "get_peer_state_file_path"
-#   local failure_counter
-#   failure_counter=$(setup_readonly_state_file)
-#   # File is now read-only and will be restored on test exit
-#   # or with custom values:
-#   local bytes_file
-#   bytes_file=$(setup_readonly_state_file "NYC" "${TEST_PEER_IP}" "last_bytes" "1000" "000")
-#
-# Note:
-#   Requires get_peer_state_file_path function to be available.
-#   Automatically sources it if not already loaded.
-#   The trap is set up automatically and will restore permissions even if test fails.
-# Note: This function is now provided by helpers/state.bash
-# It is kept here for backward compatibility.
-setup_readonly_state_file() {
-	local location="${1:-}"
-	local peer_ip="${2:-${TEST_PEER_IP}}"
-	local key="${3:-failure_count}"
-	local initial_value="${4:-3}"
-	local readonly_perms="${5:-444}"
-
-	# Get the state file path
-	local state_file
-	state_file=$(get_state_file_path "$location" "$peer_ip" "$key") || return 1
-
-	# Ensure parent directory exists
-	local parent_dir
-	parent_dir=$(dirname "$state_file")
-	mkdir -p "$parent_dir" || return 1
-
-	# Remove existing file if it exists to ensure clean state
-	rm -f "$state_file"
-
-	# Create file with initial value and set permissions in one step using install
-	# This ensures the file is created with the correct permissions from the start
-	printf '%s' "$initial_value" | install -m "$readonly_perms" /dev/stdin "$state_file" || {
-		# Fallback to echo + chmod if install fails
-		echo "$initial_value" >"$state_file" || return 1
-		chmod "$readonly_perms" "$state_file" || {
-			echo "Failed to set permissions on $state_file" >&2
-			return 1
-		}
-	}
-
-	# Verify file was created
-	[[ -f "$state_file" ]] || {
-		echo "Failed to create file: $state_file" >&2
-		return 1
-	}
-
-	# Save original permissions for restoration
-	local original_perms
-	original_perms=$(save_permissions_for_restore "$state_file")
-
-	# Set up trap to restore permissions on EXIT
-	# Use actual path value, not variable, since trap executes after function returns
-	trap "chmod $original_perms \"$state_file\" 2>/dev/null || true" EXIT
-
-	# Return the path for use in tests
-	echo "$state_file"
 }
 
 # Source helper modules for backward compatibility

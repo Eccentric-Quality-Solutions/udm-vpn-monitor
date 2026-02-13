@@ -3,13 +3,15 @@
 # Tests for Detection Error Recovery Paths
 # Tests error handling, edge cases, and state management integration for detection functions
 #
-# These tests address the gaps identified in COVERAGE_GAP_ANALYSIS.md lines 28-49:
+# These tests address error recovery paths, edge cases, and state management integration:
 # - Error Recovery Paths: cascading failures, command failures, timeouts
 # - Edge Cases: multiple peer IPs, byte counter wrap-around, partial failures
 # - State Management Integration: state file corruption, write failures, read failures
 
 load test_helper
 load helpers/test_data
+load helpers/state
+load helpers/assertions
 
 # ============================================================================
 # ERROR RECOVERY PATHS TESTS
@@ -46,7 +48,7 @@ EOF
 
 	# Initialize state
 	source_function "set_peer_state"
-	set_peer_state "" "$peer_ip" "failure_count" "0"
+	set_peer_state "TEST" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_vpn_status"
@@ -55,7 +57,7 @@ EOF
 	export ENABLE_PING_CHECK=1
 
 	# Should handle cascading failures gracefully
-	run check_vpn_status "$peer_ip" "$internal_ip" ""
+	run check_vpn_status "$peer_ip" "$internal_ip" "TEST"
 	assert_failure
 
 	remove_mock_from_path
@@ -87,7 +89,7 @@ EOF
 
 	# Initialize state
 	source_function "set_peer_state"
-	set_peer_state "" "$peer_ip" "failure_count" "0"
+	set_peer_state "TEST" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_xfrm_status"
@@ -123,7 +125,7 @@ EOF
 
 	# Initialize state
 	source_function "set_peer_state"
-	set_peer_state "" "$peer_ip" "failure_count" "0"
+	set_peer_state "TEST" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_ipsec_status"
@@ -225,8 +227,7 @@ EOF
 
 	# Test with state read failure (simulated by making state file unreadable)
 	local state_file
-	source_function "get_peer_state_file_path"
-	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "spi")
+	state_file=$(get_state_file_path "$location_name" "$peer_ip" "spi")
 	if [[ -f "$state_file" ]]; then
 		local original_perms
 		original_perms=$(save_permissions_for_restore "$state_file")
@@ -257,10 +258,37 @@ EOF
 
 	# Mock ip command - first IP succeeds, second fails
 	# Use call counter to return different results for each call
+	# Note: execute_xfrm_state_command tries "ip -s xfrm state" first, then falls back to "ip xfrm state"
 	local call_count_file="${TEST_DIR}/xfrm_call_count"
+	echo "0" >"$call_count_file"
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by execute_xfrm_state_command
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    # Track call count to return different results
+    call_count_file="${call_count_file}"
+    if [[ -f "\$call_count_file" ]]; then
+        count=\$(cat "\$call_count_file")
+        count=\$((count + 1))
+    else
+        count=1
+    fi
+    echo "\$count" > "\$call_count_file"
+
+    # First call: return SA for first IP (TEST_PEER_IP)
+    if [[ \$count -le 2 ]]; then
+        # First two calls are for first IP (ip -s xfrm state and possibly fallback)
+        echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+        echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+        echo "    lifetime current: 1000 bytes, 10 packets"
+        exit 0
+    else
+        # Subsequent calls are for second IP - return nothing (no SA for second IP)
+        exit 0  # Exit 0 but no output - grep won't find match
+    fi
+fi
+# Handle "ip xfrm state" (without statistics flag) - fallback used by execute_xfrm_state_command
 if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     # Track call count to return different results
     call_count_file="${call_count_file}"
@@ -272,20 +300,25 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     fi
     echo "\$count" > "\$call_count_file"
     
-    # First call: return SA for first IP (192.168.1.1)
-    if [[ \$count -eq 1 ]]; then
+    # First call: return SA for first IP (TEST_PEER_IP)
+    if [[ \$count -le 2 ]]; then
+        # First two calls are for first IP
         echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
         echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
         echo "    lifetime current: 1000 bytes, 10 packets"
         exit 0
     else
-        # Second call: return nothing (no SA for second IP)
+        # Subsequent calls are for second IP - return nothing (no SA for second IP)
         exit 0  # Exit 0 but no output - grep won't find match
     fi
 fi
 exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# Mock ipsec command - needed for fallback when xfrm fails
+	mock_ipsec_status 1
 	add_mock_to_path
 
 	# Initialize state for both IPs
@@ -297,9 +330,15 @@ EOF
 	# Source required functions
 	source_function "check_vpn_status"
 
+	# Reset call counter before first check
+	echo "0" >"$call_count_file"
+
 	# Check first IP (should succeed)
 	run check_vpn_status "$peer_ip1" "$internal_ip1" "$location_name"
 	assert_success
+
+	# Reset call counter before second check (so second IP gets fresh count)
+	echo "0" >"$call_count_file"
 
 	# Check second IP (should fail)
 	run check_vpn_status "$peer_ip2" "$internal_ip2" "$location_name"
@@ -470,9 +509,8 @@ EOF
 	local location_name="TEST"
 
 	# Create corrupted state file (invalid JSON/format)
-	source_function "get_peer_state_file_path"
 	local state_file
-	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "last_bytes")
+	state_file=$(get_state_file_path "$location_name" "$peer_ip" "last_bytes")
 	mkdir -p "$(dirname "$state_file")"
 	echo "invalid_corrupted_data{{{}}" >"$state_file"
 
@@ -512,9 +550,8 @@ EOF
 
 	# Make state file unwritable to simulate write failure
 	# Note: setup_test_environment already exports STATE_DIR and LOGS_DIR
-	source_function "get_peer_state_file_path"
 	local state_file
-	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "last_bytes")
+	state_file=$(get_state_file_path "$location_name" "$peer_ip" "last_bytes")
 	if [[ -f "$state_file" ]]; then
 		local original_perms
 		original_perms=$(save_permissions_for_restore "$state_file")
@@ -549,9 +586,8 @@ EOF
 
 	# Make state file unreadable to simulate read failure
 	# Note: setup_test_environment already exports STATE_DIR and LOGS_DIR
-	source_function "get_peer_state_file_path"
 	local state_file
-	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "failure_type")
+	state_file=$(get_state_file_path "$location_name" "$peer_ip" "failure_type")
 	mkdir -p "$(dirname "$state_file")"
 	echo "tunnel_down" >"$state_file" 2>/dev/null || true
 
@@ -598,9 +634,10 @@ EOF
 	# Mock ip command - xfrm check finds SA but byte counter extraction fails
 	# This simulates the scenario where SA exists but byte counter info is unavailable
 	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
+	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by execute_xfrm_state_command
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     # Return xfrm output with SA but without byte counter info in lifetime current
     # This simulates byte counter extraction failure
     echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
@@ -609,7 +646,17 @@ if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
     # Note: No "lifetime current:" line, which causes byte counter extraction to fail
     exit 0
 fi
-exec /usr/bin/ip "$@"
+# Handle "ip xfrm state" (without statistics flag) - fallback used by execute_xfrm_state_command
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Return xfrm output with SA but without byte counter info in lifetime current
+    # This simulates byte counter extraction failure
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime config: 1000000 bytes, 1000 packets"
+    # Note: No "lifetime current:" line, which causes byte counter extraction to fail
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
 
@@ -636,8 +683,9 @@ EOF
 	assert_file_exist "$log_file"
 
 	# Verify the combined message format:
-	# 1. Should contain "VPN suspect for" with location name and peer IP
-	assert_log_contains "$log_file" "VPN suspect for $location_name ($peer_ip)"
+	# 1. Should contain "VPN suspect for" with peer IP (location name is in log prefix, not in message)
+	# Note: format_peer_ip_display shows (internal_peer_ip, external_peer_ip) when internal IP is provided
+	assert_log_contains "$log_file" "VPN suspect for ($internal_ip, $peer_ip)"
 
 	# 2. Should include xfrm detection method name
 	assert_log_contains "$log_file" "Detection method: xfrm (ip xfrm state)"
@@ -685,15 +733,23 @@ EOF
 
 	# Mock ip command - xfrm check finds SA but byte counter extraction fails
 	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
+	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by execute_xfrm_state_command
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
     echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
     echo "    lifetime config: 1000000 bytes, 1000 packets"
     exit 0
 fi
-exec /usr/bin/ip "$@"
+# Handle "ip xfrm state" (without statistics flag) - fallback used by execute_xfrm_state_command
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    echo "src ${TEST_PEER_IP} dst ${TEST_PEER_IP}"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime config: 1000000 bytes, 1000 packets"
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
 
@@ -720,6 +776,8 @@ EOF
 	assert_file_exist "$log_file"
 
 	# Verify the diagnostic includes "internal IP not provided" context
+	# Note: format_peer_ip_display shows just external IP when internal IP not provided
+	assert_log_contains "$log_file" "VPN suspect for ($peer_ip)"
 	assert_log_contains "$log_file" "internal IP not provided"
 
 	# Verify it does NOT say "ping check disabled" (since ping check is enabled)
@@ -754,18 +812,19 @@ EOF
 	# Source required functions
 	source_function "check_byte_counters"
 
-	# Test 1: Bytes not increasing (static) - should populate diagnostic with specific reason
+	# Test 1: Bytes static (current == last) with ping check disabled - should succeed but populate diagnostic with warning
 	# Note: Call function directly (not with 'run') so diagnostic variable is set in current shell
+	# This is the edge case fix: static bytes with ping disabled should not fail (to avoid false positives on healthy idle VPNs)
 	local diagnostic=""
-	if check_byte_counters "$location_name" "1000" "$peer_ip" "" "$internal_peer_ip" "diagnostic"; then
-		fail "check_byte_counters should fail when bytes are not increasing"
+	if ! check_byte_counters "$location_name" "1000" "$peer_ip" "" "$internal_peer_ip" "diagnostic"; then
+		fail "check_byte_counters should succeed when bytes are static and ping check is disabled (edge case fix)"
 	fi
-	# Verify diagnostic was populated with detailed reason
+	# Verify diagnostic was populated with warning message (not failure reason)
 	[[ -n "$diagnostic" ]] || fail "Diagnostic variable should be populated"
 	[[ "$diagnostic" == *"bytes not increasing"* ]] || fail "Diagnostic should mention 'bytes not increasing'"
 	[[ "$diagnostic" == *"current=1000"* ]] || fail "Diagnostic should include current byte count"
 	[[ "$diagnostic" == *"last=1000"* ]] || fail "Diagnostic should include last byte count"
-	[[ "$diagnostic" == *"ping check: disabled"* ]] || fail "Diagnostic should include ping check status"
+	[[ "$diagnostic" == *"ping check disabled"* ]] || fail "Diagnostic should include ping check status"
 
 	# Test 2: Bytes decreased - should populate diagnostic with decreased reason
 	set_peer_state "$location_name" "$peer_ip" "last_bytes" "2000"
@@ -803,6 +862,68 @@ EOF
 	[[ "$diagnostic" == *"ping check disabled"* ]] || fail "Diagnostic should mention ping check status"
 }
 
+# bats test_tags=category:detection,priority:medium
+@test "check_byte_counters handles static bytes (current == last) with ping enabled" {
+	# Purpose: Test verifies that check_byte_counters handles static bytes (current == last) correctly when ping check is enabled
+	# Expected: When bytes are static and ping check is enabled, function should use ping to determine if VPN is healthy
+	# Importance: Tests edge case where bytes are not increasing but ping check can verify VPN health
+	setup_test_environment "${TEST_DIR}"
+	local peer_ip="${TEST_PEER_IP}"
+	local location_name="TEST"
+	local internal_peer_ip="${TEST_PEER_IP2}"
+
+	# Set up environment
+	STATE_DIR="${TEST_DIR}"
+	LOGS_DIR="${STATE_DIR}/logs"
+	mkdir -p "${STATE_DIR}"
+	mkdir -p "${LOGS_DIR}"
+	export STATE_DIR LOGS_DIR
+	export ENABLE_PING_CHECK=1
+	export PING_COUNT=3
+	export PING_TIMEOUT=2
+	export LOCAL_UDM_IP="192.168.1.100"
+
+	# Initialize state with last_bytes to simulate bytes not increasing
+	source_function "set_peer_state"
+	set_peer_state "$location_name" "$peer_ip" "last_bytes" "1000"
+
+	# Source required functions
+	source_function "check_byte_counters"
+	source_function "get_local_ip_for_ping"
+
+	# Test 1: Bytes static (current == last) with ping check enabled and ping succeeds - should succeed
+	mock_ping_success >/dev/null
+	add_mock_to_path
+
+	local diagnostic=""
+	if ! check_byte_counters "$location_name" "1000" "$peer_ip" "" "$internal_peer_ip" "diagnostic"; then
+		fail "check_byte_counters should succeed when bytes are static and ping check succeeds"
+	fi
+	# Verify diagnostic was populated with warning message (not failure reason)
+	[[ -n "$diagnostic" ]] || fail "Diagnostic variable should be populated"
+	[[ "$diagnostic" == *"bytes not increasing"* ]] || fail "Diagnostic should mention 'bytes not increasing'"
+	[[ "$diagnostic" == *"current=1000"* ]] || fail "Diagnostic should include current byte count"
+	[[ "$diagnostic" == *"last=1000"* ]] || fail "Diagnostic should include last byte count"
+	[[ "$diagnostic" == *"ping check"* ]] || fail "Diagnostic should mention ping check"
+
+	remove_mock_from_path
+
+	# Test 2: Bytes static (current == last) with ping check enabled and ping fails - should fail
+	mock_ping_failure >/dev/null
+	add_mock_to_path
+
+	diagnostic=""
+	if check_byte_counters "$location_name" "1000" "$peer_ip" "" "$internal_peer_ip" "diagnostic"; then
+		fail "check_byte_counters should fail when bytes are static and ping check fails"
+	fi
+	# Verify diagnostic was populated with failure reason
+	[[ -n "$diagnostic" ]] || fail "Diagnostic variable should be populated"
+	[[ "$diagnostic" == *"bytes not increasing"* ]] || fail "Diagnostic should mention 'bytes not increasing'"
+	[[ "$diagnostic" == *"ping check failed"* ]] || fail "Diagnostic should mention 'ping check failed'"
+
+	remove_mock_from_path
+}
+
 # bats test_tags=category:high-risk,priority:medium
 @test "XFRM output reuse optimization - ip xfrm state called once per VPN check cycle" {
 	# Purpose: Test verifies that ip xfrm state is only called once per VPN check cycle when
@@ -837,7 +958,7 @@ if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     count=\$(cat "$call_count_file" 2>/dev/null || echo "0")
     count=\$((count + 1))
     echo "\$count" > "$call_count_file"
-    # Return SA with byte counter info (same value as last_bytes to trigger "bytes not increasing")
+    # Return SA with byte counter info (lower value than last_bytes to trigger "bytes decreased")
     echo "src ${peer_ip} dst ${peer_ip}"
     echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
     echo "    lifetime current: 1000 bytes, 10 packets"
@@ -850,7 +971,7 @@ if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
     count=\$(cat "$call_count_file" 2>/dev/null || echo "0")
     count=\$((count + 1))
     echo "\$count" > "$call_count_file"
-    # Return SA with byte counter info
+    # Return SA with byte counter info (lower value than last_bytes to trigger "bytes decreased")
     echo "src ${peer_ip} dst ${peer_ip}"
     echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
     echo "    lifetime current: 1000 bytes, 10 packets"
@@ -866,12 +987,12 @@ EOF
 	mock_ipsec_status 1
 	add_mock_to_path
 
-	# Initialize state with last_bytes set to same value (bytes not increasing)
-	# This will cause xfrm check to find SA but validation fails (bytes not increasing)
+	# Initialize state with last_bytes set higher than current bytes (bytes decreased)
+	# This will cause xfrm check to find SA but validation fails (bytes decreased)
 	# xfrm_output will be captured, but VPN check will fail, triggering failure type detection
 	source_function "set_peer_state"
 	set_peer_state "$location_name" "$peer_ip" "failure_count" "0"
-	set_peer_state "$location_name" "$peer_ip" "last_bytes" "1000"
+	set_peer_state "$location_name" "$peer_ip" "last_bytes" "2000"
 
 	# Disable ping check to ensure we test the xfrm path (not ping path)
 	# When bytes not increasing and ping disabled, xfrm check fails and triggers failure type detection
@@ -902,7 +1023,7 @@ EOF
 	# Verify failure type was detected (confirms detect_failure_type was called)
 	assert_file_exist "$log_file"
 	# Should have detected failure type (not "unknown" - should be "routing_issue" or similar)
-	assert_file_contains "$log_file" "failure type" || assert_file_contains "$log_file" "Failure type"
+	assert_log_contains_any "$log_file" "failure type" "Failure type"
 
 	remove_mock_from_path
 }
@@ -926,56 +1047,58 @@ EOF
 	# Mock ip command - xfrm check finds SA with byte counters
 	# Generate xfrm output using test data helpers
 	local xfrm_output
-	xfrm_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
+	xfrm_output=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
 	local xfrm_output_file="${TEST_DIR}/xfrm_output"
 	echo "$xfrm_output" >"$xfrm_output_file"
 
 	local mock_ip="${TEST_DIR}/ip"
-	cat >"$mock_ip" <<'EOF'
+	cat >"$mock_ip" <<EOF
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by execute_xfrm_state_command
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
     # Return xfrm output with SA and byte counter info
-    cat "MOCK_XFRM_OUTPUT"
+    cat "${xfrm_output_file}"
     exit 0
 fi
-exec /usr/bin/ip "$@"
+# Handle "ip xfrm state" (without statistics flag) - fallback used by execute_xfrm_state_command
+if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    # Return xfrm output with SA and byte counter info
+    cat "${xfrm_output_file}"
+    exit 0
+fi
+exec /usr/bin/ip "\$@"
 EOF
-	# Replace placeholder with actual file path
-	sed -i "s|MOCK_XFRM_OUTPUT|${xfrm_output_file}|g" "$mock_ip"
 	chmod +x "$mock_ip"
 
 	# Mock ipsec command - ipsec check fails (no connection found)
 	mock_ipsec_status 1
 	add_mock_to_path
 
-	# Initialize state with last_bytes set to same value (simulating bytes not increasing)
+	# Initialize state with last_bytes set higher than current (simulating bytes decreased)
+	# This scenario still causes failure, so we can test the combined diagnostic message format
 	source_function "set_peer_state"
 	set_peer_state "$location_name" "$peer_ip" "failure_count" "0"
-	set_peer_state "$location_name" "$peer_ip" "last_bytes" "1000"
+	set_peer_state "$location_name" "$peer_ip" "last_bytes" "2000"
 
 	# Source required functions
 	source_function "check_vpn_status"
 
-	# Disable ping check to ensure we get the "bytes not increasing" diagnostic
+	# Disable ping check to ensure we get the "bytes decreased" diagnostic
 	export ENABLE_PING_CHECK=0
 
-	# Call check_vpn_status - both methods should fail
+	# Call check_vpn_status - should fail (bytes decreased)
 	run check_vpn_status "$peer_ip" "$internal_ip" "$location_name"
 	assert_failure
 
 	# Verify combined diagnostic message was logged
 	assert_file_exist "$log_file"
 
-	# Verify the combined message includes detailed byte counter validation reason
-	# Should NOT contain generic "byte counter validation failed"
-	assert_log_not_contains "$log_file" "byte counter validation failed"
-
-	# Should contain detailed reason about bytes not increasing
-	assert_log_contains "$log_file" "bytes not increasing"
+	# Should contain detailed reason about bytes decreased (not generic message)
+	assert_log_contains "$log_file" "bytes decreased"
 
 	# Should include specific byte counter values
 	assert_log_contains "$log_file" "current=1000"
-	assert_log_contains "$log_file" "last=1000"
+	assert_log_contains "$log_file" "last=2000"
 
 	# Should include ping check status
 	assert_log_contains "$log_file" "ping check: disabled"
@@ -986,6 +1109,9 @@ EOF
 
 	# Verify the message is combined (contains semicolon separator)
 	assert_log_contains "$log_file" ";"
+
+	# Verify the message format includes peer IP display (internal_peer_ip, external_peer_ip when internal IP provided)
+	assert_log_contains "$log_file" "VPN suspect for ($internal_ip, $peer_ip)"
 
 	# Verify we have exactly one combined diagnostic message
 	local suspect_count

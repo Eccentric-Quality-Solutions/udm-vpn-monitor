@@ -12,7 +12,7 @@
 #
 #   # Load xfrm state output
 #   local xfrm_output
-#   xfrm_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
+#   xfrm_output=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
 #
 #   # Load ipsec status output (use template function directly)
 #   local ipsec_output
@@ -61,11 +61,11 @@ fi
 #
 # Example:
 #   # Generate healthy VPN output
-#   generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678"
+#   generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678"
 #
 #   # Generate custom output with specific counters
-#   generate_xfrm_state_output "custom" "${TEST_PEER_IP}" "0x12345678" 2000 20
-generate_xfrm_state_output() {
+#   generate_xfrm_state_for_scenario "custom" "${TEST_PEER_IP}" "0x12345678" 2000 20
+generate_xfrm_state_for_scenario() {
 	local scenario="$1"
 	local peer_ip="$2"
 	local spi="$3"
@@ -76,7 +76,7 @@ generate_xfrm_state_output() {
 	case "$scenario" in
 	healthy)
 		# Use provided values if given, otherwise use scenario defaults
-		# This allows overriding defaults: generate_xfrm_state_output "healthy" "$ip" "$spi" 2000 20
+		# This allows overriding defaults: generate_xfrm_state_for_scenario "healthy" "$ip" "$spi" 2000 20
 		bytes="${bytes:-${XFRM_STATE_HEALTHY_BYTES:-1000}}"
 		packets="${packets:-${XFRM_STATE_HEALTHY_PACKETS:-10}}"
 		;;
@@ -149,7 +149,7 @@ generate_config_file() {
 		generate_config_multiple_locations "${template_args[@]}" >"$output_file"
 		;;
 	cooldown_rate_limit)
-		generate_config_cooldown_rate_limit "${template_args[@]}" >"$output_file"
+		generate_config_rate_limit "${template_args[@]}" >"$output_file"
 		;;
 	*)
 		echo "Unknown template type: $template_type" >&2

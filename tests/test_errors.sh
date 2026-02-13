@@ -4,6 +4,8 @@
 # Tests critical paths and error handling scenarios
 
 load test_helper
+load helpers/config
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load helpers/logging
@@ -22,21 +24,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script logs error and continues execution without crashing when state file writes fail
 	# Importance: Prevents script failures from filesystem permission issues or disk space problems
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-
-	# Set LOGS_DIR and STATE_DIR for state functions
-	export LOGS_DIR="${TEST_DIR}/logs"
-	export STATE_DIR="${state_dir}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Use get_peer_state_file_path to get correct path dynamically
 	# shellcheck source=../lib/state.sh
@@ -49,7 +44,7 @@ EOF
 	chmod 555 "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 0
 	add_mock_to_path
@@ -71,23 +66,20 @@ EOF
 	# Expected: Script logs error about recovery failure and continues execution without crashing
 	# Importance: Prevents script failures when recovery commands fail, ensuring monitoring continues
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-MAX_RESTARTS_PER_HOUR=10
-COOLDOWN_MINUTES=1
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"MAX_RESTARTS_PER_WINDOW=10
+RATE_LIMIT_WINDOW_MINUTES=60"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
-	# Set LOGS_DIR and STATE_DIR for state functions
-	export LOGS_DIR="${TEST_DIR}/logs"
-	export STATE_DIR="${state_dir}"
+	# Set LOGS_DIR and STATE_DIR for state functions (already set by setup_test_environment)
+	export LOGS_DIR="${LOGS_DIR}"
+	export STATE_DIR="${STATE_DIR}"
 
 	# Use get_peer_state_file_path to get correct path dynamically
 	# shellcheck source=../lib/state.sh
@@ -99,7 +91,7 @@ EOF
 	echo "3" >"$failure_counter"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN is down (no SA)
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "0" >/dev/null
@@ -131,7 +123,7 @@ EOF
 	# Should handle recovery action errors gracefully (should log error but continue)
 	# Script should not crash even if recovery actions fail
 	# Code at lib/recovery.sh:217-220 handles ipsec reload/restart failures gracefully
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -142,17 +134,14 @@ EOF
 	# Expected: Script logs error about VPN check failure and continues execution without crashing
 	# Importance: Prevents script failures when VPN detection commands fail, ensuring monitoring continues
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command to fail with error (simulates VPN check error)
 	mock_command_failure "ip" 1 "Error: Cannot access xfrm state"
@@ -163,7 +152,7 @@ EOF
 
 	# Should handle VPN check error gracefully (should log error but continue)
 	# Code at lib/detection.sh handles xfrm errors gracefully
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -183,9 +172,8 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Source logging functions to test directly
 	# shellcheck source=../lib/logging.sh
@@ -200,8 +188,8 @@ EOF
 	assert_success
 
 	# Should have logged with "SYSTEM" prefix and logged warning about missing prefix
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "SYSTEM" || assert_file_contains "$log_file" "WARNING"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$log_file" "SYSTEM" "WARNING"
 
 	remove_mock_from_path
 }
@@ -216,9 +204,8 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Source logging functions to test directly
 	# shellcheck source=../lib/logging.sh
@@ -233,8 +220,8 @@ EOF
 	assert_success
 
 	# Should have logged with "ERROR" severity and logged warning about invalid severity
-	assert_file_exist "$log_file"
-	assert_file_contains "$log_file" "ERROR" || assert_file_contains "$log_file" "Invalid severity"
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$log_file" "ERROR" "Invalid severity"
 
 	remove_mock_from_path
 }
@@ -249,9 +236,8 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Source logging functions to test directly
 	# shellcheck source=../lib/logging.sh
@@ -270,12 +256,12 @@ EOF
 	unset NO_ESCALATE
 	# In normal mode, function calls die() which exits, so we test via script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Create invalid config to trigger handle_error_or_exit_fake_mode
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="invalid-ip-format"
-EOF
+	# Use "-invalid" which fails validate_ip_or_dns() (starts with hyphen, invalid DNS label)
+	create_test_config "$config_file" \
+		'LOCATION_TEST_EXTERNAL="-invalid"'
 
 	add_mock_to_path
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script"
@@ -305,7 +291,7 @@ EOF
 	run handle_error "ERROR" "SYSTEM" "Test error message" "invalid"
 	assert_success # Should not exit (exit code was invalid, so treated as message)
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	run grep -E "^\[.*\] \[ERROR\] SYSTEM: Test error message invalid" "$log_file"
 	assert_success
 }
@@ -334,29 +320,6 @@ EOF
 }
 
 # bats test_tags=category:high-risk,priority:high,untested-critical-path
-@test "handle_error die called but function not available (defensive check)" {
-	# Purpose: Test verifies that handle_error handles missing die() function gracefully
-	# Expected: Function should handle missing die() function without crashing
-	# Importance: Defensive programming ensures error handling works even if die() is not available
-	source_logging_functions
-
-	local log_file="${TEST_DIR}/test.log"
-	export LOG_FILE="$log_file"
-	mkdir -p "$(dirname "$log_file")"
-
-	# Unset die function to simulate it not being available
-	unset -f die 2>/dev/null || true
-
-	# Call handle_error with ERROR severity and non-zero exit code
-	# Should attempt to call die(), which will fail if die() is not available
-	# Exit code 127 means "command not found" which is expected when die() is unavailable
-	# Use set -e to ensure script exits when die() command is not found
-	run bash -c "set -e; source '${BATS_TEST_DIRNAME}/../lib/common.sh' 2>/dev/null; source '${BATS_TEST_DIRNAME}/../lib/logging.sh' 2>/dev/null; export LOG_FILE='$log_file'; unset -f die 2>/dev/null; handle_error 'ERROR' 'SYSTEM' 'Test error message' 1"
-	# Should fail because die() is not available (exit code 127 = command not found)
-	[[ $status -eq 127 ]]
-}
-
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
 @test "handle_error ERROR severity with exit code 0 - should not exit" {
 	# Purpose: Test verifies that handle_error with ERROR severity and exit code 0 does not exit
 	# Expected: Function should log error but not exit when exit code is 0
@@ -371,7 +334,7 @@ EOF
 	run handle_error "ERROR" "SYSTEM" "Test error message" 0
 	assert_success # Should not exit (exit code is 0)
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	run grep -E "^\[.*\] \[ERROR\] SYSTEM: Test error message" "$log_file"
 	assert_success
 }
@@ -427,7 +390,7 @@ EOF
 	assert_failure
 	assert_equal "$status" 2
 
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	run grep -E "^\[.*\] \[ERROR\] SYSTEM: Fatal error" "$log_file"
 	assert_success
 }
@@ -442,9 +405,8 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Source logging functions to test directly
 	# shellcheck source=../lib/logging.sh
@@ -460,7 +422,7 @@ EOF
 	assert_failure # Should return 1 in fake mode
 
 	# Should have logged with "SYSTEM" prefix and logged warning about missing prefix
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	assert_file_contains "$log_file" "SYSTEM"
 	assert_file_contains "$log_file" "handle_error_or_exit_fake_mode called without prefix - this is a bug"
 
@@ -477,9 +439,8 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Source logging functions to test directly
 	# shellcheck source=../lib/logging.sh
@@ -516,9 +477,8 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Make log directory read-only to cause log_message() to fail
 	chmod 555 "${TEST_DIR}/logs"
@@ -545,42 +505,6 @@ EOF
 }
 
 # bats test_tags=category:high-risk,priority:high,untested-critical-path
-@test "handle_error_or_exit_fake_mode die function not available - fallback behavior" {
-	# Purpose: Test verifies that handle_error_or_exit_fake_mode() handles missing die() function
-	# Expected: Function should fail when die() is not available (no fallback in this function)
-	# Importance: Tests defensive behavior when dependencies are missing
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	setup_test_location_config "$config_file" \
-		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
-
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-
-	# Source logging functions, then unset die()
-	# shellcheck source=../lib/logging.sh
-	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
-
-	# Set up logging
-	export LOG_FILE="$log_file"
-	export LOGS_DIR="${TEST_DIR}/logs"
-
-	# Test in normal mode with die() unset - should fail when trying to call die()
-	unset NO_ESCALATE
-	unset -f die 2>/dev/null || true
-	# In normal mode, function calls die() which will fail if die() is not available
-	# This tests that the function doesn't have a fallback for missing die()
-	# Exit code 127 means "command not found" which is expected when die() is unavailable
-	# Note: BATS warning about exit code 127 is expected and acceptable for this test
-	run bash -c "source '${BATS_TEST_DIRNAME}/../lib/logging.sh' 2>/dev/null; export LOG_FILE='$log_file'; export LOGS_DIR='${TEST_DIR}/logs'; unset -f die 2>/dev/null; handle_error_or_exit_fake_mode 'SYSTEM' 'Test message' 7" || true
-	# Should fail because die() is not available (exit code 127 = command not found)
-	[[ $status -eq 127 ]]
-
-	remove_mock_from_path
-}
-
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
 @test "handle_error_or_exit_fake_mode exit code 0 in fake mode - should return 1" {
 	# Purpose: Test verifies that handle_error_or_exit_fake_mode() returns 1 in fake mode even with exit code 0
 	# Expected: Fake mode always returns 1, regardless of exit code parameter
@@ -590,9 +514,8 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Source logging functions to test directly
 	# shellcheck source=../lib/logging.sh
@@ -609,7 +532,7 @@ EOF
 	[[ $status -eq 1 ]]
 
 	# Verify error was logged
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 	assert_file_contains "$log_file" "Test error message"
 
 	remove_mock_from_path
@@ -625,9 +548,8 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Source logging functions to test directly
 	# shellcheck source=../lib/logging.sh
@@ -656,7 +578,7 @@ EOF
 	[[ $status -eq 1 ]] # Should return 1, not 4
 
 	# Verify errors were logged
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }

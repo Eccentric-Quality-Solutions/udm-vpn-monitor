@@ -1,42 +1,10 @@
 #!/bin/bash
 #
 # Global state operations
-# Handles cooldown periods, rate limiting, restart tracking, and state validation
+# Handles rate limiting, restart tracking, and state validation
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
-
-# Get timestamp plus N minutes
-#
-# Returns a Unix timestamp (seconds since epoch) that is N minutes in the future.
-# Used for calculating cooldown expiration times.
-#
-# Arguments:
-#   $1: Number of minutes to add (integer)
-#
-# Returns:
-#   0: Always succeeds
-#
-# Output:
-#   Prints the future timestamp (integer) to stdout
-#
-# Examples:
-#   future_time=$(get_timestamp_plus_minutes 15)
-#   echo "Cooldown expires at: $future_time"
-#
-# Note:
-#   Uses Linux date format (-d "+N minutes")
-#   Falls back to manual calculation if date fails: $(get_unix_timestamp) + minutes * SECONDS_PER_MINUTE
-get_timestamp_plus_minutes() {
-	local minutes="$1"
-	local seconds_to_add=$((minutes * SECONDS_PER_MINUTE))
-	# Use Linux date format, fallback to manual calculation
-	# +%s: output as seconds since epoch
-	date -d "+${minutes} minutes" +%s 2>/dev/null || safe_timestamp_add "$(get_unix_timestamp)" "$seconds_to_add" 2>/dev/null || {
-		handle_error "ERROR" "SYSTEM" "Failed to calculate future timestamp (overflow or invalid input)" 0
-		get_unix_timestamp # Fallback to current time
-	}
-}
 
 # Get file modification time as timestamp
 #
@@ -68,119 +36,130 @@ get_file_mtime() {
 	stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null || echo "0"
 }
 
-# Check if we're in cooldown period
+# Format rate limit error message
 #
-# Verifies if the script is currently in a cooldown period after a restart.
-# Cooldown periods prevent immediate re-restarts and allow VPN to stabilize.
-# Compares current time to cooldown expiration timestamp.
-#
-# Arguments:
-#   None
-#
-# Returns:
-#   0: Currently in cooldown period (should exit script)
-#   1: Not in cooldown (cooldown expired or doesn't exist)
-#
-# Side effects:
-#   - Removes cooldown file if it has expired
-#   - Logs remaining cooldown time if still active
-#
-# Examples:
-#   if check_cooldown; then
-#       echo "In cooldown, exiting"
-#       exit 0
-#   fi
-#
-# Note:
-#   Requires COOLDOWN_UNTIL_FILE and log_message to be set (from config.sh and logging.sh)
-#   Cooldown file contains Unix timestamp of expiration time
-#   Calculates remaining time and logs it if in cooldown
-check_cooldown() {
-	if [[ ! -f "$COOLDOWN_UNTIL_FILE" ]]; then
-		return 1 # Not in cooldown
-	fi
-
-	# Check if file is readable before attempting to read
-	if ! file_exists_and_readable "$COOLDOWN_UNTIL_FILE"; then
-		handle_error "WARNING" "SYSTEM" "Cooldown file is not readable, removing: $COOLDOWN_UNTIL_FILE" 0
-		rm -f "$COOLDOWN_UNTIL_FILE" 2>/dev/null || true
-		return 1 # Not in cooldown (file unreadable, treat as no cooldown)
-	fi
-
-	local cooldown_until
-	cooldown_until=$(cat "$COOLDOWN_UNTIL_FILE" 2>/dev/null || echo "0")
-	local now
-	now=$(get_unix_timestamp)
-
-	if [[ "$now" -lt "$cooldown_until" ]]; then
-		local remaining
-		remaining=$(safe_timestamp_diff "$cooldown_until" "$now" 2>/dev/null || echo "0")
-		# Ensure remaining is non-negative (should be if now < cooldown_until, but validate)
-		if [[ $remaining -lt 0 ]]; then
-			remaining=0
-		fi
-		log_message "INFO" "SYSTEM" "In cooldown period, $remaining seconds remaining"
-		return 0 # In cooldown
-	else
-		# Cooldown expired, remove file
-		rm -f "$COOLDOWN_UNTIL_FILE"
-		return 1 # Not in cooldown
-	fi
-}
-
-# Set cooldown period
-#
-# Sets a cooldown period to prevent immediate re-restarts after a full restart.
-# The cooldown period is stored as a Unix timestamp in COOLDOWN_UNTIL_FILE.
-# Calculates expiration time as current time + duration minutes.
+# Formats a detailed error message when rate limit is exceeded, including:
+# - Reset timestamp (when oldest restart will expire)
+# - Countdown (time remaining until reset)
+# - List of restart timestamps that count toward the limit
 #
 # Arguments:
-#   $1: Cooldown duration in minutes (integer)
+#   $1: Recent restart count
+#   $2: Window size in minutes
+#   $3: Maximum restarts allowed per window
+#   $4: Recent restart timestamps (newline-separated)
+#   $5: Current timestamp
+#   $6: Window size in seconds
+#   $7: Oldest restart timestamp (must be valid)
 #
 # Returns:
 #   0: Always succeeds
 #
+# Output:
+#   Prints formatted error message to stdout
+#
 # Side effects:
-#   - Creates/updates COOLDOWN_UNTIL_FILE with expiration timestamp (atomic write)
-#   - Logs cooldown period setting
+#   None (pure function)
 #
 # Examples:
-#   set_cooldown 15
-#   # Sets cooldown for 15 minutes from now
+#   error_msg=$(_format_rate_limit_error "$recent_restarts" "$window_minutes" "$max_restarts" "$recent_timestamps" "$now" "$window_seconds" "$oldest_restart")
 #
 # Note:
-#   Requires COOLDOWN_UNTIL_FILE, get_timestamp_plus_minutes, and log_message to be set
-#   Cooldown file contains single Unix timestamp (seconds since epoch)
-#   Uses temporary file and mv for atomic write to prevent corruption on interruption
-set_cooldown() {
-	local minutes="$1"
-	local cooldown_until
-	cooldown_until=$(get_timestamp_plus_minutes "$minutes")
-	# Atomic write: write to temp file first, then rename
-	if ! atomic_write_file "$COOLDOWN_UNTIL_FILE" "$cooldown_until"; then
-		handle_error "ERROR" "SYSTEM" "Failed to set cooldown period (file: $COOLDOWN_UNTIL_FILE)" 0
-		# Continue execution but log the error
-		return 0
+#   This is a helper function for check_rate_limit(). It formats the error message
+#   but does not log it - the caller is responsible for logging.
+#   Limits restart list display to first 10 timestamps to avoid overly long messages.
+_format_rate_limit_error() {
+	local recent_restarts="$1"
+	local window_minutes="$2"
+	local max_restarts="$3"
+	local recent_timestamps="$4"
+	local now="$5"
+	local window_seconds="$6"
+	local oldest_restart="$7"
+
+	# Calculate when rate limit will reset (oldest restart + window duration)
+	local reset_timestamp
+	reset_timestamp=$(safe_timestamp_add "$oldest_restart" "$window_seconds" 2>/dev/null || echo "0")
+
+	# Calculate countdown (time remaining until reset)
+	local countdown_seconds
+	countdown_seconds=$(calculate_duration "$now" "$reset_timestamp" 2>/dev/null || echo "0")
+
+	# Format reset timestamp for human readability
+	local reset_formatted
+	if [[ "$reset_timestamp" != "0" ]] && validate_timestamp "$reset_timestamp"; then
+		reset_formatted=$(date -d "@$reset_timestamp" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")
+	else
+		reset_formatted="unknown"
 	fi
 
-	log_message "INFO" "SYSTEM" "Cooldown period set for $minutes minutes"
+	# Format countdown as minutes:seconds or just seconds
+	local countdown_formatted
+	if [[ "$countdown_seconds" -gt 0 ]]; then
+		local minutes=$((countdown_seconds / 60))
+		local seconds=$((countdown_seconds % 60))
+		if [[ $minutes -gt 0 ]]; then
+			countdown_formatted="${minutes}m ${seconds}s"
+		else
+			countdown_formatted="${seconds}s"
+		fi
+	else
+		countdown_formatted="0s"
+	fi
+
+	# Format restart timestamps for logging (limit to first 10 to avoid overly long messages)
+	local restart_list=""
+	local restart_count=0
+	while IFS= read -r timestamp || [[ -n "$timestamp" ]]; do
+		[[ -z "$timestamp" ]] && continue
+		if [[ $restart_count -lt 10 ]]; then
+			local formatted_ts
+			formatted_ts=$(date -d "@$timestamp" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$timestamp")
+			if [[ -n "$restart_list" ]]; then
+				restart_list="${restart_list}, ${formatted_ts}"
+			else
+				restart_list="${formatted_ts}"
+			fi
+		fi
+		restart_count=$((restart_count + 1))
+	done <<<"$recent_timestamps"
+
+	# Add indicator if there are more restarts
+	if [[ $restart_count -gt 10 ]]; then
+		restart_list="${restart_list} (and $((restart_count - 10)) more)"
+	fi
+
+	# Build detailed error message
+	local error_msg="Rate limit exceeded: $recent_restarts restarts in last ${window_minutes} minute(s) (max: $max_restarts)"
+	error_msg="${error_msg}. Reset at: $reset_formatted (in $countdown_formatted)"
+	if [[ -n "$restart_list" ]]; then
+		error_msg="${error_msg}. Recent restarts: $restart_list"
+	fi
+
+	echo "$error_msg"
 }
 
 # Check rate limiting
 #
-# Verifies if the maximum number of restarts per hour has been exceeded.
-# Prevents restart loops by limiting how frequently full restarts can occur.
-# Counts restart timestamps in RESTART_COUNT_FILE within the last hour.
+# Verifies if the maximum number of Tier 3 restarts within the configured window has been exceeded,
+# and checks if minimum restart interval has elapsed since the last restart.
+# Prevents restart loops by limiting how frequently Tier 3 recovery actions (full IPsec restarts)
+# can occur. Uses a sliding window to count restart timestamps in RESTART_COUNT_FILE.
+#
+# During system-wide failures, the coordinator location bypasses the window limit (but still
+# enforces minimum interval) to allow necessary recovery attempts during infrastructure outages.
 #
 # Arguments:
-#   None
+#   $1: Optional location name (used to check if this location is the coordinator during system-wide failures)
 #
 # Returns:
 #   0: Within rate limit (restart allowed)
-#   1: Rate limit exceeded (restart blocked)
+#   1: Rate limit exceeded or minimum interval not met (restart blocked)
 #
 # Side effects:
 #   - Logs warning if rate limit exceeded (includes reset time, countdown, and restart list)
+#   - Logs warning if minimum interval not met
+#   - Logs info if coordinator bypasses window limit during system-wide failure
 #   - Reads RESTART_COUNT_FILE to count recent restarts
 #
 # Examples:
@@ -188,22 +167,63 @@ set_cooldown() {
 #       echo "Rate limit exceeded, skipping restart"
 #       return 1
 #   fi
+#   if ! check_rate_limit "NYC"; then
+#       echo "Rate limit exceeded for NYC"
+#       return 1
+#   fi
 #
 # Note:
-#   Checks RESTART_COUNT_FILE for timestamps within the last hour
-#   Requires RESTART_COUNT_FILE, MAX_RESTARTS_PER_HOUR, SECONDS_PER_HOUR, get_formatted_timestamp,
+#   Checks RESTART_COUNT_FILE for timestamps within the configured window
+#   Requires RESTART_COUNT_FILE, MAX_RESTARTS_PER_WINDOW, RATE_LIMIT_WINDOW_MINUTES,
+#   MIN_RESTART_INTERVAL_SECONDS, SECONDS_PER_MINUTE, get_formatted_timestamp,
 #   safe_timestamp_add, safe_timestamp_diff, and handle_error to be set
-#   Uses awk to filter timestamps > (now - SECONDS_PER_HOUR)
+#   Uses awk to filter timestamps > (now - window_seconds)
 #   Counts filtered lines with wc -l
 #   When rate limit is exceeded, logs detailed information including:
 #   - Reset timestamp (when oldest restart will expire)
 #   - Countdown (time remaining until reset)
 #   - List of restart timestamps that count toward the limit
+#   Coordinator bypass: If location is coordinator during system-wide failure, window limit is bypassed
+#   but minimum interval is still enforced to protect system stability
 check_rate_limit() {
+	local location_name="${1:-}"
 	local now
 	now=$(get_unix_timestamp)
-	local one_hour_ago
-	one_hour_ago=$(safe_timestamp_subtract "$now" "$SECONDS_PER_HOUR" 2>/dev/null || echo "0")
+
+	# Get configured window size in seconds
+	local window_minutes="${RATE_LIMIT_WINDOW_MINUTES:-60}"
+	# Validate window size (defensive check)
+	if [[ ! "$window_minutes" =~ ^[0-9]+$ ]] || [[ "$window_minutes" -lt 5 ]] || [[ "$window_minutes" -gt 1440 ]]; then
+		handle_error "WARNING" "SYSTEM" "Invalid RATE_LIMIT_WINDOW_MINUTES=$window_minutes (range: 5-1440), using default 60"
+		window_minutes=60
+	fi
+	local window_seconds=$((window_minutes * SECONDS_PER_MINUTE))
+	local window_start
+	window_start=$(safe_timestamp_subtract "$now" "$window_seconds" 2>/dev/null || echo "0")
+
+	# Check minimum restart interval first (simpler check, clearer error message)
+	local min_interval="${MIN_RESTART_INTERVAL_SECONDS:-30}"
+	if [[ $min_interval -gt 0 ]]; then
+		# Get restart count file (format: timestamp per line)
+		if [[ -f "$RESTART_COUNT_FILE" ]] && file_exists_and_readable "$RESTART_COUNT_FILE"; then
+			# Get most recent restart timestamp (maximum timestamp, handles unsorted files)
+			# Sort numerically and take the last (highest) value to handle unsorted timestamps
+			# Defensive timeout wrapper: file_exists_and_readable should prevent hangs, but this adds
+			# extra protection for edge cases (race conditions, test suite timing issues, etc.)
+			# Use helper function to standardize timeout command availability check
+			local last_restart
+			last_restart=$(run_with_timeout "$STATE_FILE_READ_TIMEOUT" sh -c "grep -E '^[0-9]+$' \"$RESTART_COUNT_FILE\" 2>/dev/null | sort -n | tail -n 1" || echo "0")
+			if [[ "$last_restart" != "0" ]] && [[ "$last_restart" =~ ^[0-9]+$ ]]; then
+				local time_since_last
+				time_since_last=$(calculate_duration "$last_restart" "$now" 2>/dev/null || echo "0")
+				if [[ "$time_since_last" -lt "$min_interval" ]]; then
+					local remaining=$((min_interval - time_since_last))
+					handle_error "WARNING" "SYSTEM" "Minimum restart interval not met: ${remaining} seconds remaining (minimum: ${min_interval}s, last restart: $(date -d "@$last_restart" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$last_restart"))"
+					return 1 # Blocked by minimum interval
+				fi
+			fi
+		fi
+	fi
 
 	# Get restart count file (format: timestamp per line)
 	if [[ ! -f "$RESTART_COUNT_FILE" ]]; then
@@ -216,83 +236,55 @@ check_rate_limit() {
 		return 0 # Allow restart (file unreadable, treat as no previous restarts)
 	fi
 
-	# Get all restart timestamps within the last hour (sorted)
-	# awk filters timestamps > one_hour_ago, sort -n sorts numerically
+	# Check if coordinator should bypass window limit during system-wide failure
+	# Coordinator bypasses window limit but still enforces minimum interval to protect system stability
+	local bypass_window_limit=0
+	if [[ -n "$location_name" ]]; then
+		# Check if system-wide failure is detected and this location is the coordinator
+		if command -v get_system_wide_failure_state >/dev/null 2>&1 &&
+			command -v should_location_attempt_recovery >/dev/null 2>&1; then
+			local failure_state
+			failure_state=$(get_system_wide_failure_state 2>/dev/null || echo "0")
+			if [[ "$failure_state" -eq 1 ]]; then
+				# System-wide failure detected, check if this location is the coordinator
+				if should_location_attempt_recovery "$location_name" 2>/dev/null; then
+					# This location is the coordinator during system-wide failure
+					# Bypass window limit but keep minimum interval enforcement
+					bypass_window_limit=1
+					log_message "INFO" "SYSTEM" "Coordinator $location_name bypassing rate limit window during system-wide failure (minimum interval still enforced)"
+				fi
+			fi
+		fi
+	fi
+
+	# If coordinator bypass is active, skip window limit check
+	if [[ $bypass_window_limit -eq 1 ]]; then
+		return 0 # Allow restart (window limit bypassed, minimum interval already checked)
+	fi
+
+	# Get all restart timestamps within the configured window (sorted)
+	# awk filters timestamps > window_start, sort -n sorts numerically
 	local recent_timestamps
-	recent_timestamps=$(awk -v cutoff="$one_hour_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | sort -n)
+	recent_timestamps=$(awk -v cutoff="$window_start" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | sort -n)
 
 	# Count recent restarts
 	local recent_restarts
 	recent_restarts=$(echo "$recent_timestamps" | grep -c . || echo "0")
 
-	if [[ "$recent_restarts" -ge "$MAX_RESTARTS_PER_HOUR" ]]; then
+	local max_restarts="${MAX_RESTARTS_PER_WINDOW:-3}"
+	if [[ "$recent_restarts" -ge "$max_restarts" ]]; then
 		# Find oldest restart timestamp (first in sorted list)
 		local oldest_restart
 		oldest_restart=$(echo "$recent_timestamps" | head -n 1)
-
-		# Calculate when rate limit will reset (oldest restart + 1 hour)
-		local reset_timestamp
-		reset_timestamp=$(safe_timestamp_add "$oldest_restart" "$SECONDS_PER_HOUR" 2>/dev/null || echo "0")
-
-		# Calculate countdown (time remaining until reset)
-		local countdown_seconds
-		countdown_seconds=$(safe_timestamp_diff "$reset_timestamp" "$now" 2>/dev/null || echo "0")
-		# Clamp negative values to 0 (shouldn't happen, but handle edge cases like clock skew)
-		if [[ "$countdown_seconds" -lt 0 ]]; then
-			countdown_seconds=0
+		# Defensive check: if oldest_restart is empty or invalid, allow restart
+		if [[ -z "$oldest_restart" ]] || [[ ! "$oldest_restart" =~ ^[0-9]+$ ]]; then
+			handle_error "WARNING" "SYSTEM" "Cannot determine oldest restart timestamp, allowing restart"
+			return 0
 		fi
 
-		# Format reset timestamp for human readability
-		local reset_formatted
-		if [[ "$reset_timestamp" != "0" ]] && validate_timestamp "$reset_timestamp"; then
-			reset_formatted=$(date -d "@$reset_timestamp" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")
-		else
-			reset_formatted="unknown"
-		fi
-
-		# Format countdown as minutes:seconds or just seconds
-		local countdown_formatted
-		if [[ "$countdown_seconds" -gt 0 ]]; then
-			local minutes=$((countdown_seconds / 60))
-			local seconds=$((countdown_seconds % 60))
-			if [[ $minutes -gt 0 ]]; then
-				countdown_formatted="${minutes}m ${seconds}s"
-			else
-				countdown_formatted="${seconds}s"
-			fi
-		else
-			countdown_formatted="0s"
-		fi
-
-		# Format restart timestamps for logging (limit to first 10 to avoid overly long messages)
-		local restart_list=""
-		local restart_count=0
-		while IFS= read -r timestamp || [[ -n "$timestamp" ]]; do
-			[[ -z "$timestamp" ]] && continue
-			if [[ $restart_count -lt 10 ]]; then
-				local formatted_ts
-				formatted_ts=$(date -d "@$timestamp" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$timestamp")
-				if [[ -n "$restart_list" ]]; then
-					restart_list="${restart_list}, ${formatted_ts}"
-				else
-					restart_list="${formatted_ts}"
-				fi
-			fi
-			restart_count=$((restart_count + 1))
-		done <<<"$recent_timestamps"
-
-		# Add indicator if there are more restarts
-		if [[ $restart_count -gt 10 ]]; then
-			restart_list="${restart_list} (and $((restart_count - 10)) more)"
-		fi
-
-		# Build detailed error message
-		local error_msg="Rate limit exceeded: $recent_restarts restarts in last hour (max: $MAX_RESTARTS_PER_HOUR)"
-		error_msg="${error_msg}. Reset at: $reset_formatted (in $countdown_formatted)"
-		if [[ -n "$restart_list" ]]; then
-			error_msg="${error_msg}. Recent restarts: $restart_list"
-		fi
-
+		# Format and log detailed error message
+		local error_msg
+		error_msg=$(_format_rate_limit_error "$recent_restarts" "$window_minutes" "$max_restarts" "$recent_timestamps" "$now" "$window_seconds" "$oldest_restart")
 		handle_error "WARNING" "SYSTEM" "$error_msg"
 		return 1 # Rate limited
 	fi
@@ -470,6 +462,7 @@ set_network_partition_state() {
 #
 # Arguments:
 #   $1: State file path to backup
+#   $2: Maximum retry attempts (optional, defaults to 3)
 #
 # Returns:
 #   0: Success (backup created or file doesn't exist)
@@ -478,17 +471,28 @@ set_network_partition_state() {
 # Side effects:
 #   - Creates backup file: ${state_file}.corrupted.<timestamp>
 #   - Logs backup creation
+#   - Logs warning if max_attempts is invalid (uses default 3)
 #
 # Examples:
 #   backup_corrupted_state_file "$state_file"
 #   # Creates: state_file.corrupted.1703616000
+#   backup_corrupted_state_file "$state_file" 5
+#   # Retries up to 5 times
 #
 # Note:
 #   Uses get_unix_timestamp() for backup filename timestamp
 #   Backup files can be used for forensic analysis or manual recovery
+#   Validates max_attempts is a positive integer (defaults to 3 if invalid)
 backup_corrupted_state_file() {
 	local state_file="$1"
 	local max_attempts="${2:-3}"
+
+	# Validate max_attempts is a positive integer
+	if [[ ! "$max_attempts" =~ ^[0-9]+$ ]] || [[ "$max_attempts" -lt 1 ]]; then
+		handle_error "WARNING" "SYSTEM" "Invalid max_attempts value: $max_attempts (using default 3)" 0
+		max_attempts=3
+	fi
+
 	local attempt=1
 	local timestamp
 	timestamp=$(get_unix_timestamp)
@@ -653,17 +657,26 @@ validate_state_file() {
 	fi
 
 	# Validate format based on expected type
+	# Use run_with_timeout helper for consistency: file_exists_and_readable should prevent hangs,
+	# but this adds extra protection for edge cases (race conditions, test suite timing issues, etc.)
+	# Standardized timeout pattern: use run_with_timeout() helper instead of explicit timeout checks
 	case "$expected_format" in
 	integer)
 		# Should contain only digits (0-9), possibly with newlines
-		if ! grep -qE '^[0-9]+$' "$file" 2>/dev/null; then
+		local grep_result=1
+		run_with_timeout "$STATE_FILE_READ_TIMEOUT" grep -qE '^[0-9]+$' "$file" && grep_result=0 || grep_result=1
+		if [[ $grep_result -ne 0 ]]; then
 			handle_error "WARNING" "SYSTEM" "State file corrupted (expected integer): $file"
 			return 1
 		fi
 		;;
 	timestamp)
 		# Should contain a single Unix timestamp (digits only)
-		if ! grep -qE '^[0-9]+$' "$file" 2>/dev/null || [[ $(wc -l <"$file" 2>/dev/null || echo "0") -ne 1 ]]; then
+		local grep_result=1
+		local line_count=0
+		run_with_timeout "$STATE_FILE_READ_TIMEOUT" grep -qE '^[0-9]+$' "$file" && grep_result=0 || grep_result=1
+		line_count=$(run_with_timeout "$STATE_FILE_READ_TIMEOUT" wc -l <"$file" || echo "0")
+		if [[ $grep_result -ne 0 ]] || [[ "$line_count" -ne 1 ]]; then
 			handle_error "WARNING" "SYSTEM" "State file corrupted (expected single timestamp): $file"
 			return 1
 		fi
@@ -671,9 +684,13 @@ validate_state_file() {
 	timestamp_list)
 		# Should contain one or more Unix timestamps (one per line)
 		# Empty file is valid (no restarts recorded)
-		if [[ -s "$file" ]] && ! grep -qE '^[0-9]+$' "$file" 2>/dev/null; then
-			handle_error "WARNING" "SYSTEM" "State file corrupted (expected timestamp list): $file"
-			return 1
+		if [[ -s "$file" ]]; then
+			local grep_result=1
+			run_with_timeout "$STATE_FILE_READ_TIMEOUT" grep -qE '^[0-9]+$' "$file" && grep_result=0 || grep_result=1
+			if [[ $grep_result -ne 0 ]]; then
+				handle_error "WARNING" "SYSTEM" "State file corrupted (expected timestamp list): $file"
+				return 1
+			fi
 		fi
 		;;
 	*)
@@ -691,7 +708,7 @@ validate_state_file() {
 # Automatically recovers corrupted files.
 #
 # Arguments:
-#   $1: Glob pattern to match (e.g., "failure_counter_*")
+#   $1: Glob pattern to match (e.g., "failure_count_*")
 #   $2: Expected format type ("integer", "timestamp", "timestamp_list")
 #   $3: Default value for recovery (optional, defaults to "0")
 #   $4: Description for error messages (e.g., "Failure counter file")
@@ -706,11 +723,15 @@ validate_state_file() {
 #   - Resets corrupted files to safe defaults
 #
 # Examples:
-#   validate_state_files_by_pattern "failure_counter_*" "integer" "0" "Failure counter file"
+#   validate_state_files_by_pattern "failure_count_*" "integer" "0" "Failure counter file"
 #   validate_state_files_by_pattern "last_bytes_*" "integer" "0" "Byte counter file"
 #
 # Note:
 #   Requires STATE_DIR, validate_state_file, recover_corrupted_state_file, and handle_error
+#   Uses a temporary file with timeout wrapper to prevent hangs when find encounters unreadable files
+#   Sets an EXIT trap for temp file cleanup and clears it before returning (intentional behavior)
+#   The trap ensures cleanup even on error, but is removed before function return to avoid interfering
+#   with caller's traps
 validate_state_files_by_pattern() {
 	local pattern="$1"
 	local expected_format="$2"
@@ -722,10 +743,41 @@ validate_state_files_by_pattern() {
 		return 0
 	fi
 
+	# Use find to safely enumerate files matching the pattern
+	# This avoids glob expansion issues with unreadable files
+	# Use -readable to skip unreadable files entirely, preventing hangs when find tries to stat files with 000 permissions
+	# This is more efficient and prevents hangs on some filesystems where find can block on unreadable files
+	# Add timeout wrapper as additional protection (defensive programming)
 	local state_file
-	for state_file in "${STATE_DIR}"/${pattern}; do
-		# Check if glob matched actual files
-		file_exists_and_readable "$state_file" || continue
+	# Use timeout wrapper around find to prevent hangs (5 seconds should be more than enough)
+	# Use a temporary file to store find output to avoid process substitution issues with timeout
+	# This ensures timeout is properly applied and prevents hangs
+	local find_temp_file
+	find_temp_file=$(mktemp 2>/dev/null || echo "/tmp/find_output_$$")
+	# Set up cleanup trap for temp file and file descriptor
+	# This trap ensures cleanup even if function exits early due to error
+	# Closes file descriptor 3 if opened, then removes temp file
+	# IMPORTANT: Save the old EXIT trap so we can restore it later
+	# Using `trap - EXIT` would clear all EXIT traps including the lockfile cleanup trap
+	# shellcheck disable=SC2064 # We want variable expansion at trap definition time
+	local old_exit_trap
+	old_exit_trap=$(trap -p EXIT)
+	trap "exec 3<&- 2>/dev/null || true; rm -f \"$find_temp_file\" 2>/dev/null || true" EXIT
+	# Use timeout with --kill-after to ensure find is killed if it hangs
+	# Use -readable to skip unreadable files entirely (prevents hangs on files with 000 permissions)
+	# Redirect output to temp file to avoid process substitution issues
+	# Use helper function to standardize timeout command availability check
+	run_with_timeout_kill_after 5 1 find "$STATE_DIR" -maxdepth 1 -type f -readable -name "$pattern" -print0 >"$find_temp_file" 2>/dev/null || true
+	# Read from temp file using null delimiter
+	# Open file descriptor 3 for reading to avoid issues with stdin
+	exec 3<"$find_temp_file"
+	while IFS= read -r -d '' state_file <&3 || [[ -n "$state_file" ]]; do
+		[[ -z "$state_file" ]] && continue
+		# File is already known to be readable (from find -readable), but double-check for safety
+		if ! file_exists_and_readable "$state_file"; then
+			handle_error "WARNING" "SYSTEM" "$description is unreadable (skipping validation): $state_file" 0
+			continue
+		fi
 
 		if ! validate_state_file "$state_file" "$expected_format"; then
 			handle_error "WARNING" "SYSTEM" "$description corrupted, recovering: $state_file" 0
@@ -733,6 +785,17 @@ validate_state_files_by_pattern() {
 			validation_failed=1
 		fi
 	done
+	exec 3<&-
+	# Clean up temp file and restore the old EXIT trap
+	# Explicit cleanup ensures temp file is removed even if trap wasn't set
+	# Restoring the old trap preserves the caller's EXIT trap handlers (e.g., lockfile cleanup)
+	rm -f "$find_temp_file" 2>/dev/null || true
+	# Restore old EXIT trap (or clear if there wasn't one)
+	if [[ -n "$old_exit_trap" ]]; then
+		eval "$old_exit_trap"
+	else
+		trap - EXIT
+	fi
 
 	return $validation_failed
 }
@@ -740,7 +803,7 @@ validate_state_files_by_pattern() {
 # Validate all state files
 #
 # Validates all state files used by the VPN monitor for readability and format.
-# Checks restart count file, cooldown file, network partition state file, and per-peer failure counters.
+# Checks restart count file, network partition state file, and per-peer failure counters.
 # Automatically recovers corrupted files by backing them up and resetting to defaults.
 #
 # Returns:
@@ -756,7 +819,7 @@ validate_state_files_by_pattern() {
 #   None
 #
 # Note:
-#   Requires RESTART_COUNT_FILE, COOLDOWN_UNTIL_FILE, LOGS_DIR, STATE_DIR, and log_message
+#   Requires RESTART_COUNT_FILE, LOGS_DIR, STATE_DIR, and log_message
 validate_state() {
 	local validation_failed=0
 
@@ -769,14 +832,7 @@ validate_state() {
 		fi
 	fi
 
-	# Validate cooldown file (single timestamp)
-	if file_exists_and_readable "$COOLDOWN_UNTIL_FILE"; then
-		if ! validate_state_file "$COOLDOWN_UNTIL_FILE" "timestamp"; then
-			handle_error "WARNING" "SYSTEM" "Cooldown file corrupted, recovering: $COOLDOWN_UNTIL_FILE" 0
-			recover_corrupted_state_file "$COOLDOWN_UNTIL_FILE" "" "timestamp"
-			validation_failed=1
-		fi
-	fi
+	# Cooldown file validation removed - cooldown functionality replaced by MIN_RESTART_INTERVAL_SECONDS
 
 	# Validate network partition state file
 	local network_partition_file
@@ -790,7 +846,7 @@ validate_state() {
 	fi
 
 	# Validate per-peer failure counter files (if any exist)
-	validate_state_files_by_pattern "failure_counter_*" "integer" "0" "Failure counter file" || validation_failed=1
+	validate_state_files_by_pattern "failure_count_*" "integer" "0" "Failure counter file" || validation_failed=1
 
 	# Validate per-peer byte counter files (if any exist)
 	validate_state_files_by_pattern "last_bytes_*" "integer" "0" "Byte counter file" || validation_failed=1

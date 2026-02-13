@@ -7,6 +7,7 @@
 
 load test_helper
 load helpers/test_data
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
@@ -33,7 +34,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Should detect bytes=0 as suspect (may fail VPN check)
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "bytes=0" || assert_file_contains "$LOG_FILE" "suspect"
+	assert_log_contains_any "$LOG_FILE" "bytes=0" "suspect"
 
 	remove_mock_from_path
 }
@@ -58,7 +59,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Should detect bytes not increasing (may fail VPN check)
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "bytes not increasing" || assert_file_contains "$LOG_FILE" "suspect" || assert_file_contains "$LOG_FILE" "bytes decreased"
+	assert_log_contains_any "$LOG_FILE" "bytes not increasing" "suspect" "bytes decreased"
 
 	remove_mock_from_path
 }
@@ -76,7 +77,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Should detect bytes not increasing
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "bytes not increasing" || assert_file_contains "$LOG_FILE" "suspect"
+	assert_log_contains_any "$LOG_FILE" "bytes not increasing" "suspect"
 
 	remove_mock_from_path
 }
@@ -93,7 +94,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create corrupted byte counter file (non-numeric)
 	local last_bytes_file
-	last_bytes_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "last_bytes")
+	last_bytes_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
 	echo "invalid-value" >"$last_bytes_file"
 
 	add_mock_to_path
@@ -118,7 +119,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Create byte counter file with negative number
 	local last_bytes_file
-	last_bytes_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "last_bytes")
+	last_bytes_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
 	echo "-1000" >"$last_bytes_file"
 
 	add_mock_to_path
@@ -143,7 +144,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Clear byte counter file to test empty file handling
 	local last_bytes_file
-	last_bytes_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "last_bytes")
+	last_bytes_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
 	# Remove file if it exists (from fixture setup), then create empty file
 	rm -f "$last_bytes_file"
 	touch "$last_bytes_file"
@@ -188,7 +189,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should handle all methods unavailable gracefully
 	# Script may exit early, but if log file exists, it should contain error messages
 	if [[ -f "$LOG_FILE" ]]; then
-		assert_file_contains "$LOG_FILE" "suspect" || assert_file_contains "$LOG_FILE" "failed" || assert_file_contains "$LOG_FILE" "WARNING"
+		assert_log_contains_any "$LOG_FILE" "suspect" "failed" "WARNING"
 	else
 		# If log file doesn't exist, script likely exited very early - this is acceptable
 		# The important thing is it didn't crash
@@ -209,7 +210,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# but using the helper function format as a base
 	# Use "custom" scenario with "full" format to get the complete xfrm state output
 	local xfrm_state_multiple_lifetime
-	xfrm_state_multiple_lifetime=$(generate_xfrm_state_output "custom" "${TEST_PEER_IP}" "0x12345678" 1000 10 "full")
+	xfrm_state_multiple_lifetime=$(generate_xfrm_state_for_scenario "custom" "${TEST_PEER_IP}" "0x12345678" 1000 10 "full")
 	# Add duplicate lifetime line for edge case test
 	xfrm_state_multiple_lifetime="${xfrm_state_multiple_lifetime}"$'\n'"    lifetime current: 2000 bytes, 20 packets"
 	local xfrm_state_multiple_lifetime_file="${TEST_DIR}/xfrm_state_multiple_lifetime"
@@ -381,9 +382,10 @@ EOF
 	mock_ping_hang >/dev/null
 	add_mock_to_path
 
-	# Use timeout of 10 seconds to allow script initialization, ping timeout handling, and completion
-	# The ping wrapper timeout is 2 seconds, but script initialization and other checks take additional time
-	run timeout 10 bash "$TEST_SCRIPT" --fake
+	# Use timeout of 20 seconds to allow script initialization, ping timeout handling, and completion
+	# The ping wrapper timeout is 2 seconds, but detection logic may call check_ping_connectivity
+	# multiple times (for different detection paths), so total time can be 8-12 seconds
+	run timeout 20 bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should handle ping timeout gracefully (should log error but continue)
@@ -616,7 +618,13 @@ ADDITIONAL_EOF
 	# Run with timeout to prevent test from hanging
 	# Test timeout should be longer than IPSEC_STATUS_TIMEOUT to allow script to complete
 	# Allow extra time for script initialization and other operations
-	run timeout 10 bash "$TEST_SCRIPT" --fake
+	# Note: In VPN down scenarios, ipsec status may be called multiple times (via xfrm fallbacks),
+	# each taking IPSEC_STATUS_TIMEOUT (5s) to timeout, so we need sufficient buffer
+	# When VPN is down, ipsec status is called at least twice:
+	# 1. Once in get_xfrm_state_for_peer when no SAs are found (line 486)
+	# 2. Once in check_ipsec_fallback when xfrm check fails
+	# Each call takes 5 seconds to timeout = 10 seconds minimum, plus script initialization
+	run timeout 30 bash "$TEST_SCRIPT" --fake
 	assert_success
 
 	# Should handle ipsec status hang gracefully (should timeout and continue)
@@ -944,13 +952,13 @@ EOF
 	# Should detect rekey and reset baseline
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "SA rekey detected" || assert_file_contains "$LOG_FILE" "rekey"
+	assert_log_contains_any "$LOG_FILE" "SA rekey detected" "rekey"
 
 	source_function "get_peer_state_file_path"
 
 	# Verify byte counter baseline was reset
 	local bytes_file
-	bytes_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "last_bytes")
+	bytes_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
 	if [[ -f "$bytes_file" ]]; then
 		local bytes
 		bytes=$(cat "$bytes_file")
@@ -978,7 +986,7 @@ EOF
 
 	# Verify new baseline was established (2000 bytes)
 	local bytes_file
-	bytes_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "last_bytes")
+	bytes_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
 	if [[ -f "$bytes_file" ]]; then
 		local bytes
 		bytes=$(cat "$bytes_file")
@@ -1124,7 +1132,7 @@ EOF
 
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
-	assert_file_contains "$LOG_FILE" "SA rekey detected" || assert_file_contains "$LOG_FILE" "rekey"
+	assert_log_contains_any "$LOG_FILE" "SA rekey detected" "rekey"
 
 	# Second rekey (different SPI)
 	mock_ip_xfrm_state "${TEST_PEER_IP}" "3000" "0xABCDEF12" >/dev/null
@@ -1133,17 +1141,18 @@ EOF
 	# Mock is already in PATH from first add_mock_to_path call
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
-	assert_file_contains "$LOG_FILE" "SA rekey detected" || assert_file_contains "$LOG_FILE" "rekey"
+	assert_log_contains_any "$LOG_FILE" "SA rekey detected" "rekey"
 
 	source_function "get_peer_state_file_path"
 
 	# Verify SPI was updated to latest value
 	local spi_file
-	spi_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "spi")
+	spi_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "spi")
 	if [[ -f "$spi_file" ]]; then
 		local spi
 		spi=$(cat "$spi_file")
-		assert_equal "$spi" "0xABCDEF12"
+		# SPI is normalized to lowercase hex format (0xABCDEF12 -> 0xabcdef12)
+		assert_equal "$spi" "0xabcdef12"
 	fi
 
 	remove_mock_from_path
@@ -1165,12 +1174,12 @@ EOF
 
 	# Should detect tunnel_down failure type
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Tunnel down" || assert_file_contains "$LOG_FILE" "tunnel_down"
+	assert_log_contains_any "$LOG_FILE" "Tunnel down" "tunnel_down"
 
 	source_function "get_peer_state_file_path"
 	# Verify failure type stored in state file
 	local failure_type_file
-	failure_type_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_type")
+	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
 	if [[ -f "$failure_type_file" ]]; then
 		local failure_type
 		failure_type=$(cat "$failure_type_file")
@@ -1193,12 +1202,12 @@ EOF
 
 	# Should detect routing_issue failure type
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Routing issue" || assert_file_contains "$LOG_FILE" "routing_issue"
+	assert_log_contains_any "$LOG_FILE" "Routing issue" "routing_issue"
 
 	source_function "get_peer_state_file_path"
 	# Verify failure type stored in state file
 	local failure_type_file
-	failure_type_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_type")
+	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
 	if [[ -f "$failure_type_file" ]]; then
 		local failure_type
 		failure_type=$(cat "$failure_type_file")
@@ -1224,7 +1233,7 @@ EOF
 
 	# Should detect routing_issue failure type
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Routing issue" || assert_file_contains "$LOG_FILE" "routing_issue"
+	assert_log_contains_any "$LOG_FILE" "Routing issue" "routing_issue"
 
 	remove_mock_from_path
 }
@@ -1244,12 +1253,12 @@ EOF
 	# Should detect rekey (not a failure)
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "rekey" || assert_file_contains "$LOG_FILE" "SA rekey detected"
+	assert_log_contains_any "$LOG_FILE" "rekey" "SA rekey detected"
 
 	source_function "get_peer_state_file_path"
 	# Verify failure type stored (rekey is logged but VPN is OK)
 	local failure_type_file
-	failure_type_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_type")
+	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
 	if [[ -f "$failure_type_file" ]]; then
 		local failure_type
 		failure_type=$(cat "$failure_type_file")
@@ -1301,12 +1310,12 @@ EOF
 
 	# Should detect unknown failure type
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Unknown" || assert_file_contains "$LOG_FILE" "unknown"
+	assert_log_contains_any "$LOG_FILE" "Unknown" "unknown"
 
 	source_function "get_peer_state_file_path"
 	# Verify failure type stored in state file
 	local failure_type_file
-	failure_type_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_type")
+	failure_type_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_type")
 	if [[ -f "$failure_type_file" ]]; then
 		local failure_type
 		failure_type=$(cat "$failure_type_file")
@@ -1395,7 +1404,7 @@ EOF
 	# Should detect failure type using fallback
 	assert_file_exist "$LOG_FILE"
 	# Should contain failure type detection (may be unknown or tunnel_down)
-	assert_file_contains "$LOG_FILE" "tunnel_down" || assert_file_contains "$LOG_FILE" "unknown" || assert_file_contains "$LOG_FILE" "VPN check failed"
+	assert_log_contains_any "$LOG_FILE" "tunnel_down" "unknown" "VPN check failed"
 
 	remove_mock_from_path
 }
@@ -1416,7 +1425,7 @@ EOF
 	# Should detect idle tunnel (ping succeeds)
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "idle but healthy" || assert_file_contains "$LOG_FILE" "ping check passed"
+	assert_log_contains_any "$LOG_FILE" "idle but healthy" "ping check passed"
 
 	# Idle state should be stored
 	local idle_file
@@ -1461,7 +1470,7 @@ EOF
 	# Should log keepalive suggestion
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "ENABLE_KEEPALIVE" || assert_file_contains "$LOG_FILE" "keepalive"
+	assert_log_contains_any "$LOG_FILE" "ENABLE_KEEPALIVE" "keepalive"
 
 	remove_mock_from_path
 }
@@ -1480,7 +1489,7 @@ EOF
 	assert_success
 	assert_file_exist "$LOG_FILE"
 	# Should log message about keepalive daemon (may suggest starting it)
-	assert_file_contains "$LOG_FILE" "keepalive" || assert_file_contains "$LOG_FILE" "daemon"
+	assert_log_contains_any "$LOG_FILE" "keepalive" "daemon"
 
 	remove_mock_from_path
 }
@@ -1508,7 +1517,7 @@ EOF
 	# Should clear idle state (traffic is flowing)
 	assert_success
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "traffic flowing" || assert_file_contains "$LOG_FILE" "VPN OK"
+	assert_log_contains_any "$LOG_FILE" "traffic flowing" "VPN OK"
 
 	# Idle state file should be deleted or cleared
 	if [[ -f "$idle_file" ]]; then
@@ -1533,7 +1542,7 @@ EOF
 	assert_success
 	assert_file_exist "$LOG_FILE"
 	# Should mark as suspect/failed (bytes not increasing, ping disabled)
-	assert_file_contains "$LOG_FILE" "suspect" || assert_file_contains "$LOG_FILE" "bytes not increasing"
+	assert_log_contains_any "$LOG_FILE" "suspect" "bytes not increasing"
 
 	# Idle state should not be set
 	local idle_file

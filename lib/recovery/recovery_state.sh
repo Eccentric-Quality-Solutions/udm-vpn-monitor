@@ -3,7 +3,7 @@
 # Recovery state management functions for UDM VPN Monitor
 # Manages recovery method tracking and peer display formatting
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 # Store recovery method used for a location
@@ -31,7 +31,7 @@
 #   Uses "recovery_method" as the state key
 store_recovery_method() {
 	local location_name="$1"
-	local peer_ip="$2"
+	local external_peer_ip="$2"
 	local recovery_method="$3"
 
 	# Validate recovery method
@@ -41,7 +41,7 @@ store_recovery_method() {
 
 	# Store using abstraction layer (non-critical - failures are logged but don't interrupt)
 	if command -v set_peer_state_non_critical >/dev/null 2>&1; then
-		set_peer_state_non_critical "$location_name" "$peer_ip" "recovery_method" "$recovery_method"
+		set_peer_state_non_critical "$location_name" "$external_peer_ip" "recovery_method" "$recovery_method"
 	fi
 
 	return 0
@@ -73,11 +73,11 @@ store_recovery_method() {
 #   Uses "recovery_method" as the state key
 get_recovery_method() {
 	local location_name="$1"
-	local peer_ip="$2"
+	local external_peer_ip="$2"
 	local recovery_method=""
 
 	if command -v get_peer_state >/dev/null 2>&1; then
-		recovery_method=$(get_peer_state "$location_name" "$peer_ip" "recovery_method" "")
+		recovery_method=$(get_peer_state "$location_name" "$external_peer_ip" "recovery_method" "")
 	fi
 
 	echo "$recovery_method"
@@ -107,10 +107,10 @@ get_recovery_method() {
 #   Uses "recovery_method" as the state key
 clear_recovery_method() {
 	local location_name="$1"
-	local peer_ip="$2"
+	local external_peer_ip="$2"
 
 	if command -v delete_peer_state >/dev/null 2>&1; then
-		delete_peer_state "$location_name" "$peer_ip" "recovery_method" || true
+		delete_peer_state "$location_name" "$external_peer_ip" "recovery_method" || true
 	fi
 
 	return 0
@@ -135,7 +135,9 @@ clear_recovery_method() {
 #   # Returns: "xfrm-based recovery"
 #
 # Note:
-#   Returns "unknown recovery method" for unrecognized methods
+#   - Returns "unknown recovery method" for empty/unset methods
+#   - Returns the input string as-is for unrecognized non-empty methods
+#     (preserves unknown values for debugging and future extensibility)
 format_recovery_method() {
 	local method="$1"
 
@@ -167,7 +169,7 @@ format_recovery_method() {
 # if discoverable. This provides consistent formatting across logging statements.
 #
 # Arguments:
-#   $1: External peer IP address
+#   $1: External peer IP address (external/public IP of remote VPN gateway)
 #
 # Returns:
 #   0: Always succeeds

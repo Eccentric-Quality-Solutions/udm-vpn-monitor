@@ -65,14 +65,14 @@ For detailed recovery tier flow diagrams and technical implementation, see the [
 
 ## Installation
 
-The install package (recommended) includes all required files with proper directory structure. It can be created using `./prepare_install_package.sh` (creates zip) or `./prepare_install_package.sh --tar` (creates tar.gz).
+The install package (recommended) includes all required files with proper directory structure. It can be created using `./scripts/prepare_install_package.sh` (creates zip) or `./scripts/prepare_install_package.sh --tar` (creates tar.gz).
 
 1. **Transfer files to your UDM**:
    ```bash
    # First, create the package:
-   ./prepare_install_package.sh              # Creates zip file
+   ./scripts/prepare_install_package.sh      # Creates zip file
    # Or create tar.gz:
-   ./prepare_install_package.sh --tar         # Creates tar.gz file
+   ./scripts/prepare_install_package.sh --tar # Creates tar.gz file
    # Then transfer and extract:
    scp udm-vpn-monitor.zip root@<UDM_IP>:/tmp/
 
@@ -151,20 +151,26 @@ The install package (recommended) includes all required files with proper direct
    Configure VPN locations using the location-based format:
    ```bash
    # Location-based configuration format
-   # Format: LOCATION_<NAME>_EXTERNAL="external_ip"
-   # Format: LOCATION_<NAME>_INTERNAL="internal_ip1 internal_ip2 ..."
+   # Format: LOCATION_<NAME>_EXTERNAL="external_ip_or_dns"
+   # Format: LOCATION_<NAME>_INTERNAL="internal_ip1_or_dns1 internal_ip2_or_dns2 ..."
    # Location names are automatically extracted from variable names
+   # Both IP addresses and DNS names are supported
    
    LOCATION_NYC_EXTERNAL="203.0.113.1"
    LOCATION_NYC_INTERNAL="192.168.100.1"
    
    LOCATION_DC_EXTERNAL="198.51.100.1"
    LOCATION_DC_INTERNAL="192.168.200.1 192.168.200.2"
+   
+   # DNS names are also supported:
+   LOCATION_SF_EXTERNAL="sf.server.com"
+   LOCATION_SF_INTERNAL="internal.sf.server.com"
    ```
    
    **Key Points:**
-   - Each location requires an `EXTERNAL` IP (the public/external IP of the remote VPN gateway)
-   - `INTERNAL` IPs are optional and used for ping checks
+   - Each location requires an `EXTERNAL` IP or DNS name (the public/external IP or hostname of the remote VPN gateway)
+   - `INTERNAL` IPs or DNS names are optional and used for ping checks
+   - DNS names are automatically resolved to IP addresses when needed (cached for performance)
    - For locations with multiple internal IPs, VPN is considered healthy if ≥30% respond to pings
    - Location names are extracted from variable names (text between `LOCATION_` and `_EXTERNAL`)
    - Each location has its own independent failure counter tracked separately
@@ -194,16 +200,18 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `LOCATION_<NAME>_EXTERNAL` | External/public IP address of remote VPN gateway for location `<NAME>`. Location names are extracted from variable names (text between `LOCATION_` and `_EXTERNAL`). At least one location is required. | (required) |
-| `LOCATION_<NAME>_INTERNAL` | Internal/private IP address(es) for location `<NAME>` (space-separated, optional). Used for ping checks. For multiple IPs, VPN is healthy if ≥30% respond. | "" |
+| `LOCATION_<NAME>_EXTERNAL` | External/public IP address or DNS name of remote VPN gateway for location `<NAME>`. Location names are extracted from variable names (text between `LOCATION_` and `_EXTERNAL`). DNS names are automatically resolved to IP addresses when needed. At least one location is required. | (required) |
+| `LOCATION_<NAME>_INTERNAL` | Internal/private IP address(es) or DNS name(s) for location `<NAME>` (space-separated, optional). Used for ping checks. DNS names are automatically resolved to IP addresses when needed. For multiple IPs, VPN is healthy if ≥30% respond. | "" |
 | `LOCAL_UDM_IP` | Local UDM internal IP address (required when `ENABLE_PING_CHECK=1` and `INTERNAL` IPs are set). Used as source IP for ping checks. The script automatically adds this IP to br0 if needed. | "" |
-| `VPN_NAME` | VPN identifier for logging | "Site-to-Site VPN" |
 | `TIER1_THRESHOLD` | Failures before logging starts | 1 |
 | `TIER2_THRESHOLD` | Failures before surgical cleanup | 3 |
 | `TIER3_THRESHOLD` | Failures before full restart | 5 |
-| `COOLDOWN_MINUTES` | Minutes to wait after restart | 15 |
-| `MAX_RESTARTS_PER_HOUR` | Maximum restarts per hour | 3 |
+| `MAX_RESTARTS_PER_WINDOW` | Maximum Tier 3 restarts per window (rate limiting) | 20 |
+| `RATE_LIMIT_WINDOW_MINUTES` | Time window for rate limit (sliding window) | 60 |
+| `MIN_RESTART_INTERVAL_SECONDS` | Minimum time between Tier 3 restarts | 40 |
 | `CRON_SCHEDULE` | Cron schedule for check frequency (cron format) | "*/1 * * * *" |
+| `ENABLE_MONITOR_WRAPPER` | Use wrapper for sub-minute execution (0 or 1). When 1, cron runs vpn-monitor-wrapper.sh which checks every MONITOR_INTERVAL seconds. | 1 |
+| `MONITOR_INTERVAL` | Seconds between checks when ENABLE_MONITOR_WRAPPER=1 (range: 10-60) | 20 |
 | `LOCKFILE_TIMEOUT` | Lockfile timeout in seconds (detects hung processes) | 300 |
 | `ENABLE_PING_CHECK` | Enable ping connectivity verification (0 or 1) | 1 |
 | `PING_COUNT` | Number of ping packets to send | 3 |
@@ -236,6 +244,12 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 - `"*/10 * * * *"` - Every 10 minutes
 - `"*/15 * * * *"` - Every 15 minutes
 - `"0 * * * *"` - Every hour (on the hour)
+
+**Sub-Minute Execution (Monitor Wrapper):**
+
+Enabled by default for faster failure detection. The installer configures cron to run vpn-monitor-wrapper.sh, which runs checks every `MONITOR_INTERVAL` seconds (default: 20). You get checks at :00, :20, and :40 within each minute instead of once per minute.
+
+To disable, set `ENABLE_MONITOR_WRAPPER=0` in vpn-monitor.conf and re-run `./install.sh`. With 20-second intervals and default thresholds (TIER2_THRESHOLD=3), Tier 2 triggers after ~1 minute instead of ~2-3 minutes.
 
 ### Keepalive Daemon
 
@@ -349,14 +363,12 @@ LOCATION_DC_INTERNAL="192.168.200.1"
 
 LOCATION_CHICAGO_EXTERNAL="192.0.2.1"
 LOCATION_CHICAGO_INTERNAL="192.168.300.1"
-
-VPN_NAME="Multi-Site VPN"
 ```
 
 **Key Points:**
 - Each location is monitored independently with its own failure counter
 - Failures in one location don't affect monitoring of other locations
-- State files are created per location (e.g., `failure_counter_NYC_203_0_113_1`, `last_bytes_DC_198_51_100_1`)
+- State files are created per location (e.g., `failure_count_NYC_203_0_113_1`, `last_bytes_DC_198_51_100_1`)
 - Location names are automatically extracted from variable names and sanitized for use in filenames
 
 **Example Log Output:**
@@ -487,26 +499,93 @@ Reports include summary statistics, tier action analysis, and event timelines. C
 
 **Note:** The script supports both the old log format (peer IP only, e.g., `VPN check failed for 203.0.113.1`) and the new location-based format (e.g., `VPN check failed for location NYC (203.0.113.1)`). Peer IPs are automatically extracted from either format.
 
-### Anonymize Logs
+### Unified Anonymization System
 
-The `anonymize-logs.sh` script anonymizes IP addresses and location names in VPN monitor logs while maintaining consistency, making logs safe to share for troubleshooting without exposing sensitive information:
+The UDM VPN Monitor provides a unified anonymization system that anonymizes all exported network data (firewall rules, IP routes, ipset sets, and VPN logs) using a shared mapping file. This ensures consistent anonymization - the same IP address, MAC address, hostname, or other identifier maps to the same anonymized value across all file types.
+
+**Quick Start:**
 
 ```bash
-# Anonymize log file and save to output file
-/data/vpn-monitor/scripts/anonymize-logs.sh -i /data/vpn-monitor/logs/vpn-monitor.log -o anonymized.log
+# Export network data first
+./scripts/export-udm-routes-firewall.sh -o /tmp/exports
 
-# Anonymize and view directly (stdout)
-/data/vpn-monitor/scripts/anonymize-logs.sh -i vpn-monitor.log | less
+# Anonymize all files using directory mode (auto-detects files)
+./scripts/anonymize-all.sh \
+  -d /tmp/exports \
+  -l /data/vpn-monitor/vpn-monitor.log \
+  -o /tmp/anonymized \
+  -m /tmp/mapping.txt
+```
 
-# Anonymize with verbose output
-/data/vpn-monitor/scripts/anonymize-logs.sh -i vpn-monitor.log -o anonymized.log -v
+Or specify files explicitly:
+
+```bash
+# Anonymize all files with unified mapping (explicit files)
+./scripts/anonymize-all.sh \
+  -f firewall-rules.txt \
+  -r4 routes-ipv4.txt \
+  -r6 routes-ipv6.txt \
+  -s ipset-sets.txt \
+  -l vpn-monitor.log \
+  -o /tmp/anonymized \
+  -m /tmp/mapping.txt
+```
+
+**Features:**
+- **Unified Mapping**: Same identifiers map to same anonymized values across all file types
+- **Comprehensive Coverage**: Anonymizes IPv4/IPv6, interfaces, locations, set names, MAC addresses, hostnames
+- **Deterministic**: Same input always produces same output
+- **Backward Compatible**: Individual scripts work standalone without mapping files
+
+See [UNIFIED_ANONYMIZATION.md](docs/UNIFIED_ANONYMIZATION.md) for complete documentation.
+
+### Anonymize Logs
+
+The `anonymize-logs.sh` script anonymizes IP addresses, location names, MAC addresses, and hostnames in VPN monitor logs while maintaining consistency:
+
+```bash
+# Anonymize log file with unified mapping
+/data/vpn-monitor/scripts/anonymize-logs.sh \
+  -i /data/vpn-monitor/logs/vpn-monitor.log \
+  -o anonymized.log \
+  -m mapping.txt
+
+# Anonymize standalone (without mapping file)
+/data/vpn-monitor/scripts/anonymize-logs.sh -i vpn-monitor.log -o anonymized.log
 ```
 
 **Features:**
 - **IP Address Anonymization**: Replaces all IP addresses with anonymized IPs in the 10.x.x.x range
 - **Location Name Anonymization**: Replaces location names with anonymized city names
-- **Consistency**: Same IPs and locations always map to the same anonymized values across multiple runs
+- **MAC Address Anonymization**: Replaces MAC addresses with anonymized MACs
+- **Hostname Anonymization**: Replaces hostnames/FQDNs with anonymized hostnames
+- **Consistency**: Same identifiers always map to the same anonymized values (when using unified mapping)
 - **Preserves Log Structure**: Maintains log formatting, timestamps, and structure for readability
+
+### Anonymize Firewall Rules
+
+The `anonymize-firewall.sh` script anonymizes IP addresses, interface names, and ipset set names in iptables-save output:
+
+```bash
+# Anonymize firewall rules with unified mapping
+/data/vpn-monitor/scripts/anonymize-firewall.sh \
+  -i firewall-rules.txt \
+  -o anonymized-rules.txt \
+  -m mapping.txt
+
+# Anonymize standalone
+iptables-save > /tmp/rules.txt
+/data/vpn-monitor/scripts/anonymize-firewall.sh -i /tmp/rules.txt -o anonymized-rules.txt
+```
+
+**Features:**
+- **IP Address Anonymization**: Replaces IPv4 and IPv6 addresses with anonymized addresses
+- **Interface Name Anonymization**: Replaces interface names with anonymized names (preserves `lo`)
+- **Set Name Anonymization**: Replaces ipset set names with anonymized names (e.g., `ALIEN` → `SET_42`)
+- **CIDR Preservation**: Maintains CIDR notation in network ranges
+- **Consistency**: Same identifiers always map to the same anonymized values (when using unified mapping)
+
+See [ANONYMIZE_FIREWALL.md](docs/ANONYMIZE_FIREWALL.md) for detailed documentation.
 
 **Options:**
 - `-i, --input FILE`: Input log file (required)
@@ -659,7 +738,7 @@ For detailed detection flow diagrams, sequence diagrams, ping check behavior sce
 
 ### State Management
 
-For detailed state management documentation including file structure, atomic operations, checksum validation, per-location isolation, and technical implementation details, see the [State Management section in ARCHITECTURE.md](docs/ARCHITECTURE.md#state-management).
+For detailed state management documentation including file structure, atomic operations, per-location isolation, and technical implementation details, see the [State Management section in ARCHITECTURE.md](docs/ARCHITECTURE.md#state-management).
 
 ## License
 

@@ -147,27 +147,6 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 }
 
 # bats test_tags=category:unit
-@test "get_timestamp_plus_minutes adds minutes correctly" {
-	# Purpose: Test verifies that get_timestamp_plus_minutes function correctly calculates future timestamps
-	# Expected: Function adds specified minutes to current timestamp and returns Unix timestamp
-	# Importance: Timestamp calculation is used for cooldown periods and rate limiting calculations
-	# Source the function
-	# shellcheck source=/dev/null
-	source_function "get_timestamp_plus_minutes"
-
-	local now=$(date +%s)
-	run get_timestamp_plus_minutes 5
-
-	assert_success
-	local future=$(cat <<<"$output")
-	local expected=$((now + 300)) # 5 minutes = 300 seconds
-
-	# Allow 5 second tolerance for execution time
-	assert [ $((future - expected)) -ge -5 ]
-	assert [ $((future - expected)) -le 5 ]
-}
-
-# bats test_tags=category:unit
 @test "get_file_mtime returns modification time" {
 	# Purpose: Test verifies that get_file_mtime function correctly retrieves file modification timestamp
 	# Expected: Function returns Unix timestamp representing file's last modification time
@@ -328,8 +307,7 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_failure_count"
 
 	# Test with peer IP that has no counter file
-	# Use empty string for location to test backward compatibility
-	run get_failure_count "" "${TEST_PEER_IP}"
+	run get_failure_count "TEST" "${TEST_PEER_IP}"
 	assert_success
 	assert_output "0"
 }
@@ -343,13 +321,12 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	setup_test_environment "${TEST_DIR}"
 	# Use set_peer_state to create file with correct location-based path format
 	source_function "set_peer_state"
-	set_peer_state "" "${TEST_PEER_IP}" "failure_count" "5" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "5" || true
 
 	# Source the actual function from the library
 	source_function "get_failure_count"
 
-	# Use empty string for location to test backward compatibility
-	run get_failure_count "" "${TEST_PEER_IP}"
+	run get_failure_count "TEST" "${TEST_PEER_IP}"
 	assert_success
 	assert_output "5"
 }
@@ -366,11 +343,10 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	# Manually create corrupted file using correct path format
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	echo "invalid-value" >"$counter_file"
 
-	# Use empty string for location to test backward compatibility
-	run get_failure_count "" "${TEST_PEER_IP}"
+	run get_failure_count "TEST" "${TEST_PEER_IP}"
 	assert_success
 	# Should return default (0) for corrupted file (function logs warning)
 	# Verify it ends with 0 (the actual return value)
@@ -393,21 +369,21 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_failure_count"
 	source_function "get_peer_state_file_path"
 
-	# First increment - use empty string for location to test backward compatibility
-	run increment_failure "" "${TEST_PEER_IP}"
+	# First increment
+	run increment_failure "TEST" "${TEST_PEER_IP}"
 	assert_success
 	assert_output "1"
 
 	# Verify the file was created using get_peer_state_file_path to get correct path
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	assert_file_exist "$counter_file"
 	local count
 	count=$(cat "$counter_file")
 	assert_equal "$count" 1
 
 	# Second increment
-	run increment_failure "" "${TEST_PEER_IP}"
+	run increment_failure "TEST" "${TEST_PEER_IP}"
 	assert_success
 	assert_output "2"
 
@@ -425,19 +401,18 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	setup_test_environment "${TEST_DIR}"
 	# Use set_peer_state to create file with correct location-based path format
 	source_function "set_peer_state"
-	set_peer_state "" "${TEST_PEER_IP}" "failure_count" "5" || true
+	set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "5" || true
 
 	# Source the actual function from the library
 	source_function "reset_failure_count"
 	source_function "get_peer_state_file_path"
 
-	# Use empty string for location to test backward compatibility
-	run reset_failure_count "" "${TEST_PEER_IP}"
+	run reset_failure_count "TEST" "${TEST_PEER_IP}"
 	assert_success
 
 	# Verify the counter was reset using get_peer_state_file_path to get correct path
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	assert_file_exist "$counter_file"
 	local count
 	count=$(cat "$counter_file")
@@ -457,10 +432,9 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	source_function "get_peer_state_file_path"
 
-	# Use empty string for location to test backward compatibility (empty location becomes "LOCATION")
-	run get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count"
+	run get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count"
 	assert_success
-	assert_output "${STATE_DIR}/failure_counter_LOCATION_192_168_1_1"
+	assert_output "${STATE_DIR}/failure_count_TEST_192_168_1_1"
 }
 
 # bats test_tags=category:unit
@@ -472,10 +446,9 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	source_function "get_peer_state_file_path"
 
-	# Use empty string for location to test backward compatibility (empty location becomes "LOCATION")
-	run get_peer_state_file_path "" "${TEST_PEER_IP}" "last_bytes"
+	run get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes"
 	assert_success
-	assert_output "${STATE_DIR}/last_bytes_LOCATION_192_168_1_1"
+	assert_output "${STATE_DIR}/last_bytes_TEST_192_168_1_1"
 }
 
 # bats test_tags=category:unit
@@ -487,11 +460,88 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	source_function "get_peer_state_file_path"
 
-	# Use empty string for location to test backward compatibility (empty location becomes "LOCATION")
-	run get_peer_state_file_path "" "${TEST_PEER_IP}" "unknown_key"
+	run get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "unknown_key"
 	assert_success
 	# Function logs a warning but still returns the path
-	assert_output --partial "${STATE_DIR}/unknown_key_LOCATION_192_168_1_1"
+	assert_output --partial "${STATE_DIR}/unknown_key_TEST_192_168_1_1"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "state_paths module logs warning when STATE_DIR is unset" {
+	# Purpose: Test verifies that state_paths.sh module logs a warning when STATE_DIR is unset at module load time
+	# Expected: Module logs WARNING message when STATE_DIR is unset, but does not exit
+	# Importance: Fail-fast detection of missing STATE_DIR prevents invalid paths from being generated silently
+	setup_test_environment "${TEST_DIR}"
+
+	# Unset STATE_DIR to test module-level validation
+	unset STATE_DIR
+
+	# Set up logging to capture the warning
+	local log_file="${TEST_DIR}/test.log"
+	export LOG_FILE="$log_file"
+	mkdir -p "$(dirname "$log_file")"
+
+	# Source logging functions first (needed for handle_error)
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+
+	# Source state_paths.sh - this should log a warning
+	# shellcheck source=../lib/state/state_paths.sh
+	run source "${BATS_TEST_DIRNAME}/../lib/state/state_paths.sh" 2>&1
+	assert_success
+
+	# Verify warning was logged
+	assert_file_exist "$log_file"
+	run grep -E "\[.*\] \[WARNING\] SYSTEM: STATE_DIR is not set when loading state_paths.sh" "$log_file"
+	assert_success
+}
+
+# bats test_tags=category:unit,priority:high
+@test "get_peer_state_file_path returns error when STATE_DIR is unset" {
+	# Purpose: Test verifies that get_peer_state_file_path validates STATE_DIR is set
+	# Expected: Function returns error and empty path when STATE_DIR is unset
+	# Importance: Validates that module-level validation properly catches missing STATE_DIR
+	setup_test_environment "${TEST_DIR}"
+
+	# Unset STATE_DIR to test the validation
+	unset STATE_DIR
+
+	# Source the function (module-level warning will be logged, but function still loads)
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/state/state_paths.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state/state_paths.sh" 2>/dev/null || true
+
+	# Call function with STATE_DIR unset - should fail with error
+	run get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count"
+	assert_failure
+
+	# Should output error message about STATE_DIR not being set
+	assert_output --partial "STATE_DIR is not set"
+}
+
+# bats test_tags=category:unit,priority:high
+@test "get_peer_state_file_path works correctly when STATE_DIR is set" {
+	# Purpose: Test verifies that get_peer_state_file_path works correctly when STATE_DIR is properly set
+	# Expected: Function produces valid relative paths when STATE_DIR is set
+	# Importance: Ensures normal operation works correctly after module-level validation
+	setup_test_environment "${TEST_DIR}"
+
+	# STATE_DIR should be set by setup_test_environment
+	# Verify it's set
+	assert [ -n "${STATE_DIR:-}" ]
+
+	# Source the function
+	source_function "get_peer_state_file_path"
+
+	# Call function with STATE_DIR set
+	run get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count"
+	assert_success
+
+	# Should produce valid path within STATE_DIR
+	assert_output "${STATE_DIR}/failure_count_TEST_192_168_1_1"
 }
 
 # bats test_tags=category:unit
@@ -504,12 +554,12 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state"
 
 	# Use empty string for location to test backward compatibility
-	run get_peer_state "" "${TEST_PEER_IP}" "failure_count"
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	assert_output "0"
 
 	# Test with custom default
-	run get_peer_state "" "${TEST_PEER_IP}" "failure_count" "99"
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "99"
 	assert_success
 	assert_output "99"
 }
@@ -525,11 +575,11 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "set_peer_state"
 
 	# Create file using set_peer_state to ensure correct path format
-	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "42"
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "42"
 	assert_success
 
 	# Use empty string for location to test backward compatibility
-	run get_peer_state "" "${TEST_PEER_IP}" "failure_count"
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	assert_output "42"
 }
@@ -547,11 +597,11 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	# Manually create corrupted file using correct path format
 	# Use get_peer_state_file_path to get the correct path (empty location becomes "LOCATION")
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	echo "invalid-value" >"$counter_file"
 
 	# Use empty string for location to test backward compatibility
-	run get_peer_state "" "${TEST_PEER_IP}" "failure_count"
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	# Should return default (0) for corrupted file (function logs warning)
 	# Verify it ends with 0 (the actual return value)
@@ -586,16 +636,16 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "get_peer_state_file_path"
 
 	# Create file using set_peer_state to ensure correct path format
-	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "5"
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "5"
 	assert_success
 
 	# Use empty string for location to test backward compatibility
-	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "10"
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "10"
 	assert_success
 
 	# Verify file was updated using get_peer_state_file_path
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	local count
 	count=$(cat "$counter_file")
 	assert_equal "$count" 10
@@ -613,13 +663,229 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	# Should fail with invalid value
 	# Use empty string for location to test backward compatibility
-	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "not-a-number"
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "not-a-number"
 	assert_failure
 
 	# File should not be created - use get_peer_state_file_path to get correct path
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	assert_file_not_exist "$counter_file"
+}
+
+# bats test_tags=category:unit,priority:medium
+@test "set_peer_state validates SPI format - accepts empty string" {
+	# Purpose: Test verifies that set_peer_state function accepts empty string for SPI (valid format)
+	# Expected: Function accepts empty string for SPI and creates state file
+	# Importance: Empty SPI is valid and should be allowed (e.g., when SPI is not yet known)
+	setup_test_environment "${TEST_DIR}"
+
+	source_function "set_peer_state"
+	source_function "get_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Empty string should be accepted for SPI
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" ""
+	assert_success
+
+	# Verify empty string was stored
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "spi" ""
+	assert_success
+	assert_output ""
+}
+
+# bats test_tags=category:unit,priority:medium
+@test "set_peer_state validates SPI format - accepts hex format" {
+	# Purpose: Test verifies that set_peer_state function accepts hex format SPI (0x...)
+	# Expected: Function accepts hex format SPI and stores it correctly
+	# Importance: Hex format is the standard format for SPI values from xfrm output
+	setup_test_environment "${TEST_DIR}"
+
+	source_function "set_peer_state"
+	source_function "get_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Hex format should be accepted
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "0x12345678"
+	assert_success
+
+	# Verify hex value was stored correctly
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "spi" ""
+	assert_success
+	assert_output "0x12345678"
+}
+
+# bats test_tags=category:unit,priority:medium
+@test "set_peer_state validates SPI format - accepts decimal format" {
+	# Purpose: Test verifies that set_peer_state function accepts decimal format SPI
+	# Expected: Function accepts decimal format SPI and stores it correctly
+	# Importance: Decimal format is an alternative valid format for SPI values
+	setup_test_environment "${TEST_DIR}"
+
+	source_function "set_peer_state"
+	source_function "get_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Decimal format should be accepted
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "305419896"
+	assert_success
+
+	# Verify decimal value was stored correctly
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "spi" ""
+	assert_success
+	assert_output "305419896"
+}
+
+# bats test_tags=category:unit,priority:medium
+@test "set_peer_state validates SPI format - rejects invalid formats" {
+	# Purpose: Test verifies that set_peer_state function rejects invalid SPI formats
+	# Expected: Function rejects non-hex, non-decimal SPI values and returns failure
+	# Importance: Validation prevents corrupted SPI values from being stored
+	setup_test_environment "${TEST_DIR}"
+
+	source_function "set_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Invalid formats should be rejected
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "not-a-spi"
+	assert_failure
+
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "0xinvalid"
+	assert_failure
+
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "123abc"
+	assert_failure
+
+	# File should not be created for any invalid format
+	local spi_file
+	spi_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "spi")
+	assert_file_not_exist "$spi_file"
+}
+
+# bats test_tags=category:unit,priority:medium
+@test "get_peer_state handles all SPI formats correctly" {
+	# Purpose: Test verifies that get_peer_state function correctly retrieves all valid SPI formats
+	# Expected: Function retrieves empty, hex, and decimal SPI values correctly
+	# Importance: Ensures SPI retrieval works for all valid formats used in practice
+	setup_test_environment "${TEST_DIR}"
+
+	source_function "get_peer_state"
+	source_function "set_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Test empty SPI
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" ""
+	assert_success
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "spi" ""
+	assert_success
+	assert_output ""
+
+	# Test hex SPI
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "0xabcdef12"
+	assert_success
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "spi" ""
+	assert_success
+	assert_output "0xabcdef12"
+
+	# Test decimal SPI
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "spi" "1234567890"
+	assert_success
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "spi" ""
+	assert_success
+	assert_output "1234567890"
+}
+
+# bats test_tags=category:unit,priority:medium
+@test "peer_state functions handle special characters in location names" {
+	# Purpose: Test verifies that peer_state functions handle special characters in location names correctly
+	# Expected: Functions sanitize location names and create valid state files
+	# Importance: Location names may contain special characters that need sanitization for filename safety
+	setup_test_environment "${TEST_DIR}"
+
+	source_function "set_peer_state"
+	source_function "get_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Test with special characters (should be sanitized)
+	local location_with_special="NYC-Office@123"
+	run set_peer_state "$location_with_special" "${TEST_PEER_IP}" "failure_count" "5"
+	assert_success
+
+	# Verify value can be retrieved
+	run get_peer_state "$location_with_special" "${TEST_PEER_IP}" "failure_count"
+	assert_success
+	assert_output "5"
+
+	# Verify file was created with sanitized name
+	local state_file
+	state_file=$(get_peer_state_file_path "$location_with_special" "${TEST_PEER_IP}" "failure_count")
+	# File should exist (name will be sanitized)
+	assert_file_exist "$state_file"
+}
+
+# bats test_tags=category:unit,priority:medium
+@test "peer_state functions handle very long location names" {
+	# Purpose: Test verifies that peer_state functions handle very long location names correctly
+	# Expected: Functions truncate location names to safe length and create valid state files
+	# Importance: Very long location names need truncation to ensure filename safety (max 64 chars)
+	setup_test_environment "${TEST_DIR}"
+
+	source_function "set_peer_state"
+	source_function "get_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Test with very long location name (should be truncated to 64 chars)
+	local long_location="ThisIsAVeryLongLocationNameThatExceedsTheMaximumAllowedLengthForSanitization123456789"
+	run set_peer_state "$long_location" "${TEST_PEER_IP}" "failure_count" "10"
+	assert_success
+
+	# Verify value can be retrieved
+	run get_peer_state "$long_location" "${TEST_PEER_IP}" "failure_count"
+	assert_success
+	assert_output "10"
+
+	# Verify file was created (name will be truncated)
+	local state_file
+	state_file=$(get_peer_state_file_path "$long_location" "${TEST_PEER_IP}" "failure_count")
+	assert_file_exist "$state_file"
+}
+
+# bats test_tags=category:unit,priority:medium
+@test "peer_state functions handle special characters in IP addresses" {
+	# Purpose: Test verifies that peer_state functions handle IP addresses with special characters correctly
+	# Expected: Functions sanitize IP addresses (dots/colons to underscores) and create valid state files
+	# Importance: IPv4/IPv6 addresses contain dots/colons that need sanitization for filename safety
+	setup_test_environment "${TEST_DIR}"
+
+	source_function "set_peer_state"
+	source_function "get_peer_state"
+	source_function "get_peer_state_file_path"
+
+	# Test with IPv4 (dots should be sanitized to underscores)
+	run set_peer_state "TEST" "192.168.1.1" "failure_count" "7"
+	assert_success
+
+	# Verify value can be retrieved
+	run get_peer_state "TEST" "192.168.1.1" "failure_count"
+	assert_success
+	assert_output "7"
+
+	# Test with IPv6 (colons should be sanitized to underscores)
+	run set_peer_state "TEST" "2001:db8::1" "failure_count" "8"
+	assert_success
+
+	# Verify value can be retrieved
+	run get_peer_state "TEST" "2001:db8::1" "failure_count"
+	assert_success
+	assert_output "8"
+
+	# Verify files were created with sanitized names
+	local ipv4_file
+	ipv4_file=$(get_peer_state_file_path "TEST" "192.168.1.1" "failure_count")
+	assert_file_exist "$ipv4_file"
+
+	local ipv6_file
+	ipv6_file=$(get_peer_state_file_path "TEST" "2001:db8::1" "failure_count")
+	assert_file_exist "$ipv6_file"
 }
 
 # bats test_tags=category:unit
@@ -652,10 +918,10 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	# Get file path for deletion verification
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 
 	# Delete the file
-	run delete_peer_state "" "${TEST_PEER_IP}" "failure_count"
+	run delete_peer_state "TEST" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 
 	# File should be deleted
@@ -673,14 +939,14 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	# Should succeed even if file doesn't exist
 	# Use empty string for location to test backward compatibility
-	run delete_peer_state "" "${TEST_PEER_IP}" "failure_count"
+	run delete_peer_state "TEST" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 }
 
 # bats test_tags=category:unit
 @test "cleanup_peer_state removes all peer state files" {
 	# Purpose: Test verifies that cleanup_peer_state function removes all state files for a peer
-	# Expected: Function deletes all peer-specific state files including failure_count, last_bytes, and other state files
+	# Expected: Function deletes all peer-specific state files including failure_count, last_bytes, connection_name, and other state files
 	# Importance: Complete cleanup enables removal of all peer state when peer is no longer monitored
 	setup_test_environment "${TEST_DIR}"
 
@@ -688,29 +954,38 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "set_peer_state"
 	source_function "get_peer_state_file_path"
 
-	# Create both failure_count and last_bytes files using set_peer_state to ensure correct path format
-	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "5"
+	# Create state files using set_peer_state to ensure correct path format
+	# Use a test location name for location-based keys
+	local test_location="TEST"
+	run set_peer_state "$test_location" "${TEST_PEER_IP}" "failure_count" "5"
 	assert_success
-	run set_peer_state "" "${TEST_PEER_IP}" "last_bytes" "123456"
+	run set_peer_state "$test_location" "${TEST_PEER_IP}" "last_bytes" "123456"
+	assert_success
+	# connection_name is per-peer only (no location)
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "connection_name" "test-connection"
 	assert_success
 
 	# Get file paths for verification
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "$test_location" "${TEST_PEER_IP}" "failure_count")
 	local bytes_file
-	bytes_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "last_bytes")
+	bytes_file=$(get_peer_state_file_path "$test_location" "${TEST_PEER_IP}" "last_bytes")
+	local connection_file
+	connection_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "connection_name")
 
 	# Verify files exist before cleanup
 	assert_file_exist "$counter_file"
 	assert_file_exist "$bytes_file"
+	assert_file_exist "$connection_file"
 
-	# Use empty string for location to test backward compatibility
-	run cleanup_peer_state "" "${TEST_PEER_IP}"
+	# Cleanup with the same location name used for location-based keys
+	run cleanup_peer_state "$test_location" "${TEST_PEER_IP}"
 	assert_success
 
-	# Both files should be deleted
+	# All files should be deleted
 	assert_file_not_exist "$counter_file"
 	assert_file_not_exist "$bytes_file"
+	assert_file_not_exist "$connection_file"
 }
 
 # bats test_tags=category:unit
@@ -724,11 +999,11 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	source_function "set_peer_state"
 
 	# Set a value - use empty string for location to test backward compatibility
-	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "15"
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "15"
 	assert_success
 
 	# Get it back
-	run get_peer_state "" "${TEST_PEER_IP}" "failure_count"
+	run get_peer_state "TEST" "${TEST_PEER_IP}" "failure_count"
 	assert_success
 	assert_output "15"
 }
@@ -745,158 +1020,22 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 
 	# Set a value - should use atomic write (temp file + mv)
 	# Use empty string for location to test backward compatibility
-	run set_peer_state "" "${TEST_PEER_IP}" "failure_count" "20"
+	run set_peer_state "TEST" "${TEST_PEER_IP}" "failure_count" "20"
 	assert_success
 
 	# Verify temp file doesn't exist (should have been renamed)
 	# Use get_peer_state_file_path to get correct path
 	local counter_file
-	counter_file=$(get_peer_state_file_path "" "${TEST_PEER_IP}" "failure_count")
+	counter_file=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
 	local temp_file="${counter_file}.tmp"
 	assert_file_not_exist "$temp_file"
 	assert_file_exist "$counter_file"
 }
 
 # bats test_tags=category:unit
-@test "check_cooldown returns false when cooldown file missing" {
-	# Purpose: Test verifies that check_cooldown function returns false when cooldown file doesn't exist
-	# Expected: Function returns failure (not in cooldown) when cooldown file is missing
-	# Importance: Missing cooldown file indicates no cooldown period is active, allowing recovery actions
-	local state_dir="${TEST_DIR}"
-
-	cat >"${TEST_DIR}/test_script.sh" <<'SCRIPT'
-#!/bin/bash
-STATE_DIR="$1"
-
-# Get file modification time
-#
-# Arguments:
-#   $1: File path
-#
-# Returns:
-#   Prints Unix timestamp of file modification time, or "0" on error
-get_file_mtime() {
-	local file="$1"
-	stat -c %Y "$file" 2>/dev/null || echo "0"
-}
-
-# Check if system is in cooldown period
-#
-# Arguments:
-#   None (uses STATE_DIR environment variable)
-#
-# Returns:
-#   0: In cooldown period
-#   1: Not in cooldown period
-check_cooldown() {
-	local COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
-	if [[ ! -f "$COOLDOWN_UNTIL_FILE" ]]; then
-		return 1 # Not in cooldown
-	fi
-
-	local cooldown_until
-	cooldown_until=$(cat "$COOLDOWN_UNTIL_FILE")
-	local now
-	now=$(date +%s)
-
-	if [[ $now -lt $cooldown_until ]]; then
-		return 0 # In cooldown
-	else
-		rm -f "$COOLDOWN_UNTIL_FILE"
-		return 1 # Not in cooldown
-	fi
-}
-
-check_cooldown
-SCRIPT
-
-	chmod +x "${TEST_DIR}/test_script.sh"
-
-	run bash "${TEST_DIR}/test_script.sh" "$state_dir"
-	assert_failure # Not in cooldown
-}
-
-# bats test_tags=category:unit
-@test "check_cooldown returns true when in cooldown period" {
-	# Purpose: Test verifies that check_cooldown function returns true when cooldown period is active
-	# Expected: Function returns success (in cooldown) when current time is before cooldown expiration time
-	# Importance: Cooldown checking prevents recovery actions from being executed too frequently
-	local state_dir="${TEST_DIR}"
-	local cooldown_file="${state_dir}/cooldown_until"
-	local future_time=$(($(date +%s) + 900)) # 15 minutes in future
-	echo "$future_time" >"$cooldown_file"
-
-	cat >"${TEST_DIR}/test_script.sh" <<'SCRIPT'
-#!/bin/bash
-STATE_DIR="$1"
-
-# Check if system is in cooldown period
-#
-# Arguments:
-#   None (uses STATE_DIR environment variable)
-#
-# Returns:
-#   0: In cooldown period
-#   1: Not in cooldown period
-check_cooldown() {
-	local COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
-	if [[ ! -f "$COOLDOWN_UNTIL_FILE" ]]; then
-		return 1 # Not in cooldown
-	fi
-
-	local cooldown_until
-	cooldown_until=$(cat "$COOLDOWN_UNTIL_FILE")
-	local now
-	now=$(date +%s)
-
-	if [[ $now -lt $cooldown_until ]]; then
-		return 0 # In cooldown
-	else
-		rm -f "$COOLDOWN_UNTIL_FILE"
-		return 1 # Not in cooldown
-	fi
-}
-
-check_cooldown
-SCRIPT
-
-	chmod +x "${TEST_DIR}/test_script.sh"
-
-	run bash "${TEST_DIR}/test_script.sh" "$state_dir"
-	assert_success # In cooldown
-}
-
-# bats test_tags=category:unit
-@test "check_cooldown handles corrupted file" {
-	# Purpose: Test verifies that check_cooldown function handles corrupted cooldown files gracefully
-	# Expected: Function handles invalid timestamp gracefully, treating corrupted file as expired cooldown
-	# Importance: Corrupted timestamps can cause arithmetic errors; script must handle them robustly
-	setup_test_environment "${TEST_DIR}"
-
-	source_function "check_cooldown"
-	source_function "get_unix_timestamp"
-	source_function "file_exists_and_readable"
-
-	# Create corrupted cooldown file with invalid timestamp
-	local cooldown_file="${STATE_DIR}/cooldown_until"
-	echo "invalid-timestamp-value" >"$cooldown_file"
-
-	# check_cooldown reads the file and tries to compare timestamps
-	# In bash, when comparing a number to a non-numeric string with -lt,
-	# bash treats the string as 0, so the comparison will be false
-	# This causes the function to treat it as expired and return 1 (not in cooldown)
-	run check_cooldown
-	# Function should return 1 (not in cooldown) since invalid timestamp is treated as 0
-	# and current time is greater than 0
-	assert_failure
-	# Corrupted file should be removed
-	assert_file_not_exist "$cooldown_file"
-}
-
-# bats test_tags=category:unit
 @test "check_rate_limit allows restart when under limit" {
 	# Purpose: Test verifies that check_rate_limit function allows restarts when under the rate limit
-	# Expected: Function returns success when number of recent restarts is below MAX_RESTARTS_PER_HOUR
+	# Expected: Function returns success when number of recent restarts is below MAX_RESTARTS_PER_WINDOW
 	# Importance: Rate limiting prevents excessive IPsec restarts that could cause service disruption
 	local state_dir="${TEST_DIR}"
 	local logs_dir="${TEST_DIR}/logs"
@@ -906,12 +1045,13 @@ SCRIPT
 	cat >"${TEST_DIR}/test_script.sh" <<'SCRIPT'
 #!/bin/bash
 RESTART_COUNT_FILE="$1"
-MAX_RESTARTS_PER_HOUR=3
+MAX_RESTARTS_PER_WINDOW=3
+RATE_LIMIT_WINDOW_MINUTES=60
 
 # Check if restart is within rate limit
 #
 # Arguments:
-#   None (uses RESTART_COUNT_FILE and MAX_RESTARTS_PER_HOUR variables)
+#   None (uses RESTART_COUNT_FILE, MAX_RESTARTS_PER_WINDOW, and RATE_LIMIT_WINDOW_MINUTES variables)
 #
 # Returns:
 #   0: Within rate limit (restart allowed)
@@ -919,17 +1059,17 @@ MAX_RESTARTS_PER_HOUR=3
 check_rate_limit() {
 	local now
 	now=$(date +%s)
-	local one_hour_ago
-	one_hour_ago=$((now - 3600))
+	local window_seconds=$((RATE_LIMIT_WINDOW_MINUTES * 60))
+	local window_start=$((now - window_seconds))
 
 	if [[ ! -f "$RESTART_COUNT_FILE" ]]; then
 		return 0 # No previous restarts, allow
 	fi
 
 	local recent_restarts
-	recent_restarts=$(awk -v cutoff="$one_hour_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | wc -l | tr -d ' ')
+	recent_restarts=$(awk -v cutoff="$window_start" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | wc -l | tr -d ' ')
 
-	if [[ $recent_restarts -ge $MAX_RESTARTS_PER_HOUR ]]; then
+	if [[ $recent_restarts -ge $MAX_RESTARTS_PER_WINDOW ]]; then
 		return 1 # Rate limited
 	fi
 
@@ -948,7 +1088,7 @@ SCRIPT
 # bats test_tags=category:unit
 @test "check_rate_limit blocks restart when over limit" {
 	# Purpose: Test verifies that check_rate_limit function blocks restarts when over the rate limit
-	# Expected: Function returns failure when number of recent restarts exceeds MAX_RESTARTS_PER_HOUR
+	# Expected: Function returns failure when number of recent restarts exceeds MAX_RESTARTS_PER_WINDOW
 	# Importance: Rate limiting prevents excessive IPsec restarts that could cause service disruption
 	local state_dir="${TEST_DIR}"
 	local logs_dir="${TEST_DIR}/logs"
@@ -965,12 +1105,13 @@ SCRIPT
 	cat >"${TEST_DIR}/test_script.sh" <<'SCRIPT'
 #!/bin/bash
 RESTART_COUNT_FILE="$1"
-MAX_RESTARTS_PER_HOUR=3
+MAX_RESTARTS_PER_WINDOW=3
+RATE_LIMIT_WINDOW_MINUTES=60
 
 # Check if restart is within rate limit
 #
 # Arguments:
-#   None (uses RESTART_COUNT_FILE and MAX_RESTARTS_PER_HOUR variables)
+#   None (uses RESTART_COUNT_FILE, MAX_RESTARTS_PER_WINDOW, and RATE_LIMIT_WINDOW_MINUTES variables)
 #
 # Returns:
 #   0: Within rate limit (restart allowed)
@@ -978,17 +1119,17 @@ MAX_RESTARTS_PER_HOUR=3
 check_rate_limit() {
 	local now
 	now=$(date +%s)
-	local one_hour_ago
-	one_hour_ago=$((now - 3600))
+	local window_seconds=$((RATE_LIMIT_WINDOW_MINUTES * 60))
+	local window_start=$((now - window_seconds))
 
 	if [[ ! -f "$RESTART_COUNT_FILE" ]]; then
 		return 0 # No previous restarts, allow
 	fi
 
 	local recent_restarts
-	recent_restarts=$(awk -v cutoff="$one_hour_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | wc -l | tr -d ' ')
+	recent_restarts=$(awk -v cutoff="$window_start" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | wc -l | tr -d ' ')
 
-	if [[ $recent_restarts -ge $MAX_RESTARTS_PER_HOUR ]]; then
+	if [[ $recent_restarts -ge $MAX_RESTARTS_PER_WINDOW ]]; then
 		return 1 # Rate limited
 	fi
 
@@ -1012,8 +1153,8 @@ SCRIPT
 	setup_test_environment "${TEST_DIR}"
 
 	# Set required environment variables for check_rate_limit
-	export MAX_RESTARTS_PER_HOUR=3
-	export SECONDS_PER_HOUR=3600
+	export MAX_RESTARTS_PER_WINDOW=3
+	export RATE_LIMIT_WINDOW_MINUTES=60
 
 	source_function "check_rate_limit"
 	source_function "get_unix_timestamp"
@@ -1376,7 +1517,7 @@ EOF
 		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
 	fi
 
-	run is_config_required "VPN_NAME"
+	run is_config_required "PING_COUNT"
 
 	assert_failure
 }
@@ -1408,10 +1549,10 @@ EOF
 		source "${LIB_DIR}/config_schema.sh" 2>/dev/null || true
 	fi
 
-	run get_config_default "VPN_NAME"
+	run get_config_default "PING_COUNT"
 
 	assert_success
-	assert_output "Site-to-Site VPN"
+	assert_output "3"
 }
 
 # bats test_tags=category:unit
@@ -1505,8 +1646,8 @@ EOF
 
 	# Unset all config variables to test defaults
 	# Use both unset and explicit empty assignment to ensure variables are truly unset
-	unset VPN_NAME TIER1_THRESHOLD TIER2_THRESHOLD TIER3_THRESHOLD 2>/dev/null || true
-	unset COOLDOWN_MINUTES MAX_RESTARTS_PER_HOUR LOCKFILE_TIMEOUT ENABLE_PING_CHECK LOCAL_UDM_IP 2>/dev/null || true
+	unset PING_COUNT TIER1_THRESHOLD TIER2_THRESHOLD TIER3_THRESHOLD 2>/dev/null || true
+	unset MAX_RESTARTS_PER_WINDOW RATE_LIMIT_WINDOW_MINUTES LOCKFILE_TIMEOUT ENABLE_PING_CHECK LOCAL_UDM_IP 2>/dev/null || true
 	unset PING_COUNT PING_TIMEOUT ENABLE_KEEPALIVE KEEPALIVE_INTERVAL KEEPALIVE_PING_COUNT 2>/dev/null || true
 	unset DEBUG NO_ESCALATE ENABLE_XFRM_RECOVERY LOG_FILE STATE_DIR LOGS_DIR CRON_SCHEDULE 2>/dev/null || true
 
@@ -1527,9 +1668,6 @@ EOF
 	assert_equal "$ENABLE_XFRM_RECOVERY" "1"
 	assert_equal "$LOCKFILE_TIMEOUT" "300"
 
-	# Test VPN_NAME (has spaces) - use assert_equal for better error messages
-	assert_equal "$VPN_NAME" "Site-to-Site VPN"
-
 	# Test CRON_SCHEDULE (has spaces and special chars) - use assert_equal for better error messages
 	assert_equal "$CRON_SCHEDULE" "*/1 * * * *"
 
@@ -1537,8 +1675,6 @@ EOF
 	assert_equal "$TIER1_THRESHOLD" "1"
 	assert_equal "$TIER2_THRESHOLD" "3"
 	assert_equal "$TIER3_THRESHOLD" "5"
-	assert_equal "$COOLDOWN_MINUTES" "15"
-	assert_equal "$MAX_RESTARTS_PER_HOUR" "3"
 }
 
 # ============================================================================
@@ -2159,7 +2295,7 @@ EOF
 		source "${LIB_DIR}/config.sh" 2>/dev/null || true
 	fi
 
-	run validate_config_rules "TEST_VAR" "5" "integer" "required" "" "min:1,max:10"
+	run validate_config_rules "TEST_VAR" "5" "integer" "required" "" "min:1|||max:10"
 
 	assert_success
 	assert_output "5"
@@ -2211,7 +2347,7 @@ EOF
 		return 1
 	}
 
-	run validate_config_rules "TEST_VAR" "3" "integer" "required" "" "min:5,max:10"
+	run validate_config_rules "TEST_VAR" "3" "integer" "required" "" "min:5|||max:10"
 
 	assert_failure
 }
@@ -2646,11 +2782,11 @@ EOF
 
 	# Test 1: Parse first assignment
 	declare -A parse_result
-	if ! parse_assignment "VPN_NAME=\"First VPN\"" 1 "parse_result"; then
+	if ! parse_assignment "PING_COUNT=5" 1 "parse_result"; then
 		fail "parse_assignment should succeed for valid assignment"
 	fi
-	assert_equal "${parse_result[name]}" "VPN_NAME"
-	assert_equal "${parse_result[value]}" "First VPN"
+	assert_equal "${parse_result[name]}" "PING_COUNT"
+	assert_equal "${parse_result[value]}" "5"
 
 	# Test 2: Parse second assignment - should return new values
 	declare -A parse_result2
@@ -2703,12 +2839,12 @@ EOF
 
 	# Create config file with multiple valid lines
 	local config_file="${TEST_DIR:-/tmp}/test-reset.conf"
-	cat >"$config_file" <<'EOF'
-VPN_NAME="Test VPN"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-ENABLE_PING_CHECK=1
-EOF
+	load helpers/config
+	create_test_config "$config_file" \
+		"PING_COUNT=5" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"ENABLE_PING_CHECK=1"
 
 	# Parse config file (call directly to access global variables)
 	safe_parse_config_file "$config_file"
@@ -2716,7 +2852,7 @@ EOF
 	# Verify all variables were set correctly (implicitly tests variable reset)
 	# This proves that variables are properly reset between iterations because
 	# each line is parsed independently and all values are set correctly
-	assert_equal "${VPN_NAME:-}" "Test VPN"
+	assert_equal "${PING_COUNT:-}" "5"
 	assert_equal "${TIER1_THRESHOLD:-}" "1"
 	assert_equal "${TIER2_THRESHOLD:-}" "3"
 	assert_equal "${ENABLE_PING_CHECK:-}" "1"
@@ -3342,10 +3478,12 @@ source_lockfile_module() {
 
 	# Verify xfrm constants
 	assert_equal "$XFRM_OUTPUT_CONTEXT_LINES" 10
-	assert_equal "$XFRM_RECOVERY_SLEEP_SECONDS" 3
-	assert_equal "$XFRM_RECOVERY_VERIFY_TIMEOUT" 30
-	assert_equal "$XFRM_RECOVERY_VERIFY_INTERVAL" 2
-	assert_equal "$XFRM_RECOVERY_MAX_INTERVAL" 16
+
+	# Verify command timeout constants
+	assert_equal "$IPSEC_STATUS_TIMEOUT" 5
+	assert_equal "$STATE_FILE_READ_TIMEOUT" 1
+
+	# Note: XFRM_RECOVERY_* constants are in lib/recovery/constants.sh and tested in recovery tests
 
 	# Verify time constants
 	assert_equal "$SECONDS_PER_MINUTE" 60
@@ -3429,8 +3567,8 @@ source_lockfile_module() {
 # bats test_tags=category:unit
 @test "extract_spi extracts decimal SPI from xfrm output" {
 	# Purpose: Test verifies that extract_spi function correctly extracts decimal SPI values from xfrm output
-	# Expected: Function extracts SPI value in decimal format (no prefix) from xfrm state output
-	# Importance: Decimal SPI extraction supports both hex and decimal SPI formats in xfrm output
+	# Expected: Function extracts SPI value and normalizes it to hex format (0x prefix) for consistent comparison
+	# Importance: Decimal SPI extraction supports both hex and decimal SPI formats in xfrm output, normalized to hex for consistency
 	# Source the function
 	# shellcheck source=/dev/null
 	source_function "extract_spi"
@@ -3441,7 +3579,8 @@ source_lockfile_module() {
 
 	run extract_spi "$xfrm_output"
 	assert_success
-	assert_output "305419896"
+	# SPI is normalized to hex format for consistent comparison (305419896 decimal = 0x12345678 hex)
+	assert_output "0x12345678"
 }
 
 # bats test_tags=category:unit
@@ -3822,9 +3961,10 @@ source_lockfile_module() {
 
 		# Verify SPI was stored - use empty string for location to test backward compatibility
 		local stored_spi
-		stored_spi=$(get_peer_state "" "203.0.113.1" "spi" "")
+		stored_spi=$(get_peer_state "TEST" "203.0.113.1" "spi" "")
 		# Use assert_equal for better error messages
-		assert_equal "$stored_spi" "0xABCDEF12"
+		# SPI is normalized to lowercase hex format (0xABCDEF12 -> 0xabcdef12)
+		assert_equal "$stored_spi" "0xabcdef12"
 	else
 		skip "Mock IP command not found in PATH (integration test requires mock_ip at ${TEST_DIR}/mock_ip to verify xfrm status checking)"
 	fi
@@ -3852,8 +3992,8 @@ source_lockfile_module() {
 
 	# Set initial state: stored SPI and byte counter
 	# Use empty string for location to test backward compatibility
-	set_peer_state "" "203.0.113.1" "spi" "0x12345678" || true
-	set_peer_state "" "203.0.113.1" "last_bytes" "5000" || true
+	set_peer_state "TEST" "203.0.113.1" "spi" "0x12345678" || true
+	set_peer_state "TEST" "203.0.113.1" "last_bytes" "5000" || true
 
 	# Create mock ip command FIRST
 	# Use explicit path for this test since it needs to verify the mock itself
@@ -3891,13 +4031,13 @@ source_lockfile_module() {
 
 		# Verify SPI was updated - use empty string for location to test backward compatibility
 		local stored_spi
-		stored_spi=$(get_peer_state "" "203.0.113.1" "spi" "")
+		stored_spi=$(get_peer_state "TEST" "203.0.113.1" "spi" "")
 		# Use assert_equal for better error messages
 		assert_equal "$stored_spi" "0x87654321"
 
 		# Verify byte counter baseline was reset (rekey detected)
 		local last_bytes
-		last_bytes=$(get_peer_state "" "203.0.113.1" "last_bytes" "0")
+		last_bytes=$(get_peer_state "TEST" "203.0.113.1" "last_bytes" "0")
 		# Use assert_equal for better error messages
 		assert_equal "$last_bytes" "1000"
 	else
@@ -3939,14 +4079,15 @@ source_lockfile_module() {
 	chmod +x "$mock_ip"
 	add_mock_to_path
 
-	# Test strategy selection (call directly, not with run, so global variables persist)
-	select_recovery_strategy "203.0.113.1" 2
+	# Test strategy selection (uses nameref associative array)
+	declare -A recovery_info
+	select_recovery_strategy "203.0.113.1" 2 "recovery_info"
 
 	# Use assert_equal for better error messages
-	assert_equal "$RECOVERY_STRATEGY" "xfrm"
-	assert_equal "$RECOVERY_COMMAND" "attempt_xfrm_recovery"
-	assert_equal "$RECOVERY_IMPACT" "per-connection"
-	assert_equal "$RECOVERY_AVAILABLE" "1"
+	assert_equal "${recovery_info[strategy]}" "xfrm"
+	assert_equal "${recovery_info[command]}" "attempt_xfrm_recovery"
+	assert_equal "${recovery_info[impact]}" "per-connection"
+	assert_equal "${recovery_info[available]}" "1"
 
 	remove_mock_from_path
 }
@@ -3969,9 +4110,6 @@ source_lockfile_module() {
 		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
 	fi
 
-	# Clear variables from previous tests
-	unset RECOVERY_STRATEGY RECOVERY_COMMAND RECOVERY_IMPACT RECOVERY_AVAILABLE
-
 	# Set up environment
 	ENABLE_XFRM_RECOVERY=0
 	# Mock ipsec command available
@@ -3980,14 +4118,15 @@ source_lockfile_module() {
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	# Test strategy selection (call directly, not with run, so global variables persist)
-	select_recovery_strategy "203.0.113.1" 2
+	# Test strategy selection (uses nameref associative array)
+	declare -A recovery_info
+	select_recovery_strategy "203.0.113.1" 2 "recovery_info"
 
 	# Use assert_equal for better error messages
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload"
-	assert_equal "$RECOVERY_COMMAND" "ipsec reload"
-	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
-	assert_equal "$RECOVERY_AVAILABLE" "1"
+	assert_equal "${recovery_info[strategy]}" "ipsec_reload"
+	assert_equal "${recovery_info[command]}" "ipsec reload"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" "1"
 
 	remove_mock_from_path
 }
@@ -4010,9 +4149,6 @@ source_lockfile_module() {
 		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
 	fi
 
-	# Clear variables from previous tests
-	unset RECOVERY_STRATEGY RECOVERY_COMMAND RECOVERY_IMPACT RECOVERY_AVAILABLE
-
 	# Set up environment
 	ENABLE_XFRM_RECOVERY=0
 	# Mock ipsec command available
@@ -4021,14 +4157,15 @@ source_lockfile_module() {
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	# Test strategy selection (call directly, not with run, so global variables persist)
-	select_recovery_strategy "" 3
+	# Test strategy selection (uses nameref associative array)
+	declare -A recovery_info
+	select_recovery_strategy "" 3 "recovery_info"
 
 	# Use assert_equal for better error messages
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_restart"
-	assert_equal "$RECOVERY_COMMAND" "ipsec restart"
-	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
-	assert_equal "$RECOVERY_AVAILABLE" "1"
+	assert_equal "${recovery_info[strategy]}" "ipsec_restart"
+	assert_equal "${recovery_info[command]}" "ipsec restart"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" "1"
 
 	remove_mock_from_path
 }
@@ -4051,9 +4188,6 @@ source_lockfile_module() {
 		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
 	fi
 
-	# Clear variables from previous tests
-	unset RECOVERY_STRATEGY RECOVERY_COMMAND RECOVERY_IMPACT RECOVERY_AVAILABLE
-
 	# Set up environment
 	ENABLE_XFRM_RECOVERY=1
 	# Mock ipsec command available
@@ -4062,14 +4196,15 @@ source_lockfile_module() {
 	chmod +x "$mock_ipsec"
 	add_mock_to_path
 
-	# Test strategy selection (no peer IP, call directly so global variables persist)
-	select_recovery_strategy "" 2
+	# Test strategy selection (uses nameref associative array)
+	declare -A recovery_info
+	select_recovery_strategy "" 2 "recovery_info"
 
 	# Use assert_equal for better error messages
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload"
-	assert_equal "$RECOVERY_COMMAND" "ipsec reload"
-	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
-	assert_equal "$RECOVERY_AVAILABLE" "1"
+	assert_equal "${recovery_info[strategy]}" "ipsec_reload"
+	assert_equal "${recovery_info[command]}" "ipsec reload"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" "1"
 
 	remove_mock_from_path
 }
@@ -4091,9 +4226,6 @@ source_lockfile_module() {
 		# shellcheck source=/dev/null
 		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
 	fi
-
-	# Clear variables from previous tests
-	unset RECOVERY_STRATEGY RECOVERY_COMMAND RECOVERY_IMPACT RECOVERY_AVAILABLE
 
 	# Set up environment - no commands available
 	ENABLE_XFRM_RECOVERY=1
@@ -4133,15 +4265,16 @@ source_lockfile_module() {
 		command -v "$cmd" >/dev/null 2>&1
 	}
 
-	# Test strategy selection (call directly so global variables persist)
-	select_recovery_strategy "203.0.113.1" 2 || true
+	# Test strategy selection (uses nameref associative array)
+	declare -A recovery_info
+	select_recovery_strategy "203.0.113.1" 2 "recovery_info" || true
 
 	# Restore PATH
 	PATH="$original_path"
 
 	# Use assert_equal for better error messages
-	assert_equal "$RECOVERY_STRATEGY" "unavailable"
-	assert_equal "$RECOVERY_AVAILABLE" "0"
+	assert_equal "${recovery_info[strategy]}" "unavailable"
+	assert_equal "${recovery_info[available]}" "0"
 }
 
 # bats test_tags=category:unit
@@ -4175,7 +4308,8 @@ source_lockfile_module() {
 	}
 
 	# Test invalid tier
-	run select_recovery_strategy "203.0.113.1" 1
+	declare -A recovery_info
+	run select_recovery_strategy "203.0.113.1" 1 "recovery_info"
 
 	assert_failure
 }

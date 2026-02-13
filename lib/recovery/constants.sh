@@ -3,7 +3,16 @@
 # Recovery module constants for UDM VPN Monitor
 # Defines recovery-specific constants used across recovery modules
 #
-# Version: 0.6.0
+# Usage Guidelines:
+#   - Always use these constants instead of magic numbers in recovery code
+#   - Add new constants here when a value is used in multiple recovery modules or has semantic meaning
+#   - For general application constants, see lib/constants.sh
+#
+# Sourcing:
+#   This file is safe to source multiple times (idempotent).
+#   Constants are only defined if not already set.
+#
+# Version: 0.7.0
 #
 
 # shellcheck disable=SC2034
@@ -12,23 +21,18 @@
 # Sleep delay (in seconds) after xfrm SA deletion to allow IKE re-establishment
 # Gives strongSwan time to detect SA deletion and initiate re-establishment
 # Used by both xfrm_recovery.sh and ipsec_recovery.sh
-readonly XFRM_RECOVERY_SLEEP_SECONDS=3
+[[ -z "${XFRM_RECOVERY_SLEEP_SECONDS:-}" ]] && readonly XFRM_RECOVERY_SLEEP_SECONDS=3
 
 # Maximum time (in seconds) to wait for SA re-establishment after deletion
 # Verification checks are performed with retries up to this timeout
 # Used by xfrm_recovery.sh
-readonly XFRM_RECOVERY_VERIFY_TIMEOUT=30
+[[ -z "${XFRM_RECOVERY_VERIFY_TIMEOUT:-}" ]] && readonly XFRM_RECOVERY_VERIFY_TIMEOUT=30
 
 # Interval (in seconds) between verification retry attempts
 # Used by xfrm_recovery.sh for exponential backoff during recovery verification
-readonly XFRM_RECOVERY_VERIFY_INTERVAL=2
+[[ -z "${XFRM_RECOVERY_VERIFY_INTERVAL:-}" ]] && readonly XFRM_RECOVERY_VERIFY_INTERVAL=2
 
 # Maximum interval (in seconds) for exponential backoff during recovery verification
 # Used to cap the exponential backoff interval growth
 # Used by xfrm_recovery.sh
-readonly XFRM_RECOVERY_MAX_INTERVAL=16
-
-# Timeout (in seconds) for ipsec status command to prevent hanging
-# Prevents ipsec status from blocking script execution indefinitely
-# Used by recovery_verification.sh
-readonly IPSEC_STATUS_TIMEOUT=5
+[[ -z "${XFRM_RECOVERY_MAX_INTERVAL:-}" ]] && readonly XFRM_RECOVERY_MAX_INTERVAL=16

@@ -4,7 +4,7 @@
 # Analyzes VPN monitor logs and generates reports on failure frequency and recovery success rate
 # Exports data to CSV for spreadsheet analysis
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 set -euo pipefail
@@ -32,7 +32,7 @@ source "${SCRIPT_DIR}/lib/logging.sh" 2>/dev/null || {
 	# Output:
 	#   Prints formatted timestamp to stdout (format: YYYY-MM-DD HH:MM:SS)
 	get_formatted_timestamp() {
-		date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S'
+		date '+%Y-%m-%d %H:%M:%S'
 	}
 }
 
@@ -897,13 +897,23 @@ main() {
 	# Parse command line arguments
 	parse_args "$@"
 
-	# Update REPORT_FILE and CSV_FILE to use OUTPUT_DIR if they weren't explicitly set
+	# Organize files into subdirectories when outputting to analyze directory
+	# If OUTPUT_DIR ends with "analyze" or is "analyze", use vpn-monitor-logs subdirectory
+	local actual_output_dir="$OUTPUT_DIR"
+	# Normalize trailing slashes for comparison
+	local normalized_dir="${OUTPUT_DIR%/}"
+	if [[ "$normalized_dir" == *"/analyze" ]] || [[ "$normalized_dir" == "analyze" ]] || [[ "$(basename "$normalized_dir")" == "analyze" ]]; then
+		# Remove trailing slash if present before appending subdirectory
+		actual_output_dir="${normalized_dir}/vpn-monitor-logs"
+	fi
+
+	# Update REPORT_FILE and CSV_FILE to use actual_output_dir if they weren't explicitly set
 	# This ensures that when -o changes OUTPUT_DIR, the default report/csv paths are updated
 	if [[ -z "${REPORT_FILE_SET:-}" ]]; then
-		REPORT_FILE="${OUTPUT_DIR}/vpn-monitor-report.txt"
+		REPORT_FILE="${actual_output_dir}/vpn-monitor-report.txt"
 	fi
 	if [[ -z "${CSV_FILE_SET:-}" ]]; then
-		CSV_FILE="${OUTPUT_DIR}/vpn-monitor-analysis.csv"
+		CSV_FILE="${actual_output_dir}/vpn-monitor-analysis.csv"
 	fi
 
 	# Parse date range if specified
@@ -914,8 +924,8 @@ main() {
 	fi
 
 	# Ensure output directory exists
-	mkdir -p "$OUTPUT_DIR" || {
-		echo "ERROR: Cannot create output directory: $OUTPUT_DIR" >&2
+	mkdir -p "$actual_output_dir" || {
+		echo "ERROR: Cannot create output directory: $actual_output_dir" >&2
 		exit 1
 	}
 

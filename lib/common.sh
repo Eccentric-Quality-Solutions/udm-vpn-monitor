@@ -3,27 +3,30 @@
 # Common functions for UDM VPN Monitor
 # Shared logging and utility functions for installation/uninstallation scripts and main monitor
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 # This module provides shared utility functions used throughout the codebase to reduce duplication:
-# - File operations: file_exists_and_readable(), ensure_file_exists(), atomic_write_file()
+# - File operations: file_exists_and_readable(), ensure_file_exists(), atomic_write_file(), read_counter_file()
 # - Directory operations: directory_exists(), directory_writable()
-# - Timestamp operations: get_unix_timestamp(), validate_timestamp(), safe_timestamp_subtract(), safe_timestamp_add(), safe_timestamp_diff()
+# - Timestamp operations: get_unix_timestamp(), validate_timestamp(), safe_timestamp_subtract(), safe_timestamp_add(), safe_timestamp_diff(), calculate_duration(), start_timer(), stop_timer()
 # - String escaping: escape_sed_replacement(), escape_sed_regex()
 # - String sanitization: sanitize_location_name()
+# - String trimming: trim()
+# - Validation: validate_spi_format()
 # - Config file operations: update_config_value()
 # - Logging: log_info(), log_warn(), log_error()
 # - System checks: check_root()
+# - Path resolution: resolve_lib_dir()
 #
 # All modules should use these shared functions instead of duplicating logic.
 # See ARCHITECTURAL_REVIEW.md section 8.3 for code duplication reduction guidelines.
 #
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# Colors for output (only set if not already defined to allow re-sourcing)
+[[ -z "${RED:-}" ]] && readonly RED='\033[0;31m'
+[[ -z "${GREEN:-}" ]] && readonly GREEN='\033[0;32m'
+[[ -z "${YELLOW:-}" ]] && readonly YELLOW='\033[1;33m'
+[[ -z "${NC:-}" ]] && readonly NC='\033[0m' # No Color
 
 # Log an informational message
 #
@@ -158,6 +161,8 @@ check_root() {
 #
 # Verifies that a file exists and is readable. This is a common pattern
 # used throughout the codebase to check file accessibility before operations.
+# Uses timeout wrapper to prevent hangs when checking files with restrictive
+# permissions (e.g., 000) on some systems.
 #
 # Arguments:
 #   $1: File path to check
@@ -170,13 +175,130 @@ check_root() {
 #   if file_exists_and_readable "$config_file"; then
 #       safe_parse_config_file "$config_file"  # Use safe parser, not source
 #   fi
+#
+# Note:
+#   Uses timeout wrapper (if available) to prevent hangs on unreadable files.
+#   On systems without timeout command, falls back to standard test (may hang
+#   on some filesystems with restrictive permissions).
 file_exists_and_readable() {
-	[[ -f "$1" ]] && [[ -r "$1" ]]
+	local file="$1"
+	# Check file exists first (fast check)
+	if [[ ! -f "$file" ]]; then
+		return 1
+	fi
+	# Check readability with timeout wrapper to prevent hangs on unreadable files
+	# This is especially important for files with 000 permissions on some systems
+	# where the readability check might hang due to filesystem or NFS issues
+	# Use --kill-after with timeout to ensure the process is killed if it hangs
+	# This is more reliable than timeout alone on some systems
+	if command -v timeout >/dev/null 2>&1; then
+		# Use timeout with --kill-after to ensure test -r is killed if it hangs
+		# --kill-after=0.5 sends SIGKILL 0.5 seconds after SIGTERM if process doesn't exit
+		# This ensures the check completes quickly even if test -r hangs
+		timeout --kill-after=0.5 1 test -r "$file" 2>/dev/null && return 0 || return 1
+	else
+		# Fallback without timeout (may hang on some systems with restrictive permissions)
+		[[ -r "$file" ]]
+	fi
+}
+
+# Run command with timeout wrapper
+#
+# Executes a command with timeout protection if the timeout command is available.
+# Falls back to executing without timeout if timeout is not available.
+# This consolidates the common pattern of checking for timeout availability
+# before executing commands that might hang.
+#
+# Arguments:
+#   $1: Timeout duration in seconds (default: 1)
+#   $2-$N: Command and arguments to execute (or command string if using -c flag)
+#
+# Returns:
+#   Exit code of the executed command (or timeout exit code if command times out)
+#
+# Output:
+#   Captures and returns stdout/stderr of the command (for use in command substitution)
+#
+# Examples:
+#   # Simple command
+#   if run_with_timeout 1 grep -qE '^[0-9]+$' "$file"; then
+#       echo "File contains only digits"
+#   fi
+#
+#   # Command with pipes (wrap in sh -c)
+#   result=$(run_with_timeout 1 sh -c "grep -E '^[0-9]+$' \"$file\" | sort -n | tail -n 1")
+#
+#   # Capture output
+#   output=$(run_with_timeout 1 cat "$file")
+#
+# Note:
+#   For commands with pipes or complex redirections, wrap in sh -c.
+#   Timeout exit code is 124 if command times out.
+#   Stderr is redirected to /dev/null to match existing patterns.
+run_with_timeout() {
+	local timeout_duration="${1:-1}"
+	shift # Remove timeout_duration from arguments, leaving command
+
+	# Check if timeout command is available
+	if command -v timeout >/dev/null 2>&1; then
+		# Execute with timeout
+		timeout "$timeout_duration" "$@" 2>/dev/null
+		return $?
+	else
+		# Fallback without timeout
+		"$@" 2>/dev/null
+		return $?
+	fi
+}
+
+# Run command with timeout wrapper and kill-after option
+#
+# Executes a command with timeout protection and --kill-after option if the timeout command is available.
+# Falls back to executing without timeout if timeout is not available.
+# This consolidates the common pattern of checking for timeout availability before executing
+# commands that might hang and need aggressive termination (e.g., find on unreadable files).
+#
+# Arguments:
+#   $1: Timeout duration in seconds (default: 1)
+#   $2: Kill-after duration in seconds (default: 0.5)
+#   $3-$N: Command and arguments to execute
+#
+# Returns:
+#   Exit code of the executed command (or timeout exit code if command times out)
+#
+# Output:
+#   Captures and returns stdout/stderr of the command (for use in command substitution)
+#
+# Examples:
+#   # Find command with kill-after
+#   run_with_timeout_kill_after 5 1 find "$dir" -name "*.txt" -print0 >"$output_file" 2>/dev/null || true
+#
+# Note:
+#   For commands with pipes or complex redirections, wrap in sh -c.
+#   Timeout exit code is 124 if command times out.
+#   Stderr is redirected to /dev/null to match existing patterns.
+#   Use this helper for commands that need aggressive termination (e.g., find on unreadable files).
+run_with_timeout_kill_after() {
+	local timeout_duration="${1:-1}"
+	local kill_after="${2:-0.5}"
+	shift 2 # Remove timeout_duration and kill_after from arguments, leaving command
+
+	# Check if timeout command is available
+	if command -v timeout >/dev/null 2>&1; then
+		# Execute with timeout and --kill-after
+		timeout --kill-after="$kill_after" "$timeout_duration" "$@" 2>/dev/null
+		return $?
+	else
+		# Fallback without timeout
+		"$@" 2>/dev/null
+		return $?
+	fi
 }
 
 # Ensure file exists with optional default content
 #
 # Creates a file if it doesn't exist, optionally writing default content.
+# Automatically creates parent directories if they don't exist.
 # This reduces code duplication for file initialization patterns.
 #
 # Arguments:
@@ -185,10 +307,10 @@ file_exists_and_readable() {
 #
 # Returns:
 #   0: File exists or was created successfully
-#   1: Failed to create file
+#   1: Failed to create file or parent directories
 #
 # Side effects:
-#   Creates file with default content if it doesn't exist
+#   Creates parent directories and file with default content if they don't exist
 #
 # Examples:
 #   ensure_file_exists "$counter_file" "0"
@@ -201,13 +323,21 @@ file_exists_and_readable() {
 # Note:
 #   Returns error code on failure - callers should handle errors appropriately.
 #   Some callers may want to log and continue, others may want to die().
+#   Automatically creates parent directories using mkdir -p if they don't exist.
 ensure_file_exists() {
 	local file="$1"
 	local default_content="${2:-}"
 
 	if [[ ! -f "$file" ]]; then
-		if ! echo "$default_content" >"$file" 2>/dev/null; then
-			# Return error code - let caller decide how to handle
+		# Ensure parent directory exists
+		local parent_dir
+		parent_dir=$(dirname "$file")
+		if [[ ! -d "$parent_dir" ]]; then
+			if ! mkdir -p "$parent_dir" 2>/dev/null; then
+				return 1
+			fi
+		fi
+		if ! atomic_write_file "$file" "$default_content"; then
 			return 1
 		fi
 	fi
@@ -237,6 +367,7 @@ ensure_file_exists() {
 #
 # Note:
 #   Uses 'date +%s' command internally
+#   May fail if date command is unavailable (returns error, caller should handle)
 get_unix_timestamp() {
 	date +%s
 }
@@ -440,6 +571,102 @@ safe_timestamp_diff() {
 	return 0
 }
 
+# Calculate duration between two timestamps
+#
+# Calculates the duration between a start time and an end time (defaults to now).
+# Ensures the result is non-negative (clamps to 0 if negative).
+# This is a convenience wrapper around safe_timestamp_diff that handles
+# common error cases and ensures non-negative durations.
+#
+# Arguments:
+#   $1: Start timestamp (required)
+#   $2: End timestamp (optional, defaults to current time)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints duration in seconds (non-negative integer) to stdout
+#
+# Examples:
+#   duration=$(calculate_duration "$start_time")
+#   duration=$(calculate_duration "$start_time" "$end_time")
+#
+# Note:
+#   Requires get_unix_timestamp() and safe_timestamp_diff() to be available
+#   Negative durations are clamped to 0
+calculate_duration() {
+	local start_time="$1"
+	local end_time="${2:-$(get_unix_timestamp)}"
+	local duration
+	duration=$(safe_timestamp_diff "$end_time" "$start_time" 2>/dev/null || echo "0")
+	if [[ $duration -lt 0 ]]; then
+		duration=0
+	fi
+	echo "$duration"
+	return 0
+}
+
+# Start a timer
+#
+# Returns a timer identifier (timestamp) that can be used with stop_timer()
+# to measure command execution duration. Handles errors gracefully by
+# returning "0" if timestamp retrieval fails.
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints timer identifier (Unix timestamp) to stdout, or "0" if measurement failed
+#
+# Example:
+#   timer=$(start_timer)
+#   # ... execute command ...
+#   duration=$(stop_timer "$timer")
+#
+# Note:
+#   Requires get_unix_timestamp() to be available
+#   Returns "0" on failure, which stop_timer() handles gracefully
+start_timer() {
+	get_unix_timestamp 2>/dev/null || echo "0"
+}
+
+# Stop a timer and calculate duration
+#
+# Calculates the duration between a timer start time (from start_timer())
+# and the current time. Handles errors gracefully by returning "0" if
+# measurement fails.
+#
+# Arguments:
+#   $1: Timer identifier from start_timer() (Unix timestamp)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints duration in seconds to stdout, or "0" if measurement failed
+#
+# Example:
+#   timer=$(start_timer)
+#   # ... execute command ...
+#   duration=$(stop_timer "$timer")
+#
+# Note:
+#   Requires get_unix_timestamp() and calculate_duration() to be available
+#   Returns "0" if start_time is "0" or if measurement fails
+stop_timer() {
+	local start_time="$1"
+	local end_time
+	end_time=$(get_unix_timestamp 2>/dev/null || echo "0")
+
+	if [[ "$start_time" != "0" ]] && [[ "$end_time" != "0" ]]; then
+		calculate_duration "$start_time" "$end_time" 2>/dev/null || echo "0"
+	else
+		echo "0"
+	fi
+	return 0
+}
+
 # Check if directory exists
 #
 # Verifies that a directory exists. This is a common pattern used throughout
@@ -552,6 +779,7 @@ try_ensure_directory_exists() {
 # Note:
 #   Uses pattern: echo "$content" >"${file}.tmp" && mv "${file}.tmp" "$file"
 #   This ensures atomic operation - either full write succeeds or file remains unchanged
+#   Sets explicit permissions (chmod 600) after successful write for security
 atomic_write_file() {
 	local file="$1"
 	local content="$2"
@@ -575,7 +803,54 @@ atomic_write_file() {
 	if ! (echo "$content" >"${file}.tmp" && mv "${file}.tmp" "$file"); then
 		return 1
 	fi
+
+	# Set explicit permissions for state files (security best practice)
+	# chmod 600 ensures only owner can read/write, preventing information leakage
+	chmod 600 "$file" 2>/dev/null || true
+
 	return 0
+}
+
+# Read counter value from file safely
+#
+# Safely reads a counter file with proper error handling and corruption recovery.
+# This function consolidates the common pattern of reading counter files used
+# throughout the codebase for statistics tracking.
+#
+# Arguments:
+#   $1: Counter file path to read
+#
+# Returns:
+#   0: Always succeeds (read failures default to 0)
+#
+# Output:
+#   Prints counter value (0 if file doesn't exist, is unreadable, or corrupted)
+#
+# Side effects:
+#   None
+#
+# Examples:
+#   local count=$(read_counter_file "$counter_file")
+#   local dns_success=$(read_counter_file "$dns_success_file")
+#
+# Note:
+#   Handles file corruption by returning 0
+#   Uses file_exists_and_readable() to prevent hangs on unreadable files
+#   Validates that the value is numeric before returning it
+read_counter_file() {
+	local counter_file="$1"
+	local value
+
+	if file_exists_and_readable "$counter_file"; then
+		value=$(cat "$counter_file" 2>/dev/null || echo "0")
+	else
+		value="0"
+	fi
+
+	# Validate value is numeric (handle corruption)
+	[[ "$value" =~ ^[0-9]+$ ]] || value=0
+
+	echo "$value"
 }
 
 # Escape string for sed replacement
@@ -611,9 +886,9 @@ escape_sed_replacement() {
 	# Use a different delimiter for the sed command that escapes the delimiter character
 	# This avoids issues when delimiter is | (which would create invalid s||| syntax)
 	if [[ "$delimiter" == "|" ]]; then
-		printf '%s\n' "$value" | sed 's/\\/\\\\/g' | sed 's/&/\\&/g' | sed "s#|#\\|#g"
+		printf '%s\n' "$value" | sed -e 's/\\/\\\\/g' -e 's/&/\\&/g' -e "s#|#\\\\|#g"
 	else
-		printf '%s\n' "$value" | sed 's/\\/\\\\/g' | sed 's/&/\\&/g' | sed "s|${delimiter}|\\${delimiter}|g"
+		printf '%s\n' "$value" | sed -e 's/\\/\\\\/g' -e 's/&/\\&/g' -e "s|${delimiter}|\\\\${delimiter}|g"
 	fi
 }
 
@@ -693,6 +968,84 @@ sanitize_location_name() {
 	return 0
 }
 
+# Validate SPI format (hex or decimal)
+#
+# Validates that a Security Parameter Index (SPI) value is in a valid format.
+# SPI values can be in hex format (0x12345678) or decimal format (305419896).
+# This function provides a single source of truth for SPI format validation
+# across the codebase.
+#
+# Arguments:
+#   $1: SPI value to validate
+#
+# Returns:
+#   0: Valid SPI format (hex or decimal)
+#   1: Invalid SPI format (empty, malformed, or contains invalid characters)
+#
+# Examples:
+#   if validate_spi_format "$spi"; then
+#       echo "SPI is valid"
+#   fi
+#
+#   if ! validate_spi_format "$current_spi"; then
+#       return 1
+#   fi
+#
+# Note:
+#   - Accepts hex format: 0x[0-9a-fA-F]+ (e.g., "0x12345678", "0xABC")
+#   - Accepts decimal format: [0-9]+ (e.g., "305419896", "123")
+#   - Empty strings are considered invalid (return 1)
+#   - This function only validates format, not value ranges or semantics
+validate_spi_format() {
+	local spi="$1"
+	[[ "$spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]
+}
+
+# Trim leading and trailing whitespace from a string
+#
+# Removes all leading and trailing whitespace characters (spaces, tabs, newlines)
+# from the input string using efficient bash parameter expansion.
+#
+# Arguments:
+#   $1: String to trim
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints trimmed string to stdout
+#
+# Examples:
+#   trimmed=$(trim "  hello world  ")
+#   # Returns: "hello world"
+#
+#   value=$(trim "$input_value")
+#   if [[ -z "$value" ]]; then
+#       echo "Empty after trimming"
+#   fi
+#
+# Note:
+#   - Uses bash parameter expansion for performance (faster than sed)
+#   - Handles all POSIX whitespace characters: space, tab, newline, etc.
+#   - Returns empty string if input is all whitespace or empty
+#   - Accepts empty or missing arguments (treats as empty string)
+trim() {
+	local str="$1"
+
+	# Remove leading whitespace: ${str#"${str%%[![:space:]]*}"}
+	#   ${str%%[![:space:]]*} - removes everything from first non-space to end
+	#   ${str#...} - removes that leading whitespace prefix
+	str="${str#"${str%%[![:space:]]*}"}"
+
+	# Remove trailing whitespace: ${str%"${str##*[![:space:]]}"}
+	#   ${str##*[![:space:]]} - removes everything up to last non-space
+	#   ${str%...} - removes that trailing whitespace suffix
+	str="${str%"${str##*[![:space:]]}"}"
+
+	echo "$str"
+	return 0
+}
+
 # Update or add a configuration variable in config file
 #
 # Updates an existing configuration variable or adds it if it doesn't exist.
@@ -708,7 +1061,7 @@ sanitize_location_name() {
 #
 # Returns:
 #   0: Success
-#   1: Failed to update config file (file doesn't exist or write failed)
+#   1: Failed to update config file (file doesn't exist, unreadable, or write failed)
 #
 # Examples:
 #   update_config_value "$config_file" "LOCAL_UDM_IP" "$local_udm_ip"
@@ -716,26 +1069,44 @@ sanitize_location_name() {
 #   update_config_value "$config_file" "LOCAL_UDM_IP" "$ip" "^ENABLE_PING_CHECK="
 #
 # Note:
+#   Uses escape_sed_regex() to safely escape variable names for regex matching
 #   Uses escape_sed_replacement() to safely escape values for sed replacement
 #   Uses | as delimiter in sed to avoid conflicts with / in paths/IPs
+#   Variable names should be valid shell identifiers (alphanumeric + underscore, starting with letter/underscore)
+#   Variable names containing regex special characters are properly escaped
 update_config_value() {
 	local config_file="$1"
 	local var_name="$2"
 	local var_value="$3"
 	local insert_after="${4:-}"
 
+	# Validate variable name format (must be valid shell identifier)
+	# Shell variable names: start with letter/underscore, followed by alphanumeric/underscore
+	if [[ ! "$var_name" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+		return 1
+	fi
+
 	# Validate config file exists
 	if [[ ! -f "$config_file" ]]; then
 		return 1
 	fi
 
+	# Check file readability before grep operation (prevents hangs on unreadable files)
+	if ! file_exists_and_readable "$config_file"; then
+		return 1
+	fi
+
+	# Escape variable name for regex matching
+	local escaped_var_name
+	escaped_var_name=$(escape_sed_regex "$var_name")
+
 	# Escape value for sed replacement
 	local escaped_value
 	escaped_value=$(escape_sed_replacement "$var_value" "|")
 
-	if grep -q "^${var_name}=" "$config_file"; then
-		# Update existing line
-		sed -i "s|^${var_name}=.*|${var_name}=\"${escaped_value}\"|" "$config_file"
+	if grep -q "^${escaped_var_name}=" "$config_file"; then
+		# Update existing line (use original var_name in replacement, escaped in pattern)
+		sed -i "s|^${escaped_var_name}=.*|${var_name}=\"${escaped_value}\"|" "$config_file"
 	else
 		# Add new line
 		if [[ -n "$insert_after" ]]; then
@@ -745,7 +1116,7 @@ update_config_value() {
 			sed -i "/${insert_after}/a ${var_name}=\"${escaped_value}\"" "$config_file"
 		else
 			# Append to end of file
-			echo "${var_name}=\"${var_value}\"" >>"$config_file"
+			echo "${var_name}=\"${escaped_value}\"" >>"$config_file"
 		fi
 	fi
 
@@ -763,22 +1134,31 @@ update_config_value() {
 #   $2: Value to assign
 #
 # Returns:
-#   0: Always succeeds
+#   0: Success
+#   1: Invalid variable name format
 #
 # Side effects:
 #   Sets global variable via declare -g + printf -v
 #
 # Examples:
-#   safe_set_variable "VPN_NAME" "Site-to-Site VPN"
+#   safe_set_variable "PING_COUNT" "5"
 #   safe_set_variable "$var_name" "$var_value"
 #
 # Note:
 #   This function is used throughout config.sh to safely set configuration
 #   variables without risk of code injection. It replaces the repeated pattern
 #   of "declare -g \"$var_name\"; printf -v \"$var_name\" '%s' \"$var_value\""
+#   Variable names must be valid shell identifiers (alphanumeric + underscore,
+#   starting with letter or underscore)
 safe_set_variable() {
 	local var_name="$1"
 	local var_value="$2"
+
+	# Validate variable name format (must be valid shell identifier)
+	if [[ ! "$var_name" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+		return 1
+	fi
+
 	declare -g "$var_name"
 	printf -v "$var_name" '%s' "$var_value"
 }
@@ -875,9 +1255,9 @@ check_command_available() {
 
 # Get full path to a command
 #
-# Attempts to find the full path to a command, handling PATH restrictions
-# common in cron/systemd environments. Returns the command name itself if
-# path cannot be determined (fallback to PATH at execution time).
+# Attempts to find the full path to a command by checking standard system
+# directories directly. This avoids relying on PATH or command -v, which don't
+# work reliably in cron/systemd environments with restricted PATH.
 #
 # Arguments:
 #   $1: Command name to find (e.g., "ip", "ipsec", "ping")
@@ -896,24 +1276,30 @@ check_command_available() {
 #   "$ipsec_cmd" reload
 #
 # Note:
-#   Uses same fallback logic as check_command_available() but returns path
-#   Falls back to command name if path cannot be determined
+#   Since this script always runs in cron/systemd with restricted PATH,
+#   we check standard system directories first without relying on command -v.
+#   Falls back to command name if path cannot be determined.
 #   Useful for executing commands in PATH-restricted environments (cron/systemd)
 get_command_path() {
 	local cmd="$1"
 	local cmd_path=""
 
-	# First try command -v (POSIX compliant, checks PATH)
+	# First try PATH lookup via command -v
+	# This allows:
+	# - Tests: Mock commands in PATH override system commands
+	# - Production: Commands in PATH are found
+	# - Restricted PATH (cron/systemd): Falls through to system directory check
 	cmd_path=$(command -v "$cmd" 2>/dev/null || echo "")
 	if [[ -n "$cmd_path" ]]; then
 		echo "$cmd_path"
 		return 0
 	fi
 
-	# Fallback: Check common system directories
-	# This handles cases where PATH doesn't include /usr/sbin or /sbin
-	# (common in cron/systemd environments on UDM systems)
-	local system_dirs=("/usr/sbin" "/usr/bin" "/sbin" "/bin")
+	# Check common system directories directly if not found in PATH
+	# This handles PATH-restricted environments (cron/systemd) where PATH doesn't include
+	# standard system directories like /usr/sbin and /sbin
+	# Order matters: check /usr/sbin and /sbin first (where ip, ipsec typically live)
+	local system_dirs=("/usr/sbin" "/sbin" "/usr/bin" "/bin")
 	for dir in "${system_dirs[@]}"; do
 		if [[ -x "${dir}/${cmd}" ]]; then
 			echo "${dir}/${cmd}"
@@ -922,7 +1308,48 @@ get_command_path() {
 	done
 
 	# Path not found - return command name (will rely on PATH at execution time)
+	# This should be rare since we check both PATH and standard directories
+	# Caller should have checked availability with check_command_available first
 	echo "$cmd"
+	return 0
+}
+
+# Get IP command path with recovery context support
+#
+# Returns the full path to the 'ip' command, preferring _RECOVERY_IP_PATH
+# if available (set by recovery orchestration), otherwise resolving via
+# get_command_path(). Falls back to "ip" if resolution fails.
+#
+# This function consolidates the common pattern of resolving the IP command
+# path used throughout the codebase, especially in recovery and detection code.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints command path to stdout (full path or "ip" as fallback)
+#
+# Examples:
+#   ip_cmd=$(get_ip_command_path)
+#   "$ip_cmd" xfrm state delete ...
+#
+# Note:
+#   Uses _RECOVERY_IP_PATH if available (set by recovery orchestration for
+#   consistency in PATH-restricted environments like cron/systemd).
+#   Falls back to get_command_path() if _RECOVERY_IP_PATH is not set.
+#   Final fallback is "ip" command name (relies on PATH at execution time).
+get_ip_command_path() {
+	local ip_cmd="${_RECOVERY_IP_PATH:-}"
+	if [[ -z "$ip_cmd" ]] && command -v get_command_path >/dev/null 2>&1; then
+		ip_cmd=$(get_command_path "ip")
+	fi
+	if [[ -z "$ip_cmd" ]]; then
+		ip_cmd="ip" # Fallback to command name
+	fi
+	echo "$ip_cmd"
 	return 0
 }
 
@@ -984,6 +1411,51 @@ check_command_or_warn() {
 	return 0
 }
 
+# Format peer IP display for log messages
+#
+# Formats peer IP addresses for consistent display in log messages.
+# Shows both internal and external IPs when available, otherwise just external IP.
+# For multiple internal IPs (space-separated), uses the first one.
+#
+# Arguments:
+#   $1: External peer IP address (external/public IP of remote VPN gateway, required)
+#   $2: Internal peer IP address(es) (optional, can be single IP or space-separated string)
+#
+# Returns:
+#   Prints formatted IP string to stdout: "($internal_peer_ip, $external_peer_ip)" or "($external_peer_ip)"
+#
+# Examples:
+#   ip_display=$(format_peer_ip_display "203.0.113.1" "192.168.1.1")
+#   # Output: "(192.168.1.1, 203.0.113.1)"
+#   ip_display=$(format_peer_ip_display "203.0.113.1" "")
+#   # Output: "(203.0.113.1)"
+#
+# Note:
+#   This function is used throughout the codebase to ensure consistent IP display
+#   in log messages. It removes redundant location names and shows both IPs when available.
+format_peer_ip_display() {
+	local external_peer_ip="$1"
+	local internal_peer_ips="${2:-}"
+
+	# Extract first internal IP if multiple provided (space-separated)
+	local internal_peer_ip=""
+	if [[ -n "$internal_peer_ips" ]]; then
+		local IFS=' '
+		local -a ips_array
+		read -ra ips_array <<<"$internal_peer_ips"
+		if [[ ${#ips_array[@]} -gt 0 ]]; then
+			internal_peer_ip="${ips_array[0]}"
+		fi
+	fi
+
+	# Format IPs: include internal IP if available, otherwise just external IP
+	if [[ -n "$internal_peer_ip" ]]; then
+		echo "($internal_peer_ip, $external_peer_ip)"
+	else
+		echo "($external_peer_ip)"
+	fi
+}
+
 # Safely source a library file with error suppression
 #
 # Sources a library file with error suppression (2>/dev/null) and returns
@@ -1027,5 +1499,131 @@ safe_source_lib() {
 	else
 		# Source failed
 		return 1
+	fi
+}
+
+# Resolve lib directory path
+#
+# Determines the absolute path to the lib directory based on the location of a source file.
+# This function centralizes LIB_DIR resolution logic to eliminate duplication across modules.
+#
+# Arguments:
+#   $1: Optional source file path (defaults to BASH_SOURCE[0] if not provided)
+#   $2: Optional number of directory levels to go up from source file's directory (defaults to 0)
+#       For example, if source file is in lib/config/, use 1 to get lib/
+#
+# Returns:
+#   0: Success (LIB_DIR resolved and set)
+#   1: Failure (could not resolve LIB_DIR)
+#
+# Side effects:
+#   Sets global variable LIB_DIR to the resolved path
+#   In fake mode (NO_ESCALATE=1), continues execution even if resolution fails
+#
+# Examples:
+#   # Resolve lib/ directory from lib/config/config_loading.sh (go up one level)
+#   resolve_lib_dir "${BASH_SOURCE[0]}" 1
+#
+#   # Resolve lib/ directory from lib/config.sh (no levels up needed)
+#   resolve_lib_dir "${BASH_SOURCE[0]}" 0
+#
+#   # Use default (BASH_SOURCE[0], 0 levels)
+#   resolve_lib_dir
+#
+# Note:
+#   - Uses readlink -f if available for better symlink resolution
+#   - Falls back to cd/pwd if readlink not available
+#   - Handles both absolute and relative source file paths
+#   - Validates that resolved directory exists before setting LIB_DIR
+#   - This function is used by config.sh and config module files to ensure consistent LIB_DIR resolution
+resolve_lib_dir() {
+	local source_file="${1:-${BASH_SOURCE[0]}}"
+	local levels_up="${2:-0}"
+	local resolved_dir=""
+	local current_dir
+
+	# Try to resolve using readlink if available (handles symlinks better)
+	# Note: We check for check_command_available function first (if common.sh was sourced),
+	# but fall back to command -v if not available (for cases where this function is called
+	# before common.sh is fully loaded)
+	if { (declare -f check_command_available >/dev/null 2>&1 && check_command_available "readlink") || command -v readlink >/dev/null 2>&1; } && { [[ -L "$source_file" ]] || [[ -f "$source_file" ]]; }; then
+		# Try to resolve to absolute path
+		if current_dir=$(readlink -f "$source_file" 2>/dev/null) || [[ "$source_file" =~ ^/ ]]; then
+			if [[ -n "$current_dir" ]]; then
+				source_file="$current_dir"
+			fi
+			# Get directory containing source file
+			current_dir="$(dirname "$source_file")"
+			# Go up specified number of levels
+			if [[ $levels_up -gt 0 ]]; then
+				resolved_dir="$(cd "$current_dir" && for ((i = 0; i < levels_up; i++)); do cd ..; done && pwd)" 2>/dev/null || resolved_dir=""
+			else
+				resolved_dir="$(cd "$current_dir" && pwd)" 2>/dev/null || resolved_dir=""
+			fi
+		fi
+	fi
+
+	# Fallback: try relative path resolution if readlink method didn't work
+	if [[ -z "$resolved_dir" ]] && [[ "$source_file" =~ \.\.?/ ]]; then
+		current_dir="$(dirname "$source_file")"
+		# Go up specified number of levels
+		if [[ $levels_up -gt 0 ]]; then
+			resolved_dir="$(cd "$current_dir" && for ((i = 0; i < levels_up; i++)); do cd ..; done && pwd)" 2>/dev/null || resolved_dir=""
+		else
+			resolved_dir="$(cd "$current_dir" && pwd)" 2>/dev/null || resolved_dir=""
+		fi
+	fi
+
+	# Validate resolved directory exists
+	if [[ -z "$resolved_dir" ]] || [[ ! -d "$resolved_dir" ]]; then
+		# In fake mode, allow LIB_DIR to remain unset (subsequent code will handle it)
+		if [[ -n "${NO_ESCALATE:-}" ]] && [[ "${NO_ESCALATE}" == "1" ]]; then
+			LIB_DIR=""
+			return 1
+		fi
+		# Normal mode: error out
+		echo "ERROR: Cannot determine lib directory (source_file=${source_file:-<empty>}, levels_up=${levels_up})" >&2
+		echo "ERROR: BASH_SOURCE[0]=${BASH_SOURCE[0]:-<empty>}" >&2
+		LIB_DIR=""
+		return 1
+	fi
+
+	# Set LIB_DIR to resolved path
+	LIB_DIR="$resolved_dir"
+	return 0
+}
+
+# Log error when module loading fails
+#
+# Used during module loading when log_message may not be available yet.
+# Gracefully falls back to echo if log_message is not defined.
+# This function consolidates duplicate logging helper functions used during
+# module initialization across detection.sh and state.sh.
+#
+# Arguments:
+#   $1: Error message to log
+#
+# Returns:
+#   0: Always succeeds (logging never fails)
+#
+# Output:
+#   - If log_message is available: logs via log_message to LOG_FILE and stderr
+#   - Otherwise: prints error message to stderr
+#
+# Examples:
+#   log_module_error "Failed to source detection/network_validation.sh"
+#   log_module_error "Failed to source state_paths.sh"
+#
+# Note:
+#   This function is used during module loading when log_message may not be available yet.
+#   It gracefully falls back to echo if log_message is not defined.
+log_module_error() {
+	local message="$1"
+	if type log_message >/dev/null 2>&1; then
+		# log_message is available - use it (it will handle LOG_FILE not being set)
+		log_message "ERROR" "SYSTEM" "$message"
+	else
+		# Fallback to echo if log_message not available
+		echo "Error: $message" >&2
 	fi
 }

@@ -3,7 +3,7 @@
 # Per-peer state operations
 # Handles state management for individual VPN peers
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 # Get peer state value
@@ -18,10 +18,11 @@
 #   $4: Default value (optional, defaults to "0" for numeric keys)
 #
 # Returns:
-#   0: Always succeeds
+#   0: Success
+#   1: Validation failed (invalid arguments or path generation failed)
 #
 # Output:
-#   Prints the state value to stdout (or default if not found)
+#   Prints the state value to stdout (or default if not found or validation failed)
 #
 # Examples:
 #   count=$(get_peer_state "NYC" "203.0.113.1" "failure_count")
@@ -29,10 +30,12 @@
 #
 # Note:
 #   Requires get_peer_state_file_path to be set
+#   Validates required arguments and path generation before proceeding
 #   Validates numeric values and returns default if corrupted
+#   Uses timeout wrapper for defensive file reading (see inline comment for details)
 get_peer_state() {
 	local location_name="$1"
-	local peer_ip="$2"
+	local external_peer_ip="$2"
 	local key="$3"
 	# Handle default value: if 4th arg is provided (even if empty), use it; otherwise default to "0"
 	# This allows empty string defaults for non-numeric keys like "recovery_method" and "spi"
@@ -42,11 +45,21 @@ get_peer_state() {
 		local default_value="0"
 	fi
 	local state_file
-	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "$key")
+	state_file=$(get_peer_state_file_path "$location_name" "$external_peer_ip" "$key")
+
+	# Validate path was generated successfully
+	if [[ -z "$state_file" ]]; then
+		# Error already logged by get_peer_state_file_path
+		echo "$default_value"
+		return 1
+	fi
 
 	if file_exists_and_readable "$state_file"; then
 		local value
-		value=$(cat "$state_file" 2>/dev/null || echo "$default_value")
+		# Defensive timeout wrapper: file_exists_and_readable should prevent hangs, but this adds
+		# extra protection for edge cases (race conditions, test suite timing issues).
+		# This follows the standardized timeout pattern used elsewhere in the codebase.
+		value=$(run_with_timeout "$STATE_FILE_READ_TIMEOUT" cat "$state_file" 2>/dev/null || echo "$default_value")
 		# Validate numeric keys
 		case "$key" in
 		failure_count | last_bytes | last_status_log)
@@ -58,13 +71,14 @@ get_peer_state() {
 			fi
 			;;
 		spi)
-			# SPI can be hex (0x...) or decimal format
-			if [[ ! "$value" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]; then
+			# SPI can be hex (0x...), decimal format, or empty
+			if [[ -n "$value" ]] && ! validate_spi_format "$value"; then
 				handle_error "WARNING" "SYSTEM" "Corrupted peer state file (recovering): $state_file" 0
 				recover_corrupted_state_file "$state_file" "$default_value" "integer"
 				echo "$default_value"
 				return 0
 			fi
+			# Empty value is valid for SPI
 			;;
 		esac
 		echo "$value"
@@ -98,15 +112,22 @@ get_peer_state() {
 #
 # Note:
 #   Requires get_peer_state_file_path to be set
+#   Validates required arguments and path generation before proceeding
 #   Uses temporary file and mv for atomic write to prevent corruption on interruption
 #   Validates numeric keys before writing
 set_peer_state() {
 	local location_name="$1"
-	local peer_ip="$2"
+	local external_peer_ip="$2"
 	local key="$3"
 	local value="$4"
 	local state_file
-	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "$key")
+	state_file=$(get_peer_state_file_path "$location_name" "$external_peer_ip" "$key")
+
+	# Validate path was generated successfully
+	if [[ -z "$state_file" ]]; then
+		# Error already logged by get_peer_state_file_path
+		return 1
+	fi
 
 	# Validate numeric keys
 	case "$key" in
@@ -117,8 +138,8 @@ set_peer_state() {
 		fi
 		;;
 	spi)
-		# SPI can be hex (0x...) or decimal format
-		if [[ ! "$value" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]] && [[ -n "$value" ]]; then
+		# SPI can be hex (0x...), decimal format, or empty
+		if [[ -n "$value" ]] && ! validate_spi_format "$value"; then
 			handle_error "ERROR" "SYSTEM" "Invalid value for $key (expected SPI format): $value" 0
 			return 1
 		fi
@@ -136,7 +157,7 @@ set_peer_state() {
 
 	# Atomic write: write to temp file first, then rename
 	if ! atomic_write_file "$state_file" "$value"; then
-		handle_error "ERROR" "SYSTEM" "Failed to update peer state for $peer_ip (key: $key, file: $state_file)" 0
+		handle_error "ERROR" "SYSTEM" "Failed to update peer state for $external_peer_ip (key: $key, file: $state_file)" 0
 		return 1
 	fi
 
@@ -171,11 +192,11 @@ set_peer_state() {
 #   interrupt execution. Errors are already logged by set_peer_state.
 set_peer_state_non_critical() {
 	local location_name="$1"
-	local peer_ip="$2"
+	local external_peer_ip="$2"
 	local key="$3"
 	local value="$4"
 	# State update failure is non-critical (already logged by set_peer_state)
-	if ! set_peer_state "$location_name" "$peer_ip" "$key" "$value"; then
+	if ! set_peer_state "$location_name" "$external_peer_ip" "$key" "$value"; then
 		# Error already logged by set_peer_state, continue execution
 		:
 	fi
@@ -203,13 +224,20 @@ set_peer_state_non_critical() {
 #
 # Note:
 #   Requires get_peer_state_file_path to be set
+#   Validates required arguments and path generation before proceeding
 #   Safe to call if file doesn't exist (returns 0)
 delete_peer_state() {
 	local location_name="$1"
-	local peer_ip="$2"
+	local external_peer_ip="$2"
 	local key="$3"
 	local state_file
-	state_file=$(get_peer_state_file_path "$location_name" "$peer_ip" "$key")
+	state_file=$(get_peer_state_file_path "$location_name" "$external_peer_ip" "$key")
+
+	# Validate path was generated successfully
+	if [[ -z "$state_file" ]]; then
+		# Error already logged by get_peer_state_file_path
+		return 1
+	fi
 
 	if file_exists_and_readable "$state_file"; then
 		if ! rm -f "$state_file"; then
@@ -223,7 +251,7 @@ delete_peer_state() {
 
 # Clean up state files for a removed peer
 #
-# Removes all state files associated with a peer (failure_count, last_bytes, etc.).
+# Removes all state files associated with a peer (failure_count, last_bytes, spi, idle_detected, connection_name).
 # Useful when a peer is removed from configuration.
 #
 # Arguments:
@@ -245,12 +273,13 @@ delete_peer_state() {
 #   Safe to call even if no state files exist
 cleanup_peer_state() {
 	local location_name="$1"
-	local peer_ip="$2"
-	delete_peer_state "$location_name" "$peer_ip" "failure_count"
-	delete_peer_state "$location_name" "$peer_ip" "last_bytes"
-	delete_peer_state "$location_name" "$peer_ip" "spi"
-	delete_peer_state "$location_name" "$peer_ip" "idle_detected"
-	# Add other state keys here as needed
+	local external_peer_ip="$2"
+	delete_peer_state "$location_name" "$external_peer_ip" "failure_count"
+	delete_peer_state "$location_name" "$external_peer_ip" "last_bytes"
+	delete_peer_state "$location_name" "$external_peer_ip" "spi"
+	delete_peer_state "$location_name" "$external_peer_ip" "idle_detected"
+	# connection_name is per-peer only (no location)
+	delete_peer_state "" "$external_peer_ip" "connection_name"
 }
 
 # Get current failure counter for a specific peer
@@ -275,12 +304,12 @@ cleanup_peer_state() {
 #
 # Note:
 #   Uses get_peer_state() abstraction layer internally
-#   Counter file: ${STATE_DIR}/failure_counter_<location>_<sanitized_peer_ip>
+#   Counter file: ${STATE_DIR}/failure_count_<location>_<sanitized_peer_ip>
 #   Returns 0 if file doesn't exist (cat fails) or is empty
 get_failure_count() {
 	local location_name="$1"
-	local peer_ip="$2"
-	get_peer_state "$location_name" "$peer_ip" "failure_count" "0"
+	local external_peer_ip="$2"
+	get_peer_state "$location_name" "$external_peer_ip" "failure_count" "0"
 }
 
 # Increment failure counter for a specific peer
@@ -301,7 +330,7 @@ get_failure_count() {
 #
 # Side effects:
 #   - Creates or updates per-peer counter file with new count (atomic write)
-#   - Counter file: ${STATE_DIR}/failure_counter_<location>_<sanitized_peer_ip>
+#   - Counter file: ${STATE_DIR}/failure_count_<location>_<sanitized_peer_ip>
 #
 # Examples:
 #   new_count=$(increment_failure "NYC" "203.0.113.1")
@@ -312,11 +341,11 @@ get_failure_count() {
 #   Reads current count, increments by 1, writes back atomically
 increment_failure() {
 	local location_name="$1"
-	local peer_ip="$2"
+	local external_peer_ip="$2"
 	local count
-	count=$(get_peer_state "$location_name" "$peer_ip" "failure_count" "0")
+	count=$(get_peer_state "$location_name" "$external_peer_ip" "failure_count" "0")
 	local new_count=$((count + 1))
-	if set_peer_state "$location_name" "$peer_ip" "failure_count" "$new_count"; then
+	if set_peer_state "$location_name" "$external_peer_ip" "failure_count" "$new_count"; then
 		echo "$new_count"
 	else
 		# If set failed, return current count (already logged error)
@@ -339,7 +368,7 @@ increment_failure() {
 #
 # Side effects:
 #   - Writes "0" to per-peer counter file (atomic write)
-#   - Counter file: ${STATE_DIR}/failure_counter_<location>_<sanitized_peer_ip>
+#   - Counter file: ${STATE_DIR}/failure_count_<location>_<sanitized_peer_ip>
 #
 # Examples:
 #   reset_failure_count "NYC" "203.0.113.1"
@@ -350,6 +379,6 @@ increment_failure() {
 #   Called when VPN recovers after failures
 reset_failure_count() {
 	local location_name="$1"
-	local peer_ip="$2"
-	set_peer_state_non_critical "$location_name" "$peer_ip" "failure_count" "0"
+	local external_peer_ip="$2"
+	set_peer_state_non_critical "$location_name" "$external_peer_ip" "failure_count" "0"
 }

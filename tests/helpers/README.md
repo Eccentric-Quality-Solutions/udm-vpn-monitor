@@ -49,15 +49,30 @@ setup_mock_timestamp 1000
 Provides helpers for testing VPN recovery functionality.
 
 **Key Functions:**
-- `generate_xfrm_state_output()` - Generate xfrm state output for recovery testing
+- `generate_xfrm_state_for_recovery()` - Generate xfrm state output for recovery testing
+- `override_calculate_duration_with_increment()` - Override calculate_duration for time-based testing
+- `override_calculate_duration_always_zero()` - Override calculate_duration to simulate time calculation failure
+- `setup_retry_xfrm_recovery_mocks()` - Set up common mocks for retry_xfrm_recovery tests
+- `setup_date_sleep_mocks_with_increment()` - Set up date and sleep mocks with time increment file support
 
 **Usage:**
 ```bash
 load test_helper
 load helpers/recovery
 
-# Use in a mock script
-generate_xfrm_state_output 1
+# Generate xfrm state output in a mock script
+generate_xfrm_state_for_recovery 1
+
+# Override calculate_duration for time-based testing
+local time_increment_file="${TEST_DIR}/time_increment"
+echo "0" >"$time_increment_file"
+source_recovery_module
+override_calculate_duration_with_increment "$time_increment_file"
+
+# Set up common mocks for retry_xfrm_recovery tests
+local log_file
+log_file=$(setup_retry_xfrm_recovery_mocks)
+add_mock_to_path
 ```
 
 ### `helpers/config.bash` - Config Test Helpers
@@ -119,7 +134,7 @@ run get_cpu_usage
 Provides helpers for loading and generating test data from the `tests/data/` directory. This module centralizes test data that was previously embedded in test files.
 
 **Key Functions:**
-- `generate_xfrm_state_output()` - Generate xfrm state output for common scenarios
+- `generate_xfrm_state_for_scenario()` - Generate xfrm state output for common scenarios
 - `generate_config_file()` - Generate configuration files from templates
 - `load_test_data_file()` - Load test data from files in tests/data/
 
@@ -130,7 +145,7 @@ load helpers/test_data
 
 # Generate xfrm state output
 local xfrm_output
-xfrm_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
+xfrm_output=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
 
 # Generate config file
 generate_config_file "standard" "${TEST_DIR}/vpn-monitor.conf" "${TEST_PEER_IP}"
@@ -178,6 +193,7 @@ Provides custom assertion helpers for tests. It consolidates common assertion pa
 - `assert_log_contains()` - Assert log file contains pattern
 - `assert_log_not_contains()` - Assert log file does not contain pattern
 - `assert_log_contains_any()` - Assert log file contains one of multiple patterns
+- `test_empty_string()` - Test that a function handles empty string correctly
 
 **Usage:**
 ```bash
@@ -192,6 +208,11 @@ assert_log_not_contains "${LOG_FILE}" "Error occurred"
 
 # Assert log file contains one of multiple patterns
 assert_log_contains_any "${LOG_FILE}" "ipsec reload failed" "reload failed"
+
+# Test that a function handles empty string correctly
+@test "escape_sed_regex: handles empty string" {
+    test_empty_string "escape_sed_regex"
+}
 ```
 
 ### `helpers/fixtures.bash` - Fixture Test Helpers

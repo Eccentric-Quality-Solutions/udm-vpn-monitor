@@ -56,7 +56,11 @@ Before installation, gather:
 - [ ] Edit configuration file: `nano /data/vpn-monitor/vpn-monitor.conf`
 - [ ] Configure locations using location-based format (see below)
 - [ ] Optionally set `INTERNAL` IPs for ping checks
-- [ ] Review other settings (thresholds, cooldown, etc.)
+- [ ] Review other settings (thresholds, cooldown, resource monitoring, etc.)
+- [ ] Configure resource monitoring thresholds if needed (CPU, RAM, disk space)
+- [ ] Set `STATUS_LOG_INTERVAL_SECONDS` for periodic status logging (default: 300 seconds)
+- [ ] Configure `RECOVERY_VERIFY_TIMEOUT` if needed (default: 30 seconds)
+- [ ] Review system-wide failure detection settings if monitoring multiple locations
 
 **Critical Configuration:**
 ```bash
@@ -74,6 +78,16 @@ LOCATION_DC_INTERNAL="192.168.200.1"  # Optional - Internal/private IP(s)
 ```
 See [MIGRATION.md](docs/MIGRATION.md) for detailed migration instructions.
 
+**Additional Configuration Options:**
+- **Resource Monitoring**: Enabled by default (`ENABLE_RESOURCE_MONITORING=1`). Monitors CPU, RAM, and disk space usage and throttles execution when resources are constrained. Adjust thresholds if needed:
+  - `RESOURCE_CPU_THRESHOLD` (default: 90%) - CPU usage threshold
+  - `RESOURCE_RAM_THRESHOLD` (default: 90%) - RAM usage threshold
+  - `RESOURCE_DISK_WARNING_THRESHOLD` (default: 20% free) - Disk space warning
+  - `RESOURCE_DISK_CRITICAL_THRESHOLD` (default: 10% free) - Disk space critical
+- **Status Logging**: `STATUS_LOG_INTERVAL_SECONDS` (default: 300 seconds / 5 minutes) - How often to log periodic status updates for healthy VPNs. Set to 0 to disable.
+- **Recovery Verification**: `RECOVERY_VERIFY_TIMEOUT` (default: 30 seconds) - Maximum time to wait for recovery verification after xfrm-based recovery actions.
+- **System-Wide Failure Detection**: Enabled by default (`ENABLE_SYSTEM_WIDE_FAILURE_DETECTION=1`). Detects when all or majority of VPNs fail simultaneously and coordinates recovery to prevent cascades.
+
 ### 4. Test Installation
 - [ ] Run monitor manually: `/data/vpn-monitor/vpn-monitor.sh --fake` (fake mode tests without triggering recovery)
 - [ ] Verify no errors in output
@@ -85,6 +99,7 @@ See [MIGRATION.md](docs/MIGRATION.md) for detailed migration instructions.
 - [ ] Check keepalive status: `systemctl status vpn-keepalive`
 - [ ] Or manually: `/data/vpn-monitor/vpn-keepalive.sh status`
 - [ ] Verify keepalive is sending pings (check logs if needed)
+- [ ] **Note**: Keepalive daemon automatically reloads configuration every 10 iterations (or every 5 minutes, whichever is longer) - no service restart needed for config changes
 
 ## Post-Installation Verification
 
@@ -107,6 +122,8 @@ See [MIGRATION.md](docs/MIGRATION.md) for detailed migration instructions.
 - [ ] **Lockfile issues**: Check if lockfile exists and PID is valid
 - [ ] **False positives**: Verify VPN is actually working, check ping checks
 - [ ] **Recovery not working**: Verify `ipsec` command available, check rate limiting
+- [ ] **Resource throttling**: Check if script is exiting early due to high CPU/RAM usage (check logs for "system resources constrained")
+- [ ] **Detection reliability**: If both `ip` and `ipsec` commands are unavailable, recovery escalation (Tier 2/3) is automatically blocked to prevent false recovery actions
 
 ## After UniFi OS Upgrades
 
@@ -167,6 +184,13 @@ cat /data/vpn-monitor/state/restart_count
 
 # Check cooldown
 cat /data/vpn-monitor/cooldown_until
+
+# Check if detection is reliable (both ip and ipsec should be available)
+command -v ip ipsec
+
+# Check resource monitoring state (if script is throttling)
+cat /data/vpn-monitor/state/resource_cpu_constrained
+cat /data/vpn-monitor/state/resource_ram_constrained
 ```
 
 ## Uninstallation
@@ -191,8 +215,12 @@ If you need to remove the VPN monitor:
 
 - Scripts and config files persist across reboots (stored in `/data/`)
 - Cron jobs may be wiped during UniFi OS upgrades (re-run installer if needed)
-- Keepalive daemon requires systemd (available on UDM OS 4.3+)
+- Keepalive daemon requires systemd (available on UDM OS 4.3+) and automatically reloads configuration every 10 iterations (or every 5 minutes, whichever is longer)
 - Log rotation is automatically configured via logrotate (daily rotation, 7 days retention)
 - All recovery actions are logged to `/data/vpn-monitor/logs/vpn-monitor.log`
 - Utility scripts (check-config.sh, compare-config.sh, analyze-logs.sh) are installed for configuration validation and log analysis
+- **Resource Monitoring**: Enabled by default. Script throttles execution when CPU/RAM usage is high or disk space is low to prevent system overload
+- **Detection Reliability Safeguard**: Recovery escalation (Tier 2/3) is automatically blocked when detection tools (`ip` and `ipsec` commands) are unavailable to prevent false recovery actions
+- **Status Logging**: Periodic status updates for healthy VPNs are logged every 5 minutes by default (configurable via `STATUS_LOG_INTERVAL_SECONDS`)
+- **System-Wide Failure Detection**: When monitoring multiple locations, system-wide failure detection coordinates recovery to prevent cascades and rate limiting
 

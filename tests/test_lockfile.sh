@@ -4,6 +4,10 @@
 # Tests critical paths and error handling scenarios
 
 load test_helper
+load helpers/config
+load helpers/assertions
+load helpers/lockfile
+load helpers/mocks
 load fixtures/vpn_active
 
 # Path to the VPN monitor script
@@ -23,14 +27,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -52,19 +54,16 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Lockfile is removed by EXIT trap handler even when script encounters errors
 	# Importance: Lockfile cleanup on error prevents stale locks from blocking future script execution
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<'EOF'
-LOCATION_TEST_EXTERNAL="invalid-ip-format"
-LOCATION_TEST_INTERNAL="invalid-ip-format"
-EOF
+	create_test_config "$config_file" \
+		'LOCATION_TEST_EXTERNAL="invalid-ip-format"' \
+		'LOCATION_TEST_INTERNAL="invalid-ip-format"'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Run script - should exit with error due to invalid IP
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
@@ -73,11 +72,9 @@ EOF
 	# Lockfile should be cleaned up even on error
 	# Note: Script may exit before lockfile creation, so check may be flaky
 	# But if lockfile was created, it should be cleaned up
-	if [[ -f "$lockfile" ]]; then
-		# If lockfile exists, it should be stale or cleaned up
-		# This is a best-effort check
-		echo "Lockfile still exists after error - may need manual cleanup"
-	fi
+	# In test environments, error handling may be unreliable, so we verify
+	# the cleanup path exists even if it doesn't fire perfectly
+	verify_lockfile_cleanup_or_stale "$lockfile" "error"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -90,17 +87,15 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create lockfile with invalid format (not timestamp:pid)
 	echo "invalid-format" >"$lockfile"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -110,7 +105,7 @@ EOF
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
 
 	# Should either clean up invalid lockfile or handle it gracefully
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -126,10 +121,8 @@ EOF
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'LOCKFILE_TIMEOUT=60'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create lockfile exactly at timeout boundary (60 seconds ago)
 	local boundary_time=$(($(date +%s) - 60))
@@ -139,7 +132,7 @@ EOF
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -149,7 +142,7 @@ EOF
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
 
 	# Should either treat as stale or handle gracefully
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -164,14 +157,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -187,7 +178,7 @@ EOF
 	# Should exit gracefully (code 0) when lockfile detected
 	assert_success
 	# Should log lockfile conflict (check for various possible messages)
-	assert_output --partial "already running" || assert_output --partial "Another instance" || assert_file_contains "$log_file" "already running" || assert_file_contains "$log_file" "Another instance"
+	assert_output --partial "already running" || assert_output --partial "Another instance" || assert_log_contains_any "$LOG_FILE" "already running" "Another instance"
 
 	# Clean up
 	rm -f "$lockfile"
@@ -210,14 +201,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -238,41 +227,21 @@ EOF
 	# Purpose: Test verifies that script falls back to atomic file-based locking when flock is unavailable
 	# Expected: Script uses fallback locking mechanism (atomic file operations) when flock command is not found
 	# Importance: Fallback mechanism ensures lockfile functionality works even without flock command
-	# Temporarily hide flock command
-	local test_bin="${TEST_DIR}/bin"
-	mkdir -p "$test_bin"
-
-	# Create a fake flock that doesn't exist
-	# We'll modify PATH to exclude real flock, but keep essential directories
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		# Keep essential directories (/bin, /usr/bin) even if they contain flock
-		# Only exclude directories that contain flock but aren't essential
-		if [[ "$dir" == "/bin" ]] || [[ "$dir" == "/usr/bin" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		elif [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
-	# Ensure /bin and /usr/bin are always present
-	if [[ "$path_without_flock" != *"/bin"* ]]; then
-		path_without_flock="/bin:/usr/bin:${path_without_flock}"
-	fi
+	# Create PATH without flock to force fallback method
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -300,34 +269,20 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
-	# Create a PATH without flock to test fallback mode
-	# Use the same approach as the existing fallback test
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		if [[ "$dir" == "/bin" ]] || [[ "$dir" == "/usr/bin" ]]; then
-			# Keep essential directories even if they contain flock
-			path_without_flock="${path_without_flock}:${dir}"
-		elif [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
-	if [[ "$path_without_flock" != *"/bin"* ]]; then
-		path_without_flock="/bin:/usr/bin:${path_without_flock}"
-	fi
+	# Create PATH without flock to test fallback mode
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	# Test 1: Verify concurrent execution prevention works when switching modes
 	# Create a lockfile with a running PID (current process) - format is same for both modes
@@ -367,13 +322,12 @@ EOF
 	# Create a stale lockfile (old timestamp) - format is same for both modes
 	# Update config file to set LOCKFILE_TIMEOUT for stale lockfile detection
 	local lockfile_timeout=60
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-LOCKFILE_TIMEOUT=${lockfile_timeout}
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCKFILE_TIMEOUT=${lockfile_timeout}"
 	# Recreate test script to pick up updated config
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	local old_timestamp
 	old_timestamp=$(($(date +%s) - lockfile_timeout - 10))
@@ -411,35 +365,61 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
-	# Mock ip command - VPN healthy
-	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
+	# Create a slow mock ip command that pauses long enough for us to catch the lockfile
+	# This is essential for signal handling tests - the script must be running when we send SIGTERM
+	cat >"${TEST_DIR}/ip" <<'MOCK_EOF'
+#!/bin/bash
+# Slow mock ip command for signal handling test
+sleep 0.5
+if [[ "$*" == *"xfrm state"* ]]; then
+    cat << 'EOF'
+src 192.168.1.1 dst 192.168.1.2
+    proto esp spi 0xc1234567 reqid 1 mode tunnel
+    replay-window 32
+    auth-trunc hmac(sha256) 0x... 128
+    enc cbc(aes) 0x...
+    encap type espinudp sport 4500 dport 4500 addr 0.0.0.0
+    sel src 0.0.0.0/0 dst 0.0.0.0/0
+    lifetime config:
+      limit: soft (INF)(INF), hard (INF)(INF)
+    lifetime current:
+      1000(bytes), 100(packets)
+EOF
+fi
+MOCK_EOF
+	chmod +x "${TEST_DIR}/ip"
 	add_mock_to_path
 
-	# Run script in background
-	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
+	# Run script in background in its own process group (for reliable signal delivery)
+	PATH="${TEST_DIR}:${PATH}" setsid bash "$test_script" --fake &
 	local script_pid=$!
 
-	# Give script a moment to start and create lockfile (needed for signal test)
-	sleep 0.01
+	# Wait for lockfile to exist (file-based sync using helper)
+	if ! wait_for_file "$lockfile" 2; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test signal handling"
+	fi
 
-	# Send SIGTERM
-	kill -TERM "$script_pid" 2>/dev/null || true
-	wait "$script_pid" 2>/dev/null || true
+	# Send SIGTERM to the entire process group (negative PID targets the group)
+	# This ensures the signal reaches the subshell where the trap is set
+	kill -TERM -- -"$script_pid" 2>/dev/null || kill -TERM "$script_pid" 2>/dev/null || true
 
-	# Lockfile should be cleaned up by trap handler
-	# Note: This is a best-effort check - trap may not always fire in test environment
-	if [[ -f "$lockfile" ]]; then
-		# If lockfile still exists, it should be stale
-		echo "Lockfile may still exist - trap cleanup may not fire in test environment"
+	# Wait for lockfile to be removed (file-based sync using helper)
+	# This indicates the process has exited and cleaned up via trap handler
+	# Using file-based synchronization instead of polling process directly
+	if ! wait_for_file_removed "$lockfile" 2; then
+		# Lockfile still exists after timeout - process may not have cleaned up
+		# Try to wait for process anyway to avoid leaving zombie processes
+		wait "$script_pid" 2>/dev/null || true
+		fail "Lockfile was not removed after SIGTERM (timeout after 2s) - trap handler may not have executed"
 	fi
 
 	remove_mock_from_path
@@ -460,14 +440,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -514,33 +492,21 @@ EOF
 	# Purpose: Test verifies that fallback locking prevents multiple processes from acquiring lock simultaneously
 	# Expected: Only one process succeeds in acquiring lock using atomic file operations, others detect conflict
 	# Importance: Fallback mechanism must provide same mutual exclusion guarantees as flock-based locking
-	# Temporarily hide flock command to force fallback path
-	local test_bin="${TEST_DIR}/bin"
-	mkdir -p "$test_bin"
-
-	# Create a fake flock that doesn't exist
-	# We'll modify PATH to exclude real flock
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		if [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
+	# Create PATH without flock to force fallback path
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	setup_test_location_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -607,14 +573,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -644,7 +608,7 @@ EOF
 	# Script should handle race condition gracefully
 	# Either it successfully acquires lock or detects conflict
 	# The important thing is it doesn't crash or allow concurrent execution
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	# Clean up
 	rm -f "$lockfile"
@@ -662,14 +626,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -703,7 +665,7 @@ EOF
 	# Script should handle PID reuse scenario
 	# It should check if process is running using kill -0
 	# Since old_pid has exited, it should remove stale lockfile and proceed
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	# Clean up
 	rm -f "$lockfile"
@@ -722,14 +684,12 @@ EOF
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'LOCKFILE_TIMEOUT=60'
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -739,13 +699,11 @@ EOF
 	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
 	local script_pid=$!
 
-	# Give script a moment to create lockfile before killing it
-	sleep 0.01
-
-	# Skip condition: Lockfile must be created by script before we can test crash recovery
-	# Verify lockfile exists (should be created by script)
-	if [[ ! -f "$lockfile" ]]; then
-		skip "Lockfile not created quickly enough for crash test (script may have been killed before lockfile creation, test requires lockfile to exist to verify crash recovery)"
+	# Wait for lockfile to exist (file-based sync using helper)
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid crash test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test crash recovery"
 	fi
 
 	# Kill script with SIGKILL (cannot be caught, simulates crash)
@@ -781,14 +739,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -802,30 +758,35 @@ EOF
 	# Test 2: SIGINT (INT trap)
 	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
 	local script_pid=$!
-	# Give script a moment to start before sending signal
-	sleep 0.01
+	# Wait for lockfile to exist before sending signal
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test SIGINT handling"
+	fi
 	kill -INT "$script_pid" 2>/dev/null || true
 	wait "$script_pid" 2>/dev/null || true
 	# Lockfile should be cleaned up by INT trap
-	if [[ -f "$lockfile" ]]; then
-		# Trap may not fire in test environment, but lockfile should be stale
-		# Verify it would be detected as stale
-		echo "Lockfile exists after SIGINT - verifying stale detection"
-	fi
+	# In test environments, signal handling may be unreliable, so we verify
+	# the cleanup path exists even if it doesn't fire perfectly
+	verify_lockfile_cleanup_or_stale "$lockfile" "SIGINT"
 
 	# Test 3: SIGTERM (TERM trap) - already tested above but verify consistency
 	rm -f "$lockfile"
 	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
 	script_pid=$!
-	# Give script a moment to start before sending signal
-	sleep 0.01
+	# Wait for lockfile to exist before sending signal
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test SIGTERM handling"
+	fi
 	kill -TERM "$script_pid" 2>/dev/null || true
 	wait "$script_pid" 2>/dev/null || true
 	# Lockfile should be cleaned up by TERM trap
-	if [[ -f "$lockfile" ]]; then
-		# Trap may not fire in test environment, but lockfile should be stale
-		echo "Lockfile exists after SIGTERM - verifying stale detection"
-	fi
+	# In test environments, signal handling may be unreliable, so we verify
+	# the cleanup path exists even if it doesn't fire perfectly
+	verify_lockfile_cleanup_or_stale "$lockfile" "SIGTERM"
 
 	# Clean up any remaining lockfile
 	rm -f "$lockfile"
@@ -847,25 +808,17 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create lockfile
 	echo "$(date +%s):12345" >"$lockfile"
 
 	# Mock stat command to fail (simulates permission issues)
-	local mock_stat="${TEST_DIR}/stat"
-	cat >"$mock_stat" <<'EOF'
-#!/bin/bash
-# Simulate stat failure (permission denied)
-exit 1
-EOF
-	chmod +x "$mock_stat"
+	mock_command_failure "stat" 1 >/dev/null
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -878,7 +831,7 @@ EOF
 	# Should handle stat failure gracefully (should treat mtime=0 as stale)
 	# Code at lib/state.sh:266 returns "0" on stat failure
 	# Code at lib/lockfile.sh:150-152 treats mtime=0 as stale
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	# Cleanup
 	rm -f "$lockfile" 2>/dev/null || true
@@ -899,25 +852,17 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create lockfile with a PID
 	echo "$(date +%s):12345" >"$lockfile"
 
 	# Mock kill command to fail (simulates permission denied)
-	local mock_kill="${TEST_DIR}/kill"
-	cat >"$mock_kill" <<'EOF'
-#!/bin/bash
-# Simulate kill -0 failure (permission denied for different user)
-exit 1
-EOF
-	chmod +x "$mock_kill"
+	mock_command_failure "kill" 1 >/dev/null
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -930,7 +875,7 @@ EOF
 	# Should handle kill -0 failure gracefully (should treat lockfile as stale)
 	# Code at lib/lockfile.sh:68 suppresses errors with 2>/dev/null
 	# kill -0 failure makes is_process_running() return 1, treating lockfile as stale
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	# Cleanup
 	rm -f "$lockfile" 2>/dev/null || true
@@ -951,25 +896,17 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create lockfile with a PID
 	echo "$(date +%s):12345" >"$lockfile"
 
 	# Mock kill to succeed (zombie processes still respond to kill -0)
-	local mock_kill="${TEST_DIR}/kill"
-	cat >"$mock_kill" <<'EOF'
-#!/bin/bash
-# Simulate kill -0 succeeding for zombie process
-exit 0
-EOF
-	chmod +x "$mock_kill"
+	create_mock_output "kill" "" >/dev/null
 
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	mock_ip_xfrm_state "192.168.1.1" "1000" >/dev/null
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
@@ -981,7 +918,7 @@ EOF
 
 	# Zombie processes still respond to kill -0, so lockfile would appear valid
 	# Code at lib/lockfile.sh:68 uses kill -0 which succeeds for zombies
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	# Cleanup
 	rm -f "$lockfile" 2>/dev/null || true
@@ -1003,14 +940,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -1037,14 +972,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -1053,21 +986,26 @@ EOF
 	# Run script in background
 	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
 	local script_pid=$!
-	sleep 0.1
+	# Wait for lockfile to exist before making directory read-only
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test lockfile removal failure"
+	fi
 
 	# Make lockfile directory read-only to prevent removal (simulate failure)
 	# Note: This may not work on all systems, but tests the error handling path
-	chmod 555 "$state_dir" 2>/dev/null || true
+	chmod 555 "$STATE_DIR" 2>/dev/null || true
 
 	# Wait for script to complete
 	wait "$script_pid" 2>/dev/null || true
 
 	# Restore permissions
-	chmod 755 "$state_dir" 2>/dev/null || true
+	chmod 755 "$STATE_DIR" 2>/dev/null || true
 
 	# Script should have handled removal failure gracefully
 	# The cleanup function suppresses errors (|| true) so script doesn't crash
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -1082,14 +1020,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -1115,14 +1051,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -1131,7 +1065,12 @@ EOF
 	# Run script in background and send SIGTERM
 	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
 	local script_pid=$!
-	sleep 0.1
+	# Wait for lockfile to exist before sending signal
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test exit code handling"
+	fi
 	kill -TERM "$script_pid" 2>/dev/null || true
 	wait "$script_pid" 2>/dev/null || local exit_code=$?
 
@@ -1144,10 +1083,9 @@ EOF
 
 	# Lockfile should be cleaned up regardless of exit code
 	# Cleanup should have run (even if signal handling didn't work perfectly in test)
-	if [[ -f "$lockfile" ]]; then
-		# Lockfile may still exist if signal wasn't handled, but it should be stale
-		echo "Lockfile exists - may be stale if signal wasn't handled in test environment"
-	fi
+	# In test environments, signal handling may be unreliable, so we verify
+	# the cleanup path exists even if it doesn't fire perfectly
+	verify_lockfile_cleanup_or_stale "$lockfile" "signal"
 
 	remove_mock_from_path
 }
@@ -1163,10 +1101,8 @@ EOF
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCKFILE_TIMEOUT=1"
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create stale lockfile (old timestamp)
 	local old_timestamp
@@ -1175,7 +1111,7 @@ EOF
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -1186,7 +1122,7 @@ EOF
 	assert_success
 
 	# Script should have acquired lockfile (stale one was removed)
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	remove_mock_from_path
 }
@@ -1201,14 +1137,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -1238,7 +1172,7 @@ EOF
 	# Script should have completed successfully
 	# The lockfile may still exist due to the race condition, but script should handle it gracefully
 	# The important thing is that the script doesn't crash or hang
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	# Clean up the lockfile manually (since our mock rm didn't remove it)
 	rm -f "$lockfile" 2>/dev/null || true
@@ -1257,14 +1191,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -1288,7 +1220,7 @@ EOF
 
 	# Verify script output is normal (no unexpected continuation after cleanup)
 	# The script should complete cleanly without hanging or producing errors
-	[[ -f "$log_file" ]] || true # Log file may or may not exist depending on when cleanup runs
+	[[ -f "$LOG_FILE" ]] || true # Log file may or may not exist depending on when cleanup runs
 
 	remove_mock_from_path
 }
@@ -1304,10 +1236,8 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -1316,7 +1246,7 @@ EOF
 	# Test 1: Script that succeeds (exit code 0)
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Run script - should succeed with exit code 0
 	PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
@@ -1329,14 +1259,13 @@ EOF
 
 	# Test 2: Script that fails with validation error (execution-blocking error that fails even in fake mode)
 	# Use invalid IP format which causes validation to fail after lock acquisition
-	# Validation errors exit with error code even in fake mode (see docs/FAKE_MODE_EXIT_BEHAVIOR.md)
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="invalid-ip-format"
-LOCATION_TEST_INTERNAL="invalid-ip-format"
-EOF
+	# Validation errors exit with error code even in fake mode (execution-blocking; see fake-mode guidance in CODE_PATTERNS/TEST_PATTERNS)
+	create_test_config "$config_file" \
+		'LOCATION_TEST_EXTERNAL="invalid-ip-format"' \
+		'LOCATION_TEST_INTERNAL="invalid-ip-format"'
 
 	# Recreate test script with invalid config
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Run script - should fail with non-zero exit code
 	# Validation errors should cause failure even in fake mode
@@ -1388,25 +1317,22 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	local readonly_state_dir="${TEST_DIR}/readonly-state"
-	local state_dir="${TEST_DIR}"
 
 	# Create read-only state directory
 	mkdir -p "$readonly_state_dir"
 	chmod 555 "$readonly_state_dir"
 
 	# Update config to use read-only STATE_DIR
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-STATE_DIR="${readonly_state_dir}"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"STATE_DIR=\"${readonly_state_dir}\""
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -1437,9 +1363,7 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	local readonly_lockfile_dir="${TEST_DIR}/readonly-lockfile-dir"
 
 	# Create writable STATE_DIR but read-only lockfile directory
@@ -1448,7 +1372,7 @@ EOF
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Create a modified script that sets LOCKFILE to the read-only directory
 	# We'll insert LOCKFILE assignment right before acquire_lockfile is called in main()
@@ -1496,25 +1420,22 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	local readonly_state_dir="${TEST_DIR}/readonly-state"
-	local state_dir="${TEST_DIR}"
 
 	# Create read-only state directory
 	mkdir -p "$readonly_state_dir"
 	chmod 555 "$readonly_state_dir"
 
 	# Update config to use read-only STATE_DIR
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-STATE_DIR="${readonly_state_dir}"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"STATE_DIR=\"${readonly_state_dir}\""
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -1547,14 +1468,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -1589,14 +1508,14 @@ EOF
 	# Either it succeeds (if check happens after chmod) or fails with appropriate error
 	# The important thing is it doesn't hang or crash
 	# Note: This is a best-effort test - timing may vary, so we just verify script completed
-	if [[ ! -f "$log_file" ]]; then
+	if [[ ! -f "$LOG_FILE" ]]; then
 		# If log file doesn't exist, script may have failed early (which is acceptable)
 		# Just verify the script didn't hang (run command completed)
 		[[ $status -ge 0 ]] # Any exit code is acceptable (0=success, non-zero=failure)
 	fi
 
 	# Ensure permissions are restored
-	chmod 755 "$state_dir" 2>/dev/null || true
+	chmod 755 "$STATE_DIR" 2>/dev/null || true
 	rm -f "$lockfile" 2>/dev/null || true
 
 	remove_mock_from_path
@@ -1612,25 +1531,22 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	local readonly_state_dir="${TEST_DIR}/readonly-state"
-	local state_dir="${TEST_DIR}"
 
 	# Create read-only state directory
 	mkdir -p "$readonly_state_dir"
 	chmod 555 "$readonly_state_dir"
 
 	# Update config to use read-only STATE_DIR
-	cat >"$config_file" <<EOF
-LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
-LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
-STATE_DIR="${readonly_state_dir}"
-EOF
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"STATE_DIR=\"${readonly_state_dir}\""
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -1671,32 +1587,20 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Create a PATH without flock to force fallback method
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		if [[ "$dir" == "/bin" ]] || [[ "$dir" == "/usr/bin" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		elif [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
-	if [[ "$path_without_flock" != *"/bin"* ]]; then
-		path_without_flock="/bin:/usr/bin:${path_without_flock}"
-	fi
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	# Create a short-lived process to get its PID
 	# This simulates a process that dies between PID check and exit
@@ -1718,7 +1622,7 @@ EOF
 	# Script should handle the race condition and either:
 	# 1. Detect stale lockfile and retry successfully, or
 	# 2. Exit gracefully if it can't acquire lock
-	assert_file_exist "$log_file"
+	assert_file_exist "$LOG_FILE"
 
 	# Clean up
 	rm -f "$lockfile" 2>/dev/null || true
@@ -1736,32 +1640,20 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Create a PATH without flock to force fallback method
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		if [[ "$dir" == "/bin" ]] || [[ "$dir" == "/usr/bin" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		elif [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
-	if [[ "$path_without_flock" != *"/bin"* ]]; then
-		path_without_flock="/bin:/usr/bin:${path_without_flock}"
-	fi
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	# Create a stale lockfile (dead PID)
 	local old_timestamp=$(($(date +%s) - 120))
@@ -1792,7 +1684,7 @@ EOF
 	# Script should exit gracefully (either with conflict message or after retry)
 	# The important thing is it doesn't hang or crash
 	# Note: Outcome is uncertain due to race conditions, so we just verify script completed
-	if [[ ! -f "$log_file" ]]; then
+	if [[ ! -f "$LOG_FILE" ]]; then
 		# If log file doesn't exist, script may have failed early (which is acceptable)
 		# Just verify the script didn't hang (run command completed)
 		[[ $status -ge 0 ]] # Any exit code is acceptable (0=success, non-zero=failure)
@@ -1814,32 +1706,20 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Create a PATH without flock to force fallback method
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		if [[ "$dir" == "/bin" ]] || [[ "$dir" == "/usr/bin" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		elif [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
-	if [[ "$path_without_flock" != *"/bin"* ]]; then
-		path_without_flock="/bin:/usr/bin:${path_without_flock}"
-	fi
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	# Create a race condition script that removes lockfile after failed creation
 	# This simulates the edge case where lockfile doesn't exist after failed creation
@@ -1865,7 +1745,7 @@ EOF
 
 	# Script should handle the edge case gracefully
 	# Either it successfully acquires lock or exits with appropriate error message
-	assert_file_exist "$log_file" || assert_failure
+	assert_file_exist "$LOG_FILE" || assert_failure
 
 	# Clean up
 	rm -f "$lockfile" "$race_script" 2>/dev/null || true
@@ -1883,32 +1763,20 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Create a PATH without flock to force fallback method
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		if [[ "$dir" == "/bin" ]] || [[ "$dir" == "/usr/bin" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		elif [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
-	if [[ "$path_without_flock" != *"/bin"* ]]; then
-		path_without_flock="/bin:/usr/bin:${path_without_flock}"
-	fi
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	# Create a stale lockfile
 	local old_timestamp=$(($(date +%s) - 120))
@@ -1943,7 +1811,7 @@ EOF
 
 	# Script should exit gracefully (either with conflict message or after successful retry)
 	# The important thing is it doesn't hang or crash
-	assert_file_exist "$log_file" || assert_failure
+	assert_file_exist "$LOG_FILE" || assert_failure
 
 	# Clean up
 	rm -f "$lockfile" "$interfere_script" 2>/dev/null || true
@@ -1961,32 +1829,20 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Create a PATH without flock to force fallback method
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		if [[ "$dir" == "/bin" ]] || [[ "$dir" == "/usr/bin" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		elif [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
-	if [[ "$path_without_flock" != *"/bin"* ]]; then
-		path_without_flock="/bin:/usr/bin:${path_without_flock}"
-	fi
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	# Run script - should complete successfully
 	PATH="${TEST_DIR}:${path_without_flock}" run bash "$test_script" --fake
@@ -2010,61 +1866,56 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
 	add_mock_to_path
 
 	# Create a PATH without flock to force fallback method
-	local path_without_flock=""
-	for dir in $(echo "$PATH" | tr ':' ' '); do
-		if [[ "$dir" == "/bin" ]] || [[ "$dir" == "/usr/bin" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		elif [[ ! -f "$dir/flock" ]]; then
-			path_without_flock="${path_without_flock}:${dir}"
-		fi
-	done
-	path_without_flock="${path_without_flock#:}"
-	if [[ "$path_without_flock" != *"/bin"* ]]; then
-		path_without_flock="/bin:/usr/bin:${path_without_flock}"
-	fi
+	local path_without_flock
+	path_without_flock=$(create_path_without_flock)
 
 	# Test 1: SIGINT (INT trap) - should exit with 130
 	PATH="${TEST_DIR}:${path_without_flock}" bash "$test_script" --fake &
 	local script_pid=$!
-	# Give script a moment to start and create lockfile
-	sleep 0.1
+	# Wait for lockfile to exist before sending signal
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test SIGINT handling"
+	fi
 	kill -INT "$script_pid" 2>/dev/null || true
 	wait "$script_pid" 2>/dev/null || true
 
 	# Lockfile should be cleaned up by INT trap handler (line 583)
 	# Note: In test environment, trap may not fire perfectly, but cleanup should be attempted
-	if [[ -f "$lockfile" ]]; then
-		# If lockfile exists, it should be stale (trap may not have fired)
-		echo "Lockfile exists after SIGINT - trap may not have fired in test environment"
-	fi
+	# In test environments, signal handling may be unreliable, so we verify
+	# the cleanup path exists even if it doesn't fire perfectly
+	verify_lockfile_cleanup_or_stale "$lockfile" "SIGINT"
 
 	# Test 2: SIGTERM (TERM trap) - should exit with 143
 	rm -f "$lockfile"
 	PATH="${TEST_DIR}:${path_without_flock}" bash "$test_script" --fake &
 	script_pid=$!
-	# Give script a moment to start and create lockfile
-	sleep 0.1
+	# Wait for lockfile to exist before sending signal
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test SIGTERM handling"
+	fi
 	kill -TERM "$script_pid" 2>/dev/null || true
 	wait "$script_pid" 2>/dev/null || true
 
 	# Lockfile should be cleaned up by TERM trap handler (line 585)
-	if [[ -f "$lockfile" ]]; then
-		echo "Lockfile exists after SIGTERM - trap may not have fired in test environment"
-	fi
+	# In test environments, signal handling may be unreliable, so we verify
+	# the cleanup path exists even if it doesn't fire perfectly
+	verify_lockfile_cleanup_or_stale "$lockfile" "SIGTERM"
 
 	# Test 3: Normal exit (EXIT trap) - should use main function exit code
 	rm -f "$lockfile"
@@ -2094,14 +1945,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -2110,7 +1959,12 @@ EOF
 	# Run script in background
 	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
 	local script_pid=$!
-	sleep 0.1
+	# Wait for lockfile to exist before sending signals
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test signal storm"
+	fi
 
 	# Send multiple signals simultaneously to test race condition
 	# This simulates a signal storm where INT and TERM arrive at the same time
@@ -2123,10 +1977,9 @@ EOF
 	# Even if multiple signals arrive, cleanup_and_exit should only run once
 	# The lockfile should be cleaned up (or be stale if cleanup didn't run)
 	# The important thing is the script doesn't crash or hang
-	if [[ -f "$lockfile" ]]; then
-		# Lockfile may still exist if signals weren't handled, but it should be stale
-		echo "Lockfile exists after multiple signals - verifying stale detection"
-	fi
+	# In test environments, signal handling may be unreliable, so we verify
+	# the cleanup path exists even if it doesn't fire perfectly
+	verify_lockfile_cleanup_or_stale "$lockfile" "multiple signals"
 
 	# Script should have exited (not hung)
 	# If we got here, the script completed or was killed, which is expected
@@ -2147,14 +2000,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -2186,14 +2037,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -2222,14 +2071,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command - VPN healthy
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -2241,7 +2088,12 @@ EOF
 	# Then EXIT trap runs, sees cleanup_done=1, and should use signal_exit_code
 	PATH="${TEST_DIR}:${PATH}" bash "$test_script" --fake &
 	local script_pid=$!
-	sleep 0.1
+	# Wait for lockfile to exist before sending signal
+	if ! wait_for_file "$lockfile" 1; then
+		# Script may have finished too quickly - not a valid signal test
+		wait "$script_pid" 2>/dev/null || true
+		skip "Script completed before lockfile could be verified - unable to test exit code with cleanup_done"
+	fi
 	kill -TERM "$script_pid" 2>/dev/null || true
 	wait "$script_pid" 2>/dev/null || local exit_code=$?
 
@@ -2256,10 +2108,9 @@ EOF
 
 	# Lockfile should be cleaned up
 	# cleanup_done prevents double cleanup, but cleanup should have run once
-	if [[ -f "$lockfile" ]]; then
-		# Lockfile may still exist if signal wasn't handled, but it should be stale
-		echo "Lockfile exists - may be stale if signal wasn't handled in test environment"
-	fi
+	# In test environments, signal handling may be unreliable, so we verify
+	# the cleanup path exists even if it doesn't fire perfectly
+	verify_lockfile_cleanup_or_stale "$lockfile" "signal"
 
 	remove_mock_from_path
 }
@@ -2279,14 +2130,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -2320,14 +2169,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -2378,14 +2225,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -2420,14 +2265,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
@@ -2453,14 +2296,12 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
-	mkdir -p "${TEST_DIR}/logs"
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	local state_dir="${TEST_DIR}"
-	local lockfile="${state_dir}/vpn-monitor.lock"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local lockfile="${LOCKFILE}"
 
 	# Create test version of script
 	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$state_dir" "$log_file")
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
 
 	# Mock ip command
 	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000

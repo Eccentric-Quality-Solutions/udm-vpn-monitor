@@ -4,10 +4,10 @@
 # Tests critical paths and error handling scenarios for Tier 1 recovery
 
 load test_helper
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
-load fixtures/vpn_cooldown
 load fixtures/vpn_at_tier
 
 # Path to the VPN monitor script
@@ -32,7 +32,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Should log Tier 1 failure
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Tier 1" || assert_file_contains "$LOG_FILE" "failure"
+	assert_log_contains_any "$LOG_FILE" "Tier 1" "failure"
 
 	remove_mock_from_path
 }

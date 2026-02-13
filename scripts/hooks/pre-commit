@@ -5,6 +5,11 @@
 #
 # This ensures code quality and that the installer package is always up-to-date
 # with the current codebase when committing changes.
+#
+# Environment variables:
+#   SKIP_DOC_CHECKS: If set to any value, skips documentation checks only.
+#                    Other checks (linting, formatting, package generation) still run.
+#                    Example: SKIP_DOC_CHECKS=1 git commit -m "message"
 
 set -euo pipefail
 
@@ -112,13 +117,15 @@ if [[ ${#STAGED_SH_FILES[@]} -gt 0 ]]; then
 		echo "  Linux: sudo apt-get install shellcheck" >&2
 		echo "  See DEVELOPER.md for more installation options" >&2
 	else
-		# Run ShellCheck on staged files
+		# Run ShellCheck on staged files (per-file to reduce peak memory usage)
 		echo "Running ShellCheck..."
-		if ! "$SHELLCHECK_CMD" --severity=error "${STAGED_SH_FILES[@]}"; then
-			echo "Error: ShellCheck found errors. Please fix them before committing." >&2
-			echo "Run 'shellcheck *.sh lib/*.sh tests/*.sh' to see all issues." >&2
-			exit 1
-		fi
+		for file in "${STAGED_SH_FILES[@]}"; do
+			if ! "$SHELLCHECK_CMD" --severity=error "$file"; then
+				echo "Error: ShellCheck found errors in $file. Please fix them before committing." >&2
+				echo "Run 'shellcheck *.sh lib/*.sh tests/*.sh' to see all issues." >&2
+				exit 1
+			fi
+		done
 	fi
 
 	# Find shfmt
@@ -138,34 +145,38 @@ if [[ ${#STAGED_SH_FILES[@]} -gt 0 ]]; then
 		fi
 	fi
 
-	# Check documentation standards
-	DOC_CHECK_SCRIPT="${REPO_ROOT}/scripts/check-documentation.sh"
-	if [[ -f "$DOC_CHECK_SCRIPT" ]] && [[ -x "$DOC_CHECK_SCRIPT" ]]; then
-		echo "Checking function documentation standards..."
-		if ! "$DOC_CHECK_SCRIPT"; then
-			echo "Error: Documentation check failed. Please fix documentation issues before committing." >&2
-			exit 1
+	# Check documentation standards (skip if SKIP_DOC_CHECKS is set)
+	if [[ -z "${SKIP_DOC_CHECKS:-}" ]]; then
+		DOC_CHECK_SCRIPT="${REPO_ROOT}/scripts/check-documentation.sh"
+		if [[ -f "$DOC_CHECK_SCRIPT" ]] && [[ -x "$DOC_CHECK_SCRIPT" ]]; then
+			echo "Checking function documentation standards..."
+			if ! "$DOC_CHECK_SCRIPT"; then
+				echo "Error: Documentation check failed. Please fix documentation issues before committing." >&2
+				exit 1
+			fi
+		else
+			echo "Warning: Documentation checker script not found or not executable: $DOC_CHECK_SCRIPT" >&2
 		fi
 	else
-		echo "Warning: Documentation checker script not found or not executable: $DOC_CHECK_SCRIPT" >&2
+		echo "Skipping documentation checks (SKIP_DOC_CHECKS is set)..."
 	fi
 fi
 
 # Check if prepare_install_package.sh exists
-if [[ ! -f "${REPO_ROOT}/prepare_install_package.sh" ]]; then
+if [[ ! -f "${REPO_ROOT}/scripts/prepare_install_package.sh" ]]; then
 	echo "Error: prepare_install_package.sh not found" >&2
 	exit 1
 fi
 
 # Check if prepare_install_package.sh is executable
-if [[ ! -x "${REPO_ROOT}/prepare_install_package.sh" ]]; then
-	chmod +x "${REPO_ROOT}/prepare_install_package.sh"
+if [[ ! -x "${REPO_ROOT}/scripts/prepare_install_package.sh" ]]; then
+	chmod +x "${REPO_ROOT}/scripts/prepare_install_package.sh"
 fi
 
 echo "Running prepare_install_package.sh..."
 
 # Run prepare_install_package.sh
-if ! "${REPO_ROOT}/prepare_install_package.sh"; then
+if ! "${REPO_ROOT}/scripts/prepare_install_package.sh"; then
 	echo "Error: prepare_install_package.sh failed" >&2
 	exit 1
 fi

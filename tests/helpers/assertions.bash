@@ -121,3 +121,26 @@ assert_log_contains_any() {
 		fail "Log file should contain one of: '$patterns_str'"
 	fi
 }
+
+# Test that a function handles empty string correctly
+#
+# Verifies that a function returns an empty string when given an empty string input.
+# This is a common edge case test pattern for string manipulation functions.
+#
+# Arguments:
+#   $1: Function name to test
+#
+# Returns:
+#   0: Function returns empty string (test passes)
+#   1: Function does not return empty string or fails (test fails)
+#
+# Example:
+#   @test "escape_sed_regex: handles empty string" {
+#       test_empty_string "escape_sed_regex"
+#   }
+test_empty_string() {
+	local func_name="$1"
+	run "$func_name" ""
+	assert_success
+	assert_output ""
+}

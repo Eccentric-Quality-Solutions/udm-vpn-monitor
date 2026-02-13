@@ -11,10 +11,10 @@
 
 load test_helper
 load helpers/test_data
+load helpers/assertions
 load fixtures/vpn_active
 load fixtures/vpn_down
 load fixtures/vpn_failing
-load fixtures/vpn_cooldown
 load fixtures/vpn_at_tier
 load fixtures/vpn_recovery_test
 
@@ -38,14 +38,15 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# shellcheck source=../lib/recovery.sh
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
-	# Test select_recovery_strategy function (call directly, not with run, to preserve global variables)
-	select_recovery_strategy "${TEST_PEER_IP}" 2
+	# Test select_recovery_strategy function (uses nameref associative array)
+	declare -A recovery_info
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 	local exit_code=$?
 	assert_equal "$exit_code" 0
-	assert_equal "$RECOVERY_STRATEGY" "xfrm"
-	assert_equal "$RECOVERY_COMMAND" "attempt_xfrm_recovery"
-	assert_equal "$RECOVERY_IMPACT" "per-connection"
-	assert_equal "$RECOVERY_AVAILABLE" 1
+	assert_equal "${recovery_info[strategy]}" "xfrm"
+	assert_equal "${recovery_info[command]}" "attempt_xfrm_recovery"
+	assert_equal "${recovery_info[impact]}" "per-connection"
+	assert_equal "${recovery_info[available]}" 1
 
 	remove_mock_from_path
 }
@@ -67,14 +68,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test select_recovery_strategy function (no peer IP, forces ipsec reload)
-	# Call directly, not with run, to preserve global variables
-	select_recovery_strategy "" 2
+	declare -A recovery_info
+	select_recovery_strategy "" 2 "recovery_info"
 	local exit_code=$?
 	assert_equal "$exit_code" 0
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload"
-	assert_equal "$RECOVERY_COMMAND" "ipsec reload"
-	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
-	assert_equal "$RECOVERY_AVAILABLE" 1
+	assert_equal "${recovery_info[strategy]}" "ipsec_reload"
+	assert_equal "${recovery_info[command]}" "ipsec reload"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" 1
 
 	remove_mock_from_path
 }
@@ -96,14 +97,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test select_recovery_strategy function (no peer IP, forces ipsec restart)
-	# Call directly, not with run, to preserve global variables
-	select_recovery_strategy "" 3
+	declare -A recovery_info
+	select_recovery_strategy "" 3 "recovery_info"
 	local exit_code=$?
 	assert_equal "$exit_code" 0
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_restart"
-	assert_equal "$RECOVERY_COMMAND" "ipsec restart"
-	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
-	assert_equal "$RECOVERY_AVAILABLE" 1
+	assert_equal "${recovery_info[strategy]}" "ipsec_restart"
+	assert_equal "${recovery_info[command]}" "ipsec restart"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" 1
 
 	remove_mock_from_path
 }
@@ -115,46 +116,71 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Ensures graceful handling when recovery tools are unavailable
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
 
-	# Save original PATH and create a minimal PATH that excludes ip/ipsec
-	# Use a simple approach: /bin typically has essential commands but not ip/ipsec
-	# Note: This test may need adjustment if ip/ipsec are found in /bin (unlikely)
-	local original_path="${PATH}"
-	# Create minimal PATH - start with /bin, add /usr/bin only if it doesn't contain ip/ipsec
-	local test_path="/bin"
-	# Check if /usr/bin has ip or ipsec before adding it
-	if [[ ! -x "/usr/bin/ip" ]] && [[ ! -x "/usr/bin/ipsec" ]]; then
-		test_path="/usr/bin:${test_path}"
-	fi
-	export PATH="${TEST_DIR}:${test_path}"
-
-	# Verify ip/ipsec are not available in the restricted PATH
-	if command -v ip >/dev/null 2>&1 || command -v ipsec >/dev/null 2>&1; then
-		skip "ip or ipsec found in restricted PATH - cannot test 'no commands available' scenario"
-	fi
-
-	# Don't create any mocks (no ip or ipsec available)
-	# PATH is restricted to exclude ip/ipsec, so commands won't be found
-
-	# Source dependencies first (recovery.sh needs logging.sh)
+	# Source dependencies first (recovery.sh needs logging.sh and common.sh for check_command_available)
 	# shellcheck source=../lib/logging.sh
 	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" || true
 	# shellcheck source=../lib/recovery.sh
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
-	# Test select_recovery_strategy function (call directly, not with run, to preserve global variables)
+	# Mock check_command_available to return false for ip and ipsec
+	# This simulates the scenario where commands are truly unavailable
+	# (check_command_available has fallback mechanisms that check system directories,
+	# so we need to mock it to properly test the "unavailable" scenario)
+	if command -v check_command_available >/dev/null 2>&1; then
+		local func_def
+		func_def=$(declare -f check_command_available 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			eval "${func_def/check_command_available/check_command_available.original}" 2>/dev/null || true
+		fi
+	fi
+
+	# Check if command is available (test helper)
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
+	check_command_available() {
+		local cmd="$1"
+		if [[ "$cmd" == "ip" ]] || [[ "$cmd" == "ipsec" ]]; then
+			return 1
+		fi
+		# For other commands, use original if available
+		if command -v check_command_available.original >/dev/null 2>&1; then
+			check_command_available.original "$@"
+		else
+			command -v "$cmd" >/dev/null 2>&1
+		fi
+	}
+
+	# Test select_recovery_strategy function (uses nameref associative array)
 	# Use set +e to allow function to return error code without failing test
+	declare -A recovery_info
 	set +e
-	select_recovery_strategy "${TEST_PEER_IP}" 2
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 	local exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
-	assert_equal "$RECOVERY_STRATEGY" "unavailable"
-	assert_equal "$RECOVERY_COMMAND" ""
-	assert_equal "$RECOVERY_IMPACT" ""
-	assert_equal "$RECOVERY_AVAILABLE" 0
+	assert_equal "${recovery_info[strategy]}" "unavailable"
+	assert_equal "${recovery_info[command]}" ""
+	assert_equal "${recovery_info[impact]}" ""
+	assert_equal "${recovery_info[available]}" 0
 
-	# Restore original PATH
-	export PATH="${original_path}"
+	# Restore original check_command_available if it was saved
+	# Note: Each BATS test runs in a fresh shell, so cleanup isn't strictly necessary,
+	# but we do it for completeness and to avoid potential issues if tests are run differently
+	if declare -f check_command_available.original >/dev/null 2>&1; then
+		local restore_func
+		restore_func=$(declare -f check_command_available.original 2>/dev/null || true)
+		if [[ -n "$restore_func" ]]; then
+			eval "${restore_func/check_command_available.original/check_command_available}" 2>/dev/null || true
+		fi
+	fi
+
 	remove_mock_from_path
 }
 
@@ -171,22 +197,23 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# shellcheck source=../lib/recovery.sh
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
-	# Test select_recovery_strategy with invalid tier (call directly, not with run, to preserve global variables)
+	# Test select_recovery_strategy with invalid tier (uses nameref associative array)
 	# Use set +e to allow function to return error code without failing test
+	declare -A recovery_info
 	set +e
-	select_recovery_strategy "${TEST_PEER_IP}" 1
+	select_recovery_strategy "${TEST_PEER_IP}" 1 "recovery_info"
 	local exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
 
 	set +e
-	select_recovery_strategy "${TEST_PEER_IP}" 4
+	select_recovery_strategy "${TEST_PEER_IP}" 4 "recovery_info"
 	exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
 
 	set +e
-	select_recovery_strategy "${TEST_PEER_IP}" "invalid"
+	select_recovery_strategy "${TEST_PEER_IP}" "invalid" "recovery_info"
 	exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
@@ -209,15 +236,15 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test select_recovery_strategy function (peer IP provided but xfrm disabled)
-	# Call directly, not with run, to preserve global variables
-	select_recovery_strategy "${TEST_PEER_IP}" 2
+	declare -A recovery_info
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 	local exit_code=$?
 	assert_equal "$exit_code" 0
 	# Should use ipsec_reload, not xfrm
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload"
-	assert_equal "$RECOVERY_COMMAND" "ipsec reload"
-	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
-	assert_equal "$RECOVERY_AVAILABLE" 1
+	assert_equal "${recovery_info[strategy]}" "ipsec_reload"
+	assert_equal "${recovery_info[command]}" "ipsec reload"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" 1
 
 	remove_mock_from_path
 }
@@ -328,9 +355,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Generate initial xfrm state output for multiple SAs using test data helpers
 	local xfrm_state_sa1_initial
-	xfrm_state_sa1_initial=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
+	xfrm_state_sa1_initial=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
 	local xfrm_state_sa2_initial
-	xfrm_state_sa2_initial=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x23456789" 2000 20 "minimal")
+	xfrm_state_sa2_initial=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x23456789" 2000 20 "minimal")
 	local xfrm_state_multiple_initial="${xfrm_state_sa1_initial}"$'\n'"${xfrm_state_sa2_initial}"
 	local xfrm_state_multiple_initial_file="${TEST_DIR}/xfrm_state_multiple_initial"
 	echo "$xfrm_state_multiple_initial" >"$xfrm_state_multiple_initial_file"
@@ -442,7 +469,7 @@ EOF
 
 	# Generate xfrm state output using test data helpers
 	local xfrm_state_get_output
-	xfrm_state_get_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
+	xfrm_state_get_output=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
 	local xfrm_state_get_file="${TEST_DIR}/xfrm_state_get_output"
 	echo "$xfrm_state_get_output" >"$xfrm_state_get_file"
 
@@ -614,8 +641,8 @@ EOF
 	# Importance: Timeout warnings help diagnose slow SA re-establishment and enable fallback recovery
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/timeout_warn_attempts"
@@ -623,7 +650,7 @@ EOF
 
 	# Generate xfrm state output using test data helper
 	local xfrm_state_output
-	xfrm_state_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
+	xfrm_state_output=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
 	local xfrm_state_file="${TEST_DIR}/xfrm_state_initial"
 	echo "$xfrm_state_output" >"$xfrm_state_file"
 
@@ -1060,14 +1087,14 @@ EOF
 	# Generate xfrm state outputs using test data helpers
 	# Note: These SAs have marks, so we generate base format and add mark manually
 	local xfrm_state_with_mark
-	xfrm_state_with_mark=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
+	xfrm_state_with_mark=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
 	# Add mark attribute after proto line
 	xfrm_state_with_mark=$(echo "$xfrm_state_with_mark" | sed '/proto esp/a\    mark 0x12000000/0xfe000000')
 	local xfrm_state_with_mark_file="${TEST_DIR}/xfrm_state_with_mark"
 	echo "$xfrm_state_with_mark" >"$xfrm_state_with_mark_file"
 
 	local xfrm_state_without_mark
-	xfrm_state_without_mark=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x87654321" 2000 20 "minimal")
+	xfrm_state_without_mark=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x87654321" 2000 20 "minimal")
 	# Update reqid to 2
 	xfrm_state_without_mark="${xfrm_state_without_mark//reqid 1/reqid 2}"
 	local xfrm_state_without_mark_file="${TEST_DIR}/xfrm_state_without_mark"
@@ -1580,9 +1607,15 @@ EOF
 	local mock_ip="${TEST_DIR}/ip"
 	cat >"$mock_ip" <<'EOF'
 #!/bin/bash
-if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "show" ]]; then
+# Handle "ip -s xfrm state" (with statistics flag) - tried first by get_xfrm_state_for_peer
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
     # Return empty (no SAs found) - xfrm recovery will fail
     exit 0
+# Handle "ip xfrm state" (without statistics flag) - fallback used by get_xfrm_state_for_peer
+elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    # Return empty (no SAs found) - xfrm recovery will fail
+    exit 0
+# Handle "ip xfrm state delete" (deletion command)
 elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]] && [[ "$3" == "delete" ]]; then
     # Delete fails
     exit 1
@@ -1591,8 +1624,9 @@ exec /usr/bin/ip "$@"
 EOF
 	chmod +x "$mock_ip"
 
-	# Mock ipsec - reload succeeds
-	mock_ipsec_reload_restart 0 0
+	# Mock ipsec - reload succeeds, but VPN must be DOWN for recovery to trigger
+	# status_exit=1 so ipsec status fails (VPN appears DOWN)
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -1617,8 +1651,8 @@ EOF
 	# Importance: Multiple fallback options ensure recovery succeeds even when methods fail
 	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0'
 
-	# Mock ipsec - reload fails, restart succeeds
-	mock_ipsec_reload_restart 1 0
+	# Mock ipsec - reload fails, restart succeeds; VPN must be DOWN (status_exit=1)
+	mock_ipsec_reload_restart 1 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -1630,7 +1664,7 @@ EOF
 	fi
 	assert_file_exist "$LOG_FILE"
 	# Should log fallback message
-	assert_file_contains "$LOG_FILE" "ipsec restart" || assert_file_contains "$LOG_FILE" "reload failed" || assert_file_contains "$LOG_FILE" "attempting ipsec restart"
+	assert_log_contains_any "$LOG_FILE" "ipsec restart" "reload failed" "attempting ipsec restart"
 
 	remove_mock_from_path
 }
@@ -1645,8 +1679,8 @@ EOF
 	# Mock ip command - xfrm recovery fails
 	mock_ip_vpn_down
 
-	# Mock ipsec - reload succeeds
-	mock_ipsec_reload_restart 0 0
+	# Mock ipsec - reload succeeds; VPN must be DOWN (status_exit=1)
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -1658,7 +1692,7 @@ EOF
 	fi
 	assert_file_exist "$LOG_FILE"
 	# Should contain fallback-related messages
-	assert_file_contains "$LOG_FILE" "xfrm" || assert_file_contains "$LOG_FILE" "ipsec" || assert_file_contains "$LOG_FILE" "falling back" || assert_file_contains "$LOG_FILE" "reload"
+	assert_log_contains_any "$LOG_FILE" "xfrm" "ipsec" "falling back" "reload"
 
 	remove_mock_from_path
 }
@@ -1694,8 +1728,8 @@ exec /usr/bin/ip "\$@"
 EOF
 	chmod +x "$mock_ip"
 
-	# Mock ipsec - reload succeeds
-	mock_ipsec_reload_restart 0 0
+	# Mock ipsec - reload succeeds; VPN must be DOWN (status_exit=1)
+	mock_ipsec_reload_restart 0 0 1
 	add_mock_to_path
 
 	run bash "$TEST_SCRIPT"
@@ -1707,7 +1741,7 @@ EOF
 	fi
 	assert_file_exist "$LOG_FILE"
 	# Should contain verification-related messages
-	assert_file_contains "$LOG_FILE" "verification" || assert_file_contains "$LOG_FILE" "connections active" || assert_file_contains "$LOG_FILE" "completed"
+	assert_log_contains_any "$LOG_FILE" "verification" "connections active" "completed"
 
 	remove_mock_from_path
 }
@@ -1723,40 +1757,71 @@ EOF
 	# Importance: Ensures graceful handling when all recovery tools are unavailable
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=0'
 
-	# Save original PATH and create a minimal PATH that excludes ip/ipsec
-	# Use a simple approach: /bin typically has essential commands but not ip/ipsec
-	# Note: This test may need adjustment if ip/ipsec are found in /bin (unlikely)
-	local original_path="${PATH}"
-	# Create minimal PATH - start with /bin, add /usr/bin only if it doesn't contain ip/ipsec
-	local test_path="/bin"
-	# Check if /usr/bin has ip or ipsec before adding it
-	if [[ ! -x "/usr/bin/ip" ]] && [[ ! -x "/usr/bin/ipsec" ]]; then
-		test_path="/usr/bin:${test_path}"
-	fi
-	export PATH="${TEST_DIR}:${test_path}"
-
-	# Verify ip/ipsec are not available in the restricted PATH
-	if command -v ip >/dev/null 2>&1 || command -v ipsec >/dev/null 2>&1; then
-		skip "ip or ipsec found in restricted PATH - cannot test 'no commands available' scenario"
-	fi
-
-	# Don't create any mocks (no ip or ipsec available)
-	# PATH is restricted to exclude ip/ipsec, so commands won't be found
-
-	# Source recovery functions to test directly
+	# Source dependencies first (recovery.sh needs logging.sh and common.sh for check_command_available)
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" || true
 	# shellcheck source=../lib/recovery.sh
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
-	# Test select_recovery_strategy function (xfrm disabled, no ipsec)
-	run select_recovery_strategy "${TEST_PEER_IP}" 2
-	assert_failure
-	assert_equal "$RECOVERY_STRATEGY" "unavailable"
-	assert_equal "$RECOVERY_COMMAND" ""
-	assert_equal "$RECOVERY_IMPACT" ""
-	assert_equal "$RECOVERY_AVAILABLE" 0
+	# Mock check_command_available to return false for ip and ipsec
+	# This simulates the scenario where commands are truly unavailable
+	# (check_command_available has fallback mechanisms that check system directories,
+	# so we need to mock it to properly test the "unavailable" scenario)
+	if command -v check_command_available >/dev/null 2>&1; then
+		local func_def
+		func_def=$(declare -f check_command_available 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			eval "${func_def/check_command_available/check_command_available.original}" 2>/dev/null || true
+		fi
+	fi
 
-	# Restore original PATH
-	export PATH="${original_path}"
+	# Check if command is available (test helper)
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
+	check_command_available() {
+		local cmd="$1"
+		if [[ "$cmd" == "ip" ]] || [[ "$cmd" == "ipsec" ]]; then
+			return 1
+		fi
+		# For other commands, use original if available
+		if command -v check_command_available.original >/dev/null 2>&1; then
+			check_command_available.original "$@"
+		else
+			command -v "$cmd" >/dev/null 2>&1
+		fi
+	}
+
+	# Test select_recovery_strategy function (xfrm disabled, no ipsec)
+	# Uses nameref associative array
+	# Use set +e to allow function to return error code without failing test
+	declare -A recovery_info
+	set +e
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
+	local exit_code=$?
+	set -e
+	assert_equal "$exit_code" 1
+	assert_equal "${recovery_info[strategy]}" "unavailable"
+	assert_equal "${recovery_info[command]}" ""
+	assert_equal "${recovery_info[impact]}" ""
+	assert_equal "${recovery_info[available]}" 0
+
+	# Restore original check_command_available if it was saved
+	# Note: Each BATS test runs in a fresh shell, so cleanup isn't strictly necessary,
+	# but we do it for completeness and to avoid potential issues if tests are run differently
+	if declare -f check_command_available.original >/dev/null 2>&1; then
+		local restore_func
+		restore_func=$(declare -f check_command_available.original 2>/dev/null || true)
+		if [[ -n "$restore_func" ]]; then
+			eval "${restore_func/check_command_available.original/check_command_available}" 2>/dev/null || true
+		fi
+	fi
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -1766,40 +1831,71 @@ EOF
 	# Importance: Ensures graceful handling when all recovery tools are unavailable for Tier 3
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
 
-	# Save original PATH and create a minimal PATH that excludes ip/ipsec
-	# Use a simple approach: /bin typically has essential commands but not ip/ipsec
-	# Note: This test may need adjustment if ip/ipsec are found in /bin (unlikely)
-	local original_path="${PATH}"
-	# Create minimal PATH - start with /bin, add /usr/bin only if it doesn't contain ip/ipsec
-	local test_path="/bin"
-	# Check if /usr/bin has ip or ipsec before adding it
-	if [[ ! -x "/usr/bin/ip" ]] && [[ ! -x "/usr/bin/ipsec" ]]; then
-		test_path="/usr/bin:${test_path}"
-	fi
-	export PATH="${TEST_DIR}:${test_path}"
-
-	# Verify ip/ipsec are not available in the restricted PATH
-	if command -v ip >/dev/null 2>&1 || command -v ipsec >/dev/null 2>&1; then
-		skip "ip or ipsec found in restricted PATH - cannot test 'no commands available' scenario"
-	fi
-
-	# Don't create any mocks (no ip or ipsec available)
-	# PATH is restricted to exclude ip/ipsec, so commands won't be found
-
-	# Source recovery functions to test directly
+	# Source dependencies first (recovery.sh needs logging.sh and common.sh for check_command_available)
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" || true
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" || true
 	# shellcheck source=../lib/recovery.sh
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
-	# Test select_recovery_strategy function for Tier 3
-	run select_recovery_strategy "${TEST_PEER_IP}" 3
-	assert_failure
-	assert_equal "$RECOVERY_STRATEGY" "unavailable"
-	assert_equal "$RECOVERY_COMMAND" ""
-	assert_equal "$RECOVERY_IMPACT" ""
-	assert_equal "$RECOVERY_AVAILABLE" 0
+	# Mock check_command_available to return false for ip and ipsec
+	# This simulates the scenario where commands are truly unavailable
+	# (check_command_available has fallback mechanisms that check system directories,
+	# so we need to mock it to properly test the "unavailable" scenario)
+	if command -v check_command_available >/dev/null 2>&1; then
+		local func_def
+		func_def=$(declare -f check_command_available 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			eval "${func_def/check_command_available/check_command_available.original}" 2>/dev/null || true
+		fi
+	fi
 
-	# Restore original PATH
-	export PATH="${original_path}"
+	# Check if command is available (test helper)
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
+	check_command_available() {
+		local cmd="$1"
+		if [[ "$cmd" == "ip" ]] || [[ "$cmd" == "ipsec" ]]; then
+			return 1
+		fi
+		# For other commands, use original if available
+		if command -v check_command_available.original >/dev/null 2>&1; then
+			check_command_available.original "$@"
+		else
+			command -v "$cmd" >/dev/null 2>&1
+		fi
+	}
+
+	# Test select_recovery_strategy function for Tier 3
+	# Uses nameref associative array
+	# Use set +e to allow function to return error code without failing test
+	declare -A recovery_info
+	set +e
+	select_recovery_strategy "${TEST_PEER_IP}" 3 "recovery_info"
+	local exit_code=$?
+	set -e
+	assert_equal "$exit_code" 1
+	assert_equal "${recovery_info[strategy]}" "unavailable"
+	assert_equal "${recovery_info[command]}" ""
+	assert_equal "${recovery_info[impact]}" ""
+	assert_equal "${recovery_info[available]}" 0
+
+	# Restore original check_command_available if it was saved
+	# Note: Each BATS test runs in a fresh shell, so cleanup isn't strictly necessary,
+	# but we do it for completeness and to avoid potential issues if tests are run differently
+	if declare -f check_command_available.original >/dev/null 2>&1; then
+		local restore_func
+		restore_func=$(declare -f check_command_available.original 2>/dev/null || true)
+		if [[ -n "$restore_func" ]]; then
+			eval "${restore_func/check_command_available.original/check_command_available}" 2>/dev/null || true
+		fi
+	fi
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -1809,8 +1905,8 @@ EOF
 	# Importance: Edge case where SA re-establishes but byte counter verification fails, then timeout occurs
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/timeout_byte_counter_attempts"
@@ -1915,8 +2011,8 @@ EOF
 	# Importance: Edge case where multiple SAs exist but only some re-establish within timeout
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/timeout_partial_attempts"
@@ -2039,8 +2135,8 @@ EOF
 	# Importance: Ensures graceful handling when ipsec status command fails during recovery verification
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ipsec command that fails
 	mock_ipsec_status 1 "ipsec status failed" >/dev/null
@@ -2067,8 +2163,8 @@ EOF
 	# Importance: Ensures graceful handling when ipsec status command hangs during recovery verification
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'IPSEC_STATUS_TIMEOUT=1'
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ipsec command that hangs (simulated by timeout)
 	mock_ipsec_timeout 2 "Connections:
@@ -2120,8 +2216,8 @@ EOF
 	# Importance: Ensures graceful handling when only some connections are active after recovery
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ipsec command that returns only one connection
 	mock_ipsec_status 0 "Connections:
@@ -2150,8 +2246,8 @@ EOF
 	# Importance: Ensures verification works in cron/systemd environments where PATH may not include /usr/sbin
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Save original PATH
 	local original_path="$PATH"
@@ -2265,8 +2361,8 @@ EOF
 	# Importance: Ensures graceful handling when xfrm state query fails during byte counter verification
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ip command that fails for xfrm state
 	local mock_ip="${TEST_DIR}/ip"
@@ -2302,8 +2398,8 @@ EOF
 	# Importance: Ensures graceful handling when byte counter extraction fails but SA is present
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ip command that returns xfrm state without byte counter format
 	local mock_ip="${TEST_DIR}/ip"
@@ -2352,8 +2448,8 @@ EOF
 	# Importance: Ensures detection of tunnels that are established but not passing traffic
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ip command that returns xfrm state with zero byte counters
 	local mock_ip="${TEST_DIR}/ip"
@@ -2402,8 +2498,8 @@ EOF
 	# Importance: Ensures graceful handling when peer IP has no SAs in xfrm state
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ip command that returns empty xfrm state
 	local mock_ip="${TEST_DIR}/ip"
@@ -2444,19 +2540,6 @@ EOF
 	# Importance: Ensures recovery functions handle unavailable strategies gracefully
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1'
 
-	# Save original PATH and create a minimal PATH that excludes ip/ipsec
-	local original_path="${PATH}"
-	local test_path="/bin"
-	if [[ ! -x "/usr/bin/ip" ]] && [[ ! -x "/usr/bin/ipsec" ]]; then
-		test_path="/usr/bin:${test_path}"
-	fi
-	export PATH="${TEST_DIR}:${test_path}"
-
-	# Verify ip/ipsec are not available in the restricted PATH
-	if command -v ip >/dev/null 2>&1 || command -v ipsec >/dev/null 2>&1; then
-		skip "ip or ipsec found in restricted PATH - cannot test 'no commands available' scenario"
-	fi
-
 	# Source recovery functions to test directly
 	source_recovery_module
 
@@ -2465,14 +2548,61 @@ EOF
 	LOGS_DIR="${TEST_DIR}/logs"
 	mkdir -p "${LOGS_DIR}"
 
-	# Test select_recovery_strategy directly (simulating call from surgical_cleanup)
-	run select_recovery_strategy "${TEST_PEER_IP}" 2
-	assert_failure
-	assert_equal "$RECOVERY_STRATEGY" "unavailable"
-	assert_equal "$RECOVERY_AVAILABLE" 0
+	# Mock check_command_available to return false for ip and ipsec
+	# This simulates the scenario where commands are truly unavailable
+	# (check_command_available has fallback mechanisms that check system directories,
+	# so we need to mock it to properly test the "unavailable" scenario)
+	if command -v check_command_available >/dev/null 2>&1; then
+		local func_def
+		func_def=$(declare -f check_command_available 2>/dev/null || true)
+		if [[ -n "$func_def" ]]; then
+			eval "${func_def/check_command_available/check_command_available.original}" 2>/dev/null || true
+		fi
+	fi
 
-	# Restore original PATH
-	export PATH="${original_path}"
+	# Check if command is available (test helper)
+	#
+	# Arguments:
+	#   $1: Command name to check
+	#
+	# Returns:
+	#   0: Command is available
+	#   1: Command is not available
+	check_command_available() {
+		local cmd="$1"
+		if [[ "$cmd" == "ip" ]] || [[ "$cmd" == "ipsec" ]]; then
+			return 1
+		fi
+		# For other commands, use original if available
+		if command -v check_command_available.original >/dev/null 2>&1; then
+			check_command_available.original "$@"
+		else
+			command -v "$cmd" >/dev/null 2>&1
+		fi
+	}
+
+	# Test select_recovery_strategy directly (simulating call from surgical_cleanup)
+	# Uses nameref associative array
+	# Use set +e to allow function to return error code without failing test
+	declare -A recovery_info
+	set +e
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
+	local exit_code=$?
+	set -e
+	assert_equal "$exit_code" 1
+	assert_equal "${recovery_info[strategy]}" "unavailable"
+	assert_equal "${recovery_info[available]}" 0
+
+	# Restore original check_command_available if it was saved
+	# Note: Each BATS test runs in a fresh shell, so cleanup isn't strictly necessary,
+	# but we do it for completeness and to avoid potential issues if tests are run differently
+	if declare -f check_command_available.original >/dev/null 2>&1; then
+		local restore_func
+		restore_func=$(declare -f check_command_available.original 2>/dev/null || true)
+		if [[ -n "$restore_func" ]]; then
+			eval "${restore_func/check_command_available.original/check_command_available}" 2>/dev/null || true
+		fi
+	fi
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -2482,8 +2612,8 @@ EOF
 	# Importance: Edge case where check_ipsec_phase2 fails during verification, causing timeout
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_XFRM_RECOVERY=1' 'XFRM_RECOVERY_VERIFY_TIMEOUT=2' 'XFRM_RECOVERY_VERIFY_INTERVAL=1'
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Track verification attempts
 	local verify_attempt_file="${TEST_DIR}/timeout_check_phase2_attempts"
@@ -2576,8 +2706,8 @@ EOF
 	# Importance: Ensures graceful handling when verification fails during Tier 3 recovery
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ipsec command that returns status without the expected peer IP
 	mock_ipsec_status 0 "Connections:
@@ -2606,8 +2736,8 @@ EOF
 	# Importance: Ensures graceful handling when byte counter verification fails during Tier 3 recovery
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
-	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
-	mkdir -p "${TEST_DIR}/logs"
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local log_file="$LOG_FILE"
 
 	# Mock ip command that returns xfrm state with zero byte counters
 	local mock_ip="${TEST_DIR}/ip"
@@ -2670,11 +2800,12 @@ EOF
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test with invalid tier (1 is not valid for recovery strategy selection)
-	run select_recovery_strategy "${TEST_PEER_IP}" 1
+	declare -A recovery_info
+	run select_recovery_strategy "${TEST_PEER_IP}" 1 "recovery_info"
 	assert_failure
 
 	# Test with invalid tier (4 is not valid)
-	run select_recovery_strategy "${TEST_PEER_IP}" 4
+	run select_recovery_strategy "${TEST_PEER_IP}" 4 "recovery_info"
 	assert_failure
 
 	remove_mock_from_path
@@ -2694,11 +2825,12 @@ EOF
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test with empty peer IP - should fall back to ipsec_reload for tier 2
-	select_recovery_strategy "" 2
+	declare -A recovery_info
+	select_recovery_strategy "" 2 "recovery_info"
 	local exit_code=$?
 	assert_equal "$exit_code" 0
 	# Should select ipsec_reload (not xfrm, since peer IP is empty)
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload" || assert_equal "$RECOVERY_STRATEGY" "unavailable"
+	assert_equal "${recovery_info[strategy]}" "ipsec_reload" || assert_equal "${recovery_info[strategy]}" "unavailable"
 
 	remove_mock_from_path
 }
@@ -2720,11 +2852,12 @@ EOF
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test with peer IP but xfrm disabled - should fall back to ipsec_reload
-	select_recovery_strategy "${TEST_PEER_IP}" 2
+	declare -A recovery_info
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 	local exit_code=$?
 	assert_equal "$exit_code" 0
 	# Should select ipsec_reload (not xfrm, since it's disabled)
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload" || assert_equal "$RECOVERY_STRATEGY" "unavailable"
+	assert_equal "${recovery_info[strategy]}" "ipsec_reload" || assert_equal "${recovery_info[strategy]}" "unavailable"
 
 	remove_mock_from_path
 }
@@ -2780,18 +2913,19 @@ EOF
 	}
 
 	# Test strategy selection - should fail when no commands available
-	# Call directly (not with run) to preserve global variables
+	# Uses nameref associative array
 	# Use set +e to allow function to return error code without failing test
+	declare -A recovery_info
 	set +e
-	select_recovery_strategy "${TEST_PEER_IP}" 2
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 	local exit_code=$?
 	set -e
 	assert_equal "$exit_code" 1
-	assert_equal "$RECOVERY_STRATEGY" "unavailable"
-	assert_equal "$RECOVERY_COMMAND" ""
-	assert_equal "$RECOVERY_IMPACT" ""
-	# RECOVERY_AVAILABLE should be 0
-	assert_equal "${RECOVERY_AVAILABLE:-1}" 0
+	assert_equal "${recovery_info[strategy]}" "unavailable"
+	assert_equal "${recovery_info[command]}" ""
+	assert_equal "${recovery_info[impact]}" ""
+	# available should be 0
+	assert_equal "${recovery_info[available]}" 0
 
 	# Restore original function if it existed
 	if command -v check_command_available.original >/dev/null 2>&1; then
@@ -3052,34 +3186,35 @@ EOF
 	source "${BATS_TEST_DIRNAME}/../lib/recovery.sh" || true
 
 	# Test xfrm strategy selection (Tier 2 with peer IP)
-	select_recovery_strategy "${TEST_PEER_IP}" 2
+	declare -A recovery_info
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 	local exit_code=$?
 	assert_equal "$exit_code" 0
-	# Verify all global variables are set correctly
-	assert_equal "$RECOVERY_STRATEGY" "xfrm"
-	assert_equal "$RECOVERY_COMMAND" "attempt_xfrm_recovery"
-	assert_equal "$RECOVERY_IMPACT" "per-connection"
-	assert_equal "$RECOVERY_AVAILABLE" 1
+	# Verify all array values are set correctly
+	assert_equal "${recovery_info[strategy]}" "xfrm"
+	assert_equal "${recovery_info[command]}" "attempt_xfrm_recovery"
+	assert_equal "${recovery_info[impact]}" "per-connection"
+	assert_equal "${recovery_info[available]}" 1
 
 	# Test ipsec_reload strategy selection (Tier 2 without peer IP)
-	select_recovery_strategy "" 2
+	select_recovery_strategy "" 2 "recovery_info"
 	exit_code=$?
 	assert_equal "$exit_code" 0
-	# Verify all global variables are set correctly
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_reload"
-	assert_equal "$RECOVERY_COMMAND" "ipsec reload"
-	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
-	assert_equal "$RECOVERY_AVAILABLE" 1
+	# Verify all array values are set correctly
+	assert_equal "${recovery_info[strategy]}" "ipsec_reload"
+	assert_equal "${recovery_info[command]}" "ipsec reload"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" 1
 
 	# Test ipsec_restart strategy selection (Tier 3)
-	select_recovery_strategy "" 3
+	select_recovery_strategy "" 3 "recovery_info"
 	exit_code=$?
 	assert_equal "$exit_code" 0
-	# Verify all global variables are set correctly
-	assert_equal "$RECOVERY_STRATEGY" "ipsec_restart"
-	assert_equal "$RECOVERY_COMMAND" "ipsec restart"
-	assert_equal "$RECOVERY_IMPACT" "all-tunnels"
-	assert_equal "$RECOVERY_AVAILABLE" 1
+	# Verify all array values are set correctly
+	assert_equal "${recovery_info[strategy]}" "ipsec_restart"
+	assert_equal "${recovery_info[command]}" "ipsec restart"
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_equal "${recovery_info[available]}" 1
 
 	remove_mock_from_path
 }
@@ -3139,13 +3274,14 @@ EOF
 	# Call select_recovery_strategy
 	# It should use the cached availability from _check_recovery_command_availability()
 	# and not re-check during strategy selection
-	select_recovery_strategy "${TEST_PEER_IP}" 2
+	declare -A recovery_info
+	select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 	local exit_code=$?
 	assert_equal "$exit_code" 0
 
 	# Verify that strategy was selected successfully (using cached availability)
-	assert_equal "$RECOVERY_STRATEGY" "xfrm" || assert_equal "$RECOVERY_STRATEGY" "ipsec_reload"
-	assert_equal "$RECOVERY_AVAILABLE" 1
+	assert_equal "${recovery_info[strategy]}" "xfrm" || assert_equal "${recovery_info[strategy]}" "ipsec_reload"
+	assert_equal "${recovery_info[available]}" 1
 
 	# Verify that check_command_available was called (for initial availability check)
 	# It should be called at least twice (once for ip, once for ipsec)

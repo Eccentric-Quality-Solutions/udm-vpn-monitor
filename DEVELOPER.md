@@ -63,6 +63,14 @@ This guide provides information for developers contributing to the UDM VPN Monit
    - **Library Modules**: Modular architecture with dedicated modules in `lib/` directory
      - See [ARCHITECTURE.md](docs/ARCHITECTURE.md) "Modular Library Architecture" section for complete module documentation
      - See [ADR-0005](docs/adr/0005-modular-library-architecture.md) for design decision rationale
+   - **Location-Based State Management**: The system uses location-based configuration and state tracking
+     - VPNs are configured using `LOCATION_<NAME>_EXTERNAL` and `LOCATION_<NAME>_INTERNAL` variables
+     - State files are named with location names: `<key>_<location>_<peer_ip>` (e.g., `failure_count_NYC_203_0_113_1`)
+     - Each location's state is tracked independently (failure counters, byte counters, etc.)
+     - Location names and IP addresses are sanitized for safe filenames (invalid chars → underscores, max 64 chars for locations)
+     - See [STATE_SYSTEM.md](docs/STATE_SYSTEM.md) for comprehensive state management documentation
+     - See [CODE_PATTERNS.md](docs/CODE_PATTERNS.md) "Pattern: Per-Location State Tracking" section for usage patterns
+     - See [ADR-0024](docs/adr/0024-location-based-configuration.md) for design decision rationale
 
 8. **Pick a small issue to start**
    - Check [docs/CODEBASE_REVIEW.md](docs/CODEBASE_REVIEW.md) for improvement recommendations
@@ -82,6 +90,18 @@ For comprehensive architecture information including:
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 For design decisions and rationale behind architectural choices, see [Architecture Decision Records](docs/adr/README.md).
+
+**State Management:**
+
+For comprehensive state management documentation including:
+- State file naming conventions and sanitization
+- Per-location vs. per-peer vs. global state
+- State file lifecycle and operations
+- State validation and recovery from corruption
+
+See [STATE_SYSTEM.md](docs/STATE_SYSTEM.md).
+
+For state management patterns and usage examples, see [CODE_PATTERNS.md](docs/CODE_PATTERNS.md) "Pattern: Per-Location State Tracking" section.
 
 **Testing:**
 
@@ -569,7 +589,7 @@ The `handle_error_or_exit_fake_mode()` function provides consistent error handli
 
 This function should be used instead of manually checking `is_fake_mode()` for fatal errors. It standardizes the pattern of handling errors differently based on fake mode.
 
-**Exit Behavior in Fake Mode**: The caller must decide whether to exit with error code or code 0 based on whether the error is execution-blocking. See `docs/FAKE_MODE_EXIT_BEHAVIOR.md` for detailed guidance on categorizing errors and determining appropriate exit behavior.
+**Exit Behavior in Fake Mode**: The caller must decide whether to exit with error code or code 0 based on whether the error is execution-blocking. See the fake-mode exit behavior guidance in `docs/CODE_PATTERNS.md` and `docs/testing/TEST_PATTERNS.md` for when to fail vs. succeed in fake mode and how to assert in tests.
 
 **Error Code Constants**:
 Standard exit codes are defined in `lib/constants.sh` for consistent error handling:
@@ -902,7 +922,7 @@ This should be run once after cloning the repository (see [First Time Setup](#fi
    - Warns if ShellCheck or shfmt are not installed (but allows commit to proceed)
 
 2. **Package Regeneration**:
-   - Runs `prepare_install_package.sh` to regenerate the installer package
+   - Runs `scripts/prepare_install_package.sh` to regenerate the installer package
    - Adds the generated `udm-vpn-monitor.zip` file to the commit
    - Ensures the package is always synchronized with source code changes
 
@@ -927,7 +947,7 @@ git commit --no-verify -m "commit message"
 ./scripts/setup-git-hooks.sh
 ```
 
-**Note:** The hook will fail if `prepare_install_package.sh` fails or if the package file cannot be created. Fix any issues before committing.
+**Note:** The hook will fail if `scripts/prepare_install_package.sh` fails or if the package file cannot be created. Fix any issues before committing.
 
 ## Project Structure
 
@@ -938,7 +958,8 @@ udm-vpn-monitor/
 ├── uninstall.sh              # Uninstallation script
 ├── vpn-monitor.sh            # Main monitoring script
 ├── vpn-monitor.conf          # Configuration template
-├── prepare_install_package.sh # Creates installer package
+├── scripts/
+│   ├── prepare_install_package.sh # Creates installer package
 ├── lib/
 │   ├── common.sh            # Shared utilities (logging, validation)
 │   ├── config.sh            # Configuration loading and validation

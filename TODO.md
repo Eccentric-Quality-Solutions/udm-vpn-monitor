@@ -2,8 +2,20 @@
 
 This file tracks planned improvements and tasks for the UDM VPN Monitor project.
 
-**Last Reviewed:** 2026-01-15  
-**Last Updated:** 2026-01-15
+**Last Reviewed:** 2026-01-20  
+**Last Updated:** 2026-01-20
+
+## Human
+
+- Ask for internal IP for remote VPN as well
+- ASk for internal IP for local UDM
+- When creating a new location using the interactive installer it adds the locations to the end but also keeps the NYC locations at the beginning
+- It seems like if it loads config again it starts over from the top for the networks it is testing
+- Need to make sure that after code changes Cursor updates any related tests.
+- Need Cursor to be better at grepping and replacing things, it often only fixes one or a few tests.
+- Need to regularly identify and mitigate slow tests
+- Interactive mode doesn't seem to trigger auto?
+- If you don't enter a locaiton it seems like the app doesn't fully install/start (makes sense, but probably want to handle differently).
 
 ## Medium Priority
 

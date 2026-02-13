@@ -65,8 +65,8 @@ We will implement a location-based configuration format that:
   - 10 internal IPs: Need at least 3 successful pings (30% of 10 = 3)
 
 ### State File Naming
-- **Old Format**: `state/failure_counter_203_0_113_1`
-- **New Format**: `state/failure_counter_NYC_203_0_113_1`
+- **Old Format**: `state/failure_count_203_0_113_1`
+- **New Format**: `state/failure_count_NYC_203_0_113_1`
 - **Format**: `state/<type>_<location>_<sanitized_ip>`
 - Location name included in filename for better organization
 

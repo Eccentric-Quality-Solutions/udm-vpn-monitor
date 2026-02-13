@@ -5,7 +5,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 set -euo pipefail
@@ -115,13 +115,13 @@ check_installation() {
 remove_cron() {
 	log_info "Removing cron job..."
 
-	# Check if cron entry exists
+	# Check if cron entry exists (matches both vpn-monitor.sh and vpn-monitor-wrapper.sh)
 	local crontab_content
 	crontab_content=$(crontab -l 2>/dev/null || echo "")
-	if echo "$crontab_content" | grep -q "vpn-monitor.sh"; then
+	if echo "$crontab_content" | grep -q "vpn-monitor"; then
 		# Remove cron entry - only update crontab if there are other entries
 		local filtered_content
-		filtered_content=$(echo "$crontab_content" | grep -v "vpn-monitor.sh")
+		filtered_content=$(echo "$crontab_content" | grep -v "vpn-monitor")
 		if [ -n "$filtered_content" ]; then
 			if ! echo "$filtered_content" | crontab - 2>/dev/null; then
 				log_error "Failed to update crontab"
@@ -136,7 +136,7 @@ remove_cron() {
 		fi
 
 		# Verify removal
-		if crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
+		if crontab -l 2>/dev/null | grep -q "vpn-monitor"; then
 			log_error "Failed to remove cron job - verification check failed"
 			return 1
 		fi

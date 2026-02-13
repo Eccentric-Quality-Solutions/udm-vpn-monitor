@@ -73,3 +73,24 @@ This document tracks bugs and potential issues that have been reviewed and deter
 **Date Accepted**: 2025-12-31
 
 ---
+
+## Lockfile Acquisition Timing Window (Issue #18)
+
+**Location**: `vpn-monitor.sh:709` and `lib/lockfile.sh:663-692`
+
+**Issue**: Lockfile acquisition happens after script initialization (library sourcing, directory creation, config loading), creating a timing window where multiple instances can start before the lockfile is acquired. This can cause "Another instance is already running" warnings when cron triggers before the previous instance completes.
+
+**Why Acceptable**:
+- **Low impact**: System correctly handles duplicates (exits gracefully), no data corruption observed
+- **Minimal race window**: Window is limited to initialization time (typically < 1 second)
+- **Proper protection in place**: `flock` with non-blocking locks (`flock -n`) is already implemented and prevents actual concurrent execution
+- **Dependency constraints**: Lockfile path depends on `STATE_DIR` which can be overridden in config, and lockfile error logging requires `LOG_FILE` which also depends on config. Moving lockfile earlier would require:
+  - Using a fixed location (e.g., `/tmp`) which has reliability issues (cleared on reboot, doesn't respect custom STATE_DIR)
+  - Minimal config parsing (fragile, duplicates logic, still needs directory creation)
+  - Wrapper script (adds deployment complexity)
+- **Complexity vs. benefit**: Fix complexity (MEDIUM-HIGH) outweighs the benefit given the low impact (log noise and minor wasted resources)
+- **Self-limiting**: Race window is small and only occurs when cron triggers before previous instance completes, which is rare in normal operation
+
+**Date Accepted**: 2026-01-13
+
+---

@@ -3,7 +3,7 @@
 # Configuration schema definition for UDM VPN Monitor
 # Defines validation rules for all configuration variables
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 # Configuration schema definition
@@ -14,7 +14,7 @@
 #   - rules: Multiple rules separated by pipe (|) characters in the schema definition.
 #            Internally, rules are joined with triple-pipe (|||) separator to avoid
 #            conflicts with commas in values: rules. When parsing, rules are split
-#            by ||| separator first, with fallback to comma for backward compatibility.
+#            by ||| separator.
 #            Rule types:
 #     * non-empty: value must not be empty (for strings)
 #     * min:N: minimum value (for integers)
@@ -33,8 +33,7 @@
 #   After parsing: rules string becomes "min:1|||max:10"
 #   This allows proper splitting without breaking "values:0,1" rules.
 #
-#   When validating, rules are split by ||| separator first. If no ||| found,
-#   falls back to comma-separated format for backward compatibility.
+#   When validating, rules are split by ||| separator.
 #   Special case: Single "values:" rule is not split (comma is part of value).
 #
 # LIMITATION: The pipe character (|) is used as a delimiter in the schema format.
@@ -82,11 +81,15 @@ declare -gA CONFIG_SCHEMA=(
 	# NOTE: TIER3_THRESHOLD has relative validation (depends on TIER2_THRESHOLD)
 	# Validation order is handled safely - see validate_config_schema() documentation
 	["TIER3_THRESHOLD"]="required|integer|min:TIER2_THRESHOLD|default:5"
-	["COOLDOWN_MINUTES"]="required|integer|min:1|max:1440|default:15"
-	["MAX_RESTARTS_PER_HOUR"]="required|integer|min:1|max:60|default:3"
+	# Rate limiting configuration
+	["MAX_RESTARTS_PER_WINDOW"]="required|integer|min:1|max:20|default:20"
+	["RATE_LIMIT_WINDOW_MINUTES"]="required|integer|min:5|max:1440|default:60"
+	["MIN_RESTART_INTERVAL_SECONDS"]="required|integer|min:0|max:300|default:40"
+	# Startup grace period (seconds) - wait time before first VPN check after script restart
+	# Prevents false positives when IPsec/xfrm subsystems are still initializing
+	["STARTUP_GRACE_PERIOD"]="optional|integer|min:0|max:300|default:5"
 
 	# Optional configuration with defaults
-	["VPN_NAME"]="optional|string||default:Site-to-Site VPN"
 	["ENABLE_PING_CHECK"]="optional|integer|values:0,1|default:1"
 	["LOCAL_UDM_IP"]="optional|string||default:"
 	["PING_COUNT"]="optional|integer|min:1|max:10|default:3"
@@ -97,6 +100,9 @@ declare -gA CONFIG_SCHEMA=(
 	["KEEPALIVE_PING_COUNT"]="optional|integer|min:1|max:5|default:1"
 	["DEBUG"]="optional|integer|values:0,1|default:0"
 	["NO_ESCALATE"]="optional|integer|values:0,1|default:0"
+	["ENABLE_SYSTEM_WIDE_FAILURE_DETECTION"]="optional|integer|values:0,1|default:1"
+	["SYSTEM_WIDE_FAILURE_THRESHOLD"]="optional|integer|min:0|max:100|default:100"
+	["COORDINATE_SYSTEM_WIDE_RECOVERY"]="optional|integer|values:0,1|default:1"
 	# xfrm-based per-connection recovery (enabled by default for UDM OS 4.3+)
 	["ENABLE_XFRM_RECOVERY"]="optional|integer|values:0,1|default:1"
 	# Recovery verification timeout (seconds) - maximum time to wait for recovery verification
@@ -106,6 +112,8 @@ declare -gA CONFIG_SCHEMA=(
 	["STATE_DIR"]="optional|string||default:"
 	["LOGS_DIR"]="optional|string||default:"
 	["CRON_SCHEDULE"]="optional|string||default:*/1 * * * *"
+	["ENABLE_MONITOR_WRAPPER"]="optional|integer|values:0,1|default:1"
+	["MONITOR_INTERVAL"]="optional|integer|min:10|max:60|default:20"
 	# Network partition detection (enabled by default)
 	["ENABLE_NETWORK_PARTITION_CHECK"]="optional|integer|values:0,1|default:1"
 	["NETWORK_PARTITION_DNS_SERVER"]="optional|string||default:8.8.8.8"
@@ -160,11 +168,12 @@ get_config_schema() {
 	fi
 
 	# Check pattern matches for location-based variables
-	if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+	# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
+	if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
 		# LOCATION_*_EXTERNAL pattern: required, string, non-empty
 		echo "required|string|non-empty"
 		return 0
-	elif [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+	elif [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_INTERNAL$ ]]; then
 		# LOCATION_*_INTERNAL pattern: optional, string
 		echo "optional|string"
 		return 0
@@ -217,6 +226,12 @@ is_config_required() {
 #   Prints default value to stdout (empty string if no default)
 #
 # Limitations:
+#   Default values cannot contain pipe characters (|). If you need a default
+#   with a pipe character:
+#   1. Use a different format (e.g., comma-separated list)
+#   2. Set the default in the calling code instead of schema
+#   3. Contact maintainers to discuss schema format changes
+#
 #   The regex pattern `default:([^|]+)$` extracts everything after "default:" until
 #   the end of the string. This works correctly for all current default values.
 #   However, if a default value ever needs to contain a pipe character (|), it would
@@ -227,11 +242,6 @@ is_config_required() {
 #   - Integers: "1", "3", "15"
 #   - Cron schedules: "*/1 * * * *" (contains spaces and asterisks, no pipes)
 #   - Empty strings: ""
-#
-#   If defaults with pipe characters are needed in the future, consider:
-#   - Using a different delimiter in the schema format
-#   - Implementing escaping mechanism (e.g., \| for literal pipe)
-#   - Using a different schema format that supports complex values
 #
 #   For now, this limitation is acceptable as no current defaults require pipe characters.
 get_config_default() {

@@ -3,7 +3,7 @@
 # Configuration default value application for UDM VPN Monitor
 # Handles applying default values from schema to configuration variables
 #
-# Version: 0.6.0
+# Version: 0.7.0
 
 # Apply default values from schema
 #
@@ -37,33 +37,20 @@ apply_schema_defaults() {
 		# Get schema once and parse it to extract all needed values
 		schema=$(get_config_schema "$var_name" 2>/dev/null || echo "")
 		if [[ -n "$schema" ]]; then
-			# Parse schema once to get all values: required, type, rules, and default
-			# Split schema by pipe to handle multiple rules correctly
+			# Extract required status (first part)
 			IFS='|' read -ra parts <<<"$schema"
-
-			# First part is required status
 			required="${parts[0]}"
 
-			# Remaining parts are rules and default
-			# Rules are everything before a part starting with "default:"
-			# Default is the part starting with "default:" (extract value after "default:")
-			default_val=""
-			local i=2
-			while [[ $i -lt ${#parts[@]} ]]; do
-				if [[ "${parts[$i]}" =~ ^default:(.*)$ ]]; then
-					# Found default value
-					default_val="${BASH_REMATCH[1]}"
-					break
-				fi
-				i=$((i + 1))
-			done
+			# Use existing function to get default (single source of truth)
+			default_val=$(get_config_default "$var_name" 2>/dev/null || echo "")
 		else
 			required="optional"
 			default_val=""
 		fi
 
 		# Apply default if variable is not already set
-		# Use declare -p to check if variable is set (works for indirect references)
+		# Use declare -p to check if variable is set
+		# Note: var_name is a direct variable name from schema, not an indirect reference
 		if ! declare -p "$var_name" &>/dev/null; then
 			# Variable not set, apply default
 			if [[ -n "$default_val" ]]; then
@@ -104,8 +91,8 @@ apply_schema_defaults() {
 #   - Logs warning message if provided and default is applied
 #
 # Examples:
-#   var_value=$(apply_optional_default "VPN_NAME" "$VPN_NAME" "optional" "Site-to-Site VPN" "VPN_NAME is empty, using default")
-#   # Sets VPN_NAME="Site-to-Site VPN" if optional and empty, prints value to stdout
+#   var_value=$(apply_optional_default "PING_COUNT" "$PING_COUNT" "optional" "3" "PING_COUNT is empty, using default")
+#   # Sets PING_COUNT="3" if optional and empty, prints value to stdout
 #
 # Note:
 #   This is the centralized default application logic used by apply_config_default(),
@@ -169,8 +156,8 @@ apply_optional_default() {
 #   - Calls die() if required variable is empty (exits script)
 #
 # Examples:
-#   var_value=$(apply_config_default "VPN_NAME" "$VPN_NAME" "optional" "Site-to-Site VPN")
-#   # Sets VPN_NAME="Site-to-Site VPN" if empty, prints value to stdout
+#   var_value=$(apply_config_default "PING_COUNT" "$PING_COUNT" "optional" "3")
+#   # Sets PING_COUNT="3" if empty, prints value to stdout
 #
 # Note:
 #   Requires die function to be available (from logging.sh)
@@ -184,10 +171,13 @@ apply_config_default() {
 
 	# Check if required
 	if [[ "$required" == "required" ]] && [[ -z "$var_value" ]]; then
-		# Log error message that includes variable name for better debugging
-		handle_error_or_exit_fake_mode "SYSTEM" "$var_name is required but not configured" "${EXIT_VALIDATION_ERROR:-3}"
-		# If handle_error_or_exit_fake_mode doesn't exit (e.g., in tests), return error
-		return 1
+		# Use handle_error_or_exit_fake_mode to respect fake mode
+		# In fake mode, it returns 1; in normal mode it calls die() and never returns
+		if ! handle_error_or_exit_fake_mode "SYSTEM" "$var_name is required but not configured" "${EXIT_VALIDATION_ERROR:-3}"; then
+			# In fake mode, handle_error_or_exit_fake_mode returns 1
+			return 1
+		fi
+		# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 	fi
 
 	# If optional and empty, use default from schema (centralized logic)

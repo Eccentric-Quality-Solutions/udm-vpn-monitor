@@ -14,6 +14,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_CONFIG=""
 EXISTING_CONFIG=""
 
+# Source common functions for trim() helper
+# shellcheck source=lib/common.sh
+if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
+	source "${SCRIPT_DIR}/lib/common.sh"
+fi
+
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -77,11 +83,11 @@ if [[ -z "$EXISTING_CONFIG" ]]; then
 	fi
 fi
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# Colors for output (defined in lib/common.sh, use defaults if not sourced)
+[[ -z "${RED:-}" ]] && RED='\033[0;31m'
+[[ -z "${GREEN:-}" ]] && GREEN='\033[0;32m'
+[[ -z "${YELLOW:-}" ]] && YELLOW='\033[1;33m'
+[[ -z "${NC:-}" ]] && NC='\033[0m' # No Color
 
 # Parse config file to extract variable names
 #
@@ -102,7 +108,8 @@ parse_config_variables() {
 	local line
 	local var_name
 
-	if [[ ! -f "$config_file" ]] || [[ ! -r "$config_file" ]]; then
+	# Check file readability before read operation (prevents hangs on unreadable files)
+	if ! file_exists_and_readable "$config_file"; then
 		return 1
 	fi
 
@@ -148,22 +155,30 @@ parse_config_variables() {
 #
 # Returns:
 #   0: Variable found
-#   1: Variable not found
+#   1: Variable not found, config file not found, or config file unreadable
 #
 # Output:
 #   Prints the value (with quotes removed) to stdout
+#
+# Note:
+#   Uses escape_sed_regex() to safely escape variable names for regex matching
 get_config_value() {
 	local config_file="$1"
 	local var_name="$2"
 	local line
 	local value
 
-	if [[ ! -f "$config_file" ]] || [[ ! -r "$config_file" ]]; then
+	# Check file readability before grep operation (prevents hangs on unreadable files)
+	if ! file_exists_and_readable "$config_file"; then
 		return 1
 	fi
 
+	# Escape variable name for regex matching
+	local escaped_var_name
+	escaped_var_name=$(escape_sed_regex "$var_name")
+
 	# Find the variable assignment line
-	line=$(grep "^${var_name}=" "$config_file" 2>/dev/null | head -1)
+	line=$(grep "^${escaped_var_name}=" "$config_file" 2>/dev/null | head -1)
 
 	if [[ -z "$line" ]]; then
 		return 1
@@ -174,7 +189,7 @@ get_config_value() {
 
 	# Remove surrounding quotes (handles both single and double quotes)
 	# Trim leading/trailing whitespace first
-	value=$(echo "$value" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+	value=$(trim "$value")
 
 	# Remove quotes if present
 	if [[ "$value" =~ ^\".*\"$ ]]; then
@@ -186,7 +201,7 @@ get_config_value() {
 	fi
 
 	# Trim whitespace again after quote removal
-	value=$(echo "$value" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+	value=$(trim "$value")
 
 	echo "$value"
 	return 0
@@ -205,6 +220,9 @@ get_config_value() {
 #   customer-specific LOCATION variables (e.g., LOCATION_CUSTOMER1_EXTERNAL) are
 #   considered valid even if they don't exactly match template variables (e.g., LOCATION_NYC_EXTERNAL).
 #   This allows customers to use their own location names without false deprecation warnings.
+#
+# Arguments:
+#   None (uses global variables TEMPLATE_CONFIG and EXISTING_CONFIG)
 #
 # Returns:
 #   0: Comparison completed successfully
@@ -311,10 +329,11 @@ main() {
 	has_template_location_external=0
 	has_template_location_internal=0
 	for var_name in "${!template_vars_map[@]}"; do
-		if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+		# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
+		if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
 			has_template_location_external=1
 		fi
-		if [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+		if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_INTERNAL$ ]]; then
 			has_template_location_internal=1
 		fi
 	done
@@ -325,10 +344,11 @@ main() {
 	has_existing_location_external=0
 	has_existing_location_internal=0
 	for var_name in "${!existing_vars_map[@]}"; do
-		if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+		# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
+		if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
 			has_existing_location_external=1
 		fi
-		if [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+		if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_INTERNAL$ ]]; then
 			has_existing_location_internal=1
 		fi
 	done
@@ -345,12 +365,13 @@ main() {
 		# For LOCATION variables, check if existing config has any matching pattern variable
 		# This allows template example locations (e.g., LOCATION_NYC_EXTERNAL) to be skipped
 		# when existing config already has LOCATION variables matching the pattern (e.g., LOCATION_CUSTOMER1_EXTERNAL)
-		if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+		# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
+		if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
 			# Existing config has LOCATION_*_EXTERNAL pattern, so template example is not needed
 			if [[ $has_existing_location_external -eq 1 ]]; then
 				continue
 			fi
-		elif [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+		elif [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_INTERNAL$ ]]; then
 			# Existing config has LOCATION_*_INTERNAL pattern, so template example is not needed
 			if [[ $has_existing_location_internal -eq 1 ]]; then
 				continue

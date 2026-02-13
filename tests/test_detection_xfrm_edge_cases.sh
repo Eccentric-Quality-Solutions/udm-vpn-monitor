@@ -6,6 +6,7 @@
 # These tests address the gap identified in CRITICAL_PATH_TEST_GAPS_REVIEW.md Section 2.1
 
 load test_helper
+load helpers/logging
 
 # ============================================================================
 # XFRM OUTPUT PARSING EDGE CASES TESTS
@@ -14,8 +15,11 @@ load test_helper
 # bats test_tags=category:detection,priority:medium
 @test "extract_byte_counter handles malformed byte counter line - missing bytes keyword" {
 	# Purpose: Test verifies that extract_byte_counter handles malformed xfrm output gracefully.
-	# Expected: Function returns failure (exit code 1) when byte counter line is malformed.
+	# Expected: Function returns failure (exit code 1) when byte counter line is malformed and logs warning.
 	# Importance: Malformed xfrm output could cause false positives/negatives if not handled properly.
+	source_logging_functions
+	export LOG_FILE="${TEST_DIR}/test.log"
+	mkdir -p "$(dirname "$LOG_FILE")"
 	source_function "extract_byte_counter"
 
 	local xfrm_output="src ${TEST_PEER_IP} dst ${TEST_PEER_IP}
@@ -25,14 +29,22 @@ load test_helper
 
 	run extract_byte_counter "$xfrm_output"
 	assert_failure
-	assert_output ""
+	# Function should output warning to stderr (captured by run)
+	assert_output --regexp "WARNING.*extract_byte_counter.*lifetime current.*failed to extract byte counter"
+	# Also verify warning is in log file
+	assert_file_exist "$LOG_FILE"
+	run grep -q "WARNING.*extract_byte_counter.*lifetime current.*failed to extract byte counter" "$LOG_FILE"
+	assert_success
 }
 
 # bats test_tags=category:detection,priority:medium
 @test "extract_byte_counter handles malformed byte counter line - non-numeric bytes value" {
 	# Purpose: Test verifies that extract_byte_counter rejects non-numeric byte counter values.
-	# Expected: Function returns failure when bytes value is not numeric.
+	# Expected: Function returns failure when bytes value is not numeric and logs warning.
 	# Importance: Invalid byte counter values could cause false positives/negatives.
+	source_logging_functions
+	export LOG_FILE="${TEST_DIR}/test.log"
+	mkdir -p "$(dirname "$LOG_FILE")"
 	source_function "extract_byte_counter"
 
 	local xfrm_output="src ${TEST_PEER_IP} dst ${TEST_PEER_IP}
@@ -41,14 +53,22 @@ load test_helper
 
 	run extract_byte_counter "$xfrm_output"
 	assert_failure
-	assert_output ""
+	# Function should output warning to stderr (captured by run)
+	assert_output --regexp "WARNING.*extract_byte_counter.*lifetime current.*failed to extract byte counter"
+	# Also verify warning is in log file
+	assert_file_exist "$LOG_FILE"
+	run grep -q "WARNING.*extract_byte_counter.*lifetime current.*failed to extract byte counter" "$LOG_FILE"
+	assert_success
 }
 
 # bats test_tags=category:detection,priority:medium
 @test "extract_byte_counter handles malformed byte counter line - negative bytes value" {
 	# Purpose: Test verifies that extract_byte_counter rejects negative byte counter values.
-	# Expected: Function returns failure when bytes value is negative.
+	# Expected: Function returns failure when bytes value is negative and logs warning.
 	# Importance: Negative byte counters are invalid and should be rejected.
+	source_logging_functions
+	export LOG_FILE="${TEST_DIR}/test.log"
+	mkdir -p "$(dirname "$LOG_FILE")"
 	source_function "extract_byte_counter"
 
 	local xfrm_output="src ${TEST_PEER_IP} dst ${TEST_PEER_IP}
@@ -57,7 +77,12 @@ load test_helper
 
 	run extract_byte_counter "$xfrm_output"
 	assert_failure
-	assert_output ""
+	# Function should output warning to stderr (captured by run)
+	assert_output --regexp "WARNING.*extract_byte_counter.*lifetime current.*failed to extract byte counter"
+	# Also verify warning is in log file
+	assert_file_exist "$LOG_FILE"
+	run grep -q "WARNING.*extract_byte_counter.*lifetime current.*failed to extract byte counter" "$LOG_FILE"
+	assert_success
 }
 
 # bats test_tags=category:detection,priority:medium
@@ -135,7 +160,7 @@ EOF
 
 	# Initialize state using location-aware functions
 	source_function "set_peer_state"
-	set_peer_state "" "$peer_ip" "failure_count" "0"
+	set_peer_state "TEST" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_xfrm_status"
@@ -176,7 +201,7 @@ EOF
 
 	# Initialize state using location-aware functions
 	source_function "set_peer_state"
-	set_peer_state "" "$peer_ip" "failure_count" "0"
+	set_peer_state "TEST" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_xfrm_status"
@@ -215,7 +240,7 @@ EOF
 
 	# Initialize state using location-aware functions
 	source_function "set_peer_state"
-	set_peer_state "" "$peer_ip" "failure_count" "0"
+	set_peer_state "TEST" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_xfrm_status"
@@ -260,7 +285,7 @@ EOF
 
 	# Initialize state using location-aware functions
 	source_function "set_peer_state"
-	set_peer_state "" "$peer_ip" "failure_count" "0"
+	set_peer_state "TEST" "$peer_ip" "failure_count" "0"
 
 	# Source required functions
 	source_function "check_ipsec_status"
@@ -467,6 +492,145 @@ EOF
 }
 
 # bats test_tags=category:detection,priority:medium
+@test "get_xfrm_state_for_peer handles xfrm command failure and uses ipsec status for diagnostics" {
+	# Purpose: When xfrm command errors, function should return failure with diagnostic, and still consult ipsec status.
+	# Expected: Exit code 2 (command failure), no stdout, diagnostic mentions command failure and ipsec status result.
+	setup_test_environment "${TEST_DIR}"
+	local peer_ip="${TEST_PEER_IP}"
+
+	# Mock ip command to emit error to stderr and fail for both variants
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    echo "RTNETLINK answers: Permission denied" >&2
+    exit 1
+fi
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "RTNETLINK answers: Permission denied" >&2
+    exit 1
+fi
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# ipsec status shows the connection exists
+	mock_ipsec_status 0 "${peer_ip}: ESTABLISHED"
+	add_mock_to_path
+
+	# Source function
+	source_function "get_xfrm_state_for_peer"
+
+	local error_msg=""
+	local output_file="${TEST_DIR}/out1"
+	set +e
+	get_xfrm_state_for_peer "$peer_ip" "" "error_msg" >"$output_file"
+	local rc=$?
+	set -e
+	local output
+	output=$(cat "$output_file" 2>/dev/null)
+
+	[[ $rc -eq 2 ]] || fail "Expected exit 2 for command failure, got $rc"
+	[[ -z "$output" ]] || fail "Expected no stdout, got: $output"
+	[[ "$error_msg" == *"xfrm command failed (command error)"* ]] || fail "Diagnostic should mention command failure"
+	[[ "$error_msg" == *"ipsec status shows connection exists"* ]] || fail "Diagnostic should mention ipsec status fallback"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:detection,priority:medium
+@test "get_xfrm_state_for_peer handles empty xfrm output when ipsec status shows a connection" {
+	# Purpose: When xfrm returns empty output but ipsec status shows the tunnel, function should signal no SAs with diagnostic.
+	# Expected: Exit code 1 (no SAs), no stdout, diagnostic mentions ipsec status saw connection.
+	setup_test_environment "${TEST_DIR}"
+	local peer_ip="${TEST_PEER_IP}"
+
+	# Mock ip command to return success with empty output
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    exit 0
+fi
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# ipsec status shows connection exists
+	mock_ipsec_status 0 "${peer_ip}: ESTABLISHED"
+	add_mock_to_path
+
+	source_function "get_xfrm_state_for_peer"
+
+	local error_msg=""
+	local output_file="${TEST_DIR}/out2"
+	set +e
+	get_xfrm_state_for_peer "$peer_ip" "" "error_msg" >"$output_file"
+	local rc=$?
+	set -e
+	local output
+	output=$(cat "$output_file" 2>/dev/null)
+
+	[[ $rc -eq 1 ]] || fail "Expected exit 1 for no SAs, got $rc"
+	[[ -z "$output" ]] || fail "Expected no stdout, got: $output"
+	[[ "$error_msg" == *"No SAs found in xfrm state"* ]] || fail "Diagnostic should mention no SAs"
+	[[ "$error_msg" == *"ipsec status shows connection exists"* ]] || fail "Diagnostic should mention ipsec status fallback"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:detection,priority:medium
+@test "get_xfrm_state_for_peer handles command failure when both xfrm and ipsec status are empty" {
+	# Purpose: When xfrm errors and ipsec status shows nothing, function should report command failure and tunnel down.
+	# Expected: Exit code 2 (command failure), no stdout, diagnostic mentions both failures.
+	setup_test_environment "${TEST_DIR}"
+	local peer_ip="${TEST_PEER_IP}"
+
+	# Mock ip command to emit error to stderr and fail
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    echo "xfrm: No such file or directory" >&2
+    exit 1
+fi
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "xfrm: No such file or directory" >&2
+    exit 1
+fi
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# ipsec status returns no output
+	mock_ipsec_status 0 ""
+	add_mock_to_path
+
+	source_function "get_xfrm_state_for_peer"
+
+	local error_msg=""
+	local output_file="${TEST_DIR}/out3"
+	set +e
+	get_xfrm_state_for_peer "$peer_ip" "" "error_msg" >"$output_file"
+	local rc=$?
+	set -e
+	local output
+	output=$(cat "$output_file" 2>/dev/null)
+
+	[[ $rc -eq 2 ]] || fail "Expected exit 2 for command failure, got $rc"
+	[[ -z "$output" ]] || fail "Expected no stdout, got: $output"
+	[[ "$error_msg" == *"xfrm command failed (command error) and ipsec status shows no connection"* ]] || fail "Diagnostic should mention xfrm failure and empty ipsec status"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:detection,priority:medium
 @test "get_xfrm_state_for_peer handles overlapping outputs from forward and reverse searches" {
 	# Purpose: Test verifies that get_xfrm_state_for_peer correctly handles overlapping outputs when both forward and reverse searches match
 	# Expected: Function combines outputs correctly without duplicating SA blocks when grep -A context overlaps
@@ -565,4 +729,254 @@ EOF
 	[ "$reverse_header_count" -ge 1 ] || fail "Reverse SA header should appear at least once (found: $reverse_header_count)"
 
 	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "execute_xfrm_state_command handles timeout when xfrm command hangs" {
+	# Purpose: Test verifies that execute_xfrm_state_command detects timeout (exit code 124) when xfrm command hangs
+	# Expected: Function returns exit code 2 when timeout occurs, logs WARNING message about timeout
+	# Importance: xfrm commands can hang due to netlink socket timeouts or lock contention; must be handled gracefully
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	source_logging_functions
+	export LOG_FILE="${TEST_DIR}/test.log"
+	mkdir -p "$(dirname "$LOG_FILE")"
+
+	# Set XFRM_STATE_TIMEOUT to 2 seconds for faster testing
+	export XFRM_STATE_TIMEOUT=2
+
+	# Mock ip command that hangs (sleeps longer than timeout)
+	# Must handle both "ip -s xfrm state" and "ip xfrm state" formats
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    # Sleep longer than XFRM_STATE_TIMEOUT (2 seconds) to trigger timeout
+    sleep 3
+    exit 0
+elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    # Fallback also hangs
+    sleep 3
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# Source function and dependencies
+	source_function "execute_xfrm_state_command"
+
+	# Run the function - it has internal timeout protection (2 seconds)
+	# The function will detect timeout (exit code 124 from timeout command) and return 2
+	# The mocked ip command sleeps for 3 seconds, which exceeds the 2-second timeout
+	run execute_xfrm_state_command
+	local exit_code=$status
+
+	# Should return exit code 2 (command failed/timed out)
+	assert [ $exit_code -eq 2 ]
+
+	# Verify timeout warning was logged
+	assert_file_exist "$LOG_FILE"
+	run grep -q "ip.*xfrm state timed out" "$LOG_FILE"
+	assert_success "Timeout warning should be logged"
+
+	# Verify the log message contains timeout information
+	run grep -q "xfrm subsystem may be under load or experiencing lock contention" "$LOG_FILE"
+	assert_success "Log should mention lock contention or load"
+
+	remove_mock_from_path
+	unset XFRM_STATE_TIMEOUT
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "get_xfrm_state_for_peer falls back to ipsec status when xfrm command times out" {
+	# Purpose: Test verifies that get_xfrm_state_for_peer falls back to ipsec status when xfrm command times out
+	# Expected: Function returns exit code 2, falls back to ipsec status, and provides diagnostic message
+	# Importance: Timeout handling must trigger fallback to alternative detection method
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	source_logging_functions
+	export LOG_FILE="${TEST_DIR}/test.log"
+	mkdir -p "$(dirname "$LOG_FILE")"
+
+	local peer_ip="${TEST_PEER_IP}"
+
+	# Set XFRM_STATE_TIMEOUT to 2 seconds for faster testing
+	export XFRM_STATE_TIMEOUT=2
+
+	# Mock ip command that hangs (sleeps longer than timeout)
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    # Sleep longer than XFRM_STATE_TIMEOUT (2 seconds) to trigger timeout
+    sleep 3
+    exit 0
+elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    # Fallback also hangs
+    sleep 3
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# Mock ipsec status to show connection exists (fallback should succeed)
+	mock_ipsec_status 0 "${peer_ip}: ESTABLISHED 1 hour ago, ${peer_ip}...${TEST_LOCAL_IP}"
+	add_mock_to_path
+
+	# Source function
+	source_function "get_xfrm_state_for_peer"
+
+	# Run with timeout wrapper to prevent test from hanging
+	# The function needs to run in a subshell because we need to capture the error message variable
+	# which is set via printf -v and won't be available in parent shell
+	# Note: PATH is already exported by add_mock_to_path and will be inherited by the subshell
+	local error_msg_file="${TEST_DIR}/error_msg"
+	local output_file="${TEST_DIR}/xfrm_output"
+	set +e
+	# Use timeout to wrap the function call - this prevents hanging if function doesn't timeout internally
+	# The function has its own internal timeout (XFRM_STATE_TIMEOUT=2), but we add an outer timeout
+	# as a safety measure in case something goes wrong
+	run timeout 10 bash -c "
+		# PATH is inherited from parent (already exported by add_mock_to_path with TEST_DIR first)
+		# Source required libraries in subshell (needed since we're in a new bash process)
+		source '${BATS_TEST_DIRNAME}/../lib/common.sh' || true
+		source '${BATS_TEST_DIRNAME}/../lib/logging.sh' || true
+		source '${BATS_TEST_DIRNAME}/../lib/detection.sh' || true
+		# Export environment variables needed by functions
+		export LOG_FILE='${LOG_FILE}'
+		export XFRM_STATE_TIMEOUT='${XFRM_STATE_TIMEOUT}'
+		export SCRIPT_DIR='${BATS_TEST_DIRNAME}/..'
+		# Force use of mock by setting _RECOVERY_IP_PATH (get_ip_command_path checks this first)
+		# This ensures the mock is definitely used even if PATH resolution fails
+		export _RECOVERY_IP_PATH='${TEST_DIR}/ip'
+		# Set debug log path for instrumentation
+		export DEBUG_LOG_PATH='${TEST_DIR}/debug.log'
+		# Run function and capture error message to file
+		# Note: error_msg_var must NOT be local - printf -v needs to modify it from within the function
+		error_msg_var=''
+		get_xfrm_state_for_peer '${peer_ip}' '' 'error_msg_var' >'${output_file}' 2>&1
+		func_exit=\$?
+		exit_code=\$func_exit
+		# Write error message to file so parent shell can read it
+		if [[ -n \"\$error_msg_var\" ]]; then
+			printf '%s\n' \"\$error_msg_var\" >'${error_msg_file}'
+		fi
+		exit \$exit_code
+	"
+	local exit_code=$status
+	set -e
+
+	# Debug: Check what actually happened
+	if [[ $exit_code -ne 2 ]]; then
+		echo "DEBUG: Expected exit code 2, got $exit_code" >&2
+		if [[ -f "$output_file" ]]; then
+			echo "DEBUG: Output file contents:" >&2
+			head -50 "$output_file" >&2 || true
+		fi
+		if [[ -f "$LOG_FILE" ]]; then
+			echo "DEBUG: Log file contents:" >&2
+			tail -50 "$LOG_FILE" >&2 || true
+		fi
+	fi
+
+	# Should return exit code 2 (xfrm command failed/timed out)
+	assert [ $exit_code -eq 2 ]
+
+	# Read error message from file
+	local error_msg=""
+	if [[ -f "$error_msg_file" ]]; then
+		error_msg=$(cat "$error_msg_file")
+	fi
+
+	# Verify error message indicates timeout and ipsec fallback
+	assert [ -n "$error_msg" ]
+	[[ "$error_msg" == *"xfrm command failed or timed out"* ]] || fail "Error message should mention xfrm timeout"
+	[[ "$error_msg" == *"ipsec status shows connection exists"* ]] || fail "Error message should mention ipsec status fallback"
+
+	# Verify timeout was logged
+	assert_file_exist "$LOG_FILE"
+	run grep -q "ip.*xfrm state timed out" "$LOG_FILE"
+	assert_success "Timeout warning should be logged"
+
+	remove_mock_from_path
+	unset XFRM_STATE_TIMEOUT
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "check_xfrm_status returns failure when xfrm command times out" {
+	# Purpose: Test verifies that check_xfrm_status handles xfrm timeout gracefully
+	# Expected: Function returns failure when xfrm times out (ipsec fallback is only diagnostic, not functional)
+	# Importance: End-to-end test of timeout handling in detection flow
+	# Note: The ipsec fallback in get_xfrm_state_for_peer is for diagnostic info only - it doesn't
+	#       make check_xfrm_status succeed. Callers should use check_ipsec_status as a separate fallback.
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	source_logging_functions
+	export LOG_FILE="${TEST_DIR}/test.log"
+	mkdir -p "$(dirname "$LOG_FILE")"
+
+	local peer_ip="${TEST_PEER_IP}"
+	local location_name="TEST"
+
+	# Set XFRM_STATE_TIMEOUT to 2 seconds for faster testing
+	export XFRM_STATE_TIMEOUT=2
+
+	# Mock ip command that hangs (sleeps longer than timeout)
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    # Sleep longer than XFRM_STATE_TIMEOUT (2 seconds) to trigger timeout
+    sleep 3
+    exit 0
+elif [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    # Fallback also hangs
+    sleep 3
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	# Mock ipsec status to show connection exists (fallback should succeed)
+	mock_ipsec_status 0 "${peer_ip}: ESTABLISHED 1 hour ago, ${peer_ip}...${TEST_LOCAL_IP}"
+	add_mock_to_path
+
+	# Initialize state (must be done before subshell since state is stored in files)
+	source_function "set_peer_state"
+	set_peer_state "$location_name" "$peer_ip" "failure_count" "0"
+
+	# Run with timeout wrapper to prevent test from hanging
+	# check_xfrm_status will timeout on xfrm, then fall back to ipsec status
+	# Note: Must use bash -c since timeout runs external commands, not bash functions
+	run timeout 10 bash -c "
+		# Source required libraries in subshell (needed since we're in a new bash process)
+		source '${BATS_TEST_DIRNAME}/../lib/common.sh' || true
+		source '${BATS_TEST_DIRNAME}/../lib/logging.sh' || true
+		source '${BATS_TEST_DIRNAME}/../lib/detection.sh' || true
+		# Export environment variables needed by functions
+		export LOG_FILE='${LOG_FILE}'
+		export XFRM_STATE_TIMEOUT='${XFRM_STATE_TIMEOUT}'
+		export SCRIPT_DIR='${BATS_TEST_DIRNAME}/..'
+		export STATE_DIR='${STATE_DIR}'
+		# Force use of mock by setting _RECOVERY_IP_PATH
+		export _RECOVERY_IP_PATH='${TEST_DIR}/ip'
+		# Run the function
+		check_xfrm_status '${peer_ip}' '' '${location_name}'
+	"
+	local exit_code=$status
+
+	# Should return failure because xfrm check failed (timed out)
+	# The ipsec fallback in get_xfrm_state_for_peer is only for diagnostic purposes
+	assert_failure "check_xfrm_status should fail when xfrm times out"
+
+	# Verify timeout was logged
+	assert_file_exist "$LOG_FILE"
+	run grep -q "ip.*xfrm state timed out" "$LOG_FILE"
+	assert_success "Timeout warning should be logged"
+
+	remove_mock_from_path
+	unset XFRM_STATE_TIMEOUT
 }

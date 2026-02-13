@@ -1,5 +1,11 @@
 # Test Patterns and Standards
 
+**Date**: 2026-01-19  
+**Last Updated**: 2026-01-19  
+**Status**: Active
+
+---
+
 This document describes standardized patterns for writing tests in the UDM VPN Monitor test suite.
 
 ## Related Documentation
@@ -11,6 +17,7 @@ For additional test documentation, see:
 - **[BATS Guide](BATS_GUIDE.md)** - BATS framework usage, patterns, and advanced features
 - **[Test Strategy](TEST_STRATEGY.md)** - Test strategy, philosophy, and approach
 - **[Test Maintenance](TEST_MAINTENANCE.md)** - Test maintenance procedures and guidelines
+- **[Test Suite Review](TEST_SUITE_REVIEW.md)** - Pragmatic engineering review of the test suite with recommendations
 - **[tests/MOCK_REFACTORING_OPPORTUNITIES.md](../tests/MOCK_REFACTORING_OPPORTUNITIES.md)** - Lists refactoring opportunities for custom mocks
 
 ## Standardized Patterns
@@ -74,6 +81,18 @@ run parse_location_config
 # ✅ Standardized pattern for main script execution
 run bash "$TEST_SCRIPT" --fake
 ```
+
+#### Assertion guidance for fake mode
+
+- Use `assert_failure` when the test is about detecting execution-blocking errors (validation failures, required route setup failures, permission issues). Fake mode should still fail so tests prove the error blocks execution.
+- Use `assert_success` plus log assertions when the test is about error logging/formatting for parsing or setup errors that we only need to observe (e.g., config parse errors, directory creation failures). Fake mode should exit `0` so the test can inspect logs.
+
+| Error under test | Fake mode assertion | Why |
+|------------------|---------------------|-----|
+| Validation or route setup failure | `assert_failure` | Prove we fail fast even in fake mode |
+| Permission/state file errors | `assert_failure` | Blocking condition must fail the run |
+| Config parse / malformed input | `assert_success` + log check | Focus on log format/content |
+| Directory creation/log path issues | `assert_success` + log check | Need to inspect logged error formatting |
 
 ### 2. CONFIG_FILE Environment Variable
 
@@ -256,33 +275,6 @@ load fixtures/vpn_failing
 }
 ```
 
-##### `vpn_cooldown.bash` - VPN in Cooldown Period
-
-Sets up a test environment where the VPN is in a cooldown period. During cooldown, the monitor should not take action even if VPN fails.
-
-**Function**: `setup_vpn_cooldown_fixture`
-
-**Arguments**:
-- `$1`: Peer IP address (default: "192.168.1.1")
-- `$2`: Failure count (default: 5, typically high enough to trigger cooldown)
-- `$3`: Cooldown duration in seconds (default: 900 = 15 minutes)
-- `$4+`: Additional config variables as KEY="VALUE" pairs
-
-**Example**:
-```bash
-load test_helper
-load fixtures/vpn_cooldown
-
-@test "VPN in cooldown - should not take action" {
-    setup_vpn_cooldown_fixture "192.168.1.1"
-    # VPN in cooldown for 15 minutes
-    run bash "$TEST_SCRIPT" --fake
-    # Should skip action due to cooldown
-    assert_file_contains "$LOG_FILE" "cooldown"
-    remove_mock_from_path
-}
-```
-
 ##### `vpn_rekey.bash` - VPN Rekey Scenario
 
 Sets up a test environment where the VPN has undergone a rekey (SPI change). Useful for testing rekey detection and byte counter baseline reset.
@@ -461,7 +453,7 @@ load test_helper
 load fixtures/vpn_rate_limited
 
 @test "rate limit prevents restart" {
-    # Use default: 3 restarts within last hour
+    # Use default: 20 restarts within last hour
     setup_vpn_rate_limited_fixture "192.168.1.1"
     run bash "$TEST_SCRIPT" --fake
     assert_file_contains "$LOG_FILE" "Rate limit exceeded"
@@ -605,8 +597,11 @@ load fixtures/vpn_recovery_test
     setup_vpn_recovery_test_fixture "192.168.1.1"
     # Recovery test setup with pass-through mocks, ENABLE_XFRM_RECOVERY=1 by default
     source_recovery_module
-    select_recovery_strategy "192.168.1.1" 2
-    assert_equal "$RECOVERY_STRATEGY" "xfrm"
+    declare -A recovery_info
+    select_recovery_strategy "192.168.1.1" 2 "recovery_info"
+    assert_equal "${recovery_info[strategy]}" "xfrm"
+    assert_equal "${recovery_info[command]}" "attempt_xfrm_recovery"
+    assert_equal "${recovery_info[available]}" "1"
     remove_mock_from_path
 }
 
@@ -652,7 +647,7 @@ load fixtures/vpn_at_tier
 }
 
 @test "tier 3: restart" {
-    setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_HOUR=10'
+    setup_vpn_at_tier_fixture 3 "192.168.1.1" 'MAX_RESTARTS_PER_WINDOW=10'
     # VPN at Tier 3 threshold (failure_count=5, TIER3_THRESHOLD=5)
     run bash "$TEST_SCRIPT" --fake
     # Should trigger Tier 3 action (ipsec restart)
@@ -910,6 +905,14 @@ chmod +x "$mock_ip"
 add_mock_to_path
 ```
 
+**Helper Function for Multiple Peers**:
+```bash
+# ✅ RECOMMENDED: Use helper function for multiple peers
+# This handles both formats automatically and reduces code duplication
+mock_ip_xfrm_state_multiple_peers "${TEST_PEER_IP} ${TEST_PEER_IP2} 172.16.0.1" 1000 "0x12345678" >/dev/null
+add_mock_to_path
+```
+
 **❌ INCORRECT: Only handling one format**
 ```bash
 # ❌ WRONG: Only handles ip xfrm state (without -s)
@@ -925,7 +928,8 @@ EOF
 ```
 
 **Helper Functions**: The helper functions in `test_helper.bash` already handle both formats correctly:
-- `mock_ip_xfrm_state()` - handles both formats
+- `mock_ip_xfrm_state()` - handles both formats for a single peer
+- `mock_ip_xfrm_state_multiple_peers()` - handles both formats for multiple peers (recommended for multi-peer tests)
 
 **CRITICAL: Test Mocks Must Match Real Output Format**
 
@@ -1862,7 +1866,100 @@ PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
 - Use `--fake` flag for main script execution
 - Ensure mocks are in PATH before running scripts
 
-### 15. Testing Configuration Validation and Early-Exit Scenarios
+### 15. Running Functions in Subshells with Error Message Capture
+
+**Pattern**: Use `bash -c` subshell when functions use output variables set via `printf -v` that won't be available in parent shell
+
+**When to use**: When testing functions that set output variables via `printf -v` (like error message variables) and you need to capture those values in the test. Since `printf -v` sets variables in the current shell scope, they won't be available in the parent shell when using `run`.
+
+**Key requirements**:
+1. Source all required libraries inside the subshell (they're not available in new bash process)
+2. Export environment variables needed by functions (PATH, LOG_FILE, etc.)
+3. Use file-based communication to pass values from subshell to parent shell
+4. Ensure mocks are available (PATH is inherited from parent if exported)
+
+**Example**:
+```bash
+@test "function with error message variable" {
+    setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+    source_logging_functions
+    export LOG_FILE="${TEST_DIR}/test.log"
+    
+    # Set up mocks
+    local mock_ip="${TEST_DIR}/ip"
+    cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+# Mock implementation
+EOF
+    chmod +x "$mock_ip"
+    add_mock_to_path  # Exports PATH with TEST_DIR first
+    
+    # Source function in parent (for reference, but won't be available in subshell)
+    source_function "get_xfrm_state_for_peer"
+    
+    # Run in subshell to capture error message variable
+    local error_msg_file="${TEST_DIR}/error_msg"
+    local output_file="${TEST_DIR}/xfrm_output"
+    set +e
+    run timeout 10 bash -c "
+        # PATH is inherited from parent (already exported by add_mock_to_path)
+        # Source required libraries in subshell (needed since we're in a new bash process)
+        source '${BATS_TEST_DIRNAME}/../lib/common.sh' || true
+        source '${BATS_TEST_DIRNAME}/../lib/logging.sh' || true
+        source '${BATS_TEST_DIRNAME}/../lib/detection.sh' || true
+        # Export environment variables needed by functions
+        export LOG_FILE='${LOG_FILE}'
+        export XFRM_STATE_TIMEOUT='${XFRM_STATE_TIMEOUT:-5}'
+        export SCRIPT_DIR='${BATS_TEST_DIRNAME}/..'
+        # Force use of mock if needed (get_ip_command_path checks this first)
+        export _RECOVERY_IP_PATH='${TEST_DIR}/ip'
+        # Run function and capture error message to file
+        local error_msg_var=''
+        get_xfrm_state_for_peer '${peer_ip}' '' 'error_msg_var' >'${output_file}' 2>&1
+        local exit_code=\$?
+        # Write error message to file so parent shell can read it
+        if [[ -n \"\$error_msg_var\" ]]; then
+            printf '%s\n' \"\$error_msg_var\" >'${error_msg_file}'
+        fi
+        exit \$exit_code
+    "
+    local exit_code=$status
+    set -e
+    
+    # Read error message from file
+    local error_msg=""
+    if [[ -f "$error_msg_file" ]]; then
+        error_msg=$(cat "$error_msg_file")
+    fi
+    
+    # Verify results
+    assert [ $exit_code -eq 2 ]
+    assert [ -n "$error_msg" ]
+}
+```
+
+**Important notes**:
+- PATH is inherited from parent if exported (no need to re-export unless modifying it)
+- All libraries must be sourced inside the subshell
+- Use files to communicate values from subshell to parent (variables won't persist)
+- Use `_RECOVERY_IP_PATH` to force use of mock if PATH resolution might fail
+- Always use `timeout` wrapper to prevent tests from hanging
+- Export all environment variables needed by functions
+
+**Common mistakes**:
+- ❌ Forgetting to source libraries in subshell (functions won't be available)
+- ❌ Not exporting environment variables (functions may fail or use wrong values)
+- ❌ Trying to read output variables directly (they're in subshell scope)
+- ❌ Re-exporting PATH unnecessarily (already inherited if exported)
+
+**Standard**:
+- Use file-based communication for output variables
+- Source all dependencies inside subshell
+- Export required environment variables
+- Use timeout wrapper for safety
+- Verify mocks are found (check `get_command_path` or use `_RECOVERY_IP_PATH`)
+
+### 16. Testing Configuration Validation and Early-Exit Scenarios
 
 **Pattern**: Be aware of execution order when testing configuration validation failures
 
@@ -1880,6 +1977,8 @@ PATH="${TEST_DIR}:${PATH}" run bash "$test_script" --fake
     # Importance: Prevents script from running with invalid configuration that would cause runtime errors.
 
     # Create temporary config without LOCATION_*_EXTERNAL
+    # Note: This config intentionally includes removed variables (VPN_NAME) to test
+    # that the script properly rejects invalid/outdated configuration
     local config_file="${TEST_DIR}/vpn-monitor.conf"
     cat >"$config_file" <<'EOF'
 VPN_NAME="Test VPN"
@@ -1912,7 +2011,7 @@ EOF
 - Tests for configuration validation should verify the script exits with the expected validation error message
 - Be aware that other early-exit conditions (network partition, cooldown, etc.) happen after configuration validation
 
-### 16. DRY Improvements During Bug Fixes
+### 17. DRY Improvements During Bug Fixes
 
 **Pattern**: When fixing bugs, look for redundant code and improve DRY (Don't Repeat Yourself)
 
@@ -1956,7 +2055,7 @@ process_locations() {
 - Update documentation to reflect new execution flow
 - Keep defensive checks that verify expected state
 
-### 17. Stateful Mocks for Testing State Transitions
+### 18. Stateful Mocks for Testing State Transitions
 
 **Pattern**: Use file-based counters or log file checks to create mocks that change behavior based on call count or execution phase
 
@@ -2059,7 +2158,7 @@ EOF
 - Remove fixture mocks before creating custom mocks if needed
 - Never use `local` keyword at top level of mock scripts
 
-### 18. Mock All Commands Used by Recovery Verification
+### 19. Mock All Commands Used by Recovery Verification
 
 **Pattern**: When testing recovery actions, mock all commands used by verification functions, not just the recovery command itself.
 
@@ -2112,7 +2211,7 @@ EOF
 
 **Related Patterns**:
 - See `tests/test_recovery_cascading_failures.sh` for examples of complete mocking
-- See `tests/test_recovery_cooldown_rate_limit_interaction.sh` for realistic ipsec status output format
+- See `tests/test_recovery_tier2.sh` for realistic ipsec status output format
 - See `lib/recovery.sh:verify_ipsec_connections_active()` for verification requirements
 
 ### 19. Schema Validation Order Affects Test Expectations
@@ -2744,7 +2843,7 @@ Tests configuration file error handling, security, validation, location-based co
 Tests VPN detection edge cases, byte counter handling, fallback mechanisms, network partitions, rekey detection, and XFRM edge cases.
 
 **4. Recovery Actions** (`test_recovery.sh` and split files - 51 tests total)
-Tests recovery action execution, error handling, tier-based recovery, rate limiting, cooldown interactions, and partial failures.
+Tests recovery action execution, error handling, tier-based recovery, rate limiting, and partial failures.
 
 **5. State and File Management** (`test_state.sh`, `test_state_concurrent_updates.sh`, and `test_state_location.sh` - 56 tests total)
 Tests state file handling, permissions, corruption, concurrent updates, location-based state management, and edge cases.
@@ -2938,6 +3037,33 @@ echo "5" >"$failure_counter"
 - `get_location_name_from_config_var()` - Extracts location name from config variable name
 - `get_failure_counter_path_for_location_var()` - Gets failure counter path for a location config variable (handles extraction and sourcing automatically)
 
+### 26. Using STATE_DIR vs state_dir in Tests
+
+**Pattern**: Always use `$STATE_DIR` (uppercase) when referencing the exported environment variable set by `setup_test_environment()`. Use `state_dir` (lowercase) only for local variables.
+
+**When to use**: When referencing the state directory path in tests, especially after calling `setup_test_environment()`.
+
+**Key Insight**: `setup_test_environment()` exports `STATE_DIR` (uppercase) as an environment variable. Using `$state_dir` (lowercase) will reference an undefined variable, which can cause paths to resolve incorrectly (e.g., `/logs` instead of `${TEST_DIR}/logs`).
+
+**Example**:
+```bash
+# ✅ GOOD: Use STATE_DIR (uppercase) for exported environment variable
+setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+export LOGS_DIR="${STATE_DIR}/logs"
+mkdir -p "${STATE_DIR}/logs"
+
+# ✅ GOOD: Use state_dir (lowercase) for local variables
+local state_dir="${TEST_DIR}/custom-state"
+setup_test_environment "$state_dir" "${state_dir}/logs"
+
+# ❌ BAD: Using undefined state_dir variable instead of STATE_DIR
+setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+export LOGS_DIR="${state_dir}/logs"  # state_dir is undefined!
+mkdir -p "${state_dir}/logs"  # This will try to create /logs (fails with permission denied)
+```
+
+**Common Mistake**: After calling `setup_test_environment()`, using `$state_dir` instead of `$STATE_DIR` will cause the variable to be undefined, leading to incorrect path resolution and permission errors.
+
 **Standard**:
 - Use `get_failure_counter_path_for_location_var()` when setting up failure counters
 - Use `get_location_name_from_config_var()` when you need the location name for other purposes
@@ -2956,7 +3082,7 @@ load helpers/test_data
 
 # Generate xfrm state output using test data helper
 local xfrm_state_output
-xfrm_state_output=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
+xfrm_state_output=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10)
 local xfrm_state_file="${TEST_DIR}/xfrm_state_initial"
 echo "$xfrm_state_output" >"$xfrm_state_file"
 
@@ -2983,7 +3109,7 @@ For xfrm state output with marks or other attributes not directly supported by h
 ```bash
 # Generate base output
 local xfrm_state_with_mark
-xfrm_state_with_mark=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
+xfrm_state_with_mark=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x12345678" 1000 10 "minimal")
 # Add mark attribute after proto line using sed
 xfrm_state_with_mark=$(echo "$xfrm_state_with_mark" | sed '/proto esp/a\    mark 0x12000000/0xfe000000')
 local xfrm_state_file="${TEST_DIR}/xfrm_state_with_mark"
@@ -2994,7 +3120,7 @@ For modifying generated output (e.g., changing reqid):
 ```bash
 # Generate output
 local xfrm_state
-xfrm_state=$(generate_xfrm_state_output "healthy" "${TEST_PEER_IP}" "0x87654321" 2000 20 "minimal")
+xfrm_state=$(generate_xfrm_state_for_scenario "healthy" "${TEST_PEER_IP}" "0x87654321" 2000 20 "minimal")
 # Update reqid using bash parameter expansion (preferred over sed for simple replacements)
 xfrm_state="${xfrm_state//reqid 1/reqid 2}"
 ```
@@ -3006,6 +3132,266 @@ xfrm_state="${xfrm_state//reqid 1/reqid 2}"
 
 **Related**: See `tests/data/README.md` and `tests/helpers/test_data.bash` for available helpers and templates.
 
+### 26. Disabling System-Wide Failure Detection in Tests
+
+**Pattern**: Disable system-wide failure detection when testing multiple peers triggering recovery independently.
+
+**When to use**: When writing tests that verify multiple peers or locations can trigger recovery actions simultaneously. System-wide failure detection (enabled by default) coordinates recovery so only one location attempts recovery when multiple peers fail, which can interfere with tests that expect independent recovery actions.
+
+**Example**:
+```bash
+@test "multiple peers trigger recovery independently" {
+    setup_test_location_config "$config_file" \
+        "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+        "LOCATION_TEST2_EXTERNAL=\"${TEST_PEER_IP2}\"" \
+        'ENABLE_SYSTEM_WIDE_FAILURE_DETECTION=0' \
+        'ENABLE_XFRM_RECOVERY=0'
+    # ... test expects both peers to trigger recovery ...
+}
+```
+
+**Why**: When multiple peers fail simultaneously, system-wide failure detection (default threshold: 100% of locations) detects a system-wide failure and designates only one location as the coordinator. Non-coordinator locations skip recovery actions, which can cause tests expecting multiple recovery actions to fail.
+
+**Configuration Options**:
+- `ENABLE_SYSTEM_WIDE_FAILURE_DETECTION=0` - Disables system-wide failure detection entirely
+- `COORDINATE_SYSTEM_WIDE_RECOVERY=0` - Disables recovery coordination but keeps detection (less common)
+
+**Standard**:
+- Use `ENABLE_SYSTEM_WIDE_FAILURE_DETECTION=0` when testing multiple peers triggering recovery independently
+- Keep system-wide failure detection enabled when testing the coordination mechanism itself
+- Consider whether your test needs independent recovery or coordinated recovery when deciding
+
+### 27. Disabling Network Partition Check in Recovery Tests
+
+**Pattern**: Disable network partition check when testing recovery actions that need VPN checks to run.
+
+**When to use**: When writing tests that verify recovery actions (Tier 1, Tier 2, or Tier 3), rate limiting, or any functionality that requires VPN checks to execute. Network partition detection (enabled by default) skips VPN checks when network interfaces are down, which can prevent recovery actions from being tested.
+
+**Key Insight**: The test environment may not have network interfaces properly set up, causing network partition detection to trigger and skip VPN checks entirely. This prevents recovery actions from running, making it impossible to test recovery behavior.
+
+**Example**:
+```bash
+@test "tier 3: recovery action prevented by rate limiting" {
+    create_test_config "$config_file" \
+        "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+        "ENABLE_NETWORK_PARTITION_CHECK=0" \
+        # ... other config ...
+    # ... test expects recovery to be attempted ...
+}
+```
+
+**Why**: Network partition detection runs before VPN checks. If the test environment doesn't have network interfaces properly configured (common in CI/test environments), the partition check will detect a partition and skip all VPN checks, preventing recovery actions from being tested.
+
+**Configuration Options**:
+- `ENABLE_NETWORK_PARTITION_CHECK=0` - Disables network partition detection entirely
+- `ENABLE_NETWORK_PARTITION_CHECK=1` - Enables network partition detection (default)
+
+**Standard**:
+- Use `ENABLE_NETWORK_PARTITION_CHECK=0` when testing recovery actions, rate limiting, or any functionality that requires VPN checks to execute
+- Keep network partition check enabled when testing the partition detection mechanism itself
+- Note: `setup_test_location_config()` and `setup_vpn_at_tier_fixture()` already disable network partition check by default, but `create_test_config()` does not set defaults - you must explicitly disable it
+
+**Related**: See tests that use `create_test_config()` directly - they must explicitly set `ENABLE_NETWORK_PARTITION_CHECK=0` if they test recovery actions.
+
+### 28. Complex XFRM State Mock Helpers
+
+**Pattern**: Use helper functions from `helpers/mocks.bash` for complex xfrm state scenarios instead of inline mock scripts.
+
+**When to use**: When testing SA count mismatches, asymmetric SA states, timing delays, or bidirectional SA scenarios. These helpers simplify complex mock logic with state tracking, file-based flags, and conditional behavior.
+
+**Available Helpers**:
+- `mock_ip_xfrm_bidirectional_sa()` - Bidirectional SAs (forward and reverse)
+- `mock_ip_xfrm_sa_count_mismatch()` - SA count mismatch (deleted 2, only 1 re-established)
+- `mock_ip_xfrm_asymmetric_sa()` - Asymmetric SA states (only forward or only reverse)
+- `mock_ip_xfrm_timing_delay()` - Timing issues where SAs appear after delays
+
+**Example - SA Count Mismatch**:
+```bash
+load helpers/mocks
+
+@test "SA count mismatch scenario" {
+    setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1'
+    
+    # Mock: deleted 2 SAs, only forward re-establishes
+    mock_ip_xfrm_sa_count_mismatch "${TEST_LOCAL_IP}" "${TEST_PEER_IP}" "forward" \
+        "0x12345678" "0x87654321" "${TEST_DIR}/sas_deleted" 0 1000
+    add_mock_to_path
+    
+    # ... test assertions ...
+    
+    remove_mock_from_path
+}
+```
+
+**Example - Asymmetric SA State**:
+```bash
+# Only forward SA present
+mock_ip_xfrm_asymmetric_sa "${TEST_LOCAL_IP}" "${TEST_PEER_IP}" "forward" \
+    "0x12345678" "${TEST_DIR}/sas_deleted" 0 1000
+add_mock_to_path
+```
+
+**Example - Timing Delay**:
+```bash
+# Second SA appears after 3 verification attempts
+mock_ip_xfrm_timing_delay "${TEST_LOCAL_IP}" "${TEST_PEER_IP}" 3 \
+    "0x12345678" "0x87654321" "${TEST_DIR}/sas_deleted" "${TEST_DIR}/check_count" 0 1000
+add_mock_to_path
+```
+
+**Benefits**:
+- **Simplified tests**: 1-2 line helper calls vs 50+ line inline mock scripts
+- **Maintainability**: Complex mock logic centralized in one place
+- **Consistency**: Standardized patterns across tests
+- **Documentation**: Well-documented behavior and examples
+- **State tracking**: Handles file-based flags and call counters automatically
+
+**Why**: Complex inline mocks with state tracking, file-based flags, and conditional logic are hard to maintain and understand. Helper functions encapsulate this complexity, making tests more readable and maintainable.
+
+**Standard**:
+- Use helper functions for complex xfrm state scenarios (SA count mismatch, asymmetric, timing)
+- Use `mock_ip_xfrm_state()` for simple static xfrm state scenarios
+- Prefer helpers over inline mock scripts for any scenario with state tracking or conditional behavior
+
+**Related**: See `tests/helpers/mocks.bash` for complete documentation and all available helpers.
+
+### 29. Date and Sleep Mock Setup with Time Increment Files
+
+**Pattern**: Use `setup_date_sleep_mocks_with_increment()` helper function for time-based testing that requires dynamic time progression.
+
+**When to use**: When testing time-dependent behavior such as:
+- Exponential backoff algorithms (sleep intervals)
+- Timeout handling
+- Duration calculations
+- Any test that needs to simulate elapsed time
+
+**Key Insight**:
+- The date mock reads from a time increment file to return dynamic timestamps
+- The sleep mock increments the time increment file by the sleep duration
+- Together, they simulate time progression: `date +%s` returns `base_time + increment`, and each `sleep N` adds `N` to the increment
+- The date mock must handle both Unix timestamps (`+%s`) and formatted timestamps (`+%Y-%m-%d %H:%M:%S`) for logging
+
+**Example - Basic Usage**:
+```bash
+load helpers/recovery
+
+@test "timeout handling test" {
+    setup_test_environment "${TEST_DIR}"
+    
+    local base_time=1609459200  # 2021-01-01 00:00:00 UTC
+    local time_increment_file="${TEST_DIR}/time_increment"
+    echo "0" >"$time_increment_file"
+    
+    # Set up date and sleep mocks with time increment file
+    setup_date_sleep_mocks_with_increment "$base_time" "$time_increment_file"
+    add_mock_to_path
+    
+    # Override calculate_duration to use time_increment_file
+    source_recovery_module
+    override_calculate_duration_with_increment "$time_increment_file"
+    
+    # Now time progresses as sleep is called:
+    # - First call: date +%s returns base_time + 0
+    # - After sleep 5: date +%s returns base_time + 5
+    # - After sleep 10: date +%s returns base_time + 15
+    
+    # ... test code ...
+    
+    remove_mock_from_path
+}
+```
+
+**Example - With Sleep Interval Logging**:
+```bash
+@test "exponential backoff test" {
+    setup_test_environment "${TEST_DIR}"
+    
+    local base_time=1609459200
+    local time_increment_file="${TEST_DIR}/time_increment"
+    echo "0" >"$time_increment_file"
+    
+    # Track sleep calls to verify exponential backoff
+    local sleep_log="${TEST_DIR}/sleep_log"
+    rm -f "$sleep_log"
+    
+    # Set up date mock (sleep mock needs custom logging)
+    local mock_date="${TEST_DIR}/date"
+    cat >"$mock_date" <<EOF
+#!/bin/bash
+if [[ "\$1" == "+%s" ]]; then
+    increment=\$(cat "${time_increment_file}" 2>/dev/null || echo "0")
+    echo $((base_time + increment))
+    exit 0
+elif [[ "\$1" == "+%Y-%m-%d %H:%M:%S" ]] || [[ "\$1" == '+%Y-%m-%d %H:%M:%S' ]]; then
+    echo "2021-01-01 00:00:00"
+    exit 0
+fi
+echo "Mock date: unsupported format: \$*" >&2
+exit 1
+EOF
+    sed -i "s|base_time|${base_time}|g" "$mock_date"
+    chmod +x "$mock_date"
+    
+    # Create sleep mock that logs intervals AND increments time
+    local mock_sleep="${TEST_DIR}/sleep"
+    cat >"$mock_sleep" <<EOF
+#!/bin/bash
+echo "\$1" >> "${sleep_log}"
+increment=\$(cat "${time_increment_file}" 2>/dev/null || echo "0")
+increment=\$((increment + \$1))
+echo "\$increment" > "${time_increment_file}"
+/usr/bin/sleep 0.1
+EOF
+    chmod +x "$mock_sleep"
+    
+    add_mock_to_path
+    # ... test code ...
+}
+```
+
+**Important Notes**:
+- **Date mock must handle formatted timestamps**: The logging system calls `date '+%Y-%m-%d %H:%M:%S'`, so the mock must handle this format to avoid permission issues with `/bin/date` fallback
+- **Time increment file must be initialized**: Always initialize with `echo "0" >"$time_increment_file"` before calling the helper
+- **Call helper before `add_mock_to_path`**: The helper creates mocks in `TEST_DIR`, which must be added to PATH
+- **Special cases**: If you need custom sleep behavior (e.g., logging intervals, timeout simulation), create the sleep mock manually after calling the helper, or create both mocks manually
+
+**Common Mistakes**:
+```bash
+# ❌ WRONG - Date mock doesn't handle formatted timestamps
+cat >"$mock_date" <<EOF
+#!/bin/bash
+if [[ "\$1" == "+%s" ]]; then
+    echo $((base_time + increment))
+else
+    exec /bin/date "\$@"  # Falls back to real date, may cause permission issues
+fi
+EOF
+
+# ✅ CORRECT - Date mock handles both formats
+cat >"$mock_date" <<EOF
+#!/bin/bash
+if [[ "\$1" == "+%s" ]]; then
+    increment=\$(cat "${time_increment_file}" 2>/dev/null || echo "0")
+    echo $((base_time + increment))
+    exit 0
+elif [[ "\$1" == "+%Y-%m-%d %H:%M:%S" ]] || [[ "\$1" == '+%Y-%m-%d %H:%M:%S' ]]; then
+    echo "2021-01-01 00:00:00"
+    exit 0
+fi
+echo "Mock date: unsupported format: \$*" >&2
+exit 1
+EOF
+```
+
+**Standard**:
+- Use `setup_date_sleep_mocks_with_increment()` for standard time-based testing
+- Initialize time increment file before calling helper: `echo "0" >"$time_increment_file"`
+- Use `override_calculate_duration_with_increment()` to make `calculate_duration()` read from the time increment file
+- For special cases (sleep logging, timeout simulation), create custom mocks with clear comments explaining why
+- Always handle both Unix timestamp (`+%s`) and formatted timestamp (`+%Y-%m-%d %H:%M:%S`) formats in date mocks
+
+**Related**: See `tests/helpers/recovery.bash` for `setup_date_sleep_mocks_with_increment()` and `override_calculate_duration_with_increment()` functions.
+
 ## Migration Notes
 
 - Old pattern `NO_ESCALATE=1; export NO_ESCALATE` → Use `enable_fake_mode()`
@@ -3014,4 +3400,5 @@ xfrm_state="${xfrm_state//reqid 1/reqid 2}"
 - Old pattern manual mock setup → Use `setup_mock_vpn_environment()` or fixtures
 - Old pattern missing cleanup → Always use `remove_mock_from_path()`
 - Old pattern manual location name extraction → Use `get_failure_counter_path_for_location_var()` or `get_location_name_from_config_var()`
-- Old pattern embedded xfrm/ipsec output in mock scripts → Use `generate_xfrm_state_output()` or `generate_ipsec_status_output()` with placeholder pattern
+- Old pattern embedded xfrm/ipsec output in mock scripts → Use `generate_xfrm_state_for_scenario()` or `generate_ipsec_status_output()` with placeholder pattern
+- Old pattern manual date/sleep mock setup → Use `setup_date_sleep_mocks_with_increment()` helper function

@@ -1,7 +1,7 @@
 # Test Maintenance Procedures
 
 **Date**: 2026-01-02  
-**Last Updated**: 2026-01-11  
+**Last Updated**: 2026-01-19  
 **Status**: Active
 
 ---
@@ -326,6 +326,84 @@ setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'TIER1_THRESHOLD=1' 'TIE
 - See [tests/fixtures/README.md](../../tests/fixtures/README.md) for complete fixture reference
 - See [Test Patterns](TEST_PATTERNS.md) for fixture usage patterns
 
+### Common Mock Pattern Issues
+
+**Problem**: Mock `ip` commands that only handle `ip xfrm state` but not `ip -s xfrm state` (with `-s` flag) may fail silently.
+
+**Root Cause**: `execute_xfrm_state_command()` in `lib/detection/xfrm_detection.sh` calls `ip -s xfrm state` first (with statistics flag), then falls back to `ip xfrm state` if the first call fails. Mocks that only check for `$1 == "xfrm"` and `$2 == "state"` won't match when `$1 == "-s"`, `$2 == "xfrm"`, and `$3 == "state"`.
+
+**Common Mistake - Missing `-s` Flag Handling**:
+
+```bash
+# ❌ WRONG: Only handles "ip xfrm state" (without -s flag)
+cat >"${TEST_DIR}/ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "src 203.0.113.1 dst 203.0.113.1"
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+
+# ✅ CORRECT: Handles both "ip -s xfrm state" and "ip xfrm state"
+cat >"${TEST_DIR}/ip" <<'EOF'
+#!/bin/bash
+# Handle "ip -s xfrm state" (with -s flag) - tried first by execute_xfrm_state_command
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    echo "src 203.0.113.1 dst 203.0.113.1"
+    exit 0
+fi
+# Handle "ip xfrm state" (without -s flag) - fallback used by execute_xfrm_state_command
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "src 203.0.113.1 dst 203.0.113.1"
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+```
+
+**How to Identify**:
+- Test fails with unexpected behavior when calling `check_ipsec_phase2()` or functions that use `execute_xfrm_state_command()`
+- Mock appears correct but doesn't match actual command invocation
+- Test passes when using helper functions like `mock_ip_xfrm_state()` but fails with inline mocks
+
+**Best Practices**:
+1. **Use helper functions when possible** - `mock_ip_xfrm_state()`, `mock_ip_vpn_down()`, and `mock_ip_xfrm_empty()` already handle both formats correctly
+2. **Handle both formats in inline mocks** - Always check for both `-s` and non-`-s` formats when mocking `ip xfrm state`
+3. **Test the mock** - Verify that the mock works with actual function calls, not just command syntax
+
+**Example Fix**:
+
+```bash
+# Before (broken - mock doesn't match actual command):
+cat >"${TEST_DIR}/ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "src 203.0.113.1 dst 203.0.113.1"
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+
+# After (fixed - handles both formats):
+cat >"${TEST_DIR}/ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+    echo "src 203.0.113.1 dst 203.0.113.1"
+    exit 0
+fi
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "src 203.0.113.1 dst 203.0.113.1"
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+```
+
+**Related Documentation**:
+- See `lib/detection/xfrm_detection.sh:execute_xfrm_state_command()` for implementation details
+- See `tests/test_helper.bash:mock_ip_xfrm_state()` for helper function example
+
 ## Test Performance Optimization
 
 ### Identifying Slow Tests
@@ -482,6 +560,8 @@ bats --timing tests/
 
 ## Test Maintenance Best Practices
 
+### General Principles
+
 1. **Keep Tests Simple**: Tests should be easy to understand and maintain
 2. **Use Patterns**: Follow established patterns from `tests/TEST_PATTERNS.md`
 3. **Maintain Isolation**: Ensure tests don't depend on each other
@@ -493,8 +573,158 @@ bats --timing tests/
 9. **Maintain Coverage**: Ensure adequate test coverage
 10. **Learn and Improve**: Learn from test failures and improve tests
 
+### Industry Best Practices
+
+#### Test Naming Conventions
+
+**Best Practices**:
+- Use descriptive test names that clearly state what is being tested
+- Follow the pattern: `"<functionality> - <scenario> - <expected outcome>"`
+- Include context in test names (e.g., "VPN detection - VPN down - should detect failure")
+- Avoid abbreviations unless they're widely understood
+- Use consistent terminology across tests
+
+**Examples**:
+```bash
+# ✅ Good: Clear, descriptive, includes context
+@test "VPN detection - VPN down - should detect failure and increment counter" {
+    # ...
+}
+
+# ✅ Good: Includes expected behavior
+@test "Config validation - missing required field - should fail with error message" {
+    # ...
+}
+
+# ❌ Avoid: Too vague
+@test "test VPN" {
+    # ...
+}
+
+# ❌ Avoid: Missing context
+@test "should work" {
+    # ...
+}
+```
+
+#### Test Organization
+
+**Best Practices**:
+- Group related tests in the same file
+- Use consistent file naming: `test_<module>_<feature>.sh`
+- Keep test files focused (aim for < 500 lines per file)
+- Split large test files into smaller, focused files
+- Use test tags for categorization and filtering
+
+**File Organization Pattern**:
+```
+tests/
+├── test_<module>_<feature>.sh          # Feature-specific tests
+├── test_<module>_<feature>_<variant>.sh # Variant-specific tests
+└── test_<module>.sh                     # Main module tests (may be slow)
+```
+
+#### Test Data Management
+
+**Best Practices**:
+- Use test fixtures for common scenarios (see [fixtures/README.md](../tests/fixtures/README.md))
+- Extract test data to `tests/data/` directory when reused
+- Use constants for test values (e.g., `TEST_PEER_IP`)
+- Avoid hardcoding values that should be configurable
+- Use helper functions to generate test data
+
+**Example**:
+```bash
+# ✅ Good: Use constants and fixtures
+load fixtures/vpn_active
+@test "VPN active test" {
+    setup_vpn_active_fixture "$TEST_PEER_IP"
+    # ...
+}
+
+# ❌ Avoid: Hardcoded values
+@test "VPN test" {
+    setup_mock_vpn_environment "192.168.1.1" 1000
+    # ...
+}
+```
+
+#### Test Documentation Standards
+
+**Best Practices**:
+- Include purpose, expected behavior, and importance comments for each test
+- Document test setup requirements
+- Explain complex test scenarios
+- Update documentation when tests change
+- Use consistent comment format
+
+**Comment Template**:
+```bash
+# bats test_tags=category:high-risk,priority:high
+@test "test description" {
+    # Purpose: What is being tested and why
+    # Expected: What should happen when the test runs
+    # Importance: Why this test matters (especially for high-risk tests)
+    
+    # Test implementation
+}
+```
+
+#### CI/CD Best Practices
+
+**Best Practices**:
+- Run fast tests on every commit
+- Run slow tests on pull requests
+- Generate coverage reports in CI
+- Detect and report flaky tests
+- Fail CI on test failures
+- Use parallel execution for faster feedback
+- Cache test dependencies when possible
+
+**CI/CD Checklist**:
+- [ ] Fast tests run on every commit
+- [ ] Slow tests run on pull requests
+- [ ] Coverage reports generated and uploaded
+- [ ] Flaky test detection enabled
+- [ ] Test failures block merges
+- [ ] Parallel execution configured
+- [ ] Test artifacts preserved for debugging
+
+#### Test Performance Best Practices
+
+**Best Practices**:
+- Keep fast tests under 1 second
+- Tag slow tests appropriately
+- Use parallel execution when possible
+- Optimize test setup and teardown
+- Avoid unnecessary sleeps and timeouts
+- Use efficient mocks
+
+**Performance Targets**:
+- **Fast tests**: < 1 second per test
+- **Medium tests**: 1-5 seconds per test
+- **Slow tests**: > 5 seconds per test (must be tagged)
+
+#### Test Reliability Best Practices
+
+**Best Practices**:
+- Ensure complete test isolation
+- Use deterministic mocks
+- Avoid timing-dependent tests
+- Use proper cleanup in teardown
+- Verify test isolation regularly
+- Fix flaky tests promptly
+
+**Isolation Checklist**:
+- [ ] Each test has unique `TEST_DIR`
+- [ ] Environment variables are restored
+- [ ] PATH modifications are cleaned up
+- [ ] Mock commands don't persist
+- [ ] State files are isolated
+- [ ] No shared state between tests
+
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: 2026-01-02  
-**Next Review**: 2026-04-02
+**Document Version**: 1.1  
+**Last Updated**: 2026-01-19  
+**Next Review**: 2026-04-19

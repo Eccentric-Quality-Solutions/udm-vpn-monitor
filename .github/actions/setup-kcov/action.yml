@@ -1,0 +1,43 @@
+name: 'Setup kcov'
+description: 'Cache and build kcov for coverage reporting'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Cache kcov build
+      id: cache-kcov
+      uses: actions/cache@v4
+      with:
+        path: /tmp/kcov/build
+        key: kcov-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+        restore-keys: |
+          kcov-${{ runner.os }}-
+
+    - name: Build and install kcov
+      shell: bash
+      run: |
+        # Clone kcov repository if source not present
+        # Check for CMakeLists.txt to ensure source is complete (cache only restores build directory)
+        if [ ! -f /tmp/kcov/CMakeLists.txt ]; then
+          # Remove directory if it exists but is incomplete
+          rm -rf /tmp/kcov
+          git clone https://github.com/SimonKagstrom/kcov.git /tmp/kcov
+        fi
+        
+        cd /tmp/kcov || exit 1
+        
+        # Build kcov (use cached build directory if available)
+        mkdir -p build
+        cd build || exit 1
+        
+        # Only run cmake if CMakeCache.txt doesn't exist (build not cached)
+        if [ ! -f CMakeCache.txt ]; then
+          cmake ..
+        fi
+        
+        # Build kcov (will be faster if build artifacts are cached)
+        make -j$(nproc)
+        sudo make install
+        
+        # Verify installation
+        kcov --version

@@ -444,7 +444,7 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	original_perms=$(stat -c %a "$logrotate_config")
 	chmod 444 "$logrotate_config"
 	# Use trap to ensure cleanup even on errors
-	trap "chmod $original_perms \"\$logrotate_config\" 2>/dev/null || true" EXIT
+	trap 'chmod $original_perms "$logrotate_config" 2>/dev/null || true' EXIT
 
 	run bash "$UNINSTALL_SCRIPT" --yes
 	# Script should still succeed but verification should detect the issue
@@ -1013,8 +1013,7 @@ EOF
 	mkdir -p "${install_dir}/logs"
 	echo "log content" >"${install_dir}/logs/vpn-monitor.log"
 	local config_content="LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"
-LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"
-VPN_NAME=\"Test VPN\""
+LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 	echo "$config_content" >"${install_dir}/vpn-monitor.conf"
 
 	run bash "$UNINSTALL_SCRIPT" --yes --keep-config
@@ -1026,7 +1025,6 @@ VPN_NAME=\"Test VPN\""
 	assert_file_exist "${install_dir}/vpn-monitor.conf"
 	# Check config content matches original
 	assert_file_contains "${install_dir}/vpn-monitor.conf" "LOCATION_TEST_EXTERNAL"
-	assert_file_contains "${install_dir}/vpn-monitor.conf" "VPN_NAME"
 	# Check other files are removed
 	assert_file_not_exist "${install_dir}/vpn-monitor.sh"
 	assert_dir_not_exist "${install_dir}/logs"

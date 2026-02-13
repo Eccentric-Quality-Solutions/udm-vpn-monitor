@@ -6,6 +6,7 @@
 
 load test_helper
 load helpers/test_data
+load helpers/state
 load fixtures/vpn_active
 load fixtures/vpn_down
 
@@ -71,7 +72,7 @@ EOF
 	assert_success
 
 	# Should use location-based state file naming
-	local failure_counter="${STATE_DIR}/failure_counter_NYC_203_0_113_1"
+	local failure_counter="${STATE_DIR}/failure_count_NYC_203_0_113_1"
 	if [[ -f "$failure_counter" ]]; then
 		local count
 		count=$(cat "$failure_counter")
@@ -103,7 +104,7 @@ EOF
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	# Should increment location-based failure counter
-	local failure_counter="${STATE_DIR}/failure_counter_NYC_203_0_113_1"
+	local failure_counter="${STATE_DIR}/failure_count_NYC_203_0_113_1"
 	assert_file_exist "$failure_counter"
 	local count
 	count=$(cat "$failure_counter")
@@ -139,7 +140,7 @@ EOF
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	# NYC should have failure counter incremented
-	local nyc_counter="${STATE_DIR}/failure_counter_NYC_203_0_113_1"
+	local nyc_counter="${STATE_DIR}/failure_count_NYC_203_0_113_1"
 	if [[ -f "$nyc_counter" ]]; then
 		local nyc_count
 		nyc_count=$(cat "$nyc_counter")
@@ -147,7 +148,7 @@ EOF
 	fi
 
 	# LA should not have failure (or counter reset if it was failing before)
-	local la_counter="${STATE_DIR}/failure_counter_LA_198_51_100_1"
+	local la_counter="${STATE_DIR}/failure_count_LA_198_51_100_1"
 	# LA is up, so counter should be 0 or not exist yet
 
 	remove_mock_from_path
@@ -236,9 +237,8 @@ EOF
 	assert_success
 
 	# Failure counter should be reset
-	ensure_state_functions_loaded
 	local failure_counter
-	failure_counter=$(get_peer_state_file_path "NYC" "203.0.113.1" "failure_count")
+	failure_counter=$(get_state_file_path "NYC" "203.0.113.1" "failure_count")
 	assert_file_exist "$failure_counter"
 	local count
 	count=$(cat "$failure_counter")
@@ -253,7 +253,7 @@ EOF
 # bats test_tags=category:integration,priority:high
 @test "integration location: Location-based state file naming" {
 	# Purpose: Test that state files use location names in filenames
-	# Expected: State files follow pattern: failure_counter_<location>_<peer_ip>
+	# Expected: State files follow pattern: failure_count_<location>_<peer_ip>
 	# Importance: Ensures state files are unique per location
 	setup_location_test_vpn_monitor
 
@@ -272,15 +272,15 @@ EOF
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	# Verify location-based state file naming
-	local nyc_counter="${STATE_DIR}/failure_counter_NYC_203_0_113_1"
-	local la_counter="${STATE_DIR}/failure_counter_LA_198_51_100_1"
+	local nyc_counter="${STATE_DIR}/failure_count_NYC_203_0_113_1"
+	local la_counter="${STATE_DIR}/failure_count_LA_198_51_100_1"
 
 	# At least one should exist (NYC failed)
 	assert [ -f "$nyc_counter" ] || [ -f "$la_counter" ]
 
 	# Verify filename format includes location name
 	if [[ -f "$nyc_counter" ]]; then
-		assert_equal "$(basename "$nyc_counter")" "failure_counter_NYC_203_0_113_1"
+		assert_equal "$(basename "$nyc_counter")" "failure_count_NYC_203_0_113_1"
 	fi
 
 	remove_mock_from_path
@@ -292,15 +292,15 @@ EOF
 	# Expected: Invalid characters in location names are replaced in filenames
 	# Importance: Ensures safe filenames even with special characters
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_Office_EXTERNAL="203.0.113.1"
-LOCATION_NYC_Office_INTERNAL="${TEST_PEER_IP}"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
-STATE_DIR="${TEST_DIR}"
-EOF
+	load helpers/config
+	create_test_config "$config_file" \
+		'LOCATION_NYC_Office_EXTERNAL="203.0.113.1"' \
+		"LOCATION_NYC_Office_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"LOG_FILE=\"${TEST_DIR}/logs/vpn-monitor.log\"" \
+		"STATE_DIR=\"${TEST_DIR}\""
 
 	setup_location_test_vpn_monitor
 
@@ -317,7 +317,7 @@ EOF
 
 	# Verify sanitized location name in state file
 	# Hyphen should be replaced with underscore
-	local counter="${STATE_DIR}/failure_counter_NYC_Office_203_0_113_1"
+	local counter="${STATE_DIR}/failure_count_NYC_Office_203_0_113_1"
 	# File may or may not exist depending on which location failed first
 	# But if it exists, it should use sanitized name
 
@@ -330,15 +330,15 @@ EOF
 	# Expected: Ping check uses external IP when internal IPs are not configured
 	# Importance: Validates fallback to external IP
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	cat >"$config_file" <<EOF
-LOCATION_NYC_EXTERNAL="203.0.113.1"
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
-ENABLE_PING_CHECK=1
-LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
-STATE_DIR="${TEST_DIR}"
-EOF
+	load helpers/config
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5" \
+		"ENABLE_PING_CHECK=1" \
+		"LOG_FILE=\"${TEST_DIR}/logs/vpn-monitor.log\"" \
+		"STATE_DIR=\"${TEST_DIR}\""
 
 	setup_location_test_vpn_monitor
 
@@ -446,6 +446,213 @@ EOF
 	# Both locations should be monitored (no errors)
 	refute_file_contains "$LOG_FILE" "Location.*failed"
 	refute_file_contains "$LOG_FILE" "No location-based configuration found"
+
+	remove_mock_from_path
+}
+
+# ============================================================================
+# update_location_state TESTS - Coverage gaps from COVERAGE_REVIEW
+# ============================================================================
+
+# bats test_tags=category:high-risk,priority:high
+@test "update_location_state: periodic status logging - logs status when interval elapsed" {
+	# Purpose: Test verifies that periodic status logging occurs when STATUS_LOG_INTERVAL_SECONDS elapsed
+	# Expected: Function logs "VPN check OK" when status log interval has elapsed
+	# Importance: Covers lines 868-884 - periodic status logging path
+	setup_location_test_vpn_monitor "${TEST_DIR}" \
+		'ENABLE_PING_CHECK=0' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0' \
+		'STATUS_LOG_INTERVAL_SECONDS=300'
+
+	# Mock VPN as healthy
+	mock_ip_xfrm_state "203.0.113.1" "1000" "0x12345678" >/dev/null
+	add_mock_to_path
+
+	# Set up state: VPN healthy, no failures, last_status_log set to 0 (never logged)
+	ensure_state_functions_loaded
+	set_peer_state "NYC" "203.0.113.1" "failure_count" "0" || true
+	set_peer_state "NYC" "203.0.113.1" "last_status_log" "0" || true
+
+	# Source required functions
+	source_recovery_module
+
+	# Test update_location_state directly with healthy status
+	run update_location_state "NYC" "203.0.113.1" "healthy" ""
+
+	# Should succeed
+	assert_success
+	# Should log periodic status
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "VPN check OK" "check OK"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "update_location_state: periodic status logging - skips logging when interval not elapsed" {
+	# Purpose: Test verifies that periodic status logging is skipped when interval hasn't elapsed
+	# Expected: Function does not log status when time since last log is less than interval
+	# Importance: Covers lines 868-884 - periodic status logging interval check
+	setup_location_test_vpn_monitor "${TEST_DIR}" \
+		'ENABLE_PING_CHECK=0' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0' \
+		'STATUS_LOG_INTERVAL_SECONDS=300'
+
+	# Mock VPN as healthy
+	mock_ip_xfrm_state "203.0.113.1" "1000" "0x12345678" >/dev/null
+	add_mock_to_path
+
+	# Set up state: VPN healthy, no failures, last_status_log set to recent time (within interval)
+	ensure_state_functions_loaded
+	set_peer_state "NYC" "203.0.113.1" "failure_count" "0" || true
+	local current_time
+	current_time=$(get_unix_timestamp)
+	# Set last_status_log to 100 seconds ago (less than 300 second interval)
+	local recent_time=$((current_time - 100))
+	set_peer_state "NYC" "203.0.113.1" "last_status_log" "$recent_time" || true
+
+	# Source required functions
+	source_recovery_module
+
+	# Clear log file before test
+	>"$LOG_FILE"
+
+	# Test update_location_state directly with healthy status
+	run update_location_state "NYC" "203.0.113.1" "healthy" ""
+
+	# Should succeed
+	assert_success
+	# Should NOT log periodic status (interval not elapsed)
+	# Note: May still have other log messages, but not the periodic "check OK" message
+	if [[ -f "$LOG_FILE" ]]; then
+		refute_file_contains "$LOG_FILE" "check OK"
+	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "update_location_state: false positive cleanup - clears stale failure_type file" {
+	# Purpose: Test verifies that false positive cleanup clears stale failure_type file when VPN is healthy with no failures
+	# Expected: Function silently removes failure_type file when had_failure_type=1 but failure_count=0
+	# Importance: Covers lines 859-865 - false positive cleanup path
+	setup_location_test_vpn_monitor "${TEST_DIR}" \
+		'ENABLE_PING_CHECK=0' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0'
+
+	# Mock VPN as healthy
+	mock_ip_xfrm_state "203.0.113.1" "1000" "0x12345678" >/dev/null
+	add_mock_to_path
+
+	# Set up state: VPN healthy, no failures, but failure_type file exists (false positive)
+	ensure_state_functions_loaded
+	set_peer_state "NYC" "203.0.113.1" "failure_count" "0" || true
+	# Create failure_type file to simulate false positive
+	# Source state functions to get get_peer_state_file_path
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" 2>/dev/null || true
+	local failure_type_file
+	failure_type_file=$(get_peer_state_file_path "NYC" "203.0.113.1" "failure_type")
+	mkdir -p "$(dirname "$failure_type_file")"
+	echo "tunnel_down" >"$failure_type_file"
+
+	# Source required functions
+	source_recovery_module
+
+	# Test update_location_state directly with healthy status
+	run update_location_state "NYC" "203.0.113.1" "healthy" ""
+
+	# Should succeed
+	assert_success
+	# Failure type file should be removed (false positive cleanup)
+	assert_file_not_exist "$failure_type_file"
+	# Should NOT log recovery message (silent cleanup)
+	if [[ -f "$LOG_FILE" ]]; then
+		refute_file_contains "$LOG_FILE" "recovered"
+		refute_file_contains "$LOG_FILE" "restored"
+	fi
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "update_location_state: partition state transition - detects partition after failure" {
+	# Purpose: Test verifies that partition state transition is detected and logged when network partition occurs after VPN failure
+	# Expected: Function detects partition, updates state, logs warning, and returns 2
+	# Importance: Covers lines 900-920 - partition state transitions after failure
+	setup_location_test_vpn_monitor "${TEST_DIR}" \
+		'ENABLE_PING_CHECK=0' \
+		'ENABLE_NETWORK_PARTITION_CHECK=1'
+
+	# Mock VPN as down
+	mock_ip_vpn_down "${TEST_DIR}/ip" >/dev/null
+
+	# Mock network partition check to fail (network partitioned)
+	mock_ip_interfaces_up "br0,eth0" "0" >/dev/null
+	mock_dig 0
+	add_mock_to_path
+
+	# Set up state: VPN failed, partition state initially healthy
+	mkdir -p "$STATE_DIR"
+	local partition_state_file="${STATE_DIR}/network_partition_state"
+	echo "0" >"$partition_state_file"
+
+	# Source required functions
+	source_recovery_module
+
+	# Test update_location_state directly with failed status
+	run update_location_state "NYC" "203.0.113.1" "failed" ""
+
+	# Should return 2 (partition detected)
+	assert_equal "$status" 2
+	# Should log partition detection warning
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Network partition detected" "skipping VPN recovery"
+	# Partition state should be set to 1
+	local partition_state
+	partition_state=$(get_network_partition_state)
+	assert_equal "$partition_state" 1
+
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "update_location_state: partition state transition - detects partition cleared after failure" {
+	# Purpose: Test verifies that partition cleared transition is detected and logged when network recovers after VPN failure
+	# Expected: Function detects partition cleared, updates state, logs info, and continues
+	# Importance: Covers lines 913-920 - partition cleared path after failure
+	setup_location_test_vpn_monitor "${TEST_DIR}" \
+		'ENABLE_PING_CHECK=0' \
+		'ENABLE_NETWORK_PARTITION_CHECK=1'
+
+	# Mock VPN as down
+	mock_ip_vpn_down "${TEST_DIR}/ip" >/dev/null
+
+	# Mock network partition check to succeed (network healthy)
+	mock_ip_interfaces_up "br0,eth0" "1" >/dev/null
+	mock_dig 1 "8.8.8.8"
+	add_mock_to_path
+
+	# Set up state: VPN failed, partition state was previously partitioned
+	mkdir -p "$STATE_DIR"
+	local partition_state_file="${STATE_DIR}/network_partition_state"
+	echo "1" >"$partition_state_file"
+
+	# Source required functions
+	source_recovery_module
+
+	# Test update_location_state directly with failed status
+	run update_location_state "NYC" "203.0.113.1" "failed" ""
+
+	# Should return 0 (no partition, continues with failure handling)
+	assert_equal "$status" 0
+	# Should log that network connectivity restored
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Network connectivity restored" "resuming VPN monitoring"
+	# Partition state should be cleared
+	local partition_state
+	partition_state=$(get_network_partition_state)
+	assert_equal "$partition_state" 0
 
 	remove_mock_from_path
 }

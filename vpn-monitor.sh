@@ -6,12 +6,11 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 # Strict error handling: exit on error, undefined vars, pipe failures
 set -euo pipefail
-
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/vpn-monitor.conf"
@@ -22,23 +21,44 @@ LOCKFILE="${STATE_DIR}/vpn-monitor.lock"
 LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
 
 # Script version
-SCRIPT_VERSION="0.6.0"
+SCRIPT_VERSION="0.7.0"
 
 # Source library modules
 # shellcheck source=lib/logging.sh
-source "${SCRIPT_DIR}/lib/logging.sh"
+source "${SCRIPT_DIR}/lib/logging.sh" || {
+	echo "ERROR: Failed to source logging.sh" >&2
+	exit 2
+}
 # shellcheck source=lib/config.sh
-source "${SCRIPT_DIR}/lib/config.sh"
+source "${SCRIPT_DIR}/lib/config.sh" || {
+	echo "ERROR: Failed to source config.sh" >&2
+	exit 2
+}
 # shellcheck source=lib/state.sh
-source "${SCRIPT_DIR}/lib/state.sh"
+source "${SCRIPT_DIR}/lib/state.sh" || {
+	echo "ERROR: Failed to source state.sh" >&2
+	exit 2
+}
 # shellcheck source=lib/detection.sh
-source "${SCRIPT_DIR}/lib/detection.sh"
+source "${SCRIPT_DIR}/lib/detection.sh" || {
+	echo "ERROR: Failed to source detection.sh" >&2
+	exit 2
+}
 # shellcheck source=lib/recovery.sh
-source "${SCRIPT_DIR}/lib/recovery.sh"
+source "${SCRIPT_DIR}/lib/recovery.sh" || {
+	echo "ERROR: Failed to source recovery.sh" >&2
+	exit 2
+}
 # shellcheck source=lib/lockfile.sh
-source "${SCRIPT_DIR}/lib/lockfile.sh"
+source "${SCRIPT_DIR}/lib/lockfile.sh" || {
+	echo "ERROR: Failed to source lockfile.sh" >&2
+	exit 2
+}
 # shellcheck source=lib/resources.sh
-source "${SCRIPT_DIR}/lib/resources.sh"
+source "${SCRIPT_DIR}/lib/resources.sh" || {
+	echo "ERROR: Failed to source resources.sh" >&2
+	exit 2
+}
 
 # Parse help flags early (before directory creation)
 # This allows --help/-h to work even if directories don't exist
@@ -99,10 +119,10 @@ if ! ensure_directory_exists "$LOGS_DIR" "logs"; then
 fi
 
 # State files
-# Note: Failure counters are per-peer: ${STATE_DIR}/failure_counter_<location>_<peer_ip_sanitized>
+# Note: Failure counters are per-peer: ${STATE_DIR}/failure_count_<location>_<peer_ip_sanitized>
 RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 # LAST_BYTES_FILE will be per-peer: ${STATE_DIR}/last_bytes_<peer_ip_sanitized>
-COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
+# COOLDOWN_UNTIL_FILE removed - cooldown functionality replaced by MIN_RESTART_INTERVAL_SECONDS
 
 # Test log file write capability early (before config loading)
 #
@@ -120,18 +140,14 @@ COOLDOWN_UNTIL_FILE="${STATE_DIR}/cooldown_until"
 if ! touch "$LOG_FILE" 2>/dev/null; then
 	# Log file write failed - output to stderr and continue
 	# log_message() will handle subsequent write failures gracefully
-	echo "[$(get_formatted_timestamp)] [WARNING] Cannot write to log file: $LOG_FILE (check permissions on directory: $(dirname "$LOG_FILE"))" >&2
-	echo "[$(get_formatted_timestamp)] [WARNING] Continuing execution - log messages will be output to stderr" >&2
+	log_message "WARNING" "SYSTEM" "Cannot write to log file: $LOG_FILE (check permissions on directory: $(dirname "$LOG_FILE"))"
+	log_message "WARNING" "SYSTEM" "Continuing execution - log messages will be output to stderr"
 fi
 
 # Verify logging works by writing a test message
 # This ensures log_message function will work before we proceed
 # If this fails, log_message() will handle it gracefully by outputting to stderr
-if ! echo "[$(get_formatted_timestamp)] [INFO] Log file initialized" >>"$LOG_FILE" 2>/dev/null; then
-	# Log file write failed - output to stderr and continue
-	echo "[$(get_formatted_timestamp)] [WARNING] Cannot write to log file after touch test: $LOG_FILE" >&2
-	echo "[$(get_formatted_timestamp)] [WARNING] Continuing execution - log messages will be output to stderr" >&2
-fi
+log_message "INFO" "SYSTEM" "Log file initialized"
 
 # Load configuration
 # Note: Path recalculation (log paths and state paths) is now handled inside load_config()
@@ -155,15 +171,15 @@ if ! validate_config; then
 	# validate_config calls handle_error_or_exit_fake_mode which exits in normal mode
 	# or returns 1 in fake mode
 	# In fake mode, handle_error_or_exit_fake_mode logs the error and returns 1
-	# Validation errors are execution-blocking (Category 1 errors per FAKE_MODE_EXIT_BEHAVIOR.md)
-	# so they should exit with error code even in fake mode to allow tests to assert failure
+	# Validation errors are execution-blocking, so they should exit with error code even in fake mode
+	# to allow tests to assert failure (see fake-mode exit behavior in CODE_PATTERNS/TEST_PATTERNS)
 	# In normal mode, validate_config should have already exited via handle_error_or_exit_fake_mode
 	# But if we get here, exit with error code
 	exit "${EXIT_VALIDATION_ERROR:-3}"
 fi
 
 # Update state file paths that depend on LOGS_DIR
-# Note: Failure counters are per-peer: ${STATE_DIR}/failure_counter_<location>_<peer_ip_sanitized>
+# Note: Failure counters are per-peer: ${STATE_DIR}/failure_count_<location>_<peer_ip_sanitized>
 RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 
 # Check cron persistence
@@ -187,6 +203,8 @@ RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 #   This check is performed once per script run (tracked via .cron_checked file)
 #   to avoid log spam on every execution.
 #   Uses crontab -l and grep to check for vpn-monitor.sh entry
+#   Note: The grep operation operates on command output (crontab -l), not a file,
+#   so no file_exists_and_readable() check is needed here.
 #   Requires log_message function to be available
 #
 # Arguments:
@@ -296,7 +314,7 @@ validate_args() {
 #   # Processes arguments, sets flags
 #
 # Note:
-#   --help and --version are handled early (lines 43-64) and exit before this function is called.
+#   --help and --version are handled early and exit before this function is called.
 #   Requires validate_args, log_message, and SCRIPT_VERSION to be set.
 #   Unknown arguments are handled by validate_args (warnings logged).
 parse_args() {
@@ -325,7 +343,7 @@ parse_args() {
 # Main execution
 #
 # Main entry point for the VPN monitor script.
-# Initializes state, checks cooldown, validates configuration, and monitors all configured peers.
+# Initializes state, validates configuration, and monitors all configured peers.
 #
 # Arguments:
 #   $@: Command-line arguments (passed to parse_args)
@@ -370,7 +388,7 @@ parse_args() {
 #   # Sets up script environment, parses args, logs start
 #
 # Note:
-#   Requires parse_args, log_message, init_state, VPN_NAME, NO_ESCALATE, DEBUG to be set
+#   Requires parse_args, log_message, init_state, NO_ESCALATE, DEBUG to be set
 #   Debug output goes to stderr (>&2)
 initialize_monitor() {
 	# Parse command-line arguments
@@ -378,9 +396,9 @@ initialize_monitor() {
 
 	# Log script start
 	if [[ "${NO_ESCALATE:-0}" -eq 1 ]]; then
-		log_message "INFO" "SYSTEM" "${VPN_NAME:-VPN} monitor script started in fake mode (PID: $$) - tier escalation disabled"
+		log_message "INFO" "SYSTEM" "VPN monitor script started in fake mode (PID: $$) - tier escalation disabled"
 	else
-		log_message "INFO" "SYSTEM" "${VPN_NAME:-VPN} monitor script started (PID: $$)"
+		log_message "INFO" "SYSTEM" "VPN monitor script started (PID: $$)"
 	fi
 
 	# Debug output (only if DEBUG=1)
@@ -417,7 +435,7 @@ initialize_monitor() {
 #   # Validates state, checks partition, checks cooldown, may exit if partitioned or in cooldown
 #
 # Note:
-#   Requires validate_state, check_cooldown, check_cron_persistence, check_network_partition,
+#   Requires validate_state, check_cron_persistence, check_network_partition,
 #   get_network_partition_state, set_network_partition_state, log_message, STATE_DIR, DEBUG to be set
 #   Cron check is performed once per run to avoid log spam
 #   Network partition check runs before cooldown check to ensure partition detection works during cooldown
@@ -442,6 +460,8 @@ validate_monitor_state() {
 		log_message "INFO" "SYSTEM" "Script exiting: system resources constrained"
 		exit "${EXIT_SUCCESS:-0}"
 	fi
+	# Log summary if hour has elapsed (tracks statistics for CPU, RAM, and disk checks)
+	log_resource_monitoring_summary_if_due
 
 	# Check for network partition before cooldown check
 	# Partition check should happen first because if network is partitioned,
@@ -473,16 +493,11 @@ validate_monitor_state() {
 				set_network_partition_state 0
 			fi
 		fi
+		# Log summary if hour has elapsed (tracks statistics for all three checks)
+		log_network_partition_summary_if_due
 	fi
 
-	# Check cooldown
-	debug_log "Checking cooldown"
-	if check_cooldown; then
-		debug_log "In cooldown, exiting"
-		log_message "INFO" "SYSTEM" "Script exiting: in cooldown period"
-		exit "${EXIT_SUCCESS:-0}"
-	fi
-	debug_log "Not in cooldown, continuing"
+	# Cooldown removed - rate limiting now handles restart spacing via MIN_RESTART_INTERVAL_SECONDS
 
 	# Check cron persistence (first run only, to avoid log spam)
 	if [[ ! -f "${STATE_DIR}/.cron_checked" ]]; then
@@ -547,26 +562,129 @@ process_locations() {
 		if [[ -n "$location_list" ]]; then
 			location_list="${location_list}, "
 		fi
-		location_list="${location_list}${loc}"
+		# Get external and internal IPs for this location
+		local external_ip
+		local internal_ips
+		external_ip=$(get_location_external_ip "$loc" 2>/dev/null || echo "")
+		internal_ips=$(get_location_internal_ips "$loc" 2>/dev/null || echo "")
+
+		# Format location with IPs in parentheses
+		if [[ -n "$internal_ips" ]]; then
+			location_list="${location_list}${loc} (${external_ip}, ${internal_ips})"
+		else
+			location_list="${location_list}${loc} (${external_ip})"
+		fi
 	done
 	log_message "INFO" "SYSTEM" "Found ${#LOCATIONS[@]} location(s): $location_list"
 
-	# Process each location
+	# DESIGN DECISION: System-wide failure detection uses failure counts from the previous cycle
+	# rather than checking VPN status in the current cycle. This is an intentional trade-off:
+	#
+	# Benefits:
+	#   - Efficiency: Avoids double-checking VPNs (once for system-wide detection, once for monitoring)
+	#   - Conservative: Better to coordinate recovery unnecessarily than miss a real system-wide failure
+	#   - Acceptable staleness: One-cycle delay (30-60 seconds) is negligible for coordination purposes
+	#
+	# Trade-offs:
+	#   - If a VPN recovers naturally between cycles, it may still be counted as "failing" for one cycle
+	#   - This can cause unnecessary recovery coordination, but this is safer than missing failures
+	#   - The impact is minimal: one location (coordinator) still attempts recovery, others just skip
+	#
+	# Alternative (not implemented):
+	#   - Check VPN status before system-wide detection for immediate accuracy
+	#   - Cost: Performance hit (double-checking), more complex code
+	#   - Benefit: Slightly more accurate (one cycle earlier), but benefit is minimal
+	#
+	# Step 1: Check existing failure counts from previous cycle
+	# This allows us to detect system-wide failures before attempting recovery
+	# Uses existing state (failure counts) rather than re-checking VPNs, avoiding double work
+	declare -A location_failure_status
 	for location_name in "${!LOCATIONS[@]}"; do
 		# Get external IP for this location
-		local external_ip
-		if ! external_ip=$(get_location_external_ip "$location_name"); then
+		local external_peer_ip
+		if ! external_peer_ip=$(get_location_external_ip "$location_name"); then
 			handle_error "WARNING" "$location_name" "Failed to get external IP (skipping)"
 			all_ok=1
+			location_failure_status["$location_name"]=1
 			continue
 		fi
 
-		# Get internal IPs for this location (may be empty)
+		# Check existing failure count from previous cycle
+		# If failure count > 0, location was failing in the previous cycle
+		# This is more efficient than re-checking VPNs and still provides immediate detection
+		local failure_count
+		failure_count=$(get_failure_count "$location_name" "$external_peer_ip")
+		if [[ "$failure_count" -gt 0 ]]; then
+			location_failure_status["$location_name"]=1
+		else
+			location_failure_status["$location_name"]=0
+		fi
+	done
+
+	# Step 2: Detect system-wide failure based on current status
+	# This happens before recovery attempts to coordinate recovery
+	local now
+	now=$(get_unix_timestamp)
+	# Create arrays for detection function (it expects associative array references)
+	# Both arrays use location names as keys
+	declare -A location_names_for_detection
+	declare -A failure_statuses_for_detection
+	for loc in "${!LOCATIONS[@]}"; do
+		# location_names_for_detection: key = location name, value = 1 (just a marker)
+		location_names_for_detection["$loc"]=1
+		# failure_statuses_for_detection: key = location name, value = failure status (0 or 1)
+		failure_statuses_for_detection["$loc"]="${location_failure_status[$loc]:-0}"
+	done
+	if detect_system_wide_failure "location_names_for_detection" "failure_statuses_for_detection" 2>/dev/null; then
+		local prev_failure_state
+		prev_failure_state=$(get_system_wide_failure_state)
+
+		if [[ "$prev_failure_state" -ne 1 ]]; then
+			# System-wide failure just detected
+			set_system_wide_failure_state 1
+			set_system_wide_failure_timestamp "$now"
+			log_message "WARNING" "SYSTEM" "System-wide failure detected: ${FAILED_LOCATION_COUNT:-0} of ${TOTAL_LOCATION_COUNT:-0} locations failing (threshold: ${SYSTEM_WIDE_FAILURE_THRESHOLD:-100}%)"
+			log_message "INFO" "SYSTEM" "Recovery will be coordinated to prevent cascades and rate limiting"
+		fi
+	else
+		# No system-wide failure detected
+		local prev_failure_state
+		prev_failure_state=$(get_system_wide_failure_state)
+		if [[ "$prev_failure_state" -eq 1 ]]; then
+			# System-wide failure was previously detected but is now resolved
+			# Note: set_system_wide_failure_state automatically clears coordinator when state is set to 0
+			set_system_wide_failure_state 0
+			local timestamp
+			timestamp=$(get_system_wide_failure_timestamp)
+			if [[ "$timestamp" -gt 0 ]]; then
+				local duration
+				duration=$(calculate_duration "$timestamp" "$now" 2>/dev/null || echo "0")
+				log_message "INFO" "SYSTEM" "System-wide failure resolved after ${duration} seconds"
+			else
+				log_message "INFO" "SYSTEM" "System-wide failure resolved"
+			fi
+		fi
+	fi
+
+	# Step 3: Process each location with recovery coordination
+	# monitor_location() will check should_location_attempt_recovery() internally
+	# to coordinate recovery during system-wide failures
+	for location_name in "${!LOCATIONS[@]}"; do
+		# Get external IP for this location (resolved from DNS if needed)
+		local external_peer_ip
+		if ! external_peer_ip=$(get_location_external_ip_resolved "$location_name"); then
+			# DNS resolution failed or location not found - skip
+			handle_error "WARNING" "$location_name" "Failed to get or resolve external IP (skipping)"
+			continue
+		fi
+
+		# Get internal IPs for this location (resolved from DNS if needed, may be empty)
 		local internal_ips
-		internal_ips=$(get_location_internal_ips "$location_name")
+		internal_ips=$(get_location_internal_ips_resolved "$location_name" 2>/dev/null || echo "")
 
 		# Monitor location with external IP and internal IPs
-		if ! monitor_location "$location_name" "$external_ip" "$internal_ips"; then
+		# Recovery coordination is handled in determine_recovery_action()
+		if ! monitor_location "$location_name" "$external_peer_ip" "$internal_ips"; then
 			all_ok=1
 		fi
 	done
@@ -593,7 +711,6 @@ process_locations() {
 #   1: One or more peers failed checks or configuration error
 #
 # Side effects:
-#   - May exit script if in cooldown (via validate_monitor_state)
 #   - Creates state files and directories
 #   - Writes to log file
 #   - May execute recovery actions (if not in fake mode)
@@ -614,6 +731,52 @@ main() {
 	# Validate state and check cooldown (may exit if in cooldown)
 	validate_monitor_state
 
+	# Apply startup grace period if this is first run after restart
+	# This prevents false positives when IPsec/xfrm subsystems are still initializing
+	# Check if this is a fresh start (no state file indicating recent run)
+	# We consider it a "fresh start" if:
+	#   1. The timestamp file doesn't exist (first run ever, or state directory was cleared)
+	#   2. The timestamp file is older than 5 minutes (likely system restart or script hasn't run in a while)
+	#      Note: 5-minute threshold assumes cron runs at least every minute. If file is older than 5 minutes,
+	#      it indicates the script hasn't run recently (likely due to system restart or cron being disabled)
+	local last_run_timestamp_file="${STATE_DIR}/.last_run_timestamp"
+	local apply_grace_period=0
+	local grace_period="${STARTUP_GRACE_PERIOD:-5}"
+
+	if [[ ! -f "$last_run_timestamp_file" ]]; then
+		# File doesn't exist - first run detected
+		apply_grace_period=1
+	elif [[ "$grace_period" -gt 0 ]]; then
+		# File exists - check if it's recent (within last 5 minutes)
+		# If file is older than 5 minutes, likely a system restart or script hasn't run in a while
+		# Use find to check file age (more portable than stat)
+		local find_result
+		local find_exit_code
+		find_result=$(find "$last_run_timestamp_file" -mmin -5 2>&1)
+		find_exit_code=$?
+		# Debug logging for test investigation (can be removed after test is fixed)
+		if [[ "${DEBUG:-0}" -eq 1 ]]; then
+			log_message "DEBUG" "SYSTEM" "Grace period check: file=$last_run_timestamp_file, find_result='$find_result', find_exit=$find_exit_code"
+		fi
+		if [[ $find_exit_code -ne 0 ]] || [[ -z "$find_result" ]]; then
+			# File is older than 5 minutes - likely a restart
+			apply_grace_period=1
+		fi
+	fi
+
+	if [[ "$apply_grace_period" -eq 1 ]] && [[ "$grace_period" -gt 0 ]]; then
+		log_message "INFO" "SYSTEM" "First run detected - waiting ${grace_period} seconds for IPsec/xfrm to initialize"
+		log_message "INFO" "SYSTEM" "Startup grace period active - VPN checks will begin after ${grace_period} seconds"
+		sleep "$grace_period"
+		log_message "INFO" "SYSTEM" "Startup grace period complete - beginning VPN checks"
+	fi
+
+	# Update timestamp file on every run to track last execution time
+	# Handle errors gracefully - if we can't create/update the file, continue anyway
+	if ! touch "$last_run_timestamp_file" 2>/dev/null; then
+		handle_error "WARNING" "SYSTEM" "Cannot create/update .last_run_timestamp file in ${STATE_DIR} (check permissions) - grace period may apply on next restart"
+	fi
+
 	# Process all locations
 	local all_ok=0
 	if ! process_locations; then
@@ -622,9 +785,9 @@ main() {
 
 	# Log completion and exit
 	if [[ $all_ok -eq 0 ]]; then
-		log_message "INFO" "SYSTEM" "VPN monitor check completed successfully"
+		log_message "INFO" "SYSTEM" "The VPN monitor script has successfully finished running"
 	else
-		log_message "WARNING" "SYSTEM" "VPN monitor check completed with warnings/errors"
+		log_message "WARNING" "SYSTEM" "The VPN monitor script finished running with issues (some locations below recovery threshold)"
 	fi
 
 	# In fake mode, always exit with 0 (we're just checking/logging, not taking action)

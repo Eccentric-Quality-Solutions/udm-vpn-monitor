@@ -3,7 +3,7 @@
 # UDM VPN Monitor Configuration Validator
 # Checks configuration file against schema and reports missing/deprecated settings
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 
 set -euo pipefail

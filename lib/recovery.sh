@@ -3,7 +3,7 @@
 # Recovery actions for UDM VPN Monitor
 # Implements tiered recovery: logging → surgical cleanup → full restart
 #
-# Version: 0.6.0
+# Version: 0.7.0
 #
 # This file now serves as a compatibility layer that sources the decomposed
 # recovery modules. All recovery functionality has been moved to lib/recovery/
@@ -39,3 +39,11 @@ source "${RECOVERY_DIR}/ipsec_recovery.sh" 2>/dev/null || {
 source "${RECOVERY_DIR}/recovery_orchestration.sh" 2>/dev/null || {
 	echo "Warning: Failed to source recovery_orchestration.sh" >&2
 }
+
+# Verify critical recovery function is available after sourcing
+# This ensures that if recovery_orchestration.sh failed to source, we fail fast
+# rather than continuing and causing "command not found" errors at runtime
+if ! command -v monitor_location >/dev/null 2>&1; then
+	echo "ERROR: Critical recovery function monitor_location not available after sourcing recovery modules" >&2
+	return 1
+fi

@@ -126,7 +126,9 @@ load fixtures/vpn_at_tier
 	set_peer_state "$location_name" "$peer_ip" "failure_count" "3"
 
 	# Call surgical_cleanup - xfrm will fail, fallback to ipsec_reload
-	surgical_cleanup "$peer_ip" "$location_name"
+	# Use 'run' to capture result since internal function returns cause BATS issues
+	run surgical_cleanup "$peer_ip" "$location_name"
+	assert_success
 
 	# Verify recovery method was updated to ipsec_reload (not xfrm)
 	local recovery_method

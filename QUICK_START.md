@@ -8,14 +8,20 @@
 
 1. **Create install package and transfer to UDM**:
    ```bash
-   ./prepare_install_package.sh
+   ./scripts/prepare_install_package.sh      # Creates zip file
+   # Or create tar.gz:
+   # ./scripts/prepare_install_package.sh --tar # Creates tar.gz file
    scp udm-vpn-monitor.zip root@<UDM_IP>:/tmp/
+   # Or for tar.gz:
+   # scp udm-vpn-monitor.tar.gz root@<UDM_IP>:/tmp/
    ```
 
 2. **SSH into UDM and install**:
    ```bash
    ssh root@<UDM_IP>
    cd /tmp && unzip udm-vpn-monitor.zip
+   # Or for tar.gz:
+   # cd /tmp && tar -xzf udm-vpn-monitor.tar.gz
    chmod +x install.sh
    ./install.sh --interactive
    ```
@@ -121,7 +127,7 @@ Once installed, the monitor will:
    See the [Recovery Behavior section in README.md](README.md#-important-recovery-behavior) for complete details on recovery behavior, including which actions affect all tunnels vs per-connection recovery options. For technical implementation details, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 4. **Track failures per location** independently (multiple VPNs supported)
-5. **Rate limit restarts** to prevent loops (max 3 per hour)
+5. **Rate limit restarts** to prevent loops (max 20 per hour)
 6. **Cooldown period** after restart (15 minutes default)
 
 All actions are logged to `/data/vpn-monitor/logs/vpn-monitor.log`.
@@ -135,7 +141,7 @@ All actions are logged to `/data/vpn-monitor/logs/vpn-monitor.log`.
 [2025-01-15 10:01:00] [INFO] Tier 1: Logging VPN failure for 203.0.113.1
 [2025-01-15 10:02:00] [WARNING] VPN check failed for 203.0.113.1 (failure count: 2)
 [2025-01-15 10:03:00] [WARNING] VPN check failed for 203.0.113.1 (failure count: 3)
-[2025-01-15 10:03:00] [WARNING] Tier 2: Attempting surgical SA cleanup for 203.0.113.1
+[2025-01-15 10:03:00] [INFO] Tier 2: Attempting surgical SA cleanup for 203.0.113.1
 [2025-01-15 10:03:01] [INFO] Surgical cleanup completed for 203.0.113.1
 [2025-01-15 10:04:00] [INFO] VPN recovered for 203.0.113.1 after 3 failures
 ```

@@ -2,6 +2,146 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
+## [Unreleased]
+
+## 0.7.0 - 2026-02-13
+
+### Added
+- **xfrm Command Timeout Protection**: Added timeout protection to `ip xfrm state` commands to prevent indefinite hanging:
+  - `ip xfrm state` commands are now wrapped with `timeout` command (default: 5 seconds, matching `IPSEC_STATUS_TIMEOUT`)
+  - Prevents detection from hanging when xfrm commands hang due to netlink socket timeouts or lock contention
+  - Timeout events are logged with WARNING level for diagnostics
+  - Falls back gracefully to ipsec status when xfrm commands timeout
+  - Addresses issue where xfrm appeared "unavailable" when commands were actually hanging
+  - **Related**: See `analyze/xfrm-issue-resolution-summary.md` and `docs/research/XFRM_TIMEOUT_ISSUE_RESEARCH.md` for details
+- **Unified Anonymization System**: Added comprehensive anonymization system for network data exports:
+  - New shared library `lib/anonymize.sh` providing core anonymization functions and unified mapping management
+  - Unified mapping file ensures consistent anonymization across all file types (same IP → same anonymized IP)
+  - Individual anonymization scripts: `anonymize-firewall.sh`, `anonymize-ip-rules.sh`, `anonymize-ipset.sh`, `anonymize-logs.sh`
+  - Unified command `anonymize-all.sh` for batch anonymization with shared mapping
+  - Supports IPv4, IPv6, interface names, location names, ipset set names, MAC addresses, and hostnames
+  - Deterministic anonymization ensures same input always produces same output
+  - **Related**: See `docs/scripts/UNIFIED_ANONYMIZATION.md` for comprehensive documentation
+- **Developer Troubleshooting Documentation**: Added `docs/reference/DEV_TROUBLESHOOTING.md` with troubleshooting guidance for developers:
+  - xfrm-specific troubleshooting information
+  - Keepalive service restart instructions
+  - Common development issues and solutions
+- **Research Documentation**: Added research documents in `docs/research/`:
+  - `XFRM_TIMEOUT_ISSUE_RESEARCH.md` - Comprehensive research findings on xfrm timeout issue and resolution
+  - Additional research documents for deployment analysis and recommendations
+- **Test Suite Documentation Enhancements**: Added comprehensive test suite documentation:
+  - `docs/testing/COVERAGE_ANALYSIS_GUIDE.md` - Guide for analyzing test coverage and identifying gaps
+  - `docs/testing/TEST_SUITE_REVIEW.md` - Pragmatic engineering review of test suite with recommendations
+  - Includes coverage analysis, test organization assessment, and improvement recommendations
+  - VPN monitor log analysis documents
+- **Monitor Wrapper for Sub-minute Execution**: Added `vpn-monitor-wrapper.sh` for configurable sub-minute VPN checks:
+  - When `ENABLE_MONITOR_WRAPPER=1` (default), cron runs the wrapper instead of vpn-monitor.sh directly
+  - Wrapper runs checks every `MONITOR_INTERVAL` seconds (default: 20, range: 10-60) for faster failure detection
+  - Uses PID file to prevent duplicate wrapper instances; cron resurrects wrapper every minute if needed
+  - New config options: `ENABLE_MONITOR_WRAPPER`, `MONITOR_INTERVAL`
+  - Installer configures cron for wrapper when enabled; interactive install includes these options by default
+
+### Removed
+- **BREAKING**: Removed `MAX_RESTARTS_PER_HOUR` configuration variable
+  - This parameter has been fully replaced by `MAX_RESTARTS_PER_WINDOW` and `RATE_LIMIT_WINDOW_MINUTES`
+  - The migration logic that automatically converted `MAX_RESTARTS_PER_HOUR` to the new parameters has been removed
+  - **Migration**: Users with existing config files must update their configuration:
+    - Replace `MAX_RESTARTS_PER_HOUR=3` with:
+      - `MAX_RESTARTS_PER_WINDOW=3` (or desired value, default is 20)
+      - `RATE_LIMIT_WINDOW_MINUTES=60` (or desired window size in minutes, default is 60)
+    - For example, if you had `MAX_RESTARTS_PER_HOUR=5`, use:
+      - `MAX_RESTARTS_PER_WINDOW=5`
+      - `RATE_LIMIT_WINDOW_MINUTES=60`
+  - This is a breaking change - config files with `MAX_RESTARTS_PER_HOUR` will fail to load with error: "Unknown configuration variable 'MAX_RESTARTS_PER_HOUR' (not in schema whitelist)"
+- **BREAKING**: Removed `COOLDOWN_MINUTES` configuration variable
+  - This parameter has been fully replaced by `MIN_RESTART_INTERVAL_SECONDS`
+  - The migration logic that automatically converted `COOLDOWN_MINUTES` to `MIN_RESTART_INTERVAL_SECONDS` has been removed
+  - **Migration**: Users with existing config files must update their configuration:
+    - Replace `COOLDOWN_MINUTES=15` with `MIN_RESTART_INTERVAL_SECONDS=900` (15 minutes × 60 = 900 seconds)
+    - Note: `MIN_RESTART_INTERVAL_SECONDS` has a maximum value of 300 seconds (5 minutes), so values greater than 5 minutes will be capped
+    - For example, if you had `COOLDOWN_MINUTES=2`, use `MIN_RESTART_INTERVAL_SECONDS=120`
+  - This is a breaking change - config files with `COOLDOWN_MINUTES` will fail to load with error: "Unknown configuration variable 'COOLDOWN_MINUTES' (not in schema whitelist)"
+- **BREAKING**: Removed `VPN_NAME` configuration variable
+  - Was only used in log messages and provided minimal value
+  - Log messages now use hardcoded "VPN" text instead of configurable name
+  - **Migration**: Users with existing config files should remove the `VPN_NAME=` line from their config file
+  - This is a breaking change - config files with `VPN_NAME` will fail to load with error: "Unknown configuration variable 'VPN_NAME' (not in schema whitelist)"
+
+## 0.6.2 - 2026-01-19
+
+### Changed
+- **State File Naming Consistency**: Renamed state file key from `failure_counter` to `failure_count` for consistency across codebase:
+  - Updated all state file path generation to use `failure_count` instead of `failure_counter`
+  - State files now use format: `failure_count_<location>_<peer_ip_sanitized>` instead of `failure_counter_<location>_<peer_ip_sanitized>`
+  - Updated documentation and comments to reflect new naming convention
+  - Improved code consistency and maintainability
+- **Variable Naming Improvements**: Renamed `external_ip` to `external_peer_ip` throughout codebase for clarity:
+  - More descriptive variable name clearly indicates this is the external peer IP address
+  - Updated function parameters, local variables, and documentation
+  - Improved code readability and reduced confusion with other IP variables
+- **SPI Normalization**: SPI (Security Parameter Index) values are now normalized to lowercase hex format:
+  - SPI values extracted from xfrm output are normalized to lowercase (e.g., `0xABCDEF12` → `0xabcdef12`)
+  - Ensures consistent SPI format for comparison and state storage
+  - Updated test expectations to match normalized format
+- **State Validation Improvements**: Enhanced state file path validation with better error handling:
+  - `get_peer_state_file_path()` now validates `STATE_DIR` is set and returns error if unset
+  - Improved error messages for missing `STATE_DIR` configuration
+  - Better error handling in state functions when path generation fails
+  - Prevents silent failures from missing state directory configuration
+
+### Fixed
+- **Test Location Parameter**: Fixed test cases to use proper location name "TEST" instead of empty string:
+  - Updated all test cases to use "TEST" location name for proper state management
+  - Ensures tests work correctly with location-based state file paths
+  - Improved test reliability and consistency with production code
+- **State File Path Generation**: Fixed state file path generation to use correct key name (`failure_count` instead of `failure_counter`):
+  - Updated `get_peer_state_file_path()` to generate paths with `failure_count` key
+  - Fixed test assertions to expect correct path format
+  - Ensures state files are created with consistent naming
+
+### Added
+- **Enhanced Test Coverage**: Added comprehensive test cases for state management:
+  - Added tests for SPI format validation (empty string, hex format, decimal format, invalid formats)
+  - Added tests for special characters in location names and IP addresses
+  - Added tests for very long location names (truncation handling)
+  - Added tests for state validation error handling (missing STATE_DIR, path generation failures)
+  - Improved test coverage for edge cases and error conditions
+- **Test Infrastructure Improvements**: Enhanced test helpers and patterns:
+  - Updated `setup_location_vpn_monitor()` helper to use `external_peer_ip` parameter name
+  - Improved test helper functions with better parameter naming
+  - Enhanced test documentation and comments
+
+### Documentation
+- **Code Patterns Documentation**: Significantly expanded `docs/CODE_PATTERNS.md` with comprehensive patterns and best practices:
+  - Added patterns for state management, error handling, and validation
+  - Enhanced documentation with examples and usage guidelines
+  - Improved code quality guidance for developers
+- **Test Maintenance Guide**: Expanded `docs/testing/TEST_MAINTENANCE.md` with comprehensive maintenance guidelines:
+  - Added patterns for test organization and structure
+  - Enhanced guidance on test isolation and reliability
+  - Improved documentation for test helpers and fixtures
+- **Test Strategy Documentation**: Enhanced `docs/testing/TEST_STRATEGY.md` with testing approach details:
+  - Added comprehensive testing strategy documentation
+  - Improved guidance on test organization and execution
+  - Enhanced documentation for test patterns and best practices
+- **State System Documentation**: Updated `docs/STATE_SYSTEM.md` with latest state management patterns:
+  - Updated documentation to reflect `failure_count` naming convention
+  - Enhanced documentation with improved examples and usage patterns
+  - Updated state file path format documentation
+
+## 0.6.1 - 2026-01-15
+
+### Fixed
+- **State File Validation Hang**: Fixed `validate_state_files_by_pattern()` function hanging indefinitely when encountering unreadable state files (000 permissions):
+  - Replaced bash glob expansion with `find` command to safely enumerate files matching patterns
+  - Added explicit readability check before processing each file to prevent hangs
+  - Added warning log when skipping unreadable files during validation
+  - Prevents script from hanging when state files have incorrect permissions
+- **Test Timeout**: Added timeout protection to test case "state file permissions prevent read - should handle gracefully":
+  - Added 30-second timeout to prevent test from hanging indefinitely
+  - Marked test as slow to reflect potential longer execution time
+  - Ensures test suite completes even if script doesn't handle unreadable files gracefully
+
 ## 0.6.0 - 2026-01-11
 
 ### Added
@@ -196,8 +336,8 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
   - Better handling of empty or missing configuration values
   - Enhanced location name extraction and sanitization
 - **State File Management**: Updated state file naming to include location names:
-  - Old format: `state/failure_counter_203_0_113_1`
-  - New format: `state/failure_counter_NYC_203_0_113_1`
+  - Old format: `state/failure_count_203_0_113_1`
+  - New format: `state/failure_count_NYC_203_0_113_1`
   - State files now include location name for better organization
 - **Test Suite Expansion**: Major expansion of test coverage:
   - New test files: `test_config_location.sh`, `test_detection_error_recovery.sh`, `test_detection_ping_multiple.sh`, `test_fixtures_vpn_at_tier.sh`, `test_fixtures_vpn_idle.sh`, `test_integration_location.sh`, `test_migration.sh`, `test_recovery_cascading_failures.sh`, `test_recovery_multi_location_partial.sh`, `test_state_atomic_write_failures.sh`, `test_state_location.sh`, `test_test_isolation.sh`
@@ -359,7 +499,6 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
   - `test_integration_e2e_recovery.sh` - End-to-end recovery integration tests
   - `test_multiple_peer_edge_cases.sh` - Tests for multiple peer scenarios
   - `test_rapid_state_changes.sh` - Tests for rapid state change handling
-  - `test_recovery_cooldown_rate_limit_interaction.sh` - Tests for cooldown and rate limit interactions
   - `test_recovery_network_partition.sh` - Tests for recovery during network partitions
   - `test_recovery_partial_failures.sh` - Tests for partial recovery failures
   - `test_recovery_rate_limiting.sh` - Tests for recovery rate limiting
@@ -439,7 +578,7 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
   - `lib/lockfile.sh` - Lockfile management with flock and fallback mechanisms
   - `lib/logging.sh` - Centralized logging functionality with timestamp and level support
   - `lib/recovery.sh` - Tiered recovery actions (logging → surgical cleanup → full restart)
-  - `lib/state.sh` - State file management (failure counters, cooldown, rate limiting)
+  - `lib/state.sh` - State file management (failure counters, rate limiting)
 - **Comprehensive Test Suite**: 
   - `test_integration.sh` - Integration tests for end-to-end scenarios
   - `test_high_risk.sh` - Tests for critical recovery actions and edge cases
@@ -533,7 +672,7 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 - Tiered recovery system (logging → surgical cleanup → full restart)
 - Per-peer failure tracking and independent recovery actions
 - Connection name auto-discovery for targeted recovery
-- Safety controls: lockfiles, cooldown periods, rate limiting
+- Safety controls: lockfiles, rate limiting
 - Comprehensive logging and state management
 - Installation and uninstallation scripts
 - Interactive and silent installation modes
@@ -548,7 +687,7 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 - **Detection**: Uses `ip xfrm state` byte counters to detect actual VPN traffic flow
 - **Connectivity Verification**: Optional ping checks verify end-to-end tunnel connectivity
 - **Tiered Recovery**: Escalates from logging → surgical SA cleanup → full restart
-- **Safety Controls**: Lockfiles with timeout detection, cooldown timers, and rate limiting
+- **Safety Controls**: Lockfiles with timeout detection and rate limiting
 - **Per-Peer Tracking**: Monitors multiple VPN peers independently
 - **Connection Name Support**: Auto-discovers or manually configures connection names for targeted recovery
 - **Persistent Logging**: Logs stored in `/data/` survive reboots

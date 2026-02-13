@@ -24,12 +24,12 @@ load test_helper
 
 	# Perform rapid updates
 	for i in {1..10}; do
-		set_peer_state "" "$peer_ip" "failure_count" "$i"
+		set_peer_state "TEST" "$peer_ip" "failure_count" "$i"
 	done
 
 	# Verify final state is correct (should be 10)
 	local final_count
-	final_count=$(get_peer_state "" "$peer_ip" "failure_count" "0")
+	final_count=$(get_peer_state "TEST" "$peer_ip" "failure_count" "0")
 	assert_equal "$final_count" 10
 }
 
@@ -46,22 +46,22 @@ load test_helper
 
 	# Rapid updates to different keys
 	for i in {1..5}; do
-		set_peer_state "" "$peer_ip" "failure_count" "$i"
-		set_peer_state "" "$peer_ip" "last_bytes" "$((i * 1000))"
-		set_peer_state "" "$peer_ip" "spi" "0x$(printf '%08x' "$i")"
+		set_peer_state "TEST" "$peer_ip" "failure_count" "$i"
+		set_peer_state "TEST" "$peer_ip" "last_bytes" "$((i * 1000))"
+		set_peer_state "TEST" "$peer_ip" "spi" "0x$(printf '%08x' "$i")"
 	done
 
 	# Verify all state keys are correct
 	local failure_count
-	failure_count=$(get_peer_state "" "$peer_ip" "failure_count" "0")
+	failure_count=$(get_peer_state "TEST" "$peer_ip" "failure_count" "0")
 	assert_equal "$failure_count" 5
 
 	local last_bytes
-	last_bytes=$(get_peer_state "" "$peer_ip" "last_bytes" "0")
+	last_bytes=$(get_peer_state "TEST" "$peer_ip" "last_bytes" "0")
 	assert_equal "$last_bytes" 5000
 
 	local spi
-	spi=$(get_peer_state "" "$peer_ip" "spi" "")
+	spi=$(get_peer_state "TEST" "$peer_ip" "spi" "")
 	assert_equal "$spi" "0x00000005"
 }
 
@@ -77,7 +77,7 @@ load test_helper
 	source_function "get_peer_state_file_path"
 
 	local state_file
-	state_file=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
+	state_file=$(get_peer_state_file_path "TEST" "$peer_ip" "failure_count")
 
 	# Create state file and lock it using flock
 	echo "5" >"$state_file"
@@ -99,7 +99,7 @@ load test_helper
 
 	# Try to update state (should handle gracefully)
 	# atomic_write_file should handle this, but may fail
-	run set_peer_state "" "$peer_ip" "failure_count" "10"
+	run set_peer_state "TEST" "$peer_ip" "failure_count" "10"
 
 	# Clean up lock and signal file
 	kill "$lock_pid" 2>/dev/null || true
@@ -126,12 +126,12 @@ load test_helper
 	source_function "get_peer_state_file_path"
 
 	# Set initial state
-	set_peer_state "" "$peer_ip" "failure_count" "5"
+	set_peer_state "TEST" "$peer_ip" "failure_count" "5"
 
 	# Create a mock atomic_write_file that fails
 	# We'll temporarily make the state directory unwritable to simulate failure
 	local state_file
-	state_file=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
+	state_file=$(get_peer_state_file_path "TEST" "$peer_ip" "failure_count")
 	local state_dir
 	state_dir=$(dirname "$state_file")
 
@@ -140,7 +140,7 @@ load test_helper
 		chmod 555 "$state_dir" 2>/dev/null || true
 
 		# Try to update state (should fail gracefully)
-		run set_peer_state "" "$peer_ip" "failure_count" "10"
+		run set_peer_state "TEST" "$peer_ip" "failure_count" "10"
 		assert_failure
 
 		# Restore permissions
@@ -148,7 +148,7 @@ load test_helper
 
 		# Verify original state is preserved (should still be 5)
 		local preserved_count
-		preserved_count=$(get_peer_state "" "$peer_ip" "failure_count" "0")
+		preserved_count=$(get_peer_state "TEST" "$peer_ip" "failure_count" "0")
 		assert_equal "$preserved_count" 5
 	fi
 }
@@ -165,7 +165,7 @@ load test_helper
 	source_function "get_peer_state"
 
 	# Set initial state
-	set_peer_state "" "$peer_ip" "failure_count" "5"
+	set_peer_state "TEST" "$peer_ip" "failure_count" "5"
 
 	# Use file-based synchronization for deterministic concurrent reads
 	local update_started="${TEST_DIR}/update_started"
@@ -175,21 +175,19 @@ load test_helper
 	# Start background update
 	(
 		touch "$update_started"
-		set_peer_state "" "$peer_ip" "failure_count" "10"
+		set_peer_state "TEST" "$peer_ip" "failure_count" "10"
 		touch "$update_done"
 	) &
 
 	# Wait for update to start
-	while [[ ! -f "$update_started" ]]; do
-		sleep 0.01
-	done
+	wait_for_file "$update_started" 5
 
 	# Perform concurrent reads while update is in progress
 	local read_count=0
 	local valid_reads=0
 	while [[ ! -f "$update_done" ]]; do
 		local value
-		value=$(get_peer_state "" "$peer_ip" "failure_count" "0")
+		value=$(get_peer_state "TEST" "$peer_ip" "failure_count" "0")
 		read_count=$((read_count + 1))
 		# Value should be either 5 or 10 (not corrupted)
 		if [[ "$value" == "5" ]] || [[ "$value" == "10" ]]; then
@@ -220,11 +218,11 @@ load test_helper
 
 	# Perform rapid updates and verify consistency after each
 	for i in {1..20}; do
-		set_peer_state "" "$peer_ip" "failure_count" "$i"
+		set_peer_state "TEST" "$peer_ip" "failure_count" "$i"
 
 		# Verify state is consistent
 		local current_count
-		current_count=$(get_peer_state "" "$peer_ip" "failure_count" "0")
+		current_count=$(get_peer_state "TEST" "$peer_ip" "failure_count" "0")
 		# Should be numeric and match expected value
 		# Use pattern matching that works in test environment
 		if [[ ! "$current_count" =~ ^[0-9]+$ ]]; then
@@ -252,9 +250,9 @@ load test_helper
 	# but allow different peers to update concurrently to test they don't interfere
 	for i in {1..10}; do
 		# Launch all three peers' updates in parallel
-		set_peer_state "" "$peer1" "failure_count" "$i" &
-		set_peer_state "" "$peer2" "failure_count" "$((i + 10))" &
-		set_peer_state "" "$peer3" "failure_count" "$((i + 20))" &
+		set_peer_state "TEST" "$peer1" "failure_count" "$i" &
+		set_peer_state "TEST" "$peer2" "failure_count" "$((i + 10))" &
+		set_peer_state "TEST" "$peer3" "failure_count" "$((i + 20))" &
 		# Wait for this iteration's updates to complete before starting next iteration
 		# This serializes updates to the same peer while allowing different peers to run concurrently
 		wait
@@ -262,15 +260,15 @@ load test_helper
 
 	# Verify each peer's state is correct
 	local count1
-	count1=$(get_peer_state "" "$peer1" "failure_count" "0")
+	count1=$(get_peer_state "TEST" "$peer1" "failure_count" "0")
 	assert_equal "$count1" 10
 
 	local count2
-	count2=$(get_peer_state "" "$peer2" "failure_count" "0")
+	count2=$(get_peer_state "TEST" "$peer2" "failure_count" "0")
 	assert_equal "$count2" 20
 
 	local count3
-	count3=$(get_peer_state "" "$peer3" "failure_count" "0")
+	count3=$(get_peer_state "TEST" "$peer3" "failure_count" "0")
 	assert_equal "$count3" 30
 }
 
@@ -325,13 +323,13 @@ load test_helper
 	source_function "recover_corrupted_state_file"
 
 	local state_file
-	state_file=$(get_peer_state_file_path "" "$peer_ip" "failure_count")
+	state_file=$(get_peer_state_file_path "TEST" "$peer_ip" "failure_count")
 
 	# Create corrupted state file
 	echo "invalid-value" >"$state_file"
 
 	# get_peer_state should detect corruption and recover
-	run get_peer_state "" "$peer_ip" "failure_count" "0"
+	run get_peer_state "TEST" "$peer_ip" "failure_count" "0"
 	assert_success
 	# Should return default value (0) after recovery
 	# Note: Warning message appears on stderr, so we check for the value using assert_line
