@@ -635,7 +635,7 @@ This script compares the **template configuration file** (the `vpn-monitor.conf`
 
 **Use this when:** You want to see what's new in the template during upgrades without overwriting your existing config.
 
-**Note:** During installation/upgrade, if your existing config is preserved (not overwritten), `compare-config.sh` runs automatically to show you what's new in the template. You can also run it manually anytime to check for new configuration options.
+**Note:** During installation/upgrade, if your existing config is preserved (not overwritten), `compare-config.sh` runs automatically to show you what's new in the template. If missing values are found, the installer will ask whether to append them to the end of your config file. You can also run `compare-config.sh` manually anytime to check for new configuration options.
 
 ### Manual Testing
 

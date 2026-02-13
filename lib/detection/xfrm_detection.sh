@@ -606,7 +606,7 @@ get_xfrm_state_for_peer() {
 
 			# Log error message if found, otherwise log full output preview
 			if [[ -n "$xfrm_error_msg" ]]; then
-				log_message "WARNING" "SYSTEM" "xfrm command failed for peer $external_peer_ip - error: $xfrm_error_msg"
+				log_message "WARNING" "SYSTEM" "xfrm command failed for peer $peer_ip - error: $xfrm_error_msg"
 			else
 				# No specific error message found, log output preview
 				local xfrm_output_preview
@@ -616,12 +616,12 @@ get_xfrm_state_for_peer() {
 				xfrm_output_formatted=$(echo "$xfrm_output_preview" | tr '\n' '; ' || echo "<output formatting failed>")
 				# Log with peer IP for context (xfrm output contains IPs but they're already known from config)
 				# Use WARNING level since this is an error condition
-				log_message "WARNING" "SYSTEM" "xfrm command failed for peer $external_peer_ip - xfrm output (first 10 lines): $xfrm_output_formatted"
+				log_message "WARNING" "SYSTEM" "xfrm command failed for peer $peer_ip - xfrm output (first 10 lines): $xfrm_output_formatted"
 			fi
 		else
 			# No output at all - command may have failed silently or timed out
 			# (Timeout is already logged in execute_xfrm_state_command, so we don't duplicate it)
-			log_message "WARNING" "SYSTEM" "xfrm command failed for peer $external_peer_ip - no output received (command may have failed silently or timed out)"
+			log_message "WARNING" "SYSTEM" "xfrm command failed for peer $peer_ip - no output received (command may have failed silently or timed out)"
 		fi
 
 		# Command failed or timed out - try alternative method (ipsec status) to confirm tunnel state
@@ -636,7 +636,7 @@ get_xfrm_state_for_peer() {
 
 		local ipsec_status_output
 		local ipsec_status_result
-		ipsec_status_output=$(get_ipsec_status_for_peer "$external_peer_ip" 2>/dev/null || true)
+		ipsec_status_output=$(get_ipsec_status_for_peer "$peer_ip" 2>/dev/null || true)
 		ipsec_status_result=$?
 
 		if [[ -n "$ipsec_status_output" ]]; then
@@ -644,9 +644,9 @@ get_xfrm_state_for_peer() {
 			log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: ipsec shows connection exists, returning 2"
 			if [[ -n "$_error_msg_varname" ]]; then
 				if [[ "$is_command_error" == "true" ]]; then
-					printf -v "$_error_msg_varname" "%s" "xfrm command failed (command error), but ipsec status shows connection exists for $external_peer_ip - xfrm query may be unavailable"
+					printf -v "$_error_msg_varname" "%s" "xfrm command failed (command error), but ipsec status shows connection exists for $peer_ip - xfrm query may be unavailable"
 				else
-					printf -v "$_error_msg_varname" "%s" "xfrm command failed or timed out, but ipsec status shows connection exists for $external_peer_ip - xfrm query may be unavailable"
+					printf -v "$_error_msg_varname" "%s" "xfrm command failed or timed out, but ipsec status shows connection exists for $peer_ip - xfrm query may be unavailable"
 				fi
 			fi
 			return 2
@@ -655,9 +655,9 @@ get_xfrm_state_for_peer() {
 			log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: ipsec shows no connection, returning 2"
 			if [[ -n "$_error_msg_varname" ]]; then
 				if [[ "$is_command_error" == "true" ]]; then
-					printf -v "$_error_msg_varname" "%s" "xfrm command failed (command error) and ipsec status shows no connection for $external_peer_ip - tunnel appears to be down"
+					printf -v "$_error_msg_varname" "%s" "xfrm command failed (command error) and ipsec status shows no connection for $peer_ip - tunnel appears to be down"
 				else
-					printf -v "$_error_msg_varname" "%s" "xfrm command failed or timed out and ipsec status shows no connection for $external_peer_ip - tunnel appears to be down"
+					printf -v "$_error_msg_varname" "%s" "xfrm command failed or timed out and ipsec status shows no connection for $peer_ip - tunnel appears to be down"
 				fi
 			fi
 			return 2
@@ -666,18 +666,18 @@ get_xfrm_state_for_peer() {
 		log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Entering xfrm_result!=0 block (result=$xfrm_result)"
 		# Empty output - no SAs found in kernel, try ipsec status to confirm
 		local ipsec_status_output
-		ipsec_status_output=$(get_ipsec_status_for_peer "$external_peer_ip" 2>/dev/null || true)
+		ipsec_status_output=$(get_ipsec_status_for_peer "$peer_ip" 2>/dev/null || true)
 
 		if [[ -n "$ipsec_status_output" ]]; then
 			# ipsec status shows connection exists - SAs may exist but not in xfrm state
 			if [[ -n "$_error_msg_varname" ]]; then
-				printf -v "$_error_msg_varname" "%s" "No SAs found in xfrm state for $external_peer_ip, but ipsec status shows connection exists - SAs may not be in kernel state"
+				printf -v "$_error_msg_varname" "%s" "No SAs found in xfrm state for $peer_ip, but ipsec status shows connection exists - SAs may not be in kernel state"
 			fi
 			return 1
 		else
 			# Both show no connection - tunnel is down
 			if [[ -n "$_error_msg_varname" ]]; then
-				printf -v "$_error_msg_varname" "%s" "No SAs found in xfrm state for $external_peer_ip and ipsec status shows no connection - tunnel is down"
+				printf -v "$_error_msg_varname" "%s" "No SAs found in xfrm state for $peer_ip and ipsec status shows no connection - tunnel is down"
 			fi
 			return 1
 		fi
@@ -685,16 +685,16 @@ get_xfrm_state_for_peer() {
 		# Empty output after successful command (xfrm_result == 0) - try ipsec status to confirm
 		log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Entering empty output block (xfrm_result=$xfrm_result)"
 		local ipsec_status_output
-		ipsec_status_output=$(get_ipsec_status_for_peer "$external_peer_ip" 2>/dev/null || true)
+		ipsec_status_output=$(get_ipsec_status_for_peer "$peer_ip" 2>/dev/null || true)
 
 		if [[ -n "$ipsec_status_output" ]]; then
 			if [[ -n "$_error_msg_varname" ]]; then
-				printf -v "$_error_msg_varname" "%s" "xfrm state query returned empty output for $external_peer_ip, but ipsec status shows connection exists"
+				printf -v "$_error_msg_varname" "%s" "xfrm state query returned empty output for $peer_ip, but ipsec status shows connection exists"
 			fi
 			return 1
 		else
 			if [[ -n "$_error_msg_varname" ]]; then
-				printf -v "$_error_msg_varname" "%s" "No SAs found in xfrm state for $external_peer_ip and ipsec status shows no connection - tunnel is down"
+				printf -v "$_error_msg_varname" "%s" "No SAs found in xfrm state for $peer_ip and ipsec status shows no connection - tunnel is down"
 			fi
 			return 1
 		fi
@@ -708,14 +708,14 @@ get_xfrm_state_for_peer() {
 	local forward_output=""
 	local reverse_output=""
 
-	# Find forward SAs (dst=$external_peer_ip) - matches forward SA header lines "src <local_ip> dst $external_peer_ip"
+	# Find forward SAs (dst=$peer_ip) - matches forward SA header lines "src <local_ip> dst $peer_ip"
 	log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Searching for SAs in output (length=${#full_xfrm_output})"
-	forward_output=$(echo "$full_xfrm_output" | grep -F "dst ${external_peer_ip}" -A "${extended_context}" 2>/dev/null || true)
-	# Find reverse SAs (src=$external_peer_ip) - matches reverse SA header lines "src $external_peer_ip dst <local_ip>"
-	# Use grep -E with anchored pattern to match lines starting with "src $external_peer_ip"
-	# Safe because external_peer_ip is validated above to prevent regex injection
-	# The pattern "^[[:space:]]*src $external_peer_ip[[:space:]]" matches SA header lines for reverse SAs
-	reverse_output=$(echo "$full_xfrm_output" | grep -E "^[[:space:]]*src ${external_peer_ip}[[:space:]]" -A "${extended_context}" 2>/dev/null || true)
+	forward_output=$(echo "$full_xfrm_output" | grep -F "dst ${peer_ip}" -A "${extended_context}" 2>/dev/null || true)
+	# Find reverse SAs (src=$peer_ip) - matches reverse SA header lines "src $peer_ip dst <local_ip>"
+	# Use grep -E with anchored pattern to match lines starting with "src $peer_ip"
+	# Safe because peer_ip is validated above to prevent regex injection
+	# The pattern "^[[:space:]]*src $peer_ip[[:space:]]" matches SA header lines for reverse SAs
+	reverse_output=$(echo "$full_xfrm_output" | grep -E "^[[:space:]]*src ${peer_ip}[[:space:]]" -A "${extended_context}" 2>/dev/null || true)
 	log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: forward_output length=${#forward_output}, reverse_output length=${#reverse_output}"
 
 	# Combine outputs if both exist (they represent different SAs in a bidirectional tunnel)
@@ -1706,7 +1706,7 @@ check_ipsec_phase2() {
 #   - If SA existence output variable name is provided, stores SA existence state (0 or 1) in that variable
 #   - If XFRM output variable name is provided, stores xfrm state output in that variable for reuse (optimization)
 check_xfrm_primary() {
-	local external_peer_ip="$1"
+	local peer_ip="$1"
 	local internal_peer_ip="${2:-}"
 	local location_name="$3"
 	local diagnostic_var="${4:-}"
@@ -1723,7 +1723,7 @@ check_xfrm_primary() {
 	# Pass internal IP and location_name to check_xfrm_status for idle detection via ping checks
 	# Also pass SA existence output variable to expose SA state separately
 	# Pass xfrm_output_var to expose xfrm state output for reuse by downstream functions (optimization)
-	check_xfrm_status "$external_peer_ip" "$internal_peer_ip" "$location_name" "$diagnostic_var" "$sa_exists_var" "$xfrm_output_var"
+	check_xfrm_status "$peer_ip" "$internal_peer_ip" "$location_name" "$diagnostic_var" "$sa_exists_var" "$xfrm_output_var"
 }
 
 # Check VPN status using ipsec (fallback method)
@@ -1743,7 +1743,7 @@ check_xfrm_primary() {
 #   - Logs debug/warning messages (unless diagnostic variable name is provided)
 #   - If diagnostic variable name is provided, stores diagnostic message in that variable instead of logging
 check_ipsec_fallback() {
-	local external_peer_ip="$1"
+	local peer_ip="$1"
 	local location_name="$2"
 	local diagnostic_var="${3:-}"
 
@@ -1754,5 +1754,5 @@ check_ipsec_fallback() {
 	fi
 
 	# Fallback to ipsec status check if xfrm didn't confirm
-	check_ipsec_status "$external_peer_ip" "$location_name" "$diagnostic_var"
+	check_ipsec_status "$peer_ip" "$location_name" "$diagnostic_var"
 }

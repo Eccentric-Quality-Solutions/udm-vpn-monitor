@@ -205,6 +205,43 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 }
 
 # bats test_tags=category:unit
+@test "install.sh offers to append missing config values when preserving existing config" {
+	# Purpose: Test verifies that when preserving an existing config with missing values, install offers to append them
+	# Expected: User is prompted to append; answering yes appends missing values to config file
+	# Importance: Helps users add new settings during upgrades without overwriting customizations
+	cd "$TEST_DIR"
+
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
+	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
+	# Template with NO_ESCALATE (will be missing from existing after we remove it)
+	cat >"${TEST_DIR}/source/vpn-monitor.conf" <<EOF
+LOCATION_NYC_EXTERNAL="192.168.1.1"
+LOCATION_NYC_INTERNAL="10.0.0.1"
+TIER1_THRESHOLD=1
+TIER2_THRESHOLD=3
+TIER3_THRESHOLD=5
+NO_ESCALATE=0
+EOF
+	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+
+	# First installation (silent)
+	run bash "$test_install" --dev --silent --no-cron
+	assert_success
+
+	# Remove NO_ESCALATE from installed config to simulate upgrade scenario
+	sed -i '/^NO_ESCALATE=/d' "${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
+	refute_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "NO_ESCALATE"
+
+	# Re-install without overwrite, answer no to overwrite and yes to append
+	run bash "$test_install" --dev --no-cron < <(printf 'no\nyes\n')
+	assert_success
+
+	# Verify NO_ESCALATE was appended
+	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "NO_ESCALATE=0"
+}
+
+# bats test_tags=category:unit
 @test "install.sh skips cron setup with --no-cron flag" {
 	# Purpose: Test verifies that the install script skips cron job creation when --no-cron flag is provided
 	# Expected: Script completes installation without creating cron entry when --no-cron flag is used
