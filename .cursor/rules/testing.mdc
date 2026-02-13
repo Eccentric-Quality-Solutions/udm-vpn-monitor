@@ -1,0 +1,14 @@
+---
+description: Testing practices for UDM VPN Monitor (BATS, streaming, timeouts)
+alwaysApply: true
+---
+
+# Testing
+
+- **Always run tests** so output is visible in real time (you may also log to a file). Do not rely on buffered output.
+- **Use a timeout** on test runs so they cannot hang indefinitely (e.g. `TEST_TIMEOUT=120` or `./tests/run_tests.sh` with timeout).
+- Run **relevant tests** for your changes. Use the **code-to-test table** in `docs/testing/RELEVANT_TESTS.md` to choose which test files to run for the code you changed; not the full suite unless the change is broad or pre-commit.
+- When asked to run a subset of tests, clarify whether that means test files or test cases; usually test cases — use BATS test case filtering.
+- Ensure tests **stream output** to the terminal and are not buffered.
+- Tag tests that are slow with `# bats test_tags=slow`.
+- When writing tests, use BATS built-in features and the project's test fixtures and mocks in `tests/helpers/` and `tests/fixtures/`.

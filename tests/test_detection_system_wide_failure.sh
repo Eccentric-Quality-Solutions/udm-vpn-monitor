@@ -661,9 +661,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
-	# Verify resolution message includes duration
+	# Verify resolution message includes duration (format: "System-wide failure resolved (duration: Xs)")
 	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "System-wide failure resolved after"
+	assert_file_contains "$LOG_FILE" "System-wide failure resolved"
+	assert_file_contains "$LOG_FILE" "duration:"
 
 	remove_mock_from_path
 }

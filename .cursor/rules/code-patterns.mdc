@@ -1,0 +1,11 @@
+---
+description: Atomic writes, logging context, function docs, minimal scope
+alwaysApply: true
+---
+
+# Code Patterns
+
+- **Atomic file writes**: When writing state or config, write to `"${file}.tmp"` then `mv "${file}.tmp" "$file"` so partial writes are not left on disk.
+- **Logging**: Use `log_message "LEVEL" "CONTEXT" "message"`; CONTEXT is `"SYSTEM"` for global or the **location name** (e.g. `"NYC"`) for location-specific messages.
+- **Function documentation**: When adding or changing a function, add/update the block: `# Brief description`, `# Arguments:`, `# $1: name (type) - description`, `# Returns:`, `# 0: success`, `# 1: failure` (see CLAUDE.md).
+- **Minimize scope**: When fixing a bug, change only what is necessary; do not refactor or "improve" unrelated code unless asked.

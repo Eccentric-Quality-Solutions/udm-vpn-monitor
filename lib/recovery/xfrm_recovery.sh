@@ -697,11 +697,9 @@ delete_sas_from_list() {
 					exact_sa_block=$(extract_sa_block "$pre_delete_xfrm_output" "$sa_src" "$sa_dst" 20)
 					# Enhanced diagnostics: Always log full SA block (not just DEBUG mode)
 					# This is critical for debugging deletion failures
-					if [[ -n "$sa_mark" ]]; then
-						log_message "INFO" "$location_name" "xfrm recovery: Pre-delete SA block for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=$sa_mark:\n$exact_sa_block"
-					else
-						log_message "INFO" "$location_name" "xfrm recovery: Pre-delete SA block for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi:\n$exact_sa_block"
-					fi
+					local mark_info=""
+					[[ -n "$sa_mark" ]] && mark_info=" mark=$sa_mark"
+					log_message "INFO" "$location_name" "xfrm recovery: Pre-delete SA block for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi${mark_info}:\n$exact_sa_block"
 					# Enhanced diagnostics: Extract and log all attributes found in SA block
 					# This helps identify any selectors we might be missing (e.g., reqid, mode, etc.)
 					local all_attrs=""
@@ -785,13 +783,12 @@ delete_sas_from_list() {
 		local delete_duration
 		delete_duration=$(stop_timer "$delete_timer")
 
+		local mark_info=""
+		[[ -n "$sa_mark" ]] && mark_info=" mark=$sa_mark"
+
 		if [[ $delete_exit_code -eq 0 ]]; then
 			# Enhanced diagnostics: Include timing information in success messages
-			if [[ -n "$sa_mark" ]]; then
-				log_message "INFO" "$location_name" "xfrm recovery: Deleted SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=$sa_mark for $ip_display (duration: ${delete_duration}s)"
-			else
-				log_message "INFO" "$location_name" "xfrm recovery: Deleted SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi for $ip_display (duration: ${delete_duration}s)"
-			fi
+			log_message "INFO" "$location_name" "xfrm recovery: Deleted SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi${mark_info} for $ip_display (duration: ${delete_duration}s)"
 			_deleted_count=$((_deleted_count + 1))
 		else
 			# Deletion failed - gather comprehensive diagnostic information
@@ -839,11 +836,7 @@ delete_sas_from_list() {
 							# Log the exact SA block separately to avoid breaking log message formatting
 							# Only log if we have block details (avoids empty logs)
 							if [[ -n "$sa_block_details" ]]; then
-								if [[ -n "$sa_mark" ]]; then
-									log_message "INFO" "$location_name" "xfrm recovery: SA block that exists but couldn't be deleted for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=$sa_mark:\n$sa_block_details"
-								else
-									log_message "INFO" "$location_name" "xfrm recovery: SA block that exists but couldn't be deleted for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi:\n$sa_block_details"
-								fi
+								log_message "INFO" "$location_name" "xfrm recovery: SA block that exists but couldn't be deleted for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi${mark_info}:\n$sa_block_details"
 							fi
 						else
 							diagnostic_info="$diagnostic_info, sa_still_exists=false"
@@ -867,11 +860,7 @@ delete_sas_from_list() {
 			fi
 
 			# Log comprehensive diagnostic information
-			if [[ -n "$sa_mark" ]]; then
-				handle_error "WARNING" "$location_name" "xfrm recovery: Failed to delete SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi mark=$sa_mark for $ip_display ($diagnostic_info)"
-			else
-				handle_error "WARNING" "$location_name" "xfrm recovery: Failed to delete SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi for $ip_display ($diagnostic_info)"
-			fi
+			handle_error "WARNING" "$location_name" "xfrm recovery: Failed to delete SA: src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi${mark_info} for $ip_display ($diagnostic_info)"
 
 			# Log the raw xfrm output we parsed (helps identify parsing issues vs kernel state)
 			# Only log once per recovery attempt to avoid excessive logging

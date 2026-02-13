@@ -432,8 +432,7 @@ _execute_xfrm_recovery_with_fallback() {
 			# Record restart for rate limiting (even though it's per-connection)
 			record_restart
 		else
-			log_message "INFO" "$location_name" "xfrm-based recovery completed successfully for $ip_display"
-			log_message "INFO" "$location_name" "Surgical cleanup completed for $ip_display (via xfrm)"
+			log_message "INFO" "$location_name" "xfrm-based surgical cleanup completed successfully for $ip_display"
 		fi
 		return 0
 	else
@@ -841,11 +840,9 @@ update_location_state() {
 			fi
 
 			# Log recovery success with method if available
-			if [[ -n "$recovery_method_display" ]]; then
-				log_message "INFO" "$location_name" "VPN restored for $ip_display after $failure_count failures (recovery method: $recovery_method_display)"
-			else
-				log_message "INFO" "$location_name" "VPN recovered for $ip_display after $failure_count failures"
-			fi
+			local method_info=""
+			[[ -n "$recovery_method_display" ]] && method_info=" (recovery method: $recovery_method_display)"
+			log_message "INFO" "$location_name" "VPN restored for $ip_display after $failure_count failures${method_info}"
 			reset_failure_count "$location_name" "$external_peer_ip"
 
 			# Clear failure type file on recovery
@@ -901,14 +898,8 @@ update_location_state() {
 			local interfaces="${NETWORK_PARTITION_INTERFACES:-br0,eth0}"
 			if ! check_network_partition "$dns_server" "$dns_hostname" "$dns_timeout" "$interfaces"; then
 				# Network is partitioned - update state and indicate partition detected
-				local prev_partition_state
-				prev_partition_state=$(get_network_partition_state)
 				set_network_partition_state 1
-				if [[ "$prev_partition_state" -eq 0 ]]; then
-					log_message "WARNING" "$location_name" "Network partition detected - skipping VPN recovery for $ip_display until connectivity restored"
-				else
-					log_message "INFO" "$location_name" "Skipping VPN recovery for $ip_display - network is still partitioned (failure count: $failure_count)"
-				fi
+				log_message "WARNING" "$location_name" "Network partition - skipping VPN recovery for $ip_display until connectivity restored"
 				# Return special code to indicate partition detected (after failure count increment)
 				return 2
 			else

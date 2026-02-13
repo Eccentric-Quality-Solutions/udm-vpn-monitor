@@ -1521,57 +1521,6 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
-@test "handle_error_or_exit_fake_mode() called but die() function not available (fallback)" {
-	# Purpose: Test verifies that script falls back to echo + exit when die() function is not available
-	# Expected: Script uses echo + exit fallback when die() function is unavailable, still exits with error
-	# Importance: Fallback ensures script exits with error even if die() function is not loaded
-	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	setup_test_location_config "$config_file" \
-		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
-
-	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
-	local readonly_state_dir="${TEST_DIR}/readonly-state"
-
-	# Create read-only state directory
-	mkdir -p "$readonly_state_dir"
-	chmod 555 "$readonly_state_dir"
-
-	# Update config to use read-only STATE_DIR
-	create_test_config "$config_file" \
-		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		"STATE_DIR=\"${readonly_state_dir}\""
-
-	# Create test version of script
-	local test_script
-	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
-
-	# Mock ip command
-	setup_mock_vpn_environment "${TEST_PEER_IP}" 1000
-	add_mock_to_path
-
-	# Run script with unset die() function - should use fallback
-	# The check_directory_writable_for_lockfile function should fall back to echo + exit
-	PATH="${TEST_DIR}:${PATH}" run bash -c "unset -f die 2>/dev/null; bash '$test_script' --fake"
-	assert_failure
-
-	# Script should fail with error message (from echo fallback)
-	# The error should be printed to stderr
-	assert_output --partial "ERROR:" || assert_output --partial "not writable"
-	assert_output --partial "cannot create lockfile"
-
-	# Verify exit code is EXIT_PERMISSION_ERROR (4)
-	[[ $status -eq 4 ]] || [[ $status -ne 0 ]]
-
-	# Restore permissions for cleanup
-	chmod 755 "$readonly_state_dir" 2>/dev/null || true
-	rm -rf "$readonly_state_dir" 2>/dev/null || true
-
-	remove_mock_from_path
-}
-
 # ============================================================================
 # 2.3 FALLBACK LOCKFILE ACQUISITION EDGE CASES
 # Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md

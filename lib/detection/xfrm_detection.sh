@@ -581,11 +581,11 @@ get_xfrm_state_for_peer() {
 	else
 		output_empty_check="no"
 	fi
-	log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: xfrm_result=$xfrm_result, output_length=${#full_xfrm_output}, output_empty=$output_empty_check"
+	log_message "DEBUG" "SYSTEM" "get_xfrm_state_for_peer: xfrm_result=$xfrm_result, output_length=${#full_xfrm_output}, output_empty=$output_empty_check"
 
 	# Handle different failure types
 	if [[ $xfrm_result -eq 2 ]]; then
-		log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Entering xfrm_result==2 block (timeout/failure)"
+		log_message "DEBUG" "SYSTEM" "get_xfrm_state_for_peer: Entering xfrm_result==2 block (timeout/failure)"
 		# Command failed or timed out - extract and log error information
 		# Note: Timeout is already logged in execute_xfrm_state_command, so we don't duplicate it here
 		# This helps debug xfrm command failures without exposing sensitive information
@@ -663,7 +663,7 @@ get_xfrm_state_for_peer() {
 			return 2
 		fi
 	elif [[ $xfrm_result -ne 0 ]]; then
-		log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Entering xfrm_result!=0 block (result=$xfrm_result)"
+		log_message "DEBUG" "SYSTEM" "get_xfrm_state_for_peer: Entering xfrm_result!=0 block (result=$xfrm_result)"
 		# Empty output - no SAs found in kernel, try ipsec status to confirm
 		local ipsec_status_output
 		ipsec_status_output=$(get_ipsec_status_for_peer "$peer_ip" 2>/dev/null || true)
@@ -683,7 +683,7 @@ get_xfrm_state_for_peer() {
 		fi
 	elif [[ -z "$full_xfrm_output" ]]; then
 		# Empty output after successful command (xfrm_result == 0) - try ipsec status to confirm
-		log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Entering empty output block (xfrm_result=$xfrm_result)"
+		log_message "DEBUG" "SYSTEM" "get_xfrm_state_for_peer: Entering empty output block (xfrm_result=$xfrm_result)"
 		local ipsec_status_output
 		ipsec_status_output=$(get_ipsec_status_for_peer "$peer_ip" 2>/dev/null || true)
 
@@ -699,7 +699,7 @@ get_xfrm_state_for_peer() {
 			return 1
 		fi
 	else
-		log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Processing non-empty output (xfrm_result=$xfrm_result, output_length=${#full_xfrm_output})"
+		log_message "DEBUG" "SYSTEM" "get_xfrm_state_for_peer: Processing non-empty output (xfrm_result=$xfrm_result, output_length=${#full_xfrm_output})"
 	fi
 
 	# Increase context lines to ensure we capture lifetime current section which may appear after lifetime config
@@ -709,14 +709,14 @@ get_xfrm_state_for_peer() {
 	local reverse_output=""
 
 	# Find forward SAs (dst=$peer_ip) - matches forward SA header lines "src <local_ip> dst $peer_ip"
-	log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Searching for SAs in output (length=${#full_xfrm_output})"
+	log_message "DEBUG" "SYSTEM" "get_xfrm_state_for_peer: Searching for SAs in output (length=${#full_xfrm_output})"
 	forward_output=$(echo "$full_xfrm_output" | grep -F "dst ${peer_ip}" -A "${extended_context}" 2>/dev/null || true)
 	# Find reverse SAs (src=$peer_ip) - matches reverse SA header lines "src $peer_ip dst <local_ip>"
 	# Use grep -E with anchored pattern to match lines starting with "src $peer_ip"
 	# Safe because peer_ip is validated above to prevent regex injection
 	# The pattern "^[[:space:]]*src $peer_ip[[:space:]]" matches SA header lines for reverse SAs
 	reverse_output=$(echo "$full_xfrm_output" | grep -E "^[[:space:]]*src ${peer_ip}[[:space:]]" -A "${extended_context}" 2>/dev/null || true)
-	log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: forward_output length=${#forward_output}, reverse_output length=${#reverse_output}"
+	log_message "DEBUG" "SYSTEM" "get_xfrm_state_for_peer: forward_output length=${#forward_output}, reverse_output length=${#reverse_output}"
 
 	# Combine outputs if both exist (they represent different SAs in a bidirectional tunnel)
 	# If only one exists, use it (asymmetric SA state)
@@ -727,16 +727,16 @@ get_xfrm_state_for_peer() {
 		# Both exist - combine them, but deduplicate SA blocks
 		# Multiple SAs can have the same src/dst but different SPI values
 		# So we need to include SPI in the uniqueness check, not just the header line
-		log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Found both forward and reverse SAs, returning 0"
+		log_message "DEBUG" "SYSTEM" "get_xfrm_state_for_peer: Successfully found both forward and reverse SAs"
 		local combined="${forward_output}"$'\n'"${reverse_output}"
 		echo "$combined" | deduplicate_sa_blocks
 		return 0
 	elif [[ -n "$forward_output" ]]; then
-		log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Found forward SA only, returning 0"
+		log_message "DEBUG" "SYSTEM" "get_xfrm_state_for_peer: Found forward SA only, returning 0"
 		echo "$forward_output"
 		return 0
 	elif [[ -n "$reverse_output" ]]; then
-		log_message "WARNING" "SYSTEM" "get_xfrm_state_for_peer: Found reverse SA only, returning 0"
+		log_message "DEBUG" "SYSTEM" "get_xfrm_state_for_peer: Found reverse SA only, returning 0"
 		echo "$reverse_output"
 		return 0
 	fi
@@ -1046,6 +1046,44 @@ detect_sa_rekey() {
 #   Uses simple heuristics: bytes increasing = healthy, bytes not increasing + ping fails = broken
 #   If rekey detected, byte counter baseline is reset and check passes
 #   Uses abstraction layer for state management
+
+# Log keepalive suggestion when tunnel is idle but healthy
+#
+# If ENABLE_KEEPALIVE is not set, suggests enabling it. If enabled, checks whether
+# the keepalive daemon is running and suggests starting it if not.
+#
+# Arguments:
+#   $1: location_name - Location name for log prefix
+#   $2: ip_display   - Display string for peer IP (for log message)
+#
+# Returns:
+#   0: always (logging only)
+log_keepalive_suggestion() {
+	local location_name="$1"
+	local ip_display="$2"
+	if [[ "${ENABLE_KEEPALIVE:-0}" -ne 1 ]]; then
+		log_message "INFO" "$location_name" "Consider enabling ENABLE_KEEPALIVE=1 in config to prevent idle tunnel timeouts for $ip_display"
+	else
+		local keepalive_pidfile="${STATE_DIR:-/data/vpn-monitor}/vpn-keepalive.pid"
+		if [[ ! -f "$keepalive_pidfile" ]] || ! file_exists_and_readable "$keepalive_pidfile" || ! kill -0 "$(cat "$keepalive_pidfile" 2>/dev/null)" 2>/dev/null; then
+			log_message "INFO" "$location_name" "Keepalive is enabled but daemon is not running - consider starting: vpn-keepalive.sh start"
+		fi
+	fi
+}
+
+# Check xfrm byte counters for a peer and update failure state; may trigger rekey detection.
+#
+# Arguments:
+# $1: location_name (string) - Location name for state and logging
+# $2: current_bytes (string) - Current byte count from xfrm state
+# $3: external_peer_ip (string) - Peer IP (external)
+# $4: current_spi (string, optional) - Current SPI for rekey detection
+# $5: internal_peer_ip (string, optional) - Internal peer IP for display
+# $6: diagnostic_var (string, optional) - Variable name for diagnostics
+#
+# Returns:
+# 0: Success (counters checked, state updated)
+# 1: Validation error or failure
 check_byte_counters() {
 	local location_name="$1"
 	local current_bytes="$2"
@@ -1075,13 +1113,10 @@ check_byte_counters() {
 			last_bytes=$(get_peer_state "$location_name" "$external_peer_ip" "last_bytes" "0")
 			if [[ "$current_bytes" -gt 0 ]]; then
 				# Bytes are non-zero after rekey - update baseline
-				if set_peer_state "$location_name" "$external_peer_ip" "last_bytes" "$current_bytes"; then
-					log_message "INFO" "$location_name" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset) for $ip_display"
-					return 0
-				else
-					log_message "INFO" "$location_name" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset, state update failed) for $ip_display"
-					return 0
-				fi
+				local state_note=""
+				set_peer_state "$location_name" "$external_peer_ip" "last_bytes" "$current_bytes" || state_note=", state update failed"
+				log_message "INFO" "$location_name" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset${state_note}) for $ip_display"
+				return 0
 			fi
 			# If bytes are 0 after rekey, continue to normal check below
 		fi
@@ -1161,15 +1196,15 @@ check_byte_counters() {
 			fi
 		fi
 		# Bytes are increasing and ping check passed (or disabled) - definitely healthy
+		local flow_note="traffic flowing"
 		if set_peer_state "$location_name" "$external_peer_ip" "last_bytes" "$current_bytes"; then
 			# Clear idle state if set (traffic is flowing again)
 			delete_peer_state "$location_name" "$external_peer_ip" "idle_detected" || true
-			log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, traffic flowing) for $ip_display"
-			return 0
 		else
-			log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, state update failed) for $ip_display"
-			return 0
+			flow_note="state update failed"
 		fi
+		log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, $flow_note) for $ip_display"
+		return 0
 	fi
 
 	# Edge case: bytes are static (current_bytes == last_bytes and last_bytes > 0)
@@ -1192,16 +1227,7 @@ check_byte_counters() {
 					printf -v "$diagnostic_var" "%s" "$warning_msg"
 				fi
 				# Check keepalive status and suggest action if needed
-				if [[ "${ENABLE_KEEPALIVE:-0}" -ne 1 ]]; then
-					log_message "INFO" "$location_name" "Consider enabling ENABLE_KEEPALIVE=1 in config to prevent idle tunnel timeouts for $ip_display"
-				else
-					# Keepalive is enabled - check if daemon is running
-					local keepalive_pidfile="${STATE_DIR:-/data/vpn-monitor}/vpn-keepalive.pid"
-					if [[ ! -f "$keepalive_pidfile" ]] || ! file_exists_and_readable "$keepalive_pidfile" || ! kill -0 "$(cat "$keepalive_pidfile" 2>/dev/null)" 2>/dev/null; then
-						# Note: location_name is already in log prefix, so we remove redundant location name
-						log_message "INFO" "$location_name" "Keepalive is enabled but daemon is not running - consider starting: vpn-keepalive.sh start"
-					fi
-				fi
+				log_keepalive_suggestion "$location_name" "$ip_display"
 				return 0
 			else
 				# Ping fails - bytes are static and ping check failed, VPN is likely broken
@@ -1253,16 +1279,7 @@ check_byte_counters() {
 			set_peer_state_non_critical "$location_name" "$external_peer_ip" "idle_detected" "1"
 			log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (idle but healthy, ping check passed) for $ip_display"
 			# Check keepalive status and suggest action if needed
-			if [[ "${ENABLE_KEEPALIVE:-0}" -ne 1 ]]; then
-				log_message "INFO" "$location_name" "Consider enabling ENABLE_KEEPALIVE=1 in config to prevent idle tunnel timeouts for $ip_display"
-			else
-				# Keepalive is enabled - check if daemon is running
-				local keepalive_pidfile="${STATE_DIR:-/data/vpn-monitor}/vpn-keepalive.pid"
-				if [[ ! -f "$keepalive_pidfile" ]] || ! file_exists_and_readable "$keepalive_pidfile" || ! kill -0 "$(cat "$keepalive_pidfile" 2>/dev/null)" 2>/dev/null; then
-					# Note: location_name is already in log prefix, so we remove redundant location name
-					log_message "INFO" "$location_name" "Keepalive is enabled but daemon is not running - consider starting: vpn-keepalive.sh start"
-				fi
-			fi
+			log_keepalive_suggestion "$location_name" "$ip_display"
 			return 0
 		fi
 	fi

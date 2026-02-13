@@ -1,0 +1,10 @@
+---
+description: Debugging markers to avoid conflicting agent changes
+alwaysApply: true
+---
+
+# Debugging
+
+- When debugging, add a comment **before** the function you are changing: `# AGENT {NAME} DEBUGGING`, and remove it when done.
+- `{NAME}` is the name of the chat/session you are operating in.
+- This helps avoid conflicting changes when multiple agents work on the codebase at once.

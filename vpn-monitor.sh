@@ -140,8 +140,7 @@ RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 if ! touch "$LOG_FILE" 2>/dev/null; then
 	# Log file write failed - output to stderr and continue
 	# log_message() will handle subsequent write failures gracefully
-	log_message "WARNING" "SYSTEM" "Cannot write to log file: $LOG_FILE (check permissions on directory: $(dirname "$LOG_FILE"))"
-	log_message "WARNING" "SYSTEM" "Continuing execution - log messages will be output to stderr"
+	log_message "WARNING" "SYSTEM" "Cannot write to log file: $LOG_FILE (check permissions on directory: $(dirname "$LOG_FILE")) - continuing execution with log messages output to stderr"
 fi
 
 # Verify logging works by writing a test message
@@ -215,8 +214,7 @@ RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 #
 check_cron_persistence() {
 	if ! crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
-		log_message "WARNING" "SYSTEM" "Cron job not found! Persistence may have been lost."
-		log_message "WARNING" "SYSTEM" "Re-run install.sh to restore cron job."
+		log_message "WARNING" "SYSTEM" "Cron job not found! Persistence may have been lost. Re-run install.sh to restore cron job."
 	fi
 }
 
@@ -396,7 +394,7 @@ initialize_monitor() {
 
 	# Log script start
 	if [[ "${NO_ESCALATE:-0}" -eq 1 ]]; then
-		log_message "INFO" "SYSTEM" "VPN monitor script started in fake mode (PID: $$) - tier escalation disabled"
+		log_message "WARNING" "SYSTEM" "VPN monitor script started in fake mode (PID: $$) - tier escalation disabled"
 	else
 		log_message "INFO" "SYSTEM" "VPN monitor script started (PID: $$)"
 	fi
@@ -457,7 +455,7 @@ validate_monitor_state() {
 	# This check happens early to throttle execution if resources are constrained
 	# Resource monitoring may exit early if resources are severely constrained
 	if ! check_system_resources "$STATE_DIR"; then
-		log_message "INFO" "SYSTEM" "Script exiting: system resources constrained"
+		log_message "ERROR" "SYSTEM" "Script exiting: system resources constrained"
 		exit "${EXIT_SUCCESS:-0}"
 	fi
 	# Log summary if hour has elapsed (tracks statistics for CPU, RAM, and disk checks)
@@ -478,12 +476,8 @@ validate_monitor_state() {
 
 		if ! check_network_partition "$dns_server" "$dns_hostname" "$dns_timeout" "$interfaces"; then
 			# Network is partitioned - update state but continue to allow recovery code to check partition state
-			if [[ "$prev_partition_state" -eq 0 ]]; then
-				log_message "WARNING" "SYSTEM" "Network partition detected - skipping VPN checks until connectivity restored"
-				set_network_partition_state 1
-			else
-				log_message "INFO" "SYSTEM" "Network still partitioned - VPN checks skipped"
-			fi
+			log_message "WARNING" "SYSTEM" "Network partition - skipping VPN checks until connectivity restored"
+			set_network_partition_state 1
 			# Don't exit early - let recovery code check partition state and skip recovery actions
 			# This allows tests to verify that recovery is skipped when partition is detected
 		else
@@ -505,7 +499,7 @@ validate_monitor_state() {
 		check_cron_persistence
 		# Create .cron_checked file - handle errors gracefully
 		if ! touch "${STATE_DIR}/.cron_checked" 2>/dev/null; then
-			handle_error "WARNING" "SYSTEM" "Cannot create .cron_checked file in ${STATE_DIR} (check permissions)"
+			handle_error "ERROR" "SYSTEM" "Cannot create .cron_checked file in ${STATE_DIR} (check permissions)"
 		fi
 	fi
 }
@@ -643,8 +637,7 @@ process_locations() {
 			# System-wide failure just detected
 			set_system_wide_failure_state 1
 			set_system_wide_failure_timestamp "$now"
-			log_message "WARNING" "SYSTEM" "System-wide failure detected: ${FAILED_LOCATION_COUNT:-0} of ${TOTAL_LOCATION_COUNT:-0} locations failing (threshold: ${SYSTEM_WIDE_FAILURE_THRESHOLD:-100}%)"
-			log_message "INFO" "SYSTEM" "Recovery will be coordinated to prevent cascades and rate limiting"
+			log_message "WARNING" "SYSTEM" "System-wide failure detected: ${FAILED_LOCATION_COUNT:-0} of ${TOTAL_LOCATION_COUNT:-0} locations failing (threshold: ${SYSTEM_WIDE_FAILURE_THRESHOLD:-100}%). Recovery will be coordinated to prevent cascades and rate limiting"
 		fi
 	else
 		# No system-wide failure detected
@@ -656,13 +649,9 @@ process_locations() {
 			set_system_wide_failure_state 0
 			local timestamp
 			timestamp=$(get_system_wide_failure_timestamp)
-			if [[ "$timestamp" -gt 0 ]]; then
-				local duration
-				duration=$(calculate_duration "$timestamp" "$now" 2>/dev/null || echo "0")
-				log_message "INFO" "SYSTEM" "System-wide failure resolved after ${duration} seconds"
-			else
-				log_message "INFO" "SYSTEM" "System-wide failure resolved"
-			fi
+			local duration="0"
+			[[ "$timestamp" -gt 0 ]] && duration=$(calculate_duration "$timestamp" "$now" 2>/dev/null || echo "0")
+			log_message "INFO" "SYSTEM" "System-wide failure resolved (duration: ${duration}s)"
 		fi
 	fi
 
@@ -765,8 +754,7 @@ main() {
 	fi
 
 	if [[ "$apply_grace_period" -eq 1 ]] && [[ "$grace_period" -gt 0 ]]; then
-		log_message "INFO" "SYSTEM" "First run detected - waiting ${grace_period} seconds for IPsec/xfrm to initialize"
-		log_message "INFO" "SYSTEM" "Startup grace period active - VPN checks will begin after ${grace_period} seconds"
+		log_message "INFO" "SYSTEM" "First run detected - waiting ${grace_period} seconds for IPsec/xfrm to initialize; VPN checks will begin after grace period"
 		sleep "$grace_period"
 		log_message "INFO" "SYSTEM" "Startup grace period complete - beginning VPN checks"
 	fi

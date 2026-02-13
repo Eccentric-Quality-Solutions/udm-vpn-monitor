@@ -32,7 +32,7 @@ create_sample_log_file() {
 [${date_prefix} 10:02:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 2)
 [${date_prefix} 10:03:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 3)
 [${date_prefix} 10:03:00] [INFO] Tier 2: Attempting surgical SA cleanup for 192.168.1.1
-[${date_prefix} 10:03:05] [INFO] Surgical cleanup completed for 192.168.1.1
+[${date_prefix} 10:03:05] [INFO] xfrm-based surgical cleanup completed successfully for 192.168.1.1
 [${date_prefix} 10:04:00] [INFO] VPN recovered for 192.168.1.1 after 3 failures
 [${date_prefix} 10:05:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 1)
 [${date_prefix} 10:06:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 2)
@@ -75,7 +75,7 @@ create_recovery_type_test_log_file() {
 [${date_prefix} 10:04:00] [WARNING] VPN check failed for 192.168.1.2 (failure count: 2)
 [${date_prefix} 10:05:00] [WARNING] VPN check failed for 192.168.1.2 (failure count: 3)
 [${date_prefix} 10:05:00] [INFO] Tier 2: Attempting surgical SA cleanup for 192.168.1.2
-[${date_prefix} 10:05:05] [INFO] Surgical cleanup completed for 192.168.1.2
+[${date_prefix} 10:05:05] [INFO] xfrm-based surgical cleanup completed successfully for 192.168.1.2
 [${date_prefix} 10:06:00] [INFO] VPN restored for 192.168.1.2 after 3 failures (recovery method: xfrm-based recovery)
 # Another self-healed recovery
 [${date_prefix} 10:07:00] [WARNING] VPN check failed for 192.168.1.3 (failure count: 1)

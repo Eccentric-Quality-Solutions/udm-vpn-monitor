@@ -1,0 +1,9 @@
+---
+description: Documenting learnings and date handling
+alwaysApply: true
+---
+
+# Documenting Knowledge
+
+- When hardcoding dates, use the **local system date** (do not assume the current date).
+- When you learn something project-specific (e.g. BATS behavior or UDM OS command availability), **update a project document** with the learning and use that document for future decisions.

@@ -1,0 +1,11 @@
+---
+description: When to use handle_error_or_exit_fake_mode vs die vs return
+alwaysApply: true
+---
+
+# Error Handling
+
+- **Fatal but test-recoverable** (e.g. config/validation): use `handle_error_or_exit_fake_mode "CONTEXT" "Message" "${EXIT_*:-N}"` so tests can use fake mode.
+- **Truly fatal** (e.g. required command missing): use `die "Message" "${EXIT_COMMAND_NOT_FOUND:-5}"` — exits even in fake mode.
+- **Non-fatal** (caller should handle): use `log_message "ERROR" "CONTEXT" "..."` and `return 1`. Do not exit.
+- Use exit code constants from `lib/constants.sh` (e.g. `EXIT_CONFIG_ERROR`, `EXIT_VALIDATION_ERROR`).

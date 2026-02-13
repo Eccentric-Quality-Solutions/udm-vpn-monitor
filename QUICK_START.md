@@ -142,7 +142,7 @@ All actions are logged to `/data/vpn-monitor/logs/vpn-monitor.log`.
 [2025-01-15 10:02:00] [WARNING] VPN check failed for 203.0.113.1 (failure count: 2)
 [2025-01-15 10:03:00] [WARNING] VPN check failed for 203.0.113.1 (failure count: 3)
 [2025-01-15 10:03:00] [INFO] Tier 2: Attempting surgical SA cleanup for 203.0.113.1
-[2025-01-15 10:03:01] [INFO] Surgical cleanup completed for 203.0.113.1
+[2025-01-15 10:03:01] [INFO] xfrm-based surgical cleanup completed successfully for 203.0.113.1
 [2025-01-15 10:04:00] [INFO] VPN recovered for 203.0.113.1 after 3 failures
 ```
 

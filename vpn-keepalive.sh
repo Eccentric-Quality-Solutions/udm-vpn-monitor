@@ -166,11 +166,9 @@ start_daemon() {
 		else
 			pid=""
 		fi
-		if [[ -n "$pid" ]]; then
-			log_message "INFO" "SYSTEM" "VPN keepalive daemon is already running (PID: $pid)"
-		else
-			log_message "INFO" "SYSTEM" "VPN keepalive daemon is already running"
-		fi
+		local pid_suffix=""
+		[[ -n "$pid" ]] && pid_suffix=" (PID: $pid)"
+		log_message "INFO" "SYSTEM" "VPN keepalive daemon is already running${pid_suffix}"
 		return 0
 	fi
 

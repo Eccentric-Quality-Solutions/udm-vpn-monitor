@@ -1,0 +1,14 @@
+---
+description: UDM VPN Monitor project conventions and platform constraints
+alwaysApply: true
+---
+
+# Project Conventions
+
+- Target **UDM OS 4.3+** only. No compatibility with other *nix versions.
+- Use only tools and commands available on UDM OS unless easily addable without affecting UDM stability.
+- Do not assume backwards compatibility; single deployment. Reinstall on UDMs if needed. Ask before ignoring backwards compatibility.
+- When multiple equally valid implementation paths exist, ask clarifying questions (for significant choices, not every detail).
+- If a change does not fix the problem, revert it unless otherwise worthwhile. Minimize code churn when fixing bugs; add suggestions to FUTURE.md.
+- When git commit hooks or associated scripts are updated, run `./scripts/setup-git-hooks.sh` so git uses them.
+- **DO NOT FIT CODE TO TESTS.** Tests run the code. Fix bugs in code; do not change code only to satisfy tests.
