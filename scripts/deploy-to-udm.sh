@@ -18,8 +18,6 @@
 #   --target-ip IP           Target UDM IP address (required)
 #   --bind-ip IP             Source IP address for BindAddress (optional, omit for default routing)
 #   --username USER          SSH username (default: root)
-#   --password PASS          SSH password (required, or use --password-file)
-#   --password-file FILE     File containing SSH password (alternative to --password)
 #   --ssh-port PORT          SSH port (default: 22)
 #   --keep-config            Keep existing config during uninstall (default: yes)
 #   --remove-state           Remove state directory during uninstall (default: yes)
@@ -32,30 +30,16 @@
 #   --help                   Show this help message
 #
 # Security Notes:
-# - Passwords are passed via environment variables or files to avoid process list exposure
+# - Prompts for password interactively (not in process list)
 # - Consider using SSH keys instead of passwords when possible
-# - Passwords in command line arguments are visible in process lists
+#
+# Authentication:
+#   Interactive: prompts for username and password.
+#   Non-interactive: reads password from stdin (first line) when piped.
 #
 # Examples:
-#   # Deploy with password from file
-#   ./scripts/deploy-to-udm.sh \
-#     --file udm-vpn-monitor.zip \
-#     --target-ip 192.168.1.100 \
-#     --bind-ip 192.168.1.50 \
-#     --password-file /path/to/password.txt
-#
-#   # Deploy with password from environment variable
-#   SSH_PASSWORD="mypass" ./scripts/deploy-to-udm.sh \
-#     --file udm-vpn-monitor.zip \
-#     --target-ip 192.168.1.100 \
-#     --bind-ip 192.168.1.50
-#
-#   # Deploy with explicit password (less secure - visible in ps)
-#   ./scripts/deploy-to-udm.sh \
-#     --file udm-vpn-monitor.zip \
-#     --target-ip 192.168.1.100 \
-#     --bind-ip 192.168.1.50 \
-#     --password "mypass"
+#   # Deploy (prompts for credentials)
+#   ./scripts/deploy-to-udm.sh --target-ip 192.168.1.100
 #
 
 set -euo pipefail
@@ -66,7 +50,6 @@ TARGET_IP=""
 BIND_IP=""
 SSH_USERNAME="root"
 SSH_PASSWORD=""
-SSH_PASSWORD_FILE=""
 SSH_PORT=22
 KEEP_CONFIG="yes"
 REMOVE_STATE="yes"
@@ -167,9 +150,7 @@ Package Options:
   --file FILE              Package file to deploy (default: udm-vpn-monitor.zip)
 
 Authentication Options:
-  --username USER          SSH username (default: root)
-  --password PASS          SSH password (required, or use --password-file)
-  --password-file FILE     File containing SSH password (alternative to --password)
+  --username USER          SSH username (default: root; prompts if not set)
   --ssh-port PORT          SSH port (default: 22)
 
 Deployment Options:
@@ -185,29 +166,13 @@ Output Options:
   --verbose                Enable verbose output
   --help                   Show this help message
 
-Security Notes:
-  - Passwords passed via --password are visible in process lists (ps)
-  - Use --password-file or SSH_PASSWORD environment variable for better security
-  - Consider using SSH keys instead of passwords when possible
+Authentication:
+  Prompts for username and password when run interactively.
+  Receives password via stdin when piped (e.g. from deploy-to-udms.sh).
 
 Examples:
-  # Deploy with password from file
-  $0 --file udm-vpn-monitor.zip \\
-     --target-ip 192.168.1.100 \\
-     --bind-ip 192.168.1.50 \\
-     --password-file /path/to/password.txt
-
-  # Deploy with password from environment variable
-  SSH_PASSWORD="mypass" $0 \\
-     --file udm-vpn-monitor.zip \\
-     --target-ip 192.168.1.100 \\
-     --bind-ip 192.168.1.50
-
-  # Deploy with explicit password (less secure)
-  $0 --file udm-vpn-monitor.zip \\
-     --target-ip 192.168.1.100 \\
-     --bind-ip 192.168.1.50 \\
-     --password "mypass"
+  # Deploy (prompts for credentials)
+  $0 --target-ip 192.168.1.100
 EOF
 }
 
@@ -235,14 +200,6 @@ parse_args() {
 			;;
 		--username)
 			SSH_USERNAME="$2"
-			shift 2
-			;;
-		--password)
-			SSH_PASSWORD="$2"
-			shift 2
-			;;
-		--password-file)
-			SSH_PASSWORD_FILE="$2"
 			shift 2
 			;;
 		--ssh-port)
@@ -316,29 +273,20 @@ validate_params() {
 		errors=$((errors + 1))
 	fi
 
-	# Get password from file, environment variable, or argument
-	# Priority: password file > command line argument > environment variable
-	if [[ -n "$SSH_PASSWORD_FILE" ]]; then
-		if [[ ! -f "$SSH_PASSWORD_FILE" ]]; then
-			log_error "Password file not found: $SSH_PASSWORD_FILE"
-			errors=$((errors + 1))
+	# Get password: interactive prompt or stdin (when piped from deploy-to-udms.sh)
+	if [[ -z "$SSH_PASSWORD" ]]; then
+		if [[ -t 0 ]] && [[ -t 1 ]]; then
+			# Interactive: prompt for username and password
+			read -rp "Username for ${TARGET_IP} [${SSH_USERNAME}]: " read_user
+			[[ -n "$read_user" ]] && SSH_USERNAME="$read_user"
+			read -rsp "Password for ${SSH_USERNAME}@${TARGET_IP}: " SSH_PASSWORD
+			echo ""
 		else
-			# Read password from file (first line only, trim whitespace)
-			SSH_PASSWORD=$(head -n 1 "$SSH_PASSWORD_FILE" | tr -d '[:space:]')
-			if [[ -z "$SSH_PASSWORD" ]]; then
-				log_error "Password file is empty: $SSH_PASSWORD_FILE"
-				errors=$((errors + 1))
-			fi
+			# Non-interactive: read password from stdin (first line)
+			SSH_PASSWORD=$(head -n 1 2>/dev/null || echo "")
 		fi
-	elif [[ -z "$SSH_PASSWORD" ]]; then
-		# Try environment variable (may have been set before script execution)
-		# Use printenv to check actual environment, not script variable
-		local env_password
-		env_password=$(printenv SSH_PASSWORD 2>/dev/null || echo "")
-		if [[ -n "$env_password" ]]; then
-			SSH_PASSWORD="$env_password"
-		else
-			log_error "SSH password is required (--password, --password-file, or SSH_PASSWORD env var)"
+		if [[ -z "$SSH_PASSWORD" ]]; then
+			log_error "Password is required. Run interactively or pipe password via stdin."
 			errors=$((errors + 1))
 		fi
 	fi
