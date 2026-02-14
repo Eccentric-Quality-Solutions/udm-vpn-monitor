@@ -320,9 +320,15 @@ compact_restart_count_file() {
 	one_day_ago=$(safe_timestamp_subtract "$now" "$SECONDS_PER_DAY" 2>/dev/null || echo "0")
 	local filtered_content
 	filtered_content=$(awk -v cutoff="$one_day_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null || echo "")
-	if ! atomic_write_file "$RESTART_COUNT_FILE" "$filtered_content"; then
-		handle_error "WARNING" "SYSTEM" "Failed to compact restart count file: $RESTART_COUNT_FILE"
-		return 0
+	if [[ -z "$filtered_content" ]]; then
+		# All timestamps expired; remove file instead of writing empty content.
+		# atomic_write_file "" would write a newline, which fails timestamp_list validation.
+		rm -f "$RESTART_COUNT_FILE" 2>/dev/null || true
+	else
+		if ! atomic_write_file "$RESTART_COUNT_FILE" "$filtered_content"; then
+			handle_error "WARNING" "SYSTEM" "Failed to compact restart count file: $RESTART_COUNT_FILE"
+			return 0
+		fi
 	fi
 	return 0
 }
