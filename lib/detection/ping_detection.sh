@@ -3,7 +3,7 @@
 # Ping detection functions for UDM VPN Monitor
 # Handles ping-based connectivity checks (single and multiple IPs)
 #
-# Version: 0.8.0
+# Version: 0.8.1
 #
 
 # shellcheck source=lib/constants.sh

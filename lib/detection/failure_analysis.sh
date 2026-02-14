@@ -3,7 +3,7 @@
 # Failure analysis functions for UDM VPN Monitor
 # Handles failure type classification and VPN status determination
 #
-# Version: 0.8.0
+# Version: 0.8.1
 #
 
 # shellcheck source=lib/constants.sh

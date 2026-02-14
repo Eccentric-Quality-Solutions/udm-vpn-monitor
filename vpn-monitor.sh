@@ -6,7 +6,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.8.0
+# Version: 0.8.1
 #
 
 # Strict error handling: exit on error, undefined vars, pipe failures
@@ -21,7 +21,7 @@ LOCKFILE="${STATE_DIR}/vpn-monitor.lock"
 LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
 
 # Script version
-SCRIPT_VERSION="0.8.0"
+SCRIPT_VERSION="0.8.1"
 
 # Source library modules
 # shellcheck source=lib/logging.sh

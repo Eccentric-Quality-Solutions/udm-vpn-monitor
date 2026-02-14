@@ -12,7 +12,7 @@
 #   This file is safe to source multiple times (idempotent).
 #   Constants are only defined if not already set.
 #
-# Version: 0.8.0
+# Version: 0.8.1
 #
 
 # Lockfile timeout default (in seconds)

@@ -3,7 +3,7 @@
 # Configuration file loading and parsing for UDM VPN Monitor
 # Handles loading configuration files and safely parsing variable assignments
 #
-# Version: 0.8.0
+# Version: 0.8.1
 
 # Source configuration schema
 # shellcheck source=lib/config_schema.sh
