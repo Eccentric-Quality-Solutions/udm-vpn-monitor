@@ -3,7 +3,7 @@
 # Recovery orchestration functions for UDM VPN Monitor
 # Coordinates recovery actions across xfrm and IPsec recovery methods
 #
-# Version: 0.8.0
+# Version: 0.8.1
 #
 
 # shellcheck source=lib/recovery/recovery_verification.sh

@@ -3,7 +3,7 @@
 # XFRM detection functions for UDM VPN Monitor
 # Handles xfrm state parsing, byte counter detection, and SA checking
 #
-# Version: 0.8.0
+# Version: 0.8.1
 #
 
 # Source constants for magic numbers

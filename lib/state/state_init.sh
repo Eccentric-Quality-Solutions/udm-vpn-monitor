@@ -3,7 +3,7 @@
 # State initialization
 # Handles initialization of state files and directories
 #
-# Version: 0.8.0
+# Version: 0.8.1
 #
 
 # Initialize state files if they don't exist

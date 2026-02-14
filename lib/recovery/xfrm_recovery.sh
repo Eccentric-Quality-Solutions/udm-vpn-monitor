@@ -3,7 +3,7 @@
 # xfrm-based recovery functions for UDM VPN Monitor
 # Implements per-connection recovery using Linux kernel xfrm framework
 #
-# Version: 0.8.0
+# Version: 0.8.1
 #
 
 # Source recovery constants for magic numbers

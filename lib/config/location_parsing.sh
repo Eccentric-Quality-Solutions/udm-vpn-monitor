@@ -3,7 +3,7 @@
 # Location-based configuration parsing for UDM VPN Monitor
 # Handles parsing and accessing location-based configuration variables
 #
-# Version: 0.8.0
+# Version: 0.8.1
 
 # Validate required dependencies at module load time
 # These functions must be available when this module is sourced
