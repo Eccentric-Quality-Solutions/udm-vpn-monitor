@@ -3,7 +3,7 @@
 # Configuration validation for UDM VPN Monitor
 # Handles schema-based validation, type checking, and rule validation
 #
-# Version: 0.7.0
+# Version: 0.8.0
 
 # Validate configuration variable type
 # Note: parse_config_schema() is defined in config_loading.sh and available here
@@ -544,27 +544,36 @@ validate_config_var() {
 # Note:
 #   Requires CONFIG_SCHEMA to be defined (from config_schema.sh)
 #
-# RELATIVE VALIDATION ORDER DEPENDENCY:
-#   Some variables have relative validation rules (e.g., TIER2_THRESHOLD >= TIER1_THRESHOLD).
-#   Associative array iteration order is not guaranteed, so dependent variables might be
-#   validated before their dependencies. This is handled safely because:
-#   1. load_config() sets all default values BEFORE this function is called
-#   2. validate_config_var() checks if referenced variables exist before using them
-#   3. Variables exist from defaults even if not yet validated
+# VALIDATION ORDER:
+#   Variables with relative validation rules (e.g., min:TIER1_THRESHOLD) must be validated
+#   after their dependencies so the referenced variable holds a validated value. We validate
+#   in explicit dependency order first, then the remaining schema variables in any order.
 #
-#   Example dependencies:
-#   - TIER2_THRESHOLD depends on TIER1_THRESHOLD
-#   - TIER3_THRESHOLD depends on TIER2_THRESHOLD
+#   Ordered dependencies (validated in this order):
+#   - TIER1_THRESHOLD (no dependency)
+#   - TIER2_THRESHOLD (depends on TIER1_THRESHOLD)
+#   - TIER3_THRESHOLD (depends on TIER2_THRESHOLD)
 #
-#   All dependencies work correctly regardless of validation order because defaults are
-#   set first in load_config().
+#   When adding new schema variables with relative min:VAR rules, add them to ordered_deps
+#   in dependency order (dependencies first).
 validate_config_schema() {
 	local validation_failed=0
 
-	# Validate all schema-defined variables
-	# Note: Iteration order is not guaranteed, but relative validation handles this
-	# correctly by checking if referenced variables exist (they do, from load_config defaults)
+	# Variables that have relative validation rules; must be validated in this order
+	# so that min:VAR rules see already-validated values (avoids undefined iteration order).
+	local ordered_deps=(TIER1_THRESHOLD TIER2_THRESHOLD TIER3_THRESHOLD)
+	local var_name
+	for var_name in "${ordered_deps[@]}"; do
+		[[ -z "${CONFIG_SCHEMA[$var_name]:-}" ]] && continue
+		if ! validate_config_var "$var_name"; then
+			validation_failed=1
+		fi
+	done
+
+	# Validate remaining schema-defined variables (order does not matter)
 	for var_name in "${!CONFIG_SCHEMA[@]}"; do
+		# Skip if already validated in ordered_deps
+		case " ${ordered_deps[*]} " in *" $var_name "*) continue ;; esac
 		# Skip NO_ESCALATE if it was set from command line (runtime flag, not config file option)
 		if [[ "$var_name" == "NO_ESCALATE" ]] && [[ "${NO_ESCALATE_SET_FROM_CMD:-0}" -eq 1 ]]; then
 			continue
@@ -729,6 +738,13 @@ validate_config() {
 		# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 	fi
 
+	# When ping is enabled, warn if LOCAL_UDM_IP or remote IPs are missing
+	if [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
+		if [[ -z "${LOCAL_UDM_IP:-}" ]]; then
+			handle_error "WARNING" "SYSTEM" "Ping checks are enabled (ENABLE_PING_CHECK=1) but LOCAL_UDM_IP is not set. Set LOCAL_UDM_IP for reliable ping checks (source IP for pings)."
+		fi
+	fi
+
 	# Validate location-based configuration: IP address formats
 	local location_name
 	local external_peer_ip
@@ -761,6 +777,11 @@ validate_config() {
 
 		# Get internal IPs for this location (may be empty)
 		internal_ips=$(get_location_internal_ips "$location_name")
+
+		# When ping is enabled and location has no internal IPs, warn (ping will use external IP)
+		if [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]] && [[ -z "$internal_ips" ]]; then
+			handle_error "WARNING" "$location_name" "Ping checks are enabled but no internal IPs configured (LOCATION_${location_name}_INTERNAL). Ping will use external IP which may not be reachable."
+		fi
 
 		# Validate internal IPs or DNS names if set
 		if [[ -n "$internal_ips" ]]; then

@@ -3,7 +3,7 @@
 # Ping detection functions for UDM VPN Monitor
 # Handles ping-based connectivity checks (single and multiple IPs)
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # shellcheck source=lib/constants.sh
@@ -21,7 +21,6 @@ if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	[[ -z "${IPV4_CIDR_SINGLE_HOST:-}" ]] && readonly IPV4_CIDR_SINGLE_HOST=32
 	[[ -z "${PING_PACKET_LOSS_THRESHOLD:-}" ]] && readonly PING_PACKET_LOSS_THRESHOLD=100
 	[[ -z "${PING_SUCCESS_THRESHOLD:-}" ]] && readonly PING_SUCCESS_THRESHOLD=0.3
-	[[ -z "${PING_CEIL_ADJUSTMENT:-}" ]] && readonly PING_CEIL_ADJUSTMENT=0.999
 	[[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && readonly XFRM_OUTPUT_CONTEXT_LINES=10
 	[[ -z "${IPSEC_STATUS_TIMEOUT:-}" ]] && readonly IPSEC_STATUS_TIMEOUT=5
 fi
@@ -97,7 +96,9 @@ log_ping_summary_if_due() {
 	# Increment ping count
 	ping_count=$((ping_count + 1))
 	# Use atomic write for state file (per ADR-0012)
-	atomic_write_file "$count_file" "$ping_count" 2>/dev/null || true
+	if ! atomic_write_file "$count_file" "$ping_count"; then
+		log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $count_file"
+	fi
 
 	# Check if configured interval has elapsed since last summary
 	local time_since_last=$((current_time - last_time))
@@ -111,8 +112,12 @@ log_ping_summary_if_due() {
 		fi
 
 		# Reset count and update last time (use atomic writes per ADR-0012)
-		atomic_write_file "$count_file" "0" 2>/dev/null || true
-		atomic_write_file "$last_time_file" "$current_time" 2>/dev/null || true
+		if ! atomic_write_file "$count_file" "0"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $count_file"
+		fi
+		if ! atomic_write_file "$last_time_file" "$current_time"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $last_time_file"
+		fi
 	fi
 
 	return 0
@@ -232,7 +237,8 @@ check_ping_connectivity() {
 
 	# If local_ip is provided, manage route on br0 before pinging
 	if [[ -n "$local_ip" ]]; then
-		# Check if route exists, add if needed
+		# Check if route exists, add if needed. add_route_if_needed may still log "already exists"
+		# if another process (e.g. vpn-keepalive or a concurrent cron run) added it between the two checks.
 		if ! check_route_exists "$local_ip"; then
 			log_message "INFO" "${location_name:-SYSTEM}" "Route not found on br0, attempting to add: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
 			if ! add_route_if_needed "$local_ip"; then
@@ -419,8 +425,9 @@ check_ping_multiple_ips() {
 	done
 
 	# Calculate success threshold: ceil(PING_SUCCESS_THRESHOLD * count) using awk
+	# Explicit ceiling: int(x) when x is integer, else int(x)+1 (awk int() truncates toward zero)
 	local threshold
-	threshold=$(awk "BEGIN {print int(($ping_total_count * $PING_SUCCESS_THRESHOLD) + $PING_CEIL_ADJUSTMENT)}")
+	threshold=$(awk "BEGIN {v=($ping_total_count * $PING_SUCCESS_THRESHOLD); print (v==int(v))?int(v):int(v)+1}")
 
 	# Calculate percentage for logging
 	local success_percent=0
@@ -497,8 +504,9 @@ check_ping_if_enabled() {
 #   0: Always succeeds (function logs results but doesn't affect return code)
 #
 # Side effects:
-#   - Logs INFO messages when ping succeeds and SA exists
-#   - Logs WARNING messages when connectivity issues are detected
+#   - When ping succeeds and SA exists: check_ping_multiple_ips() logs the result
+#     (count and threshold); this function does not add a second success log.
+#   - Logs WARNING when connectivity issues are detected.
 #
 # Note:
 #   This function is called by check_ping_if_enabled() when multiple targets
@@ -522,7 +530,7 @@ handle_ping_multiple_targets() {
 	fi
 
 	if check_ping_multiple_ips "$ping_target" "$local_ip" "$location_name"; then
-		log_message "INFO" "${location_name:-SYSTEM}" "VPN connectivity verified: ping check passed for multiple internal IPs"
+		# Success already logged by check_ping_multiple_ips (count and threshold)
 		return
 	fi
 
@@ -567,7 +575,7 @@ handle_ping_single_target() {
 	fi
 
 	if check_ping_connectivity "$ping_target" "$local_ip" "$location_name"; then
-		log_message "INFO" "${location_name:-SYSTEM}" "VPN connectivity verified: ping check passed from $local_ip to $ping_target"
+		log_message "INFO" "${location_name:-SYSTEM}" "Ping check passed from $local_ip to $ping_target"
 		return
 	fi
 

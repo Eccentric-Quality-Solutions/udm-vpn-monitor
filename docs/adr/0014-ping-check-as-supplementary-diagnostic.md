@@ -39,7 +39,9 @@ We will design ping checks as a **supplementary diagnostic tool** that:
 
 ## Implementation Details
 - **Ping Check Behavior**:
-  - **Scenario 1**: SA exists but ping fails → VPN marked as OK, WARNING logged
+  - **Scenario 1a**: SA exists, byte counters **increasing**, ping fails → VPN marked as **FAILED** (routing issue), recovery can trigger after consecutive failures (see tier thresholds).
+  - **Scenario 1b**: SA exists, byte counters **static/zero**, ping fails → VPN marked as **FAILED** (idle/broken), recovery can trigger.
+  - **Scenario 1c**: SA exists, ping fails, but **ENABLE_PING_CHECK=0** or **no internal IPs** configured → Ping is not run; VPN marked OK when bytes show traffic. Ping timeouts (e.g. manual tests) do not affect the monitor.
   - **Scenario 2**: SA doesn't exist but ping succeeds → VPN marked as FAILED, WARNING logged (indicates alternative route)
 - **Ping Check Purpose**:
   - Early warning of connectivity issues

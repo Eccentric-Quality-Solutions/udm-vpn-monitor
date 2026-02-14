@@ -7,8 +7,8 @@ This file tracks planned improvements and tasks for the UDM VPN Monitor project.
 
 ## Human
 
-- Ask for internal IP for remote VPN as well
-- ASk for internal IP for local UDM
+- ~~Ask for internal IP for remote VPN as well~~ (done: install "Configure a location now?" prompts for remote internal IP)
+- ~~Ask for internal IP for local UDM~~ (done: same flow prompts for LOCAL_UDM_IP)
 - When creating a new location using the interactive installer it adds the locations to the end but also keeps the NYC locations at the beginning
 - It seems like if it loads config again it starts over from the top for the networks it is testing
 - Need to make sure that after code changes Cursor updates any related tests.

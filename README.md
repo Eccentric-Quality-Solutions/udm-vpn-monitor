@@ -138,10 +138,16 @@ The install package (recommended) includes all required files with proper direct
    - `--no-cron`: Install without setting up cron job (useful for manual execution or custom scheduling)
    - `--silent`: Perform installation silently without prompts (by default preserves existing config)
    - `--overwrite-conf`: Overwrite existing config file (only effective with `--silent`)
+   - `--append-missing-config`: Auto-append new config fields to existing config (only with `--silent`)
    - `--dev`: Install to current working directory instead of `/data/vpn-monitor` (useful for development/testing)
    - `--keepalive-only`: Only install and enable keepalive daemon (requires existing installation, ignores other flags)
    
    **Note:** `--interactive` and `--silent` flags cannot be used together.
+
+   - **Silent installation with config append** (append new config fields without overwriting):
+     ```bash
+     ./install.sh --silent --append-missing-config
+     ```
 
 4. **Configure the monitor**:
    ```bash
@@ -194,6 +200,8 @@ The install package (recommended) includes all required files with proper direct
    tail -f /data/vpn-monitor/logs/vpn-monitor.log
    ```
 
+   **Deploying to multiple UDMs:** Use `./scripts/deploy-to-udms.sh` to deploy to several UDMs from a config file. Copy `scripts/deploy-udms.conf.example` to `deploy-udms.conf`, add your UDMs (one per line: `host [bind_ip]`), then run the script. It will prompt for credentials per UDM, deploy, and run `tail -f` until you press Ctrl+C. See [DEPLOYMENT_ANALYSIS.md](docs/research/DEPLOYMENT_ANALYSIS.md) for details.
+
 ## Configuration
 
 Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
@@ -204,8 +212,8 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `LOCATION_<NAME>_INTERNAL` | Internal/private IP address(es) or DNS name(s) for location `<NAME>` (space-separated, optional). Used for ping checks. DNS names are automatically resolved to IP addresses when needed. For multiple IPs, VPN is healthy if ≥30% respond. | "" |
 | `LOCAL_UDM_IP` | Local UDM internal IP address (required when `ENABLE_PING_CHECK=1` and `INTERNAL` IPs are set). Used as source IP for ping checks. The script automatically adds this IP to br0 if needed. | "" |
 | `TIER1_THRESHOLD` | Failures before logging starts | 1 |
-| `TIER2_THRESHOLD` | Failures before surgical cleanup | 3 |
-| `TIER3_THRESHOLD` | Failures before full restart | 5 |
+| `TIER2_THRESHOLD` | Failures before surgical cleanup | 2 |
+| `TIER3_THRESHOLD` | Failures before full restart | 3 |
 | `MAX_RESTARTS_PER_WINDOW` | Maximum Tier 3 restarts per window (rate limiting) | 20 |
 | `RATE_LIMIT_WINDOW_MINUTES` | Time window for rate limit (sliding window) | 60 |
 | `MIN_RESTART_INTERVAL_SECONDS` | Minimum time between Tier 3 restarts | 40 |
@@ -249,7 +257,7 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 
 Enabled by default for faster failure detection. The installer configures cron to run vpn-monitor-wrapper.sh, which runs checks every `MONITOR_INTERVAL` seconds (default: 20). You get checks at :00, :20, and :40 within each minute instead of once per minute.
 
-To disable, set `ENABLE_MONITOR_WRAPPER=0` in vpn-monitor.conf and re-run `./install.sh`. With 20-second intervals and default thresholds (TIER2_THRESHOLD=3), Tier 2 triggers after ~1 minute instead of ~2-3 minutes.
+To disable, set `ENABLE_MONITOR_WRAPPER=0` in vpn-monitor.conf and re-run `./install.sh`. With 20-second intervals and default thresholds (TIER2_THRESHOLD=2), Tier 2 triggers after ~40 seconds instead of ~1-2 minutes.
 
 ### Keepalive Daemon
 
@@ -727,7 +735,7 @@ The monitor uses a multi-method detection approach with automatic fallback:
 
 **Fallback Method**: If xfrm checks fail, falls back to `ipsec status` to verify connection state.
 
-**Optional Verification**: When enabled (`ENABLE_PING_CHECK=1`), ping checks provide additional connectivity verification. Ping failures are logged as warnings but don't override SA state checks - the primary detection method (SA state + byte counters) remains authoritative.
+**Optional Verification**: When enabled (`ENABLE_PING_CHECK=1`), ping checks provide additional connectivity verification. If the SA exists but ping fails, the tunnel is marked failed for that run and the failure counts toward the tier thresholds (Tier 1/2/3), so repeated ping failures eventually trigger recovery (e.g. restarts). The primary detection remains SA state + byte counters; ping does not override when SA is absent or when ping is disabled.
 
 **Key Behaviors**:
 - SA existence and byte counter validation determine tunnel health

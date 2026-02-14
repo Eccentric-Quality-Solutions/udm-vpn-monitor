@@ -3,7 +3,7 @@
 # Configuration file loading and parsing for UDM VPN Monitor
 # Handles loading configuration files and safely parsing variable assignments
 #
-# Version: 0.7.0
+# Version: 0.8.0
 
 # Source configuration schema
 # shellcheck source=lib/config_schema.sh
@@ -466,7 +466,8 @@ safe_parse_config_file() {
 		fi
 
 		# Validate security - reject lines with dangerous patterns
-		if [[ "$line" =~ [\`\$\(] ]] || [[ "$line" =~ (eval|source|exec|\.\s*\/) ]]; then
+		# Use [[:space:]] not \s: bash ERE does not support \s (it matches literal 's')
+		if [[ "$line" =~ [\`\$\(] ]] || [[ "$line" =~ (eval|source|exec|\.[[:space:]]*\/) ]]; then
 			handle_config_error "Configuration file contains dangerous content: $line" "$line_num" || parse_error=1
 		fi
 

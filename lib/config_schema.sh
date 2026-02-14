@@ -3,7 +3,7 @@
 # Configuration schema definition for UDM VPN Monitor
 # Defines validation rules for all configuration variables
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # Configuration schema definition
@@ -56,8 +56,11 @@
 # The load_config() function in lib/config.sh reads defaults from this schema using
 # get_config_default(), ensuring consistency and eliminating duplication.
 #
-# IMPORTANT: To change defaults, update ONLY this file (CONFIG_SCHEMA array).
-# The load_config() function will automatically use the updated defaults.
+# IMPORTANT: To change defaults, update this file first. The installer (install.sh) sources
+# this file and uses get_config_default() for tier thresholds. Also keep in sync:
+#   - vpn-monitor.conf (shipped template, static file)
+#   - tests/helpers/config.bash and tests/data/configs/config_templates.sh (test defaults)
+# See docs/reference/CONFIG_DEFAULTS.md for the full list and checklist.
 #
 # Purpose:
 #   - Single source of truth for all default values
@@ -77,10 +80,10 @@ declare -gA CONFIG_SCHEMA=(
 	["TIER1_THRESHOLD"]="required|integer|min:1|default:1"
 	# NOTE: TIER2_THRESHOLD has relative validation (depends on TIER1_THRESHOLD)
 	# Validation order is handled safely - see validate_config_schema() documentation
-	["TIER2_THRESHOLD"]="required|integer|min:TIER1_THRESHOLD|default:3"
+	["TIER2_THRESHOLD"]="required|integer|min:TIER1_THRESHOLD|default:2"
 	# NOTE: TIER3_THRESHOLD has relative validation (depends on TIER2_THRESHOLD)
 	# Validation order is handled safely - see validate_config_schema() documentation
-	["TIER3_THRESHOLD"]="required|integer|min:TIER2_THRESHOLD|default:5"
+	["TIER3_THRESHOLD"]="required|integer|min:TIER2_THRESHOLD|default:3"
 	# Rate limiting configuration
 	["MAX_RESTARTS_PER_WINDOW"]="required|integer|min:1|max:20|default:20"
 	["RATE_LIMIT_WINDOW_MINUTES"]="required|integer|min:5|max:1440|default:60"

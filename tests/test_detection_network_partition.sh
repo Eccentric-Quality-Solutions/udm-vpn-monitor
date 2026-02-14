@@ -316,7 +316,7 @@ EOF
 # Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
 # ============================================================================
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "network partition state transitions (healthy -> partitioned -> healthy)" {
 	# Purpose: Test verifies that network partition state transitions are handled correctly
 	# Expected: State transitions from healthy to partitioned and back to healthy are tracked correctly
@@ -353,7 +353,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "network partition detected but state file write fails" {
 	# Purpose: Test verifies that script handles network partition state file write failures gracefully
 	# Expected: Script detects write failure, logs error, handles gracefully without crashing
@@ -393,7 +393,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "get_network_partition_state fails - returns 0 as default" {
 	# Purpose: Test verifies that get_network_partition_state() returns 0 (healthy) as default when it fails
 	# Expected: Function returns 0 when state file doesn't exist or cannot be read

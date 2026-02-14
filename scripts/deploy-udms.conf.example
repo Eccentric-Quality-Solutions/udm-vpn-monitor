@@ -1,0 +1,16 @@
+# UDM deployment targets for deploy-to-udms.sh
+#
+# Format: host_or_ip [bind_ip]
+# - host_or_ip: Target UDM hostname or IP address (required)
+# - bind_ip: Source IP for SCP/SSH BindAddress (optional; if omitted, uses LOCAL_UDM_IP from vpn-monitor.conf)
+#
+# Lines starting with # or empty are ignored.
+# Username and password are prompted for each UDM.
+#
+# Copy to deploy-udms.conf (in repo/install root) and add your UDMs:
+#   cp scripts/deploy-udms.conf.example deploy-udms.conf
+#
+# Example entries:
+# 192.168.1.100
+# 192.168.1.101 192.168.50.1
+# vpn-gateway.example.com

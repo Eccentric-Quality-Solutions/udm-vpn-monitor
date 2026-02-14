@@ -550,6 +550,42 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	unset ENABLE_PING_CHECK
 }
 
+# bats test_tags=category:unit,priority:high
+@test "check_routing_issue_for_failure_type runs ping with external IP when internal IP not set and ENABLE_PING_CHECK=1" {
+	# Purpose: Test verifies that when internal IP is empty, ping check still runs using external IP as target.
+	# Expected: ping_checked=1 and ping succeeds (ping_failed=0); function returns 1 (no routing issue).
+	# Importance: Validates fallback to external IP for ping when location has no internal IPs configured.
+	source_function "check_routing_issue_for_failure_type"
+	source_function "set_peer_state"
+
+	export STATE_DIR="${TEST_DIR}"
+	mkdir -p "$STATE_DIR"
+	export ENABLE_PING_CHECK=1
+
+	local current_bytes="2000"
+	local location_name="TEST"
+	local external_peer_ip="${TEST_PEER_IP}"
+	local internal_peer_ip=""
+
+	set_peer_state "$location_name" "$external_peer_ip" "last_bytes" "1000" || true
+
+	# Mock ping to succeed only for external IP; proves ping was called with external IP when internal is empty
+	mock_ping_selective "${TEST_PEER_IP}" >/dev/null
+	add_mock_to_path
+
+	run check_routing_issue_for_failure_type "$current_bytes" "$location_name" "$external_peer_ip" "$internal_peer_ip"
+
+	assert_failure
+	local byte_counters_available ping_checked ping_failed
+	read -r byte_counters_available ping_checked ping_failed <<<"$output"
+	assert_equal "$byte_counters_available" "1"
+	assert_equal "$ping_checked" "1"
+	assert_equal "$ping_failed" "0"
+
+	remove_mock_from_path
+	unset ENABLE_PING_CHECK
+}
+
 # bats test_tags=category:unit,priority:medium
 @test "check_routing_issue_for_failure_type - byte counters unavailable, ping check disabled" {
 	# Purpose: Test verifies that function returns 1 when byte counters unavailable and ping check disabled

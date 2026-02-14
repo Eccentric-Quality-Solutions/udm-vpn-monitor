@@ -10,7 +10,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 set -euo pipefail
@@ -84,6 +84,8 @@ is_running() {
 #
 # Runs vpn-monitor.sh at configured interval. Exits immediately if another
 # instance is already running. Does not return (runs until interrupted).
+# Monitor stdout/stderr are appended to CRON_LOG. If the monitor exits non-zero,
+# a timestamped line is appended to CRON_LOG so failures are not silent.
 #
 # Arguments:
 #   None
@@ -102,12 +104,16 @@ run_loop() {
 		exit 0
 	fi
 
-	echo $$ >"$PIDFILE"
+	echo "$$" >"$PIDFILE"
 	trap 'rm -f "$PIDFILE"; exit 0' EXIT INT TERM
 
 	while true; do
 		if [[ -x "$MONITOR_SCRIPT" ]]; then
-			"$MONITOR_SCRIPT" >>"$CRON_LOG" 2>&1 || true
+			local exit_code=0
+			"$MONITOR_SCRIPT" >>"$CRON_LOG" 2>&1 || exit_code=$?
+			if [[ $exit_code -ne 0 ]]; then
+				echo "$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z'): vpn-monitor.sh exited with code $exit_code" >>"$CRON_LOG"
+			fi
 		fi
 		sleep "$interval"
 	done

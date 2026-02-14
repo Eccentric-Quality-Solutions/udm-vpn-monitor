@@ -150,6 +150,9 @@ LIB_FILES=(
 SCRIPT_FILES=(
 	"scripts/migrate-config-to-locations.sh"
 	"scripts/anonymize-logs.sh"
+	"scripts/deploy-to-udm.sh"
+	"scripts/deploy-to-udms.sh"
+	"scripts/deploy-udms.conf.example"
 )
 
 echo "Preparing install package..."

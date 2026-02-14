@@ -544,6 +544,28 @@ LIB_DIR="${BATS_TEST_DIRNAME}/../lib"
 	assert_output "${STATE_DIR}/failure_count_TEST_192_168_1_1"
 }
 
+# bats test_tags=category:unit,priority:high
+@test "get_network_partition_state_file returns error when STATE_DIR is unset" {
+	# Purpose: Test verifies get_network_partition_state_file does not return a root path when STATE_DIR is unset
+	# Expected: Function returns failure and no path when STATE_DIR is unset (and NETWORK_PARTITION_STATE_FILE unset)
+	# Importance: Prevents writing to root filesystem (e.g. /network_partition_state)
+	setup_test_environment "${TEST_DIR}"
+	unset STATE_DIR
+	unset NETWORK_PARTITION_STATE_FILE
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/state/state_paths.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state/state_paths.sh" 2>/dev/null || true
+
+	run get_network_partition_state_file
+	assert_failure
+	# Must not output a path (would be /network_partition_state when STATE_DIR empty)
+	refute_output --regexp '^/'
+	assert_output --partial "STATE_DIR is not set"
+}
+
 # bats test_tags=category:unit
 @test "get_peer_state returns default when file missing" {
 	# Purpose: Test verifies that get_peer_state function returns default value when state file doesn't exist
@@ -1671,10 +1693,10 @@ EOF
 	# Test CRON_SCHEDULE (has spaces and special chars) - use assert_equal for better error messages
 	assert_equal "$CRON_SCHEDULE" "*/1 * * * *"
 
-	# Verify backward compatibility defaults for required variables
+	# Verify schema defaults for required tier thresholds
 	assert_equal "$TIER1_THRESHOLD" "1"
-	assert_equal "$TIER2_THRESHOLD" "3"
-	assert_equal "$TIER3_THRESHOLD" "5"
+	assert_equal "$TIER2_THRESHOLD" "2"
+	assert_equal "$TIER3_THRESHOLD" "3"
 }
 
 # ============================================================================
@@ -3474,7 +3496,6 @@ source_lockfile_module() {
 	# Verify ping constants
 	assert_equal "$PING_PACKET_LOSS_THRESHOLD" 100
 	assert_equal "$PING_SUCCESS_THRESHOLD" "0.3"
-	assert_equal "$PING_CEIL_ADJUSTMENT" "0.999"
 
 	# Verify xfrm constants
 	assert_equal "$XFRM_OUTPUT_CONTEXT_LINES" 10

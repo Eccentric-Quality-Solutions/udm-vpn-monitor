@@ -265,6 +265,22 @@ service cron status
 
 ## Ping Checks Failing
 
+### "Ping timeouts but VPN never restarts"
+
+If pings time out repeatedly but the monitor never triggers recovery:
+
+1. **Ping check not used for this location**  
+   The monitor only uses ping when **ENABLE_PING_CHECK=1** and the location has **internal IP(s)** configured (e.g. `INTERNAL_PEER_IP` or per-location internal IPs). If either is missing, the VPN is considered OK whenever xfrm byte counters show traffic; ping is not run in that path, so timeouts (e.g. from manual pings) do not affect the result.  
+   **Fix:** Set `ENABLE_PING_CHECK=1` and configure internal IPs for the location so ping runs and failures are counted.
+
+2. **Recovery needs consecutive failures**  
+   Recovery runs only after **3** (Tier 2) or **5** (Tier 3) **consecutive** runs where the VPN check fails. Any single run where the check passes (e.g. one successful ping) resets the failure count to 0. So if ping is intermittent (timeout, timeout, pass, timeout…), the counter never reaches 3 or 5.  
+   **Check logs:** Look for "VPN suspect" with "ping check failed" and "VPN restored" or "VPN check OK" in between; that indicates resets.  
+   **Options:** Ensure the ping target and network are stable enough for consecutive failures, or consider lowering tier thresholds (see `vpn-monitor.conf`).
+
+3. **Ipsec fallback no longer overrides ping failure**  
+   If the xfrm check finds an SA but fails (e.g. ping times out), the monitor no longer uses the ipsec-status fallback to mark the VPN OK. Previously, `ipsec status` could still show the connection as established while the tunnel was broken, so the failure count was reset every run and recovery never triggered. Now, when xfrm fails with "SA exists" (e.g. bytes increasing but ping failed), the result is treated as a real failure and recovery can run after consecutive failures.
+
 ### Symptoms
 - Ping checks always fail
 - Logs show "Ping check failed" warnings

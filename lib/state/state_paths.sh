@@ -3,7 +3,7 @@
 # State file path management
 # Handles path generation and sanitization for state files
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # Sanitize peer IP for use in filenames
@@ -106,7 +106,7 @@ get_peer_state_file_path() {
 		return 1
 	fi
 
-	# Validate STATE_DIR is set
+	# Validate STATE_DIR is set and non-empty (prevents dangerous paths like /connection_name_... on root)
 	if [[ -z "${STATE_DIR:-}" ]]; then
 		handle_error "ERROR" "SYSTEM" "get_peer_state_file_path: STATE_DIR is not set" 0
 		echo ""
@@ -163,23 +163,29 @@ get_peer_state_file_path() {
 #   None
 #
 # Returns:
-#   0: Always succeeds
+#   0: Success (path printed)
+#   1: STATE_DIR unset/empty and NETWORK_PARTITION_STATE_FILE not set (no path printed)
 #
 # Output:
-#   Prints the full file path to stdout
+#   Prints the full file path to stdout on success; prints nothing on failure.
 #
 # Examples:
 #   state_file=$(get_network_partition_state_file)
 #   # Returns: ${STATE_DIR}/network_partition_state (or NETWORK_PARTITION_STATE_FILE if set)
 #
 # Note:
-#   Requires STATE_DIR to be set (validated during module load and state initialization).
-#   If STATE_DIR is unset and NETWORK_PARTITION_STATE_FILE is also unset, this function will produce
-#   an invalid absolute path starting with "/".
-#   The module logs a warning if STATE_DIR is unset when state_paths.sh is sourced.
+#   When using the default path, STATE_DIR must be set and non-empty to avoid writing to root.
 #   Used internally by get_network_partition_state and set_network_partition_state.
 get_network_partition_state_file() {
-	echo "${NETWORK_PARTITION_STATE_FILE:-${STATE_DIR}/network_partition_state}"
+	if [[ -n "${NETWORK_PARTITION_STATE_FILE:-}" ]]; then
+		echo "${NETWORK_PARTITION_STATE_FILE}"
+		return 0
+	fi
+	if [[ -z "${STATE_DIR:-}" ]]; then
+		handle_error "ERROR" "SYSTEM" "get_network_partition_state_file: STATE_DIR is not set" 0
+		return 1
+	fi
+	echo "${STATE_DIR}/network_partition_state"
 }
 
 # Module-level validation: Check that STATE_DIR is set

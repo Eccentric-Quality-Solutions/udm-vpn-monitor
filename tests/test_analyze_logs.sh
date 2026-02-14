@@ -26,7 +26,7 @@ create_sample_log_file() {
 	mkdir -p "$(dirname "$log_file")"
 
 	cat >"$log_file" <<EOF
-[${date_prefix} 10:00:00] [INFO] Log file initialized
+[${date_prefix} 10:00:00] [DEBUG] Log file initialized
 [${date_prefix} 10:01:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 1)
 [${date_prefix} 10:01:00] [INFO] Tier 1: Logging VPN failure for 192.168.1.1
 [${date_prefix} 10:02:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 2)
@@ -66,7 +66,7 @@ create_recovery_type_test_log_file() {
 	mkdir -p "$(dirname "$log_file")"
 
 	cat >"$log_file" <<EOF
-[${date_prefix} 10:00:00] [INFO] Log file initialized
+[${date_prefix} 10:00:00] [DEBUG] Log file initialized
 # Self-healed recovery (no recovery method, just "after N failures")
 [${date_prefix} 10:01:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 1)
 [${date_prefix} 10:02:00] [INFO] VPN recovered for 192.168.1.1 after 1 failures
@@ -377,7 +377,7 @@ EOF
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "$(dirname "$log_file")"
 	cat >"$log_file" <<EOF
-[2025-01-15 10:00:00] [INFO] Log file initialized
+[2025-01-15 10:00:00] [DEBUG] Log file initialized
 [2025-01-15 10:01:00] [INFO] Configuration loaded from: /data/vpn-monitor/vpn-monitor.conf
 EOF
 

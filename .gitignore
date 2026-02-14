@@ -16,6 +16,7 @@ vpn-monitor.lock
 # Local configuration (may contain sensitive info)
 vpn-monitor.conf.local
 *.conf.local
+deploy-udms.conf
 
 # Editor files
 *.swp

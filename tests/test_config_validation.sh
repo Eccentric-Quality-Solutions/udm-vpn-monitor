@@ -413,6 +413,88 @@ EOF
 	remove_mock_from_path
 }
 
+# ============================================================================
+# PING WARNINGS VALIDATION TESTS
+# ============================================================================
+
+# bats test_tags=category:high-risk,priority:high
+@test "validate_config warns when ENABLE_PING_CHECK=1 and LOCAL_UDM_IP not set" {
+	# Purpose: Test verifies that validate_config() logs a warning when ping checks are enabled but LOCAL_UDM_IP is not set.
+	# Expected: Warning message is written to log (LOG_FILE) so operators know to set LOCAL_UDM_IP for reliable ping checks.
+	# Importance: Ensures the config validation warning for missing LOCAL_UDM_IP is covered by tests.
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'ENABLE_PING_CHECK=1'
+	# Do not set LOCAL_UDM_IP
+
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	mkdir -p "$(dirname "$LOG_FILE")"
+	touch "$LOG_FILE"
+
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+	# shellcheck source=../lib/detection.sh
+	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	export CONFIG_FILE="$config_file"
+	export STATE_DIR="$STATE_DIR"
+	export LOG_FILE="$LOG_FILE"
+	export ENABLE_PING_CHECK=1
+	unset LOCAL_UDM_IP
+	enable_fake_mode
+
+	load_config
+	run validate_config
+
+	assert_success
+	assert_file_contains "$LOG_FILE" "LOCAL_UDM_IP is not set"
+	assert_file_contains "$LOG_FILE" "Ping checks are enabled"
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "validate_config warns when ENABLE_PING_CHECK=1 and location has no internal IPs" {
+	# Purpose: Test verifies that validate_config() logs a warning when ping checks are enabled but a location has no internal IPs.
+	# Expected: Warning message is written to log so operators know ping will use external IP which may not be reachable.
+	# Importance: Ensures the config validation warning for missing LOCATION_*_INTERNAL is covered by tests.
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		'LOCATION_TEST_INTERNAL=""' \
+		'ENABLE_PING_CHECK=1'
+
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	mkdir -p "$(dirname "$LOG_FILE")"
+	touch "$LOG_FILE"
+
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+	# shellcheck source=../lib/detection.sh
+	source "${BATS_TEST_DIRNAME}/../lib/detection.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+
+	export CONFIG_FILE="$config_file"
+	export STATE_DIR="$STATE_DIR"
+	export LOG_FILE="$LOG_FILE"
+	export ENABLE_PING_CHECK=1
+	enable_fake_mode
+
+	load_config
+	run validate_config
+
+	assert_success
+	assert_file_contains "$LOG_FILE" "no internal IPs configured"
+	assert_file_contains "$LOG_FILE" "Ping will use external IP"
+}
+
 # bats test_tags=category:high-risk,priority:high
 @test "validate_config sets up routes when ping checks enabled and internal IPs configured" {
 	# Purpose: Test verifies that validate_config() sets up routes when ping checks are enabled and internal IPs are configured

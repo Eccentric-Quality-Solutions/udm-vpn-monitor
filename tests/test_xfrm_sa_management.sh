@@ -232,6 +232,70 @@ src 192.168.1.2 dst 10.0.0.1
 }
 
 # ============================================================================
+# SA_EXISTS_IN_XFRM_OUTPUT TESTS (C2 bug fix: per-block verification)
+# ============================================================================
+
+# bats test_tags=category:high-risk,priority:high
+@test "sa_exists_in_xfrm_output - returns true when SA exists in single block" {
+	# Purpose: Test verifies sa_exists_in_xfrm_output returns true when all selectors appear in same block
+	# Expected: Function returns 0 when SA (src,dst,proto,spi) exists in one block
+	# Importance: Core correctness for SA existence verification during xfrm recovery
+	source_recovery_module
+
+	local xfrm_output="src 192.168.1.2 dst ${TEST_PEER_IP}
+  proto esp spi 0x12345678
+  mode tunnel"
+
+	run sa_exists_in_xfrm_output "$xfrm_output" "192.168.1.2" "${TEST_PEER_IP}" "esp" "0x12345678" ""
+	assert_success
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "sa_exists_in_xfrm_output - returns false when selectors scattered across blocks" {
+	# Purpose: Test verifies sa_exists_in_xfrm_output returns false when selectors come from different SAs
+	# Expected: Function returns 1 - prevents false positive from loose substring matching
+	# Importance: Fixes C2 bug - multi-peer setups can have src from SA1, spi from SA2; must not match
+	source_recovery_module
+
+	# SA1: src=192.168.1.2 dst=peer proto=esp spi=0x11111111
+	# SA2: src=192.168.1.3 dst=peer proto=esp spi=0x22222222
+	# Query for src=192.168.1.2 dst=peer proto=esp spi=0x22222222 - does NOT exist (spi from SA2)
+	local xfrm_output="src 192.168.1.2 dst ${TEST_PEER_IP}
+  proto esp spi 0x11111111
+  mode tunnel
+src 192.168.1.3 dst ${TEST_PEER_IP}
+  proto esp spi 0x22222222
+  mode tunnel"
+
+	run sa_exists_in_xfrm_output "$xfrm_output" "192.168.1.2" "${TEST_PEER_IP}" "esp" "0x22222222" ""
+	assert_failure
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "sa_exists_in_xfrm_output - returns true with mark when SA has matching mark" {
+	# Purpose: Test verifies sa_exists_in_xfrm_output includes mark in per-block verification
+	# Expected: Function returns 0 when SA exists with matching mark in same block
+	source_recovery_module
+
+	local xfrm_output="src 192.168.1.2 dst ${TEST_PEER_IP}
+  proto esp spi 0x12345678
+  mark 0x12000000/0xfe000000
+  mode tunnel"
+
+	run sa_exists_in_xfrm_output "$xfrm_output" "192.168.1.2" "${TEST_PEER_IP}" "esp" "0x12345678" "0x12000000/0xfe000000"
+	assert_success
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "sa_exists_in_xfrm_output - returns false for empty output" {
+	# Purpose: Test verifies sa_exists_in_xfrm_output returns false for empty input
+	source_recovery_module
+
+	run sa_exists_in_xfrm_output "" "192.168.1.2" "${TEST_PEER_IP}" "esp" "0x12345678" ""
+	assert_failure
+}
+
+# ============================================================================
 # DELETE_SAS_FROM_LIST TESTS
 # ============================================================================
 

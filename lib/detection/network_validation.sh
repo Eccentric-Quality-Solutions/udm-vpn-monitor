@@ -3,7 +3,7 @@
 # Network validation functions for UDM VPN Monitor
 # Handles IP validation (IPv4/IPv6) and route checks
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # Source constants for magic numbers
@@ -20,7 +20,6 @@ if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	[[ -z "${IPV4_CIDR_SINGLE_HOST:-}" ]] && readonly IPV4_CIDR_SINGLE_HOST=32
 	[[ -z "${PING_PACKET_LOSS_THRESHOLD:-}" ]] && readonly PING_PACKET_LOSS_THRESHOLD=100
 	[[ -z "${PING_SUCCESS_THRESHOLD:-}" ]] && readonly PING_SUCCESS_THRESHOLD=0.3
-	[[ -z "${PING_CEIL_ADJUSTMENT:-}" ]] && readonly PING_CEIL_ADJUSTMENT=0.999
 	[[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && readonly XFRM_OUTPUT_CONTEXT_LINES=10
 	[[ -z "${IPSEC_STATUS_TIMEOUT:-}" ]] && readonly IPSEC_STATUS_TIMEOUT=5
 fi
@@ -67,9 +66,9 @@ validate_ipv4() {
 	local -a octets
 	read -ra octets <<<"$ip"
 	for octet in "${octets[@]}"; do
-		# Remove leading zeros for numeric comparison (but allow "0")
+		# Decimal interpretation (10#) never yields negative; validate 0..255
 		local num=$((10#$octet))
-		if [[ $num -lt 0 ]] || [[ $num -gt $MAX_IPV4_OCTET ]]; then
+		if [[ $num -gt $MAX_IPV4_OCTET ]]; then
 			return 1
 		fi
 	done
@@ -758,7 +757,7 @@ add_route_if_needed() {
 		return 1
 	fi
 
-	# Check if route already exists
+	# Check if route already exists (e.g. added by another process since caller's check)
 	if check_route_exists "$local_ip"; then
 		log_message "INFO" "SYSTEM" "Route already exists on br0: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
 		return 0

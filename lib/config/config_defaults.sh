@@ -3,7 +3,7 @@
 # Configuration default value application for UDM VPN Monitor
 # Handles applying default values from schema to configuration variables
 #
-# Version: 0.7.0
+# Version: 0.8.0
 
 # Apply default values from schema
 #

@@ -38,7 +38,7 @@ bats tests/test_install.sh
 
 ### Test Files by Category
 
-**Script-Specific Tests**: `test_install.sh`, `test_uninstall.sh`, `test_vpn_monitor.sh`, `test_analyze_logs.sh`, `test_anonymize_logs.sh`, `test_check_config.sh`, `test_compare_config.sh`, `test_check_utilities.sh`, `test_vpn_keepalive.sh`, `test_prepare_install_package.sh`, `test_migration.sh`
+**Script-Specific Tests**: `test_install.sh`, `test_uninstall.sh`, `test_vpn_monitor.sh`, `test_analyze_logs.sh`, `test_anonymize_logs.sh`, `test_check_config.sh`, `test_compare_config.sh`, `test_check_utilities.sh`, `test_vpn_keepalive.sh`, `test_prepare_install_package.sh`, `test_deploy_to_udm.sh`, `test_deploy_to_udms.sh`, `test_migration.sh`
 
 **Integration Tests**: `test_integration.sh`, `test_integration_e2e_recovery.sh`, `test_integration_location.sh`
 

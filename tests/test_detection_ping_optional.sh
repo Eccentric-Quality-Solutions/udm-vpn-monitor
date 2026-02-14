@@ -98,10 +98,8 @@ EOF
 	# Should succeed (always returns 0)
 	assert_success
 
-	# Should log that SA exists (not "no SA found")
-	# The message format is "VPN SA exists but ping check failed" or "VPN connectivity verified"
-	assert_log_contains_any "$LOG_FILE" "VPN SA exists" "VPN connectivity verified"
-	assert_file_contains "$LOG_FILE" "ping check"
+	# Should log success (not "no SA found"). When SA exists and ping succeeds we log "Ping check passed from ... to ..."
+	assert_file_contains "$LOG_FILE" "Ping check passed"
 
 	# Should NOT log contradictory "no SA found" message
 	run grep -q "VPN tunnel is down (no SA found)" "$LOG_FILE" || true
@@ -297,14 +295,70 @@ EOF
 	remove_mock_from_path
 }
 
+# bats test_tags=category:unit,category:high-risk,priority:high
+@test "check_ping_optional uses external IP when no internal IPs configured" {
+	# Purpose: Test that when a location has no internal IPs, check_ping_optional uses the external IP as ping target.
+	# Expected: Ping is invoked with the external peer IP (fallback); log shows "Ping check passed from ... to <external_ip>".
+	# Importance: Ensures fallback to external IP is covered when LOCATION_*_INTERNAL is empty (PRAGMATIC_ENGINEER_TEST_REVIEW 3.3).
+	setup_ping_optional_test
+
+	local external_peer_ip="203.0.113.1"
+	local internal_peer_ip="" # No internal IPs configured - fallback to external
+	local location_name="TEST"
+
+	# Mock ping to succeed and record the target IP (ping is called with target as last arg)
+	local ping_log="${TEST_DIR}/ping_target.log"
+	cat >"${TEST_DIR}/ping" <<EOF
+#!/bin/bash
+# Record target IP (last argument; ping is typically ... -c N -W N -q [ -I local ] target)
+for arg in "\$@"; do
+	echo "\$arg" >> "$ping_log"
+done
+echo "3 packets transmitted, 3 received, 0% packet loss"
+exit 0
+EOF
+	chmod +x "${TEST_DIR}/ping"
+	add_mock_to_path
+
+	# Mock ip for check_ipsec_phase2 (SA exists)
+	cat >"${TEST_DIR}/ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "-s" ]] && [[ "$2" == "xfrm" ]] && [[ "$3" == "state" ]]; then
+	echo "src 203.0.113.1 dst 203.0.113.1"
+	echo "	proto esp spi 0x12345678 reqid 1 mode tunnel"
+	exit 0
+fi
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+	echo "src 203.0.113.1 dst 203.0.113.1"
+	echo "	proto esp spi 0x12345678 reqid 1 mode tunnel"
+	exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "${TEST_DIR}/ip"
+	add_mock_to_path
+
+	rm -f "$ping_log"
+	run check_ping_optional 1 "$external_peer_ip" "$internal_peer_ip" "$location_name"
+
+	assert_success
+	# Ping target should be the external IP (fallback when internal is empty)
+	assert_file_contains "$ping_log" "$external_peer_ip"
+	# Log should show ping passed to the external IP
+	assert_file_contains "$LOG_FILE" "Ping check passed"
+	assert_file_contains "$LOG_FILE" "$external_peer_ip"
+
+	remove_mock_from_path
+}
+
 # ============================================================================
 # TESTS FOR check_ping_if_enabled()
 # ============================================================================
 
 # bats test_tags=category:unit,category:high-risk,priority:high
-@test "check_ping_if_enabled - sa_exists=1, ping succeeds - logs connectivity verified" {
+@test "check_ping_if_enabled - sa_exists=1, ping succeeds - logs Ping check passed" {
 	# Purpose: Test that check_ping_if_enabled correctly handles sa_exists=1 with successful ping
-	# Expected: Should log "VPN connectivity verified: ping check passed from local_udm_ip to internal_peer_ip"
+	# Expected: Should log "Ping check passed from <local_ip> to <ping_target>"
 	# Importance: Validates function works correctly with explicit SA status
 	setup_ping_optional_test
 
@@ -334,9 +388,9 @@ EOF
 	# Should succeed
 	assert_success
 
-	# Should log connectivity verified
-	assert_file_contains "$LOG_FILE" "VPN connectivity verified"
-	assert_file_contains "$LOG_FILE" "ping check passed"
+	# Should log Ping check passed (single-target success message)
+	assert_file_contains "$LOG_FILE" "Ping check passed"
+	assert_file_contains "$LOG_FILE" "$ping_target"
 
 	remove_mock_from_path
 }
@@ -485,7 +539,7 @@ EOF
 # bats test_tags=category:unit
 @test "check_ping_if_enabled - multiple IPs, sa_exists=1, ping succeeds - logs correctly" {
 	# Purpose: Test that check_ping_if_enabled handles multiple IPs correctly with SA exists
-	# Expected: Should log "VPN connectivity verified: ping check passed for multiple internal IPs"
+	# Expected: check_ping_multiple_ips logs count and threshold (e.g. "2/2 internal IPs responded ... >= 30% threshold")
 	# Importance: Validates multiple IP support
 	setup_ping_optional_test
 
@@ -515,9 +569,9 @@ EOF
 	# Should succeed
 	assert_success
 
-	# Should log connectivity verified for multiple IPs
-	assert_file_contains "$LOG_FILE" "VPN connectivity verified"
-	assert_file_contains "$LOG_FILE" "multiple internal IPs"
+	# Success is logged by check_ping_multiple_ips with count and threshold
+	assert_file_contains "$LOG_FILE" "internal IPs responded"
+	assert_file_contains "$LOG_FILE" "30% threshold"
 
 	remove_mock_from_path
 }

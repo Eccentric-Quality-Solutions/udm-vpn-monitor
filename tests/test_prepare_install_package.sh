@@ -43,6 +43,9 @@ EXPECTED_MODULE_DIRS=(
 EXPECTED_SCRIPT_FILES=(
 	"scripts/migrate-config-to-locations.sh"
 	"scripts/anonymize-logs.sh"
+	"scripts/deploy-to-udm.sh"
+	"scripts/deploy-to-udms.sh"
+	"scripts/deploy-udms.conf.example"
 )
 
 # bats test_tags=category:unit

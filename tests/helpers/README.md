@@ -82,7 +82,7 @@ Provides helpers for testing configuration functionality.
 **Key Functions:**
 - `create_test_config()` - Create a test config file with specified variables
 - `create_valid_config()` - Create a minimal valid config file
-- `create_test_lib()` - Create a test lib directory with config_schema.sh
+- `create_test_lib()` - Create a test lib directory and copy the project's lib/config_schema.sh (requires run from repo root)
 - `get_config_schema()` - Get configuration schema for a variable
 - `get_config_default()` - Get default value for a configuration variable
 

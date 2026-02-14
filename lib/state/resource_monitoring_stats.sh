@@ -3,7 +3,7 @@
 # Resource monitoring statistics tracking
 # Handles success/failure counting and hourly summary logging for resource monitoring checks
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # Internal helper to increment a counter file
@@ -39,7 +39,9 @@ _increment_counter_file() {
 	current_count=$((current_count + 1))
 
 	# Use atomic write for state file (per ADR-0012)
-	atomic_write_file "$counter_file" "$current_count" 2>/dev/null || true
+	if ! atomic_write_file "$counter_file" "$current_count"; then
+		log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $counter_file"
+	fi
 
 	return 0
 }
@@ -258,16 +260,36 @@ log_resource_monitoring_summary_if_due() {
 		fi
 
 		# Reset all counters and update last time (use atomic writes per ADR-0012)
-		atomic_write_file "$cpu_success_file" "0" 2>/dev/null || true
-		atomic_write_file "$cpu_fail_file" "0" 2>/dev/null || true
-		atomic_write_file "$ram_success_file" "0" 2>/dev/null || true
-		atomic_write_file "$ram_fail_file" "0" 2>/dev/null || true
-		atomic_write_file "$disk_success_file" "0" 2>/dev/null || true
-		atomic_write_file "$disk_fail_file" "0" 2>/dev/null || true
-		atomic_write_file "$cpu_constrained_file" "0" 2>/dev/null || true
-		atomic_write_file "$ram_constrained_file" "0" 2>/dev/null || true
-		atomic_write_file "$disk_critical_file" "0" 2>/dev/null || true
-		atomic_write_file "$last_time_file" "$current_time" 2>/dev/null || true
+		if ! atomic_write_file "$cpu_success_file" "0"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $cpu_success_file"
+		fi
+		if ! atomic_write_file "$cpu_fail_file" "0"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $cpu_fail_file"
+		fi
+		if ! atomic_write_file "$ram_success_file" "0"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $ram_success_file"
+		fi
+		if ! atomic_write_file "$ram_fail_file" "0"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $ram_fail_file"
+		fi
+		if ! atomic_write_file "$disk_success_file" "0"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $disk_success_file"
+		fi
+		if ! atomic_write_file "$disk_fail_file" "0"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $disk_fail_file"
+		fi
+		if ! atomic_write_file "$cpu_constrained_file" "0"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $cpu_constrained_file"
+		fi
+		if ! atomic_write_file "$ram_constrained_file" "0"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $ram_constrained_file"
+		fi
+		if ! atomic_write_file "$disk_critical_file" "0"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $disk_critical_file"
+		fi
+		if ! atomic_write_file "$last_time_file" "$current_time"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $last_time_file"
+		fi
 	fi
 
 	return 0

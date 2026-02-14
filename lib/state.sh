@@ -3,13 +3,12 @@
 # State file management for UDM VPN Monitor
 # Handles failure counters, cooldown periods, rate limiting, and restart tracking
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 # This file sources modular state management components:
 #   - state_paths.sh: Path generation and sanitization
 #   - global_state.sh: Global state (cooldown, restart count, etc.)
 #   - peer_state.sh: Per-peer state operations
-#   - location_state.sh: Per-location state operations
 #   - state_init.sh: State initialization
 #   - network_partition_stats.sh: Network partition statistics tracking
 #   - resource_monitoring_stats.sh: Resource monitoring statistics tracking
@@ -55,11 +54,6 @@ source "${STATE_MODULE_DIR}/global_state.sh" 2>/dev/null || {
 # shellcheck source=lib/state/peer_state.sh
 source "${STATE_MODULE_DIR}/peer_state.sh" 2>/dev/null || {
 	log_module_error "Failed to source peer_state.sh"
-	exit 1
-}
-# shellcheck source=lib/state/location_state.sh
-source "${STATE_MODULE_DIR}/location_state.sh" 2>/dev/null || {
-	log_module_error "Failed to source location_state.sh"
 	exit 1
 }
 # shellcheck source=lib/state/state_init.sh

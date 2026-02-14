@@ -258,7 +258,8 @@ create_corrupted_state_file() {
 # Side effects:
 #   Creates the state file with initial value
 #   Sets file permissions to read-only (or specified permissions)
-#   Sets up EXIT trap to restore original permissions
+#   Sets up EXIT trap to restore original permissions (chained with any
+#   existing EXIT trap so multiple calls in one test all get restored)
 #   Sources get_peer_state_file_path function if not available
 #
 # Example:
@@ -274,6 +275,7 @@ create_corrupted_state_file() {
 #   Requires get_peer_state_file_path function to be available.
 #   Automatically sources it if not already loaded.
 #   The trap is set up automatically and will restore permissions even if test fails.
+#   Multiple calls in one test chain their restores so every file is restored on exit.
 setup_readonly_state_file() {
 	local location="${1:-TEST}"
 	local peer_ip="${2:-${TEST_PEER_IP}}"
@@ -314,10 +316,22 @@ setup_readonly_state_file() {
 	local original_perms
 	original_perms=$(save_permissions_for_restore "$state_file")
 
-	# Set up trap to restore permissions on EXIT
-	# Use actual path value, not variable, since trap executes after function returns
+	# Set up trap to restore permissions on EXIT. Chain with any existing EXIT trap
+	# so multiple calls to setup_readonly_state_file() in one test all get restored.
+	# Use actual path value, not variable, since trap executes after function returns.
+	local restore_cmd existing_trap existing_cmd new_trap
+	restore_cmd="chmod $original_perms \"$state_file\" 2>/dev/null || true"
+	existing_trap=$(trap -p EXIT 2>/dev/null) || true
+	if [[ -n "$existing_trap" ]]; then
+		# Extract command from "trap -- 'command' EXIT" (strip trap -- ' and ' EXIT)
+		existing_cmd=${existing_trap#trap -- \'}
+		existing_cmd=${existing_cmd%\' EXIT}
+		new_trap="$restore_cmd; ${existing_cmd}"
+	else
+		new_trap="$restore_cmd"
+	fi
 	# shellcheck disable=SC2064 # We want variable expansion at trap definition time
-	trap "chmod $original_perms \"$state_file\" 2>/dev/null || true" EXIT
+	trap "$new_trap" EXIT
 
 	# Return the path for use in tests
 	echo "$state_file"

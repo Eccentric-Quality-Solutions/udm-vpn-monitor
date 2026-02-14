@@ -110,45 +110,32 @@ load test_helper
 }
 
 # bats test_tags=category:high-risk,priority:high,slow
-@test "state atomic write failures: record_restart fails due to atomic write failure" {
-	# Purpose: Test verifies that record_restart handles atomic write failures gracefully
+@test "state atomic write failures: record_restart fails when append fails" {
+	# Purpose: Test verifies that record_restart handles append failures gracefully
 	# Expected: Function detects write failure, logs error, preserves current state
 	# Importance: Restart record failures can affect rate limiting; must be handled gracefully
+	# Note: record_restart uses append-only writes; we simulate failure by making the file read-only
 	setup_test_environment "${TEST_DIR}"
 
 	source_function "record_restart"
-	source_function "check_rate_limit"
 
 	# Set up state directory
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Use RESTART_COUNT_FILE as set by setup_test_environment
-	# Write initial content to the file that record_restart will use
 	echo "2" >"$RESTART_COUNT_FILE"
-
-	# Make state directory unwritable to simulate atomic write failure
-	# This prevents record_restart from writing to RESTART_COUNT_FILE (which is in STATE_DIR)
-	local state_dir="${STATE_DIR}"
 	local original_perms
-	original_perms=$(save_permissions_for_restore "$state_dir")
+	original_perms=$(save_permissions_for_restore "$RESTART_COUNT_FILE")
 
-	# Try to make unwritable (may fail on some systems)
-	if chmod 555 "$state_dir" 2>/dev/null; then
-		# Try to record restart (should fail gracefully)
+	if chmod 444 "$RESTART_COUNT_FILE" 2>/dev/null; then
 		run record_restart
-		# Function should handle failure gracefully
 		assert_file_exist "$RESTART_COUNT_FILE"
-
-		# Verify original state is preserved (should still be 2)
 		local preserved_count
 		preserved_count=$(cat "$RESTART_COUNT_FILE" 2>/dev/null || echo "0")
 		assert_equal "$preserved_count" 2
-
-		# Restore permissions
-		restore_permissions_after_test "$state_dir" "$original_perms"
+		restore_permissions_after_test "$RESTART_COUNT_FILE" "$original_perms"
 	else
-		# Can't test unwritable directory on this system - skip
-		skip "Cannot make directory unwritable on this system"
+		skip "Cannot make file read-only on this system"
 	fi
 }
 

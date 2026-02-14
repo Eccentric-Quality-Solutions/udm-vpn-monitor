@@ -2331,7 +2331,7 @@ print_coverage_summary() {
 # Parse command line arguments
 #
 # Parses command-line arguments and sets corresponding global flags.
-# Handles --coverage, --slow, --all, --failed, --jobs, --filter-tags, --individual, --resume, --sequential, --help.
+# Handles --coverage, --slow, --all, --fail-fast, --failed, --jobs, --filter-tags, --individual, --resume, --sequential, --help.
 #
 # Arguments:
 #   $@: Command-line arguments
@@ -2353,6 +2353,10 @@ parse_args() {
 			;;
 		--all | -a)
 			FAST_FAIL=0
+			shift
+			;;
+		--fail-fast | -F)
+			FAST_FAIL=1
 			shift
 			;;
 		--failed | -f)
@@ -2433,6 +2437,7 @@ Options:
     --coverage, -c         Enable test coverage reporting (requires kcov)
     --slow, -s             Include slow tests (integration and high-risk tests)
     --all, -a              Run all tests even if some fail (disables fast-fail)
+    --fail-fast, -F        Stop on first failure or timeout
     --failed, -f           Rerun only failed tests from the last completed run
     --jobs, -j <N>         Number of parallel jobs (auto, 0=disabled, or number)
                            Default: auto (batch/parallel execution if parallel tool available)
@@ -2454,6 +2459,7 @@ Examples:
     $0 --coverage                   Run fast tests with coverage reporting in batch/parallel mode
     $0 --slow --coverage            Run all tests with coverage reporting in batch/parallel mode
     $0 --all                        Run all tests even if some fail (same as default)
+    $0 --fail-fast                  Stop on first failure or timeout
     $0 --failed                     Rerun only tests that failed in the last run
     $0 --slow --failed              Rerun only failed tests from last run (includes slow tests)
     $0 --jobs 8                     Run tests with 8 parallel jobs (requires GNU parallel)
@@ -2475,7 +2481,7 @@ Test Behavior:
     Tests run in batch/parallel mode by default if GNU parallel or rush is available.
     Use --sequential or --jobs 0 to run tests sequentially.
     Tests that exceed 2 minutes (120 seconds) will be skipped automatically.
-    Use --all flag or set FAST_FAIL=0 to run all tests regardless of failures (default).
+    Use --fail-fast or FAST_FAIL=1 to stop on first failure. Use --all or FAST_FAIL=0 to run all tests (default).
     
     Slow tests (test_integration.sh and high-risk test files: test_config.sh, test_lockfile.sh,
     test_detection.sh, test_recovery.sh, test_state.sh, test_logging.sh, test_connection.sh,

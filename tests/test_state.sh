@@ -956,7 +956,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
 # ============================================================================
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "state file atomic write fails - filesystem full" {
 	# Purpose: Test verifies that script handles read-only STATE_DIR gracefully by exiting early
 	# Expected: Script detects STATE_DIR is not writable, cannot create lockfile, exits with clear error
@@ -996,7 +996,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "state file atomic write fails - permission error" {
 	# Purpose: Test verifies that script handles read-only STATE_DIR gracefully by exiting early
 	# Expected: Script detects STATE_DIR is not writable, cannot create lockfile, exits with clear error
@@ -1036,7 +1036,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "state file read fails but script continues" {
 	# Purpose: Test verifies that script handles state file read failures gracefully
 	# Expected: Script detects read failure, handles gracefully, continues execution with defaults
@@ -1081,7 +1081,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
 # ============================================================================
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "try_ensure_directory_exists fails for LOGS_DIR - warning logged but continues" {
 	# Purpose: Test verifies that try_ensure_directory_exists() failures for LOGS_DIR log warning but continue
 	# Expected: Script logs warning about directory creation failure but continues execution
@@ -1114,7 +1114,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "try_ensure_directory_exists fails for STATE_DIR - warning logged but continues" {
 	# Purpose: Test verifies that try_ensure_directory_exists() failures for STATE_DIR log warning but continue
 	# Expected: Script logs warning about directory creation failure but continues execution
@@ -1146,7 +1146,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "directory creation succeeds but directory is immediately deleted (race condition)" {
 	# Purpose: Test verifies that script handles race condition where directory is created but immediately deleted
 	# Expected: Script should handle this gracefully, possibly retrying creation or continuing
@@ -1202,7 +1202,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "directory creation fails but handle_error also fails (logging failure)" {
 	# Purpose: Test verifies that script handles case where directory creation fails and handle_error also fails
 	# Expected: Script should handle this gracefully, possibly using fallback error handling
@@ -1238,7 +1238,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "state directory creation fails but script continues - subsequent state file operations fail" {
 	# Purpose: Test verifies that script continues when state directory creation fails, and subsequent state operations fail gracefully
 	# Expected: Script continues execution, but state file operations fail gracefully (warnings logged)

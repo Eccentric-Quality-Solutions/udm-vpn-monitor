@@ -1,7 +1,7 @@
 # Code Review Lessons Learned
 
 **Date:** 2025-01-15
-**Last Updated:** 2026-01-23
+**Last Updated:** 2026-02-14
 **Context:** Comprehensive codebase review for errors, bugs, DRY violations, and bad practices
 
 **Note:** For a pragmatic assessment of this document's value and recommendations for improvement, see `CODE_REVIEW_LESSONS_LEARNED_ASSESSMENT.md`.
@@ -1914,6 +1914,35 @@ When using EXIT traps for cleanup, the cleanup function must preserve the exit c
 
 ---
 
+## 20a. Wrapper/Cron Scripts: Don't Swallow Child Script Exit Codes
+
+**Impact Level:** Medium  
+**Applicability:** Wrapper and cron-invoked scripts that run a child in a loop  
+**Actionability:** High
+
+### Problem
+Scripts that run a child in a loop (e.g. cron wrapper running the monitor) used `child >>log 2>&1 || true`, so all child failures were silent and operators had no visibility when the child crashed or exited with an error.
+
+### Lesson
+When running a child script in a loop, capture its exit code and log non-zero exits to the same log so failures are visible. Don't use `|| true` without recording the failure.
+
+### Pattern to Follow
+```bash
+# ✅ GOOD: Capture and log failure
+local exit_code=0
+"$MONITOR_SCRIPT" >>"$CRON_LOG" 2>&1 || exit_code=$?
+if [[ $exit_code -ne 0 ]]; then
+    echo "$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z'): monitor exited with code $exit_code" >>"$CRON_LOG"
+fi
+
+# ❌ BAD: Silent failure
+"$MONITOR_SCRIPT" >>"$CRON_LOG" 2>&1 || true
+```
+
+**Fixed:** vpn-monitor-wrapper.sh (M10, 2026-02-14)
+
+---
+
 ## 21. Trap Cleanup Functions Must Handle Unset Variables with `set -u`
 
 **Impact Level:** Critical  
@@ -2067,6 +2096,35 @@ acquire_lockfile_flock() {
 **Divergence:** None - This is bash scripting best practice.
 
 **Recommendation:** ✅ **Keep** - Essential for robust bash scripts.
+
+---
+
+## 21a. Chain EXIT Traps in Test Helpers That May Be Called Multiple Times
+
+**Impact Level:** Medium  
+**Applicability:** Test helpers that set EXIT traps  
+**Actionability:** High
+
+### Problem
+`setup_readonly_state_file()` in `tests/helpers/state.bash` set `trap "chmod ..." EXIT` on every call. A second call overwrote the first trap, so only the last file had its permissions restored on exit; earlier files were left read-only and could break later tests or leave the test dir in a bad state.
+
+### Lesson
+**When a test helper sets an EXIT trap and may be invoked multiple times in one test, chain with the existing trap instead of overwriting.** Use `trap -p EXIT` to read the current trap command, then set `trap "new_cleanup; existing_command" EXIT` so all cleanups run.
+
+### Pattern to Follow
+```bash
+# ✅ GOOD: Chain with existing EXIT trap
+restore_cmd="chmod $perms \"$path\" 2>/dev/null || true"
+existing_trap=$(trap -p EXIT 2>/dev/null) || true
+if [[ -n "$existing_trap" ]]; then
+  existing_cmd=${existing_trap#trap -- \'}; existing_cmd=${existing_cmd%\' EXIT}
+  trap "$restore_cmd; ${existing_cmd}" EXIT
+else
+  trap "$restore_cmd" EXIT
+fi
+```
+
+**Fixed:** tests/helpers/state.bash (T3, 2026-02-14)
 
 ---
 
@@ -2995,3 +3053,7 @@ These lessons should be applied systematically in future development and code re
 38. **Signal handlers can be triggered by cleanup code, not just user interrupts** - When cleanup functions send signals (e.g., `kill -TERM`), those signals can trigger signal handlers (traps) that were set up to handle user interrupts. This causes false "interrupted" messages even when no user interruption occurred. **Always temporarily disable signal traps before calling cleanup functions that send signals**, then re-enable them immediately after. Only call cleanup functions when actually needed (e.g., on timeout), not after every operation. Example: Fixed `run_single_test_with_timeout()` to only call `cleanup_test_processes()` on timeout (exit codes 124 or 143), and to temporarily disable TERM/INT traps before cleanup to prevent false "Interrupted by user (Ctrl+C)" messages.
 
 39. **`local` keyword cannot be used at top level of `bash -c` subshells** - The `local` keyword in bash can only be used inside functions, not at the top level of scripts or subshells. When using `bash -c "..."` to run code in a subshell (e.g., for test isolation or capturing output variables via `printf -v`), **never use `local` for variable declarations**. Use regular variable assignments instead. This bug manifests as variables appearing empty even after assignment, causing silent failures. Example: Fixed test in `test_detection_xfrm_edge_cases.sh` where `local func_exit=$?` and `local exit_code=$func_exit` in a `bash -c` subshell left variables empty, preventing exit code capture. Changed to `func_exit=$?` and `exit_code=$func_exit` (without `local`).
+
+40. **Awk has no built-in ceil(); `-int(-x)` is wrong** - In awk, `int()` truncates toward zero (e.g. `int(-0.6)` is 0), so the common C-style ceiling trick `-int(-x)` gives 0 for `x=0.6` instead of 1. For ceiling of a positive value use: `(v==int(v)) ? int(v) : int(v)+1`. Example: Ping threshold in `lib/detection/ping_detection.sh` was changed from `int(x + 0.999)` to this explicit ceiling to avoid a magic constant and to be correct in awk.
+
+41. **Pipeline exit code is the last command's** - In a pipeline `cmd1 | cmd2`, the pipeline's exit code is `cmd2`'s. If you need to act on `cmd1`'s success/failure (e.g. avoid masking `cmd1` failure when `cmd2` succeeds), run `cmd1` first, capture its output and exit code, then run `cmd2` on the captured output only when `cmd1` succeeded. Use `|| true` on `cmd2` when its non-zero exit (e.g. grep no match) is expected and the script uses `set -e`. Example: `lib/recovery/xfrm_recovery.sh` pre-delete diagnostic now runs `ip xfrm state` then greps its output so ip failures are not masked.

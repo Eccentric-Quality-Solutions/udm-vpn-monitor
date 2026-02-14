@@ -209,7 +209,7 @@ flowchart TD
     PingCheck -->|Yes| PingTest{ping<br/>Success?}
     PingCheck -->|No| VPNOK[VPN OK]
     PingTest -->|Yes| VPNOK
-    PingTest -->|No| VPNFail
+    PingTest -->|No| VPNFail[VPN Failed]
 
     IpsecCheck -->|Yes| VPNOK
     IpsecCheck -->|No| VPNFail
@@ -266,6 +266,8 @@ flowchart TD
 - **Network Partition Check**: (if enabled via `ENABLE_NETWORK_PARTITION_CHECK`) occurs before cooldown check to ensure partition detection works even during cooldown periods. This timing is intentional - if the network is partitioned, VPN checks should be skipped regardless of cooldown status. When network is partitioned, the script updates partition state and continues execution (does not exit early). Recovery actions later check partition state and skip recovery if network is partitioned, allowing VPN checks to proceed but preventing unnecessary recovery actions.
 
 - **Cron Persistence Check**: Performed once per run (tracked via `.cron_checked` file) after cooldown check. Detects if cron jobs were removed during system upgrades (common after UniFi OS updates). Logs warnings but doesn't fail execution - this is a diagnostic check to help users detect configuration loss.
+
+- **Ping Check** (enabled by default): When `ENABLE_PING_CHECK=1`, ping runs for every location (target = internal IP(s) or external IP). Ping failure is treated as VPN failed (routing_issue) and counts toward the recovery threshold; the diagram’s "Ping Success?" → No leads to VPN Failed.
 
 - **System-Wide Failure Detection**: (if enabled via `ENABLE_SYSTEM_WIDE_FAILURE_DETECTION`) occurs after all locations are checked but before recovery attempts. The system checks all locations' VPN status (read-only, doesn't update state) and compares failure count to configured threshold. If threshold exceeded, system-wide failure state is set and recovery coordination is enabled. Only the designated coordinator location attempts recovery during system-wide failures, preventing cascades and rate limiting issues. System-wide failure state is cleared when failures drop below threshold. This detection happens in `process_locations()` before individual location recovery attempts in `monitor_location()`. See the "System-Wide Failure Detection" section below for detailed documentation.
 
@@ -422,7 +424,7 @@ sequenceDiagram
             alt Ping Success
                 Script->>Script: VPN OK
             else Ping Failed
-                Script->>Script: VPN Suspect (log warning)
+                Script->>Script: VPN Failed (routing_issue, counts toward threshold)
             end
         else Bytes Not Increasing
             Script->>Script: VPN Failed<br/>Uses passed SA state for failure type
@@ -444,27 +446,59 @@ sequenceDiagram
 
 ### Ping Check Behavior
 
-The ping check provides additional connectivity verification beyond SA state checks. It's important to understand how ping failures interact with SA state:
+Ping check is **enabled by default** (`ENABLE_PING_CHECK=1`). When enabled:
+
+- **Ping always runs** for each location: target is the location’s internal IP(s) if configured, otherwise the external IP. A warning is logged at config validation if `LOCAL_UDM_IP` or location internal/external IPs are not set.
+- **Ping failure is treated as VPN failed**: failure type is `routing_issue`, the VPN is marked failed, and the run counts toward the failure threshold (recovery tiers).
 
 **Scenario 1: SA Exists But Ping Fails**
-- **Behavior**: VPN is marked as **OK** (SA check passes), but a **WARNING** is logged
-- **Reasoning**: The Security Association exists, indicating the tunnel is established at the IPsec level. The ping failure suggests the tunnel may not be routing traffic correctly, but the SA state is still valid
-- **Impact**: The tunnel passes the primary check (SA exists), allowing it to remain active while warning about connectivity issues
-- **Escalation**: If ping continues to fail, byte counters should also stop increasing (no traffic flowing), which will eventually trigger a failure when byte counters don't increase. This provides a natural escalation path: ping warnings → byte counter failure → recovery actions
-- **Use Case**: Helps detect cases where the tunnel is established but routing is broken, without immediately failing on transient ping issues
+- **Behavior**: VPN is marked as **FAILED** (failure type `routing_issue`), a **WARNING** is logged, and the failure counts toward the recovery threshold.
+- **Reasoning**: The SA exists but ping failure indicates the tunnel is not reliably routing traffic; the run is treated as a failure so repeated ping failures can trigger recovery.
+- **Impact**: Same as other failures: failure counter increments and tier logic applies (Tier 1 log, Tier 2 surgical cleanup, Tier 3 full restart when thresholds are reached).
 
 **Scenario 2: SA Doesn't Exist But Ping Succeeds**
-- **Behavior**: VPN is marked as **FAILED** (SA check fails), but a **WARNING** is logged
-- **Reasoning**: No Security Association exists, so the VPN tunnel is down. However, ping succeeds, indicating connectivity exists via another route (not through the VPN tunnel)
-- **Impact**: The tunnel fails the primary check (no SA), triggering normal failure handling. The ping success warning helps distinguish between "no connectivity at all" vs "connectivity exists but not through VPN"
-- **Use Case**: Helps identify when connectivity exists via alternative routes (e.g., direct internet, other VPNs) even though the monitored tunnel is down
+- **Behavior**: VPN is marked as **FAILED** (no SA), but a **WARNING** is logged that connectivity exists via an alternative route.
+- **Reasoning**: No Security Association exists, so the VPN tunnel is down. Ping succeeds via another path (e.g. direct internet, other VPN).
+- **Impact**: Normal failure handling; the warning helps distinguish “no connectivity” from “connectivity exists but not through this tunnel”.
 
-**Design Rationale**:
-The ping check is designed as a **supplementary diagnostic tool**, not a hard failure condition. The primary detection method (SA state + byte counters) remains the authoritative source for tunnel health. Ping checks provide early warning of connectivity issues while allowing the more reliable byte counter method to confirm actual traffic flow problems before triggering recovery actions.
+**Design rationale**: When ping check is enabled, it is a **hard failure condition**: ping failure causes the VPN to be considered failed for that run and contributes to the threshold for recovery actions. Configure `LOCAL_UDM_IP` and per-location internal (or external) IPs for reliable ping checks.
 
-If validation fails (based on SA state and byte counters), it escalates through recovery tiers. The ping check helps distinguish between "tunnel exists but broken" and "tunnel exists and working but idle".
+### VPN status check: xfrm primary and ipsec fallback
 
-**Note**: When ping check is enabled, `routing_issue` warnings may still appear for healthy VPNs in some edge cases. These warnings are logged "for diagnostic purposes" but can create log noise (Issue #16 - Partially Fixed). The VPN is still correctly identified as healthy (SA exists, bytes increasing), but the routing_issue warning may be logged even when the VPN is functioning correctly.
+`check_vpn_status()` (in `lib/detection/failure_analysis.sh`) tries xfrm first, then optionally ipsec status. Whether ipsec fallback runs depends on **why** xfrm failed, not on ping:
+
+- **xfrm passes** → VPN OK; no fallback.
+- **xfrm fails, diagnostic does not contain "SA exists"** (no SA, or xfrm command error) → **ipsec status runs**. If ipsec finds the connection, VPN is marked OK.
+- **xfrm fails, diagnostic contains "SA exists"** (SA found but validation failed: e.g. ping timeout, bytes not increasing, bytes decreased) → **ipsec fallback is skipped**; result stays failed. This avoids ipsec status (which can still show "established" when the tunnel is broken) from resetting the failure count and blocking recovery.
+
+```mermaid
+flowchart TD
+    subgraph check_vpn_status
+        A[check_xfrm_primary] --> B{xfrm passed?}
+        B -->|yes| C[VPN OK]
+        B -->|no| D{xfrm_diagnostic contains SA exists?}
+        D -->|yes| E[skip ipsec fallback]
+        D -->|no| F[check_ipsec_fallback]
+        E --> G[VPN Failed]
+        F --> H{ipsec found connection?}
+        H -->|yes| C
+        H -->|no| G
+        C --> I[check_ping_optional]
+        G --> I
+        I --> J[determine_vpn_status]
+        J --> K[return 0 or 1]
+    end
+```
+
+**Summary**
+
+| xfrm result | xfrm diagnostic      | ipsec fallback runs? | VPN result if ipsec would pass |
+|-------------|-----------------------|----------------------|----------------------------------|
+| Pass        | —                     | No                   | OK                               |
+| Fail        | No SA / xfrm error    | **Yes**              | OK (if ipsec finds connection)   |
+| Fail        | "SA exists" (e.g. ping failed, bytes not increasing) | **No**  | Failed (stays failed)            |
+
+So: **xfrm fails but ping passes** — ipsec status runs only when the failure was **no SA** (or xfrm error). When the failure is "SA exists" (validation failed), we never run ipsec; in those paths ping has already been used inside xfrm and did not pass (otherwise xfrm would have passed).
 
 ## Recovery Tier Flow
 
@@ -645,7 +679,7 @@ The monitor tracks state independently for each configured location, enabling in
 **Location-Based Configuration**:
 VPNs are configured using location-based variables:
 - `LOCATION_<NAME>_EXTERNAL`: External/public IP address of the remote VPN gateway
-- `LOCATION_<NAME>_INTERNAL`: Internal/private IP address(es) for ping checks (optional, space-separated)
+- `LOCATION_<NAME>_INTERNAL`: Internal/private IP address(es) for ping checks (optional, space-separated). When ping is enabled but not set, external IP is used and a config warning is logged.
 - Location names are automatically extracted from variable names (text between `LOCATION_` and `_EXTERNAL`)
 - For locations with multiple internal IPs, VPN is considered healthy if ≥30% respond to pings
 
@@ -919,7 +953,6 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │   └── state/                   # State module subdirectory
 │       ├── state_paths.sh         # State file path generation and sanitization
 │       ├── peer_state.sh          # Per-peer state operations
-│       ├── location_state.sh      # Per-location state operations
 │       ├── global_state.sh         # Global state operations
 │       ├── state_init.sh           # State initialization and validation
 │       ├── network_partition_stats.sh # Network partition check statistics tracking
@@ -1070,7 +1103,7 @@ The system uses a modular library architecture where functionality is organized 
 - `check_vpn_status()` - Main detection function (in `failure_analysis.sh`)
 - `check_xfrm_status()` - Checks Security Associations via `ip xfrm state` (in `xfrm_detection.sh`)
 - `check_ipsec_status()` - Fallback detection via `ipsec status` (in `xfrm_detection.sh`)
-- `check_ping_connectivity()` - Optional ping-based connectivity verification (in `ping_detection.sh`)
+- `check_ping_connectivity()` - Ping-based connectivity verification (in `ping_detection.sh`). When ENABLE_PING_CHECK=1, ping runs for each location; failure is treated as VPN failed.
 - `validate_ip_address()` - IP address validation (in `network_validation.sh`)
 - `detect_failure_type()` - Failure type classification (in `failure_analysis.sh`)
 - `detect_system_wide_failure()` - Detects system-wide failure across all locations (in `system_wide_failure.sh`)
@@ -1159,7 +1192,6 @@ The system uses a modular library architecture where functionality is organized 
 **Module Structure**: The state management functionality is organized into focused modules in the `lib/state/` subdirectory:
 - **`lib/state/state_paths.sh`**: State file path generation, sanitization, and path management utilities
 - **`lib/state/peer_state.sh`**: Per-peer state operations (connection name caching)
-- **`lib/state/location_state.sh`**: Per-location state operations (currently placeholder - reserved for future location-specific state operations not tied to individual peers)
 - **`lib/state/global_state.sh`**: Global state operations (cooldown, restart count, network partition state)
 - **`lib/state/state_init.sh`**: State initialization and validation functions
 - **`lib/state/network_partition_stats.sh`**: Network partition check statistics tracking (success/failure counting, hourly summary logging)
@@ -1331,8 +1363,8 @@ The following improvements have been implemented to enhance system reliability a
 - **Implementation**:
   - Primary: `ip xfrm state` (SA state and byte counters)
   - Fallback: `ipsec status` (if xfrm unavailable)
-  - Optional: Ping checks verify end-to-end connectivity
-- **Benefit**: Works across different UDM configurations, distinguishes "idle" from "broken"
+  - Ping checks (enabled by default): when enabled, always run (internal or external IP as target); ping failure = VPN failed (routing_issue, counts toward threshold)
+- **Benefit**: Works across different UDM configurations; ping provides a direct connectivity failure signal when enabled
 
 ### 6. Modular Library Architecture
 - **Why**: Reduce code duplication, improve maintainability, enable code reuse
@@ -1421,7 +1453,7 @@ The following improvements have been implemented to enhance system reliability a
 8. **False Positive Prevention**: 
    - Recovery messages are only logged when `failure_count > 0` to prevent false positive recovery messages (Issue #17 - Fixed)
    - Stale `failure_type` files are cleared silently without logging recovery
-   - Routing_issue warnings may still appear for healthy VPNs when ping check is enabled (Issue #16 - Partially Fixed), but VPN status is correctly identified as healthy
+   - When ping check is enabled, ping failure is treated as VPN failed (routing_issue); VPN is not marked healthy if ping fails
 9. **Network Command Timeout Handling**: Network commands that may hang are wrapped with `timeout` command to prevent indefinite blocking:
    - **Pattern**: Wrap potentially hanging network commands with `timeout` wrapper
    - **Implementation**: Check for `timeout` command availability, wrap command with calculated timeout value
