@@ -655,7 +655,7 @@ determine_vpn_status() {
 #   4. When ENABLE_PING_CHECK=1, ping always runs (internal IP(s) or external as target). Ping failure is treated as VPN failed (counts toward threshold).
 #
 # Side effects:
-#   - Creates/updates per-peer last_bytes file if byte counters found
+#   - Creates/updates per-peer last_bytes after failure type detection (when xfrm primary passed)
 #   - Logs debug/warning messages about VPN state
 #   - When both xfrm and ipsec status checks fail, logs a single combined diagnostic message
 #     that includes which detection methods were attempted and why each failed
@@ -718,8 +718,10 @@ check_vpn_status() {
 	# Note: sa_exists_var is kept for internal optimization in check_xfrm_primary but not used upstream
 	local sa_exists_var=""
 
+	local xfrm_primary_passed=0
 	if check_xfrm_primary "$external_peer_ip" "$first_internal_ip" "$location_name" "xfrm_diagnostic" "sa_exists_var" "xfrm_output"; then
 		primary_check_passed=1
+		xfrm_primary_passed=1
 	else
 		# xfrm check failed - only try ipsec fallback when failure was due to no SA or xfrm error.
 		# When SA existed but validation failed (e.g. ping timeout, byte counter rules), do not
@@ -828,9 +830,24 @@ check_vpn_status() {
 	# check_ping_optional will derive SA existence from primary_check_passed
 	check_ping_optional "$primary_check_passed" "$external_peer_ip" "$internal_peer_ips" "$location_name"
 
+	# Persist last_bytes only after failure type detection so check_routing_issue_for_failure_type
+	# sees the previous run's value (avoids false "routing issue" when current_bytes == last_bytes).
+	local primary_before_failure_type=$primary_check_passed
+
 	# Determine final primary check status based on failure type detection
 	# Pass location_name, first internal IP, and xfrm_output for failure type detection
 	primary_check_passed=$(determine_vpn_status "$primary_check_passed" "$external_peer_ip" "$first_internal_ip" "$location_name" "$xfrm_output")
+
+	# Update last_bytes after failure type detection when primary passed via xfrm (not ipsec fallback)
+	if [[ $xfrm_primary_passed -eq 1 ]] && [[ $primary_before_failure_type -eq 1 ]] && [[ -n "$xfrm_output" ]]; then
+		local current_bytes
+		if current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null) && [[ -n "$current_bytes" ]] && [[ "$current_bytes" =~ ^[0-9]+$ ]]; then
+			set_peer_state "$location_name" "$external_peer_ip" "last_bytes" "$current_bytes" || true
+			if [[ "$current_bytes" -gt 0 ]]; then
+				delete_peer_state "$location_name" "$external_peer_ip" "idle_detected" || true
+			fi
+		fi
+	fi
 
 	# Return 0 if OK, 1 if failed (invert primary_check_passed: 1 becomes 0, 0 becomes 1)
 	return $((1 - primary_check_passed))
