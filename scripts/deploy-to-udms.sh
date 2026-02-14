@@ -4,9 +4,9 @@
 # Deploys the VPN monitor to multiple UDMs from a config file.
 #
 # For each UDM:
-# 1. Prompts for username and password
+# 1. Calls deploy-to-udm.sh (which prompts for username/password)
 # 2. SCP package, archive logs, uninstall (keep config), extract, install
-# 3. Runs tail -f on vpn-monitor.log until user presses Ctrl+C
+# 3. Runs tail -f on vpn-monitor.log until user presses Ctrl+C (ssh may prompt for password)
 # 4. Continues to next UDM
 #
 # Usage:
@@ -165,27 +165,22 @@ ensure_package() {
 }
 
 # Run tail -f on vpn-monitor.log on remote UDM (interactive until Ctrl+C).
+# Uses root@host; ssh will prompt for password if needed.
 #
 # Arguments:
-#   $1: username - SSH user
-#   $2: host - Target host or IP
-#   $3: bind_ip - Optional bind address for SSH
+#   $1: host - Target host or IP
+#   $2: bind_ip - Optional bind address for SSH
 #
 # Returns:
 #   Exit code of ssh/tail (or 0 when user interrupts)
 run_tail_f() {
-	local username="$1"
-	local host="$2"
-	local bind_ip="$3"
+	local host="$1"
+	local bind_ip="$2"
 	local ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -t"
 	[[ -n "$bind_ip" ]] && ssh_opts="$ssh_opts -o BindAddress=$bind_ip"
 
-	log_info "Tailing vpn-monitor.log on ${username}@${host} (Ctrl+C to continue to next UDM)..."
-	if command -v sshpass >/dev/null 2>&1 && [[ -n "${SSH_PASSWORD:-}" ]]; then
-		SSHPASS="$SSH_PASSWORD" sshpass -e ssh $ssh_opts "${username}@${host}" "tail -f /data/vpn-monitor/logs/vpn-monitor.log 2>/dev/null || echo 'Log file not found'"
-	else
-		ssh $ssh_opts "${username}@${host}" "tail -f /data/vpn-monitor/logs/vpn-monitor.log 2>/dev/null || echo 'Log file not found'"
-	fi
+	log_info "Tailing vpn-monitor.log on root@${host} (Ctrl+C to continue to next UDM)..."
+	ssh $ssh_opts "root@${host}" "tail -f /data/vpn-monitor/logs/vpn-monitor.log 2>/dev/null || echo 'Log file not found'"
 }
 
 # Main: parse args, ensure package, deploy to each UDM from config.
@@ -252,19 +247,9 @@ main() {
 		log_info "Deploying to: $host"
 		echo ""
 
-		read -rp "Username for ${host} [root]: " username
-		username="${username:-root}"
-		read -rsp "Password for ${host}: " password
-		echo ""
-
-		# Clear password from next UDM
-		export SSH_PASSWORD="$password"
-		unset -v password
-
 		local deploy_args=(
 			--file "$PACKAGE_FILE"
 			--target-ip "$host"
-			--username "$username"
 			--append-missing-config
 		)
 		[[ -n "$bind_ip" ]] && deploy_args+=(--bind-ip "$bind_ip")
@@ -272,14 +257,12 @@ main() {
 		if "${SCRIPT_DIR}/deploy-to-udm.sh" "${deploy_args[@]}"; then
 			success_count=$((success_count + 1))
 			if [[ $SKIP_TAIL -eq 0 ]]; then
-				run_tail_f "$username" "$host" "$bind_ip" || true
+				run_tail_f "$host" "$bind_ip" || true
 			fi
 		else
 			fail_count=$((fail_count + 1))
 			log_error "Deployment failed for $host"
 		fi
-
-		unset SSH_PASSWORD
 		echo ""
 	done
 

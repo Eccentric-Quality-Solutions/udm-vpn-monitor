@@ -156,8 +156,7 @@ MOCK
 	run bash "${fake_root}/scripts/deploy-to-udms.sh" \
 		--config "${fake_root}/deploy-udms.conf" \
 		--file "${fake_root}/udm-vpn-monitor.zip" \
-		--skip-tail \
-		< <(printf '%s\n' root testpass) 2>&1
+		--skip-tail 2>&1
 
 	assert_success
 	assert_output --partial "Deployment summary"

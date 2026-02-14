@@ -5,7 +5,7 @@
 #
 # Critical paths covered:
 # - Argument parsing and help
-# - Required parameter validation (target-ip, password, package file)
+# - Required parameter validation (target-ip, password via stdin or interactive, package file)
 # - resolve_bind_ip_from_config (LOCAL_UDM_IP from vpn-monitor.conf)
 # - --bind-ip explicit and from config
 # - --append-missing-config
@@ -30,7 +30,7 @@ PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 	assert_output --partial "Usage:"
 	assert_output --partial "--target-ip"
 	assert_output --partial "--bind-ip"
-	assert_output --partial "--password"
+	assert_output --partial "--username"
 }
 
 # bats test_tags=category:unit
@@ -49,16 +49,17 @@ PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 
 # bats test_tags=category:unit
 @test "deploy-to-udm.sh requires --target-ip" {
-	run bash "$DEPLOY_SCRIPT" --file /nonexistent.zip --password x 2>&1
+	run bash "$DEPLOY_SCRIPT" --file /nonexistent.zip </dev/null 2>&1
 	assert_failure
 	assert_output --partial "Target IP address is required"
 }
 
 # bats test_tags=category:unit
-@test "deploy-to-udm.sh requires password when SSH_PASSWORD not set" {
+@test "deploy-to-udm.sh requires password when not interactive and stdin empty" {
+	# Non-interactive with empty stdin: must pipe password or run interactively
 	run bash "$DEPLOY_SCRIPT" \
 		--target-ip 192.168.1.100 \
-		--file "${PROJECT_ROOT}/udm-vpn-monitor.zip" 2>&1
+		--file "${PROJECT_ROOT}/udm-vpn-monitor.zip" </dev/null 2>&1
 	assert_failure
 	assert_output --partial "password"
 }
@@ -100,11 +101,10 @@ MOCK
 	export PATH="${mock_bin}:${PATH}"
 
 	# Run deploy without --bind-ip; should use LOCAL_UDM_IP from config
-	run bash "$DEPLOY_SCRIPT" \
+	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
 		--target-ip 192.168.1.100 \
-		--file "${PROJECT_ROOT}/udm-vpn-monitor.zip" \
-		--password testpass \
-		--verbose 2>&1
+		--file \"${PROJECT_ROOT}/udm-vpn-monitor.zip\" \
+		--verbose" 2>&1
 
 	# Restore config
 	if [[ -f "$backup_conf" ]]; then
@@ -142,11 +142,10 @@ MOCK
 	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
 	export PATH="${mock_bin}:${PATH}"
 
-	run bash "$DEPLOY_SCRIPT" \
+	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
 		--target-ip 192.168.1.100 \
 		--bind-ip 192.168.50.1 \
-		--file "${PROJECT_ROOT}/udm-vpn-monitor.zip" \
-		--password testpass 2>&1
+		--file \"${PROJECT_ROOT}/udm-vpn-monitor.zip\"" 2>&1
 
 	assert_success
 	assert_output --partial "192.168.50.1"
@@ -177,10 +176,9 @@ MOCK
 	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
 	export PATH="${mock_bin}:${PATH}"
 
-	run bash "$DEPLOY_SCRIPT" \
+	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
 		--target-ip 192.168.1.100 \
-		--file "${PROJECT_ROOT}/udm-vpn-monitor.zip" \
-		--password testpass 2>&1
+		--file \"${PROJECT_ROOT}/udm-vpn-monitor.zip\"" 2>&1
 
 	assert_success
 	assert_output --partial "Deployment completed successfully"
@@ -213,11 +211,10 @@ MOCK
 	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
 	export PATH="${mock_bin}:${PATH}"
 
-	run bash "$DEPLOY_SCRIPT" \
+	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
 		--target-ip 192.168.1.100 \
-		--file "${PROJECT_ROOT}/udm-vpn-monitor.zip" \
-		--password testpass \
-		--append-missing-config 2>&1
+		--file \"${PROJECT_ROOT}/udm-vpn-monitor.zip\" \
+		--append-missing-config" 2>&1
 
 	# --append-missing-config is passed to install.sh in Step 5; deploy completes
 	assert_success
@@ -249,10 +246,9 @@ MOCK
 	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
 	export PATH="${mock_bin}:${PATH}"
 
-	run bash "$DEPLOY_SCRIPT" \
+	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
 		--target-ip 192.168.1.100 \
-		--file "${PROJECT_ROOT}/udm-vpn-monitor.zip" \
-		--password testpass 2>&1
+		--file \"${PROJECT_ROOT}/udm-vpn-monitor.zip\"" 2>&1
 
 	assert_success
 	# Step 2 (log archive) runs before Step 3 (uninstall)
@@ -287,11 +283,10 @@ MOCK
 	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
 	export PATH="${mock_bin}:${PATH}"
 
-	run bash "$DEPLOY_SCRIPT" \
+	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
 		--target-ip 192.168.1.100 \
-		--file "${PROJECT_ROOT}/udm-vpn-monitor.zip" \
-		--password testpass \
-		--skip-uninstall 2>&1
+		--file \"${PROJECT_ROOT}/udm-vpn-monitor.zip\" \
+		--skip-uninstall" 2>&1
 
 	assert_success
 	# Log archive runs only when uninstall runs; with --skip-uninstall it is skipped
