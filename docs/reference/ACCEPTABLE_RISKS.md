@@ -22,23 +22,6 @@ This document tracks bugs and potential issues that have been reviewed and deter
 
 ---
 
-## Race Condition in `record_restart()` - Data Loss Risk
-
-**Location**: `lib/state.sh:898-940`
-
-**Issue**: `record_restart()` has a race condition where concurrent calls can cause data loss due to non-atomic append and read-modify-write operations.
-
-**Why Acceptable**:
-- Very low likelihood (< 0.1% in normal operation) - lockfile mechanism prevents concurrent execution
-- `record_restart()` is only called from `full_restart()` which runs after lockfile is acquired
-- Both append and read-modify-write operations happen in the same process after lockfile acquisition
-- Limited impact: worst case is lost restart records leading to slightly inaccurate rate limiting (self-corrects on next restart)
-- The cleanup operation (read-filter-write) uses atomic move, so even if append races, cleanup is safe
-
-**Date Accepted**: 2025-12-31
-
----
-
 ## Race Condition in Lockfile Stale Removal
 
 **Location**: `lib/lockfile.sh:402-410`

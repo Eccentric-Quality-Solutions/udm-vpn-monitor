@@ -766,6 +766,18 @@ atomic_write_file "$state_file" "$value"
   echo "tunnel_down" >"${STATE_DIR}/failure_type_TEST_192_168_1_1"
   ```
 
+### Pattern: Defer State Writes When Same-Run Logic Depends on Previous Value
+
+**When to Use:** A function in the same run both updates a state value and later runs logic that reads that state to make a decision. Writing the new value before the read causes the reader to see the value just written instead of the previous run's value, which can cause false positives (e.g. "no change" mistaken for "regression").
+
+**Pattern:**
+- Do not write the state in the early success path. Have the caller (or a single place after all reads that depend on the old value) persist the state once those reads are done.
+- Example: `last_bytes` was previously written in `check_byte_counters` when the primary check passed; `check_routing_issue_for_failure_type` then read `last_bytes` and treated `current_bytes <= last_bytes` as "routing issue". Because the write had already happened, `last_bytes` equaled `current_bytes`, so every healthy tunnel was misclassified. Fix: persist `last_bytes` in `check_vpn_status` only after `determine_vpn_status` (and thus `check_routing_issue_for_failure_type`) has run.
+
+**Key Points:**
+- Identify all readers of a state value in the same invocation; if any reader's logic assumes "value from previous run", ensure the write happens after that reader runs.
+- Prefer a single, clear persistence point (e.g. one function that writes after all dependent logic) over scattering writes.
+
 **Files Intentionally Outside the Abstraction Layer:**
 
 Some state files are intentionally **not** managed by `get_peer_state_file_path()` because they represent **global system state** rather than per-peer or per-location state.

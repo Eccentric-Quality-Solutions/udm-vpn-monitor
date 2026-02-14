@@ -1006,7 +1006,8 @@ detect_sa_rekey() {
 #
 # Validates that byte counters indicate healthy VPN tunnel using simple heuristics.
 # Uses simple logic: bytes increasing = healthy, bytes not increasing + ping fails = broken.
-# Updates the last_bytes file with current byte count if valid.
+# Does not write last_bytes here; the caller (check_vpn_status) persists it after failure
+# type detection so check_routing_issue_for_failure_type sees the previous run's value.
 # Detects SA rekey events before checking bytes to prevent false positives.
 #
 # Arguments:
@@ -1022,8 +1023,8 @@ detect_sa_rekey() {
 #   1: Byte counters are invalid (zero or broken tunnel)
 #
 # Side effects:
-#   - Updates last_bytes state using abstraction layer if bytes are valid
-#   - Detects SA rekey if SPI provided and resets byte counter baseline
+#   - Does not write last_bytes (caller persists after failure type detection)
+#   - Detects SA rekey if SPI provided and resets byte counter baseline to 0
 #   - Marks idle tunnels and suggests keepalive if needed
 #   - Logs INFO messages for valid counters
 #   - Logs warning messages for invalid counters (unless diagnostic variable is provided)
@@ -1111,10 +1112,9 @@ check_byte_counters() {
 			local last_bytes
 			last_bytes=$(get_peer_state "$location_name" "$external_peer_ip" "last_bytes" "0")
 			if [[ "$current_bytes" -gt 0 ]]; then
-				# Bytes are non-zero after rekey - update baseline
-				local state_note=""
-				set_peer_state "$location_name" "$external_peer_ip" "last_bytes" "$current_bytes" || state_note=", state update failed"
-				log_message "INFO" "$location_name" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset${state_note}) for $ip_display"
+				# Bytes are non-zero after rekey - baseline will be updated by caller after failure type detection.
+				# If that deferred write fails, set_peer_state logs the error.
+				log_message "INFO" "$location_name" "VPN OK: SA rekeyed, bytes=$current_bytes (baseline reset) for $ip_display"
 				return 0
 			fi
 			# If bytes are 0 after rekey, continue to normal check below
@@ -1138,7 +1138,7 @@ check_byte_counters() {
 				# Errors are logged by check_ping_connectivity, so we don't suppress stderr
 				if check_ping_connectivity "$internal_peer_ip" "$local_ip"; then
 					# Ping succeeds - VPN is healthy but idle (newly established or idle)
-					set_peer_state_non_critical "$location_name" "$external_peer_ip" "last_bytes" "$current_bytes"
+					# last_bytes updated by caller after failure type detection
 					set_peer_state_non_critical "$location_name" "$external_peer_ip" "idle_detected" "1"
 					log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=0 (first check, idle but healthy, ping check passed) for $ip_display"
 					return 0
@@ -1195,14 +1195,9 @@ check_byte_counters() {
 			fi
 		fi
 		# Bytes are increasing and ping check passed (or disabled) - definitely healthy
-		local flow_note="traffic flowing"
-		if set_peer_state "$location_name" "$external_peer_ip" "last_bytes" "$current_bytes"; then
-			# Clear idle state if set (traffic is flowing again)
-			delete_peer_state "$location_name" "$external_peer_ip" "idle_detected" || true
-		else
-			flow_note="state update failed"
-		fi
-		log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, $flow_note) for $ip_display"
+		# last_bytes updated by caller after failure type detection so routing-issue logic sees previous value
+		delete_peer_state "$location_name" "$external_peer_ip" "idle_detected" || true
+		log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (was $last_bytes, traffic flowing) for $ip_display"
 		return 0
 	fi
 
@@ -1216,7 +1211,7 @@ check_byte_counters() {
 			# Errors are logged by check_ping_connectivity, so we don't suppress stderr
 			if check_ping_connectivity "$internal_peer_ip" "$local_ip"; then
 				# Ping succeeds - tunnel is idle but healthy
-				set_peer_state_non_critical "$location_name" "$external_peer_ip" "last_bytes" "$current_bytes"
+				# last_bytes updated by caller after failure type detection
 				set_peer_state_non_critical "$location_name" "$external_peer_ip" "idle_detected" "1"
 				log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (static, idle but healthy, ping check passed) for $ip_display"
 				# Populate diagnostic variable if provided (for failure type detection)
@@ -1250,8 +1245,7 @@ check_byte_counters() {
 			fi
 			# Also log warning directly (even if diagnostic_var is provided) since it's a suspect condition
 			handle_error "WARNING" "$location_name" "VPN suspect: SA exists but $warning_msg for $ip_display"
-			# Update state but don't mark as idle (ping check required for idle detection)
-			set_peer_state_non_critical "$location_name" "$external_peer_ip" "last_bytes" "$current_bytes"
+			# last_bytes not updated here (primary failed); caller will not persist for this peer
 			return 1
 		fi
 	fi
@@ -1274,7 +1268,7 @@ check_byte_counters() {
 		# Errors are logged by check_ping_connectivity, so we don't suppress stderr
 		if check_ping_connectivity "$internal_peer_ip" "$local_ip"; then
 			# Ping succeeds - tunnel is idle but healthy
-			set_peer_state_non_critical "$location_name" "$external_peer_ip" "last_bytes" "$current_bytes"
+			# last_bytes updated by caller after failure type detection
 			set_peer_state_non_critical "$location_name" "$external_peer_ip" "idle_detected" "1"
 			log_message "INFO" "$location_name" "VPN OK: SA exists, bytes=$current_bytes (idle but healthy, ping check passed) for $ip_display"
 			# Check keepalive status and suggest action if needed

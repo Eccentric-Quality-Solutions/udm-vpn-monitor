@@ -54,7 +54,9 @@ Options:
   -i, --input FILE      Input log file (required)
   -o, --output FILE     Output file for anonymized log (default: stdout)
   -m, --mapping-file FILE  Mapping file for unified anonymization (optional)
-                          If provided, loads existing mappings and saves updated mappings
+                          If provided, loads existing mappings and saves updated mappings.
+                          If omitted, a mapping file is created by default: <output>.mapping
+                          when -o is used, or <input>.mapping when writing to stdout.
   -v, --verbose         Verbose output
   -h, --help            Show this help message
 
@@ -561,16 +563,28 @@ main() {
 		[[ $VERBOSE -eq 1 ]] && [[ "$final_output_file" != "$OUTPUT_FILE" ]] && echo "Output filename updated: $OUTPUT_FILE -> $final_output_file" >&2
 	fi
 
+	# If no mapping file was specified, create one by default so mappings can be reused
+	if [[ -z "$MAPPING_FILE" ]]; then
+		if [[ -n "$final_output_file" ]]; then
+			MAPPING_FILE="${final_output_file}.mapping"
+		else
+			MAPPING_FILE="${INPUT_FILE}.mapping"
+		fi
+		[[ $VERBOSE -eq 1 ]] && echo "No mapping file specified, will save to: $MAPPING_FILE" >&2
+	fi
+
 	# Anonymize log file
 	if ! anonymize_log_file "$INPUT_FILE" "$final_output_file"; then
 		echo "ERROR: Failed to anonymize log file" >&2
 		exit 1
 	fi
 
-	# Save mapping file if provided
+	# Save mapping file (always set now: either user -m or default next to output/input)
 	if [[ -n "$MAPPING_FILE" ]]; then
 		[[ $VERBOSE -eq 1 ]] && echo "Saving mapping file: $MAPPING_FILE" >&2
-		if ! save_mapping_file "$MAPPING_FILE"; then
+		if save_mapping_file "$MAPPING_FILE"; then
+			echo "Mapping file written to: $MAPPING_FILE" >&2
+		else
 			echo "WARNING: Failed to save mapping file: $MAPPING_FILE" >&2
 		fi
 	fi
