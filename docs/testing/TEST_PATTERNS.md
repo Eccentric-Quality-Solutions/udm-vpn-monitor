@@ -1642,6 +1642,7 @@ mock_ipsec_status 0 "Connections:
 - Use `assert_log_contains_any` when log messages may vary slightly (e.g., "ipsec reload failed" vs "reload failed")
 - Use `assert_equal` for exact value comparisons
 - Prefer descriptive assertions over generic `assert`
+- **Script output vs LOG_FILE**: Messages from `log_message()` in the main script (e.g. lockfile "already running") are written to `LOG_FILE`, not stdout/stderr. When asserting such content after `run bash "$test_script"`, use `assert_log_contains_any "$LOG_FILE" "pattern1" "pattern2"` or a fallback chain: `assert_output --partial "pattern" || assert_log_contains_any "$LOG_FILE" "pattern1" "pattern2"` so the test passes whether the message appears on stdout or in the log.
 
 ### 10. Recovery Message Patterns
 

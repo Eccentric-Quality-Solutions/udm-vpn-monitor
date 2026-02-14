@@ -4,6 +4,34 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 
 ## [Unreleased]
 
+## 0.8.0 - 2026-02-14
+
+### Added
+- **Multi-UDM deployment script**: `scripts/deploy-to-udms.sh` deploys to multiple UDMs from a config file. Copy `scripts/deploy-udms.conf.example` to `deploy-udms.conf` (or use path via env), add UDMs (one per line: `host [bind_ip]`), then run; prompts for credentials per UDM, deploys, and optionally tails logs. Included in install package and installed to `scripts/` under install dir.
+- **Install flag `--append-missing-config`**: With `--silent --append-missing-config`, the installer auto-appends new config variables from the template to the existing config (no overwrite). Paths containing `/data/vpn-monitor` are substituted with the actual install directory. Uses `compare-config.sh --list-missing-with-values` under the hood.
+- **Interactive installer location flow**: When "Configure a location now?" is chosen, the installer now prompts for remote internal IP(s) and (on first location) local UDM IP, supports "Add another location?" to add multiple locations in one run, and avoids duplicate location names.
+- **Lockfile staleness**: Lockfiles whose mtime differs from current time by more than 1 hour (in either direction) are always considered stale and removed, avoiding far-future or corrupted timestamps blocking execution.
+- **Path safety in state helpers**: `get_peer_state_file_path()` and `get_network_partition_state_file()` in `lib/state/state_paths.sh` require `STATE_DIR` to be set and non-empty; they return failure when unset so callers never receive root-level paths.
+- **Wrapper exit code logging**: `vpn-monitor-wrapper.sh` now captures the child monitor exit code and logs non-zero exits to the cron log so failures are visible instead of being swallowed by `|| true`.
+- **Code review lessons**: New lessons in `docs/reference/CODE_REVIEW_LESSONS_LEARNED.md`: 20a (wrapper/cron scripts must not swallow child exit codes), 21a (chain EXIT traps in test helpers when invoked multiple times), 40 (awk ceiling), 41 (pipeline exit code).
+- **Test/doc improvements**: TEST_PATTERNS.md note on script output vs LOG_FILE; RELEVANT_TESTS.md and deploy/install test coverage; compare-config and install tests updated; state helper EXIT trap chaining in `tests/helpers/state.bash`.
+
+### Changed
+- **Ping check behavior (breaking for “warning only” use)**: When `ENABLE_PING_CHECK=1`, ping failure is now treated as **VPN failed** (failure type `routing_issue`) and counts toward the recovery tier thresholds. Previously, SA existed + ping failed → VPN was marked OK with a warning only. Ipsec fallback is **skipped** when xfrm failed with "SA exists" (e.g. ping failed or bytes not increasing), so ipsec status can no longer reset the failure count in that case. ADR-0014 and ARCHITECTURE.md updated; TROUBLESHOOTING.md added "Ping timeouts but VPN never restarts" with causes and fixes.
+- **Default tier thresholds**: Default `TIER2_THRESHOLD` changed from 3 to 2 and `TIER3_THRESHOLD` from 5 to 3. Schema, config template, and install interactive defaults now use these values (single source of truth via `get_config_default` where available).
+- **compare-config.sh**: `LOCATION_*_EXTERNAL` and `LOCATION_*_INTERNAL` variables are never flagged as deprecated (user-defined location names; template may ship no or example location vars).
+- **Install script**: Sources `lib/config_schema.sh` for tier defaults; installs `scripts/deploy-to-udm.sh`, `scripts/deploy-to-udms.sh`, `scripts/deploy-udms.conf.example`, and `scripts/migrate-config-to-locations.sh` when present; config template no longer ships example location vars (user adds their own).
+- **Documentation**: ARCHITECTURE.md updated for ping-as-failure, xfrm/ipsec fallback logic diagram, and state module list; STATE_SYSTEM.md lockfile staleness and path safety; BASH_CODING_GUIDE.md removed `location_state.sh` sourcing; README tier defaults and deploy-to-udms note.
+
+### Removed
+- **`lib/state/location_state.sh`**: Empty stub removed; per-location state remains via per-peer state with location as a parameter. ADR-0005 and ARCHITECTURE.md updated; FUTURE.md notes reintroduction only if location-level state not tied to peers is added.
+- **FUTURE.md item**: Removed "Standardize non-critical state write error handling" (completed or superseded).
+
+### Fixed
+- **xfrm_recovery.sh**: Pre-delete diagnostic now runs `ip xfrm state` then greps its output in separate steps so pipeline exit code reflects `ip` failure rather than being masked by grep.
+- **Ping threshold ceiling (awk)**: Replaced incorrect ceiling expression in `lib/detection/ping_detection.sh` with correct awk ceiling for positive values.
+- **Test helper state.bash**: `setup_readonly_state_file()` now chains with existing EXIT trap so multiple calls in one test all restore permissions on exit.
+
 ## 0.7.0 - 2026-02-13
 
 ### Added

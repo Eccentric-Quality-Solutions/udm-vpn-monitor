@@ -184,9 +184,9 @@ RATE_LIMIT_WINDOW_MINUTES=60'
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
-	# Script may exit with code 1, but ping check should still be logged
-	# Should log ping check failure warning (check for either message variant)
-	assert_log_contains_any "$LOG_FILE" "ping check failed" "Ping check failed"
+	# When xfrm finds SA but ping fails, we mark VPN failed (no ipsec fallback override).
+	# Log should show ping failure or VPN suspect (script may exit 0 if resource-throttled before detection).
+	assert_log_contains_any "$LOG_FILE" "ping check failed" "Ping check failed" "VPN suspect"
 
 	remove_mock_from_path
 }

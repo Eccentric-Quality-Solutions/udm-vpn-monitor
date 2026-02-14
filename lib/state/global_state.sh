@@ -3,7 +3,7 @@
 # Global state operations
 # Handles rate limiting, restart tracking, and state validation
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # Get file modification time as timestamp
@@ -292,77 +292,68 @@ check_rate_limit() {
 	return 0 # Within rate limit
 }
 
-# Record restart timestamp
+# Compact restart count file to last 24 hours
 #
-# Records the current timestamp to RESTART_COUNT_FILE for rate limiting.
-# Also cleans up old entries (older than 24 hours) to prevent file growth.
-# Each restart adds a new line with Unix timestamp.
+# Reads RESTART_COUNT_FILE, keeps only timestamps from the last 24 hours, and
+# atomically writes back. Prevents unbounded file growth. Safe to call once per
+# run at startup (under main lock); avoids read-modify-write in record_restart.
+#
+# Arguments:
+#   None
 #
 # Returns:
 #   0: Always succeeds (logs warnings on errors but continues)
 #
 # Side effects:
-#   - Reads current RESTART_COUNT_FILE content (if exists and readable)
-#   - Appends current Unix timestamp to content in memory
-#   - Filters content to keep only entries from last 24 hours
-#   - Atomically writes updated content to RESTART_COUNT_FILE using atomic_write_file
-#   - Logs warnings if read, filter, or write operations fail
+#   - May overwrite RESTART_COUNT_FILE with filtered content
 #
-# Examples:
-#   record_restart
-#   # Adds current timestamp to restart count file atomically
+# Note:
+#   Requires RESTART_COUNT_FILE, SECONDS_PER_DAY, file_exists_and_readable,
+#   atomic_write_file, safe_timestamp_subtract, get_unix_timestamp, handle_error.
+compact_restart_count_file() {
+	if ! file_exists_and_readable "$RESTART_COUNT_FILE"; then
+		return 0
+	fi
+	local now
+	now=$(get_unix_timestamp)
+	local one_day_ago
+	one_day_ago=$(safe_timestamp_subtract "$now" "$SECONDS_PER_DAY" 2>/dev/null || echo "0")
+	local filtered_content
+	filtered_content=$(awk -v cutoff="$one_day_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null || echo "")
+	if ! atomic_write_file "$RESTART_COUNT_FILE" "$filtered_content"; then
+		handle_error "WARNING" "SYSTEM" "Failed to compact restart count file: $RESTART_COUNT_FILE"
+		return 0
+	fi
+	return 0
+}
+
+# Record restart timestamp
+#
+# Appends the current Unix timestamp to RESTART_COUNT_FILE for rate limiting.
+# Uses append-only writes so concurrent processes do not overwrite each other
+# (avoids race condition in read-modify-write). File growth is limited by
+# compact_restart_count_file(), called once per run at startup.
+#
+# Returns:
+#   0: Always succeeds (logs warnings on errors but continues)
+#
+# Side effects:
+#   - Appends one line (timestamp) to RESTART_COUNT_FILE
 #
 # Arguments:
 #   None
 #
 # Note:
-#   Requires RESTART_COUNT_FILE, SECONDS_PER_DAY, file_exists_and_readable, atomic_write_file,
-#   and handle_error to be set (from config.sh, constants.sh, common.sh, and logging.sh)
-#   File format: one Unix timestamp per line
-#   Cleanup uses awk to filter timestamps > (now - SECONDS_PER_DAY)
-#   Fully atomic operation: read-modify-write pattern with error handling
+#   Requires RESTART_COUNT_FILE, get_unix_timestamp, handle_error.
+#   File format: one Unix timestamp per line.
 record_restart() {
 	local timestamp
 	timestamp=$(get_unix_timestamp)
-
-	# Read current file content (if it exists and is readable)
-	# Append new timestamp to content in memory, then filter and write atomically
-	local current_content
-	if file_exists_and_readable "$RESTART_COUNT_FILE"; then
-		current_content=$(cat "$RESTART_COUNT_FILE" 2>/dev/null || echo "")
-		# Trim trailing newlines to avoid creating empty lines when appending
-		# Remove all trailing newlines using parameter expansion
-		while [[ "$current_content" == *$'\n' ]]; do
-			current_content="${current_content%$'\n'}"
-		done
-	else
-		current_content=""
-	fi
-
-	# Append new timestamp to content
-	local updated_content
-	if [[ -n "$current_content" ]]; then
-		updated_content="${current_content}"$'\n'"${timestamp}"
-	else
-		updated_content="${timestamp}"
-	fi
-
-	# Keep only last 24 hours of timestamps (cleanup old entries)
-	# Prevents restart count file from growing indefinitely
-	local one_day_ago
-	one_day_ago=$(safe_timestamp_subtract "$timestamp" "$SECONDS_PER_DAY" 2>/dev/null || echo "0")
-	# awk filters lines where first field (timestamp) > cutoff
-	local filtered_content
-	if ! filtered_content=$(echo "$updated_content" | awk -v cutoff="$one_day_ago" '$1 > cutoff' 2>/dev/null); then
-		handle_error "WARNING" "SYSTEM" "Failed to filter old restart timestamps"
-		return 0 # Continue even if filtering fails
-	fi
-
-	# Atomic write: write entire file atomically with error checking
-	if ! atomic_write_file "$RESTART_COUNT_FILE" "$filtered_content"; then
+	if ! (printf '%s\n' "$timestamp" >>"$RESTART_COUNT_FILE" 2>/dev/null); then
 		handle_error "WARNING" "SYSTEM" "Failed to record restart timestamp in $RESTART_COUNT_FILE"
-		return 0 # Continue even if write fails
+		return 0
 	fi
+	return 0
 }
 
 # Get network partition state
@@ -393,6 +384,10 @@ record_restart() {
 get_network_partition_state() {
 	local state_file
 	state_file=$(get_network_partition_state_file)
+	[[ -z "$state_file" ]] && {
+		echo "0"
+		return 0
+	}
 
 	if file_exists_and_readable "$state_file"; then
 		local value
@@ -439,6 +434,7 @@ set_network_partition_state() {
 	local state_value="$1"
 	local state_file
 	state_file=$(get_network_partition_state_file)
+	[[ -z "$state_file" ]] && return 1
 
 	# Validate value (must be 0 or 1)
 	if [[ ! "$state_value" =~ ^[01]$ ]]; then
@@ -837,7 +833,7 @@ validate_state() {
 	# Validate network partition state file
 	local network_partition_file
 	network_partition_file=$(get_network_partition_state_file)
-	if file_exists_and_readable "$network_partition_file"; then
+	if [[ -n "$network_partition_file" ]] && file_exists_and_readable "$network_partition_file"; then
 		if ! validate_state_file "$network_partition_file" "integer"; then
 			handle_error "WARNING" "SYSTEM" "Network partition state file corrupted, recovering: $network_partition_file" 0
 			recover_corrupted_state_file "$network_partition_file" "0" "integer"

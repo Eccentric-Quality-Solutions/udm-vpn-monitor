@@ -251,14 +251,18 @@ EOF
 	# Expected: Function checks each IP independently and handles mixed results correctly
 	# Importance: Multiple peer IPs can have different states; must be handled correctly
 	setup_test_environment "${TEST_DIR}"
+	# Set PATH and ENABLE_PING_CHECK before any mocks so run subshell inherits them
+	export PATH="${TEST_DIR}:${PATH}"
+	export ENABLE_PING_CHECK=0
 	local peer_ip1="${TEST_PEER_IP}"
 	local peer_ip2="192.168.1.2"
 	local internal_ip1="${TEST_PEER_IP2}"
 	local internal_ip2="10.0.0.2"
 
-	# Mock ip command - first IP succeeds, second fails
-	# Use call counter to return different results for each call
-	# Note: execute_xfrm_state_command tries "ip -s xfrm state" first, then falls back to "ip xfrm state"
+	# Mock ip command - first IP succeeds (SA + bytes), second fails (no SA)
+	# Use call counter to return different results for each call.
+	# execute_xfrm_state_command tries "ip -s xfrm state" first, then falls back to "ip xfrm state".
+	# Use format matching mock_ip_xfrm_state / extract_byte_counter (single-line "N bytes").
 	local call_count_file="${TEST_DIR}/xfrm_call_count"
 	echo "0" >"$call_count_file"
 	local mock_ip="${TEST_DIR}/ip"
@@ -675,44 +679,71 @@ EOF
 	# This ensures we get the diagnostic message about byte counter info unavailable
 	export ENABLE_PING_CHECK=0
 
-	# Call check_vpn_status - both methods should fail
+	# Call check_vpn_status - xfrm fails (SA exists but byte counter unavailable, ping disabled).
+	# When xfrm fails with "SA exists", we intentionally skip ipsec fallback so the failure is not
+	# overridden by ipsec status (which can still show "established" while the tunnel is broken).
 	run check_vpn_status "$peer_ip" "$internal_ip" "$location_name"
 	assert_failure
 
-	# Verify combined diagnostic message was logged
+	# Verify diagnostic message was logged (xfrm only; ipsec fallback is skipped when SA exists)
 	assert_file_exist "$log_file"
 
-	# Verify the combined message format:
-	# 1. Should contain "VPN suspect for" with peer IP (location name is in log prefix, not in message)
-	# Note: format_peer_ip_display shows (internal_peer_ip, external_peer_ip) when internal IP is provided
+	# 1. Should contain "VPN suspect for" with peer IP
 	assert_log_contains "$log_file" "VPN suspect for ($internal_ip, $peer_ip)"
 
 	# 2. Should include xfrm detection method name
 	assert_log_contains "$log_file" "Detection method: xfrm (ip xfrm state)"
 
-	# 3. Should include ipsec detection method name
-	assert_log_contains "$log_file" "Detection method: ipsec status"
-
-	# 4. Should include context about byte counter availability
-	#    (either "byte counter info unavailable" or specific reason)
+	# 3. Should include context about byte counter availability and ping disabled
 	assert_log_contains "$log_file" "byte counter info unavailable"
-
-	# 5. Should include context about why byte counter check failed
-	#    (ping check disabled or internal IP not provided)
 	assert_log_contains "$log_file" "ping check disabled"
 
-	# 6. Should include "No connection found via ipsec status"
-	assert_log_contains "$log_file" "No connection found via ipsec status"
-
-	# 7. Verify the message is combined (contains semicolon separator)
-	assert_log_contains "$log_file" ";"
-
-	# 8. Verify we don't have separate warning messages (old behavior)
-	#    Count occurrences of "VPN suspect" - should be 1 (the combined message)
+	# 4. When xfrm fails with "SA exists", ipsec fallback is not used (by design), so we do NOT
+	#    expect ipsec diagnostic or semicolon-separated combined message.
+	# 5. Exactly one "VPN suspect" message (single xfrm diagnostic)
 	local suspect_count
 	suspect_count=$(grep -c "VPN suspect" "$log_file" || echo "0")
-	[ "$suspect_count" -eq 1 ] || fail "Should have exactly one combined diagnostic message, found $suspect_count"
+	[ "$suspect_count" -eq 1 ] || fail "Should have exactly one diagnostic message, found $suspect_count"
 
+	remove_mock_from_path
+}
+
+# bats test_tags=category:detection,priority:high
+@test "check_vpn_status does not override with ipsec fallback when xfrm failed with SA exists (e.g. ping timeout)" {
+	# Purpose: When xfrm finds SA but validation fails (e.g. bytes increasing but ping failed), we must not
+	#          use ipsec fallback to mark VPN OK - ipsec status can still show established while tunnel is broken.
+	# Expected: check_vpn_status returns failure even when ipsec fallback would pass.
+	setup_test_environment "${TEST_DIR}"
+	local peer_ip="${TEST_PEER_IP}"
+	local internal_ip="${TEST_PEER_IP2}"
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	local location_name="TEST"
+	export LOG_FILE="$log_file"
+	mkdir -p "$(dirname "$log_file")"
+
+	# Mock ip: xfrm SA exists, bytes increasing (1000 -> 2000) so we enter "bytes increasing" path
+	# Mock ping: fail (so xfrm check fails with "SA exists but ping check failed")
+	local mock_ip="${TEST_DIR}/ip"
+	MOCK_IP=$(mock_ip_xfrm_state "$peer_ip" "2000" "0x12345678")
+	mv "$MOCK_IP" "$mock_ip" 2>/dev/null || true
+	mock_ping_failure >/dev/null
+	add_mock_to_path
+
+	source_function "set_peer_state"
+	set_peer_state "$location_name" "$peer_ip" "last_bytes" "1000"
+	set_peer_state "$location_name" "$peer_ip" "spi" "0x12345678"
+	export ENABLE_PING_CHECK=1
+
+	# Mock ipsec to return success (connection found) - would override if we used fallback
+	mock_ipsec_status 0 "${peer_ip}: ESTABLISHED 1 hour ago"
+	add_mock_to_path
+
+	source_function "check_vpn_status"
+	run check_vpn_status "$peer_ip" "$internal_ip" "$location_name"
+
+	# Must still fail: we skip ipsec fallback when xfrm diagnostic contains "SA exists"
+	assert_failure
+	assert_log_contains "$log_file" "SA exists"
 	remove_mock_from_path
 }
 
@@ -812,14 +843,13 @@ EOF
 	# Source required functions
 	source_function "check_byte_counters"
 
-	# Test 1: Bytes static (current == last) with ping check disabled - should succeed but populate diagnostic with warning
+	# Test 1: Bytes static (current == last) with ping check disabled - should fail (return 1); cannot verify health without ping
 	# Note: Call function directly (not with 'run') so diagnostic variable is set in current shell
-	# This is the edge case fix: static bytes with ping disabled should not fail (to avoid false positives on healthy idle VPNs)
 	local diagnostic=""
-	if ! check_byte_counters "$location_name" "1000" "$peer_ip" "" "$internal_peer_ip" "diagnostic"; then
-		fail "check_byte_counters should succeed when bytes are static and ping check is disabled (edge case fix)"
+	if check_byte_counters "$location_name" "1000" "$peer_ip" "" "$internal_peer_ip" "diagnostic"; then
+		fail "check_byte_counters should fail when bytes are static and ping disabled (cannot verify health)"
 	fi
-	# Verify diagnostic was populated with warning message (not failure reason)
+	# Verify diagnostic was populated with failure/suspect reason
 	[[ -n "$diagnostic" ]] || fail "Diagnostic variable should be populated"
 	[[ "$diagnostic" == *"bytes not increasing"* ]] || fail "Diagnostic should mention 'bytes not increasing'"
 	[[ "$diagnostic" == *"current=1000"* ]] || fail "Diagnostic should include current byte count"
@@ -1103,20 +1133,16 @@ EOF
 	# Should include ping check status
 	assert_log_contains "$log_file" "ping check: disabled"
 
-	# Should still include detection method names
+	# Should include xfrm detection method (when xfrm fails with "SA exists", we skip ipsec fallback)
 	assert_log_contains "$log_file" "Detection method: xfrm (ip xfrm state)"
-	assert_log_contains "$log_file" "Detection method: ipsec status"
 
-	# Verify the message is combined (contains semicolon separator)
-	assert_log_contains "$log_file" ";"
-
-	# Verify the message format includes peer IP display (internal_peer_ip, external_peer_ip when internal IP provided)
+	# Verify the message format includes peer IP display
 	assert_log_contains "$log_file" "VPN suspect for ($internal_ip, $peer_ip)"
 
-	# Verify we have exactly one combined diagnostic message
+	# Exactly one diagnostic message (xfrm only; ipsec fallback skipped when SA exists)
 	local suspect_count
 	suspect_count=$(grep -c "VPN suspect" "$log_file" || echo "0")
-	[ "$suspect_count" -eq 1 ] || fail "Should have exactly one combined diagnostic message, found $suspect_count"
+	[ "$suspect_count" -eq 1 ] || fail "Should have exactly one diagnostic message, found $suspect_count"
 
 	remove_mock_from_path
 }

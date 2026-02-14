@@ -21,6 +21,17 @@
 #   exit 0
 #   EOF
 #   add_mock_to_path
+#
+# Heredoc variable convention (unquoted <<EOF):
+# - Unescaped variables (e.g. ${deletion_flag}, ${local_ip}) are expanded when
+#   the mock script is created (write time). Use for paths, test IPs, and
+#   other values known at mock creation.
+# - Escaped variables (e.g. \$1, \$2, \$@) are literal in the generated script
+#   and are expanded when the mock runs (runtime). Use for script arguments
+#   and any shell builtins the mock must interpret at runtime.
+# When adding or editing heredocs, ensure each variable is either expanded
+# at write time (no backslash) or literal in script (backslash before $).
+# See also docs/testing/TEST_PATTERNS.md (heredoc variable expansion, mock scripts).
 
 # Create mock command that fails with specific exit code and error message
 #
@@ -322,7 +333,58 @@ clear_mock_tracking() {
 # - Call counters: Track verification attempts for timing scenarios
 # - SA re-establishment: Track when SAs re-establish after deletion
 #
+# State files and cleanup:
+# - Mocks create state files only when the mock is exercised (e.g. deletion
+#   flag and MOCK_SAS_DELETED_FILE when "ip xfrm state delete" runs;
+#   mock_ip_xfrm_timing_delay also creates/uses a call counter file).
+# - Default paths are under TEST_DIR (sas_deleted, MOCK_SAS_DELETED_FILE,
+#   check_count). When tests use standard_setup()/standard_teardown(),
+#   TEST_DIR is removed after each test, so no explicit cleanup is needed.
+# - If a test passes custom paths outside TEST_DIR, that test is responsible
+#   for removing those files (or the directory) in teardown or when resetting.
+# - To reset mock state within a test (e.g. before a second phase), use
+#   clear_xfrm_mock_state() with the same paths used when creating the mock.
+#
 # ============================================================================
+
+# Clear state files created by xfrm mock ip commands
+#
+# Removes the deletion-flag file, MOCK_SAS_DELETED_FILE, and optional call
+# counter file so the mock behaves as "before deletion" again. Use when
+# reusing the same mock in multiple phases within one test.
+#
+# Arguments:
+#   $1: Path to deletion flag file (default: ${TEST_DIR}/sas_deleted)
+#   $2: Path to MOCK_SAS_DELETED_FILE (default: ${TEST_DIR}/MOCK_SAS_DELETED_FILE)
+#   $3: Path to call counter file, or empty to skip (default: empty)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Example:
+#   clear_xfrm_mock_state "${TEST_DIR}/sas_deleted" "${TEST_DIR}/MOCK_SAS_DELETED_FILE"
+#   clear_xfrm_mock_state "${TEST_DIR}/sas_deleted" "${TEST_DIR}/MOCK_SAS_DELETED_FILE" "${TEST_DIR}/check_count"
+clear_xfrm_mock_state() {
+	local deletion_flag
+	local mock_sas_deleted
+	local check_count_file="${3:-}"
+
+	# Use defaults only when TEST_DIR is set (avoids rm -f "/sas_deleted" if unset)
+	if [[ $# -ge 2 ]]; then
+		deletion_flag="$1"
+		mock_sas_deleted="$2"
+	elif [[ -n "${TEST_DIR:-}" ]]; then
+		deletion_flag="${1:-${TEST_DIR}/sas_deleted}"
+		mock_sas_deleted="${2:-${TEST_DIR}/MOCK_SAS_DELETED_FILE}"
+	else
+		return 0
+	fi
+
+	rm -f "$deletion_flag" "$mock_sas_deleted"
+	if [[ -n "$check_count_file" ]]; then
+		echo "0" >"$check_count_file" 2>/dev/null || true
+	fi
+}
 
 # Create mock ip command for bidirectional SA scenarios
 #
@@ -354,7 +416,9 @@ clear_mock_tracking() {
 #
 # Side effects:
 #   - Creates executable mock ip script
-#   - Creates deletion flag file when SAs are deleted
+#   - When "ip xfrm state delete" runs: creates deletion_flag and
+#     ${TEST_DIR}/MOCK_SAS_DELETED_FILE. Cleanup: use default paths under
+#     TEST_DIR so standard_teardown() removes them, or call clear_xfrm_mock_state().
 #
 # Example:
 #   # Basic bidirectional SA mock
@@ -375,6 +439,7 @@ mock_ip_xfrm_bidirectional_sa() {
 	local bytes_after="${7:-1000}"
 	local mock_ip="${8:-${TEST_DIR}/ip}"
 
+	# Heredoc: expand at write time: deletion_flag, local_ip, peer_ip, forward_spi, reverse_spi, bytes_*, TEST_DIR; literal: \$1,\$2,\$3,\$@
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
 if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
@@ -468,7 +533,9 @@ EOF
 #
 # Side effects:
 #   - Creates executable mock ip script
-#   - Creates deletion flag file when SAs are deleted
+#   - When "ip xfrm state delete" runs: creates deletion_flag and
+#     ${TEST_DIR}/MOCK_SAS_DELETED_FILE. Cleanup: use default paths under
+#     TEST_DIR or call clear_xfrm_mock_state().
 #
 # Example:
 #   # SA count mismatch: deleted 2, only forward re-establishes
@@ -489,6 +556,7 @@ mock_ip_xfrm_sa_count_mismatch() {
 	local bytes_after="${8:-1000}"
 	local mock_ip="${9:-${TEST_DIR}/ip}"
 
+	# Heredoc: expand at write time: deletion_flag, direction, local_ip, peer_ip, forward_spi, reverse_spi, bytes_*, TEST_DIR; literal: \$1,\$2,\$3,\$@
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
 if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
@@ -587,7 +655,9 @@ EOF
 #
 # Side effects:
 #   - Creates executable mock ip script
-#   - Creates deletion flag file when SAs are deleted
+#   - When "ip xfrm state delete" runs: creates deletion_flag and
+#     ${TEST_DIR}/MOCK_SAS_DELETED_FILE. Cleanup: use default paths under
+#     TEST_DIR or call clear_xfrm_mock_state().
 #
 # Example:
 #   # Asymmetric: only forward SA present
@@ -616,6 +686,7 @@ mock_ip_xfrm_asymmetric_sa() {
 		fi
 	fi
 
+	# Heredoc: expand at write time: deletion_flag, direction, local_ip, peer_ip, spi, bytes_*, TEST_DIR; literal: \$1,\$2,\$3,\$@
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
 if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then
@@ -717,8 +788,10 @@ EOF
 #
 # Side effects:
 #   - Creates executable mock ip script
-#   - Creates deletion flag file when SAs are deleted
-#   - Creates/initializes call counter file
+#   - Initializes call counter file at creation. When "ip xfrm state delete"
+#     runs: creates deletion_flag, ${TEST_DIR}/MOCK_SAS_DELETED_FILE, resets
+#     counter. Cleanup: use default paths under TEST_DIR or call
+#     clear_xfrm_mock_state() with the counter path as third argument.
 #
 # Example:
 #   # Timing delay: second SA appears after 3 attempts
@@ -744,6 +817,7 @@ mock_ip_xfrm_timing_delay() {
 	# Initialize call counter
 	echo "0" >"$check_count_file" 2>/dev/null || true
 
+	# Heredoc: expand at write time: deletion_flag, check_count_file, local_ip, peer_ip, forward_spi, reverse_spi, delay, bytes_*, TEST_DIR; literal: \$1,\$2,\$3,\$@,\$check_count,\$should_return_two
 	cat >"$mock_ip" <<EOF
 #!/bin/bash
 if [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]] && [[ "\$3" == "delete" ]]; then

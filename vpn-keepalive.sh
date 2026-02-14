@@ -6,7 +6,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # Strict error handling: exit on error, undefined vars, pipe failures
@@ -22,7 +22,7 @@ PIDFILE="${STATE_DIR}/vpn-keepalive.pid"
 LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"
 
 # Script version
-SCRIPT_VERSION="0.7.0"
+SCRIPT_VERSION="0.8.0"
 
 # Source library modules
 # shellcheck source=lib/logging.sh
@@ -203,8 +203,9 @@ start_daemon() {
 		# LOG_FILE should already be set correctly by load_config() above, but ensure it's set
 		LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"
 
-		# Detach from terminal
-		exec >/dev/null 2>&1
+		# Detach from terminal: discard stdout; redirect stderr to error log so uncaught
+		# errors (e.g. command failures, write failures) are not silently lost
+		exec >/dev/null 2>>"${LOGS_DIR}/vpn-keepalive-errors.log"
 
 		# Set up cleanup trap
 		trap 'rm -f "$PIDFILE"; exit 0' EXIT INT TERM

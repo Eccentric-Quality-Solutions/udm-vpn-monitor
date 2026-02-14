@@ -261,7 +261,7 @@ These files control script execution and prevent concurrent runs.
 - **Purpose**: Prevents concurrent script execution
 - **Format**: `timestamp:pid` (e.g., `1703616000:12345`)
 - **Mechanism**: Uses file locking (`flock`) and atomic creation
-- **Staleness Detection**: Lockfiles older than `LOCKFILE_TIMEOUT` seconds are considered stale and removed
+- **Staleness Detection**: Lockfiles older than `LOCKFILE_TIMEOUT` seconds are considered stale and removed. Lockfiles whose modification time differs from the current time by more than 1 hour in either direction are always considered stale (prevents far-future or corrupted timestamps from blocking execution).
 - **Usage**: Acquired at script start, released at script end
 - **Example**: Contains `1703616000:12345` (timestamp:process_id)
 
@@ -338,6 +338,8 @@ The following global state files are intentionally outside the abstraction layer
 - Atomic write operations
 - Easy to extend with new state keys
 - Automatic format validation and corruption recovery
+
+**Path safety**: Path helpers in `lib/state/state_paths.sh` (`get_peer_state_file_path`, `get_network_partition_state_file`) require `STATE_DIR` to be set and non-empty before building paths. They return failure and no path when `STATE_DIR` is unset/empty so callers never receive root paths (e.g. `/connection_name_...` or `/network_partition_state`), avoiding writes to the root filesystem.
 
 ### State Passing Pattern
 

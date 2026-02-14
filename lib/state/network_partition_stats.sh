@@ -3,7 +3,7 @@
 # Network partition check statistics tracking
 # Handles success/failure counting and hourly summary logging for network partition checks
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # Track network partition check result
@@ -68,7 +68,9 @@ track_network_partition_check() {
 	current_count=$((current_count + 1))
 
 	# Use atomic write for state file (per ADR-0012)
-	atomic_write_file "$counter_file" "$current_count" 2>/dev/null || true
+	if ! atomic_write_file "$counter_file" "$current_count"; then
+		log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $counter_file"
+	fi
 
 	return 0
 }
@@ -166,13 +168,27 @@ log_network_partition_summary_if_due() {
 		fi
 
 		# Reset all counters and update last time (use atomic writes per ADR-0012)
-		atomic_write_file "$dns_success_file" "0" 2>/dev/null || true
-		atomic_write_file "$dns_fail_file" "0" 2>/dev/null || true
-		atomic_write_file "$route_success_file" "0" 2>/dev/null || true
-		atomic_write_file "$route_fail_file" "0" 2>/dev/null || true
-		atomic_write_file "$interface_success_file" "0" 2>/dev/null || true
-		atomic_write_file "$interface_fail_file" "0" 2>/dev/null || true
-		atomic_write_file "$last_time_file" "$current_time" 2>/dev/null || true
+		if ! atomic_write_file "$dns_success_file" "0"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $dns_success_file"
+		fi
+		if ! atomic_write_file "$dns_fail_file" "0"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $dns_fail_file"
+		fi
+		if ! atomic_write_file "$route_success_file" "0"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $route_success_file"
+		fi
+		if ! atomic_write_file "$route_fail_file" "0"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $route_fail_file"
+		fi
+		if ! atomic_write_file "$interface_success_file" "0"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $interface_success_file"
+		fi
+		if ! atomic_write_file "$interface_fail_file" "0"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $interface_fail_file"
+		fi
+		if ! atomic_write_file "$last_time_file" "$current_time"; then
+			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $last_time_file"
+		fi
 	fi
 
 	return 0

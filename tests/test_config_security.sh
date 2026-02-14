@@ -293,6 +293,25 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 }
 
 # bats test_tags=category:high-risk,priority:critical
+@test "config file with dot-space-slash (. /path) is rejected" {
+	# Purpose: Ensures dot-source with space (e.g. ". /script") is rejected; bash ERE uses [[:space:]] not \s
+	# Expected: Script detects dangerous content and rejects config file
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	printf 'LOCATION_TEST_EXTERNAL="%s"\n. /tmp/malicious.sh\n' "${TEST_PEER_IP}" >"$config_file"
+
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
+
+	add_mock_to_path
+	run bash "$test_script" --fake
+	assert_success
+
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "dangerous content" "Failed to parse" "ERROR"
+}
+
+# bats test_tags=category:high-risk,priority:critical
 @test "config file with multiple dangerous patterns in one line is rejected" {
 	# Purpose: Test verifies that config files with multiple dangerous patterns in one line are rejected
 	# Expected: Script detects dangerous content and rejects config file

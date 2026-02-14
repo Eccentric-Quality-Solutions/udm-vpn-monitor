@@ -136,9 +136,10 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	run bash "$test_install" --dev --silent --no-cron
 	assert_success
 
-	# Check default config was created
+	# Check default config was created (no example locations are shipped)
 	assert_file_exist "${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
-	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "LOCATION_NYC_EXTERNAL"
+	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "LOCATION_"
+	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "_EXTERNAL"
 	# Verify critical enable flags are set to 1 by default
 	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "ENABLE_PING_CHECK=1"
 	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "ENABLE_KEEPALIVE=1"
@@ -219,8 +220,8 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 LOCATION_NYC_EXTERNAL="192.168.1.1"
 LOCATION_NYC_INTERNAL="10.0.0.1"
 TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
+TIER2_THRESHOLD=2
+TIER3_THRESHOLD=3
 NO_ESCALATE=0
 EOF
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
@@ -239,6 +240,128 @@ EOF
 
 	# Verify NO_ESCALATE was appended
 	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "NO_ESCALATE=0"
+}
+
+# bats test_tags=category:unit
+@test "install.sh auto-appends missing config values with --silent --append-missing-config" {
+	# Purpose: Test verifies that --silent --append-missing-config auto-appends without prompting
+	# Expected: Missing values are appended to existing config without user interaction
+	cd "$TEST_DIR"
+
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
+	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
+	cat >"${TEST_DIR}/source/vpn-monitor.conf" <<EOF
+LOCATION_NYC_EXTERNAL="192.168.1.1"
+TIER1_THRESHOLD=1
+TIER2_THRESHOLD=2
+TIER3_THRESHOLD=3
+NO_ESCALATE=0
+EOF
+	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+
+	# First installation (silent)
+	run bash "$test_install" --dev --silent --no-cron
+	assert_success
+
+	# Remove NO_ESCALATE to simulate upgrade
+	sed -i '/^NO_ESCALATE=/d' "${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
+	refute_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "NO_ESCALATE"
+
+	# Re-install with --silent --append-missing-config (no prompts)
+	run bash "$test_install" --dev --silent --append-missing-config --no-cron
+	assert_success
+
+	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "NO_ESCALATE=0"
+}
+
+# bats test_tags=category:unit
+@test "install.sh --append-missing-config substitutes /data/vpn-monitor with INSTALL_DIR in appended lines" {
+	# Purpose: Test verifies that when appending missing config values, paths containing /data/vpn-monitor
+	#          are substituted with the actual INSTALL_DIR (e.g. dev path or /data/vpn-monitor in production).
+	# Expected: Appended LOG_FILE and STATE_DIR lines use INSTALL_DIR, not literal /data/vpn-monitor.
+	# Importance: Ensures upgraded configs get correct paths for the current installation directory.
+	cd "$TEST_DIR"
+
+	local project_root="${BATS_TEST_DIRNAME}/.."
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
+	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
+	# Use repo default config so template has /data/vpn-monitor paths for LOG_FILE and STATE_DIR
+	cp "${project_root}/vpn-monitor.conf" "${TEST_DIR}/source/vpn-monitor.conf"
+	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+
+	# First installation (silent) so installed config gets template content
+	run bash "$test_install" --dev --silent --no-cron
+	assert_success
+
+	# Remove path vars from installed config to simulate upgrade where they were missing
+	sed -i '/^LOG_FILE=/d' "${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
+	sed -i '/^STATE_DIR=/d' "${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
+	refute_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "LOG_FILE="
+	refute_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "STATE_DIR="
+
+	# Re-install with --silent --append-missing-config; substitute /data/vpn-monitor -> INSTALL_DIR
+	run bash "$test_install" --dev --silent --append-missing-config --no-cron
+	assert_success
+
+	# Appended LOG_FILE= and STATE_DIR= lines must not contain literal /data/vpn-monitor (must be substituted)
+	run grep "^LOG_FILE=" "${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
+	assert_success
+	refute_output --partial "/data/vpn-monitor"
+	run grep "^STATE_DIR=" "${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
+	assert_success
+	refute_output --partial "/data/vpn-monitor"
+	# Appended lines must contain INSTALL_DIR path (dev: .../vpn-monitor/...)
+	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "vpn-monitor/logs/vpn-monitor.log"
+	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" "vpn-monitor/state"
+}
+
+# bats test_tags=category:unit
+@test "install.sh prompts to add location when config has no locations and adds location plus LOCAL_UDM_IP" {
+	# Purpose: Test that when config has no (non-empty) locations, install prompts "Configure a location now?"
+	#          and accepts one location with external IP, internal IP, LOCAL_UDM_IP, then "Add another? no".
+	# Expected: Config file contains LOCATION_NYC_EXTERNAL, LOCATION_NYC_INTERNAL, and LOCAL_UDM_IP.
+	# Importance: Validates the interactive add-location flow used on new installs.
+	cd "$TEST_DIR"
+
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
+	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
+	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	# No vpn-monitor.conf in source so install creates default config with empty LOCATION_NYC_EXTERNAL=""
+
+	# Run install without --silent so validate_config_after_install prompts when no locations
+	# Input: yes (configure now), NYC, external IP, internal IP, local UDM IP, no (add another)
+	run bash "$test_install" --dev --no-cron < <(printf 'yes\nNYC\n203.0.113.1\n192.168.1.1\n192.168.1.100\nno\n')
+	assert_success
+
+	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" 'LOCATION_NYC_EXTERNAL="203.0.113.1"'
+	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" 'LOCATION_NYC_INTERNAL="192.168.1.1"'
+	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" 'LOCAL_UDM_IP="192.168.1.100"'
+}
+
+# bats test_tags=category:unit
+@test "install.sh add-location flow adds multiple locations when user says yes to Add another" {
+	# Purpose: Test that the "Configure a location now?" flow allows adding multiple locations.
+	# Expected: Config contains both LOCATION_NYC_* and LOCATION_DC_* after answering yes, then no.
+	# Importance: Validates the add-another-location loop.
+	cd "$TEST_DIR"
+
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
+	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
+	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+
+	# Input: yes, NYC, 203.0.113.1, 192.168.1.1, 192.168.1.100, yes (add another), DC, 198.51.100.1, 10.0.0.1, (no local UDM prompt), no
+	run bash "$test_install" --dev --no-cron < <(printf 'yes\nNYC\n203.0.113.1\n192.168.1.1\n192.168.1.100\nyes\nDC\n198.51.100.1\n10.0.0.1\nno\n')
+	assert_success
+
+	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" 'LOCATION_NYC_EXTERNAL="203.0.113.1"'
+	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" 'LOCATION_NYC_INTERNAL="192.168.1.1"'
+	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" 'LOCATION_DC_EXTERNAL="198.51.100.1"'
+	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" 'LOCATION_DC_INTERNAL="10.0.0.1"'
+	assert_file_contains "${TEST_DIR}/vpn-monitor/vpn-monitor.conf" 'LOCAL_UDM_IP="192.168.1.100"'
 }
 
 # bats test_tags=category:unit

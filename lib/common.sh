@@ -3,7 +3,7 @@
 # Common functions for UDM VPN Monitor
 # Shared logging and utility functions for installation/uninstallation scripts and main monitor
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 # This module provides shared utility functions used throughout the codebase to reduce duplication:
 # - File operations: file_exists_and_readable(), ensure_file_exists(), atomic_write_file(), read_counter_file()
@@ -103,7 +103,8 @@ log_error() {
 # Print debug message if DEBUG is enabled
 #
 # Prints a debug message to stderr if the DEBUG environment variable is set to 1.
-# This provides a consistent way to output debug information throughout the codebase.
+# Uses the same format as log_message() with DEBUG level for consistency:
+# [YYYY-MM-DD HH:MM:SS] [DEBUG] SYSTEM: <message>
 #
 # Arguments:
 #   $@: Debug message text (all arguments are concatenated with spaces)
@@ -112,7 +113,7 @@ log_error() {
 #   0: Always succeeds
 #
 # Output:
-#   Prints to stderr if DEBUG=1: "DEBUG: <message>"
+#   Prints to stderr if DEBUG=1: "[timestamp] [DEBUG] SYSTEM: <message>"
 #
 # Examples:
 #   debug_log "Starting main() function, PID: $$"
@@ -122,9 +123,12 @@ log_error() {
 # Note:
 #   Only outputs if DEBUG environment variable is set to 1
 #   Output goes to stderr (>&2) to avoid interfering with stdout
+#   Format matches log_message "DEBUG" "SYSTEM" "..." for consistent debug output
 debug_log() {
 	if [[ "${DEBUG:-0}" -eq 1 ]]; then
-		echo "DEBUG: $*" >&2
+		local timestamp
+		timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+		echo "[$timestamp] [DEBUG] SYSTEM: $*" >&2
 	fi
 }
 

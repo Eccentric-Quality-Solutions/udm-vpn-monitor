@@ -5,7 +5,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 set -euo pipefail
@@ -24,6 +24,7 @@ OVERWRITE_CONF=0
 DEV_MODE=0
 INTERACTIVE=0
 KEEPALIVE_ONLY=0
+APPEND_MISSING_CONFIG=0
 
 # Verify lib directory exists before sourcing
 # The lib directory should be present from the installation package extraction
@@ -48,6 +49,10 @@ source "${INSTALL_SCRIPT_DIR}/lib/common.sh"
 # Source detection functions for IP address validation
 # shellcheck source=lib/detection.sh
 source "${INSTALL_SCRIPT_DIR}/lib/detection.sh"
+
+# Source config schema for default values (single source of truth for tier thresholds, etc.)
+# shellcheck source=lib/config_schema.sh
+source "${INSTALL_SCRIPT_DIR}/lib/config_schema.sh"
 
 # Check if we're on a UDM
 #
@@ -322,11 +327,12 @@ create_interactive_config() {
 	log_info "Please provide configuration values (press Enter to accept default)"
 	echo ""
 
-	# Default values
+	# Default values (tier thresholds from schema; fallback if schema unavailable)
 	local default_peer_ips=""
-	local default_tier1=1
-	local default_tier2=3
-	local default_tier3=5
+	local default_tier1 default_tier2 default_tier3
+	default_tier1=$(get_config_default "TIER1_THRESHOLD" 2>/dev/null || echo "1")
+	default_tier2=$(get_config_default "TIER2_THRESHOLD" 2>/dev/null || echo "2")
+	default_tier3=$(get_config_default "TIER3_THRESHOLD" 2>/dev/null || echo "3")
 	local default_max_restarts=3
 	local default_log_file="${INSTALL_DIR}/logs/vpn-monitor.log"
 	local default_state_dir="${INSTALL_DIR}/state"
@@ -466,6 +472,11 @@ install_config_file() {
 		log_info "Installed ${CONFIG_NAME} (please customize it)"
 	else
 		log_warn "Config template not found, creating default"
+		# Use schema defaults for tier thresholds (single source of truth)
+		local install_tier1 install_tier2 install_tier3
+		install_tier1=$(get_config_default "TIER1_THRESHOLD" 2>/dev/null || echo "1")
+		install_tier2=$(get_config_default "TIER2_THRESHOLD" 2>/dev/null || echo "2")
+		install_tier3=$(get_config_default "TIER3_THRESHOLD" 2>/dev/null || echo "3")
 		cat >"${INSTALL_DIR}/${CONFIG_NAME}" <<EOF
 # UDM VPN Monitor Configuration
 # Location-based VPN configuration
@@ -478,11 +489,11 @@ install_config_file() {
 #   LOCATION_NYC_INTERNAL="192.168.1.1 192.168.1.88"
 #   LOCATION_DC_EXTERNAL="203.0.113.2"
 #   LOCATION_DC_INTERNAL="192.168.10.1 192.168.10.254"
-LOCATION_NYC_EXTERNAL=""
-LOCATION_NYC_INTERNAL=""
-TIER1_THRESHOLD=1
-TIER2_THRESHOLD=3
-TIER3_THRESHOLD=5
+#
+# Add your locations below (no example locations are shipped).
+TIER1_THRESHOLD=${install_tier1}
+TIER2_THRESHOLD=${install_tier2}
+TIER3_THRESHOLD=${install_tier3}
 MAX_RESTARTS_PER_WINDOW=20
 RATE_LIMIT_WINDOW_MINUTES=60
 LOG_FILE="${INSTALL_DIR}/logs/vpn-monitor.log"
@@ -749,6 +760,56 @@ offer_append_missing_config_values() {
 	return 0
 }
 
+# Auto-append missing config values to existing config file (non-interactive)
+#
+# When --silent --append-missing-config is used, appends variables from the template
+# that are missing from the existing config, without prompting.
+# Paths containing /data/vpn-monitor are substituted with the actual INSTALL_DIR.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Completed (appended or nothing to append)
+#
+# Side effects:
+#   - May append lines to existing config file
+auto_append_missing_config_values() {
+	local existing_config="${INSTALL_DIR}/${CONFIG_NAME}"
+	local template_config="${INSTALL_SCRIPT_DIR}/${CONFIG_NAME}"
+	local compare_script="${INSTALL_DIR}/compare-config.sh"
+	local missing_lines
+	local line
+
+	# Skip if config or compare script doesn't exist
+	if [[ ! -f "$existing_config" ]] || [[ ! -f "$template_config" ]] ||
+		[[ ! -f "$compare_script" ]] || [[ ! -x "$compare_script" ]]; then
+		return 0
+	fi
+
+	missing_lines=$("$compare_script" --template "$template_config" --existing "$existing_config" --list-missing-with-values 2>/dev/null) || true
+
+	if [[ -z "${missing_lines//[[:space:]]/}" ]]; then
+		return 0
+	fi
+
+	log_info "Appending missing configuration values to existing config..."
+
+	# Substitute /data/vpn-monitor with actual INSTALL_DIR in paths
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		[[ -z "$line" ]] && continue
+		line="${line//\/data\/vpn-monitor/$INSTALL_DIR}"
+		if echo "$line" >>"$existing_config"; then
+			log_info "Appended: $line"
+		else
+			log_error "Failed to append: $line"
+		fi
+	done <<<"$missing_lines"
+
+	log_info "Missing values appended to ${existing_config}"
+	return 0
+}
+
 # Install scripts
 #
 # Copies the main VPN monitor script, library files, and configuration file to the installation directory.
@@ -766,7 +827,9 @@ offer_append_missing_config_values() {
 #   - Copies vpn-keepalive.sh to installation directory (if available)
 #   - Copies analyze-logs.sh to installation directory (if available)
 #   - Copies check-utilities.sh to installation directory (if available)
-#   - Copies scripts/anonymize-logs.sh to installation directory (if available)
+#   - Copies scripts/ utilities to installation directory (if available): anonymize-logs.sh,
+#     deploy-to-udm.sh, deploy-to-udms.sh, migrate-config-to-locations.sh
+#   - Copies scripts/deploy-udms.conf.example (if available)
 #   - Sets executable permissions on scripts
 #   - Installs config file (may prompt user in interactive mode)
 install_scripts() {
@@ -836,13 +899,37 @@ install_scripts() {
 		log_info "Installed compare-config.sh (template vs existing config comparison)"
 	fi
 
-	# Copy anonymize logs script (optional utility)
-	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/anonymize-logs.sh" ]]; then
-		# Create scripts directory in installation directory
+	# Copy scripts directory utilities (optional)
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/anonymize-logs.sh" ]] ||
+		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/deploy-to-udm.sh" ]] ||
+		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/deploy-to-udms.sh" ]] ||
+		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/migrate-config-to-locations.sh" ]] ||
+		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/deploy-udms.conf.example" ]]; then
 		mkdir -p "${INSTALL_DIR}/scripts"
+	fi
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/anonymize-logs.sh" ]]; then
 		cp "${INSTALL_SCRIPT_DIR}/scripts/anonymize-logs.sh" "${INSTALL_DIR}/scripts/anonymize-logs.sh"
 		chmod 755 "${INSTALL_DIR}/scripts/anonymize-logs.sh"
 		log_info "Installed scripts/anonymize-logs.sh (log anonymization utility)"
+	fi
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/deploy-to-udm.sh" ]]; then
+		cp "${INSTALL_SCRIPT_DIR}/scripts/deploy-to-udm.sh" "${INSTALL_DIR}/scripts/deploy-to-udm.sh"
+		chmod 755 "${INSTALL_DIR}/scripts/deploy-to-udm.sh"
+		log_info "Installed scripts/deploy-to-udm.sh (deploy to single UDM)"
+	fi
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/deploy-to-udms.sh" ]]; then
+		cp "${INSTALL_SCRIPT_DIR}/scripts/deploy-to-udms.sh" "${INSTALL_DIR}/scripts/deploy-to-udms.sh"
+		chmod 755 "${INSTALL_DIR}/scripts/deploy-to-udms.sh"
+		log_info "Installed scripts/deploy-to-udms.sh (deploy to multiple UDMs)"
+	fi
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/migrate-config-to-locations.sh" ]]; then
+		cp "${INSTALL_SCRIPT_DIR}/scripts/migrate-config-to-locations.sh" "${INSTALL_DIR}/scripts/migrate-config-to-locations.sh"
+		chmod 755 "${INSTALL_DIR}/scripts/migrate-config-to-locations.sh"
+		log_info "Installed scripts/migrate-config-to-locations.sh (config migration utility)"
+	fi
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/deploy-udms.conf.example" ]]; then
+		cp "${INSTALL_SCRIPT_DIR}/scripts/deploy-udms.conf.example" "${INSTALL_DIR}/scripts/deploy-udms.conf.example"
+		log_info "Installed scripts/deploy-udms.conf.example (template for deploy-udms.conf used by scripts/deploy-to-udms.sh)"
 	fi
 
 	# Handle config file installation
@@ -859,8 +946,12 @@ install_scripts() {
 				log_info "Config file already exists, preserving: ${INSTALL_DIR}/${CONFIG_NAME}"
 				# Compare template with existing config to show what's new
 				compare_template_with_existing_config
-				# Offer to append missing values (skipped in silent mode)
-				offer_append_missing_config_values
+				# Append missing values: auto-append if --append-missing-config, else offer (skipped in silent)
+				if [[ $APPEND_MISSING_CONFIG -eq 1 ]]; then
+					auto_append_missing_config_values
+				else
+					offer_append_missing_config_values
+				fi
 			fi
 		else
 			# Non-interactive, non-silent mode: ask user
@@ -1617,6 +1708,8 @@ check_and_setup_routes() {
 #
 # Side effects:
 #   - May prompt user for location configuration if empty and not in silent mode
+#     (prompts for each location: name, external IP, optional internal IP; LOCAL_UDM_IP once on first;
+#      after each location, prompts "Add another location?" to allow multiple)
 #   - Logs warnings if configuration is invalid
 validate_config_after_install() {
 	local config_file="${INSTALL_DIR}/${CONFIG_NAME}"
@@ -1659,28 +1752,62 @@ validate_config_after_install() {
 			read -rp "Configure a location now? (yes/no) [yes]: " REPLY
 			echo ""
 			if [[ -z "$REPLY" ]] || [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]] || [[ $REPLY =~ ^[Yy]$ ]]; then
-				local location_name
-				local external_peer_ip
-				read -rp "Location name (e.g., NYC, DC, OFFICE): " location_name
-				read -rp "External/Public IP address: " external_peer_ip
-				if [[ -n "$location_name" ]] && [[ -n "$external_peer_ip" ]]; then
-					# Sanitize location name for config variable name
-					local sanitized_name
-					sanitized_name=$(sanitize_location_name_for_config "$location_name")
-					# Add location config to file
-					{
-						echo ""
-						echo "# Location configuration"
-						echo "LOCATION_${sanitized_name}_EXTERNAL=\"${external_peer_ip}\""
-						echo "LOCATION_${sanitized_name}_INTERNAL=\"\""
-					} >>"$config_file"
-					log_info "Location configuration added to ${config_file}"
+				local added_at_least_one=0
+				local first_location=1
+				local local_udm_ip_value=""
+				local -A added_sanitized_names=()
+				while true; do
+					local location_name
+					local external_peer_ip
+					local internal_peer_ips
+					read -rp "Remote location name (e.g., NYC, DC, OFFICE): " location_name
+					read -rp "Remote external/public IP address: " external_peer_ip
+					read -rp "Remote internal IP (optional, for ping checks; space-separated for multiple; empty to skip): " internal_peer_ips
+					if [[ $first_location -eq 1 ]]; then
+						read -rp "Local UDM IP (optional; source IP for ping checks; empty to skip or auto-detect later): " local_udm_ip_value
+						local_udm_ip_value=$(trim "$local_udm_ip_value")
+					fi
+					location_name=$(trim "$location_name")
+					external_peer_ip=$(trim "$external_peer_ip")
+					internal_peer_ips=$(trim "$internal_peer_ips")
+					if [[ -n "$location_name" ]] && [[ -n "$external_peer_ip" ]]; then
+						local sanitized_name
+						sanitized_name=$(sanitize_location_name_for_config "$location_name")
+						if [[ -n "${added_sanitized_names[$sanitized_name]:-}" ]]; then
+							log_warn "Location '${sanitized_name}' was already added; skipping duplicate."
+						else
+							{
+								echo ""
+								echo "# Location configuration"
+								echo "LOCATION_${sanitized_name}_EXTERNAL=\"${external_peer_ip}\""
+								echo "LOCATION_${sanitized_name}_INTERNAL=\"${internal_peer_ips}\""
+							} >>"$config_file"
+							added_sanitized_names["$sanitized_name"]=1
+							if [[ $first_location -eq 1 ]] && [[ -n "$local_udm_ip_value" ]]; then
+								update_config_value "$config_file" "LOCAL_UDM_IP" "$local_udm_ip_value" "^ENABLE_PING_CHECK="
+								log_info "LOCAL_UDM_IP set in ${config_file}"
+							fi
+							log_info "Location '${location_name}' added to ${config_file}"
+							added_at_least_one=1
+							first_location=0
+						fi
+					else
+						log_warn "Location name and external IP are required; this location was skipped."
+					fi
+					echo ""
+					read -rp "Add another location? (yes/no) [no]: " REPLY
+					echo ""
+					if [[ -z "$REPLY" ]] || [[ $REPLY =~ ^[Nn][Oo]$ ]] || [[ $REPLY =~ ^[Nn]$ ]]; then
+						break
+					fi
+					[[ "$REPLY" =~ ^[Yy][Ee][Ss]$ ]] || [[ "$REPLY" =~ ^[Yy]$ ]] || break
+				done
+				if [[ $added_at_least_one -eq 1 ]]; then
 					log_info "Note: IP addresses will be validated when the monitor runs"
 					return 0
-				else
-					log_warn "Location name and IP address are required. Please configure manually."
-					return 1
 				fi
+				log_warn "No locations were added. Please configure manually."
+				return 1
 			else
 				log_info "Skipping configuration. Please edit ${config_file} manually."
 				return 1
@@ -1789,8 +1916,9 @@ display_help() {
 	echo "  --no-cron         Install without setting up cron job"
 	echo "  --silent          Perform installation silently (no prompts)"
 	echo "  --interactive     Prompt for each config value with defaults"
-	echo "  --overwrite-conf  Overwrite existing config file (only works with --silent)"
-	echo "  --dev             Install to current working directory (dev mode)"
+	echo "  --overwrite-conf       Overwrite existing config file (only works with --silent)"
+	echo "  --append-missing-config  Auto-append new config fields to existing config (only with --silent)"
+	echo "  --dev                  Install to current working directory (dev mode)"
 	echo "  --keepalive-only  Only install and enable keepalive daemon (requires existing installation)"
 	echo "  --help, -h        Show this help message"
 	echo ""
@@ -1799,6 +1927,7 @@ display_help() {
 	echo "  $0 --interactive                      # Interactive config setup"
 	echo "  $0 --silent                          # Silent installation, preserve existing config"
 	echo "  $0 --silent --overwrite-conf          # Silent installation, overwrite config"
+	echo "  $0 --silent --append-missing-config   # Silent installation, append new config fields"
 	echo "  $0 --silent --no-cron                 # Silent installation, no cron"
 	echo "  $0 --dev                              # Install to current directory (dev mode)"
 	echo "  $0 --dev --silent --no-cron           # Dev mode, silent, no cron"
@@ -1857,6 +1986,10 @@ parse_args() {
 			OVERWRITE_CONF=1
 			shift
 			;;
+		--append-missing-config)
+			APPEND_MISSING_CONFIG=1
+			shift
+			;;
 		--dev)
 			DEV_MODE=1
 			if [[ $SILENT -eq 0 ]]; then
@@ -1895,6 +2028,11 @@ parse_args() {
 	if [[ $OVERWRITE_CONF -eq 1 ]] && [[ $SILENT -eq 0 ]]; then
 		log_warn "Warning: --overwrite-conf is only effective with --silent flag"
 		log_warn "In interactive mode, you will be prompted to overwrite the config file"
+	fi
+
+	if [[ $APPEND_MISSING_CONFIG -eq 1 ]] && [[ $SILENT -eq 0 ]]; then
+		log_warn "Warning: --append-missing-config is only effective with --silent flag"
+		APPEND_MISSING_CONFIG=0
 	fi
 
 	if [[ $INTERACTIVE -eq 1 ]] && [[ $SILENT -eq 1 ]]; then

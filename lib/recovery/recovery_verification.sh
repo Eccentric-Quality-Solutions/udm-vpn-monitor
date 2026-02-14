@@ -3,7 +3,7 @@
 # Recovery verification functions for UDM VPN Monitor
 # Verifies that recovery actions succeeded by checking SA state, byte counters, and IPsec connections
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # Source recovery constants for magic numbers
@@ -104,10 +104,11 @@ count_sas_for_peer() {
 	# Find both forward SAs (dst=$external_peer_ip) and reverse SAs (src=$external_peer_ip)
 	# Forward SAs: "src <local_ip> dst $external_peer_ip"
 	# Reverse SAs: "src $external_peer_ip dst <local_ip>"
+	# Use ([[:space:]]|$) so we match when IP is followed by space or end-of-line
 	local forward_headers
 	local reverse_headers
 	forward_headers=$(echo "$xfrm_output" | grep -F "dst $external_peer_ip" | grep -E "^[[:space:]]*src" || true)
-	reverse_headers=$(echo "$xfrm_output" | grep -E "^[[:space:]]*src ${external_peer_ip}[[:space:]]" || true)
+	reverse_headers=$(echo "$xfrm_output" | grep -E "^[[:space:]]*src ${external_peer_ip}([[:space:]]|$)" || true)
 
 	# Combine headers, deduplicating by SA header line (src ... dst ...)
 	# Use awk to deduplicate since the same SA might appear in both if grep -A includes context

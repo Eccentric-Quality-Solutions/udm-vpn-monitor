@@ -3,7 +3,7 @@
 # xfrm-based recovery functions for UDM VPN Monitor
 # Implements per-connection recovery using Linux kernel xfrm framework
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # Source recovery constants for magic numbers
@@ -143,6 +143,87 @@ source "${RECOVERY_DIR}/recovery_verification.sh" 2>/dev/null || {
 #
 # Example:
 #   sa_block=$(extract_sa_block "$xfrm_output" "192.0.2.1" "192.0.2.2" 15)
+
+# Check if SA (src, dst, proto, spi, mark) exists in xfrm output within a single block
+#
+# Parses xfrm output into per-SA blocks and verifies all selectors appear in the SAME block.
+# Prevents false positives when multiple SAs share attributes (e.g. same dst, proto) but
+# differ in src or spi - loose substring matching across the entire output can incorrectly
+# match selectors from different SAs.
+#
+# Arguments:
+#   $1: xfrm output text
+#   $2: Source IP address (required)
+#   $3: Destination IP address (required)
+#   $4: Protocol (e.g. esp, ah)
+#   $5: SPI value (e.g. 0x12345678)
+#   $6: Mark (optional, e.g. 0x12000000/0xfe000000)
+#
+# Returns:
+#   0: SA exists (all selectors found in same block)
+#   1: SA does not exist
+#
+# Example:
+#   if sa_exists_in_xfrm_output "$xfrm_output" "192.0.2.1" "192.0.2.2" "esp" "0x12345678" ""; then
+#       echo "SA exists"
+#   fi
+sa_exists_in_xfrm_output() {
+	local xfrm_output="${1:-}"
+	local sa_src="$2"
+	local sa_dst="$3"
+	local sa_proto="$4"
+	local sa_spi="$5"
+	local sa_mark="${6:-}"
+
+	[[ -z "$sa_src" ]] || [[ -z "$sa_dst" ]] || [[ -z "$sa_proto" ]] || [[ -z "$sa_spi" ]] && return 1
+	[[ -z "$xfrm_output" ]] && return 1
+
+	echo "$xfrm_output" | awk -v sa_src="$sa_src" -v sa_dst="$sa_dst" -v sa_proto="$sa_proto" -v sa_spi="$sa_spi" -v sa_mark="$sa_mark" '
+		/^src / {
+			if (block != "") {
+				if (index(block, "src " sa_src) && index(block, "dst " sa_dst) &&
+					index(block, "proto " sa_proto) && index(block, "spi " sa_spi)) {
+					if (sa_mark == "" || index(block, "mark " sa_mark)) {
+						exit 0
+					}
+				}
+			}
+			block = $0
+			next
+		}
+		{
+			block = block "\n" $0
+		}
+		END {
+			if (block != "") {
+				if (index(block, "src " sa_src) && index(block, "dst " sa_dst) &&
+					index(block, "proto " sa_proto) && index(block, "spi " sa_spi)) {
+					if (sa_mark == "" || index(block, "mark " sa_mark)) {
+						exit 0
+					}
+				}
+			}
+			exit 1
+		}'
+}
+
+# Extract the first SA block matching src/dst from xfrm state output.
+#
+# Reads either the first argument as xfrm output or stdin, and prints lines
+# forming the first block that starts with the given src/dst pair. Output
+# is limited to max_lines lines.
+#
+# Arguments:
+#   $1: xfrm_output (optional) - Pre-fetched "ip xfrm state" output. If empty, reads from stdin.
+#   $2: sa_src (required) - Source IP to match (start of block line).
+#   $3: sa_dst (required) - Destination IP to match (start of block line).
+#   $4: max_lines (optional) - Maximum lines to output. Default 20.
+#
+# Returns:
+#   0: Always (output is to stdout; empty src/dst produces no output).
+#
+# Side effects:
+#   - Writes matching SA block lines to stdout
 extract_sa_block() {
 	local xfrm_output="${1:-}"
 	local sa_src="$2"
@@ -671,26 +752,22 @@ delete_sas_from_list() {
 		fi
 
 		# Enhanced diagnostics: Query xfrm state right before deletion to check for race conditions
-		# and to capture the exact format the kernel sees
+		# and to capture the exact format the kernel sees.
+		# Run ip xfrm state first and grep its output so we use ip's exit code; a pipeline would
+		# expose grep's exit code and mask ip failures when grep finds text in partial output.
 		local pre_delete_xfrm_output
 		local pre_delete_query_success=0
-		if pre_delete_xfrm_output=$("$ip_cmd" xfrm state 2>/dev/null | grep -F "dst $sa_dst" -A 20 2>/dev/null); then
-			pre_delete_query_success=1
-			# Check if this specific SA (with all selectors) appears in the output
-			# Include mark in check if present (mark is a required selector when present)
-			local sa_match=1
-			if [[ "$pre_delete_xfrm_output" == *"src $sa_src"* ]] &&
-				[[ "$pre_delete_xfrm_output" == *"dst $sa_dst"* ]] &&
-				[[ "$pre_delete_xfrm_output" == *"proto $sa_proto"* ]] &&
-				[[ "$pre_delete_xfrm_output" == *"spi $sa_spi"* ]]; then
-				# If mark is present, verify it matches too
-				if [[ -n "$sa_mark" ]]; then
-					# Mark format in output: "mark 0x<value>/0x<mask>"
-					if [[ ! "$pre_delete_xfrm_output" == *"mark $sa_mark"* ]]; then
-						sa_match=0
-					fi
-				fi
-				if [[ $sa_match -eq 1 ]]; then
+		local ip_xfrm_raw
+		ip_xfrm_raw=$("$ip_cmd" xfrm state 2>/dev/null)
+		local ip_xfrm_exit=$?
+		if [[ $ip_xfrm_exit -eq 0 ]]; then
+			# Use || true so grep's exit 1 (no match) does not trigger set -e
+			pre_delete_xfrm_output=$(printf '%s' "$ip_xfrm_raw" | grep -F "dst $sa_dst" -A 20 2>/dev/null || true)
+			if [[ -n "$pre_delete_xfrm_output" ]]; then
+				pre_delete_query_success=1
+				# Check if this specific SA (with all selectors) appears in a single block
+				# Parse per-SA blocks to avoid false positives when multiple SAs share attributes
+				if sa_exists_in_xfrm_output "$pre_delete_xfrm_output" "$sa_src" "$sa_dst" "$sa_proto" "$sa_spi" "${sa_mark:-}"; then
 					# Extract the exact SA block for this specific SA to see what the kernel sees
 					# This helps identify if there are additional attributes we're missing
 					local exact_sa_block
@@ -808,38 +885,20 @@ delete_sas_from_list() {
 			# Add information about pre-delete query
 			if [[ $pre_delete_query_success -eq 1 ]]; then
 				# Check if SA still exists (could indicate race condition or permissions issue)
-				# Query xfrm state for this peer and check if the specific SA (src+dst+proto+spi) still exists
-				# Use get_xfrm_state_for_peer to get full SA blocks, then check if all selectors appear together
+				# Query xfrm state for this peer and check if the specific SA (src+dst+proto+spi) exists in a single block
+				# Parse per-SA blocks to avoid false positives when multiple SAs share attributes
 				local peer_xfrm_output
 				if peer_xfrm_output=$(get_xfrm_state_for_peer "$sa_dst" 2>/dev/null); then
-					# Check if all selectors appear in the output (they may be on different lines)
-					# This is a simple check - if all selectors are present, the SA likely still exists
-					# Include mark in check if present (mark is a required selector when present)
-					local sa_exists_check=1
-					if [[ "$peer_xfrm_output" == *"src $sa_src"* ]] &&
-						[[ "$peer_xfrm_output" == *"dst $sa_dst"* ]] &&
-						[[ "$peer_xfrm_output" == *"proto $sa_proto"* ]] &&
-						[[ "$peer_xfrm_output" == *"spi $sa_spi"* ]]; then
-						# If mark is present, verify it matches too
-						if [[ -n "$sa_mark" ]]; then
-							# Mark format in output: "mark 0x<value>/0x<mask>"
-							if [[ ! "$peer_xfrm_output" == *"mark $sa_mark"* ]]; then
-								sa_exists_check=0
-							fi
-						fi
-						if [[ $sa_exists_check -eq 1 ]]; then
-							diagnostic_info="$diagnostic_info, sa_still_exists=true"
-							# If SA exists but deletion failed, extract the exact SA block for detailed logging
-							# This helps identify if there are additional attributes we're missing
-							local sa_block_details
-							sa_block_details=$(extract_sa_block "$peer_xfrm_output" "$sa_src" "$sa_dst" 15)
-							# Log the exact SA block separately to avoid breaking log message formatting
-							# Only log if we have block details (avoids empty logs)
-							if [[ -n "$sa_block_details" ]]; then
-								log_message "INFO" "$location_name" "xfrm recovery: SA block that exists but couldn't be deleted for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi${mark_info}:\n$sa_block_details"
-							fi
-						else
-							diagnostic_info="$diagnostic_info, sa_still_exists=false"
+					if sa_exists_in_xfrm_output "$peer_xfrm_output" "$sa_src" "$sa_dst" "$sa_proto" "$sa_spi" "${sa_mark:-}"; then
+						diagnostic_info="$diagnostic_info, sa_still_exists=true"
+						# If SA exists but deletion failed, extract the exact SA block for detailed logging
+						# This helps identify if there are additional attributes we're missing
+						local sa_block_details
+						sa_block_details=$(extract_sa_block "$peer_xfrm_output" "$sa_src" "$sa_dst" 15)
+						# Log the exact SA block separately to avoid breaking log message formatting
+						# Only log if we have block details (avoids empty logs)
+						if [[ -n "$sa_block_details" ]]; then
+							log_message "INFO" "$location_name" "xfrm recovery: SA block that exists but couldn't be deleted for src=$sa_src dst=$sa_dst proto=$sa_proto spi=$sa_spi${mark_info}:\n$sa_block_details"
 						fi
 					else
 						diagnostic_info="$diagnostic_info, sa_still_exists=false"
@@ -1041,8 +1100,8 @@ delete_xfrm_policies() {
 #   $1: Peer IP address
 #   $2: Location name (required for logging context)
 #   $3: xfrm output to parse (from get_xfrm_state_for_peer)
-#   $4: Variable name to set with deleted_count (output parameter)
-#   $5: Variable name to set with failed_count (output parameter)
+#   $4: Variable name to set with deleted_count (output parameter; used via nameref)
+#   $5: Variable name to set with failed_count (output parameter; used via nameref)
 #
 # Returns:
 #   0: Success (at least one SA deleted or no SAs found)
@@ -1059,6 +1118,8 @@ delete_stale_sas() {
 	local xfrm_output="$3"
 	local deleted_count_var="$4"
 	local failed_count_var="$5"
+	local -n deleted_count_ref="$deleted_count_var"
+	local -n failed_count_ref="$failed_count_var"
 
 	# Format IP display once for reuse
 	local ip_display
@@ -1067,13 +1128,15 @@ delete_stale_sas() {
 	# Parse xfrm output into SA list
 	local sa_list=()
 	if ! parse_xfrm_output_to_sa_list "$xfrm_output" "$external_peer_ip" "$location_name" "sa_list"; then
-		eval "$deleted_count_var=0"
-		eval "$failed_count_var=0"
+		deleted_count_ref=0
+		failed_count_ref=0
 		return 1
 	fi
 
 	# Delete SAs
-	# Initialize counters - delete_sas_from_list will update them via nameref
+	# Initialize counters - delete_sas_from_list will update them via nameref.
+	# Use names distinct from ref targets (deleted_count_ref/failed_count_ref -> __deleted_count/__failed_count)
+	# to avoid nameref shadowing (see delete_sas_from_list comment for same pattern).
 	local deleted_count=0
 	local failed_count=0
 	delete_sas_from_list "${sa_list[@]}" "$external_peer_ip" "$location_name" deleted_count failed_count
@@ -1083,13 +1146,13 @@ delete_stale_sas() {
 		# If deletion failed completely, check if we had any SAs to delete
 		if [[ ${#sa_list[@]} -eq 0 ]]; then
 			log_message "INFO" "$location_name" "xfrm recovery: No SAs found to delete for $ip_display"
-			eval "$deleted_count_var=0"
-			eval "$failed_count_var=0"
+			deleted_count_ref=0
+			failed_count_ref=0
 			return 0
 		else
 			handle_error "WARNING" "$location_name" "xfrm recovery: Parsed ${#sa_list[@]} SA(s) but failed to delete any for $ip_display"
-			eval "$deleted_count_var=$deleted_count"
-			eval "$failed_count_var=$failed_count"
+			deleted_count_ref=$deleted_count
+			failed_count_ref=$failed_count
 			return 1
 		fi
 	fi
@@ -1098,8 +1161,8 @@ delete_stale_sas() {
 	delete_xfrm_policies "$external_peer_ip" "$location_name"
 
 	# Set output variables
-	eval "$deleted_count_var=$deleted_count"
-	eval "$failed_count_var=$failed_count"
+	deleted_count_ref=$deleted_count
+	failed_count_ref=$failed_count
 
 	# If no SAs were deleted, check if any existed
 	if [[ $deleted_count -eq 0 ]] && [[ $failed_count -eq 0 ]]; then
@@ -1502,9 +1565,11 @@ attempt_xfrm_recovery() {
 		# Parsing failed or all deletions failed
 		return 1
 	fi
-	# Read the counts set by delete_stale_sas
-	eval "deleted_count=\$$deleted_count_var"
-	eval "failed_count=\$$failed_count_var"
+	# Read the counts set by delete_stale_sas (namerefs avoid eval)
+	local -n _deleted_ref="$deleted_count_var"
+	local -n _failed_ref="$failed_count_var"
+	deleted_count="$_deleted_ref"
+	failed_count="$_failed_ref"
 
 	# Old parsing and deletion code removed - now handled by delete_stale_sas()
 	# All parsing, SA deletion, and policy deletion is now in delete_stale_sas()

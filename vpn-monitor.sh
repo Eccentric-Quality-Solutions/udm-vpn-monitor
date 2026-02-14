@@ -6,7 +6,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # Strict error handling: exit on error, undefined vars, pipe failures
@@ -21,7 +21,7 @@ LOCKFILE="${STATE_DIR}/vpn-monitor.lock"
 LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
 
 # Script version
-SCRIPT_VERSION="0.7.0"
+SCRIPT_VERSION="0.8.0"
 
 # Source library modules
 # shellcheck source=lib/logging.sh
@@ -143,10 +143,9 @@ if ! touch "$LOG_FILE" 2>/dev/null; then
 	log_message "WARNING" "SYSTEM" "Cannot write to log file: $LOG_FILE (check permissions on directory: $(dirname "$LOG_FILE")) - continuing execution with log messages output to stderr"
 fi
 
-# Verify logging works by writing a test message
-# This ensures log_message function will work before we proceed
+# Verify logging works by writing a test message (DEBUG so cron runs don't clutter the log)
 # If this fails, log_message() will handle it gracefully by outputting to stderr
-log_message "INFO" "SYSTEM" "Log file initialized"
+log_message "DEBUG" "SYSTEM" "Log file initialized"
 
 # Load configuration
 # Note: Path recalculation (log paths and state paths) is now handled inside load_config()
@@ -185,7 +184,8 @@ RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 #
 # Verifies that the cron job entry still exists in the crontab.
 # This helps detect if cron jobs were removed during UniFi OS upgrades.
-# Checks root crontab for lines containing "vpn-monitor.sh".
+# Checks root crontab for lines containing "vpn-monitor" (matches both
+# vpn-monitor.sh and vpn-monitor-wrapper.sh, since either is a valid install).
 #
 # Returns:
 #   0: Always succeeds (warnings logged but don't fail script)
@@ -201,7 +201,7 @@ RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 # Note:
 #   This check is performed once per script run (tracked via .cron_checked file)
 #   to avoid log spam on every execution.
-#   Uses crontab -l and grep to check for vpn-monitor.sh entry
+#   Uses crontab -l and grep to check for vpn-monitor entry (direct or wrapper).
 #   Note: The grep operation operates on command output (crontab -l), not a file,
 #   so no file_exists_and_readable() check is needed here.
 #   Requires log_message function to be available
@@ -213,7 +213,7 @@ RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 #   0: Always succeeds (warnings logged but don't fail script)
 #
 check_cron_persistence() {
-	if ! crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
+	if ! crontab -l 2>/dev/null | grep -q "vpn-monitor"; then
 		log_message "WARNING" "SYSTEM" "Cron job not found! Persistence may have been lost. Re-run install.sh to restore cron job."
 	fi
 }
@@ -379,6 +379,7 @@ parse_args() {
 #   - Logs script start message with PID
 #   - Logs fake mode status if enabled
 #   - Initializes state files via init_state()
+#   - Compacts restart count file via compact_restart_count_file()
 #   - Enables debug output if DEBUG=1
 #
 # Examples:
@@ -386,7 +387,7 @@ parse_args() {
 #   # Sets up script environment, parses args, logs start
 #
 # Note:
-#   Requires parse_args, log_message, init_state, NO_ESCALATE, DEBUG to be set
+#   Requires parse_args, log_message, init_state, compact_restart_count_file, NO_ESCALATE, DEBUG to be set
 #   Debug output goes to stderr (>&2)
 initialize_monitor() {
 	# Parse command-line arguments
@@ -407,6 +408,8 @@ initialize_monitor() {
 	debug_log "Calling init_state()"
 	init_state
 	debug_log "After init_state()"
+	# Compact restart count file once per run (under main lock) to limit file growth
+	compact_restart_count_file
 }
 
 # Validate monitor state and check cooldown

@@ -416,19 +416,10 @@ main() {
 			continue
 		fi
 
-		# For LOCATION variables, check if template has any matching pattern variable
-		# This allows customer-specific location names (e.g., LOCATION_CUSTOMER1_EXTERNAL)
-		# to be valid even if template only has example locations (e.g., LOCATION_NYC_EXTERNAL)
-		if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
-			# Template has LOCATION_*_EXTERNAL pattern, so this is valid
-			if [[ $has_template_location_external -eq 1 ]]; then
-				continue
-			fi
-		elif [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
-			# Template has LOCATION_*_INTERNAL pattern, so this is valid
-			if [[ $has_template_location_internal -eq 1 ]]; then
-				continue
-			fi
+		# LOCATION_* variables are user-defined (location names); never flag as deprecated.
+		# Template may ship no location vars (user adds their own) or example names (e.g. LOCATION_NYC_*).
+		if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]] || [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+			continue
 		fi
 
 		# Variable is not in template and doesn't match a valid pattern

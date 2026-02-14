@@ -76,107 +76,44 @@ create_valid_config() {
 	create_test_config "$config_file" \
 		"LOCATION_NYC_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		'TIER1_THRESHOLD=1' \
-		'TIER2_THRESHOLD=3' \
-		'TIER3_THRESHOLD=5' \
+		'TIER2_THRESHOLD=2' \
+		'TIER3_THRESHOLD=3' \
 		'MAX_RESTARTS_PER_WINDOW=20' \
 		'RATE_LIMIT_WINDOW_MINUTES=60'
 }
 
 # Create a test lib directory with config_schema.sh
 #
-# Creates a lib directory structure with a minimal config_schema.sh
-# that matches the real schema structure. If the real config_schema.sh
-# exists, it copies it; otherwise creates a minimal version for testing.
+# Creates a lib directory and copies the project's lib/config_schema.sh into it
+# so tests use the real schema and can catch schema validation regressions.
+# Requires the repository lib/config_schema.sh to exist (run tests from repo root).
 #
 # Arguments:
 #   $1: Base directory (lib will be created here)
 #
 # Returns:
-#   0: Always succeeds
+#   0: Success (lib created, config_schema.sh copied)
+#   1: Project lib/config_schema.sh not found
 #
 # Side effects:
 #   - Creates lib directory structure
-#   - Creates or copies config_schema.sh
+#   - Copies lib/config_schema.sh from project
 #
 # Example:
 #   create_test_lib "${TEST_DIR}"
-#   # lib/config_schema.sh now exists
+#   # lib/config_schema.sh now exists (copy of project schema)
 create_test_lib() {
 	local base_dir="$1"
 	local lib_dir="${base_dir}/lib"
+	local real_schema="${BATS_TEST_DIRNAME}/../lib/config_schema.sh"
+
 	mkdir -p "$lib_dir"
 
-	# Copy the real config_schema.sh if available, otherwise create minimal version
-	if [[ -f "${BATS_TEST_DIRNAME}/../lib/config_schema.sh" ]]; then
-		cp "${BATS_TEST_DIRNAME}/../lib/config_schema.sh" "${lib_dir}/config_schema.sh"
-	else
-		# Create minimal schema for testing
-		cat >"${lib_dir}/config_schema.sh" <<'EOF'
-#!/bin/bash
-declare -A CONFIG_SCHEMA=(
-	["TIER1_THRESHOLD"]="required|integer|min:1|default:1"
-	["TIER2_THRESHOLD"]="required|integer|min:TIER1_THRESHOLD|default:3"
-	["TIER3_THRESHOLD"]="required|integer|min:TIER2_THRESHOLD|default:5"
-	["MAX_RESTARTS_PER_WINDOW"]="required|integer|min:1|max:20|default:20"
-	["RATE_LIMIT_WINDOW_MINUTES"]="required|integer|min:5|max:1440|default:60"
-	["NO_ESCALATE"]="optional|integer|values:0,1|default:0"
-	["RECOVERY_VERIFY_TIMEOUT"]="optional|integer|min:10|max:300|default:30"
-	["LOGS_DIR"]="optional|string||default:"
-)
-
-# Get configuration schema for a variable
-#
-# Arguments:
-#   $1: Variable name
-#
-# Returns:
-#   0: Schema found and printed to stdout
-#   1: Variable not found in schema
-get_config_schema() {
-	local var_name="$1"
-	# Check exact match first
-	if [[ -n "${CONFIG_SCHEMA[$var_name]:-}" ]]; then
-		echo "${CONFIG_SCHEMA[$var_name]}"
-		return 0
-	fi
-	# Check pattern matches for location-based variables
-	# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
-	if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
-		# LOCATION_*_EXTERNAL pattern: required, string, non-empty
-		echo "required|string|non-empty"
-		return 0
-	elif [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_INTERNAL$ ]]; then
-		# LOCATION_*_INTERNAL pattern: optional, string
-		echo "optional|string"
-		return 0
-	fi
-	return 1
-}
-
-# Get default value for a configuration variable
-#
-# Arguments:
-#   $1: Variable name
-#
-# Returns:
-#   0: Default value found and printed to stdout
-#   1: Variable not found in schema
-get_config_default() {
-	local var_name="$1"
-	local schema
-	schema=$(get_config_schema "$var_name")
-	if [[ -z "$schema" ]]; then
+	if [[ ! -f "$real_schema" ]]; then
+		echo "create_test_lib: project lib/config_schema.sh not found at $real_schema (run tests from repository root)" >&2
 		return 1
 	fi
-	if [[ "$schema" =~ default:([^|]+)$ ]]; then
-		echo "${BASH_REMATCH[1]}"
-	else
-		echo ""
-	fi
-	return 0
-}
-EOF
-	fi
+	cp "$real_schema" "${lib_dir}/config_schema.sh"
 }
 
 # Copy compare-config.sh script and its dependencies to test directory

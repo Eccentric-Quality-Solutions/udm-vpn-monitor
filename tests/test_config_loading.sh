@@ -43,7 +43,7 @@ EOF
 	assert_log_contains_any "$LOG_FILE" "Failed to parse configuration file" "Invalid configuration line" "ERROR"
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "config file exists but is not readable - permission error handled" {
 	# Purpose: Test verifies that the script handles unreadable configuration files gracefully
 	# Expected: Script detects permission issue via file_exists_and_readable(), logs fatal error, exits appropriately in fake vs normal mode
@@ -89,7 +89,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "config file is a directory - warning logged and defaults used" {
 	# Purpose: Test verifies that the script handles configuration file paths that point to directories instead of files gracefully
 	# Expected: Script detects that config path is a directory, logs warning, uses default configuration values, and continues execution
@@ -221,7 +221,7 @@ EOF
 # Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
 # ============================================================================
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "load_config fails in fake mode - should exit with code 0" {
 	# Purpose: Test verifies that load_config() failures in fake mode exit gracefully with code 0
 	# Expected: Script exits with code 0 in fake mode even if config loading fails (errors are logged)
@@ -251,7 +251,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "validate_critical_config_vars detects missing required variables" {
 	# Purpose: Test verifies that validate_critical_config_vars() detects missing required variables after parsing
 	# Expected: Script detects missing required variables, logs error, exits appropriately
@@ -279,7 +279,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "config file parsing partially succeeds - some variables set, others not" {
 	# Purpose: Test verifies that script handles partial config parsing failures gracefully
 	# Expected: Script detects partial parsing failure, validates critical variables, handles gracefully
@@ -317,7 +317,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "handle_fatal_config_error exit behavior in fake mode vs normal mode" {
 	# Purpose: Test verifies that handle_fatal_config_error() exits with code 0 in fake mode, error code in normal mode
 	# Expected: Fake mode exits with 0, normal mode exits with error code
@@ -351,7 +351,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "load_config fails in normal mode - defensive check exits with error code" {
 	# Purpose: Test verifies that load_config() failures in normal mode exit with error code (defensive check)
 	# Expected: Script exits with EXIT_VALIDATION_ERROR (3) if load_config fails but doesn't exit (defensive check)
@@ -385,7 +385,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "validate_config fails after load_config succeeds" {
 	# Purpose: Test verifies that validate_config() failures after successful load_config() are handled correctly
 	# Expected: Script detects validation failure after config loads, exits appropriately
@@ -421,7 +421,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "config loading fails but LOG_FILE was set before load_config - fallback behavior" {
 	# Purpose: Test verifies that LOG_FILE set before load_config() is preserved when config parsing fails
 	# Expected: LOG_FILE set before load_config() is preserved even when config parsing fails (in fake mode)
@@ -461,7 +461,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "safe_parse_config_file fails but error is properly caught" {
 	# Purpose: Test verifies that safe_parse_config_file() failures are properly caught and handled
 	# Expected: Script catches safe_parse_config_file() failure, calls handle_fatal_config_error, exits appropriately
@@ -496,7 +496,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "config file contains dangerous content - caught by safe_parse" {
 	# Purpose: Test verifies that safe_parse_config_file() detects and rejects dangerous content
 	# Expected: Script detects dangerous content (command injection attempts), logs error, rejects config

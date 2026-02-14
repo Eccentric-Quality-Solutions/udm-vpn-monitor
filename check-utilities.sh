@@ -3,7 +3,7 @@
 # UDM Utility Availability Checker
 # Checks whether required Linux utilities are available on the system
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # Colors for output

@@ -3,7 +3,7 @@
 # Per-peer state operations
 # Handles state management for individual VPN peers
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # Get peer state value

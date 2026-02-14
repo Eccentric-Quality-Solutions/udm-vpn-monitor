@@ -3,7 +3,7 @@
 # Failure analysis functions for UDM VPN Monitor
 # Handles failure type classification and VPN status determination
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # shellcheck source=lib/constants.sh
@@ -23,7 +23,6 @@ if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	[[ -z "${IPV4_CIDR_SINGLE_HOST:-}" ]] && readonly IPV4_CIDR_SINGLE_HOST=32
 	[[ -z "${PING_PACKET_LOSS_THRESHOLD:-}" ]] && readonly PING_PACKET_LOSS_THRESHOLD=100
 	[[ -z "${PING_SUCCESS_THRESHOLD:-}" ]] && readonly PING_SUCCESS_THRESHOLD=0.3
-	[[ -z "${PING_CEIL_ADJUSTMENT:-}" ]] && readonly PING_CEIL_ADJUSTMENT=0.999
 	[[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && readonly XFRM_OUTPUT_CONTEXT_LINES=10
 	[[ -z "${IPSEC_STATUS_TIMEOUT:-}" ]] && readonly IPSEC_STATUS_TIMEOUT=5
 	[[ -z "${STATE_FILE_READ_TIMEOUT:-}" ]] && readonly STATE_FILE_READ_TIMEOUT=1
@@ -164,6 +163,7 @@ check_rekey_for_failure_type() {
 #   where each value is 0 or 1
 #
 # Note:
+#   When ENABLE_PING_CHECK=1, ping always runs (target is internal IP if set, else external).
 #   Caller MUST capture stdout to get flags, even if only return code is needed.
 #   Example: flags=$(check_routing_issue_for_failure_type "$bytes" "$loc" "$ip" "$int_ip")
 #            read -r byte_counters_available ping_checked ping_failed <<< "$flags"
@@ -193,14 +193,15 @@ check_routing_issue_for_failure_type() {
 		fi
 	fi
 
-	# Check ping if enabled and internal IP provided
+	# Check ping when enabled (always run if ENABLE_PING_CHECK=1; use internal IP or fall back to external)
 	# Check ping even if byte counters are unavailable to help diagnose routing issues
 	# If byte counters unavailable and ping check enabled and fails: definitely routing_issue
-	if [[ $has_routing_issue -eq 0 ]] && [[ -n "$internal_peer_ip" ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
+	if [[ $has_routing_issue -eq 0 ]] && [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]]; then
 		ping_checked=1
-		local local_ip
+		local local_ip ping_target
 		local_ip=$(get_local_ip_for_ping)
-		if ! check_ping_connectivity "$internal_peer_ip" "$local_ip" 2>/dev/null; then
+		ping_target="${internal_peer_ip:-$external_peer_ip}"
+		if ! check_ping_connectivity "$ping_target" "$local_ip" "$location_name" 2>/dev/null; then
 			ping_failed=1
 			has_routing_issue=1
 		fi
@@ -593,7 +594,9 @@ determine_vpn_status() {
 		failure_type_file=$(get_peer_state_file_path "$location_name" "$external_peer_ip" "failure_type")
 		# Validate path was generated successfully before writing
 		if [[ -n "$failure_type_file" ]]; then
-			atomic_write_file "$failure_type_file" "$failure_type" 2>/dev/null || true
+			if ! atomic_write_file "$failure_type_file" "$failure_type"; then
+				log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $failure_type_file"
+			fi
 		fi
 
 		case "$failure_type" in
@@ -607,16 +610,9 @@ determine_vpn_status() {
 			handle_error "WARNING" "$location_name" "VPN failure type: Tunnel down (no Phase 2 SA found) for $ip_display"
 			;;
 		"routing_issue")
-			# Log routing issue warning only when primary check failed
-			# When primary_check_passed=0: Primary check failed, routing issue is the cause
-			# When primary_check_passed=1: Primary check passed (SA exists, bytes increasing) but routing issue detected from ping failure
-			#   In this case, silently ignore since ping is supplementary and primary check is authoritative
-			#   This prevents log noise from transient ping failures when VPN is actually healthy
-			if [[ $primary_check_passed -eq 0 ]]; then
-				handle_error "WARNING" "$location_name" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $ip_display"
-			fi
-			# Note: If primary_check_passed was 1, we keep it as 1 and don't log routing_issue warning
-			# since ping check is supplementary and primary check (SA + byte counters) is authoritative
+			# Ping failed or byte counters indicate no traffic: treat as VPN failed (count toward threshold)
+			handle_error "WARNING" "$location_name" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $ip_display"
+			primary_check_passed=0
 			;;
 		*)
 			# "unknown" failure type
@@ -656,7 +652,7 @@ determine_vpn_status() {
 #   1. Checks ip xfrm state for SA matching external peer IP
 #   2. Validates byte counters are > 0 and increasing (if available)
 #   3. Falls back to ipsec status if xfrm doesn't confirm
-#   4. Optionally performs ping check if ENABLE_PING_CHECK=1 (uses internal IP(s) if provided)
+#   4. When ENABLE_PING_CHECK=1, ping always runs (internal IP(s) or external as target). Ping failure is treated as VPN failed (counts toward threshold).
 #
 # Side effects:
 #   - Creates/updates per-peer last_bytes file if byte counters found
@@ -725,11 +721,20 @@ check_vpn_status() {
 	if check_xfrm_primary "$external_peer_ip" "$first_internal_ip" "$location_name" "xfrm_diagnostic" "sa_exists_var" "xfrm_output"; then
 		primary_check_passed=1
 	else
-		# xfrm check failed - try ipsec fallback
-		if check_ipsec_fallback "$external_peer_ip" "$location_name" "ipsec_diagnostic"; then
+		# xfrm check failed - only try ipsec fallback when failure was due to no SA or xfrm error.
+		# When SA existed but validation failed (e.g. ping timeout, byte counter rules), do not
+		# override with ipsec status - ipsec can still report "established" while the tunnel is
+		# broken (e.g. routing issue), which would reset failure count and prevent recovery.
+		local use_ipsec_fallback=1
+		if [[ "$xfrm_diagnostic" == *"SA exists"* ]]; then
+			use_ipsec_fallback=0
+		fi
+		if [[ $use_ipsec_fallback -eq 1 ]] && check_ipsec_fallback "$external_peer_ip" "$location_name" "ipsec_diagnostic"; then
 			primary_check_passed=1
-		else
-			# Both methods failed - check IPsec daemon status for diagnostics
+		fi
+		if [[ $primary_check_passed -eq 0 ]]; then
+			# Both methods failed (or fallback skipped because SA existed but validation failed)
+			# Check IPsec daemon status for diagnostics
 			local ipsec_daemon_status="unknown"
 			if check_command_available "systemctl"; then
 				# Try systemctl first (more reliable on UDM OS)

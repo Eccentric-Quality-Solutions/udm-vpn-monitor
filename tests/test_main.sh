@@ -922,7 +922,7 @@ EOF
 # Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
 # ============================================================================
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "INT signal (Ctrl+C) received - signal_exit_code=130 set correctly" {
 	# Purpose: Test verifies that INT signal sets signal_exit_code=130 correctly
 	# Expected: Script receives INT signal, sets signal_exit_code=130, exits with code 130
@@ -966,7 +966,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "EXIT trap runs after signal handler - exit code precedence" {
 	# Purpose: Test verifies that EXIT trap runs after signal handler and preserves correct exit code
 	# Expected: EXIT trap runs, uses signal_exit_code if set, otherwise uses main_exit_code
@@ -1015,7 +1015,7 @@ EOF
 # Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
 # ============================================================================
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "ensure_directory_exists fails for STATE_DIR in fake mode - should exit gracefully" {
 	# Purpose: Test verifies that ensure_directory_exists() failures for STATE_DIR in fake mode exit gracefully
 	# Expected: Script exits with code 0 in fake mode even if STATE_DIR creation fails (errors are logged)
@@ -1046,7 +1046,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "directory creation succeeds but directory is not writable (race condition)" {
 	# Purpose: Test verifies that script handles race condition where directory is created but not writable
 	# Expected: Script detects directory is not writable, exits with error (cannot create lockfile)
@@ -1091,7 +1091,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "ensure_directory_exists fails for LOGS_DIR in fake mode - should exit gracefully" {
 	# Purpose: Test verifies that ensure_directory_exists() failures for LOGS_DIR in fake mode exit gracefully
 	# Expected: Script exits with code 0 in fake mode even if LOGS_DIR creation fails (errors are logged)
@@ -1123,7 +1123,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "directory creation fails due to permission errors (parent directory read-only)" {
 	# Purpose: Test verifies that script handles directory creation failures due to permission errors
 	# Expected: Script detects permission error, logs error, handles gracefully
@@ -1163,7 +1163,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "directory creation fails due to filesystem full condition" {
 	# Purpose: Test verifies that script handles directory creation failures due to filesystem full condition
 	# Expected: Script detects filesystem full condition, logs error, handles gracefully
@@ -1214,7 +1214,7 @@ EOF
 # Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
 # ============================================================================
 
-# bats test_tags=category:high-risk,priority:medium,untested-critical-path
+# bats test_tags=category:high-risk,priority:medium
 @test "unknown argument that looks like file path but is not readable" {
 	# Purpose: Test verifies that validate_args() checks file readability for file path arguments
 	# Expected: Script should exit with error when file path argument exists but is not readable
@@ -1245,7 +1245,7 @@ EOF
 	rm -f "$unreadable_file" 2>/dev/null || true
 }
 
-# bats test_tags=category:high-risk,priority:medium,untested-critical-path
+# bats test_tags=category:high-risk,priority:medium
 @test "unknown argument that looks like directory but is not accessible" {
 	# Purpose: Test verifies that validate_args() checks directory accessibility for directory path arguments
 	# Expected: Script should exit with error when directory path argument exists but is not accessible
@@ -1276,7 +1276,7 @@ EOF
 	rm -rf "$inaccessible_dir" 2>/dev/null || true
 }
 
-# bats test_tags=category:high-risk,priority:medium,untested-critical-path
+# bats test_tags=category:high-risk,priority:medium
 @test "multiple unknown arguments - all should be reported" {
 	# Purpose: Test verifies that validate_args() reports all unknown arguments, not just the first one
 	# Expected: Script should collect all unknown arguments and report them together

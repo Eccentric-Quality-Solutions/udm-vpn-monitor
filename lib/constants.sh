@@ -12,7 +12,7 @@
 #   This file is safe to source multiple times (idempotent).
 #   Constants are only defined if not already set.
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # Lockfile timeout default (in seconds)
@@ -46,12 +46,8 @@
 [[ -z "${PING_PACKET_LOSS_THRESHOLD:-}" ]] && readonly PING_PACKET_LOSS_THRESHOLD=100
 # Success threshold for multiple internal IPs (0.3 = 30% must respond)
 # For locations with multiple internal IPs, VPN is considered healthy if ≥30% respond to pings
-# This threshold is used with ceil() rounding (e.g., 2 IPs requires 1 success, 10 IPs requires 3)
+# Threshold is computed as ceil(count * PING_SUCCESS_THRESHOLD) in awk (e.g., 2 IPs → 1, 10 IPs → 3)
 [[ -z "${PING_SUCCESS_THRESHOLD:-}" ]] && readonly PING_SUCCESS_THRESHOLD=0.3
-# Adjustment value for ceiling calculation (0.999 ensures proper rounding up)
-# Used in awk calculation: int((count * PING_SUCCESS_THRESHOLD) + PING_CEIL_ADJUSTMENT)
-# This ensures ceil() behavior: ceil(0.3 * 2) = 1, ceil(0.3 * 10) = 3
-[[ -z "${PING_CEIL_ADJUSTMENT:-}" ]] && readonly PING_CEIL_ADJUSTMENT=0.999
 
 # xfrm output parsing constants
 # Number of context lines to show after grep match when parsing xfrm state output

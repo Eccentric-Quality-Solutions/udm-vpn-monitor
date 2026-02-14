@@ -2576,11 +2576,6 @@ source "${STATE_MODULE_DIR}/peer_state.sh" 2>/dev/null || {
 	log_state_error "Failed to source peer_state.sh"
 	exit 1
 }
-# shellcheck source=lib/state/location_state.sh
-source "${STATE_MODULE_DIR}/location_state.sh" 2>/dev/null || {
-	log_state_error "Failed to source location_state.sh"
-	exit 1
-}
 # shellcheck source=lib/state/state_init.sh
 source "${STATE_MODULE_DIR}/state_init.sh" 2>/dev/null || {
 	log_state_error "Failed to source state_init.sh"

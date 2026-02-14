@@ -245,7 +245,8 @@ RATE_LIMIT_WINDOW_MINUTES=60'
 # bats test_tags=category:unit
 @test "compare-config.sh handles empty template file gracefully" {
 	# Purpose: Test verifies that the script handles empty template files without crashing
-	# Expected: Script reports all existing settings as deprecated when template is empty
+	# Expected: Script reports non-LOCATION existing settings as deprecated when template is empty
+	# LOCATION_* variables are never flagged as deprecated (user-defined location names).
 	# Importance: Ensures script handles edge cases gracefully
 	local test_dir="${TEST_DIR}/test-compare"
 	mkdir -p "$test_dir"
@@ -260,8 +261,8 @@ RATE_LIMIT_WINDOW_MINUTES=60'
 
 	assert_success
 	assert_output --partial "Deprecated Settings in Existing Config"
-	# Should report all existing variables as deprecated
-	assert_output --partial "LOCATION_NYC_EXTERNAL"
+	# Non-LOCATION vars (e.g. TIER1_THRESHOLD) should be reported as deprecated
+	assert_output --partial "TIER1_THRESHOLD"
 }
 
 # bats test_tags=category:unit
@@ -583,8 +584,8 @@ RATE_LIMIT_WINDOW_MINUTES=60'
 # Config with inline comments
 LOCATION_NYC_EXTERNAL="${TEST_PEER_IP}"  # External IP
 TIER1_THRESHOLD=1  # Tier 1 threshold
-TIER2_THRESHOLD=3  # Tier 2 threshold
-TIER3_THRESHOLD=5  # Tier 3 threshold
+TIER2_THRESHOLD=2  # Tier 2 threshold
+TIER3_THRESHOLD=3  # Tier 3 threshold
 MAX_RESTARTS_PER_WINDOW=20
 RATE_LIMIT_WINDOW_MINUTES=60  # Max restarts
 EOF

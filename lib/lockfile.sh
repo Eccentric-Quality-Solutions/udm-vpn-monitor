@@ -3,7 +3,7 @@
 # Lockfile management for UDM VPN Monitor
 # Handles flock-based and fallback lockfile mechanisms to prevent concurrent execution
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # shellcheck source=lib/common.sh
@@ -17,6 +17,11 @@ source "${LIB_DIR}/logging.sh"
 # Used when flock is unavailable. Set to 1 to limit retries and prevent infinite loops.
 # Note: This is a fallback method with inherent race conditions - retries help but don't eliminate all races.
 readonly FALLBACK_MAX_RETRIES=1
+
+# Hard maximum lockfile age in seconds (regardless of clock direction).
+# A lockfile whose mtime differs from "now" by more than this (past or future) is always treated as stale.
+# Prevents far-future or corrupted timestamps (e.g. year 2099, NTP jump) from permanently blocking execution.
+readonly LOCKFILE_MAX_AGE_SECONDS=3600
 
 # Extract PID from lockfile
 #
@@ -153,12 +158,14 @@ create_lockfile_atomically() {
 #
 # Note:
 #   Uses get_file_mtime to get file modification time
-#   Requires LOCKFILE, LOCKFILE_TIMEOUT, get_file_mtime, and calculate_duration to be set
+#   Requires LOCKFILE, LOCKFILE_TIMEOUT, LOCKFILE_MAX_AGE_SECONDS, get_file_mtime, and calculate_duration to be set
 #   If file mtime cannot be determined (returns 0), considers lockfile stale
 #   Uses calculate_duration() for safe timestamp arithmetic (handles clock skew)
-#   Detects clock skew: if lockfile mtime is significantly in the future (>60s), logs warning
+#   Detects clock skew: if lockfile mtime is in the future but within LOCKFILE_MAX_AGE_SECONDS, logs warning
 #   but does not treat as stale (safer to keep lockfile than remove valid one)
 #   Clock skew can occur due to NTP adjustments, VM snapshot restores, or system clock changes
+#   Hard maximum age: if lockfile mtime differs from now by more than LOCKFILE_MAX_AGE_SECONDS in either
+#   direction, the lockfile is always treated as stale (prevents far-future/corrupt timestamps from blocking)
 check_lockfile_stale() {
 	if [[ ! -f "$LOCKFILE" ]]; then
 		return 1 # No lockfile, not stale
@@ -177,7 +184,15 @@ check_lockfile_stale() {
 		return 0 # Consider stale
 	fi
 
-	# Check for clock skew: lockfile mtime significantly in the future
+	# Hard maximum age: if lockfile is more than LOCKFILE_MAX_AGE_SECONDS from "now" in either direction,
+	# treat as stale (prevents far-future or corrupted timestamps from permanently blocking execution)
+	local abs_age=$((lockfile_mtime - now))
+	[[ $abs_age -lt 0 ]] && abs_age=$((-abs_age))
+	if [[ $abs_age -gt $LOCKFILE_MAX_AGE_SECONDS ]]; then
+		return 0 # Stale (exceeds hard maximum age in either direction)
+	fi
+
+	# Check for clock skew: lockfile mtime in the future (but within hard max age)
 	# This can happen if system clock moved backward (NTP adjustment, VM restore)
 	# We log info but don't treat as stale (safer to keep lockfile than remove valid one)
 	if [[ $lockfile_mtime -gt $now ]]; then

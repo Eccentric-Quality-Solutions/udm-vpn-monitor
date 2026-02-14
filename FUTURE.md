@@ -2,6 +2,8 @@ Considerations for the future, but want to avoid overarchitecting and premature 
 
 **Note:** Items marked with ✅ COMPLETED have been finished and can be considered resolved.
 
+- Reintroduce `lib/state/location_state.sh` only if we add location-specific state not tied to individual peers (e.g. location-level flags or aggregates). Removed 2026-02-14 as an empty stub; per-location state is currently handled via per-peer state with location as a parameter.
+
 - Consider routing issue detection during ipsec status fallback periods
   - Current state: When xfrm unavailable, system falls back to ipsec status (no byte counters)
   - Issue: Routing issues (ping failures) may go undetected longer when byte counters unavailable
@@ -43,18 +45,6 @@ Considerations for the future, but want to avoid overarchitecting and premature 
     - Consider partial resolution for multiple internal IPs (continue with successfully resolved IPs instead of failing entirely)
     - Add DNS resolution retry logic for transient DNS failures
     - Note: Basic DNS support completed 2026-01-27, these are enhancements for edge cases
-
-- Standardize non-critical state write error handling
-    - Multiple instances of `atomic_write_file ... 2>/dev/null || true` silently ignore errors (lib/state/, lib/detection/, lib/resources.sh)
-    - Pattern used for non-critical statistics/logging state files (ping summaries, resource monitoring stats, network partition stats, etc.)
-    - Issue: Silent failures can mask real problems (permission errors, disk full conditions)
-    - Proposed: Add DEBUG-level logging for state file write failures in non-critical paths
-    - Pattern: `if ! atomic_write_file "$file" "$value" 2>/dev/null; then log_message "DEBUG" "SYSTEM" "Failed to update state file: $file (non-fatal)"; fi`
-    - Benefit: Better diagnostic visibility without cluttering logs (DEBUG level only visible when DEBUG=1)
-    - Cost: MEDIUM - requires updating multiple instances across codebase for consistency
-    - Priority: LOW - current pattern works, failures are non-fatal, but diagnostic value would be helpful
-    - Note: Pilot implementation added to `log_ping_summary_if_due()` in `ping_detection.sh` (2026-01-18)
-    - See: `docs/CODEBASE_REVIEW.md` for related analysis
 
 - System-wide failure detection enhancements
   - Consider making coordinator selection more robust (e.g., use location order instead of first-check-wins)

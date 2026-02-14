@@ -3795,7 +3795,6 @@ source_function() {
 				local state_modules=(
 					"${LIB_DIR}/state/state_paths.sh"
 					"${LIB_DIR}/state/peer_state.sh"
-					"${LIB_DIR}/state/location_state.sh"
 					"${LIB_DIR}/state/global_state.sh"
 					"${LIB_DIR}/state/state_init.sh"
 				)

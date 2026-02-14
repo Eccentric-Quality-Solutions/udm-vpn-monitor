@@ -3,7 +3,7 @@
 # Resource monitoring functions for UDM VPN Monitor
 # Monitors CPU, RAM, and disk space usage and implements throttling
 #
-# Version: 0.7.0
+# Version: 0.8.0
 #
 
 # Source common utility functions
@@ -37,7 +37,8 @@ source "${LIB_DIR}/common.sh"
 # Note:
 #   Requires /proc/stat to be readable
 #   Uses 1-second sampling interval for accuracy
-#   Returns 1 if /proc/stat is unreadable or calculation fails (graceful degradation)
+#   Returns 1 if /proc/stat is unreadable, calculation fails, or result is non-numeric
+#   (e.g. nan, inf, or scientific notation from awk on overflow/unexpected values)
 get_cpu_usage() {
 	local cpu_stat_file="/proc/stat"
 	# Check file readability before grep operation (prevents hangs on unreadable files)
@@ -90,6 +91,11 @@ get_cpu_usage() {
 	# Use awk for floating point math (UDM doesn't have bc)
 	local cpu_usage
 	cpu_usage=$(awk "BEGIN {printf \"%.0f\", (1 - $idle_diff/$total_diff) * 100}")
+
+	# Reject non-integer output (awk can produce nan, inf, or scientific notation on overflow/unexpected input)
+	if [[ ! $cpu_usage =~ ^-?[0-9]+$ ]]; then
+		return 1
+	fi
 
 	# Clamp CPU usage to 0-100 range (shouldn't be needed but protects against edge cases)
 	if [[ $cpu_usage -lt 0 ]]; then
@@ -353,11 +359,15 @@ check_resource_constrained() {
 				fi
 			else
 				# Invalid state file, recreate it
-				atomic_write_file "$state_file" "$current_time" 2>/dev/null || true
+				if ! atomic_write_file "$state_file" "$current_time"; then
+					log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $state_file"
+				fi
 			fi
 		else
 			# First time we see it constrained, create state file
-			atomic_write_file "$state_file" "$current_time" 2>/dev/null || true
+			if ! atomic_write_file "$state_file" "$current_time"; then
+				log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $state_file"
+			fi
 		fi
 	else
 		# Resource is not constrained - remove state file if it exists
@@ -515,7 +525,9 @@ check_system_resources() {
 				filesystem=$(df -P "$check_path" 2>/dev/null | tail -n1 | awk '{print $1}')
 				handle_error "WARNING" "SYSTEM" "Free disk space is low: ${free_space}% free on ${filesystem}" 0
 				# Mark that we've logged the warning
-				atomic_write_file "$disk_warning_state_file" "1" 2>/dev/null || true
+				if ! atomic_write_file "$disk_warning_state_file" "1"; then
+					log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $disk_warning_state_file"
+				fi
 			fi
 		else
 			# Disk space recovered above warning threshold, clear warning state

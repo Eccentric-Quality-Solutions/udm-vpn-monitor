@@ -140,7 +140,19 @@ if [[ ! -f "${COVERAGE_DIR}/index.js" ]] && [[ ! -f "${COVERAGE_DIR}/index.json"
 	exit 1
 fi
 
-# Function to check if a file has coverage data
+# Check whether kcov produced coverage data for a given source file.
+#
+# Looks for an HTML file under COVERAGE_DIR whose name matches the source file.
+#
+# Arguments:
+#   $1: file_path - Relative path to the source file (e.g. lib/recovery/recovery_orchestration.sh)
+#   $2: func_name - Function name (unused; for caller convenience)
+#   $3: start_line - Function start line (unused)
+#   $4: end_line - Function end line (unused)
+#
+# Returns:
+#   0: Coverage data (HTML file) found for the file
+#   1: No coverage data found
 check_file_coverage() {
 	local file_path="$1"
 	local func_name="$2"

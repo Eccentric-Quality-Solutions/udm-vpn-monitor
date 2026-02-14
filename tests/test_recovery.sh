@@ -2786,7 +2786,7 @@ EOF
 # Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
 # ============================================================================
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "strategy selection with invalid tier (not 2 or 3)" {
 	# Purpose: Test verifies that select_recovery_strategy() handles invalid tier values gracefully
 	# Expected: Function returns error when tier is not 2 or 3
@@ -2811,7 +2811,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "strategy selection with empty peer IP but xfrm preferred" {
 	# Purpose: Test verifies that select_recovery_strategy() handles empty peer IP gracefully
 	# Expected: Function falls back to ipsec_reload/restart when peer IP is empty
@@ -2835,7 +2835,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "strategy selection with peer IP but ENABLE_XFRM_RECOVERY=0" {
 	# Purpose: Test verifies that select_recovery_strategy() respects ENABLE_XFRM_RECOVERY=0
 	# Expected: Function falls back to ipsec_reload/restart when xfrm recovery is disabled
@@ -2862,7 +2862,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "all recovery strategies unavailable - RECOVERY_AVAILABLE=0 set correctly" {
 	# Purpose: Test verifies that select_recovery_strategy() sets RECOVERY_AVAILABLE=0 when all strategies unavailable
 	# Expected: Function returns error and sets RECOVERY_AVAILABLE=0 when no strategies are available
@@ -2948,7 +2948,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "_check_recovery_command_availability fails silently when command check fails" {
 	# Purpose: Test verifies that _check_recovery_command_availability() handles command check failures gracefully
 	# Expected: Function sets availability flags to 0 when check_command_available fails, but doesn't error
@@ -3025,7 +3025,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "get_command_path fails for ipsec command - fallback to 'ipsec'" {
 	# Purpose: Test verifies that _check_recovery_command_availability() handles get_command_path() failure gracefully
 	# Expected: When get_command_path() fails or is unavailable, _RECOVERY_IPSEC_PATH falls back to "ipsec"
@@ -3172,7 +3172,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "strategy selection succeeds - verify all global variables set correctly" {
 	# Purpose: Test verifies that select_recovery_strategy() sets all global variables correctly when strategy selection succeeds
 	# Expected: All global variables (RECOVERY_STRATEGY, RECOVERY_COMMAND, RECOVERY_IMPACT, RECOVERY_AVAILABLE) are set correctly
@@ -3219,7 +3219,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:medium,untested-critical-path
+# bats test_tags=category:high-risk,priority:medium
 @test "command availability changes between checks - race condition simulation" {
 	# Purpose: Test verifies that select_recovery_strategy() handles command availability changes between checks
 	# Expected: Function uses cached availability from _check_recovery_command_availability() and doesn't re-check during strategy selection
@@ -3310,7 +3310,7 @@ EOF
 # Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
 # ============================================================================
 
-# bats test_tags=category:high-risk,priority:medium,untested-critical-path
+# bats test_tags=category:high-risk,priority:medium
 @test "_check_recovery_command_availability command available but path resolution fails" {
 	# Purpose: Test verifies that _check_recovery_command_availability handles path resolution failures gracefully
 	# Expected: Function should handle get_command_path() failures and fall back to command name
@@ -3433,7 +3433,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:medium,untested-critical-path
+# bats test_tags=category:high-risk,priority:medium
 @test "_check_recovery_command_availability command available but not executable (permission error)" {
 	# Purpose: Test verifies that _check_recovery_command_availability handles permission errors gracefully
 	# Expected: Function should detect when command exists but is not executable and mark as unavailable
@@ -3519,7 +3519,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:medium,untested-critical-path
+# bats test_tags=category:high-risk,priority:medium
 @test "_check_recovery_command_availability multiple calls with different results (should cache)" {
 	# Purpose: Test verifies that _check_recovery_command_availability caches results and doesn't re-check unnecessarily
 	# Expected: Function should cache availability results, so multiple calls return same results

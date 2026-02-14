@@ -108,7 +108,7 @@ lib/
 │   ├── recovery_state.sh, constants.sh
 └── state/
     ├── state_init.sh, state_paths.sh
-    ├── location_state.sh, peer_state.sh, global_state.sh
+    ├── peer_state.sh, global_state.sh
     ├── network_partition_stats.sh, resource_monitoring_stats.sh
 ```
 

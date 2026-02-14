@@ -162,7 +162,7 @@ EOF
 # Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
 # ============================================================================
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "handle_error called without prefix - fallback to SYSTEM" {
 	# Purpose: Test verifies that handle_error() falls back to "SYSTEM" when called without prefix
 	# Expected: Function uses "SYSTEM" as default prefix and logs warning about missing prefix
@@ -194,7 +194,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "handle_error with invalid severity level - default to ERROR" {
 	# Purpose: Test verifies that handle_error() defaults to "ERROR" when invalid severity is provided
 	# Expected: Function uses "ERROR" as default severity and logs warning about invalid severity
@@ -226,7 +226,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "handle_error_or_exit_fake_mode exit behavior - fake mode vs normal mode" {
 	# Purpose: Test verifies that handle_error_or_exit_fake_mode() exits correctly in fake mode vs normal mode
 	# Expected: Fake mode returns 1, normal mode exits with error code
@@ -276,7 +276,7 @@ EOF
 # Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
 # ============================================================================
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "handle_error exit code parsing fails (non-numeric last argument)" {
 	# Purpose: Test verifies that handle_error handles non-numeric exit code gracefully
 	# Expected: Function should treat non-numeric last argument as part of message, not exit code
@@ -296,7 +296,7 @@ EOF
 	assert_success
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "handle_error log_message fails inside function (logging failure)" {
 	# Purpose: Test verifies that handle_error handles logging failures gracefully
 	# Expected: Function should handle log_message failures without crashing
@@ -319,7 +319,7 @@ EOF
 	chmod 755 "$(dirname "$log_file")" 2>/dev/null || true
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "handle_error ERROR severity with exit code 0 - should not exit" {
 	# Purpose: Test verifies that handle_error with ERROR severity and exit code 0 does not exit
 	# Expected: Function should log error but not exit when exit code is 0
@@ -344,7 +344,7 @@ EOF
 # Tests for untested critical paths identified in docs/UNTESTED_CRITICAL_PATHS.md
 # ============================================================================
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "handle_error_or_exit_fake_mode exit code non-zero in normal mode - should exit via die" {
 	# Purpose: Test verifies that handle_error_or_exit_fake_mode exits via die() in normal mode with non-zero exit code
 	# Expected: Function should call die() and exit with specified code in normal mode
@@ -369,7 +369,7 @@ EOF
 	assert_success
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "handle_error_or_exit_fake_mode called without prefix - fallback to SYSTEM" {
 	# Purpose: Test verifies that handle_error_or_exit_fake_mode() falls back to "SYSTEM" when called without prefix
 	# Expected: Function uses "SYSTEM" as default prefix and logs warning about missing prefix
@@ -403,7 +403,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "handle_error_or_exit_fake_mode is_fake_mode check with invalid NO_ESCALATE" {
 	# Purpose: Test verifies that handle_error_or_exit_fake_mode() handles invalid NO_ESCALATE values defensively
 	# Expected: Function treats non-1 values as normal mode (not fake mode)
@@ -441,7 +441,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "handle_error_or_exit_fake_mode log_message fails inside function" {
 	# Purpose: Test verifies that handle_error_or_exit_fake_mode() handles log_message() failures gracefully
 	# Expected: Function should still attempt to exit/die even if logging fails
@@ -478,7 +478,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "handle_error_or_exit_fake_mode exit code 0 in fake mode - should return 1" {
 	# Purpose: Test verifies that handle_error_or_exit_fake_mode() returns 1 in fake mode even with exit code 0
 	# Expected: Fake mode always returns 1, regardless of exit code parameter
@@ -512,7 +512,7 @@ EOF
 	remove_mock_from_path
 }
 
-# bats test_tags=category:high-risk,priority:high,untested-critical-path
+# bats test_tags=category:high-risk,priority:high
 @test "handle_error_or_exit_fake_mode exit code non-zero in fake mode - should return 1" {
 	# Purpose: Test verifies that handle_error_or_exit_fake_mode() returns 1 in fake mode with non-zero exit code
 	# Expected: Fake mode returns 1, not the specified exit code

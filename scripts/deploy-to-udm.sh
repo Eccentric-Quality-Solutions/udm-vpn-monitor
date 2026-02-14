@@ -16,7 +16,7 @@
 # Options:
 #   --file FILE              Package file to deploy (default: udm-vpn-monitor.zip)
 #   --target-ip IP           Target UDM IP address (required)
-#   --bind-ip IP             Source IP address for BindAddress (required)
+#   --bind-ip IP             Source IP address for BindAddress (optional, omit for default routing)
 #   --username USER          SSH username (default: root)
 #   --password PASS          SSH password (required, or use --password-file)
 #   --password-file FILE     File containing SSH password (alternative to --password)
@@ -25,6 +25,7 @@
 #   --remove-state           Remove state directory during uninstall (default: yes)
 #   --remove-logs            Remove logs directory during uninstall (default: yes)
 #   --skip-uninstall         Skip uninstall step (for fresh installs)
+#   --append-missing-config  Append new config fields to existing config during install
 #   --log-lines N            Number of log lines to display (default: 50)
 #   --timeout SECONDS        SSH/SCP timeout in seconds (default: 30)
 #   --verbose                Enable verbose output
@@ -71,6 +72,7 @@ KEEP_CONFIG="yes"
 REMOVE_STATE="yes"
 REMOVE_LOGS="yes"
 SKIP_UNINSTALL=0
+APPEND_MISSING_CONFIG=0
 LOG_LINES=50
 SSH_TIMEOUT=30
 VERBOSE=0
@@ -90,30 +92,65 @@ else
 	NC=''
 fi
 
-# Logging functions
+# Logging functions (write prefixed message to stderr)
 log_info() {
 	echo -e "${BLUE}[INFO]${NC} $*" >&2
 }
-
+# Log success message to stderr.
 log_success() {
 	echo -e "${GREEN}[SUCCESS]${NC} $*" >&2
 }
-
+# Log warning message to stderr.
 log_warn() {
 	echo -e "${YELLOW}[WARN]${NC} $*" >&2
 }
-
+# Log error message to stderr.
 log_error() {
 	echo -e "${RED}[ERROR]${NC} $*" >&2
 }
 
+# Log verbose message to stderr when VERBOSE=1.
 log_verbose() {
 	if [[ $VERBOSE -eq 1 ]]; then
 		echo -e "${BLUE}[VERBOSE]${NC} $*" >&2
 	fi
 }
 
-# Display help message
+# Resolve bind IP from LOCAL_UDM_IP in vpn-monitor.conf when not explicitly set
+#
+# Checks /data/vpn-monitor/vpn-monitor.conf and repo vpn-monitor.conf.
+# LOCAL_UDM_IP is the local system's IP, used as source for SCP/SSH when deploying.
+#
+# Arguments:
+#   None (reads config file paths internally).
+#
+# Returns:
+#   0: Bind IP resolved and printed to stdout
+#   1: No config found or LOCAL_UDM_IP not set
+resolve_bind_ip_from_config() {
+	local config_paths=(
+		"/data/vpn-monitor/vpn-monitor.conf"
+		"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/vpn-monitor.conf"
+	)
+	local val
+	for cfg in "${config_paths[@]}"; do
+		[[ -f "$cfg" ]] || continue
+		val=$(grep -E '^LOCAL_UDM_IP=' "$cfg" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d ' ')
+		[[ -n "$val" ]] && {
+			echo "$val"
+			return 0
+		}
+	done
+	return 1
+}
+
+# Display help message and usage to stdout.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always
 display_help() {
 	cat <<EOF
 Usage: $0 [OPTIONS]
@@ -122,7 +159,9 @@ Deploy UDM VPN Monitor to a remote UDM via SSH/SCP.
 
 Required Options:
   --target-ip IP           Target UDM IP address
-  --bind-ip IP             Source IP address for BindAddress
+
+Optional Options:
+  --bind-ip IP             Source IP for BindAddress (default: LOCAL_UDM_IP from vpn-monitor.conf)
 
 Package Options:
   --file FILE              Package file to deploy (default: udm-vpn-monitor.zip)
@@ -138,6 +177,7 @@ Deployment Options:
   --remove-state           Remove state directory during uninstall (default: yes)
   --remove-logs            Remove logs directory during uninstall (default: yes)
   --skip-uninstall         Skip uninstall step (for fresh installs)
+  --append-missing-config  Append new config fields to existing config during install
 
 Output Options:
   --log-lines N            Number of log lines to display (default: 50)
@@ -171,7 +211,13 @@ Examples:
 EOF
 }
 
-# Parse command-line arguments
+# Parse command-line arguments and set global option variables.
+#
+# Arguments:
+#   $@: Command-line arguments (e.g. "$@")
+#
+# Returns:
+#   0: Always (exits script on --help)
 parse_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -219,6 +265,10 @@ parse_args() {
 			SKIP_UNINSTALL=1
 			shift
 			;;
+		--append-missing-config)
+			APPEND_MISSING_CONFIG=1
+			shift
+			;;
 		--log-lines)
 			LOG_LINES="$2"
 			shift 2
@@ -245,17 +295,19 @@ parse_args() {
 	done
 }
 
-# Validate required parameters
+# Validate required parameters and resolve bind IP from config if needed.
+#
+# Arguments:
+#   None (uses global option variables).
+#
+# Returns:
+#   0: All validations passed
+#   Exits 1 after printing errors and help if validation fails
 validate_params() {
 	local errors=0
 
 	if [[ -z "$TARGET_IP" ]]; then
 		log_error "Target IP address is required (--target-ip)"
-		errors=$((errors + 1))
-	fi
-
-	if [[ -z "$BIND_IP" ]]; then
-		log_error "Bind IP address is required (--bind-ip)"
 		errors=$((errors + 1))
 	fi
 
@@ -291,6 +343,15 @@ validate_params() {
 		fi
 	fi
 
+	# Resolve bind IP from LOCAL_UDM_IP in vpn-monitor.conf when not set
+	if [[ -z "$BIND_IP" ]]; then
+		local resolved
+		if resolved=$(resolve_bind_ip_from_config 2>/dev/null); then
+			BIND_IP="$resolved"
+			log_verbose "Using LOCAL_UDM_IP from vpn-monitor.conf for BindAddress: $BIND_IP"
+		fi
+	fi
+
 	if [[ $errors -gt 0 ]]; then
 		echo ""
 		display_help
@@ -298,7 +359,14 @@ validate_params() {
 	fi
 }
 
-# Check if sshpass is available
+# Check if sshpass is available for password-based SSH/SCP.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: sshpass found
+#   1: sshpass not found
 check_sshpass() {
 	if command -v sshpass >/dev/null 2>&1; then
 		return 0
@@ -306,7 +374,14 @@ check_sshpass() {
 	return 1
 }
 
-# Check if expect is available
+# Check if expect is available for password-based SSH/SCP fallback.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: expect found
+#   1: expect not found
 check_expect() {
 	if command -v expect >/dev/null 2>&1; then
 		return 0
@@ -314,8 +389,17 @@ check_expect() {
 	return 1
 }
 
-# Execute SSH command with password authentication
-# Uses sshpass if available, otherwise falls back to expect or manual entry
+# Execute SSH command with password authentication.
+# Uses sshpass if available, otherwise falls back to expect or manual entry.
+#
+# Arguments:
+#   $1: cmd - Remote shell command to run (single string).
+#
+# Returns:
+#   Exit code of ssh (or expect) invocation.
+#
+# Side effects:
+#   Connects to TARGET_IP, may prompt for password if no sshpass/expect.
 execute_ssh() {
 	local cmd="$1"
 	local use_sshpass=0
@@ -334,12 +418,13 @@ execute_ssh() {
 		log_warn "Consider installing sshpass: apt-get install sshpass (or equivalent)"
 	fi
 
+	local ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_TIMEOUT"
+	[[ -n "$BIND_IP" ]] && ssh_opts="$ssh_opts -o BindAddress=$BIND_IP"
+
 	if [[ $use_sshpass -eq 1 ]]; then
 		# Use sshpass (password passed via environment variable to avoid ps exposure)
 		SSHPASS="$SSH_PASSWORD" sshpass -e ssh \
-			-o StrictHostKeyChecking=no \
-			-o UserKnownHostsFile=/dev/null \
-			-o ConnectTimeout="$SSH_TIMEOUT" \
+			$ssh_opts \
 			-p "$SSH_PORT" \
 			"${SSH_USERNAME}@${TARGET_IP}" \
 			"$cmd"
@@ -347,7 +432,7 @@ execute_ssh() {
 		# Use expect script
 		expect <<EOF
 set timeout $SSH_TIMEOUT
-spawn ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_TIMEOUT -p $SSH_PORT ${SSH_USERNAME}@${TARGET_IP} "$cmd"
+spawn ssh $ssh_opts -p $SSH_PORT ${SSH_USERNAME}@${TARGET_IP} "$cmd"
 expect {
 	"password:" {
 		send "$SSH_PASSWORD\r"
@@ -363,16 +448,24 @@ EOF
 	else
 		# Manual entry fallback
 		ssh \
-			-o StrictHostKeyChecking=no \
-			-o UserKnownHostsFile=/dev/null \
-			-o ConnectTimeout="$SSH_TIMEOUT" \
+			$ssh_opts \
 			-p "$SSH_PORT" \
 			"${SSH_USERNAME}@${TARGET_IP}" \
 			"$cmd"
 	fi
 }
 
-# Execute SCP command with password authentication
+# Execute SCP command with password authentication.
+#
+# Arguments:
+#   $1: src_file - Local path to file to copy
+#   $2: dest_path - Remote path (user@host:path)
+#
+# Returns:
+#   Exit code of scp (or expect) invocation.
+#
+# Side effects:
+#   Copies file to TARGET_IP; may prompt for password if no sshpass/expect.
 execute_scp() {
 	local src_file="$1"
 	local dest_path="$2"
@@ -391,13 +484,13 @@ execute_scp() {
 		log_warn "Neither sshpass nor expect found. SCP password will need to be entered manually."
 	fi
 
+	local scp_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_TIMEOUT"
+	[[ -n "$BIND_IP" ]] && scp_opts="$scp_opts -o BindAddress=$BIND_IP"
+
 	if [[ $use_sshpass -eq 1 ]]; then
 		# Use sshpass (password passed via environment variable)
 		SSHPASS="$SSH_PASSWORD" sshpass -e scp \
-			-o StrictHostKeyChecking=no \
-			-o UserKnownHostsFile=/dev/null \
-			-o ConnectTimeout="$SSH_TIMEOUT" \
-			-o BindAddress="$BIND_IP" \
+			$scp_opts \
 			-P "$SSH_PORT" \
 			"$src_file" \
 			"${SSH_USERNAME}@${TARGET_IP}:${dest_path}"
@@ -405,7 +498,7 @@ execute_scp() {
 		# Use expect script
 		expect <<EOF
 set timeout $SSH_TIMEOUT
-spawn scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_TIMEOUT -o BindAddress=$BIND_IP -P $SSH_PORT "$src_file" ${SSH_USERNAME}@${TARGET_IP}:${dest_path}
+spawn scp $scp_opts -P $SSH_PORT "$src_file" ${SSH_USERNAME}@${TARGET_IP}:${dest_path}
 expect {
 	"password:" {
 		send "$SSH_PASSWORD\r"
@@ -421,17 +514,21 @@ EOF
 	else
 		# Manual entry fallback
 		scp \
-			-o StrictHostKeyChecking=no \
-			-o UserKnownHostsFile=/dev/null \
-			-o ConnectTimeout="$SSH_TIMEOUT" \
-			-o BindAddress="$BIND_IP" \
+			$scp_opts \
 			-P "$SSH_PORT" \
 			"$src_file" \
 			"${SSH_USERNAME}@${TARGET_IP}:${dest_path}"
 	fi
 }
 
-# Main deployment function
+# Main deployment function: parse args, validate, transfer package, install on UDM.
+#
+# Arguments:
+#   $@: Command-line arguments (passed to parse_args).
+#
+# Returns:
+#   0: Deployment succeeded
+#   Non-zero: Parse/validation/SSH/SCP or remote install failure
 main() {
 	log_info "UDM VPN Monitor Deployment"
 	log_info "=================================="
@@ -447,7 +544,7 @@ main() {
 	log_info "Deployment Plan:"
 	echo "  Package file:    $PACKAGE_FILE"
 	echo "  Target UDM:      ${SSH_USERNAME}@${TARGET_IP}:${SSH_PORT}"
-	echo "  Bind address:    $BIND_IP"
+	echo "  Bind address:    ${BIND_IP:-<default>}"
 	echo "  Uninstall:       $([ $SKIP_UNINSTALL -eq 1 ] && echo "Skip" || echo "Yes")"
 	if [[ $SKIP_UNINSTALL -eq 0 ]]; then
 		echo "    Keep config:   $KEEP_CONFIG"
@@ -467,9 +564,21 @@ main() {
 	fi
 	echo ""
 
-	# Step 2: Uninstall (if not skipped)
+	# Step 2: Archive logs (before uninstall)
 	if [[ $SKIP_UNINSTALL -eq 0 ]]; then
-		log_info "Step 2: Uninstalling existing installation (if present)..."
+		log_info "Step 2: Archiving logs on target UDM (if present)..."
+		local archive_cmd="mkdir -p /tmp/vpn-monitor-logs-archive && if [ -d /data/vpn-monitor/logs ] && [ -n \"\$(ls -A /data/vpn-monitor/logs 2>/dev/null)\" ]; then tar -czf /tmp/vpn-monitor-logs-archive/vpn-monitor-logs-\$(date +%Y%m%d-%H%M%S).tar.gz -C /data/vpn-monitor logs && echo 'Logs archived'; else echo 'No logs to archive'; fi"
+		if execute_ssh "$archive_cmd"; then
+			log_success "Log archive step completed"
+		else
+			log_warn "Log archive step may have failed, continuing"
+		fi
+		echo ""
+	fi
+
+	# Step 3: Uninstall (if not skipped)
+	if [[ $SKIP_UNINSTALL -eq 0 ]]; then
+		log_info "Step 3: Uninstalling existing installation (if present)..."
 		local uninstall_cmd="cd /tmp && if [ -f /data/vpn-monitor/uninstall.sh ]; then"
 		uninstall_cmd+=" /data/vpn-monitor/uninstall.sh --yes"
 		if [[ "$KEEP_CONFIG" == "yes" ]]; then
@@ -497,8 +606,8 @@ main() {
 		echo ""
 	fi
 
-	# Step 3: Extract package
-	log_info "Step 3: Extracting package on target UDM..."
+	# Step 4: Extract package
+	log_info "Step 4: Extracting package on target UDM..."
 	local extract_cmd="cd /tmp && "
 	if [[ "$PACKAGE_FILE" == *.tar.gz ]] || [[ "$PACKAGE_FILE" == *.tgz ]]; then
 		extract_cmd+="tar -xzf $(basename "$PACKAGE_FILE")"
@@ -517,11 +626,10 @@ main() {
 	fi
 	echo ""
 
-	# Step 4: Install
-	log_info "Step 4: Installing VPN Monitor..."
+	# Step 5: Install
+	log_info "Step 5: Installing VPN Monitor..."
 	local install_cmd="cd /tmp && chmod +x install.sh && ./install.sh --silent"
-	# Don't overwrite config if it exists (default behavior of --silent)
-	# If we want to overwrite, we would use --overwrite-conf, but user requested not to
+	[[ $APPEND_MISSING_CONFIG -eq 1 ]] && install_cmd+=" --append-missing-config"
 
 	if execute_ssh "$install_cmd"; then
 		log_success "Installation completed successfully"
@@ -531,8 +639,8 @@ main() {
 	fi
 	echo ""
 
-	# Step 5: Display recent log output
-	log_info "Step 5: Displaying last $LOG_LINES lines of log file..."
+	# Step 6: Display recent log output
+	log_info "Step 6: Displaying last $LOG_LINES lines of log file..."
 	local log_cmd="tail -n $LOG_LINES /data/vpn-monitor/logs/vpn-monitor.log 2>/dev/null || echo 'Log file not found or empty'"
 
 	if execute_ssh "$log_cmd"; then

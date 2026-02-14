@@ -61,7 +61,6 @@ We will refactor the codebase into a modular library architecture with dedicated
   - `lib/state/` - State module subdirectory:
     - `lib/state/state_paths.sh` - Path generation and sanitization
     - `lib/state/peer_state.sh` - Per-peer state operations
-    - `lib/state/location_state.sh` - Per-location state operations
     - `lib/state/global_state.sh` - Global state operations
     - `lib/state/state_init.sh` - State initialization
 - **Module Loading**: Modules are sourced at script startup

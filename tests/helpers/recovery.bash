@@ -194,22 +194,20 @@ echo "$1"
 EOF
 	chmod +x "$mock_format_ip"
 
-	# Mock log_message
+	# Mock log_message (variables expanded at write time; no sed to avoid delimiter/race issues)
 	local mock_log="${TEST_DIR}/log_message"
 	cat >"$mock_log" <<EOF
 #!/bin/bash
 echo "\$*" >> "${log_file}"
 EOF
-	sed -i "s|log_file|${log_file}|g" "$mock_log"
 	chmod +x "$mock_log"
 
-	# Mock handle_error
+	# Mock handle_error (variables expanded at write time; no sed to avoid delimiter/race issues)
 	local mock_handle_error="${TEST_DIR}/handle_error"
 	cat >"$mock_handle_error" <<EOF
 #!/bin/bash
 echo "\$*" >> "${log_file}"
 EOF
-	sed -i "s|log_file|${log_file}|g" "$mock_handle_error"
 	chmod +x "$mock_handle_error"
 
 	# Mock clear_recovery_method
@@ -256,13 +254,14 @@ setup_date_sleep_mocks_with_increment() {
 	local time_increment_file="${2:-${TEST_DIR}/time_increment}"
 
 	# Create date mock that handles both Unix timestamps and formatted timestamps
+	# Variables expanded at write time; no sed to avoid delimiter/race issues
 	local mock_date="${TEST_DIR}/date"
 	cat >"$mock_date" <<EOF
 #!/bin/bash
 if [[ "\$1" == "+%s" ]]; then
     # Unix timestamp format - read from time_increment_file
     increment=\$(cat "${time_increment_file}" 2>/dev/null || echo "0")
-    echo $((base_time + increment))
+    echo \$(( ${base_time} + increment ))
     exit 0
 elif [[ "\$1" == "+%Y-%m-%d %H:%M:%S" ]] || [[ "\$1" == '+%Y-%m-%d %H:%M:%S' ]]; then
     # Formatted timestamp format (used by logging) - return simple fixed format
@@ -274,7 +273,6 @@ fi
 echo "Mock date: unsupported format: \$*" >&2
 exit 1
 EOF
-	sed -i "s|base_time|${base_time}|g" "$mock_date"
 	chmod +x "$mock_date"
 
 	# Create sleep mock that increments time_increment_file
