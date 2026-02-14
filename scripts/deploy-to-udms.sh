@@ -5,9 +5,10 @@
 #
 # For each UDM:
 # 1. Prompts for username and password
-# 2. SCP package, archive logs, uninstall (keep config), extract, install
-# 3. Runs tail -f on vpn-monitor.log until user presses Ctrl+C
-# 4. Continues to next UDM
+# 2. Passes password to deploy-to-udm.sh via SSH_PASSWORD env var
+# 3. SCP package, archive logs, uninstall (keep config), extract, install
+# 4. Runs tail -f on vpn-monitor.log until user presses Ctrl+C
+# 5. Continues to next UDM
 #
 # Usage:
 #   ./scripts/deploy-to-udms.sh [OPTIONS]
@@ -173,6 +174,8 @@ ensure_package() {
 #
 # Returns:
 #   Exit code of ssh/tail (or 0 when user interrupts)
+#
+# Uses SSH_PASSWORD from environment when sshpass is available; otherwise plain ssh.
 run_tail_f() {
 	local username="$1"
 	local host="$2"
@@ -257,7 +260,13 @@ main() {
 		read -rsp "Password for ${host}: " password
 		echo ""
 
-		# Clear password from next UDM
+		if [[ -z "$password" ]]; then
+			log_error "Password cannot be empty for $host"
+			fail_count=$((fail_count + 1))
+			continue
+		fi
+
+		# Pass password via SSH_PASSWORD env var (deploy-to-udm.sh accepts it when sshpass unavailable)
 		export SSH_PASSWORD="$password"
 		unset -v password
 
@@ -269,7 +278,8 @@ main() {
 		)
 		[[ -n "$bind_ip" ]] && deploy_args+=(--bind-ip "$bind_ip")
 
-		if "${SCRIPT_DIR}/deploy-to-udm.sh" "${deploy_args[@]}"; then
+		# Explicitly pass SSH_PASSWORD to child for reliable env inheritance
+		if SSH_PASSWORD="$SSH_PASSWORD" "${SCRIPT_DIR}/deploy-to-udm.sh" "${deploy_args[@]}"; then
 			success_count=$((success_count + 1))
 			if [[ $SKIP_TAIL -eq 0 ]]; then
 				run_tail_f "$username" "$host" "$bind_ip" || true
