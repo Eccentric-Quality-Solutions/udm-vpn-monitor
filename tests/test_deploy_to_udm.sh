@@ -222,6 +222,41 @@ MOCK
 }
 
 # bats test_tags=category:unit
+@test "deploy-to-udm.sh --tail-follow runs tail -f after deploy (uses same credentials)" {
+	cd "$PROJECT_ROOT"
+	[[ -f udm-vpn-monitor.zip ]] || ./scripts/prepare_install_package.sh >/dev/null 2>&1 || true
+	[[ -f udm-vpn-monitor.zip ]] || skip "Package file not available"
+
+	standard_setup
+	local mock_bin="${TEST_DIR}/mock_bin"
+	mkdir -p "$mock_bin"
+	cat >"${mock_bin}/ssh" <<'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+	cat >"${mock_bin}/scp" <<'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+	cat >"${mock_bin}/sshpass" <<'MOCK'
+#!/bin/bash
+shift 2
+exec ssh "$@"
+MOCK
+	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
+	export PATH="${mock_bin}:${PATH}"
+
+	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
+		--target-ip 192.168.1.100 \
+		--file \"${PROJECT_ROOT}/udm-vpn-monitor.zip\" \
+		--tail-follow" 2>&1
+
+	assert_success
+	assert_output --partial "Tailing vpn-monitor.log"
+	assert_output --partial "Deployment completed successfully"
+}
+
+# bats test_tags=category:unit
 @test "deploy-to-udm.sh runs log archive step before uninstall when uninstall is not skipped" {
 	cd "$PROJECT_ROOT"
 	[[ -f udm-vpn-monitor.zip ]] || ./scripts/prepare_install_package.sh >/dev/null 2>&1 || true
@@ -292,4 +327,113 @@ MOCK
 	# Log archive runs only when uninstall runs; with --skip-uninstall it is skipped
 	refute_output --partial "Step 2: Archiving logs on target UDM"
 	assert_output --partial "Step 4: Extracting package"
+}
+
+# bats test_tags=category:unit
+@test "deploy-to-udm.sh creates log file and does not log username or password" {
+	cd "$PROJECT_ROOT"
+	[[ -f udm-vpn-monitor.zip ]] || ./scripts/prepare_install_package.sh >/dev/null 2>&1 || true
+	[[ -f udm-vpn-monitor.zip ]] || skip "Package file not available"
+
+	standard_setup
+	local log_file="${TEST_DIR}/logs/deploy-to-udm.log"
+	mkdir -p "$(dirname "$log_file")"
+	local mock_bin="${TEST_DIR}/mock_bin"
+	mkdir -p "$mock_bin"
+	cat >"${mock_bin}/ssh" <<'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+	cat >"${mock_bin}/scp" <<'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+	cat >"${mock_bin}/sshpass" <<'MOCK'
+#!/bin/bash
+shift 2
+exec ssh "$@"
+MOCK
+	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
+	export PATH="${mock_bin}:${PATH}"
+	export DEPLOY_LOG_FILE="$log_file"
+
+	run bash -c "printf '%s\n' secretpassword123 | \"$DEPLOY_SCRIPT\" \
+		--target-ip 192.168.1.100 \
+		--username myuser \
+		--file \"${PROJECT_ROOT}/udm-vpn-monitor.zip\"" 2>&1
+
+	assert_success
+	assert_file_exist "$log_file"
+	assert_file_contains "$log_file" "Deployment completed successfully"
+	assert_file_contains "$log_file" "Package file transferred"
+	# Username and password must NOT appear in log file
+	refute_file_contains "$log_file" "myuser"
+	refute_file_contains "$log_file" "secretpassword123"
+	# Sanitized form should appear (*** instead of username)
+	assert_file_contains "$log_file" "***@192.168.1.100"
+}
+
+# bats test_tags=category:unit
+@test "deploy-to-udm.sh records deployment in registry on success" {
+	cd "$PROJECT_ROOT"
+	[[ -f udm-vpn-monitor.zip ]] || ./scripts/prepare_install_package.sh >/dev/null 2>&1 || true
+	[[ -f udm-vpn-monitor.zip ]] || skip "Package file not available"
+
+	standard_setup
+	mkdir -p "$(dirname "${TEST_DIR}/deploy-registry")"
+
+	local mock_bin="${TEST_DIR}/mock_bin"
+	mkdir -p "$mock_bin"
+	cat >"${mock_bin}/ssh" <<'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+	cat >"${mock_bin}/scp" <<'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+	cat >"${mock_bin}/sshpass" <<'MOCK'
+#!/bin/bash
+shift 2
+exec ssh "$@"
+MOCK
+	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
+	export PATH="${mock_bin}:${PATH}"
+	export DEPLOY_REGISTRY_FILE="${TEST_DIR}/deploy-registry"
+
+	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
+		--target-ip 192.168.1.100 \
+		--file \"${PROJECT_ROOT}/udm-vpn-monitor.zip\"" 2>&1
+
+	assert_success
+	local reg_file="${TEST_DIR}/deploy-registry"
+	assert_file_exist "$reg_file"
+	assert_file_contains "$reg_file" "192.168.1.100"
+	assert_file_contains "$reg_file" "0.8.0"
+}
+
+# bats test_tags=category:unit
+@test "deploy-registry record_deployment uses exact host match (no substring removal)" {
+	# Regression: grep -v -F "192.168.1.10" would incorrectly remove 192.168.1.100
+	standard_setup
+	export DEPLOY_REGISTRY_FILE="${TEST_DIR}/deploy-registry"
+	export REPO_ROOT="$PROJECT_ROOT"
+	mkdir -p "$(dirname "$DEPLOY_REGISTRY_FILE")"
+
+	# Pre-populate: 192.168.1.100 exists
+	echo -e "192.168.1.100\t0.8.0\t2025-02-14T12:00:00" >"$DEPLOY_REGISTRY_FILE"
+
+	# Source and call record_deployment for 192.168.1.10 (substring of 192.168.1.100)
+	source "${PROJECT_ROOT}/scripts/deploy-registry.sh"
+	record_deployment "192.168.1.10" "0.8.0" "2025-02-14T12:01:00"
+
+	# 192.168.1.100 must still exist; 192.168.1.10 must be added
+	grep -q $'192.168.1.100\t' "$DEPLOY_REGISTRY_FILE" || {
+		echo "192.168.1.100 should not have been removed when recording 192.168.1.10"
+		return 1
+	}
+	grep -q $'192.168.1.10\t' "$DEPLOY_REGISTRY_FILE" || {
+		echo "192.168.1.10 should have been added"
+		return 1
+	}
 }

@@ -9,6 +9,8 @@
 # 3. Unzip and uninstall (with options)
 # 4. Install (with options)
 # 5. Display recent log output
+# 6. Optionally run tail -f on log file (interactive until Ctrl+C; uses same credentials)
+# 7. Log deployment output to REPO_ROOT/logs/deploy-to-udm.log (username/password never logged)
 #
 # Usage:
 #   ./scripts/deploy-to-udm.sh [OPTIONS]
@@ -16,6 +18,7 @@
 # Options:
 #   --file FILE              Package file to deploy (default: udm-vpn-monitor.zip)
 #   --target-ip IP           Target UDM IP address (required)
+#   --no-record              Do not record deployment in registry (used when tail -f will run)
 #   --bind-ip IP             Source IP address for BindAddress (optional, omit for default routing)
 #   --username USER          SSH username (default: root)
 #   --ssh-port PORT          SSH port (default: 22)
@@ -25,6 +28,7 @@
 #   --skip-uninstall         Skip uninstall step (for fresh installs)
 #   --append-missing-config  Append new config fields to existing config during install
 #   --log-lines N            Number of log lines to display (default: 50)
+#   --tail-follow            After deploy, run tail -f on log file until Ctrl+C
 #   --timeout SECONDS        SSH/SCP timeout in seconds (default: 30)
 #   --verbose                Enable verbose output
 #   --help                   Show this help message
@@ -44,6 +48,18 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Source deployment registry helpers (for record_deployment)
+# shellcheck source=scripts/deploy-registry.sh
+if [[ -f "${SCRIPT_DIR}/deploy-registry.sh" ]]; then
+	# shellcheck source=scripts/deploy-registry.sh
+	source "${SCRIPT_DIR}/deploy-registry.sh"
+fi
+LOGS_DIR="${REPO_ROOT}/logs"
+DEPLOY_LOG_FILE="${DEPLOY_LOG_FILE:-${LOGS_DIR}/deploy-to-udm.log}"
+
 # Default values
 PACKAGE_FILE="udm-vpn-monitor.zip"
 TARGET_IP=""
@@ -56,6 +72,8 @@ REMOVE_STATE="yes"
 REMOVE_LOGS="yes"
 SKIP_UNINSTALL=0
 APPEND_MISSING_CONFIG=0
+NO_RECORD=0
+TAIL_FOLLOW=0
 LOG_LINES=50
 SSH_TIMEOUT=30
 VERBOSE=0
@@ -75,27 +93,58 @@ else
 	NC=''
 fi
 
-# Logging functions (write prefixed message to stderr)
-log_info() {
-	echo -e "${BLUE}[INFO]${NC} $*" >&2
-}
-# Log success message to stderr.
-log_success() {
-	echo -e "${GREEN}[SUCCESS]${NC} $*" >&2
-}
-# Log warning message to stderr.
-log_warn() {
-	echo -e "${YELLOW}[WARN]${NC} $*" >&2
-}
-# Log error message to stderr.
-log_error() {
-	echo -e "${RED}[ERROR]${NC} $*" >&2
+# Append message to deploy log file (sanitized: no username or password).
+# Writes plain text with timestamp; never logs credentials.
+#
+# Arguments:
+#   $1: level - INFO, SUCCESS, WARN, ERROR, VERBOSE
+#   $2+: message parts (concatenated)
+#
+# Returns:
+#   0: Always (write failures are ignored to avoid breaking deployment)
+deploy_log_write() {
+	local level="$1"
+	shift
+	local msg="$*"
+	# Sanitize: never log username or password
+	[[ -n "${SSH_USERNAME:-}" ]] && msg="${msg//${SSH_USERNAME}/***}"
+	[[ -n "${SSH_PASSWORD:-}" ]] && msg="${msg//${SSH_PASSWORD}/***}"
+	mkdir -p "$(dirname "$DEPLOY_LOG_FILE")" 2>/dev/null || true
+	echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $msg" >>"$DEPLOY_LOG_FILE" 2>/dev/null || true
 }
 
-# Log verbose message to stderr when VERBOSE=1.
+# Logging functions (write to stderr and append to deploy log file)
+log_info() {
+	echo -e "${BLUE}[INFO]${NC} $*" >&2
+	deploy_log_write "INFO" "$*"
+}
+# Log success message to stderr and log file.
+log_success() {
+	echo -e "${GREEN}[SUCCESS]${NC} $*" >&2
+	deploy_log_write "SUCCESS" "$*"
+}
+# Log warning message to stderr and log file.
+log_warn() {
+	echo -e "${YELLOW}[WARN]${NC} $*" >&2
+	deploy_log_write "WARN" "$*"
+}
+# Log error message to stderr and log file.
+log_error() {
+	echo -e "${RED}[ERROR]${NC} $*" >&2
+	deploy_log_write "ERROR" "$*"
+}
+
+# Log verbose message to stderr and log file when VERBOSE=1.
+#
+# Arguments:
+#   $1+: message parts (concatenated)
+#
+# Returns:
+#   0: Always
 log_verbose() {
 	if [[ $VERBOSE -eq 1 ]]; then
 		echo -e "${BLUE}[VERBOSE]${NC} $*" >&2
+		deploy_log_write "VERBOSE" "$*"
 	fi
 }
 
@@ -162,8 +211,10 @@ Deployment Options:
 
 Output Options:
   --log-lines N            Number of log lines to display (default: 50)
+  --tail-follow            After deploy, run tail -f on log file until Ctrl+C
   --timeout SECONDS        SSH/SCP timeout in seconds (default: 30)
   --verbose                Enable verbose output
+  --no-record              Do not record deployment in registry (used when tail -f will run)
   --help                   Show this help message
 
 Authentication:
@@ -230,12 +281,20 @@ parse_args() {
 			LOG_LINES="$2"
 			shift 2
 			;;
+		--tail-follow)
+			TAIL_FOLLOW=1
+			shift
+			;;
 		--timeout)
 			SSH_TIMEOUT="$2"
 			shift 2
 			;;
 		--verbose)
 			VERBOSE=1
+			shift
+			;;
+		--no-record)
+			NO_RECORD=1
 			shift
 			;;
 		--help | -h)
@@ -342,6 +401,7 @@ check_expect() {
 #
 # Arguments:
 #   $1: cmd - Remote shell command to run (single string).
+#   $2: interactive - Optional. If non-empty, no timeout for expect (for tail -f etc.).
 #
 # Returns:
 #   Exit code of ssh (or expect) invocation.
@@ -350,6 +410,7 @@ check_expect() {
 #   Connects to TARGET_IP, may prompt for password if no sshpass/expect.
 execute_ssh() {
 	local cmd="$1"
+	local interactive="${2:-}"
 	local use_sshpass=0
 	local use_expect=0
 
@@ -368,6 +429,7 @@ execute_ssh() {
 
 	local ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_TIMEOUT"
 	[[ -n "$BIND_IP" ]] && ssh_opts="$ssh_opts -o BindAddress=$BIND_IP"
+	[[ -n "$interactive" ]] && ssh_opts="$ssh_opts -t"
 
 	if [[ $use_sshpass -eq 1 ]]; then
 		# Use sshpass (password passed via environment variable to avoid ps exposure)
@@ -377,9 +439,11 @@ execute_ssh() {
 			"${SSH_USERNAME}@${TARGET_IP}" \
 			"$cmd"
 	elif [[ $use_expect -eq 1 ]]; then
-		# Use expect script
+		# Use expect script; -1 = no timeout for interactive (tail -f)
+		local expect_timeout=$SSH_TIMEOUT
+		[[ -n "$interactive" ]] && expect_timeout=-1
 		expect <<EOF
-set timeout $SSH_TIMEOUT
+set timeout $expect_timeout
 spawn ssh $ssh_opts -p $SSH_PORT ${SSH_USERNAME}@${TARGET_IP} "$cmd"
 expect {
 	"password:" {
@@ -478,7 +542,9 @@ EOF
 #   0: Deployment succeeded
 #   Non-zero: Parse/validation/SSH/SCP or remote install failure
 main() {
+	mkdir -p "$(dirname "$DEPLOY_LOG_FILE")" 2>/dev/null || true
 	log_info "UDM VPN Monitor Deployment"
+	log_info "Logging to: $DEPLOY_LOG_FILE"
 	log_info "=================================="
 	echo ""
 
@@ -491,15 +557,23 @@ main() {
 	# Display deployment plan
 	log_info "Deployment Plan:"
 	echo "  Package file:    $PACKAGE_FILE"
+	deploy_log_write "INFO" "  Package file:    $PACKAGE_FILE"
 	echo "  Target UDM:      ${SSH_USERNAME}@${TARGET_IP}:${SSH_PORT}"
+	deploy_log_write "INFO" "  Target UDM:      ***@${TARGET_IP}:${SSH_PORT}"
 	echo "  Bind address:    ${BIND_IP:-<default>}"
+	deploy_log_write "INFO" "  Bind address:    ${BIND_IP:-<default>}"
 	echo "  Uninstall:       $([ $SKIP_UNINSTALL -eq 1 ] && echo "Skip" || echo "Yes")"
+	deploy_log_write "INFO" "  Uninstall:       $([ $SKIP_UNINSTALL -eq 1 ] && echo 'Skip' || echo 'Yes')"
 	if [[ $SKIP_UNINSTALL -eq 0 ]]; then
 		echo "    Keep config:   $KEEP_CONFIG"
 		echo "    Remove state:  $REMOVE_STATE"
 		echo "    Remove logs:   $REMOVE_LOGS"
+		deploy_log_write "INFO" "    Keep config:   $KEEP_CONFIG"
+		deploy_log_write "INFO" "    Remove state:  $REMOVE_STATE"
+		deploy_log_write "INFO" "    Remove logs:   $REMOVE_LOGS"
 	fi
 	echo "  Log lines:       $LOG_LINES"
+	deploy_log_write "INFO" "  Log lines:       $LOG_LINES"
 	echo ""
 
 	# Step 1: Transfer package file
@@ -598,13 +672,35 @@ main() {
 	fi
 	echo ""
 
+	# Step 6b: Optional tail -f (interactive until Ctrl+C; uses same credentials)
+	if [[ $TAIL_FOLLOW -eq 1 ]]; then
+		log_info "Tailing vpn-monitor.log (Ctrl+C to exit)..."
+		local tail_cmd="tail -f /data/vpn-monitor/logs/vpn-monitor.log 2>/dev/null || echo 'Log file not found'"
+		execute_ssh "$tail_cmd" "interactive" || true
+		echo ""
+	fi
+
 	# Summary
 	log_success "Deployment completed successfully!"
+
+	# Record deployment in registry (skip when --no-record, e.g. batch deploy with tail -f)
+	if [[ $NO_RECORD -eq 0 ]] && [[ -n "${REPO_ROOT:-}" ]] && command -v record_deployment >/dev/null 2>&1; then
+		local pkg_version
+		if pkg_version=$(get_package_version "$PACKAGE_FILE" 2>/dev/null); then
+			if record_deployment "$TARGET_IP" "$pkg_version" 2>/dev/null; then
+				log_verbose "Recorded deployment: $TARGET_IP version $pkg_version"
+			fi
+		fi
+	fi
+
 	echo ""
 	log_info "Next steps:"
 	echo "  1. Verify installation: ssh ${SSH_USERNAME}@${TARGET_IP} 'ls -la /data/vpn-monitor/'"
 	echo "  2. Check configuration: ssh ${SSH_USERNAME}@${TARGET_IP} 'cat /data/vpn-monitor/vpn-monitor.conf'"
 	echo "  3. Monitor logs: ssh ${SSH_USERNAME}@${TARGET_IP} 'tail -f /data/vpn-monitor/logs/vpn-monitor.log'"
+	deploy_log_write "INFO" "  1. Verify installation: ssh ***@${TARGET_IP} 'ls -la /data/vpn-monitor/'"
+	deploy_log_write "INFO" "  2. Check configuration: ssh ***@${TARGET_IP} 'cat /data/vpn-monitor/vpn-monitor.conf'"
+	deploy_log_write "INFO" "  3. Monitor logs: ssh ***@${TARGET_IP} 'tail -f /data/vpn-monitor/logs/vpn-monitor.log'"
 	echo ""
 }
 

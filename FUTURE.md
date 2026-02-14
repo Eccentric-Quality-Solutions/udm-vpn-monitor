@@ -2,6 +2,10 @@ Considerations for the future, but want to avoid overarchitecting and premature 
 
 **Note:** Items marked with ✅ COMPLETED have been finished and can be considered resolved.
 
+- Deploy scripts: tail -f moved into deploy-to-udm.sh (2026-02-14); now uses same SSH_USERNAME as deploy. See deploy-advanced-auth branch for --password-file/env-var options if automation is needed later.
+
+- Deploy registry: Semantic version comparison (e.g. skip if deployed 0.8.1 when deploying 0.8.0) could be added to `host_has_version()`. Currently exact match only.
+
 - Reintroduce `lib/state/location_state.sh` only if we add location-specific state not tied to individual peers (e.g. location-level flags or aggregates). Removed 2026-02-14 as an empty stub; per-location state is currently handled via per-peer state with location as a parameter.
 
 - Consider routing issue detection during ipsec status fallback periods
