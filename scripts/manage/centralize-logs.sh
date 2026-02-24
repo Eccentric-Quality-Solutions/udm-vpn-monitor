@@ -5,7 +5,7 @@
 # Reads a conf file of KEY=VALUE lines. BIND=IP sets the source IP for SCP;
 # NAME=IP lines are targets. For each target, fetches
 # /data/vpn-monitor/logs/vpn-monitor.log into /tmp/centralize-logs/, then
-# zips all collected logs and removes the loose .log files.
+# archives them to a tar.gz and removes the loose .log files.
 #
 # Usage:
 #   ./scripts/manage/centralize-logs.sh
@@ -14,21 +14,23 @@
 # Copy centralize.conf.example to centralize.conf and edit.
 #
 # Authentication:
-#   SCP will prompt for password or SSH key passphrase as needed. To avoid
-#   repeated prompts, use ssh-agent and ssh-add before running this script.
+#   SSH/SCP will prompt for password or SSH key passphrase as needed. Uses
+#   OpenSSH ControlMaster so you are prompted once per host; both log and
+#   crontab are fetched over the same connection. To avoid prompts entirely,
+#   use ssh-agent and ssh-add before running this script.
 #
 # Conf file format:
 #   Lines starting with # and blank lines are ignored.
 #   BIND=IP - required; source IP for SCP (BindAddress).
-#   NAME=IP - target UDM (e.g. NYC=192.168.1.1). Name is shown before the single SCP per host (log + crontab).
+#   NAME=IP - target UDM (e.g. NYC=192.168.1.1). Name is shown before each host.
 #
 # Output:
-#   /tmp/centralize-logs/all-vpn-logs-YYYY-MM-DD-HHMMSS.zip
+#   /tmp/centralize-logs/all-vpn-logs-YYYY-MM-DD-HHMMSS.tar.gz
 #   /tmp/centralize-logs/still-running (one line per target: "NAME IP cron_ok" or "NAME IP reinstall_needed";
 #   derived by SCP-pulling each UDM's root crontab, checking locally, then deleting the temp crontab files)
 #
 # Returns:
-#   0: All targets fetched and zip created (or no targets)
+#   0: All targets fetched and archive created (or no targets)
 #   1: Missing conf file, no entries, or missing BIND=IP
 #   2: One or more SCP failures
 #
@@ -58,8 +60,8 @@ usage() {
 	cat <<-EOF >&2
 		Usage: $(basename "$0")
 		Reads centralize.conf from the script directory.
-		Conf: BIND=IP (required), NAME=IP per target. One SCP per host (log + crontab); name shown before each.
-		SCP will prompt for password or key passphrase as needed.
+		Conf: BIND=IP (required), NAME=IP per target. Uses ControlMaster (one prompt per host).
+		Requires OpenSSH client. Prompts for password or key passphrase as needed.
 	EOF
 	exit 1
 }
@@ -119,10 +121,10 @@ parse_conf_entries() {
 	done <<<"$lines"
 }
 
-# Main entry point: read conf, fetch logs from UDMs, zip results.
+# Main entry point: read conf, fetch logs from UDMs, archive results.
 #
 # Parses centralize.conf, fetches vpn-monitor.log from each target UDM via SCP,
-# zips collected logs to /tmp/centralize-logs/all-vpn-logs-YYYY-MM-DD-HHMMSS.zip,
+# archives collected logs to /tmp/centralize-logs/all-vpn-logs-YYYY-MM-DD-HHMMSS.tar.gz,
 # and removes loose .log files.
 #
 # Arguments:
@@ -134,7 +136,7 @@ parse_conf_entries() {
 #   2: One or more SCP failures
 #
 # Side effects:
-#   Creates OUTPUT_DIR, fetches files, creates zip, removes .log files
+#   Creates OUTPUT_DIR, fetches files, creates tar.gz archive, removes .log files
 main() {
 	[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && usage
 
@@ -169,34 +171,46 @@ main() {
 		echo "# Format: NAME IP cron_ok | NAME IP reinstall_needed"
 	} >"$STILL_RUNNING_FILE"
 	local scp_failed=0
-	local scp_opts=(-o "ConnectTimeout=$SCP_CONNECT_TIMEOUT" -o "StrictHostKeyChecking=ask" -o "BindAddress=$bind_ip")
+	local ctrl_path="${OUTPUT_DIR}/.ctrl-%h-%p-%r"
+	local ssh_opts=(
+		-o "ConnectTimeout=$SCP_CONNECT_TIMEOUT"
+		-o "StrictHostKeyChecking=ask"
+		-o "BindAddress=$bind_ip"
+		-o "ControlPath=${ctrl_path}"
+	)
 
 	local i
 	for i in "${!target_ips[@]}"; do
 		local ip="${target_ips[$i]}"
 		local name="${target_names[$i]}"
 		local dest="${OUTPUT_DIR}/vpn-monitor-${ip}.log"
-		local scp_dir="${OUTPUT_DIR}/.scp-${ip}"
-		mkdir -p "$scp_dir"
+		local crontab_local="${OUTPUT_DIR}/crontab-${ip}.tmp"
 		echo "---"
 		echo "Connecting to ${name} (${ip}) - enter password/passphrase when prompted."
-		echo "Fetching log and crontab from root@${ip}"
-		if ! scp "${scp_opts[@]}" "root@${ip}:${REMOTE_LOG_PATH}" "root@${ip}:${REMOTE_CRONTAB_PATH}" "${scp_dir}/"; then
-			echo "Warning: SCP failed for ${name} ($ip)" >&2
+		# Open master connection (prompts once); subsequent SCPs reuse it
+		if ! ssh -M -N -f "${ssh_opts[@]}" "root@${ip}"; then
+			echo "Warning: SSH failed for ${name} ($ip)" >&2
 			scp_failed=1
 			echo "${name} ${ip} reinstall_needed" >>"$STILL_RUNNING_FILE"
 		else
-			# SCP writes remote basenames: vpn-monitor.log, root (crontab)
-			if [[ -f "${scp_dir}/vpn-monitor.log" ]]; then
-				mv "${scp_dir}/vpn-monitor.log" "$dest"
+			# Fetch log (separate SCP so crontab failure doesn't block log)
+			if ! scp "${ssh_opts[@]}" "root@${ip}:${REMOTE_LOG_PATH}" "$dest"; then
+				echo "Warning: SCP failed for log from ${name} ($ip)" >&2
+				scp_failed=1
+				[[ -f "$dest" ]] && rm -f "$dest"
 			fi
+			# Fetch crontab (can fail without losing log)
 			local status="reinstall_needed"
-			if [[ -f "${scp_dir}/root" ]] && grep -q "vpn-monitor" "${scp_dir}/root" 2>/dev/null; then
-				status="cron_ok"
+			if scp "${ssh_opts[@]}" "root@${ip}:${REMOTE_CRONTAB_PATH}" "$crontab_local" 2>/dev/null; then
+				if grep -q "vpn-monitor" "$crontab_local" 2>/dev/null; then
+					status="cron_ok"
+				fi
 			fi
+			rm -f "$crontab_local"
 			echo "${name} ${ip} ${status}" >>"$STILL_RUNNING_FILE"
+			# Close master
+			ssh -O exit "${ssh_opts[@]}" "root@${ip}" 2>/dev/null || true
 		fi
-		rm -rf "$scp_dir"
 	done
 
 	local log_count=0
@@ -205,24 +219,24 @@ main() {
 	done
 
 	if [[ $log_count -eq 0 ]]; then
-		echo "No logs collected. Skipping zip." >&2
+		echo "No logs collected. Skipping archive." >&2
 		exit 2
 	fi
 
 	local stamp
 	stamp=$(date +%Y-%m-%d-%H%M%S)
-	local zip_name="all-vpn-logs-${stamp}.zip"
-	local zip_path="${OUTPUT_DIR}/${zip_name}"
+	local archive_name="all-vpn-logs-${stamp}.tar.gz"
+	local archive_path="${OUTPUT_DIR}/${archive_name}"
 
-	# Create zip from collected logs only (cd so zip stores relative names).
+	# Create tar.gz from collected logs (tar is universally available; zip is not).
 	(
 		cd "$OUTPUT_DIR"
-		zip -q "$zip_name" vpn-monitor-*.log
+		tar czf "$archive_name" vpn-monitor-*.log
 	)
-	echo "Created $zip_path"
+	echo "Created $archive_path"
 	echo "Crontab status per host: $STILL_RUNNING_FILE"
 
-	# Remove only the collected .log files (not the zip).
+	# Remove only the collected .log files (not the archive).
 	for ip in "${target_ips[@]}"; do
 		local f="${OUTPUT_DIR}/vpn-monitor-${ip}.log"
 		[[ -f "$f" ]] && rm -f "$f"
