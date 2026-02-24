@@ -61,7 +61,7 @@ LOGS_DIR="${REPO_ROOT}/logs"
 DEPLOY_LOG_FILE="${DEPLOY_LOG_FILE:-${LOGS_DIR}/deploy-to-udm.log}"
 
 # Default values
-PACKAGE_FILE="udm-vpn-monitor.zip"
+PACKAGE_FILE="${REPO_ROOT}/udm-vpn-monitor.zip"
 TARGET_IP=""
 BIND_IP=""
 SSH_USERNAME="root"
@@ -440,14 +440,23 @@ execute_ssh() {
 			"$cmd"
 	elif [[ $use_expect -eq 1 ]]; then
 		# Use expect script; -1 = no timeout for interactive (tail -f)
+		# Pass all values via environment variables and use single-quoted heredoc
+		# to avoid Tcl interpolation of special characters in the password
 		local expect_timeout=$SSH_TIMEOUT
 		[[ -n "$interactive" ]] && expect_timeout=-1
-		expect <<EOF
-set timeout $expect_timeout
-spawn ssh $ssh_opts -p $SSH_PORT ${SSH_USERNAME}@${TARGET_IP} "$cmd"
+		DEPLOY_PASSWORD="$SSH_PASSWORD" \
+			DEPLOY_TIMEOUT="$expect_timeout" \
+			DEPLOY_SSH_OPTS="$ssh_opts" \
+			DEPLOY_PORT="$SSH_PORT" \
+			DEPLOY_USER="$SSH_USERNAME" \
+			DEPLOY_HOST="$TARGET_IP" \
+			DEPLOY_CMD="$cmd" \
+			expect <<'EOF'
+set timeout $env(DEPLOY_TIMEOUT)
+spawn ssh {*}$env(DEPLOY_SSH_OPTS) -p $env(DEPLOY_PORT) $env(DEPLOY_USER)@$env(DEPLOY_HOST) "$env(DEPLOY_CMD)"
 expect {
 	"password:" {
-		send "$SSH_PASSWORD\r"
+		send "$env(DEPLOY_PASSWORD)\r"
 		exp_continue
 	}
 	"yes/no" {
@@ -456,6 +465,8 @@ expect {
 	}
 	eof
 }
+lassign [wait] pid spawnid os_error value
+exit $value
 EOF
 	else
 		# Manual entry fallback
@@ -507,13 +518,22 @@ execute_scp() {
 			"$src_file" \
 			"${SSH_USERNAME}@${TARGET_IP}:${dest_path}"
 	elif [[ $use_expect -eq 1 ]]; then
-		# Use expect script
-		expect <<EOF
-set timeout $SSH_TIMEOUT
-spawn scp $scp_opts -P $SSH_PORT "$src_file" ${SSH_USERNAME}@${TARGET_IP}:${dest_path}
+		# Pass all values via environment variables and use single-quoted heredoc
+		# to avoid Tcl interpolation of special characters in the password
+		DEPLOY_PASSWORD="$SSH_PASSWORD" \
+			DEPLOY_TIMEOUT="$SSH_TIMEOUT" \
+			DEPLOY_SCP_OPTS="$scp_opts" \
+			DEPLOY_PORT="$SSH_PORT" \
+			DEPLOY_SRC="$src_file" \
+			DEPLOY_USER="$SSH_USERNAME" \
+			DEPLOY_HOST="$TARGET_IP" \
+			DEPLOY_DEST="$dest_path" \
+			expect <<'EOF'
+set timeout $env(DEPLOY_TIMEOUT)
+spawn scp {*}$env(DEPLOY_SCP_OPTS) -P $env(DEPLOY_PORT) $env(DEPLOY_SRC) $env(DEPLOY_USER)@$env(DEPLOY_HOST):$env(DEPLOY_DEST)
 expect {
 	"password:" {
-		send "$SSH_PASSWORD\r"
+		send "$env(DEPLOY_PASSWORD)\r"
 		exp_continue
 	}
 	"yes/no" {
@@ -522,6 +542,8 @@ expect {
 	}
 	eof
 }
+lassign [wait] pid spawnid os_error value
+exit $value
 EOF
 	else
 		# Manual entry fallback

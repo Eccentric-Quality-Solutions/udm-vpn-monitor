@@ -58,6 +58,15 @@ Considerations for the future, but want to avoid overarchitecting and premature 
   - Dynamic rate limiting (adjust limits based on failure patterns)
   - Note: Basic rate limiting refactored 2026-01-12 to remove cooldown and add configurable window + minimum interval
 
+- Replace expect fallback with SSH_ASKPASS in deploy scripts
+    - Current: `deploy-to-udm.sh` uses `expect` as a fallback when `sshpass` is unavailable
+    - Issue: Expect is Tcl-based, adding complexity and a dependency for password handling
+    - Proposed: Use `SSH_ASKPASS` (built into OpenSSH) instead — set `SSH_ASKPASS` to a script that echoes the password, with `SSH_ASKPASS_REQUIRE=force` to bypass terminal check
+    - Benefit: No external dependencies, no Tcl interpolation concerns, simpler code
+    - Cost: LOW - straightforward replacement of the expect blocks in `execute_ssh()` and `execute_scp()`
+    - Priority: LOW - expect path works correctly after Tcl injection fix (2026-02-24)
+    - See: `scripts/manage/deploy-to-udm.sh` execute_ssh() and execute_scp()
+
 - centralize-logs.sh: optional fallback crontab path or tests
   - Crontab check uses `/var/spool/cron/crontabs/root`; if a UDM OS variant uses a different path, SCP fails and we report reinstall_needed. Could add a fallback path or document known paths. Optional: add tests (would require mocking scp/conf or running in env with test hosts). Low priority.
 
