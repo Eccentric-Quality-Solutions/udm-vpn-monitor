@@ -47,7 +47,7 @@ EXPECTED_SCRIPT_FILES=(
 	"scripts/anonymize/anonymize-ipset.sh"
 	"scripts/anonymize/anonymize-logs.sh"
 	"scripts/manage/centralize-logs.sh"
-	"scripts/manage/centralize-logs-ips.conf.example"
+	"scripts/manage/centralize.conf.example"
 	"scripts/manage/deploy-registry.sh"
 	"scripts/manage/deploy-to-udm.sh"
 	"scripts/manage/deploy-to-udms.sh"

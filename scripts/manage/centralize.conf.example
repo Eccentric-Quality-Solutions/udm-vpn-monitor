@@ -1,0 +1,9 @@
+# Config for centralize-logs.sh
+# - BIND=IP — required; source IP for SCP (BindAddress)
+# - NAME=IP — target UDM (name shown before each password/passphrase prompt)
+# Lines starting with # and blank lines are ignored.
+#
+# Example:
+# BIND=192.168.1.10
+# NYC=192.168.1.20
+# SF=192.168.1.30

@@ -829,7 +829,7 @@ auto_append_missing_config_values() {
 #   - Copies check-utilities.sh to installation directory (if available)
 #   - Copies scripts/ utilities to installation directory (if available): anonymize/, scripts/manage/
 #     (centralize-logs.sh, deploy-to-udm.sh, deploy-to-udms.sh, etc.)
-#   - Copies scripts/manage/deploy-udms.conf.example and scripts/manage/centralize-logs-ips.conf.example (if available)
+#   - Copies scripts/manage/deploy-udms.conf.example and scripts/manage/centralize.conf.example (if available)
 #   - Sets executable permissions on scripts
 #   - Installs config file (may prompt user in interactive mode)
 install_scripts() {
@@ -918,10 +918,10 @@ install_scripts() {
 		chmod 755 "${INSTALL_DIR}/scripts/manage/centralize-logs.sh"
 		log_info "Installed scripts/manage/centralize-logs.sh (centralize logs utility)"
 	fi
-	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/centralize-logs-ips.conf.example" ]]; then
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/centralize.conf.example" ]]; then
 		mkdir -p "${INSTALL_DIR}/scripts/manage"
-		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/centralize-logs-ips.conf.example" "${INSTALL_DIR}/scripts/manage/centralize-logs-ips.conf.example"
-		log_info "Installed scripts/manage/centralize-logs-ips.conf.example (template for centralize-logs IPs config)"
+		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/centralize.conf.example" "${INSTALL_DIR}/scripts/manage/centralize.conf.example"
+		log_info "Installed scripts/manage/centralize.conf.example (template for centralize-logs config)"
 	fi
 	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-to-udm.sh" ]]; then
 		mkdir -p "${INSTALL_DIR}/scripts/manage"

@@ -2,40 +2,41 @@
 #
 # Centralize VPN Monitor logs from multiple UDMs
 #
-# Reads a list of IPs from a conf file. The first IP is used as BindAddress
-# for SCP; the remaining IPs are targets. For each target, fetches
+# Reads a conf file of KEY=VALUE lines. BIND=IP sets the source IP for SCP;
+# NAME=IP lines are targets. For each target, fetches
 # /data/vpn-monitor/logs/vpn-monitor.log into /tmp/centralize-logs/, then
 # zips all collected logs and removes the loose .log files.
 #
 # Usage:
 #   ./scripts/manage/centralize-logs.sh
 #
-# Conf file: centralize-logs-ips.conf in the same directory as this script.
-# Copy centralize-logs-ips.conf.example to centralize-logs-ips.conf and edit.
+# Conf file: centralize.conf in the same directory as this script.
+# Copy centralize.conf.example to centralize.conf and edit.
 #
 # Authentication:
 #   SCP will prompt for password or SSH key passphrase as needed. To avoid
 #   repeated prompts, use ssh-agent and ssh-add before running this script.
 #
 # Conf file format:
-#   One IP per line. Lines starting with # and blank lines are ignored.
-#   First non-comment IP = BindAddress; remaining IPs = targets to fetch from.
+#   Lines starting with # and blank lines are ignored.
+#   BIND=IP — required; source IP for SCP (BindAddress).
+#   NAME=IP — target UDM (e.g. NYC=192.168.1.1). Name is shown before each password/passphrase prompt.
 #
 # Output:
 #   /tmp/centralize-logs/all-vpn-logs-YYYY-MM-DD-HHMMSS.zip
-#   /tmp/centralize-logs/still-running (one line per target: "IP cron_ok" or "IP reinstall_needed";
+#   /tmp/centralize-logs/still-running (one line per target: "NAME IP cron_ok" or "NAME IP reinstall_needed";
 #   derived by SCP-pulling each UDM's root crontab, checking locally, then deleting the temp crontab files)
 #
 # Returns:
 #   0: All targets fetched and zip created (or no targets)
-#   1: Missing conf file or no IPs in conf
+#   1: Missing conf file, no entries, or missing BIND=IP
 #   2: One or more SCP failures
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONF_FILE="${SCRIPT_DIR}/centralize-logs-ips.conf"
+CONF_FILE="${SCRIPT_DIR}/centralize.conf"
 REMOTE_LOG_PATH="/data/vpn-monitor/logs/vpn-monitor.log"
 # Root's crontab on most Linux/UDM (install.sh uses crontab - so job lives here)
 REMOTE_CRONTAB_PATH="/var/spool/cron/crontabs/root"
@@ -56,31 +57,71 @@ SCP_CONNECT_TIMEOUT=30
 usage() {
 	cat <<-EOF >&2
 		Usage: $(basename "$0")
-		Reads centralize-logs-ips.conf from the script directory.
-		First IP in conf = BindAddress; remaining IPs = UDMs to fetch logs from.
+		Reads centralize.conf from the script directory.
+		Conf: BIND=IP (required), NAME=IP per target. Names shown before each password prompt.
 		SCP will prompt for password or key passphrase as needed.
 	EOF
 	exit 1
 }
 
-# Parse conf file: strip comments and blank lines, output one IP per line.
+# Parse conf file: strip comments and blank lines, output one line per entry.
 #
 # Arguments:
-#   $1: conf_path (string) - path to the IP list conf file
+#   $1: conf_path (string) - path to the conf file
 #
 # Returns:
-#   0: file exists and is readable; IP lines printed to stdout
+#   0: file exists and is readable; lines printed to stdout
 #   1: file missing or unreadable
 #
-read_ips_from_conf() {
+read_lines_from_conf() {
 	local conf="$1"
 	[[ -f "$conf" ]] || return 1
 	grep -v '^[[:space:]]*#' "$conf" | grep -v '^[[:space:]]*$' || true
 }
 
+# Parse conf lines into bind_ip and parallel arrays target_names and target_ips.
+# Only KEY=VALUE lines are used: BIND=IP sets BindAddress; any other KEY=VALUE is a target (name=KEY, ip=VALUE).
+# Lines without '=' are ignored.
+#
+# Arguments:
+#   $1: lines (string) - newline-separated lines from conf
+#
+# Returns:
+#   0: always (caller checks bind_ip and target_ips)
+#
+# Globals (set by this function):
+#   bind_ip: BindAddress IP or empty
+#   target_names: array of display names for each target
+#   target_ips: array of target IPs
+#
+parse_conf_entries() {
+	local lines="$1"
+	bind_ip=""
+	target_names=()
+	target_ips=()
+	while IFS= read -r line; do
+		line="${line#"${line%%[![:space:]]*}"}"
+		line="${line%"${line##*[![:space:]]}"}"
+		[[ -z "$line" ]] && continue
+		[[ "$line" != *"="* ]] && continue
+		local key="${line%%=*}"
+		local value="${line#*=}"
+		key="${key#"${key%%[![:space:]]*}"}"
+		key="${key%"${key##*[![:space:]]}"}"
+		value="${value#"${value%%[![:space:]]*}"}"
+		value="${value%"${value##*[![:space:]]}"}"
+		if [[ "${key^^}" == "BIND" ]]; then
+			bind_ip="$value"
+		else
+			target_names+=("$key")
+			target_ips+=("$value")
+		fi
+	done <<<"$lines"
+}
+
 # Main entry point: read conf, fetch logs from UDMs, zip results.
 #
-# Parses centralize-logs-ips.conf, fetches vpn-monitor.log from each target UDM via SCP,
+# Parses centralize.conf, fetches vpn-monitor.log from each target UDM via SCP,
 # zips collected logs to /tmp/centralize-logs/all-vpn-logs-YYYY-MM-DD-HHMMSS.zip,
 # and removes loose .log files.
 #
@@ -89,7 +130,7 @@ read_ips_from_conf() {
 #
 # Returns:
 #   0: Success (all targets fetched or no targets)
-#   1: Missing conf file or no IPs in conf
+#   1: Missing conf file, no entries, or missing BIND=IP
 #   2: One or more SCP failures
 #
 # Side effects:
@@ -99,56 +140,47 @@ main() {
 
 	if [[ ! -f "$CONF_FILE" ]]; then
 		echo "Error: conf file not found: $CONF_FILE" >&2
-		echo "Copy centralize-logs-ips.conf.example to centralize-logs-ips.conf and edit." >&2
+		echo "Copy centralize.conf.example to centralize.conf and edit." >&2
 		exit 1
 	fi
 
-	local ips
-	ips=$(read_ips_from_conf "$CONF_FILE") || true
-	if [[ -z "${ips// /}" ]]; then
-		echo "Error: no IPs found in $CONF_FILE" >&2
+	local lines
+	lines=$(read_lines_from_conf "$CONF_FILE") || true
+	if [[ -z "${lines// /}" ]]; then
+		echo "Error: no entries found in $CONF_FILE" >&2
 		exit 1
 	fi
 
-	local bind_ip=""
-	local target_ips=()
-	local first=1
-	while IFS= read -r line; do
-		line="${line#"${line%%[![:space:]]*}"}"
-		line="${line%"${line##*[![:space:]]}"}"
-		[[ -z "$line" ]] && continue
-		if [[ $first -eq 1 ]]; then
-			bind_ip="$line"
-			first=0
-		else
-			target_ips+=("$line")
-		fi
-	done <<<"$ips"
+	parse_conf_entries "$lines"
 
-	if [[ $first -eq 1 ]]; then
-		echo "Error: no valid IP in $CONF_FILE" >&2
+	if [[ -z "${bind_ip:-}" ]]; then
+		echo "Error: BIND=IP is required in $CONF_FILE" >&2
 		exit 1
 	fi
 
 	if [[ ${#target_ips[@]} -eq 0 ]]; then
-		echo "No target IPs (only BindAddress $bind_ip). Nothing to fetch." >&2
+		echo "No target IPs (only BIND ${bind_ip}). Nothing to fetch." >&2
 		exit 0
 	fi
 
 	mkdir -p "$OUTPUT_DIR"
 	{
 		echo "# Crontab status per target UDM (crontab file pulled via SCP, checked locally, temp files removed)."
-		echo "# Format: IP cron_ok | IP reinstall_needed"
+		echo "# Format: NAME IP cron_ok | NAME IP reinstall_needed"
 	} >"$STILL_RUNNING_FILE"
 	local scp_failed=0
-	local scp_opts=(-o "ConnectTimeout=$SCP_CONNECT_TIMEOUT" -o "StrictHostKeyChecking=ask")
-	[[ -n "$bind_ip" ]] && scp_opts+=(-o "BindAddress=$bind_ip")
+	local scp_opts=(-o "ConnectTimeout=$SCP_CONNECT_TIMEOUT" -o "StrictHostKeyChecking=ask" -o "BindAddress=$bind_ip")
 
-	for ip in "${target_ips[@]}"; do
+	local i
+	for i in "${!target_ips[@]}"; do
+		local ip="${target_ips[$i]}"
+		local name="${target_names[$i]}"
 		local dest="${OUTPUT_DIR}/vpn-monitor-${ip}.log"
+		echo "---"
+		echo "Connecting to ${name} (${ip}) — enter password/passphrase when prompted."
 		echo "Fetching $REMOTE_LOG_PATH from root@${ip} -> $dest"
 		if ! scp "${scp_opts[@]}" "root@${ip}:${REMOTE_LOG_PATH}" "$dest"; then
-			echo "Warning: SCP failed for $ip" >&2
+			echo "Warning: SCP failed for ${name} ($ip)" >&2
 			scp_failed=1
 			[[ -f "$dest" ]] && rm -f "$dest"
 		fi
@@ -161,7 +193,7 @@ main() {
 			fi
 		fi
 		rm -f "$crontab_local"
-		echo "${ip} ${status}" >>"$STILL_RUNNING_FILE"
+		echo "${name} ${ip} ${status}" >>"$STILL_RUNNING_FILE"
 	done
 
 	local log_count=0
