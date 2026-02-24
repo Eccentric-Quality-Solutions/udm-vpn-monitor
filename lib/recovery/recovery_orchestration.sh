@@ -1038,7 +1038,9 @@ determine_recovery_action() {
 			fi
 		else
 			log_message "INFO" "$location_name" "Tier 2: Attempting surgical SA cleanup for $ip_display"
-			surgical_cleanup "$external_peer_ip" "$location_name"
+			if surgical_cleanup "$external_peer_ip" "$location_name"; then
+				reset_failure_count "$location_name" "$external_peer_ip"
+			fi
 		fi
 	fi
 

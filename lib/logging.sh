@@ -253,7 +253,8 @@ _parse_message_and_exit_code() {
 			message="$*"
 		else
 			# Non-numeric last argument is treated as part of message
-			# Set exit_code to 0 to prevent accidental exits when exit code parsing fails
+			# Default exit_code to 0: log only, don't exit (callers that want fatal
+			# behavior must pass an explicit non-zero exit code)
 			message="$*"
 			exit_code="0"
 			exit_code_provided=0
@@ -279,7 +280,9 @@ _parse_message_and_exit_code() {
 #   $1: Severity level (ERROR, WARNING, INFO)
 #   $2: Prefix name (location name or "SYSTEM" for system-level messages) - REQUIRED
 #   $3: Error message to log
-#   $4: Exit code (optional, defaults to 1, only used for ERROR severity)
+#   $4: Exit code (optional, only used for ERROR severity)
+#       If omitted, defaults to 0 (log only, do not exit)
+#       Pass a non-zero value (e.g., 1) to make ERROR severity fatal
 #
 # Returns:
 #   0: Always returns 0 (unless severity is ERROR and exit_code is non-zero, then exits)
@@ -294,9 +297,16 @@ _parse_message_and_exit_code() {
 #   handle_error "WARNING" "SYSTEM" "Optional feature unavailable, using fallback"
 #   handle_error "WARNING" "NYC" "Optional feature unavailable, using fallback"
 #
-#   # Fatal error (logs error and exits)
+#   # Fatal error (logs error and exits with code 1)
 #   handle_error "ERROR" "SYSTEM" "Critical configuration missing" 1
 #   handle_error "ERROR" "NYC" "Critical configuration missing" 1
+#
+#   # Non-fatal ERROR (logs error, continues execution - no exit code provided)
+#   handle_error "ERROR" "SYSTEM" "Recoverable error occurred"
+#   # Caller must handle flow control (e.g., return 1)
+#
+#   # Non-fatal ERROR (logs error, continues - explicit exit code 0)
+#   handle_error "ERROR" "SYSTEM" "Error logged but not fatal" 0
 #
 #   # Informational error (logs info, continues execution)
 #   handle_error "INFO" "SYSTEM" "Operation completed with minor issues"
