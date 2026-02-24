@@ -26,7 +26,7 @@ cp scripts/manage/centralize.conf.example scripts/manage/centralize.conf
 - Conf file: **centralize.conf** in the script directory (no path argument).
 - Lines starting with `#` and blank lines are ignored.
 - **BIND=IP** — required; source IP for SCP (BindAddress).
-- **NAME=IP** — target UDM (e.g. `NYC=192.168.1.1`). The **name is shown before each password/passphrase prompt** so you know which UDM you're logging into.
+- **NAME=IP** — target UDM (e.g. `NYC=192.168.1.1`). The **name is shown before the single SCP per host** so you know which UDM you're logging into.
 - If only BIND is given (no targets), no logs are fetched (script exits 0 with a message).
 
 See `scripts/manage/centralize.conf.example` for a template.
@@ -37,7 +37,7 @@ See `scripts/manage/centralize.conf.example` for a template.
 
 ## Authentication
 
-SCP will prompt for a password or SSH key passphrase when needed. Before each prompt, the script prints which target it is connecting to (e.g. "Connecting to NYC (192.168.1.1) — enter password/passphrase when prompted."). To avoid repeated prompts for key passphrases, run `ssh-agent` and `ssh-add` before running the script.
+SCP will prompt for a password or SSH key passphrase when needed. The script runs one SCP per host, fetching both the log file and the crontab in a single connection, so you are prompted at most once per host. Before each run it prints which target is being used (e.g. "Connecting to NYC (192.168.1.1) - enter password/passphrase when prompted."). To avoid repeated prompts for key passphrases, run `ssh-agent` and `ssh-add` before running the script.
 
 ## Output
 

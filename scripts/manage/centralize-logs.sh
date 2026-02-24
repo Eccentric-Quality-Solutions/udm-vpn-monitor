@@ -19,8 +19,8 @@
 #
 # Conf file format:
 #   Lines starting with # and blank lines are ignored.
-#   BIND=IP — required; source IP for SCP (BindAddress).
-#   NAME=IP — target UDM (e.g. NYC=192.168.1.1). Name is shown before each password/passphrase prompt.
+#   BIND=IP - required; source IP for SCP (BindAddress).
+#   NAME=IP - target UDM (e.g. NYC=192.168.1.1). Name is shown before the single SCP per host (log + crontab).
 #
 # Output:
 #   /tmp/centralize-logs/all-vpn-logs-YYYY-MM-DD-HHMMSS.zip
@@ -58,7 +58,7 @@ usage() {
 	cat <<-EOF >&2
 		Usage: $(basename "$0")
 		Reads centralize.conf from the script directory.
-		Conf: BIND=IP (required), NAME=IP per target. Names shown before each password prompt.
+		Conf: BIND=IP (required), NAME=IP per target. One SCP per host (log + crontab); name shown before each.
 		SCP will prompt for password or key passphrase as needed.
 	EOF
 	exit 1
@@ -176,24 +176,27 @@ main() {
 		local ip="${target_ips[$i]}"
 		local name="${target_names[$i]}"
 		local dest="${OUTPUT_DIR}/vpn-monitor-${ip}.log"
+		local scp_dir="${OUTPUT_DIR}/.scp-${ip}"
+		mkdir -p "$scp_dir"
 		echo "---"
-		echo "Connecting to ${name} (${ip}) — enter password/passphrase when prompted."
-		echo "Fetching $REMOTE_LOG_PATH from root@${ip} -> $dest"
-		if ! scp "${scp_opts[@]}" "root@${ip}:${REMOTE_LOG_PATH}" "$dest"; then
+		echo "Connecting to ${name} (${ip}) - enter password/passphrase when prompted."
+		echo "Fetching log and crontab from root@${ip}"
+		if ! scp "${scp_opts[@]}" "root@${ip}:${REMOTE_LOG_PATH}" "root@${ip}:${REMOTE_CRONTAB_PATH}" "${scp_dir}/"; then
 			echo "Warning: SCP failed for ${name} ($ip)" >&2
 			scp_failed=1
-			[[ -f "$dest" ]] && rm -f "$dest"
-		fi
-		# Pull root crontab from this UDM via SCP (no SSH command execution); check locally for vpn-monitor job.
-		local crontab_local="${OUTPUT_DIR}/crontab-${ip}.tmp"
-		local status="reinstall_needed"
-		if scp "${scp_opts[@]}" "root@${ip}:${REMOTE_CRONTAB_PATH}" "$crontab_local" 2>/dev/null; then
-			if grep -q "vpn-monitor" "$crontab_local" 2>/dev/null; then
+			echo "${name} ${ip} reinstall_needed" >>"$STILL_RUNNING_FILE"
+		else
+			# SCP writes remote basenames: vpn-monitor.log, root (crontab)
+			if [[ -f "${scp_dir}/vpn-monitor.log" ]]; then
+				mv "${scp_dir}/vpn-monitor.log" "$dest"
+			fi
+			local status="reinstall_needed"
+			if [[ -f "${scp_dir}/root" ]] && grep -q "vpn-monitor" "${scp_dir}/root" 2>/dev/null; then
 				status="cron_ok"
 			fi
+			echo "${name} ${ip} ${status}" >>"$STILL_RUNNING_FILE"
 		fi
-		rm -f "$crontab_local"
-		echo "${name} ${ip} ${status}" >>"$STILL_RUNNING_FILE"
+		rm -rf "$scp_dir"
 	done
 
 	local log_count=0
