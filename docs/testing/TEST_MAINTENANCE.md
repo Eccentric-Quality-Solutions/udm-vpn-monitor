@@ -132,6 +132,8 @@ load fixtures/vpn_active
 }
 ```
 
+For multi-location scenarios (2–3 named locations, per-location state healthy/failing/idle, optional system-wide/network-partition state), use `load fixtures/vpn_multi_location` and `setup_vpn_multi_location_fixture`. Spec format is `NAME:IP:STATE`; IP must be IPv4 (colons in IPv6 would break parsing). See `tests/test_fixtures_vpn_multi_location.sh`.
+
 **Extract Helper Functions**:
 ```bash
 # Before: Repeated pattern
@@ -283,6 +285,8 @@ setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'TIER1_THRESHOLD=1' 'ENA
 - Test setup appears to succeed but test doesn't run
 - Fixture function receives wrong parameter values
 
+**Guard against silent failure**: All fixture setup calls should use `|| fail "Fixture setup failed"` so that a non-zero return from the fixture fails the test immediately with a clear message instead of continuing with an incomplete environment.
+
 **Fixture Parameter Patterns**:
 
 **`setup_vpn_active_fixture`**:
@@ -403,6 +407,31 @@ EOF
 **Related Documentation**:
 - See `lib/detection/xfrm_detection.sh:execute_xfrm_state_command()` for implementation details
 - See `tests/test_helper.bash:mock_ip_xfrm_state()` for helper function example
+
+### xfrm mock state in multi-phase tests
+
+**Rule:** If a test runs the script (or recovery) more than once while using the same xfrm mock that tracks state (e.g. `mock_ip_xfrm_bidirectional_sa`, `mock_ip_xfrm_asymmetric_sa`, `mock_ip_xfrm_sa_count_mismatch`, `mock_ip_xfrm_timing_delay`), you **must** call `clear_xfrm_mock_state()` between phases. These mocks create state files (deletion flags, SA counters) under `TEST_DIR`; without clearing, the second phase sees stale state and the test can false-pass.
+
+**Example (default paths):**
+```bash
+# Phase 1
+mock_ip_xfrm_bidirectional_sa "${TEST_LOCAL_IP}" "${TEST_PEER_IP}"
+add_mock_to_path
+run bash "$TEST_SCRIPT"
+assert_success
+
+# Phase 2: reset mock state so mock behaves as "before deletion" again
+clear_xfrm_mock_state "${TEST_DIR}/sas_deleted" "${TEST_DIR}/MOCK_SAS_DELETED_FILE"
+run bash "$TEST_SCRIPT"
+assert_success
+
+remove_mock_from_path
+```
+
+For `mock_ip_xfrm_timing_delay`, also pass the call counter path:  
+`clear_xfrm_mock_state "${TEST_DIR}/sas_deleted" "${TEST_DIR}/MOCK_SAS_DELETED_FILE" "${TEST_DIR}/check_count"`.
+
+**References:** `tests/helpers/mocks.bash` (xfrm mock header), `tests/helpers/README.md` (mocks.bash section).
 
 ## Test Performance Optimization
 

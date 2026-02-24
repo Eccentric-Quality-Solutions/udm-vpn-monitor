@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Development Environment Setup Script
-# Ensures development tools (shfmt, shellcheck) are available in PATH
+# Ensures development tools (shellcheck, shfmt, bats) are available in PATH.
 #
 # Usage:
 #   ./scripts/setup-dev-env.sh
@@ -11,9 +11,9 @@
 # If tools are only available via Homebrew, it adds Homebrew's bin directory to
 # PATH in your shell configuration file (.bashrc, .zshrc, or .profile).
 #
-# The script detects which shell configuration file to use and only adds PATH
-# entries if necessary. It also checks for missing tools and provides installation
-# instructions for both apt and Homebrew.
+# Required tools: shellcheck, shfmt, bats (see DEVELOPER.md).
+# Optional: kcov (for coverage); script reports if missing.
+# After running, run ./scripts/setup-git-hooks.sh to install pre-commit hooks.
 
 set -euo pipefail
 
@@ -57,7 +57,7 @@ fi
 # Check if tools are available in system paths (apt-installed)
 TOOLS_IN_SYSTEM_PATH=0
 for sys_path in "/usr/bin" "/usr/local/bin" "/bin"; do
-	if [[ -x "${sys_path}/shfmt" ]] || [[ -x "${sys_path}/shellcheck" ]]; then
+	if [[ -x "${sys_path}/shfmt" ]] || [[ -x "${sys_path}/shellcheck" ]] || [[ -x "${sys_path}/bats" ]]; then
 		TOOLS_IN_SYSTEM_PATH=1
 		break
 	fi
@@ -85,7 +85,7 @@ elif [[ $TOOLS_IN_SYSTEM_PATH -eq 1 ]]; then
 elif [[ -z "$BREW_BIN" ]]; then
 	echo "⚠ Homebrew not found and tools not in system PATH"
 	echo "  Install tools using apt or install Homebrew:"
-	echo "    sudo apt-get install -y shfmt shellcheck"
+	echo "    sudo apt-get install -y shellcheck shfmt bats"
 	echo "    # OR"
 	echo "    /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
 fi
@@ -102,7 +102,7 @@ echo "Checking for development tools..."
 # in git hooks with minimal environment).
 #
 # Arguments:
-#   $1: Name of the tool/command to check (e.g., "shfmt", "shellcheck")
+#   $1: Name of the tool/command to check (e.g., "shellcheck", "shfmt", "bats")
 #
 # Returns:
 #   0: Tool found in PATH or standard locations
@@ -156,12 +156,16 @@ tool_exists() {
 
 MISSING_TOOLS=()
 
+if ! tool_exists "shellcheck"; then
+	MISSING_TOOLS+=("shellcheck")
+fi
+
 if ! tool_exists "shfmt"; then
 	MISSING_TOOLS+=("shfmt")
 fi
 
-if ! tool_exists "shellcheck"; then
-	MISSING_TOOLS+=("shellcheck")
+if ! tool_exists "bats"; then
+	MISSING_TOOLS+=("bats")
 fi
 
 if [[ ${#MISSING_TOOLS[@]} -gt 0 ]]; then
@@ -179,12 +183,26 @@ if [[ ${#MISSING_TOOLS[@]} -gt 0 ]]; then
 	echo "  Fedora/RHEL (dnf):"
 	echo "    sudo dnf install -y ${MISSING_TOOLS[*]}"
 	echo ""
+	echo "  Note: On some systems bats is provided by bats-core: brew install bats-core"
+	echo ""
 	echo "After installation, reload your shell configuration:"
 	echo "  source $SHELL_CONFIG"
 else
-	echo "✓ All development tools found"
+	echo "✓ All required development tools found (shellcheck, shfmt, bats)"
 	echo ""
 	echo "Tools available:"
+	if tool_exists "shellcheck"; then
+		if command -v shellcheck >/dev/null 2>&1; then
+			shellcheck --version
+		else
+			for sys_path in "/usr/bin" "/usr/local/bin" "/bin" "$BREW_BIN"; do
+				if [[ -n "$sys_path" ]] && [[ -x "${sys_path}/shellcheck" ]]; then
+					"${sys_path}/shellcheck" --version
+					break
+				fi
+			done
+		fi
+	fi
 	if tool_exists "shfmt"; then
 		if command -v shfmt >/dev/null 2>&1; then
 			shfmt --version
@@ -198,18 +216,21 @@ else
 			done
 		fi
 	fi
-	if tool_exists "shellcheck"; then
-		if command -v shellcheck >/dev/null 2>&1; then
-			shellcheck --version
+	if tool_exists "bats"; then
+		if command -v bats >/dev/null 2>&1; then
+			bats --version
 		else
-			# Find it in system paths
 			for sys_path in "/usr/bin" "/usr/local/bin" "/bin" "$BREW_BIN"; do
-				if [[ -n "$sys_path" ]] && [[ -x "${sys_path}/shellcheck" ]]; then
-					"${sys_path}/shellcheck" --version
+				if [[ -n "$sys_path" ]] && [[ -x "${sys_path}/bats" ]]; then
+					"${sys_path}/bats" --version
 					break
 				fi
 			done
 		fi
+	fi
+	if ! tool_exists "kcov"; then
+		echo ""
+		echo "  Optional: kcov not found (install for coverage: ./tests/run_tests.sh --coverage)"
 	fi
 fi
 
@@ -218,5 +239,8 @@ echo "Setup complete!"
 echo ""
 echo "To apply changes to your current shell session, run:"
 echo "  source $SHELL_CONFIG"
+echo ""
+echo "Then install git hooks (if not already done):"
+echo "  ./scripts/setup-git-hooks.sh"
 echo ""
 echo "Or open a new terminal window."

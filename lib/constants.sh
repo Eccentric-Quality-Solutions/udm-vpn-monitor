@@ -12,7 +12,7 @@
 #   This file is safe to source multiple times (idempotent).
 #   Constants are only defined if not already set.
 #
-# Version: 0.8.1
+# Version: 0.8.2
 #
 
 # Lockfile timeout default (in seconds)
@@ -84,6 +84,7 @@
 #   EXIT_PERMISSION_ERROR (4) - Permission denied (file/directory not writable, insufficient privileges)
 #   EXIT_COMMAND_NOT_FOUND (5) - Required command or utility not found in PATH
 #   EXIT_STATE_ERROR (6)      - State file error (corruption, unreadable, checksum failure)
+#   EXIT_MALFORMED_DATA (7)   - Malformed or corrupted data (e.g. location data format violation)
 #
 # Usage Guidelines:
 #   - Use EXIT_SUCCESS for successful completion
@@ -93,6 +94,7 @@
 #   - Use EXIT_PERMISSION_ERROR when file/directory operations fail due to permissions
 #   - Use EXIT_COMMAND_NOT_FOUND when required commands are missing
 #   - Use EXIT_STATE_ERROR when state file operations fail
+#   - Use EXIT_MALFORMED_DATA when data format is invalid (distinct from "not found")
 [[ -z "${EXIT_SUCCESS:-}" ]] && readonly EXIT_SUCCESS=0
 [[ -z "${EXIT_GENERAL_ERROR:-}" ]] && readonly EXIT_GENERAL_ERROR=1
 [[ -z "${EXIT_CONFIG_ERROR:-}" ]] && readonly EXIT_CONFIG_ERROR=2
@@ -100,3 +102,8 @@
 [[ -z "${EXIT_PERMISSION_ERROR:-}" ]] && readonly EXIT_PERMISSION_ERROR=4
 [[ -z "${EXIT_COMMAND_NOT_FOUND:-}" ]] && readonly EXIT_COMMAND_NOT_FOUND=5
 [[ -z "${EXIT_STATE_ERROR:-}" ]] && readonly EXIT_STATE_ERROR=6
+[[ -z "${EXIT_MALFORMED_DATA:-}" ]] && readonly EXIT_MALFORMED_DATA=7
+
+# Ensure sourcing returns 0; the [[ -z ]] && readonly idiom exits 1 when
+# the variable is already set, which is fatal under set -e / errexit.
+true

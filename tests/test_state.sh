@@ -19,7 +19,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles corrupted failure counter files containing non-numeric values.
 	# Expected: Script treats corrupted file as 0 or resets it, continuing normal operation without crashing.
 	# Importance: File corruption can occur due to disk errors or manual editing; script must handle it robustly.
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	source_function "get_peer_state_file_path"
 
@@ -42,7 +42,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles failure counter files containing negative numbers.
 	# Expected: Script handles negative numbers gracefully, treating them as invalid and recovering to 0.
 	# Importance: Negative failure counts are invalid; script must handle corrupted data robustly.
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	source_function "get_peer_state_file_path"
 
@@ -66,7 +66,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles empty failure counter files.
 	# Expected: Script treats empty file as corrupted and recovers it to "0".
 	# Importance: Empty files can occur from truncation or corruption; script must handle them robustly.
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	source_function "get_peer_state_file_path"
 
@@ -108,7 +108,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles read-only state files gracefully when attempting to update counters.
 	# Expected: Script logs error about write failure but continues execution without crashing.
 	# Importance: Permission issues can occur due to incorrect file ownership or chmod operations; script must handle gracefully.
-	setup_vpn_down_fixture "${TEST_PEER_IP}" 3
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 3 || fail "Fixture setup failed"
 
 	source_function "get_peer_state_file_path"
 
@@ -134,7 +134,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles unreadable state files gracefully.
 	# Expected: Script defaults to 0 or handles error gracefully when state file cannot be read.
 	# Importance: Permission issues can prevent reading state files; script must handle gracefully.
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	source_function "get_peer_state_file_path"
 
@@ -246,7 +246,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles state files that are deleted during execution.
 	# Expected: Script recreates deleted files or defaults to 0, continuing execution without crashing.
 	# Importance: Files can be deleted by other processes or manual intervention; script must handle gracefully.
-	setup_vpn_down_fixture "${TEST_PEER_IP}" 2
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 2 || fail "Fixture setup failed"
 
 	source_function "get_peer_state_file_path"
 
@@ -275,7 +275,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that lockfile mechanism prevents concurrent state file modification.
 	# Expected: Lockfile prevents concurrent execution, ensuring state file is not modified during script execution.
 	# Importance: Concurrent modification can cause data corruption; lockfile mechanism must prevent it.
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	# Run script - lockfile should prevent concurrent execution
 	add_mock_to_path
@@ -769,7 +769,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that unknown key types use default path.
 	# Expected: Unknown keys use STATE_DIR/<key>_<sanitized_ip> path.
 	# Importance: Ensures abstraction layer handles unknown keys gracefully.
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	# Source state.sh to access functions
 	# shellcheck source=../lib/state.sh
@@ -800,7 +800,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that atomic write failures are handled gracefully.
 	# Expected: Script handles write failures without crashing.
 	# Importance: Write failures can occur due to disk full or permissions.
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	# Source state.sh to access functions
 	# shellcheck source=../lib/state.sh
@@ -842,7 +842,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that file path resolution works for all key types.
 	# Expected: Each key type resolves to correct file path.
 	# Importance: Ensures abstraction layer works for all state types.
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	# Source state.sh to access functions
 	# shellcheck source=../lib/state.sh

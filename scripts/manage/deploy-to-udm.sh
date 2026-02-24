@@ -13,7 +13,7 @@
 # 7. Log deployment output to REPO_ROOT/logs/deploy-to-udm.log (username/password never logged)
 #
 # Usage:
-#   ./scripts/deploy-to-udm.sh [OPTIONS]
+#   ./scripts/manage/deploy-to-udm.sh [OPTIONS]
 #
 # Options:
 #   --file FILE              Package file to deploy (default: udm-vpn-monitor.zip)
@@ -43,13 +43,13 @@
 #
 # Examples:
 #   # Deploy (prompts for credentials)
-#   ./scripts/deploy-to-udm.sh --target-ip 192.168.1.100
+#   ./scripts/manage/deploy-to-udm.sh --target-ip 192.168.1.100
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # Source deployment registry helpers (for record_deployment)
 # shellcheck source=scripts/deploy-registry.sh
@@ -162,7 +162,7 @@ log_verbose() {
 resolve_bind_ip_from_config() {
 	local config_paths=(
 		"/data/vpn-monitor/vpn-monitor.conf"
-		"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/vpn-monitor.conf"
+		"${REPO_ROOT:-}/vpn-monitor.conf"
 	)
 	local val
 	for cfg in "${config_paths[@]}"; do

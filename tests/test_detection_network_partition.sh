@@ -269,7 +269,7 @@ EOF
 	# Purpose: Test verifies that check_network_partition correctly identifies network partition
 	# Expected: Function returns 1 when one or more checks fail
 	# Importance: Network partition detection prevents false VPN failure detection
-	setup_vpn_network_partition_fixture "${TEST_PEER_IP}" "no_default_route" "br0,eth0"
+	setup_vpn_network_partition_fixture "${TEST_PEER_IP}" "no_default_route" "br0,eth0" || fail "Fixture setup failed"
 
 	# Source detection functions to test directly
 	# shellcheck source=../lib/logging.sh

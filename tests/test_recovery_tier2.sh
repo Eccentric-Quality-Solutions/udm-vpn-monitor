@@ -25,7 +25,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: ipsec reload affects all VPN tunnels, which is the default surgical cleanup behavior
 	# Note: This may impact other VPN tunnels, not just the failing one.
 	# Disable xfrm recovery to force ipsec reload (xfrm recovery is tried first if enabled)
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
 
 	# Mock ipsec - reload succeeds, track reload call
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -57,7 +57,7 @@ EOF
 	# Purpose: Test verifies that the script handles failures of surgical cleanup (ipsec reload) gracefully
 	# Expected: Script logs error about reload failure but continues execution without crashing
 	# Importance: Recovery actions can fail due to system issues; script must handle failures robustly
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}"
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 	# Mock ipsec - reload succeeds, restart fails; VPN must be DOWN (status_exit=1)
 	mock_ipsec_reload_restart 0 1 1
@@ -426,7 +426,7 @@ EOF
 	# Purpose: Test verifies that surgical cleanup works correctly when PATH is restricted (simulating cron/systemd environment)
 	# Expected: get_command_path() finds ipsec via system directory fallback, and ipsec commands execute successfully using full path
 	# Importance: Ensures recovery works in PATH-restricted environments common in cron/systemd contexts on UDM OS
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
 
 	# Save original PATH
 	local original_path="${PATH}"

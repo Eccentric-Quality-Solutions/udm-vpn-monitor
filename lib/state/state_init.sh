@@ -3,7 +3,7 @@
 # State initialization
 # Handles initialization of state files and directories
 #
-# Version: 0.8.1
+# Version: 0.8.2
 #
 
 # Initialize state files if they don't exist
@@ -13,7 +13,8 @@
 # This ensures state files exist before they are accessed.
 #
 # State files:
-#   - RESTART_COUNT_FILE: Tracks restart timestamps for rate limiting (created here)
+#   - RESTART_COUNT_FILE: Tracks restart timestamps for Tier 3 rate limiting (created here)
+#   - TIER2_RECOVERY_COUNT_FILE: Tracks Tier 2 recovery timestamps for rate limiting (created here)
 #   - Network partition state file: Tracks network partition status (path from get_network_partition_state_file())
 #   - System-wide failure state file: Tracks system-wide failure status (path from get_system_wide_failure_state_file(), created if function available)
 #   - Per-peer failure counters: Created on-demand as failure_count_<location>_<external_peer_ip>
@@ -77,8 +78,11 @@ init_state() {
 		handle_error "WARNING" "SYSTEM" "Failed to create state directory: $STATE_DIR" 0
 	fi
 
-	if ! ensure_file_exists "$RESTART_COUNT_FILE" "0"; then
+	if ! ensure_file_exists "$RESTART_COUNT_FILE" ""; then
 		handle_error "WARNING" "SYSTEM" "Failed to create restart count file: $RESTART_COUNT_FILE" 0
+	fi
+	if [[ -n "${TIER2_RECOVERY_COUNT_FILE:-}" ]] && ! ensure_file_exists "$TIER2_RECOVERY_COUNT_FILE" ""; then
+		handle_error "WARNING" "SYSTEM" "Failed to create Tier 2 recovery count file: $TIER2_RECOVERY_COUNT_FILE" 0
 	fi
 	# Initialize network partition state file (0 = healthy, 1 = partitioned)
 	local network_partition_file

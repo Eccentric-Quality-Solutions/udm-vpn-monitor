@@ -24,7 +24,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that rate limiting handles corrupted restart count file gracefully
 	# Expected: Script recovers corrupted file and continues execution without crashing
 	# Importance: Prevents script failures from corrupted rate limit files, ensuring monitoring continues
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=3' 'RATE_LIMIT_WINDOW_MINUTES=60'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=3' 'RATE_LIMIT_WINDOW_MINUTES=60' || fail "Fixture setup failed"
 
 	# Create corrupted restart file (non-numeric)
 	local restart_file="${STATE_DIR}/restart_count"
@@ -266,7 +266,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		'MAX_RESTARTS_PER_WINDOW=3' \
 		'RATE_LIMIT_WINDOW_MINUTES=60' \
 		'ENABLE_XFRM_RECOVERY=0' \
-		'ENABLE_NETWORK_PARTITION_CHECK=0'
+		'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
 
 	local restart_file="${STATE_DIR}/restart_count"
 
@@ -320,7 +320,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		'MAX_RESTARTS_PER_WINDOW=3' \
 		'RATE_LIMIT_WINDOW_MINUTES=60' \
 		'ENABLE_XFRM_RECOVERY=0' \
-		'ENABLE_NETWORK_PARTITION_CHECK=0'
+		'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
 
 	local restart_file="${STATE_DIR}/restart_count"
 
@@ -349,6 +349,54 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		file_lines=$(wc -l <"$restart_file" | tr -d ' ')
 		# Should have at least 3 entries (2 old + 1 new restart)
 		assert [ "$file_lines" -ge 3 ]
+	fi
+
+	remove_mock_from_path
+}
+
+# ============================================================================
+# TIER 2 RATE LIMITING TESTS
+# ============================================================================
+
+# bats test_tags=category:high-risk,priority:high
+@test "rate limiting: Tier 2 recovery blocked when rate limit exceeded" {
+	# Purpose: Test verifies that Tier 2 recovery is blocked when Tier 2 rate limit is exceeded
+	# Expected: When tier2_recovery_count has MAX_TIER2_RECOVERIES_PER_WINDOW recent entries, surgical cleanup is skipped
+	# Importance: Tier 2 rate limiting prevents excessive ipsec reload / xfrm recovery loops
+
+	local base_time=1609459200
+	mock_date "$base_time" 0
+	add_mock_to_path
+
+	local now=$base_time
+	local recent=$((now - 1800))
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" \
+		'MAX_TIER2_RECOVERIES_PER_WINDOW=3' \
+		'RATE_LIMIT_WINDOW_MINUTES=60' \
+		'ENABLE_XFRM_RECOVERY=0' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
+
+	local tier2_file="${TIER2_RECOVERY_COUNT_FILE:-${STATE_DIR}/tier2_recovery_count}"
+	printf '%s\n%s\n%s\n' "$recent" "$recent" "$recent" >"$tier2_file"
+
+	mock_ip_vpn_down
+	mock_ipsec_reload_restart 0 0 1
+	add_mock_to_path
+
+	# Run without --fake so surgical_cleanup is actually invoked (rate limit check is inside it)
+	run bash "$TEST_SCRIPT"
+	if [[ $status -ne 0 ]] && [[ $status -ne 1 ]]; then
+		fail "Script exited with unexpected status: $status"
+	fi
+
+	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "Tier 2 rate limit exceeded" "rate limit exceeded" "Tier 2 minimum interval not met"
+
+	# Should not have recorded new Tier 2 recovery (file should still have 3 entries)
+	if [[ -f "$tier2_file" ]]; then
+		local file_lines
+		file_lines=$(wc -l <"$tier2_file" | tr -d ' ')
+		assert_equal "$file_lines" "3"
 	fi
 
 	remove_mock_from_path

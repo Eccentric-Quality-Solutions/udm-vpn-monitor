@@ -11,7 +11,7 @@
 # 5. Logs deployment output to REPO_ROOT/logs/deploy-to-udms.log
 #
 # Usage:
-#   ./scripts/deploy-to-udms.sh [OPTIONS]
+#   ./scripts/manage/deploy-to-udms.sh [OPTIONS]
 #
 # Options:
 #   --config FILE    Config file with UDM list (default: deploy-udms.conf)
@@ -23,13 +23,13 @@
 # Config format (one target per line):
 #   host_or_ip [bind_ip]
 #
-# See scripts/deploy-udms.conf.example for details.
+# See scripts/manage/deploy-udms.conf.example for details.
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 LOGS_DIR="${REPO_ROOT}/logs"
 DEPLOY_LOG_FILE="${DEPLOY_LOG_FILE:-${LOGS_DIR}/deploy-to-udms.log}"
 CONFIG_FILE="${REPO_ROOT}/deploy-udms.conf"
@@ -139,7 +139,7 @@ Options:
 
 Config format: host_or_ip [bind_ip]
 If bind_ip omitted, uses LOCAL_UDM_IP from vpn-monitor.conf.
-See scripts/deploy-udms.conf.example for details.
+See scripts/manage/deploy-udms.conf.example for details.
 EOF
 }
 
@@ -196,7 +196,7 @@ ensure_package() {
 		return 0
 	fi
 	log_info "Package not found: $PACKAGE_FILE"
-	if [[ -f "${SCRIPT_DIR}/prepare_install_package.sh" ]]; then
+	if [[ -f "${REPO_ROOT}/scripts/prepare_install_package.sh" ]]; then
 		log_info "Running prepare_install_package.sh..."
 		if (cd "$REPO_ROOT" && ./scripts/prepare_install_package.sh); then
 			if [[ -f "$PACKAGE_FILE" ]]; then
@@ -224,7 +224,7 @@ main() {
 
 	if [[ ! -f "$CONFIG_FILE" ]]; then
 		log_error "Config file not found: $CONFIG_FILE"
-		log_info "Copy scripts/deploy-udms.conf.example to deploy-udms.conf and add your UDMs"
+		log_info "Copy scripts/manage/deploy-udms.conf.example to deploy-udms.conf and add your UDMs"
 		exit 1
 	fi
 

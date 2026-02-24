@@ -5,7 +5,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.8.1
+# Version: 0.8.2
 #
 
 set -euo pipefail
@@ -827,9 +827,9 @@ auto_append_missing_config_values() {
 #   - Copies vpn-keepalive.sh to installation directory (if available)
 #   - Copies analyze-logs.sh to installation directory (if available)
 #   - Copies check-utilities.sh to installation directory (if available)
-#   - Copies scripts/ utilities to installation directory (if available): anonymize-logs.sh,
-#     deploy-to-udm.sh, deploy-to-udms.sh, migrate-config-to-locations.sh
-#   - Copies scripts/deploy-udms.conf.example (if available)
+#   - Copies scripts/ utilities to installation directory (if available): anonymize/, scripts/manage/
+#     (centralize-logs.sh, deploy-to-udm.sh, deploy-to-udms.sh, etc.)
+#   - Copies scripts/manage/deploy-udms.conf.example and scripts/manage/centralize-logs-ips.conf.example (if available)
 #   - Sets executable permissions on scripts
 #   - Installs config file (may prompt user in interactive mode)
 install_scripts() {
@@ -900,36 +900,51 @@ install_scripts() {
 	fi
 
 	# Copy scripts directory utilities (optional)
-	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/anonymize-logs.sh" ]] ||
-		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/deploy-to-udm.sh" ]] ||
-		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/deploy-to-udms.sh" ]] ||
-		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/migrate-config-to-locations.sh" ]] ||
-		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/deploy-udms.conf.example" ]]; then
+	if [[ -d "${INSTALL_SCRIPT_DIR}/scripts/anonymize" ]] ||
+		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/centralize-logs.sh" ]] ||
+		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-to-udm.sh" ]] ||
+		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-to-udms.sh" ]] ||
+		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-udms.conf.example" ]]; then
 		mkdir -p "${INSTALL_DIR}/scripts"
 	fi
-	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/anonymize-logs.sh" ]]; then
-		cp "${INSTALL_SCRIPT_DIR}/scripts/anonymize-logs.sh" "${INSTALL_DIR}/scripts/anonymize-logs.sh"
-		chmod 755 "${INSTALL_DIR}/scripts/anonymize-logs.sh"
-		log_info "Installed scripts/anonymize-logs.sh (log anonymization utility)"
+	if [[ -d "${INSTALL_SCRIPT_DIR}/scripts/anonymize" ]]; then
+		mkdir -p "${INSTALL_DIR}/scripts/anonymize"
+		cp -r "${INSTALL_SCRIPT_DIR}/scripts/anonymize"/* "${INSTALL_DIR}/scripts/anonymize/"
+		log_info "Installed scripts/anonymize/ (anonymization utilities)"
 	fi
-	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/deploy-to-udm.sh" ]]; then
-		cp "${INSTALL_SCRIPT_DIR}/scripts/deploy-to-udm.sh" "${INSTALL_DIR}/scripts/deploy-to-udm.sh"
-		chmod 755 "${INSTALL_DIR}/scripts/deploy-to-udm.sh"
-		log_info "Installed scripts/deploy-to-udm.sh (deploy to single UDM)"
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/centralize-logs.sh" ]]; then
+		mkdir -p "${INSTALL_DIR}/scripts/manage"
+		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/centralize-logs.sh" "${INSTALL_DIR}/scripts/manage/centralize-logs.sh"
+		chmod 755 "${INSTALL_DIR}/scripts/manage/centralize-logs.sh"
+		log_info "Installed scripts/manage/centralize-logs.sh (centralize logs utility)"
 	fi
-	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/deploy-to-udms.sh" ]]; then
-		cp "${INSTALL_SCRIPT_DIR}/scripts/deploy-to-udms.sh" "${INSTALL_DIR}/scripts/deploy-to-udms.sh"
-		chmod 755 "${INSTALL_DIR}/scripts/deploy-to-udms.sh"
-		log_info "Installed scripts/deploy-to-udms.sh (deploy to multiple UDMs)"
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/centralize-logs-ips.conf.example" ]]; then
+		mkdir -p "${INSTALL_DIR}/scripts/manage"
+		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/centralize-logs-ips.conf.example" "${INSTALL_DIR}/scripts/manage/centralize-logs-ips.conf.example"
+		log_info "Installed scripts/manage/centralize-logs-ips.conf.example (template for centralize-logs IPs config)"
 	fi
-	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/migrate-config-to-locations.sh" ]]; then
-		cp "${INSTALL_SCRIPT_DIR}/scripts/migrate-config-to-locations.sh" "${INSTALL_DIR}/scripts/migrate-config-to-locations.sh"
-		chmod 755 "${INSTALL_DIR}/scripts/migrate-config-to-locations.sh"
-		log_info "Installed scripts/migrate-config-to-locations.sh (config migration utility)"
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-to-udm.sh" ]]; then
+		mkdir -p "${INSTALL_DIR}/scripts/manage"
+		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-to-udm.sh" "${INSTALL_DIR}/scripts/manage/deploy-to-udm.sh"
+		chmod 755 "${INSTALL_DIR}/scripts/manage/deploy-to-udm.sh"
+		log_info "Installed scripts/manage/deploy-to-udm.sh (deploy to single UDM)"
 	fi
-	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/deploy-udms.conf.example" ]]; then
-		cp "${INSTALL_SCRIPT_DIR}/scripts/deploy-udms.conf.example" "${INSTALL_DIR}/scripts/deploy-udms.conf.example"
-		log_info "Installed scripts/deploy-udms.conf.example (template for deploy-udms.conf used by scripts/deploy-to-udms.sh)"
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-to-udms.sh" ]]; then
+		mkdir -p "${INSTALL_DIR}/scripts/manage"
+		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-to-udms.sh" "${INSTALL_DIR}/scripts/manage/deploy-to-udms.sh"
+		chmod 755 "${INSTALL_DIR}/scripts/manage/deploy-to-udms.sh"
+		log_info "Installed scripts/manage/deploy-to-udms.sh (deploy to multiple UDMs)"
+	fi
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-registry.sh" ]]; then
+		mkdir -p "${INSTALL_DIR}/scripts/manage"
+		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-registry.sh" "${INSTALL_DIR}/scripts/manage/deploy-registry.sh"
+		chmod 755 "${INSTALL_DIR}/scripts/manage/deploy-registry.sh"
+		log_info "Installed scripts/manage/deploy-registry.sh (deployment registry)"
+	fi
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-udms.conf.example" ]]; then
+		mkdir -p "${INSTALL_DIR}/scripts/manage"
+		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-udms.conf.example" "${INSTALL_DIR}/scripts/manage/deploy-udms.conf.example"
+		log_info "Installed scripts/manage/deploy-udms.conf.example (template for deploy-udms.conf used by scripts/manage/deploy-to-udms.sh)"
 	fi
 
 	# Handle config file installation

@@ -25,7 +25,7 @@ load fixtures/vpn_at_tier
 	# Purpose: Test verifies that script handles cascading recovery failures gracefully
 	# Expected: Script attempts all recovery methods, logs failures, and continues without crashing
 	# Importance: Cascading failures can occur in production; script must handle them robustly
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_PING_CHECK=0'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_PING_CHECK=0' || fail "Fixture setup failed"
 
 	# Mock ip command - xfrm recovery fails (can't delete SAs)
 	local mock_ip="${TEST_DIR}/ip"
@@ -85,7 +85,7 @@ EOF
 	# Purpose: Test verifies that script handles state update failures after successful recovery
 	# Expected: Recovery action succeeds but state update fails; script logs error and continues
 	# Importance: State update failures can leave system in inconsistent state; must be handled gracefully
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_NETWORK_PARTITION_CHECK=0'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
 
 	# Track recovery state to make VPN appear healthy after recovery action
 	local recovery_state_file="${TEST_DIR}/recovery_state"
@@ -195,7 +195,7 @@ EOF
 	# Purpose: Test verifies that script handles cooldown set failures after successful recovery
 	# Expected: Recovery succeeds but cooldown set fails; script logs error and continues
 	# Importance: Cooldown failures can cause rapid re-restarts; must be handled gracefully
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_NETWORK_PARTITION_CHECK=0'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
 
 	# Mock ipsec - restart succeeds, status returns peer IP for verification
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -243,7 +243,7 @@ EOF
 	# Purpose: Test verifies that script handles restart record failures after successful recovery
 	# Expected: Recovery succeeds but restart record fails; script logs error and continues
 	# Importance: Restart record failures can affect rate limiting; must be handled gracefully
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_NETWORK_PARTITION_CHECK=0'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
 
 	# Mock ipsec - restart succeeds, status returns peer IP for verification
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -303,7 +303,7 @@ EOF
 	# Purpose: Test verifies that script handles increment_failure failures during recovery
 	# Expected: Recovery action executes but failure count increment fails; script logs error and continues
 	# Importance: Failure count failures can affect recovery decisions; must be handled gracefully
-	setup_vpn_down_fixture "${TEST_PEER_IP}" 2 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_NETWORK_PARTITION_CHECK=0'
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 2 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
 
 	# Mock VPN as down
 	mock_ip_xfrm_empty >/dev/null
@@ -373,7 +373,7 @@ EOF
 	# Purpose: Test verifies that script handles reset_failure_count failures after successful recovery
 	# Expected: VPN recovers but failure count reset fails; script logs error and continues
 	# Importance: Reset failures can cause false failure detection; must be handled gracefully
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_NETWORK_PARTITION_CHECK=0'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
 
 	# Set failure count to simulate recovery scenario
 	local state_dir="${STATE_DIR:-${TEST_DIR}}"

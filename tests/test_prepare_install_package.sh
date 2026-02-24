@@ -41,11 +41,17 @@ EXPECTED_MODULE_DIRS=(
 )
 
 EXPECTED_SCRIPT_FILES=(
-	"scripts/migrate-config-to-locations.sh"
-	"scripts/anonymize-logs.sh"
-	"scripts/deploy-to-udm.sh"
-	"scripts/deploy-to-udms.sh"
-	"scripts/deploy-udms.conf.example"
+	"scripts/anonymize/anonymize-all.sh"
+	"scripts/anonymize/anonymize-firewall.sh"
+	"scripts/anonymize/anonymize-ip-rules.sh"
+	"scripts/anonymize/anonymize-ipset.sh"
+	"scripts/anonymize/anonymize-logs.sh"
+	"scripts/manage/centralize-logs.sh"
+	"scripts/manage/centralize-logs-ips.conf.example"
+	"scripts/manage/deploy-registry.sh"
+	"scripts/manage/deploy-to-udm.sh"
+	"scripts/manage/deploy-to-udms.sh"
+	"scripts/manage/deploy-udms.conf.example"
 )
 
 # bats test_tags=category:unit

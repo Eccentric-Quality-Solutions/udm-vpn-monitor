@@ -3,7 +3,7 @@
 # Location-based configuration parsing for UDM VPN Monitor
 # Handles parsing and accessing location-based configuration variables
 #
-# Version: 0.8.1
+# Version: 0.8.2
 
 # Validate required dependencies at module load time
 # These functions must be available when this module is sourced
@@ -455,6 +455,7 @@ parse_location_config() {
 # Returns:
 #   0: External IP found
 #   1: Location not found
+#   7: Malformed location data (format violation; use EXIT_MALFORMED_DATA)
 #
 # Output:
 #   Prints external IP to stdout
@@ -475,7 +476,8 @@ get_location_external_ip() {
 		return 0
 	fi
 
-	return 1
+	# Non-empty data but format invalid (masks data corruption if we return 1)
+	return "${EXIT_MALFORMED_DATA:-7}"
 }
 
 # Get internal IPs for a location
@@ -486,8 +488,9 @@ get_location_external_ip() {
 #   $1: Location name (sanitized)
 #
 # Returns:
-#   0: Internal IPs found (may be empty string)
+#   0: Internal IPs found (may be empty string), or valid format with no internal IPs
 #   1: Location not found
+#   7: Malformed location data (format violation; use EXIT_MALFORMED_DATA)
 #
 # Output:
 #   Prints internal IPs (space-separated) to stdout, or empty string if not set
@@ -508,9 +511,14 @@ get_location_internal_ips() {
 		return 0
 	fi
 
-	# No internal IPs set - return empty string
-	echo ""
-	return 0
+	# Valid format with empty internal: "external:IP|internal:" (regex .+ did not match)
+	if [[ "$location_data" =~ ^external:[^|]*\|internal: ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Non-empty data but format invalid (masks data corruption if we return 0 with "")
+	return "${EXIT_MALFORMED_DATA:-7}"
 }
 
 # Get external IP for a location (resolved from DNS if needed)

@@ -188,19 +188,13 @@ The install package (recommended) includes all required files with proper direct
    The installer will attempt to auto-detect this from the br0 interface if not configured.
    
    **Important**: Use the external/public IP address that the VPN tunnel is established with, not the internal/private IP address. The script checks IPsec Security Associations (SAs) which are identified by external IP addresses. If `INTERNAL` IPs are not set, ping checks will use `EXTERNAL` IPs instead.
-   
-   **Migrating from old format**: If you have an existing configuration using `EXTERNAL_PEER_IPS`/`INTERNAL_PEER_IPS`, use the migration script:
-   ```bash
-   /data/vpn-monitor/scripts/migrate-config-to-locations.sh
-   ```
-   The migration script runs in **interactive mode by default** (prompts for location names). Use `--auto` for automatic generation (`LOCATION_1`, `LOCATION_2`, etc.) or `--csv FILE` for bulk import from CSV. See [MIGRATION.md](docs/MIGRATION.md) for detailed migration instructions.
 
 5. **Monitor logs**:
    ```bash
    tail -f /data/vpn-monitor/logs/vpn-monitor.log
    ```
 
-   **Deploying to multiple UDMs:** Use `./scripts/deploy-to-udms.sh` to deploy to several UDMs from a config file. Copy `scripts/deploy-udms.conf.example` to `deploy-udms.conf`, add your UDMs (one per line: `host [bind_ip]`), then run the script. It will prompt for credentials per UDM, deploy, and run `tail -f` until you press Ctrl+C. See [DEPLOYMENT_ANALYSIS.md](docs/research/DEPLOYMENT_ANALYSIS.md) for details.
+   **Deploying to multiple UDMs:** Use `./scripts/manage/deploy-to-udms.sh` to deploy to several UDMs from a config file. Copy `scripts/manage/deploy-udms.conf.example` to `deploy-udms.conf`, add your UDMs (one per line: `host [bind_ip]`), then run the script. It will prompt for credentials per UDM, deploy, and run `tail -f` until you press Ctrl+C. See [DEPLOYMENT_ANALYSIS.md](docs/research/DEPLOYMENT_ANALYSIS.md) for details.
 
 ## Configuration
 
@@ -217,6 +211,8 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `MAX_RESTARTS_PER_WINDOW` | Maximum Tier 3 restarts per window (rate limiting) | 20 |
 | `RATE_LIMIT_WINDOW_MINUTES` | Time window for rate limit (sliding window) | 60 |
 | `MIN_RESTART_INTERVAL_SECONDS` | Minimum time between Tier 3 restarts | 40 |
+| `MAX_TIER2_RECOVERIES_PER_WINDOW` | Maximum Tier 2 recoveries per window (surgical cleanup rate limiting) | 30 |
+| `MIN_TIER2_INTERVAL_SECONDS` | Minimum time between Tier 2 recoveries | 20 |
 | `CRON_SCHEDULE` | Cron schedule for check frequency (cron format) | "*/1 * * * *" |
 | `ENABLE_MONITOR_WRAPPER` | Use wrapper for sub-minute execution (0 or 1). When 1, cron runs vpn-monitor-wrapper.sh which checks every MONITOR_INTERVAL seconds. | 1 |
 | `MONITOR_INTERVAL` | Seconds between checks when ENABLE_MONITOR_WRAPPER=1 (range: 10-60) | 20 |
@@ -518,7 +514,7 @@ The UDM VPN Monitor provides a unified anonymization system that anonymizes all 
 ./scripts/export-udm-routes-firewall.sh -o /tmp/exports
 
 # Anonymize all files using directory mode (auto-detects files)
-./scripts/anonymize-all.sh \
+./scripts/anonymize/anonymize-all.sh \
   -d /tmp/exports \
   -l /data/vpn-monitor/vpn-monitor.log \
   -o /tmp/anonymized \
@@ -529,7 +525,7 @@ Or specify files explicitly:
 
 ```bash
 # Anonymize all files with unified mapping (explicit files)
-./scripts/anonymize-all.sh \
+./scripts/anonymize/anonymize-all.sh \
   -f firewall-rules.txt \
   -r4 routes-ipv4.txt \
   -r6 routes-ipv6.txt \
@@ -553,13 +549,13 @@ The `anonymize-logs.sh` script anonymizes IP addresses, location names, MAC addr
 
 ```bash
 # Anonymize log file with unified mapping
-/data/vpn-monitor/scripts/anonymize-logs.sh \
+/data/vpn-monitor/scripts/anonymize/anonymize-logs.sh \
   -i /data/vpn-monitor/logs/vpn-monitor.log \
   -o anonymized.log \
   -m mapping.txt
 
 # Anonymize standalone (without mapping file)
-/data/vpn-monitor/scripts/anonymize-logs.sh -i vpn-monitor.log -o anonymized.log
+/data/vpn-monitor/scripts/anonymize/anonymize-logs.sh -i vpn-monitor.log -o anonymized.log
 ```
 
 **Features:**
@@ -576,14 +572,14 @@ The `anonymize-firewall.sh` script anonymizes IP addresses, interface names, and
 
 ```bash
 # Anonymize firewall rules with unified mapping
-/data/vpn-monitor/scripts/anonymize-firewall.sh \
+/data/vpn-monitor/scripts/anonymize/anonymize-firewall.sh \
   -i firewall-rules.txt \
   -o anonymized-rules.txt \
   -m mapping.txt
 
 # Anonymize standalone
 iptables-save > /tmp/rules.txt
-/data/vpn-monitor/scripts/anonymize-firewall.sh -i /tmp/rules.txt -o anonymized-rules.txt
+/data/vpn-monitor/scripts/anonymize/anonymize-firewall.sh -i /tmp/rules.txt -o anonymized-rules.txt
 ```
 
 **Features:**

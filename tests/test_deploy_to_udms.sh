@@ -13,7 +13,7 @@
 
 load test_helper
 
-DEPLOY_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/deploy-to-udms.sh"
+DEPLOY_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/manage/deploy-to-udms.sh"
 PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 
 # bats test_tags=category:unit
@@ -138,8 +138,12 @@ EOF
 	standard_setup
 	export DEPLOY_REGISTRY_FILE="${TEST_DIR}/deploy-registry"
 	mkdir -p "$(dirname "$DEPLOY_REGISTRY_FILE")"
-	# Pre-populate registry: 192.168.1.100 already at 0.8.0
-	echo -e "192.168.1.100\t0.8.0\t2025-02-14T12:00:00" >"$DEPLOY_REGISTRY_FILE"
+	# Get package version so registry matches (skip logic requires exact version match)
+	local pkg_version
+	pkg_version=$(unzip -p "${PROJECT_ROOT}/udm-vpn-monitor.zip" vpn-monitor.sh 2>/dev/null | grep -E '^SCRIPT_VERSION=' | head -1 | sed -E 's/^SCRIPT_VERSION=["'\'']?([^"'\'' ]+).*/\1/' | tr -d ' ')
+	[[ -z "$pkg_version" ]] && skip "Could not get package version"
+	# Pre-populate registry: 192.168.1.100 already at package version
+	echo -e "192.168.1.100\t${pkg_version}\t2025-02-14T12:00:00" >"$DEPLOY_REGISTRY_FILE"
 
 	local config_file="${TEST_DIR}/deploy-udms.conf"
 	cat >"$config_file" <<'EOF'
@@ -154,7 +158,7 @@ EOF
 		< <(printf '%s\n' root testpass) 2>&1
 
 	# Skip behavior verified; deploy to 192.168.1.101 fails (no real SSH) so exit may be 1
-	assert_output --partial "Skipping 192.168.1.100 (already at version 0.8.0)"
+	assert_output --partial "Skipping 192.168.1.100 (already at version ${pkg_version})"
 	assert_output --partial "Deploying to: 192.168.1.101"
 	assert_output --partial "1 skipped (already at version)"
 }
@@ -302,8 +306,8 @@ EOF
 	local fake_root="${TEST_DIR}/fake_repo"
 	mkdir -p "${fake_root}/scripts"
 	cp "$DEPLOY_SCRIPT" "${fake_root}/scripts/deploy-to-udms.sh"
-	cp "${PROJECT_ROOT}/scripts/deploy-to-udm.sh" "${fake_root}/scripts/deploy-to-udm.sh" 2>/dev/null || true
-	cp "${PROJECT_ROOT}/scripts/deploy-registry.sh" "${fake_root}/scripts/deploy-registry.sh" 2>/dev/null || true
+	cp "${PROJECT_ROOT}/scripts/manage/deploy-to-udm.sh" "${fake_root}/scripts/deploy-to-udm.sh" 2>/dev/null || true
+	cp "${PROJECT_ROOT}/scripts/manage/deploy-registry.sh" "${fake_root}/scripts/deploy-registry.sh" 2>/dev/null || true
 	# Mock deploy-to-udm to succeed (so we get to the prompt)
 	cat >"${fake_root}/scripts/deploy-to-udm.sh" <<'MOCK'
 #!/bin/bash

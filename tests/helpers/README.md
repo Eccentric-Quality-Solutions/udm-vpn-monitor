@@ -16,6 +16,10 @@ Provides standardized patterns for creating mock commands in tests.
 - `create_mock_with_tracking()` - Create a mock that tracks calls
 - `get_mock_call_count()` - Get call count for a tracked mock
 - `clear_mock_tracking()` - Clear call tracking for a mock
+- `clear_xfrm_mock_state()` - Clear xfrm mock state files (deletion flags, SA counters) so the mock behaves as "before deletion" again
+
+**xfrm mock state cleanup (multi-phase tests):**  
+Tests that run the script or recovery more than once while using the same xfrm mock (`mock_ip_xfrm_bidirectional_sa`, `mock_ip_xfrm_asymmetric_sa`, `mock_ip_xfrm_sa_count_mismatch`, `mock_ip_xfrm_timing_delay`) **must** call `clear_xfrm_mock_state()` between phases. Use the same paths as when creating the mock (defaults: `"${TEST_DIR}/sas_deleted"` and `"${TEST_DIR}/MOCK_SAS_DELETED_FILE"`; for timing mocks also pass `"${TEST_DIR}/check_count"` as the third argument). Otherwise the second phase inherits stale state and tests can false-pass. See `tests/helpers/mocks.bash` (xfrm mock header) and [TEST_MAINTENANCE.md](../../docs/testing/TEST_MAINTENANCE.md#xfrm-mock-state-in-multi-phase-tests) for details.
 
 **Usage:**
 ```bash
@@ -229,7 +233,7 @@ load fixtures/vpn_active
 setup_vpn_active_fixture "${TEST_PEER_IP}"
 ```
 
-**Note:** Most fixture functionality is provided by the fixtures themselves in `tests/fixtures/`. This module provides additional helper functions for working with fixtures that may emerge as patterns develop.
+**Note:** Most fixture functionality is provided by the fixtures themselves in `tests/fixtures/`. For multi-location scenarios (2–3 named locations, per-location state healthy/failing/idle, optional system-wide/network-partition state), use `load fixtures/vpn_multi_location` and `setup_vpn_multi_location_fixture()` (see `tests/test_fixtures_vpn_multi_location.sh`). This module provides additional helper functions for working with fixtures that may emerge as patterns develop.
 
 ## Loading Helper Modules
 

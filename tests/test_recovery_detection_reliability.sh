@@ -27,7 +27,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script logs error about unreliable detection and skips Tier 2/3 recovery escalation
 	# Importance: Prevents false recovery actions when detection is unreliable
 	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10
-RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0'
+RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
 
 	# Remove ip mock (make it unavailable)
 	# setup_vpn_at_tier_fixture creates a mock ip, but we need to remove it
@@ -75,7 +75,7 @@ RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0'
 	# Expected: Script proceeds with recovery escalation when ip command is available (even if ipsec unavailable)
 	# Importance: Ensures recovery works when at least one detection method is available
 	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10
-RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0'
+RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
 
 	# Keep ip mock (available) - setup_vpn_at_tier_fixture creates it
 	# Don't create ipsec mock (unavailable)
@@ -109,7 +109,7 @@ RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RE
 	# Expected: Script proceeds with recovery escalation when ipsec command is available (even if ip unavailable)
 	# Importance: Ensures recovery works when at least one detection method is available
 	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10
-RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0'
+RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
 
 	# Remove ip mock (unavailable)
 	rm -f "${TEST_DIR}/ip"
@@ -154,7 +154,7 @@ EOF
 	# Expected: Script logs VPN failure and Tier 1 message even when recovery is blocked
 	# Importance: Ensures monitoring continues even when recovery is unavailable
 	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10
-RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0'
+RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
 
 	# Remove ip mock (unavailable)
 	rm -f "${TEST_DIR}/ip"
@@ -197,7 +197,7 @@ RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0'
 	# Expected: Recovery proceeds normally when failure type is known (e.g., "tunnel_down") even if detection tools limited
 	# Importance: Ensures safeguard doesn't block recovery when we can reliably determine failure type
 	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10
-RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0'
+RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
 
 	# Keep ip mock (available) - needed to detect tunnel_down failure type
 	# setup_vpn_at_tier_fixture creates mock ip that returns empty (VPN down)

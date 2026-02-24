@@ -244,8 +244,8 @@ EOF
 	count=$(cat "$failure_counter")
 	assert_equal "$count" 0
 
-	# Should log recovery message (should be "recovered" since no recovery method was used)
-	assert_file_contains "$LOG_FILE" "recovered"
+	# Should log recovery message (VPN restored for peer after N failures)
+	assert_file_contains "$LOG_FILE" "restored"
 
 	remove_mock_from_path
 }

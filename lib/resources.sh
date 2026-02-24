@@ -3,7 +3,7 @@
 # Resource monitoring functions for UDM VPN Monitor
 # Monitors CPU, RAM, and disk space usage and implements throttling
 #
-# Version: 0.8.1
+# Version: 0.8.2
 #
 
 # Source common utility functions
@@ -92,8 +92,8 @@ get_cpu_usage() {
 	local cpu_usage
 	cpu_usage=$(awk "BEGIN {printf \"%.0f\", (1 - $idle_diff/$total_diff) * 100}")
 
-	# Reject non-integer output (awk can produce nan, inf, or scientific notation on overflow/unexpected input)
-	if [[ ! $cpu_usage =~ ^-?[0-9]+$ ]]; then
+	# Reject non-integer or negative output (awk can produce nan, inf, or scientific notation on overflow/unexpected input)
+	if [[ ! $cpu_usage =~ ^[0-9]+$ ]]; then
 		return 1
 	fi
 

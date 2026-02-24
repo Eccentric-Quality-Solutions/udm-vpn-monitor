@@ -21,7 +21,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles ipsec commands that return error exit codes but still produce valid output.
 	# Expected: Script processes output even when ipsec returns error code, detecting VPN status correctly.
 	# Importance: Some ipsec implementations may return non-zero exit codes even with valid output; script must handle this edge case.
-	setup_vpn_down_fixture "${TEST_PEER_IP}" 0
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 0 || fail "Fixture setup failed"
 
 	# Mock ipsec - returns error code but has output containing peer IP
 	mock_ipsec_status 1 "${TEST_PEER_IP}: ESTABLISHED 1 hour ago"
@@ -95,7 +95,7 @@ EOF
 	# Purpose: Test verifies that the script handles missing ping commands gracefully when ping check is enabled.
 	# Expected: Script logs warning but continues execution without ping check when ping command is unavailable.
 	# Importance: Ping commands may not be available on all systems; script must handle this gracefully.
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_NYC_INTERNAL="2001:db8::1"'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_NYC_INTERNAL="2001:db8::1"' || fail "Fixture setup failed"
 
 	# Mock command to fail for ping (simulates ping not available)
 	local mock_command="${TEST_DIR}/command"
@@ -129,7 +129,7 @@ EOF
 	# Purpose: Test verifies that the script handles ping commands that hang indefinitely without blocking execution.
 	# Expected: Script uses timeout mechanism to prevent ping from blocking script execution indefinitely.
 	# Importance: Network issues can cause ping to hang; script must handle this to remain responsive.
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' "LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\"" 'PING_COUNT=3' 'PING_TIMEOUT=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' "LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\"" 'PING_COUNT=3' 'PING_TIMEOUT=1' || fail "Fixture setup failed"
 
 	# Mock ping to hang (simulates timeout)
 	mock_ping_hang 2 >/dev/null
@@ -153,7 +153,7 @@ EOF
 	# Purpose: Test verifies that the script handles ping commands that succeed but report 100% packet loss.
 	# Expected: Script detects packet loss and logs warning but continues execution.
 	# Importance: Network anomalies can cause ping to succeed but report no packets received; script must handle this edge case.
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' "LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\""
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' "LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\"" || fail "Fixture setup failed"
 
 	# Mock ping to return success but 100% packet loss (weird network state)
 	mock_ping_packet_loss "192.168.1.1" >/dev/null
@@ -178,7 +178,7 @@ EOF
 	# Purpose: Test verifies that the script handles ipsec commands that hang indefinitely during status checks.
 	# Expected: Script uses timeout mechanism or error handling to prevent ipsec from blocking script execution.
 	# Importance: Network or system issues can cause ipsec to hang; script must handle this to remain responsive.
-	setup_vpn_down_fixture "${TEST_PEER_IP}" 0
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 0 || fail "Fixture setup failed"
 
 	# Mock ipsec status to hang (simulates timeout)
 	# Sleep longer than IPSEC_STATUS_TIMEOUT (5 seconds) to trigger timeout

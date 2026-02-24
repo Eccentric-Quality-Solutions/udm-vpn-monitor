@@ -1,7 +1,7 @@
 # ADR-0008: Rate Limiting and Cooldown Periods
 
 ## Status
-Accepted (Updated 2026-01-12)
+Accepted (Updated 2026-02-23)
 
 ## Context
 Recovery actions, especially full restarts (Tier 3), can be disruptive:
@@ -27,10 +27,17 @@ Without rate limiting:
 - Cooldown deprecated and replaced by minimum interval mechanism
 
 ## Decision
-We will implement a three-parameter rate limiting system:
+We will implement rate limiting for both Tier 2 and Tier 3 recovery:
+
+**Tier 3 (full restart):** Three-parameter system (unchanged)
 1. **Sliding Window Rate Limiting**: Limit the number of Tier 3 (full restart) actions within a configurable time window
 2. **Minimum Restart Interval**: Enforce minimum spacing between consecutive restarts to prevent rapid-fire restarts
 3. **Cooldown Deprecated**: Cooldown mechanism removed (replaced by minimum interval, which allows monitoring to continue)
+
+**Tier 2 (surgical cleanup):** Added 2026-02-23
+1. **Sliding Window**: Limit Tier 2 recoveries (xfrm, ipsec reload) per window via `MAX_TIER2_RECOVERIES_PER_WINDOW` (default: 30)
+2. **Minimum Interval**: `MIN_TIER2_INTERVAL_SECONDS` (default: 20) between Tier 2 recoveries
+3. **Shared Window**: Uses same `RATE_LIMIT_WINDOW_MINUTES` as Tier 3
 
 ## Consequences
 

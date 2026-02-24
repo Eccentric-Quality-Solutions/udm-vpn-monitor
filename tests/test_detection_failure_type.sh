@@ -22,7 +22,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that failure type "tunnel_down" is detected when no Phase 2 SA is found
 	# Expected: Failure type is detected as "tunnel_down" when no SA exists
 	# Importance: Enables targeted recovery strategies based on failure type
-	setup_vpn_down_fixture "${TEST_PEER_IP}"
+	setup_vpn_down_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
@@ -196,7 +196,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that failure type "rekey" is detected when SPI changes (not a failure)
 	# Expected: Failure type is detected as "rekey" when SPI changes, VPN marked as OK
 	# Importance: Rekey events are logged but not treated as failures
-	setup_vpn_rekey_fixture "${TEST_PEER_IP}" "0x12345678" "0x87654321" 1000 2000
+	setup_vpn_rekey_fixture "${TEST_PEER_IP}" "0x12345678" "0x87654321" 1000 2000 || fail "Fixture setup failed"
 	run bash "$TEST_SCRIPT" --fake
 
 	# Should detect rekey (not a failure)
@@ -374,7 +374,7 @@ EOF
 	# Purpose: Test verifies that failure type is stored in state file for use by recovery actions
 	# Expected: Failure type is stored in state file and can be retrieved for recovery strategies
 	# Importance: Enables recovery actions to use failure-specific strategies
-	setup_vpn_down_fixture "${TEST_PEER_IP}"
+	setup_vpn_down_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 
@@ -394,7 +394,7 @@ EOF
 	# Expected: Failure type file is removed or cleared when VPN becomes healthy
 	# Importance: Ensures failure type tracking is reset after recovery
 	# Use same fixture as working test in test_detection.sh
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	source_function "get_peer_state_file_path"
 	# Create failure type file (from previous failure)

@@ -4,12 +4,8 @@
 cron.log
 vpn-monitor.log
 
-# State files (generated at runtime)
-failure_counter
-last_restart
-restart_count
-last_bytes
-cooldown_until
+# State files (generated at runtime; STATE_DIR default: state/)
+/state/
 vpn-monitor.lock
 .cron_checked
 
@@ -47,5 +43,6 @@ coverage/
 /docs/code-diagrams
 /analyze/firewall-rules/
 /analyze/vpn-monitor-logs/
+/analyze/old-analysis/
 
 architecture-docs/tests/.bats/

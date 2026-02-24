@@ -7,12 +7,12 @@ The UDM VPN Monitor unified anonymization system provides consistent anonymizati
 The unified anonymization system consists of:
 
 - **Shared Library** (`lib/anonymize.sh`) - Core anonymization functions and mapping management
-- **Individual Scripts** - Specialized anonymizers for each file type:
+- **Individual Scripts** (in `scripts/anonymize/`) - Specialized anonymizers for each file type:
   - `anonymize-firewall.sh` - Firewall rules (iptables-save format)
   - `anonymize-ip-rules.sh` - IP routes (ip route output)
   - `anonymize-ipset.sh` - Ipset sets (ipset save output)
   - `anonymize-logs.sh` - VPN monitor logs
-- **Unified Command** (`anonymize-all.sh`) - Runs all anonymizers with shared mapping
+- **Unified Command** (`scripts/anonymize/anonymize-all.sh`) - Runs all anonymizers with shared mapping
 
 ## Key Features
 
@@ -57,7 +57,7 @@ The easiest way to anonymize exported files is using directory mode, which auto-
 ./scripts/export-udm-routes-firewall.sh -o /tmp/exports
 
 # Anonymize all detected files with unified mapping
-./scripts/anonymize-all.sh \
+./scripts/anonymize/anonymize-all.sh \
   -d /tmp/exports \
   -l /data/vpn-monitor/vpn-monitor.log \
   -o /tmp/anonymized \
@@ -76,7 +76,7 @@ You can also specify files explicitly:
 
 ```bash
 # Anonymize all files with unified mapping (explicit files)
-./scripts/anonymize-all.sh \
+./scripts/anonymize/anonymize-all.sh \
   -f firewall-rules.txt \
   -r4 routes-ipv4.txt \
   -r6 routes-ipv6.txt \
@@ -92,7 +92,7 @@ You can combine directory mode with explicit files (explicit files override auto
 
 ```bash
 # Auto-detect most files, but use custom firewall file
-./scripts/anonymize-all.sh \
+./scripts/anonymize/anonymize-all.sh \
   -d /tmp/exports \
   -f /path/to/custom-firewall.txt \
   -l vpn-monitor.log \
@@ -115,19 +115,19 @@ Each script can be used independently with a mapping file:
 
 ```bash
 # Anonymize firewall rules
-./scripts/anonymize-firewall.sh \
+./scripts/anonymize/anonymize-firewall.sh \
   -i firewall-rules.txt \
   -o anonymized-firewall.txt \
   -m mapping.txt
 
 # Anonymize IP routes
-./scripts/anonymize-ip-rules.sh \
+./scripts/anonymize/anonymize-ip-rules.sh \
   -i routes-ipv4.txt \
   -o anonymized-routes.txt \
   -m mapping.txt
 
 # Anonymize logs
-./scripts/anonymize-logs.sh \
+./scripts/anonymize/anonymize-logs.sh \
   -i vpn-monitor.log \
   -o anonymized.log \
   -m mapping.txt
@@ -139,12 +139,14 @@ Scripts work without mapping files for backward compatibility:
 
 ```bash
 # Anonymize without mapping file (standalone mode)
-./scripts/anonymize-firewall.sh \
+./scripts/anonymize/anonymize-firewall.sh \
   -i firewall-rules.txt \
   -o anonymized-firewall.txt
 ```
 
 In standalone mode, each script generates its own mappings internally, but mappings are not shared across scripts.
+
+**Log script (anonymize-logs.sh)**: When `-m` is omitted, the script uses a **shared mapping file** in the input file's directory: `<input_dir>/anonymization.mapping`. This file is loaded (if present) before anonymizing and saved after. So location mappings persist across runs: e.g. first run NYC→DENVER, second run ATLANTA→SACRAMENTO (a different city), without overwriting. Use `-m` to point to a different mapping file (e.g. for anonymize-all.sh consistency).
 
 ## Mapping File Format
 
@@ -201,7 +203,7 @@ NYC -> ANAHEIM
 ./scripts/export-udm-routes-firewall.sh -o /tmp/exports
 
 # Anonymize all files using directory mode (creates new mapping file)
-./scripts/anonymize-all.sh \
+./scripts/anonymize/anonymize-all.sh \
   -d /tmp/exports \
   -l /data/vpn-monitor/vpn-monitor.log \
   -o /tmp/anonymized \
@@ -214,7 +216,7 @@ Directory mode automatically finds the most recent files matching the export pat
 
 ```bash
 # Anonymize new firewall export using existing mapping
-./scripts/anonymize-firewall.sh \
+./scripts/anonymize/anonymize-firewall.sh \
   -i /tmp/new-firewall-rules.txt \
   -o /tmp/new-anonymized-firewall.txt \
   -m /tmp/mapping.txt
@@ -226,9 +228,9 @@ Directory mode automatically finds the most recent files matching the export pat
 
 ```bash
 # Anonymize files one at a time, building up the mapping
-./scripts/anonymize-firewall.sh -i firewall.txt -o firewall-anon.txt -m mapping.txt
-./scripts/anonymize-ip-rules.sh -i routes.txt -o routes-anon.txt -m mapping.txt
-./scripts/anonymize-logs.sh -i logs.txt -o logs-anon.txt -m mapping.txt
+./scripts/anonymize/anonymize-firewall.sh -i firewall.txt -o firewall-anon.txt -m mapping.txt
+./scripts/anonymize/anonymize-ip-rules.sh -i routes.txt -o routes-anon.txt -m mapping.txt
+./scripts/anonymize/anonymize-logs.sh -i logs.txt -o logs-anon.txt -m mapping.txt
 
 # Each script extends the mapping file, ensuring consistency
 ```
@@ -321,11 +323,11 @@ Always use the `-m` flag with the same mapping file when anonymizing multiple fi
 
 ```bash
 # Good: All files use same mapping
-./scripts/anonymize-all.sh -f fw.txt -r4 r4.txt -m mapping.txt -o out/
+./scripts/anonymize/anonymize-all.sh -f fw.txt -r4 r4.txt -m mapping.txt -o out/
 
 # Bad: Each file gets different mappings
-./scripts/anonymize-firewall.sh -i fw.txt -o fw-anon.txt  # No mapping
-./scripts/anonymize-ip-rules.sh -i r4.txt -o r4-anon.txt  # No mapping
+./scripts/anonymize/anonymize-firewall.sh -i fw.txt -o fw-anon.txt  # No mapping
+./scripts/anonymize/anonymize-ip-rules.sh -i r4.txt -o r4-anon.txt  # No mapping
 ```
 
 ### 2. Keep Mapping Files Secure

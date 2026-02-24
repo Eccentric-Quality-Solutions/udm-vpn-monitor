@@ -3,7 +3,7 @@
 # Global state operations
 # Handles rate limiting, restart tracking, and state validation
 #
-# Version: 0.8.1
+# Version: 0.8.2
 #
 
 # Get file modification time as timestamp
@@ -51,6 +51,7 @@ get_file_mtime() {
 #   $5: Current timestamp
 #   $6: Window size in seconds
 #   $7: Oldest restart timestamp (must be valid)
+#   $8: Optional recovery label for message (default: "restarts"; use "Tier 2 recoveries" for Tier 2)
 #
 # Returns:
 #   0: Always succeeds
@@ -129,11 +130,14 @@ _format_rate_limit_error() {
 		restart_list="${restart_list} (and $((restart_count - 10)) more)"
 	fi
 
-	# Build detailed error message
-	local error_msg="Rate limit exceeded: $recent_restarts restarts in last ${window_minutes} minute(s) (max: $max_restarts)"
+	# Build detailed error message (recovery_label: "restarts" for Tier 3, "Tier 2 recoveries" for Tier 2)
+	local recovery_label="${8:-restarts}"
+	local error_msg="Rate limit exceeded: $recent_restarts $recovery_label in last ${window_minutes} minute(s) (max: $max_restarts)"
 	error_msg="${error_msg}. Reset at: $reset_formatted (in $countdown_formatted)"
 	if [[ -n "$restart_list" ]]; then
-		error_msg="${error_msg}. Recent restarts: $restart_list"
+		local list_label="restarts"
+		[[ "$recovery_label" == *"Tier 2"* ]] && list_label="recoveries"
+		error_msg="${error_msg}. Recent $list_label: $restart_list"
 	fi
 
 	echo "$error_msg"
@@ -358,6 +362,161 @@ record_restart() {
 	if ! (printf '%s\n' "$timestamp" >>"$RESTART_COUNT_FILE" 2>/dev/null); then
 		handle_error "WARNING" "SYSTEM" "Failed to record restart timestamp in $RESTART_COUNT_FILE"
 		return 0
+	fi
+	return 0
+}
+
+# Check Tier 2 rate limiting
+#
+# Verifies if the maximum number of Tier 2 recoveries within the configured window has been exceeded,
+# and checks if minimum interval has elapsed since the last Tier 2 recovery.
+# Prevents recovery loops by limiting how frequently Tier 2 recovery actions (surgical cleanup,
+# ipsec reload, xfrm-based per-connection recovery) can occur.
+#
+# Arguments:
+#   $1: Optional location name (reserved for future use, e.g. coordinator bypass)
+#
+# Returns:
+#   0: Within rate limit (Tier 2 recovery allowed)
+#   1: Rate limit exceeded or minimum interval not met (recovery blocked)
+#
+# Side effects:
+#   - Logs warning if rate limit exceeded (includes reset time, countdown, and recovery list)
+#   - Logs warning if minimum interval not met
+#   - Reads TIER2_RECOVERY_COUNT_FILE to count recent recoveries
+#
+# Note:
+#   Requires TIER2_RECOVERY_COUNT_FILE, MAX_TIER2_RECOVERIES_PER_WINDOW, RATE_LIMIT_WINDOW_MINUTES,
+#   MIN_TIER2_INTERVAL_SECONDS. Uses same window as Tier 3 (RATE_LIMIT_WINDOW_MINUTES).
+check_tier2_rate_limit() {
+	local _location_name="${1:-}"
+	local count_file="${TIER2_RECOVERY_COUNT_FILE:-}"
+	if [[ -z "$count_file" ]]; then
+		return 0
+	fi
+
+	local now
+	now=$(get_unix_timestamp)
+
+	local window_minutes="${RATE_LIMIT_WINDOW_MINUTES:-60}"
+	if [[ ! "$window_minutes" =~ ^[0-9]+$ ]] || [[ "$window_minutes" -lt 5 ]] || [[ "$window_minutes" -gt 1440 ]]; then
+		window_minutes=60
+	fi
+	local window_seconds=$((window_minutes * SECONDS_PER_MINUTE))
+	local window_start
+	window_start=$(safe_timestamp_subtract "$now" "$window_seconds" 2>/dev/null || echo "0")
+
+	local min_interval="${MIN_TIER2_INTERVAL_SECONDS:-20}"
+	if [[ $min_interval -gt 0 ]] && [[ -f "$count_file" ]] && file_exists_and_readable "$count_file"; then
+		local last_recovery
+		last_recovery=$(run_with_timeout "$STATE_FILE_READ_TIMEOUT" sh -c "grep -E '^[0-9]+$' \"$count_file\" 2>/dev/null | sort -n | tail -n 1" || echo "0")
+		if [[ "$last_recovery" != "0" ]] && [[ "$last_recovery" =~ ^[0-9]+$ ]]; then
+			local time_since_last
+			time_since_last=$(calculate_duration "$last_recovery" "$now" 2>/dev/null || echo "0")
+			if [[ "$time_since_last" -lt "$min_interval" ]]; then
+				local remaining=$((min_interval - time_since_last))
+				handle_error "WARNING" "SYSTEM" "Tier 2 minimum interval not met: ${remaining} seconds remaining (minimum: ${min_interval}s, last recovery: $(date -d "@$last_recovery" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$last_recovery"))"
+				return 1
+			fi
+		fi
+	fi
+
+	if [[ ! -f "$count_file" ]]; then
+		return 0
+	fi
+	if ! file_exists_and_readable "$count_file"; then
+		handle_error "WARNING" "SYSTEM" "Tier 2 recovery count file is not readable, treating as empty: $count_file" 0
+		return 0
+	fi
+
+	local max_recoveries="${MAX_TIER2_RECOVERIES_PER_WINDOW:-30}"
+	if [[ ! "$max_recoveries" =~ ^[0-9]+$ ]] || [[ "$max_recoveries" -lt 1 ]]; then
+		max_recoveries=30
+	fi
+
+	local recent_timestamps
+	recent_timestamps=$(awk -v cutoff="$window_start" '$1 > cutoff' "$count_file" 2>/dev/null | sort -n)
+	local recent_count
+	recent_count=$(echo "$recent_timestamps" | grep -E '^[0-9]+$' 2>/dev/null | wc -l | tr -d ' ')
+	[[ -z "$recent_count" ]] && recent_count=0
+
+	if [[ "$recent_count" -ge "$max_recoveries" ]]; then
+		local oldest_recovery
+		oldest_recovery=$(echo "$recent_timestamps" | grep -E '^[0-9]+$' | head -n 1)
+		if [[ -z "$oldest_recovery" ]] || [[ ! "$oldest_recovery" =~ ^[0-9]+$ ]]; then
+			handle_error "WARNING" "SYSTEM" "Cannot determine oldest Tier 2 recovery timestamp, allowing recovery"
+			return 0
+		fi
+		local error_msg
+		error_msg=$(_format_rate_limit_error "$recent_count" "$window_minutes" "$max_recoveries" "$recent_timestamps" "$now" "$window_seconds" "$oldest_recovery" "Tier 2 recoveries")
+		handle_error "WARNING" "SYSTEM" "$error_msg"
+		return 1
+	fi
+	return 0
+}
+
+# Record Tier 2 recovery timestamp
+#
+# Appends the current Unix timestamp to TIER2_RECOVERY_COUNT_FILE for rate limiting.
+# Uses append-only writes. File growth is limited by compact_tier2_recovery_count_file().
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds (logs warnings on errors but continues)
+#
+# Side effects:
+#   - Appends one line (timestamp) to TIER2_RECOVERY_COUNT_FILE
+#
+# Note:
+#   Requires TIER2_RECOVERY_COUNT_FILE, get_unix_timestamp, handle_error.
+record_tier2_recovery() {
+	local count_file="${TIER2_RECOVERY_COUNT_FILE:-}"
+	[[ -z "$count_file" ]] && return 0
+
+	local timestamp
+	timestamp=$(get_unix_timestamp)
+	if ! (printf '%s\n' "$timestamp" >>"$count_file" 2>/dev/null); then
+		handle_error "WARNING" "SYSTEM" "Failed to record Tier 2 recovery timestamp in $count_file"
+		return 0
+	fi
+	return 0
+}
+
+# Compact Tier 2 recovery count file to last 24 hours
+#
+# Reads TIER2_RECOVERY_COUNT_FILE, keeps only timestamps from the last 24 hours, and
+# atomically writes back. Prevents unbounded file growth.
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0: Always succeeds (logs warnings on errors but continues)
+#
+# Note:
+#   Requires TIER2_RECOVERY_COUNT_FILE, SECONDS_PER_DAY, file_exists_and_readable,
+#   atomic_write_file, safe_timestamp_subtract, get_unix_timestamp, handle_error.
+compact_tier2_recovery_count_file() {
+	local count_file="${TIER2_RECOVERY_COUNT_FILE:-}"
+	[[ -z "$count_file" ]] && return 0
+	if ! file_exists_and_readable "$count_file"; then
+		return 0
+	fi
+	local now
+	now=$(get_unix_timestamp)
+	local one_day_ago
+	one_day_ago=$(safe_timestamp_subtract "$now" "$SECONDS_PER_DAY" 2>/dev/null || echo "0")
+	local filtered_content
+	filtered_content=$(awk -v cutoff="$one_day_ago" '$1 > cutoff' "$count_file" 2>/dev/null || echo "")
+	if [[ -z "$filtered_content" ]]; then
+		rm -f "$count_file" 2>/dev/null || true
+	else
+		if ! atomic_write_file "$count_file" "$filtered_content"; then
+			handle_error "WARNING" "SYSTEM" "Failed to compact Tier 2 recovery count file: $count_file"
+			return 0
+		fi
 	fi
 	return 0
 }

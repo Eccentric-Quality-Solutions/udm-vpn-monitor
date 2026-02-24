@@ -2983,8 +2983,8 @@ source_lockfile_module() {
 
 	# Should exit with code 0 (graceful exit, not error)
 	assert_success
-	# Should output warning about lockfile conflict
-	assert_output --partial "already running"
+	# Should log lockfile conflict (log_message INFO goes to log file, not stderr in non-interactive mode)
+	assert_file_contains "$LOG_FILE" "already running"
 	# Main function should not have executed
 	refute_output --partial "This should not execute"
 }
@@ -3205,8 +3205,8 @@ source_lockfile_module() {
 
 	# Should exit with code 0 (graceful exit, not error)
 	assert_success
-	# Should output warning about lockfile conflict
-	assert_output --partial "already running"
+	# Should log lockfile conflict (log_message INFO goes to log file, not stderr in non-interactive mode)
+	assert_file_contains "$LOG_FILE" "already running"
 	# Main function should not have executed
 	refute_output --partial "This should not execute"
 }
@@ -3802,11 +3802,12 @@ source_lockfile_module() {
 	run check_byte_counters "TEST" "1000" "203.0.113.1" "0x87654321"
 	assert_success
 
-	# Verify byte counter baseline was reset and updated
+	# Verify byte counter baseline was reset (caller is responsible for updating to current_bytes)
+	# check_byte_counters does NOT write last_bytes - that's deferred to the caller (check_vpn_status)
 	local last_bytes
 	last_bytes=$(get_peer_state "TEST" "203.0.113.1" "last_bytes" "0")
 	# Use assert_equal for better error messages
-	assert_equal "$last_bytes" "1000"
+	assert_equal "$last_bytes" "0"
 
 	# Verify SPI was updated
 	local stored_spi

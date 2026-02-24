@@ -18,7 +18,7 @@ load helpers/assertions
 # ============================================================================
 
 # bats test_tags=category:high-risk,priority:high
-@test "check_vpn_status handles cascading detection failures: xfrm fails → ipsec fails → ping fails" {
+@test "check_vpn_status handles cascading detection failures: xfrm fails then ipsec fails then ping fails" {
 	# Purpose: Test verifies that check_vpn_status handles cascading detection failures gracefully
 	# Expected: Function attempts all detection methods, logs failures, and returns failure status
 	# Importance: Cascading failures can occur in production; must be handled robustly

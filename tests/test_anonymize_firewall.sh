@@ -6,7 +6,7 @@
 load test_helper
 
 # Path to the anonymize-firewall script
-ANONYMIZE_FIREWALL_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize-firewall.sh"
+ANONYMIZE_FIREWALL_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize/anonymize-firewall.sh"
 
 # Create sample firewall rules file with IPs and interfaces
 #
@@ -14,6 +14,9 @@ ANONYMIZE_FIREWALL_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize-firewall.sh
 #
 # Arguments:
 #   $1: Firewall rules file path
+#
+# Returns:
+#   0: success
 create_sample_firewall_file() {
 	local rules_file="$1"
 
@@ -51,6 +54,9 @@ EOF
 #
 # Arguments:
 #   $1: Firewall rules file path
+#
+# Returns:
+#   0: success
 create_sample_firewall_file_with_sets() {
 	local rules_file="$1"
 

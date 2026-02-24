@@ -6,7 +6,7 @@
 load test_helper
 
 # Path to the anonymize-ip-rules script
-ANONYMIZE_IP_RULES_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize-ip-rules.sh"
+ANONYMIZE_IP_RULES_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize/anonymize-ip-rules.sh"
 
 # Create sample IPv4 routes file with IPs and interfaces
 #
@@ -14,6 +14,9 @@ ANONYMIZE_IP_RULES_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize-ip-rules.sh
 #
 # Arguments:
 #   $1: Routes file path
+#
+# Returns:
+#   0: success
 create_sample_ipv4_routes_file() {
 	local routes_file="$1"
 
@@ -34,6 +37,9 @@ EOF
 #
 # Arguments:
 #   $1: Routes file path
+#
+# Returns:
+#   0: success
 create_sample_ipv6_routes_file() {
 	local routes_file="$1"
 
@@ -54,6 +60,9 @@ EOF
 #
 # Arguments:
 #   $1: Routes file path
+#
+# Returns:
+#   0: success
 create_sample_mixed_routes_file() {
 	local routes_file="$1"
 

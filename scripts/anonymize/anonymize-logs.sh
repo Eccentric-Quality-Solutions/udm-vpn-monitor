@@ -9,19 +9,19 @@
 
 set -euo pipefail
 
-# Get script directory
+# Get script directory (scripts/anonymize) and repo root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # Source anonymization library
-# shellcheck source=../lib/anonymize.sh
+# shellcheck source=../../lib/anonymize.sh
 source "${PROJECT_ROOT}/lib/anonymize.sh" 2>/dev/null || {
 	echo "Error: Could not source lib/anonymize.sh" >&2
 	exit 1
 }
 
 # Source common utilities (for escape_sed_regex/escape_sed_replacement)
-# shellcheck source=../lib/common.sh
+# shellcheck source=../../lib/common.sh
 source "${PROJECT_ROOT}/lib/common.sh" 2>/dev/null || {
 	echo "Error: Could not source lib/common.sh" >&2
 	exit 1
@@ -55,8 +55,8 @@ Options:
   -o, --output FILE     Output file for anonymized log (default: stdout)
   -m, --mapping-file FILE  Mapping file for unified anonymization (optional)
                           If provided, loads existing mappings and saves updated mappings.
-                          If omitted, a mapping file is created by default: <output>.mapping
-                          when -o is used, or <input>.mapping when writing to stdout.
+                          If omitted, uses <input_dir>/anonymization.mapping so location
+                          mappings persist across runs (e.g. NYC->DENVER, ATLANTA->SACRAMENTO).
   -v, --verbose         Verbose output
   -h, --help            Show this help message
 
@@ -135,6 +135,8 @@ parse_args() {
 # Extracts location name from input filename (if present) and replaces it with
 # anonymized location name in the output filename.
 # Pattern: vpn-monitor-<location>.log -> vpn-monitor-<anonymized_location>-anonymized.log
+# If -o path contains the real location (e.g. anonymized-vpn-monitor-Denver.log), the
+# script rewrites it to the canonical name so the filename does not leak the location.
 #
 # Arguments:
 #   $1: Input file path
@@ -220,6 +222,10 @@ generate_anonymized_output_filename() {
 			fi
 		elif [[ "$output_basename" == "vpn-monitor-anonymized.log" ]] || [[ "$output_basename" == "anonymized.log" ]]; then
 			# Default anonymized filename - replace with location-specific name
+			output_basename="vpn-monitor-${anonymized_location}-anonymized.log"
+		elif [[ "$output_basename_lower" == *"${location_lower}"* ]]; then
+			# Output filename contains the original location (e.g. anonymized-vpn-monitor-Denver.log)
+			# Use canonical anonymized name so we do not leak the real location in the filename
 			output_basename="vpn-monitor-${anonymized_location}-anonymized.log"
 		fi
 
@@ -542,17 +548,24 @@ main() {
 	# Parse command line arguments
 	parse_args "$@"
 
-	# Load existing mapping file if provided
-	if [[ -n "$MAPPING_FILE" ]]; then
-		if [[ -f "$MAPPING_FILE" ]]; then
-			[[ $VERBOSE -eq 1 ]] && echo "Loading existing mapping file: $MAPPING_FILE" >&2
-			if ! load_mapping_file "$MAPPING_FILE"; then
-				echo "WARNING: Failed to load mapping file: $MAPPING_FILE" >&2
-				echo "         Continuing with new mappings..." >&2
-			fi
-		else
-			[[ $VERBOSE -eq 1 ]] && echo "Mapping file does not exist, will create new one: $MAPPING_FILE" >&2
+	# When -m is omitted, use a shared mapping file in the input file's directory so
+	# location mappings persist across runs (e.g. NYC->DENVER once, then ATLANTA->SACRAMENTO).
+	if [[ -z "$MAPPING_FILE" ]]; then
+		local input_dir
+		input_dir=$(dirname "$INPUT_FILE")
+		MAPPING_FILE="${input_dir}/anonymization.mapping"
+		[[ $VERBOSE -eq 1 ]] && echo "Using shared mapping file: $MAPPING_FILE" >&2
+	fi
+
+	# Load existing mapping file so we don't overwrite previous location mappings
+	if [[ -n "$MAPPING_FILE" ]] && [[ -f "$MAPPING_FILE" ]]; then
+		[[ $VERBOSE -eq 1 ]] && echo "Loading existing mapping file: $MAPPING_FILE" >&2
+		if ! load_mapping_file "$MAPPING_FILE"; then
+			echo "WARNING: Failed to load mapping file: $MAPPING_FILE" >&2
+			echo "         Continuing with new mappings..." >&2
 		fi
+	elif [[ -n "$MAPPING_FILE" ]]; then
+		[[ $VERBOSE -eq 1 ]] && echo "Mapping file does not exist, will create: $MAPPING_FILE" >&2
 	fi
 
 	# Generate anonymized output filename if output file is specified
@@ -563,23 +576,13 @@ main() {
 		[[ $VERBOSE -eq 1 ]] && [[ "$final_output_file" != "$OUTPUT_FILE" ]] && echo "Output filename updated: $OUTPUT_FILE -> $final_output_file" >&2
 	fi
 
-	# If no mapping file was specified, create one by default so mappings can be reused
-	if [[ -z "$MAPPING_FILE" ]]; then
-		if [[ -n "$final_output_file" ]]; then
-			MAPPING_FILE="${final_output_file}.mapping"
-		else
-			MAPPING_FILE="${INPUT_FILE}.mapping"
-		fi
-		[[ $VERBOSE -eq 1 ]] && echo "No mapping file specified, will save to: $MAPPING_FILE" >&2
-	fi
-
 	# Anonymize log file
 	if ! anonymize_log_file "$INPUT_FILE" "$final_output_file"; then
 		echo "ERROR: Failed to anonymize log file" >&2
 		exit 1
 	fi
 
-	# Save mapping file (always set now: either user -m or default next to output/input)
+	# Save mapping file (always set now: either user -m or shared default in input dir)
 	if [[ -n "$MAPPING_FILE" ]]; then
 		[[ $VERBOSE -eq 1 ]] && echo "Saving mapping file: $MAPPING_FILE" >&2
 		if save_mapping_file "$MAPPING_FILE"; then

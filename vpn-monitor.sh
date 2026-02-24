@@ -6,7 +6,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.8.1
+# Version: 0.8.2
 #
 
 # Strict error handling: exit on error, undefined vars, pipe failures
@@ -21,7 +21,7 @@ LOCKFILE="${STATE_DIR}/vpn-monitor.lock"
 LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
 
 # Script version
-SCRIPT_VERSION="0.8.1"
+SCRIPT_VERSION="0.8.2"
 
 # Source library modules
 # shellcheck source=lib/logging.sh
@@ -121,6 +121,7 @@ fi
 # State files
 # Note: Failure counters are per-peer: ${STATE_DIR}/failure_count_<location>_<peer_ip_sanitized>
 RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
+TIER2_RECOVERY_COUNT_FILE="${STATE_DIR}/tier2_recovery_count"
 # LAST_BYTES_FILE will be per-peer: ${STATE_DIR}/last_bytes_<peer_ip_sanitized>
 # COOLDOWN_UNTIL_FILE removed - cooldown functionality replaced by MIN_RESTART_INTERVAL_SECONDS
 
@@ -179,6 +180,7 @@ fi
 # Update state file paths that depend on LOGS_DIR
 # Note: Failure counters are per-peer: ${STATE_DIR}/failure_count_<location>_<peer_ip_sanitized>
 RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
+TIER2_RECOVERY_COUNT_FILE="${STATE_DIR}/tier2_recovery_count"
 
 # Check cron persistence
 #
@@ -410,6 +412,7 @@ initialize_monitor() {
 	debug_log "After init_state()"
 	# Compact restart count file once per run (under main lock) to limit file growth
 	compact_restart_count_file
+	compact_tier2_recovery_count_file
 }
 
 # Validate monitor state and check cooldown
@@ -741,12 +744,12 @@ main() {
 	elif [[ "$grace_period" -gt 0 ]]; then
 		# File exists - check if it's recent (within last 5 minutes)
 		# If file is older than 5 minutes, likely a system restart or script hasn't run in a while
-		# Use find to check file age (more portable than stat)
+		# Use find to check file age (more portable than stat).
+		# Capture stdout only; stderr is discarded so error messages are not treated as result.
 		local find_result
 		local find_exit_code
-		find_result=$(find "$last_run_timestamp_file" -mmin -5 2>&1)
+		find_result=$(find "$last_run_timestamp_file" -mmin -5 2>/dev/null)
 		find_exit_code=$?
-		# Debug logging for test investigation (can be removed after test is fixed)
 		if [[ "${DEBUG:-0}" -eq 1 ]]; then
 			log_message "DEBUG" "SYSTEM" "Grace period check: file=$last_run_timestamp_file, find_result='$find_result', find_exit=$find_exit_code"
 		fi

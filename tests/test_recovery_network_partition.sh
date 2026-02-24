@@ -27,7 +27,7 @@ load fixtures/vpn_at_tier
 	# Importance: Recovery actions during network partition are wasteful and could cause issues
 	# Use partition fixture to set up network partition scenario
 	setup_vpn_network_partition_fixture "${TEST_PEER_IP}" "all" \
-		'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_XFRM_RECOVERY=0'
+		'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
 
 	# Set up VPN down scenario: update mock_ip to also return empty for xfrm state (no SA)
 	# This simulates VPN down + network partition
@@ -83,7 +83,7 @@ ADDITIONAL_EOF
 	# Expected: Recovery action detects partition mid-execution and aborts with appropriate logging
 	# Importance: Continuing recovery during partition is wasteful and could cause issues
 	# Use fixture to set up VPN down scenario first (creates state files and basic setup)
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_NETWORK_PARTITION_CHECK=1' 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_NETWORK_PARTITION_CHECK=1' 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
 
 	# Mock network partition check - starts healthy, becomes partitioned during recovery
 	# Use a file to track state across calls
@@ -154,7 +154,7 @@ EOF
 	# Expected: Recovery detects partition cleared and continues with recovery actions
 	# Importance: Network recovery shouldn't prevent VPN recovery once network is healthy
 	# Use fixture to set up VPN down scenario first (creates state files and basic setup)
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_NETWORK_PARTITION_CHECK=1' 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_NETWORK_PARTITION_CHECK=1' 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
 
 	# Set network partition state initially (after fixture sets up STATE_DIR)
 	local partition_state_file="${STATE_DIR}/network_partition_state"

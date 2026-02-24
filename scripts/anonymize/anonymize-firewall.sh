@@ -9,19 +9,19 @@
 
 set -euo pipefail
 
-# Get script directory
+# Get script directory (scripts/anonymize) and repo root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # Source anonymization library
-# shellcheck source=../lib/anonymize.sh
+# shellcheck source=../../lib/anonymize.sh
 source "${PROJECT_ROOT}/lib/anonymize.sh" 2>/dev/null || {
 	echo "Error: Could not source lib/anonymize.sh" >&2
 	exit 1
 }
 
 # Source common utilities (for escape_sed_regex/escape_sed_replacement)
-# shellcheck source=../lib/common.sh
+# shellcheck source=../../lib/common.sh
 source "${PROJECT_ROOT}/lib/common.sh" 2>/dev/null || {
 	echo "Error: Could not source lib/common.sh" >&2
 	exit 1

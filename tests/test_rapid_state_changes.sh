@@ -32,7 +32,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'ENABLE_NETWORK_PARTITION_CHECK=0'
+		'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
 
 	local log_file="$LOG_FILE"
 	local state_dir="$STATE_DIR"
@@ -97,7 +97,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'ENABLE_NETWORK_PARTITION_CHECK=0'
+		'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
 
 	# Update bytes for each peer individually (fixture sets all to same value)
 	ensure_state_functions_loaded
@@ -180,7 +180,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		'TIER3_THRESHOLD=5' \
 		'MAX_RESTARTS_PER_WINDOW=20
 RATE_LIMIT_WINDOW_MINUTES=60' \
-		'ENABLE_NETWORK_PARTITION_CHECK=0'
+		'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
 
 	local log_file="$LOG_FILE"
 	local state_dir="$STATE_DIR"
@@ -220,7 +220,7 @@ RATE_LIMIT_WINDOW_MINUTES=60' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \
-		'ENABLE_NETWORK_PARTITION_CHECK=0'
+		'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
 
 	local log_file="$LOG_FILE"
 	local state_dir="$STATE_DIR"

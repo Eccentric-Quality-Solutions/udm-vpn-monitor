@@ -852,6 +852,17 @@ Each peer's monitoring and recovery actions operate completely independently.
   - Checks minimum interval first (prevents rapid-fire restarts)
   - If limit exceeded, Tier 3 recovery actions are skipped until rate limit window expires
 
+**Tier 2 Rate Limiting** (`state/tier2_recovery_count`):
+- **Purpose**: Prevents excessive Tier 2 recovery loops (surgical cleanup, ipsec reload, xfrm per-connection)
+- **Mechanism**: Tracks Unix timestamps (one per line) of Tier 2 recovery actions
+  - Records successful xfrm-based per-connection recovery and ipsec reload
+  - Automatically cleans up entries older than 24 hours
+- **Configuration**:
+  - `MAX_TIER2_RECOVERIES_PER_WINDOW`: Maximum recoveries allowed (default: 30, range: 1-60)
+  - `RATE_LIMIT_WINDOW_MINUTES`: Same window as Tier 3 (default: 60)
+  - `MIN_TIER2_INTERVAL_SECONDS`: Minimum time between Tier 2 recoveries (default: 20, range: 0-300)
+- **Behavior**: Same sliding window and minimum interval logic as Tier 3
+
 **Network Partition State** (`network_partition_state`):
 - **Purpose**: Tracks network connectivity status to distinguish VPN failures from network partition issues
 - **Mechanism**: Stores a single integer value (0 = healthy, 1 = partitioned)

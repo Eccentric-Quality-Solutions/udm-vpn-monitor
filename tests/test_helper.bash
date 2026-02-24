@@ -84,6 +84,11 @@ standard_setup() {
 	ORIGINAL_PATH="${PATH}"
 	export ORIGINAL_PATH
 
+	# PATH restoration is handled by standard_teardown(), which BATS calls
+	# after every test (including failed tests). Do NOT set a trap on EXIT
+	# here — it overrides BATS's internal EXIT trap and breaks error reporting,
+	# causing test failures to silently vanish ("Executed 0 instead of N").
+
 	# Save original paths
 	ORIGINAL_PWD="$PWD"
 	ORIGINAL_HOME="$HOME"
@@ -2052,7 +2057,8 @@ EOF
 # Add mock commands to PATH
 #
 # Prepends TEST_DIR to PATH so mock commands are found before real system commands.
-# Must be called after creating mock commands and before running scripts that use them.
+# Idempotent: if TEST_DIR is already at the front (e.g. from fixtures + setup),
+# PATH is not modified to avoid duplicate entries.
 #
 # Returns:
 #   0: Always succeeds
@@ -2060,13 +2066,17 @@ EOF
 # Side effects:
 #   Modifies PATH environment variable
 add_mock_to_path() {
-	export PATH="${TEST_DIR}:${PATH}"
+	# Avoid duplicate TEST_DIR at front (double-call from fixtures + setup)
+	if [[ "${PATH#"${TEST_DIR}:"}" == "$PATH" && "$PATH" != "$TEST_DIR" ]]; then
+		export PATH="${TEST_DIR}:${PATH}"
+	fi
 }
 
 # Remove mock commands from PATH
 #
-# Removes TEST_DIR from PATH to restore original command search order.
-# Should be called after tests complete to clean up PATH modifications.
+# Restores PATH to ORIGINAL_PATH when set (from standard_setup), so cleanup is
+# complete even after double add_mock_to_path or when a test fails before calling
+# this. If ORIGINAL_PATH is not set, strips TEST_DIR from PATH (legacy fallback).
 #
 # Returns:
 #   0: Always succeeds
@@ -2074,9 +2084,13 @@ add_mock_to_path() {
 # Side effects:
 #   Modifies PATH environment variable
 remove_mock_from_path() {
-	# Use bash parameter expansion instead of sed for better performance and reliability
-	local new_path="${PATH//${TEST_DIR}:/}"
-	export PATH="$new_path"
+	if [[ -n "${ORIGINAL_PATH:-}" ]]; then
+		export PATH="$ORIGINAL_PATH"
+	else
+		# Fallback when not run under standard_setup (e.g. some helpers)
+		local new_path="${PATH//${TEST_DIR}:/}"
+		export PATH="$new_path"
+	fi
 }
 
 # Run code with mocks, ensuring cleanup even on failure
@@ -2372,6 +2386,7 @@ setup_test_environment() {
 	export LOCKFILE="${state_dir}/vpn-monitor.lock"
 	export LOG_FILE="${logs_dir}/vpn-monitor.log"
 	export RESTART_COUNT_FILE="${state_dir}/restart_count"
+	export TIER2_RECOVERY_COUNT_FILE="${state_dir}/tier2_recovery_count"
 }
 
 # Common detection test setup
@@ -2425,7 +2440,7 @@ setup_detection_test() {
 	local extra_config=("$@")
 
 	# Set up VPN active fixture (requires fixtures/vpn_active to be loaded)
-	setup_vpn_active_fixture "$peer_ip" "$initial_bytes" "$current_bytes" "$spi" "${extra_config[@]}"
+	setup_vpn_active_fixture "$peer_ip" "$initial_bytes" "$current_bytes" "$spi" "${extra_config[@]}" || fail "Fixture setup failed"
 
 	# Add mocks to PATH
 	# Note: setup_vpn_active_fixture() → setup_mock_vpn_environment() already calls add_mock_to_path(),
@@ -3752,6 +3767,7 @@ source_recovery_module() {
 # Returns:
 #   0: Function found and sourced successfully
 #   1: Function not found in any module
+#   Non-zero: Sourcing a dependency failed (failure propagates; tests will fail)
 #
 # Side effects:
 #   - Sources the function and its dependencies
@@ -3824,6 +3840,8 @@ source_function() {
 					export LOG_FILE
 					RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
 					export RESTART_COUNT_FILE
+					TIER2_RECOVERY_COUNT_FILE="${TIER2_RECOVERY_COUNT_FILE:-${STATE_DIR}/tier2_recovery_count}"
+					export TIER2_RECOVERY_COUNT_FILE
 					CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
 					export CONFIG_FILE
 					DEBUG="${DEBUG:-0}"
@@ -3832,20 +3850,20 @@ source_function() {
 					# Source entire state.sh module since functions depend on each other
 					if [[ -f "${LIB_DIR}/constants.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/constants.sh" 2>/dev/null || true
+						source "${LIB_DIR}/constants.sh"
 					fi
 					if [[ -f "${LIB_DIR}/common.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/common.sh" 2>/dev/null || true
+						source "${LIB_DIR}/common.sh"
 					fi
 					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+						source "${LIB_DIR}/logging.sh"
 					fi
 					# Source entire state.sh to make all functions available
 					if [[ -f "${LIB_DIR}/state.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+						source "${LIB_DIR}/state.sh"
 						# Function already sourced, skip eval below
 						return 0
 					fi
@@ -3888,6 +3906,8 @@ source_function() {
 					export LOG_FILE
 					RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
 					export RESTART_COUNT_FILE
+					TIER2_RECOVERY_COUNT_FILE="${TIER2_RECOVERY_COUNT_FILE:-${STATE_DIR}/tier2_recovery_count}"
+					export TIER2_RECOVERY_COUNT_FILE
 					CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
 					export CONFIG_FILE
 					DEBUG="${DEBUG:-0}"
@@ -3896,20 +3916,20 @@ source_function() {
 					# Source entire config.sh module since functions depend on each other
 					if [[ -f "${LIB_DIR}/constants.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/constants.sh" 2>/dev/null || true
+						source "${LIB_DIR}/constants.sh"
 					fi
 					if [[ -f "${LIB_DIR}/common.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/common.sh" 2>/dev/null || true
+						source "${LIB_DIR}/common.sh"
 					fi
 					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+						source "${LIB_DIR}/logging.sh"
 					fi
 					# Source entire config.sh to make all functions available
 					if [[ -f "${LIB_DIR}/config.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/config.sh" 2>/dev/null || true
+						source "${LIB_DIR}/config.sh"
 						# Function already sourced, skip eval below
 						return 0
 					fi
@@ -3953,6 +3973,8 @@ source_function() {
 					export LOG_FILE
 					RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
 					export RESTART_COUNT_FILE
+					TIER2_RECOVERY_COUNT_FILE="${TIER2_RECOVERY_COUNT_FILE:-${STATE_DIR}/tier2_recovery_count}"
+					export TIER2_RECOVERY_COUNT_FILE
 					CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
 					export CONFIG_FILE
 					DEBUG="${DEBUG:-0}"
@@ -3961,24 +3983,24 @@ source_function() {
 					# Source entire detection.sh module since functions depend on each other
 					if [[ -f "${LIB_DIR}/constants.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/constants.sh" 2>/dev/null || true
+						source "${LIB_DIR}/constants.sh"
 					fi
 					if [[ -f "${LIB_DIR}/common.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/common.sh" 2>/dev/null || true
+						source "${LIB_DIR}/common.sh"
 					fi
 					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+						source "${LIB_DIR}/logging.sh"
 					fi
 					if [[ -f "${LIB_DIR}/state.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+						source "${LIB_DIR}/state.sh"
 					fi
 					# Source entire detection.sh to make all functions available
 					if [[ -f "${LIB_DIR}/detection.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/detection.sh" 2>/dev/null || true
+						source "${LIB_DIR}/detection.sh"
 						# Function already sourced, skip eval below
 						return 0
 					fi
@@ -4023,6 +4045,8 @@ source_function() {
 					export LOG_FILE
 					RESTART_COUNT_FILE="${RESTART_COUNT_FILE:-${STATE_DIR}/restart_count}"
 					export RESTART_COUNT_FILE
+					TIER2_RECOVERY_COUNT_FILE="${TIER2_RECOVERY_COUNT_FILE:-${STATE_DIR}/tier2_recovery_count}"
+					export TIER2_RECOVERY_COUNT_FILE
 					CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/vpn-monitor.conf}"
 					export CONFIG_FILE
 					DEBUG="${DEBUG:-0}"
@@ -4031,28 +4055,28 @@ source_function() {
 					# Source entire recovery.sh module since functions depend on each other
 					if [[ -f "${LIB_DIR}/constants.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/constants.sh" 2>/dev/null || true
+						source "${LIB_DIR}/constants.sh"
 					fi
 					if [[ -f "${LIB_DIR}/common.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/common.sh" 2>/dev/null || true
+						source "${LIB_DIR}/common.sh"
 					fi
 					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+						source "${LIB_DIR}/logging.sh"
 					fi
 					if [[ -f "${LIB_DIR}/state.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+						source "${LIB_DIR}/state.sh"
 					fi
 					if [[ -f "${LIB_DIR}/detection.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/detection.sh" 2>/dev/null || true
+						source "${LIB_DIR}/detection.sh"
 					fi
 					# Source entire recovery.sh to make all functions available
 					if [[ -f "${LIB_DIR}/recovery.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
+						source "${LIB_DIR}/recovery.sh"
 						# Function already sourced, skip eval below
 						return 0
 					fi
@@ -4086,7 +4110,7 @@ source_function() {
 					# common.sh is standalone, no dependencies
 					# Source entire common.sh to make all functions available
 					# shellcheck source=/dev/null
-					source "${LIB_DIR}/common.sh" 2>/dev/null || true
+					source "${LIB_DIR}/common.sh"
 					# Function already sourced, skip eval below
 					return 0
 					;;
@@ -4094,7 +4118,7 @@ source_function() {
 					# config.sh needs logging.sh
 					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+						source "${LIB_DIR}/logging.sh"
 					fi
 					;;
 				"${LIB_DIR}/state.sh")
@@ -4102,20 +4126,20 @@ source_function() {
 					# Source entire state.sh module since functions depend on each other
 					if [[ -f "${LIB_DIR}/constants.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/constants.sh" 2>/dev/null || true
+						source "${LIB_DIR}/constants.sh"
 					fi
 					if [[ -f "${LIB_DIR}/common.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/common.sh" 2>/dev/null || true
+						source "${LIB_DIR}/common.sh"
 					fi
 					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+						source "${LIB_DIR}/logging.sh"
 					fi
 					# Source entire state.sh to make all functions available
 					if [[ -f "${LIB_DIR}/state.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+						source "${LIB_DIR}/state.sh"
 						# Function already sourced, skip eval below
 						return 0
 					fi
@@ -4125,17 +4149,17 @@ source_function() {
 					# Also source detection.sh itself to make helper functions available
 					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+						source "${LIB_DIR}/logging.sh"
 					fi
 					if [[ -f "${LIB_DIR}/state.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+						source "${LIB_DIR}/state.sh"
 					fi
 					# Source detection.sh to make all helper functions available
 					# (e.g., validate_ipv4, validate_ipv6, etc. used by validate_ip_address)
 					if [[ -f "${LIB_DIR}/detection.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/detection.sh" 2>/dev/null || true
+						source "${LIB_DIR}/detection.sh"
 						# Function already sourced, skip eval below
 						return 0
 					fi
@@ -4144,26 +4168,26 @@ source_function() {
 					# recovery.sh needs detection.sh, state.sh, logging.sh
 					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+						source "${LIB_DIR}/logging.sh"
 					fi
 					if [[ -f "${LIB_DIR}/state.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+						source "${LIB_DIR}/state.sh"
 					fi
 					if [[ -f "${LIB_DIR}/detection.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/detection.sh" 2>/dev/null || true
+						source "${LIB_DIR}/detection.sh"
 					fi
 					;;
 				"${LIB_DIR}/lockfile.sh")
 					# lockfile.sh needs state.sh and logging.sh
 					if [[ -f "${LIB_DIR}/logging.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+						source "${LIB_DIR}/logging.sh"
 					fi
 					if [[ -f "${LIB_DIR}/state.sh" ]]; then
 						# shellcheck source=/dev/null
-						source "${LIB_DIR}/state.sh" 2>/dev/null || true
+						source "${LIB_DIR}/state.sh"
 					fi
 					;;
 				esac

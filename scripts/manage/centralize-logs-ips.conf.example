@@ -1,0 +1,9 @@
+# List of IPs for centralize-logs.sh
+# - First non-comment, non-empty line = BindAddress (source IP for SCP)
+# - Remaining lines = UDM IPs to fetch vpn-monitor.log from
+# Lines starting with # and blank lines are ignored.
+#
+# Example: this host has 192.168.1.10; fetch logs from the other two UDMs.
+# 192.168.1.10
+# 192.168.1.20
+# 192.168.1.30

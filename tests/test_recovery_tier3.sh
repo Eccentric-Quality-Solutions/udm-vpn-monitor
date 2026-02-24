@@ -23,7 +23,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that Tier 3 recovery action triggers full IPsec restart when failure count reaches threshold
 	# Expected: Script executes "ipsec restart" command when failure count reaches Tier 3 threshold
 	# Importance: Full restart is the most aggressive recovery action and should only trigger after multiple failures
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60' || fail "Fixture setup failed"
 
 	# Mock ipsec - restart succeeds, track restart call
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -55,7 +55,7 @@ EOF
 	# Purpose: Test verifies that Tier 3 recovery handles errors gracefully when ipsec restart command fails
 	# Expected: Script logs error message and continues execution when restart command fails
 	# Importance: Error handling prevents script crashes and ensures monitoring continues after recovery failures
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60' || fail "Fixture setup failed"
 
 	# Mock ipsec - reload fails, restart fails; VPN must be DOWN (status_exit=1)
 	mock_ipsec_reload_restart 1 1 1
@@ -79,7 +79,7 @@ EOF
 	# Purpose: Test verifies that Tier 3 recovery handles gracefully when ipsec command is unavailable
 	# Expected: Script logs error message indicating ipsec is not available and continues execution
 	# Importance: Graceful handling prevents script failures when required recovery tools are missing
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60' || fail "Fixture setup failed"
 
 	# Don't create ipsec mock (unavailable)
 
@@ -160,7 +160,7 @@ EOF
 	# Expected: When restart fails, restart timestamp IS recorded in restart_count file (recorded before execution)
 	# Importance: Documents current behavior where restart attempts are recorded before execution, even if they fail
 	# Note: This behavior means failed restart attempts count toward rate limit, which prevents retry loops
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
 
 	local restart_file="${STATE_DIR}/restart_count"
 

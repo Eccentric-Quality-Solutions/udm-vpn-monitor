@@ -7,7 +7,7 @@
 load test_helper
 
 # Path to the anonymize-ipset script
-ANONYMIZE_IPSET_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize-ipset.sh"
+ANONYMIZE_IPSET_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize/anonymize-ipset.sh"
 
 # Create sample ipset save file with sets, IPs, and set names
 #
@@ -15,6 +15,9 @@ ANONYMIZE_IPSET_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize-ipset.sh"
 #
 # Arguments:
 #   $1: Ipset save file path
+#
+# Returns:
+#   0: success
 create_sample_ipset_file() {
 	local ipset_file="$1"
 
@@ -42,6 +45,9 @@ EOF
 #
 # Arguments:
 #   $1: Ipset save file path
+#
+# Returns:
+#   0: success
 create_sample_ipset_ipv6_file() {
 	local ipset_file="$1"
 
@@ -64,6 +70,9 @@ EOF
 #
 # Arguments:
 #   $1: Ipset save file path
+#
+# Returns:
+#   0: success
 create_sample_ipset_mac_file() {
 	local ipset_file="$1"
 

@@ -22,7 +22,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that idle tunnel detection works when bytes are not increasing but ping succeeds
 	# Expected: Tunnel is marked as idle but healthy, idle state stored in state file
 	# Importance: Prevents false failure detection for tunnels that are healthy but not passing traffic
-	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "${TEST_PEER_IP2}"
+	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "${TEST_PEER_IP2}" || fail "Fixture setup failed"
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -47,7 +47,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that idle tunnel state is stored in state file
 	# Expected: idle_detected file is created with value "1" when idle tunnel is detected
 	# Importance: Idle state tracking allows monitoring idle tunnels over time
-	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "${TEST_PEER_IP2}"
+	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "${TEST_PEER_IP2}" || fail "Fixture setup failed"
 
 	source_function "get_peer_state_file_path"
 

@@ -3,7 +3,7 @@
 # Lockfile management for UDM VPN Monitor
 # Handles flock-based and fallback lockfile mechanisms to prevent concurrent execution
 #
-# Version: 0.8.1
+# Version: 0.8.2
 #
 
 # shellcheck source=lib/common.sh
@@ -212,7 +212,8 @@ check_lockfile_stale() {
 	# This handles negative values (clamps to 0) and validates timestamps
 	lockfile_age=$(calculate_duration "$lockfile_mtime" "$now" 2>/dev/null || echo "0")
 
-	if [[ "$lockfile_age" -gt "$LOCKFILE_TIMEOUT" ]]; then
+	# Arithmetic context: non-numeric lockfile_age is treated as 0 (not stale)
+	if ((lockfile_age > LOCKFILE_TIMEOUT)); then
 		return 0 # Stale (exceeded timeout)
 	fi
 

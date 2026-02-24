@@ -26,7 +26,7 @@ load fixtures/vpn_at_tier
 	# Expected: Script deletes 2 SAs, detects only 1 re-established, logs warning about mismatch
 	# Importance: Validates enhanced diagnostic logging and verification logic for SA count mismatches
 	# Location name is "TEST" (extracted from LOCATION_TEST_EXTERNAL)
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_PING_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=10'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_PING_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=10' || fail "Fixture setup failed"
 
 	# Mock ip command - return 2 SAs initially, then only 1 after deletion (SA count mismatch)
 	# Uses helper function to simplify complex mock logic
@@ -62,7 +62,7 @@ load fixtures/vpn_at_tier
 	# Expected: Script detects only forward SA (local→peer), logs bidirectional state diagnostic
 	# Importance: Validates enhanced diagnostic logging for asymmetric SA state detection
 	# Location name is "TEST" (extracted from LOCATION_TEST_EXTERNAL)
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_PING_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=10'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_PING_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=10' || fail "Fixture setup failed"
 
 	# Mock ip command - return only forward SA (asymmetric state)
 	# Uses helper function to simplify complex mock logic
@@ -97,7 +97,7 @@ load fixtures/vpn_at_tier
 	# Expected: Script detects only reverse SA (peer→local), logs bidirectional state diagnostic
 	# Importance: Validates enhanced diagnostic logging for asymmetric SA state detection (reverse direction)
 	# Location name is "TEST" (extracted from LOCATION_TEST_EXTERNAL)
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_PING_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=10'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_PING_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=10' || fail "Fixture setup failed"
 
 	# Mock ip command - return only reverse SA (asymmetric state)
 	# Uses helper function to simplify complex mock logic
@@ -132,7 +132,7 @@ load fixtures/vpn_at_tier
 	# Expected: Script detects first SA re-established, continues checking, detects second SA appears later
 	# Importance: Validates enhanced verification logic that checks SA count multiple times to catch delayed SA establishment
 	# Location name is "TEST" (extracted from LOCATION_TEST_EXTERNAL)
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_PING_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=10'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_PING_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=10' || fail "Fixture setup failed"
 
 	# Mock ip command - return 1 SA initially, then 2 SAs after delay (timing issue)
 	# Uses helper function to simplify complex mock logic with call counter tracking

@@ -553,6 +553,50 @@ declare -gA LOCATIONS
 	assert_failure
 }
 
+# bats test_tags=category:high-risk,priority:high
+@test "get_location_internal_ips - malformed location data returns distinct exit code" {
+	# Purpose: Malformed location data must not be treated as "empty internal IPs"
+	# Expected: Function returns EXIT_MALFORMED_DATA (7), not 0 with empty string
+	# Importance: Surfaces data corruption instead of masking it (CODEBASE_DEEP_DIVE M4)
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
+
+	setup_location_config_and_load "$config_file"
+	parse_location_config
+	# Simulate corrupted/malformed entry (valid format is "external:IP|internal:IPs")
+	LOCATIONS["MALFORMED"]="garbage"
+
+	run get_location_internal_ips "MALFORMED"
+	assert_failure
+	[[ $status -eq "${EXIT_MALFORMED_DATA:-7}" ]]
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "get_location_external_ip - malformed location data returns distinct exit code" {
+	# Purpose: Malformed location data must not be treated as "location not found"
+	# Expected: Function returns EXIT_MALFORMED_DATA (7), not 1
+	# Importance: Surfaces data corruption instead of masking it (CODEBASE_DEEP_DIVE M4)
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	create_test_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=3" \
+		"TIER3_THRESHOLD=5"
+
+	setup_location_config_and_load "$config_file"
+	parse_location_config
+	# Simulate corrupted entry (valid format is "external:IP|internal:IPs")
+	LOCATIONS["MALFORMED"]="no_external_prefix"
+
+	run get_location_external_ip "MALFORMED"
+	assert_failure
+	[[ $status -eq "${EXIT_MALFORMED_DATA:-7}" ]]
+}
+
 # ============================================================================
 # DNS RESOLUTION TESTS FOR LOCATION CONFIG
 # ============================================================================

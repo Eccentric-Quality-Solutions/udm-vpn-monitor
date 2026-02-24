@@ -2,7 +2,44 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
-## [Unreleased]
+## 0.8.2 - 2026-02-23
+
+### Added
+- **Tier 2 rate limiting**: New config options `MAX_TIER2_RECOVERIES_PER_WINDOW` (default 30) and `MIN_TIER2_INTERVAL_SECONDS` (default 20) limit how often Tier 2 recovery actions (surgical SA cleanup, ipsec reload) can run. `check_tier2_rate_limit()` and `record_tier2_recovery()` in `lib/state/global_state.sh`; recovery orchestration checks the limit before surgical cleanup and records after success. `compact_tier2_recovery_count_file()` limits file growth. Rate limit messages distinguish "Tier 2 recoveries" from "restarts".
+- **Centralize logs**: `scripts/manage/centralize-logs.sh` fetches vpn-monitor.log from multiple UDMs via SCP (config in `centralize-logs-ips.conf`), writes into `/tmp/centralize-logs/`, and zips to `all-vpn-logs-YYYY-MM-DD-HHMMSS.zip`. Example config `scripts/manage/centralize-logs-ips.conf.example`. Documented in `docs/scripts/CENTRALIZE_LOGS.md`. Installer installs `scripts/manage/` including centralize-logs and example.
+- **Exit code `EXIT_MALFORMED_DATA` (7)**: New constant in `lib/constants.sh` for malformed or corrupted data (e.g. location data format violation), distinct from "not found".
+- **Multi-location test fixture**: `tests/fixtures/vpn_multi_location.bash` and `tests/test_fixtures_vpn_multi_location.sh` for testing multiple locations.
+- **Deployment registry and tail-follow**: `scripts/deploy-registry.sh` tracks host, version, and timestamp for skip/resume across runs. `deploy-to-udm.sh` records deployments, adds `--tail-follow` and `--no-record`, and writes deploy log; `deploy-to-udms.sh` skips hosts at same version, adds `--force`, records on user confirm. Logs to `REPO_ROOT/logs/deploy-to-udm.log` (credentials sanitized). Registry uses exact host match to avoid collisions (e.g. 192.168.1.10 vs 192.168.1.100). FUTURE.md notes tail-follow and semantic version comparison.
+
+### Changed
+- **Scripts layout**: Anonymization scripts moved to `scripts/anonymize/` (anonymize-all.sh, anonymize-firewall.sh, anonymize-ip-rules.sh, anonymize-ipset.sh, anonymize-logs.sh). Deploy and management scripts moved to `scripts/manage/` (deploy-registry.sh, deploy-to-udm.sh, deploy-to-udms.sh, deploy-udms.conf.example, centralize-logs.sh, centralize-logs-ips.conf.example). Installer and `prepare_install_package.sh` install/copy `scripts/anonymize/` and `scripts/manage/`; README, docs, and tests updated to new paths.
+- **Wrapper lock**: `vpn-monitor-wrapper.sh` uses atomic lock acquisition: `acquire_wrapper_lock()` with `flock` (preferred) or mkdir fallback, replacing the previous is_running/PID-file check to eliminate TOCTOU races.
+- **Config/location validation**: `get_location_external_ip()` and `get_location_internal_ips()` in `lib/config/location_parsing.sh` now return `EXIT_MALFORMED_DATA` (7) for invalid location data format (distinct from "location not found"); config validation in `lib/config/config_validation.sh` checks for malformed data and surfaces clearer error messages.
+- **Keepalive daemon**: Validates that the daemon error log is writable before starting; refuses to start with a logged error if not (avoids silent stderr loss after `exec`). EXIT trap in the daemon child no longer removes the PID file (parent is sole owner per systemd Type=forking).
+- **.gitignore**: State files now ignored via `/state/` directory instead of individual names; added `/analyze/old-analysis/`.
+- **Documentation**: VERSIONING.md revised; ARCHITECTURE.md, ADRs (0008, 0024), ANONYMIZE_* docs, TEST_MAINTENANCE.md, BATS_GUIDE.md, CODE_REVIEW_LESSONS_LEARNED.md, and related docs updated. Config template (`vpn-monitor.conf`), TROUBLESHOOTING.md, and FUTURE.md updated.
+- **Tests**: Paths and helpers updated for `scripts/anonymize/` and `scripts/manage/`; test_helper.bash and verify_test_isolation.sh improved; test_config_location.sh expanded; fixture and mock updates across detection, recovery, integration, and install tests.
+- **Deploy auth**: Auth methods simplified to interactive for deployment scripts.
+
+### Removed
+- **`scripts/migrate-config-to-locations.sh`**: Removed; location-based config is the default and the migration script is no longer provided.
+- **`scripts/analyze-function-coverage.sh`**: Removed.
+- **`docs/scripts/MIGRATION.md`**: Removed.
+- **`docs/testing/COVERAGE_ANALYSIS_GUIDE.md`**: Removed.
+- **`tests/test_migration.sh`**: Removed.
+- **DEPLOYMENT_CHECKLIST.md** and **QUICK_START.md**: Removed or substantially reduced.
+- **udm-vpn-monitor.zip**: No longer tracked in the repository (install package is built, not committed).
+
+### Fixed
+- **Detection false positive (routing_issue)**: In `determine_vpn_status()` (`lib/detection/failure_analysis.sh`), when failure type is `routing_issue`, the primary check result is now respected: if the primary check passed (e.g. idle tunnel confirmed healthy via ping in `check_byte_counters`), the code no longer overrides it to failed. Only when the primary check already failed does routing_issue confirm the failure type. Prevents healthy idle tunnels from being marked failed.
+- **idle_detected clearing**: In `check_vpn_status()`, `idle_detected` is now cleared only when byte counters are actively increasing (`current_bytes > prev_bytes`). Previously it was cleared whenever `current_bytes > 0`, so static (idle) bytes could clear the flag and cause inconsistent state or follow-up false positives.
+
+
+## 0.8.1 - 2026-02-14
+
+### Fixed
+- **False "routing issue"**: `last_bytes` is now persisted only after `determine_vpn_status` (and thus `check_routing_issue_for_failure_type`) has run, so the routing-issue logic sees the previous run's value. Previously, `check_byte_counters` wrote `last_bytes` as soon as the primary check passed, so later in the same run `current_bytes <= last_bytes` held and healthy tunnels were misclassified as routing issues.
+- **State corruption**: When compacting the restart count file, if all timestamps had expired, the code now removes the file instead of writing empty content; empty content had failed `timestamp_list` validation and could corrupt state.
 
 ## 0.8.0 - 2026-02-14
 
@@ -45,8 +82,8 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 - **Unified Anonymization System**: Added comprehensive anonymization system for network data exports:
   - New shared library `lib/anonymize.sh` providing core anonymization functions and unified mapping management
   - Unified mapping file ensures consistent anonymization across all file types (same IP → same anonymized IP)
-  - Individual anonymization scripts: `anonymize-firewall.sh`, `anonymize-ip-rules.sh`, `anonymize-ipset.sh`, `anonymize-logs.sh`
-  - Unified command `anonymize-all.sh` for batch anonymization with shared mapping
+  - Individual anonymization scripts in `scripts/anonymize/`: `anonymize-firewall.sh`, `anonymize-ip-rules.sh`, `anonymize-ipset.sh`, `anonymize-logs.sh`
+  - Unified command `scripts/anonymize/anonymize-all.sh` for batch anonymization with shared mapping
   - Supports IPv4, IPv6, interface names, location names, ipset set names, MAC addresses, and hostnames
   - Deterministic anonymization ensures same input always produces same output
   - **Related**: See `docs/scripts/UNIFIED_ANONYMIZATION.md` for comprehensive documentation

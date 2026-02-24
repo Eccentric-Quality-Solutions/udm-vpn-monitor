@@ -14,7 +14,7 @@
 
 load test_helper
 
-DEPLOY_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/deploy-to-udm.sh"
+DEPLOY_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/manage/deploy-to-udm.sh"
 PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 
 # bats test_tags=category:unit
@@ -409,7 +409,11 @@ MOCK
 	local reg_file="${TEST_DIR}/deploy-registry"
 	assert_file_exist "$reg_file"
 	assert_file_contains "$reg_file" "192.168.1.100"
-	assert_file_contains "$reg_file" "0.8.0"
+	# Version comes from package (vpn-monitor.sh SCRIPT_VERSION)
+	local pkg_version
+	pkg_version=$(unzip -p "${PROJECT_ROOT}/udm-vpn-monitor.zip" vpn-monitor.sh 2>/dev/null | grep -E '^SCRIPT_VERSION=' | head -1 | sed -E 's/^SCRIPT_VERSION=["'\'']?([^"'\'' ]+).*/\1/' | tr -d ' ')
+	[[ -n "$pkg_version" ]] || skip "Could not get package version"
+	assert_file_contains "$reg_file" "$pkg_version"
 }
 
 # bats test_tags=category:unit
@@ -424,7 +428,7 @@ MOCK
 	echo -e "192.168.1.100\t0.8.0\t2025-02-14T12:00:00" >"$DEPLOY_REGISTRY_FILE"
 
 	# Source and call record_deployment for 192.168.1.10 (substring of 192.168.1.100)
-	source "${PROJECT_ROOT}/scripts/deploy-registry.sh"
+	source "${PROJECT_ROOT}/scripts/manage/deploy-registry.sh"
 	record_deployment "192.168.1.10" "0.8.0" "2025-02-14T12:01:00"
 
 	# 192.168.1.100 must still exist; 192.168.1.10 must be added

@@ -28,7 +28,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Function detects bytes=0 as suspect condition and may mark VPN as failed.
 	# Importance: Zero byte counter indicates VPN tunnel is established but not passing traffic, a failure condition.
 	# Test Category: VPN status detection
-	setup_vpn_bytes_zero_fixture "${TEST_PEER_IP}" "0x12345678" 'ENABLE_NETWORK_PARTITION_CHECK=0'
+	setup_vpn_bytes_zero_fixture "${TEST_PEER_IP}" "0x12345678" 'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -49,7 +49,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Setup: Set initial byte count to 10000, mock returns 5000
 	# Edge case: Handles counter wrap-around scenarios
 	# Disable ping check so that bytes decreasing is detected as suspect (not idle but healthy)
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 10000 2000 "0x12345678" 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_PING_CHECK=0'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 10000 2000 "0x12345678" 'ENABLE_NETWORK_PARTITION_CHECK=0' 'ENABLE_PING_CHECK=0' || fail "Fixture setup failed"
 
 	# Override mock to return decreased bytes (5000 instead of 2000)
 	# mock_ip_xfrm_state creates the file at ${TEST_DIR}/ip by default, overwriting the fixture's mock
@@ -71,7 +71,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Importance: Stagnant byte counters indicate VPN tunnel is not passing traffic, a critical failure condition.
 	# Test Category: VPN status detection
 	# Disable ping check so that bytes not increasing is detected as suspect (not idle but healthy)
-	setup_vpn_failing_fixture "${TEST_PEER_IP}" 0 1000 1000 "0x12345678" 'ENABLE_PING_CHECK=0'
+	setup_vpn_failing_fixture "${TEST_PEER_IP}" 0 1000 1000 "0x12345678" 'ENABLE_PING_CHECK=0' || fail "Fixture setup failed"
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -88,7 +88,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script treats corrupted file as 0 or resets it, continuing normal operation.
 	# Importance: File corruption can occur due to disk errors or manual editing; script must handle it robustly.
 	# Test Category: Error handling, File corruption
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	source_function "get_peer_state_file_path"
 
@@ -113,7 +113,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script treats negative value as invalid and either resets to 0 or uses current bytes value.
 	# Importance: Negative values can occur from file corruption or manual editing; script must handle them robustly.
 	# Test Category: Error handling, File corruption
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	source_function "get_peer_state_file_path"
 
@@ -138,7 +138,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script treats empty file as 0, then updates it with current bytes value from xfrm output.
 	# Importance: Empty files can occur from file deletion or initialization; script must handle them robustly.
 	# Test Category: Error handling, File corruption
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	source_function "get_peer_state_file_path"
 
@@ -244,7 +244,7 @@ EOF
 	# Expected: Script falls back to using external peer IP for ping check when internal IP is not configured.
 	# Importance: Ensures ping check works even when internal peer IPs are not configured.
 	# Test Category: VPN status detection, Ping check fallback
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' || fail "Fixture setup failed"
 
 	# Mock ping - should use peer IP
 	local mock_ping
@@ -270,7 +270,7 @@ EOF
 	# Expected: Script processes output even when exit code indicates error, detecting VPN status from output content.
 	# Importance: Some ipsec implementations may return error codes even when output contains valid status information.
 	# Test Category: VPN status detection, Fallback chain edge cases
-	setup_vpn_down_fixture "${TEST_PEER_IP}" 0
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 0 || fail "Fixture setup failed"
 
 	# Mock ipsec - returns error code but has output containing peer IP
 	mock_ipsec_status 1 "${TEST_PEER_IP}: ESTABLISHED 1 hour ago" >/dev/null
@@ -338,7 +338,7 @@ EOF
 	# Expected: Script logs warning about missing ping command but continues execution without ping check.
 	# Importance: Ping commands may not be available in all environments; script must handle gracefully.
 	# Test Category: Error handling, Tool availability
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="2001:db8::1"'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' 'LOCATION_TEST_INTERNAL="2001:db8::1"' || fail "Fixture setup failed"
 
 	# Mock command to fail for ping (simulates ping not available)
 	local mock_command="${TEST_DIR}/command"
@@ -376,7 +376,7 @@ EOF
 	# Scenario: Ping command hangs due to network issues
 	# Setup: Mock ping to sleep longer than timeout value
 	# Edge case: Handles hanging commands that could block script execution
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" 'PING_COUNT=3' 'PING_TIMEOUT=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" 'PING_COUNT=3' 'PING_TIMEOUT=1' || fail "Fixture setup failed"
 
 	# Mock ping to hang (simulates timeout)
 	mock_ping_hang >/dev/null
@@ -401,7 +401,7 @@ EOF
 	# Expected: Script detects 100% packet loss from ping output and logs warning but continues execution.
 	# Importance: Weird network states can cause ping to succeed but report no packets received; script must detect this.
 	# Test Category: VPN status detection, Ping check edge cases
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" || fail "Fixture setup failed"
 
 	# Mock ping to return success but 100% packet loss (weird network state)
 	mock_ping_packet_loss "${TEST_PEER_IP}" >/dev/null
@@ -608,7 +608,7 @@ ADDITIONAL_EOF
 	# Expected: Script times out ipsec status check and continues execution without blocking.
 	# Importance: Network issues can cause ipsec commands to hang; script must handle this to remain responsive.
 	# Test Category: Error handling, Timeout handling
-	setup_vpn_down_fixture "${TEST_PEER_IP}" 0
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 0 || fail "Fixture setup failed"
 
 	# Mock ipsec status to hang (simulates timeout)
 	# Sleep longer than IPSEC_STATUS_TIMEOUT (5 seconds) to trigger timeout
@@ -644,7 +644,7 @@ ADDITIONAL_EOF
 	# Expected: Function returns 0 when default route is present.
 	# Importance: Default route check is critical for network partition detection.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1' || fail "Fixture setup failed"
 
 	# Mock ip command - default route exists
 	mock_ip_route "1" "default via ${TEST_PEER_IP} dev eth0"
@@ -669,7 +669,7 @@ ADDITIONAL_EOF
 	# Expected: Function returns 1 when default route is not found.
 	# Importance: Missing default route indicates network partition.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1' || fail "Fixture setup failed"
 
 	# Mock ip command - default route missing
 	mock_ip_route "0"
@@ -694,7 +694,7 @@ ADDITIONAL_EOF
 	# Expected: Function returns 0 when DNS resolution succeeds.
 	# Importance: DNS resolution check is critical for network partition detection.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1' || fail "Fixture setup failed"
 
 	# Mock dig command - DNS resolution succeeds
 	mock_dig "1" "8.8.8.8"
@@ -719,7 +719,7 @@ ADDITIONAL_EOF
 	# Expected: Function returns 1 when DNS resolution times out.
 	# Importance: DNS timeout indicates network partition.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1' || fail "Fixture setup failed"
 
 	# Mock dig command - DNS resolution fails (timeout)
 	mock_dig "0" "8.8.8.8" "timeout"
@@ -746,7 +746,7 @@ ADDITIONAL_EOF
 	# Expected: Function returns 1 when DNS server is unreachable.
 	# Importance: Unreachable DNS server indicates network partition.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1' || fail "Fixture setup failed"
 
 	# Mock dig command - DNS server unreachable
 	mock_dig 0
@@ -771,7 +771,7 @@ ADDITIONAL_EOF
 	# Expected: Function returns 0 when all checked interfaces are UP.
 	# Importance: Interface state check is critical for network partition detection.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1' || fail "Fixture setup failed"
 
 	# Mock ip command - all interfaces UP
 	mock_ip_interfaces_up "br0,eth0" "0" >/dev/null
@@ -821,7 +821,7 @@ ADDITIONAL_EOF
 	# Expected: Function returns 1 when interface doesn't exist.
 	# Importance: Non-existent interfaces indicate network partition or misconfiguration.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1' || fail "Fixture setup failed"
 
 	# Mock ip command - interface doesn't exist
 	local mock_ip="${TEST_DIR}/ip"
@@ -858,7 +858,7 @@ EOF
 	# Expected: Function returns 0 when all checks pass.
 	# Importance: Network partition detection prevents false VPN failure detection.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1' || fail "Fixture setup failed"
 
 	# Mock ip command - default route exists, interfaces UP
 	mock_ip_interfaces_up "br0,eth0" "1" >/dev/null
@@ -886,7 +886,7 @@ EOF
 	# Expected: Function returns 1 when one or more checks fail.
 	# Importance: Network partition detection prevents false VPN failure detection.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1' || fail "Fixture setup failed"
 
 	# Mock ip command - default route missing, interfaces UP
 	mock_ip_interfaces_up "br0,eth0" "0" >/dev/null
@@ -914,7 +914,7 @@ EOF
 	# Expected: Function uses custom DNS server, hostname, and interfaces.
 	# Importance: Custom parameters allow flexible network partition detection.
 	# Test Category: Network partition detection
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_NETWORK_PARTITION_CHECK=1' || fail "Fixture setup failed"
 
 	# Mock ip command - interfaces UP
 	mock_ip_interfaces_up "eth1,eth2" "1" >/dev/null
@@ -945,7 +945,7 @@ EOF
 	# Purpose: Test verifies that SA rekey detection resets byte counter baseline to 0 when SPI changes
 	# Expected: When SPI changes, byte counter baseline is reset to 0
 	# Importance: Prevents false failure detection after SA rekey events
-	setup_vpn_rekey_fixture "${TEST_PEER_IP}" "0x12345678" "0x87654321" 5000 1000
+	setup_vpn_rekey_fixture "${TEST_PEER_IP}" "0x12345678" "0x87654321" 5000 1000 || fail "Fixture setup failed"
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -974,7 +974,7 @@ EOF
 	# Purpose: Test verifies that byte counter baseline reset after rekey allows new baseline to be established
 	# Expected: After rekey, new byte counter baseline can be established from current bytes
 	# Importance: Ensures byte counter tracking works correctly after rekey events
-	setup_vpn_rekey_fixture "${TEST_PEER_IP}" "0x12345678" "0x87654321" 10000 2000
+	setup_vpn_rekey_fixture "${TEST_PEER_IP}" "0x12345678" "0x87654321" 10000 2000 || fail "Fixture setup failed"
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -1001,7 +1001,7 @@ EOF
 	# Purpose: Test verifies that idle state is cleared when SA rekey is detected
 	# Expected: Idle state file is deleted when rekey occurs
 	# Importance: Rekey events reset all state, including idle detection
-	setup_vpn_rekey_fixture "${TEST_PEER_IP}" "0x12345678" "0x87654321" 1000 2000
+	setup_vpn_rekey_fixture "${TEST_PEER_IP}" "0x12345678" "0x87654321" 1000 2000 || fail "Fixture setup failed"
 
 	source_function "get_peer_state_file_path"
 	# setup_location_vpn_monitor creates location "TEST" from LOCATION_TEST_EXTERNAL
@@ -1054,7 +1054,7 @@ EOF
 	# Purpose: Test verifies that first check stores SPI without detecting rekey
 	# Expected: SPI is stored on first check, no rekey detected
 	# Importance: Ensures SPI tracking starts correctly on first check
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	# Don't set SPI file (first check) - fixture sets it, so remove it
 	source_function "get_peer_state_file_path"
@@ -1086,7 +1086,7 @@ EOF
 	# Purpose: Test verifies that corrupted SPI files are recovered gracefully
 	# Expected: Corrupted SPI file is recovered and SPI tracking continues
 	# Importance: Prevents script failures from corrupted SPI files
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "0x12345678"
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "0x12345678" || fail "Fixture setup failed"
 
 	source_function "get_peer_state_file_path"
 
@@ -1167,7 +1167,7 @@ EOF
 	# Purpose: Test verifies that failure type "tunnel_down" is detected when no Phase 2 SA is found
 	# Expected: Failure type is detected as "tunnel_down" when no SA exists
 	# Importance: Enables targeted recovery strategies based on failure type
-	setup_vpn_down_fixture "${TEST_PEER_IP}"
+	setup_vpn_down_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
@@ -1195,7 +1195,7 @@ EOF
 	# Expected: Failure type is detected as "routing_issue" when SA exists but traffic not flowing
 	# Importance: Enables targeted recovery strategies for routing issues
 	# Disable ping check so that bytes not increasing is treated as a routing issue, not idle tunnel
-	setup_vpn_failing_fixture "${TEST_PEER_IP}" 0 1000 1000 "0x12345678" 'ENABLE_PING_CHECK=0'
+	setup_vpn_failing_fixture "${TEST_PEER_IP}" 0 1000 1000 "0x12345678" 'ENABLE_PING_CHECK=0' || fail "Fixture setup failed"
 
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
@@ -1222,7 +1222,7 @@ EOF
 	# Purpose: Test verifies that failure type "routing_issue" is detected when SA exists but ping fails
 	# Expected: Failure type is detected as "routing_issue" when SA exists but connectivity fails
 	# Importance: Enables targeted recovery strategies for routing issues
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" || fail "Fixture setup failed"
 
 	# Mock ping - fails (overrides fixture's ping mock)
 	mock_ping_failure >/dev/null
@@ -1243,7 +1243,7 @@ EOF
 	# Purpose: Test verifies that failure type "rekey" is detected when SPI changes (not a failure)
 	# Expected: Failure type is detected as "rekey" when SPI changes, VPN marked as OK
 	# Importance: Rekey events are logged but not treated as failures
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "0x12345678"
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "0x12345678" || fail "Fixture setup failed"
 
 	# Mock ip command - new SPI (rekey) - override fixture's mock
 	mock_ip_xfrm_state "${TEST_PEER_IP}" 2000 "0x87654321" >/dev/null
@@ -1357,7 +1357,7 @@ EOF
 	# Purpose: Test verifies that failure type is cleared when VPN recovers
 	# Expected: Failure type file is removed or cleared when VPN becomes healthy
 	# Importance: Ensures failure type tracking is reset after recovery
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	source_function "get_peer_state_file_path"
 	# Create failure type file (from previous failure)
@@ -1418,7 +1418,7 @@ EOF
 	# Purpose: Test verifies that idle tunnel detection works when bytes are not increasing but ping succeeds
 	# Expected: Tunnel is marked as idle but healthy, idle state stored in state file
 	# Importance: Prevents false failure detection for tunnels that are healthy but not passing traffic
-	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "${TEST_PEER_IP2}"
+	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "${TEST_PEER_IP2}" || fail "Fixture setup failed"
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -1443,7 +1443,7 @@ EOF
 	# Purpose: Test verifies that idle tunnel state is stored in state file
 	# Expected: idle_detected file is created with value "1" when idle tunnel is detected
 	# Importance: Idle state tracking allows monitoring idle tunnels over time
-	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "${TEST_PEER_IP2}"
+	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "${TEST_PEER_IP2}" || fail "Fixture setup failed"
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -1463,7 +1463,7 @@ EOF
 	# Purpose: Test verifies that keepalive suggestion is logged when idle tunnel detected and keepalive disabled
 	# Expected: Log message suggests enabling ENABLE_KEEPALIVE=1 when idle tunnel detected
 	# Importance: Helps users prevent idle tunnel timeouts
-	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "${TEST_PEER_IP2}" "0x12345678" 'ENABLE_KEEPALIVE=0'
+	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "${TEST_PEER_IP2}" "0x12345678" 'ENABLE_KEEPALIVE=0' || fail "Fixture setup failed"
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -1480,7 +1480,7 @@ EOF
 	# Purpose: Test verifies that keepalive daemon status is checked when keepalive is enabled
 	# Expected: Log message checks if keepalive daemon is running when idle tunnel detected
 	# Importance: Helps users ensure keepalive daemon is running when enabled
-	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "${TEST_PEER_IP2}" "0x12345678" 'ENABLE_KEEPALIVE=1'
+	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "${TEST_PEER_IP2}" "0x12345678" 'ENABLE_KEEPALIVE=1' || fail "Fixture setup failed"
 
 	# Don't create keepalive pidfile (daemon not running)
 	run bash "$TEST_SCRIPT" --fake
@@ -1499,7 +1499,7 @@ EOF
 	# Purpose: Test verifies that idle state is cleared when traffic resumes
 	# Expected: idle_detected file is deleted or cleared when bytes start increasing again
 	# Importance: Ensures idle state doesn't persist after traffic resumes
-	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "${TEST_PEER_IP2}"
+	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "${TEST_PEER_IP2}" || fail "Fixture setup failed"
 
 	source_function "get_peer_state_file_path"
 
@@ -1534,7 +1534,7 @@ EOF
 	# Purpose: Test verifies that idle tunnel is not detected when ping check is disabled
 	# Expected: Tunnel is marked as suspect/failed when bytes not increasing and ping disabled
 	# Importance: Ping check is required for idle tunnel detection
-	setup_vpn_failing_fixture "${TEST_PEER_IP}" 0 1000 1000 "0x12345678" 'ENABLE_PING_CHECK=0' "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP2}\""
+	setup_vpn_failing_fixture "${TEST_PEER_IP}" 0 1000 1000 "0x12345678" 'ENABLE_PING_CHECK=0' "LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP2}\"" || fail "Fixture setup failed"
 
 	run bash "$TEST_SCRIPT" --fake
 

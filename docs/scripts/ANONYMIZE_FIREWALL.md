@@ -22,13 +22,13 @@ All replacements are **deterministic** - the same input always produces the same
 
 ```bash
 # Anonymize rules and save to file
-/data/vpn-monitor/scripts/anonymize-firewall.sh -i /tmp/iptables-save.txt -o anonymized-rules.txt
+/data/vpn-monitor/scripts/anonymize/anonymize-firewall.sh -i /tmp/iptables-save.txt -o anonymized-rules.txt
 
 # Anonymize rules and output to stdout
-/data/vpn-monitor/scripts/anonymize-firewall.sh -i firewall-rules.txt | less
+/data/vpn-monitor/scripts/anonymize/anonymize-firewall.sh -i firewall-rules.txt | less
 
 # Verbose mode (shows progress and mappings)
-/data/vpn-monitor/scripts/anonymize-firewall.sh -i firewall-rules.txt -o anonymized-rules.txt -v
+/data/vpn-monitor/scripts/anonymize/anonymize-firewall.sh -i firewall-rules.txt -o anonymized-rules.txt -v
 ```
 
 ### Command Line Options
@@ -63,7 +63,7 @@ All replacements are **deterministic** - the same input always produces the same
 iptables-save > /tmp/my-firewall-rules.txt
 
 # Anonymize them
-/data/vpn-monitor/scripts/anonymize-firewall.sh \
+/data/vpn-monitor/scripts/anonymize/anonymize-firewall.sh \
   -i /tmp/my-firewall-rules.txt \
   -o /tmp/anonymized-rules.txt
 
@@ -75,18 +75,18 @@ cat /tmp/anonymized-rules.txt
 
 ```bash
 # Anonymize and count rules
-/data/vpn-monitor/scripts/anonymize-firewall.sh \
+/data/vpn-monitor/scripts/anonymize/anonymize-firewall.sh \
   -i firewall-rules.txt | grep -c "^\-A"
 
 # Anonymize and search for specific patterns
-/data/vpn-monitor/scripts/anonymize-firewall.sh \
+/data/vpn-monitor/scripts/anonymize/anonymize-firewall.sh \
   -i firewall-rules.txt | grep "ACCEPT"
 ```
 
 #### Example 3: Verbose Mode for Debugging
 
 ```bash
-/data/vpn-monitor/scripts/anonymize-firewall.sh \
+/data/vpn-monitor/scripts/anonymize/anonymize-firewall.sh \
   -i firewall-rules.txt \
   -o anonymized-rules.txt \
   -v
@@ -227,7 +227,7 @@ When seeking help with firewall configuration issues, you can anonymize your rul
 ```bash
 # Export and anonymize
 iptables-save > /tmp/rules.txt
-/data/vpn-monitor/scripts/anonymize-firewall.sh \
+/data/vpn-monitor/scripts/anonymize/anonymize-firewall.sh \
   -i /tmp/rules.txt \
   -o /tmp/anonymized.txt
 
@@ -240,7 +240,7 @@ Anonymized rules can be used in documentation, training materials, or examples w
 
 ```bash
 # Create anonymized example rules
-/data/vpn-monitor/scripts/anonymize-firewall.sh \
+/data/vpn-monitor/scripts/anonymize/anonymize-firewall.sh \
   -i production-rules.txt \
   -o docs/examples/firewall-rules-example.txt
 ```
@@ -251,7 +251,7 @@ Anonymized rules can be used in test environments or shared with developers:
 
 ```bash
 # Anonymize production rules for testing
-/data/vpn-monitor/scripts/anonymize-firewall.sh \
+/data/vpn-monitor/scripts/anonymize/anonymize-firewall.sh \
   -i /etc/iptables/rules.v4 \
   -o test-rules.txt
 ```
@@ -275,7 +275,7 @@ Anonymized rules can be used in test environments or shared with developers:
 
 ## Related Scripts
 
-- **[anonymize-logs.sh](../scripts/anonymize-logs.sh)** - Anonymizes VPN monitor log files
+- **[anonymize-logs.sh](anonymize-logs.sh)** - Anonymizes VPN monitor log files (in `scripts/anonymize/`)
 - **[export-udm-routes-firewall.sh](../scripts/export-udm-routes-firewall.sh)** - Exports UDM firewall rules and routes
 
 ## See Also

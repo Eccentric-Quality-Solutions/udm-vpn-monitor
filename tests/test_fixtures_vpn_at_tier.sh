@@ -19,7 +19,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that vpn_at_tier fixture correctly sets up Tier 1 scenario
 	# Expected: Failure count is 1, tier thresholds are set correctly
 	# Importance: Ensures fixture works correctly for Tier 1 tests
-	setup_vpn_at_tier_fixture 1 "192.168.1.1"
+	setup_vpn_at_tier_fixture 1 "192.168.1.1" || fail "Fixture setup failed"
 
 	# Verify state file has correct failure count
 	ensure_state_functions_loaded
@@ -47,7 +47,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that vpn_at_tier fixture correctly sets up Tier 2 scenario
 	# Expected: Failure count is 3, tier thresholds are set correctly
 	# Importance: Ensures fixture works correctly for Tier 2 tests
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
 
 	# Verify state file has correct failure count
 	ensure_state_functions_loaded
@@ -71,7 +71,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that vpn_at_tier fixture correctly sets up Tier 3 scenario
 	# Expected: Failure count is 5, tier thresholds are set correctly
 	# Importance: Ensures fixture works correctly for Tier 3 tests
-	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10'
+	setup_vpn_at_tier_fixture 3 "${TEST_PEER_IP}" 'MAX_RESTARTS_PER_WINDOW=10' || fail "Fixture setup failed"
 
 	# Verify state file has correct failure count
 	ensure_state_functions_loaded

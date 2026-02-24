@@ -12,7 +12,7 @@
 #   This file is safe to source multiple times (idempotent).
 #   Constants are only defined if not already set.
 #
-# Version: 0.8.1
+# Version: 0.8.2
 #
 
 # shellcheck disable=SC2034
@@ -36,3 +36,7 @@
 # Used to cap the exponential backoff interval growth
 # Used by xfrm_recovery.sh
 [[ -z "${XFRM_RECOVERY_MAX_INTERVAL:-}" ]] && readonly XFRM_RECOVERY_MAX_INTERVAL=16
+
+# Ensure sourcing returns 0; the [[ -z ]] && readonly idiom exits 1 when
+# the variable is already set, which is fatal under set -e / errexit.
+true

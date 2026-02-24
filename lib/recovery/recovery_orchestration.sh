@@ -3,7 +3,7 @@
 # Recovery orchestration functions for UDM VPN Monitor
 # Coordinates recovery actions across xfrm and IPsec recovery methods
 #
-# Version: 0.8.1
+# Version: 0.8.2
 #
 
 # shellcheck source=lib/recovery/recovery_verification.sh
@@ -499,6 +499,12 @@ surgical_cleanup() {
 		return 1
 	fi
 
+	# Check Tier 2 rate limiting before attempting recovery
+	if ! check_tier2_rate_limit "$location_name"; then
+		handle_error "WARNING" "$location_name" "Tier 2 rate limit exceeded, skipping surgical SA cleanup"
+		return 1
+	fi
+
 	local peer_display
 	peer_display=$(format_peer_display "$external_peer_ip")
 	# Note: surgical_cleanup doesn't have access to internal_peer_ip, so we only show external IP
@@ -529,6 +535,7 @@ surgical_cleanup() {
 			case $xfrm_result in
 			0)
 				# xfrm recovery succeeded
+				record_tier2_recovery
 				return 0
 				;;
 			1)
@@ -553,6 +560,7 @@ surgical_cleanup() {
 			recovery_succeeded=0
 			if execute_ipsec_reload "$external_peer_ip" "$location_name"; then
 				recovery_succeeded=1
+				record_tier2_recovery
 			fi
 			strategy_executed=1
 			;;

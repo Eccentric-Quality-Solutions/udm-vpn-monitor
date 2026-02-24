@@ -3,7 +3,7 @@
 # Configuration schema definition for UDM VPN Monitor
 # Defines validation rules for all configuration variables
 #
-# Version: 0.8.1
+# Version: 0.8.2
 #
 
 # Configuration schema definition
@@ -88,6 +88,9 @@ declare -gA CONFIG_SCHEMA=(
 	["MAX_RESTARTS_PER_WINDOW"]="required|integer|min:1|max:20|default:20"
 	["RATE_LIMIT_WINDOW_MINUTES"]="required|integer|min:5|max:1440|default:60"
 	["MIN_RESTART_INTERVAL_SECONDS"]="required|integer|min:0|max:300|default:40"
+	# Tier 2 rate limiting (surgical cleanup / ipsec reload)
+	["MAX_TIER2_RECOVERIES_PER_WINDOW"]="optional|integer|min:1|max:60|default:30"
+	["MIN_TIER2_INTERVAL_SECONDS"]="optional|integer|min:0|max:300|default:20"
 	# Startup grace period (seconds) - wait time before first VPN check after script restart
 	# Prevents false positives when IPsec/xfrm subsystems are still initializing
 	["STARTUP_GRACE_PERIOD"]="optional|integer|min:0|max:300|default:5"

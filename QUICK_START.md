@@ -153,10 +153,3 @@ For complete configuration options, descriptions, and examples, see the [Configu
 **Essential settings:**
 - `LOCATION_<NAME>_EXTERNAL` - **Required**: External/public IP of remote VPN gateway for location `<NAME>`
 - `LOCATION_<NAME>_INTERNAL` - **Optional**: Internal/private IP(s) for ping checks (space-separated, uses EXTERNAL IP if not set)
-
-**Note**: If you have an existing configuration using `EXTERNAL_PEER_IPS`/`INTERNAL_PEER_IPS`, use the migration script:
-```bash
-/data/vpn-monitor/scripts/migrate-config-to-locations.sh
-```
-The migration script runs in interactive mode by default (prompts for location names). Use `--auto` for automatic generation or `--csv FILE` for bulk import. See [MIGRATION.md](docs/MIGRATION.md) for detailed migration instructions.
-

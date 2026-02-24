@@ -8,7 +8,7 @@
 # Username and password are prompted for each UDM.
 #
 # Copy to deploy-udms.conf (in repo/install root) and add your UDMs:
-#   cp scripts/deploy-udms.conf.example deploy-udms.conf
+#   cp scripts/manage/deploy-udms.conf.example deploy-udms.conf
 #
 # Example entries:
 # 192.168.1.100

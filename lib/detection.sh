@@ -3,7 +3,7 @@
 # VPN status detection for UDM VPN Monitor
 # Handles VPN detection using xfrm, ipsec, and ping checks
 #
-# Version: 0.8.1
+# Version: 0.8.2
 #
 # This file sources all detection modules:
 # - network_validation.sh: IP validation, route checks

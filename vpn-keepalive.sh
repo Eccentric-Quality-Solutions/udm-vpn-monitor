@@ -6,7 +6,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.8.1
+# Version: 0.8.2
 #
 
 # Strict error handling: exit on error, undefined vars, pipe failures
@@ -22,7 +22,7 @@ PIDFILE="${STATE_DIR}/vpn-keepalive.pid"
 LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"
 
 # Script version
-SCRIPT_VERSION="0.8.1"
+SCRIPT_VERSION="0.8.2"
 
 # Source library modules
 # shellcheck source=lib/logging.sh
@@ -194,6 +194,14 @@ start_daemon() {
 	# Start daemon in background and capture PID
 	# For systemd Type=forking: parent must write PID file and exit immediately
 	(
+		# Validate error log is writable before disabling strict mode or redirecting.
+		# If the error log is unwritable, stderr would be lost silently after exec.
+		error_log="${LOGS_DIR}/vpn-keepalive-errors.log"
+		if ! { touch "$error_log" 2>/dev/null && test -w "$error_log"; }; then
+			log_message "ERROR" "SYSTEM" "Cannot write to daemon error log: $error_log (check permissions) - daemon will not start"
+			exit 1
+		fi
+
 		# Disable strict error handling in daemon (errors should not kill daemon)
 		set +e
 		set +u
@@ -205,10 +213,10 @@ start_daemon() {
 
 		# Detach from terminal: discard stdout; redirect stderr to error log so uncaught
 		# errors (e.g. command failures, write failures) are not silently lost
-		exec >/dev/null 2>>"${LOGS_DIR}/vpn-keepalive-errors.log"
+		exec >/dev/null 2>>"$error_log"
 
-		# Set up cleanup trap
-		trap 'rm -f "$PIDFILE"; exit 0' EXIT INT TERM
+		# Set up cleanup trap (do not touch PIDFILE - parent is sole owner per systemd Type=forking)
+		trap 'exit 0' EXIT INT TERM
 
 		# Keepalive interval (default: 30 seconds)
 		local keepalive_interval="${KEEPALIVE_INTERVAL:-30}"

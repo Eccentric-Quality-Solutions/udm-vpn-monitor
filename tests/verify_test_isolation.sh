@@ -48,6 +48,7 @@ TEST_ENV_VARS=(
 	LOCKFILE
 	LOG_FILE
 	RESTART_COUNT_FILE
+	TIER2_RECOVERY_COUNT_FILE
 	COOLDOWN_UNTIL_FILE
 	MOCK_IP
 	MOCK_PING
@@ -76,15 +77,37 @@ print_info() {
 	echo -e "${GREEN}[INFO]${NC} $*"
 }
 
+# Print warning message in yellow
+#
+# Arguments:
+#   $@: Message to print
+#
+# Returns:
+#   0: always
 print_warn() {
 	echo -e "${YELLOW}[WARN]${NC} $*"
 }
 
+# Print error message in red
+#
+# Arguments:
+#   $@: Message to print
+#
+# Returns:
+#   0: always
 print_error() {
 	echo -e "${RED}[ERROR]${NC} $*"
 }
 
-# Capture current environment state
+# Capture current environment state to a file
+#
+# Writes TEST_ENV_VARS and PATH to the given file for later comparison.
+#
+# Arguments:
+#   $1: output_file (string) - path to write env state
+#
+# Returns:
+#   0: success
 capture_env_state() {
 	local output_file="$1"
 	local -A env_state
@@ -111,6 +134,15 @@ capture_env_state() {
 }
 
 # Compare two environment state files
+#
+# Arguments:
+#   $1: before_file (string) - path to before state
+#   $2: after_file (string) - path to after state
+#   $3: diff_file (string, optional) - path to write diff output
+#
+# Returns:
+#   0: states match
+#   1: states differ
 compare_env_states() {
 	local before_file="$1"
 	local after_file="$2"
@@ -141,7 +173,14 @@ compare_env_states() {
 	return 0
 }
 
-# Check for files created outside TEST_DIR
+# Check for files created outside TEST_DIR that may indicate test pollution
+#
+# Arguments:
+#   None (uses TEST_DIR from environment)
+#
+# Returns:
+#   0: no suspicious files found
+#   1: files found outside TEST_DIR
 check_files_outside_test_dir() {
 	local test_dir="${TEST_DIR:-}"
 	local files_found=()
@@ -189,6 +228,13 @@ check_files_outside_test_dir() {
 }
 
 # Check if a test file is a slow test file
+#
+# Arguments:
+#   $1: filename (string) - basename of test file
+#
+# Returns:
+#   0: file is a slow test file
+#   1: file is not a slow test file
 is_slow_test_file() {
 	local filename="$1"
 	[[ "$filename" == "test_integration.sh" ]] ||
@@ -204,6 +250,17 @@ is_slow_test_file() {
 }
 
 # Verify test isolation for a single test file
+#
+# Runs the test file, captures env before/after, compares states, checks for file leakage.
+#
+# Arguments:
+#   $1: test_file (string) - path to BATS test file
+#   $2: file_num (string, optional) - progress display
+#   $3: total_files (string, optional) - progress display
+#
+# Returns:
+#   0: isolation verified
+#   1: isolation failed
 verify_test_file_isolation() {
 	local test_file="$1"
 	local test_name
@@ -293,7 +350,15 @@ verify_test_file_isolation() {
 }
 
 # Parse command line arguments
-# Sets RUN_SLOW_TESTS, SAMPLE_SIZE, and returns remaining args in global array
+#
+# Sets RUN_SLOW_TESTS, SAMPLE_SIZE, and remaining args in global PARSED_ARGS array.
+#
+# Arguments:
+#   $@: Command-line arguments (--slow, --sample N, --help, or test file paths)
+#
+# Returns:
+#   0: success (or exits 0 for --help)
+#   1: invalid arguments (exits)
 parse_args() {
 	local remaining_args=()
 
@@ -353,6 +418,12 @@ EOF
 }
 
 # Filter test files based on slow test setting
+#
+# Arguments:
+#   $@: Array of test file paths
+#
+# Returns:
+#   0: success (prints filtered list to stdout)
 filter_test_files() {
 	local all_files=("$@")
 	local filtered_files=()
@@ -373,7 +444,14 @@ filter_test_files() {
 	printf '%s\n' "${filtered_files[@]}"
 }
 
-# Main function
+# Main entry point: run isolation verification on test files
+#
+# Arguments:
+#   $@: Optional test file paths; if omitted, finds all fast test files
+#
+# Returns:
+#   0: all verifications passed
+#   1: one or more verifications failed
 main() {
 	# Parse arguments
 	parse_args "$@"

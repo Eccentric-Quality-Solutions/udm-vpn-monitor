@@ -3,7 +3,7 @@
 # Failure analysis functions for UDM VPN Monitor
 # Handles failure type classification and VPN status determination
 #
-# Version: 0.8.1
+# Version: 0.8.2
 #
 
 # shellcheck source=lib/constants.sh
@@ -610,9 +610,17 @@ determine_vpn_status() {
 			handle_error "WARNING" "$location_name" "VPN failure type: Tunnel down (no Phase 2 SA found) for $ip_display"
 			;;
 		"routing_issue")
-			# Ping failed or byte counters indicate no traffic: treat as VPN failed (count toward threshold)
-			handle_error "WARNING" "$location_name" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $ip_display"
-			primary_check_passed=0
+			if [[ $primary_check_passed -eq 0 ]]; then
+				# Primary check already failed — routing issue confirms the failure type
+				handle_error "WARNING" "$location_name" "VPN failure type: Routing issue (tunnel established but traffic not flowing) for $ip_display"
+				# primary_check_passed remains 0
+			else
+				# Primary check passed (e.g., idle tunnel confirmed healthy via ping in
+				# check_byte_counters). Failure analysis detected static/decreased bytes
+				# but the primary check is authoritative — it used both bytes AND ping.
+				# Log for diagnostics but do NOT override the primary verdict.
+				log_message "DEBUG" "$location_name" "Failure analysis detected routing_issue for $ip_display but primary check passed (idle tunnel or ping confirmed health) — not overriding"
+			fi
 			;;
 		*)
 			# "unknown" failure type
@@ -842,8 +850,12 @@ check_vpn_status() {
 	if [[ $xfrm_primary_passed -eq 1 ]] && [[ $primary_before_failure_type -eq 1 ]] && [[ -n "$xfrm_output" ]]; then
 		local current_bytes
 		if current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null) && [[ -n "$current_bytes" ]] && [[ "$current_bytes" =~ ^[0-9]+$ ]]; then
+			local prev_bytes
+			prev_bytes=$(get_peer_state "$location_name" "$external_peer_ip" "last_bytes" "0")
 			set_peer_state "$location_name" "$external_peer_ip" "last_bytes" "$current_bytes" || true
-			if [[ "$current_bytes" -gt 0 ]]; then
+			# Only clear idle_detected when bytes are actively increasing (traffic flowing).
+			# Static bytes (current == previous) means tunnel is still idle — preserve the state.
+			if [[ "$current_bytes" -gt 0 ]] && [[ "$current_bytes" -gt "$prev_bytes" ]]; then
 				delete_peer_state "$location_name" "$external_peer_ip" "idle_detected" || true
 			fi
 		fi

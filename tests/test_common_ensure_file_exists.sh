@@ -6,6 +6,7 @@
 # and various content scenarios
 
 load test_helper
+load helpers/mocks
 
 # Source the common library functions
 # shellcheck source=../lib/common.sh
@@ -280,10 +281,12 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 	# Purpose: Test that ensure_file_exists returns failure when mkdir fails
 	# Expected: Returns failure (1) when parent directory creation fails
 	# Importance: Error handling - function should report failures correctly
-	# Note: This test may be difficult to simulate without root permissions
-	# We'll test with a path that should fail (e.g., invalid characters or permissions)
-	# For a more reliable test, we could mock mkdir, but for now we'll skip if we can't create a failure scenario
-	skip "Difficult to reliably test mkdir failure without mocking or root permissions"
+	mock_command_failure "mkdir" 1 "Permission denied" >/dev/null
+	add_mock_to_path
+	local test_file="${BATS_TEST_TMPDIR}/nonexistent_parent/file.txt"
+	run ensure_file_exists "$test_file" "content"
+	assert_failure
+	remove_mock_from_path
 }
 
 # bats test_tags=category:unit
@@ -291,9 +294,13 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 	# Purpose: Test that ensure_file_exists returns failure when file write fails
 	# Expected: Returns failure (1) when file cannot be written
 	# Importance: Error handling - function should report write failures
-	# Note: This test may be difficult to simulate without root permissions
-	# We'll skip if we can't create a reliable failure scenario
-	skip "Difficult to reliably test file write failure without mocking or root permissions"
+	local readonly_dir="${BATS_TEST_TMPDIR}/readonly_dir"
+	mkdir -p "$readonly_dir"
+	chmod 555 "$readonly_dir"
+	local test_file="${readonly_dir}/file.txt"
+	run ensure_file_exists "$test_file" "content"
+	assert_failure
+	chmod 755 "$readonly_dir" 2>/dev/null || true
 }
 
 # ============================================================================

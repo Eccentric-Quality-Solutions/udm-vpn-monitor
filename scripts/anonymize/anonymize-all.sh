@@ -8,12 +8,12 @@
 
 set -euo pipefail
 
-# Get script directory
+# Get script directory (scripts/anonymize) and repo root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # Source anonymization library for location mapping
-# shellcheck source=../lib/anonymize.sh
+# shellcheck source=../../lib/anonymize.sh
 source "${PROJECT_ROOT}/lib/anonymize.sh" 2>/dev/null || {
 	echo "Error: Could not source lib/anonymize.sh" >&2
 	exit 1

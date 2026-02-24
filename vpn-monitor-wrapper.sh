@@ -10,7 +10,7 @@
 #
 # Designed for UniFi Dream Machine (UDM) running UniFi OS 4.3+
 #
-# Version: 0.8.1
+# Version: 0.8.2
 #
 
 set -euo pipefail
@@ -52,31 +52,51 @@ get_monitor_interval() {
 	echo "$interval"
 }
 
-# Check if wrapper is already running
+# Acquire exclusive lock to prevent concurrent wrapper instances
+#
+# Uses flock (preferred) or mkdir (fallback) for atomic lock acquisition.
+# Eliminates TOCTOU race in the previous is_running/echo PID approach.
 #
 # Arguments:
 #   None
 #
 # Returns:
-#   0: Wrapper is running
-#   1: Wrapper is not running
-is_running() {
-	if [[ ! -f "$PIDFILE" ]]; then
-		return 1
+#   0: Lock acquired (caller holds exclusive lock)
+#   1: Another instance holds the lock; caller should exit
+#
+# Side effects:
+#   On success: PIDFILE contains our PID; trap cleans up on exit
+#   On failure: returns 1 (caller exits 0 to avoid cron failures)
+acquire_wrapper_lock() {
+	if command -v flock >/dev/null 2>&1; then
+		exec 9>"$PIDFILE"
+		if ! flock -n 9; then
+			exec 9>&-
+			return 1
+		fi
+		echo "$$" >&9
+		trap 'exec 9>&-; rm -f "$PIDFILE"; exit 0' EXIT INT TERM
+		return 0
 	fi
 
-	local pid
-	pid=$(cat "$PIDFILE" 2>/dev/null || echo "")
-	if [[ -z "$pid" ]]; then
-		rm -f "$PIDFILE"
-		return 1
+	# Fallback: mkdir is atomic on POSIX (only one process can create)
+	local lock_dir="${STATE_DIR}/.wrapper.lock"
+	if ! mkdir "$lock_dir" 2>/dev/null; then
+		# Lock dir exists - check if holder is still running
+		if [[ -f "$PIDFILE" ]]; then
+			local pid
+			pid=$(cat "$PIDFILE" 2>/dev/null || echo "")
+			if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+				return 1
+			fi
+		fi
+		rm -rf "$lock_dir" 2>/dev/null
+		if ! mkdir "$lock_dir" 2>/dev/null; then
+			return 1
+		fi
 	fi
-
-	if ! kill -0 "$pid" 2>/dev/null; then
-		rm -f "$PIDFILE"
-		return 1
-	fi
-
+	echo "$$" >"$PIDFILE"
+	trap 'rm -rf "${STATE_DIR}/.wrapper.lock"; rm -f "$PIDFILE"; exit 0' EXIT INT TERM
 	return 0
 }
 
@@ -99,13 +119,10 @@ run_loop() {
 	# Ensure directories exist
 	mkdir -p "$STATE_DIR" "$LOGS_DIR"
 
-	# Exit if already running (cron may start us every minute)
-	if is_running; then
+	# Acquire exclusive lock (atomic; prevents concurrent instances)
+	if ! acquire_wrapper_lock; then
 		exit 0
 	fi
-
-	echo "$$" >"$PIDFILE"
-	trap 'rm -f "$PIDFILE"; exit 0' EXIT INT TERM
 
 	while true; do
 		if [[ -x "$MONITOR_SCRIPT" ]]; then

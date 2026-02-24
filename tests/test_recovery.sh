@@ -30,7 +30,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that select_recovery_strategy selects xfrm recovery when peer IP is provided and xfrm recovery is enabled
 	# Expected: Function selects "xfrm" strategy with "attempt_xfrm_recovery" command
 	# Importance: xfrm recovery is preferred for per-connection recovery
-	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 	# Source dependencies first (recovery.sh needs logging.sh)
 	# shellcheck source=../lib/logging.sh
@@ -56,7 +56,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that select_recovery_strategy selects ipsec_reload for Tier 2 when xfrm is unavailable
 	# Expected: Function selects "ipsec_reload" strategy when xfrm recovery is not available
 	# Importance: Ensures fallback to ipsec reload when xfrm recovery is unavailable
-	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 	# Remove ip mock to simulate xfrm unavailable (keep ipsec for reload)
 	rm -f "${TEST_DIR}/ip"
@@ -85,7 +85,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that select_recovery_strategy selects ipsec_restart for Tier 3 when xfrm is unavailable
 	# Expected: Function selects "ipsec_restart" strategy for Tier 3
 	# Importance: Ensures correct strategy selection for Tier 3 recovery
-	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 	# Remove ip mock to simulate xfrm unavailable (keep ipsec for restart)
 	rm -f "${TEST_DIR}/ip"
@@ -189,7 +189,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that select_recovery_strategy rejects invalid tier values
 	# Expected: Function returns error when tier is not 2 or 3
 	# Importance: Prevents invalid tier values from causing unexpected behavior
-	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1'
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' || fail "Fixture setup failed"
 
 	# Source dependencies first (recovery.sh needs logging.sh)
 	# shellcheck source=../lib/logging.sh
@@ -224,7 +224,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that select_recovery_strategy uses ipsec when xfrm recovery is disabled
 	# Expected: Function selects ipsec_reload/ipsec_restart when xfrm recovery is disabled
 	# Importance: Allows disabling xfrm recovery via configuration
-	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
 
 	# Export ENABLE_XFRM_RECOVERY=0 before sourcing (config not loaded when sourcing directly)
 	export ENABLE_XFRM_RECOVERY=0
@@ -1598,7 +1598,7 @@ EOF
 	# Purpose: Test verifies that xfrm recovery failure falls back to ipsec reload
 	# Expected: When xfrm recovery fails, script falls back to ipsec reload
 	# Importance: Fallback ensures recovery has multiple options when preferred method fails
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' || fail "Fixture setup failed"
 
 	# Mock ip command - xfrm recovery fails (delete fails)
 	# Use mock_ip_xfrm_delete with failure flag (0 = fail)
@@ -1649,7 +1649,7 @@ EOF
 	# Purpose: Test verifies that ipsec reload failure falls back to ipsec restart for Tier 2
 	# Expected: When ipsec reload fails, script falls back to ipsec restart
 	# Importance: Multiple fallback options ensure recovery succeeds even when methods fail
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
 
 	# Mock ipsec - reload fails, restart succeeds; VPN must be DOWN (status_exit=1)
 	mock_ipsec_reload_restart 1 0 1
@@ -1674,7 +1674,7 @@ EOF
 	# Purpose: Test verifies that appropriate log messages are generated for each fallback step
 	# Expected: Each fallback logs appropriate warning/info messages
 	# Importance: Logging helps diagnose recovery issues and understand fallback behavior
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' || fail "Fixture setup failed"
 
 	# Mock ip command - xfrm recovery fails
 	mock_ip_vpn_down
@@ -1702,7 +1702,7 @@ EOF
 	# Purpose: Test verifies that verification runs after fallback recovery actions
 	# Expected: Verification is performed after ipsec reload/restart fallback
 	# Importance: Verification ensures fallback recovery actually worked
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1'
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' || fail "Fixture setup failed"
 
 	# Mock ip command - xfrm recovery fails (no SAs), but verification succeeds after fallback
 	# Use a counter file to track calls
@@ -2791,7 +2791,7 @@ EOF
 	# Purpose: Test verifies that select_recovery_strategy() handles invalid tier values gracefully
 	# Expected: Function returns error when tier is not 2 or 3
 	# Importance: Invalid tier values should be caught early to prevent incorrect recovery behavior
-	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 	# Source dependencies first
 	# shellcheck source=../lib/logging.sh
@@ -2816,7 +2816,7 @@ EOF
 	# Purpose: Test verifies that select_recovery_strategy() handles empty peer IP gracefully
 	# Expected: Function falls back to ipsec_reload/restart when peer IP is empty
 	# Importance: Empty peer IP should not cause errors; should fall back to all-tunnels recovery
-	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 	# Source dependencies first
 	# shellcheck source=../lib/logging.sh
@@ -2840,7 +2840,7 @@ EOF
 	# Purpose: Test verifies that select_recovery_strategy() respects ENABLE_XFRM_RECOVERY=0
 	# Expected: Function falls back to ipsec_reload/restart when xfrm recovery is disabled
 	# Importance: Configuration should be respected; xfrm recovery should be skipped when disabled
-	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 	# Disable xfrm recovery
 	export ENABLE_XFRM_RECOVERY=0
@@ -2867,7 +2867,7 @@ EOF
 	# Purpose: Test verifies that select_recovery_strategy() sets RECOVERY_AVAILABLE=0 when all strategies unavailable
 	# Expected: Function returns error and sets RECOVERY_AVAILABLE=0 when no strategies are available
 	# Importance: Recovery availability should be correctly reported when commands are missing
-	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 	# Remove ip and ipsec commands from PATH (simulate unavailable)
 	local saved_path="$PATH"
@@ -2953,7 +2953,7 @@ EOF
 	# Purpose: Test verifies that _check_recovery_command_availability() handles command check failures gracefully
 	# Expected: Function sets availability flags to 0 when check_command_available fails, but doesn't error
 	# Importance: Command availability checks should fail silently to allow fallback strategies
-	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 	# Source dependencies first
 	# shellcheck source=../lib/logging.sh
@@ -3030,7 +3030,7 @@ EOF
 	# Purpose: Test verifies that _check_recovery_command_availability() handles get_command_path() failure gracefully
 	# Expected: When get_command_path() fails or is unavailable, _RECOVERY_IPSEC_PATH falls back to "ipsec"
 	# Importance: Path resolution failures should not prevent recovery; fallback to command name allows PATH resolution at execution time
-	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 	# Source dependencies first
 	# shellcheck source=../lib/logging.sh
@@ -3177,7 +3177,7 @@ EOF
 	# Purpose: Test verifies that select_recovery_strategy() sets all global variables correctly when strategy selection succeeds
 	# Expected: All global variables (RECOVERY_STRATEGY, RECOVERY_COMMAND, RECOVERY_IMPACT, RECOVERY_AVAILABLE) are set correctly
 	# Importance: Incorrectly set global variables can cause recovery execution failures
-	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1'
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' || fail "Fixture setup failed"
 
 	# Source dependencies first
 	# shellcheck source=../lib/logging.sh
@@ -3224,7 +3224,7 @@ EOF
 	# Purpose: Test verifies that select_recovery_strategy() handles command availability changes between checks
 	# Expected: Function uses cached availability from _check_recovery_command_availability() and doesn't re-check during strategy selection
 	# Importance: Race conditions where commands become unavailable between checks should be handled gracefully
-	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 	# Source dependencies first
 	# shellcheck source=../lib/logging.sh
@@ -3315,7 +3315,7 @@ EOF
 	# Purpose: Test verifies that _check_recovery_command_availability handles path resolution failures gracefully
 	# Expected: Function should handle get_command_path() failures and fall back to command name
 	# Importance: Path resolution failures should not prevent recovery command availability checks
-	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 	# Source dependencies first
 	# shellcheck source=../lib/logging.sh
@@ -3438,7 +3438,7 @@ EOF
 	# Purpose: Test verifies that _check_recovery_command_availability handles permission errors gracefully
 	# Expected: Function should detect when command exists but is not executable and mark as unavailable
 	# Importance: Permission errors should be handled gracefully to prevent recovery failures
-	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 	# Source dependencies first
 	# shellcheck source=../lib/logging.sh
@@ -3524,7 +3524,7 @@ EOF
 	# Purpose: Test verifies that _check_recovery_command_availability caches results and doesn't re-check unnecessarily
 	# Expected: Function should cache availability results, so multiple calls return same results
 	# Importance: Caching prevents unnecessary command checks and ensures consistent behavior
-	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}"
+	setup_vpn_recovery_test_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 	# Source dependencies first
 	# shellcheck source=../lib/logging.sh

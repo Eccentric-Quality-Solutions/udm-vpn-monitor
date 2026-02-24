@@ -1,7 +1,7 @@
 # Code Review Lessons Learned
 
 **Date:** 2025-01-15
-**Last Updated:** 2026-02-14
+**Last Updated:** 2026-02-23
 **Context:** Comprehensive codebase review for errors, bugs, DRY violations, and bad practices
 
 **Note:** For a pragmatic assessment of this document's value and recommendations for improvement, see `CODE_REVIEW_LESSONS_LEARNED_ASSESSMENT.md`.
@@ -1448,6 +1448,7 @@ fi
 - See `vpn-keepalive.sh:stop_daemon()` for reference implementation
 - See `lib/lockfile.sh` for similar race condition handling in lockfile operations
 - See `ACCEPTABLE_RISKS.md` for documented race conditions that are acceptable
+- **PID file single-owner:** For daemon PID files (systemd Type=forking), let only the parent write; the child must not touch the PID file on exit to avoid races. `stop_daemon` and `is_running()` handle removal. (vpn-keepalive.sh fix 2026-02-23)
 
 ### Best Practices Comparison
 
@@ -2447,7 +2448,7 @@ fi
 **Actionability:** High
 
 ### Problem
-The `anonymize_location()` function in `scripts/anonymize-logs.sh` used hash-based mapping to anonymize location names:
+The `anonymize_location()` function in `scripts/anonymize/anonymize-logs.sh` used hash-based mapping to anonymize location names:
 - Hash function: `hash_string()` creates deterministic hash from location name
 - Mapping: `hash % ${#CITY_NAMES[@]}` selects city name from array
 - **Issue:** Multiple different location names can hash to the same city index, causing collisions
@@ -2532,7 +2533,7 @@ anonymize_location() {
 - Ensure mapping remains deterministic (same input → same output) within a single run
 
 ### Related Patterns
-- See `scripts/anonymize-logs.sh` lines 312-325 for implementation
+- See `scripts/anonymize/anonymize-logs.sh` lines 312-325 for implementation
 - Hash-based mapping is used for both IP and location anonymization
 - IP anonymization doesn't have collision issues (maps to 10.x.x.x range with 256^3 possible values)
 - Location anonymization needed collision resolution (maps to 50 city names)
@@ -3057,3 +3058,13 @@ These lessons should be applied systematically in future development and code re
 40. **Awk has no built-in ceil(); `-int(-x)` is wrong** - In awk, `int()` truncates toward zero (e.g. `int(-0.6)` is 0), so the common C-style ceiling trick `-int(-x)` gives 0 for `x=0.6` instead of 1. For ceiling of a positive value use: `(v==int(v)) ? int(v) : int(v)+1`. Example: Ping threshold in `lib/detection/ping_detection.sh` was changed from `int(x + 0.999)` to this explicit ceiling to avoid a magic constant and to be correct in awk.
 
 41. **Pipeline exit code is the last command's** - In a pipeline `cmd1 | cmd2`, the pipeline's exit code is `cmd2`'s. If you need to act on `cmd1`'s success/failure (e.g. avoid masking `cmd1` failure when `cmd2` succeeds), run `cmd1` first, capture its output and exit code, then run `cmd2` on the captured output only when `cmd1` succeeded. Use `|| true` on `cmd2` when its non-zero exit (e.g. grep no match) is expected and the script uses `set -e`. Example: `lib/recovery/xfrm_recovery.sh` pre-delete diagnostic now runs `ip xfrm state` then greps its output so ip failures are not masked.
+
+42. **Path resolution breaks when moving scripts to subdirectories** - When a script uses `$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)` to find the repo root, moving the script one level deeper (e.g. from `scripts/` to `scripts/manage/`) changes the result: `dirname/..` becomes the parent of the script's directory, not the repo root. **After moving scripts, audit all path resolution**: update `REPO_ROOT` to go up the correct number of levels (`../..` for scripts in `scripts/manage/`), and replace any `dirname/..` patterns with `${REPO_ROOT}` or equivalent. Prefer using a single `REPO_ROOT` variable set at script start over repeating `dirname/..` in multiple places. Example: `scripts/manage/deploy-to-udm.sh` had `resolve_bind_ip_from_config()` using `$(dirname "${BASH_SOURCE[0]}")/..` which pointed to `scripts/` instead of repo root after the move; fixed to use `${REPO_ROOT}/vpn-monitor.conf`.
+
+43. **When removing a script, remove or skip its tests and update all doc references** - If a script is deleted (e.g. `scripts/migrate-config-to-locations.sh`), its test file (e.g. `tests/test_migration.sh`) will fail with "Command not found" (exit 127), and any docs that tell users to run that script become broken. **Remove or skip the dedicated test file** so the suite does not run tests against a non-existent script. **Audit and update or remove references** in install.sh, config templates, README, QUICK_START, TROUBLESHOOTING, deployment checklists, ADRs, and test docs (RELEVANT_TESTS.md, BATS_GUIDE.md, tests/README.md). Leave CHANGELOG/ADR historical mentions as-is; user-facing "how to" text should not point at the missing script. Example: C4 fix removed migrate-config references from install.sh and vpn-monitor.conf; test_migration.sh was removed and test docs updated; remaining user-facing doc references are in FUTURE.md.
+
+44. **Isolate mutable process state in tests with save + restore + EXIT trap** - When tests modify global process state (e.g. PATH for mock commands), that state can leak to later tests if an assertion fails before explicit cleanup runs. **Save the original value in setup** (e.g. `ORIGINAL_PATH="${PATH}"`), **restore it in teardown** so normal runs are isolated, and **also register an EXIT trap** in setup that restores the value so cleanup runs even when the test fails or teardown is overridden. Make add/remove helpers idempotent (e.g. don't duplicate PATH entries on double-call) and have remove restore from the saved value when available so cleanup is complete. Example: C5 fix in `test_helper.bash`—`standard_setup()` saves `ORIGINAL_PATH` and sets `trap '... export PATH="$ORIGINAL_PATH"' EXIT`; `remove_mock_from_path()` restores from `ORIGINAL_PATH` when set; `add_mock_to_path()` only prepends if `TEST_DIR` is not already at the front of PATH.
+
+45. **Use arithmetic context for numeric comparison when value may be non-numeric** - When comparing a value from command substitution (e.g. `calculate_duration` output) with `[[ -gt ]]`, non-numeric output causes the comparison to fail silently (bash does not enter the then-branch). Prefer `(( value > limit ))`: in arithmetic context, non-numeric values are treated as 0, so behavior is deterministic (e.g. "not stale" when age is invalid). Example: `lib/lockfile.sh` `check_lockfile_stale()` changed from `[[ "$lockfile_age" -gt "$LOCKFILE_TIMEOUT" ]]` to `((lockfile_age > LOCKFILE_TIMEOUT))`.
+
+46. **Do not swallow sourcing failures in test helpers** - When a test helper sources production modules (e.g. `source_function()` sourcing `lib/constants.sh`, `lib/common.sh`, etc.), do **not** use `2>/dev/null || true` or `|| true` on the `source` command. Swallowing the exit code causes tests that fail to load the function under test to pass vacuously (the function was never defined, so assertions never run or run on stale definitions). Let sourcing failures propagate so the test fails with a clear error. Example: Removed `|| true` from all `source "${LIB_DIR}/...` calls inside `source_function()` in `tests/test_helper.bash` so that module load failures surface as test failures.

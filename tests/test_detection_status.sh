@@ -91,7 +91,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Function detects bytes not increasing and marks VPN as suspect or failed
 	# Importance: Stagnant byte counters indicate VPN tunnel is not passing traffic, a critical failure condition
 	# Disable ping check so that bytes not increasing is detected as suspect (not idle but healthy)
-	setup_vpn_failing_fixture "${TEST_PEER_IP}" 0 1000 1000 "0x12345678" 'ENABLE_PING_CHECK=0'
+	setup_vpn_failing_fixture "${TEST_PEER_IP}" 0 1000 1000 "0x12345678" 'ENABLE_PING_CHECK=0' || fail "Fixture setup failed"
 
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
@@ -108,7 +108,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles corrupted byte counter files gracefully without crashing
 	# Expected: Script treats corrupted file as 0 or resets it, continuing normal operation
 	# Importance: File corruption can occur due to disk errors or manual editing; script must handle it robustly
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	# Get state file path using helper
 	# Create corrupted byte counter file (non-numeric)
@@ -131,7 +131,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles byte counter files containing negative numbers gracefully
 	# Expected: Script treats negative value as invalid and either resets to 0 or uses current bytes value
 	# Importance: Negative values can occur from file corruption or manual editing; script must handle them robustly
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	# Get state file path using helper
 	# Create byte counter file with negative number
@@ -154,7 +154,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that the script handles empty byte counter files gracefully
 	# Expected: Script treats empty file as 0, then updates it with current bytes value from xfrm output
 	# Importance: Empty files can occur from file deletion or initialization; script must handle them robustly
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
 
 	# Get state file path using helper
 	# Clear byte counter file to test empty file handling
@@ -265,7 +265,7 @@ EOF
 	# Purpose: Test verifies that ping check works correctly when LOCATION_*_INTERNAL is not set
 	# Expected: Script uses peer IP for ping check when internal IPs are not configured
 	# Importance: Ensures ping check works even when internal IPs are not specified in configuration
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1'
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_PING_CHECK=1' || fail "Fixture setup failed"
 
 	# Mock ping - should use peer IP
 	local mock_ping

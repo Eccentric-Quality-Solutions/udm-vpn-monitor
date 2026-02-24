@@ -72,12 +72,6 @@ LOCATION_DC_EXTERNAL="198.51.100.1"  # REQUIRED - External/public IP
 LOCATION_DC_INTERNAL="192.168.200.1"  # Optional - Internal/private IP(s)
 ```
 
-**Note**: If migrating from old format (`EXTERNAL_PEER_IPS`/`INTERNAL_PEER_IPS`), use the migration script:
-```bash
-/data/vpn-monitor/scripts/migrate-config-to-locations.sh
-```
-See [MIGRATION.md](docs/MIGRATION.md) for detailed migration instructions.
-
 **Additional Configuration Options:**
 - **Resource Monitoring**: Enabled by default (`ENABLE_RESOURCE_MONITORING=1`). Monitors CPU, RAM, and disk space usage and throttles execution when resources are constrained. Adjust thresholds if needed:
   - `RESOURCE_CPU_THRESHOLD` (default: 90%) - CPU usage threshold

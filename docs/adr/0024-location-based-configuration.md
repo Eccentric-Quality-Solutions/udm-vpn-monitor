@@ -26,7 +26,6 @@ We will implement a location-based configuration format that:
 - Includes location names in state file names and logs for better identification
 - Supports multiple internal IPs per location with 30% ping threshold for health determination
 - Maintains independent failure tracking per location
-- Provides migration script to convert from old format to new format
 
 ## Consequences
 
@@ -36,12 +35,12 @@ We will implement a location-based configuration format that:
 - **Multiple Internal IPs**: Supports multiple internal IPs per location with flexible health determination (30% threshold)
 - **Independent Tracking**: Each location has its own failure counter and state files
 - **Easier Management**: Add or remove locations without affecting others
-- **Migration Support**: Automated migration script helps users transition from old format
-- **Backward Compatibility**: Migration script preserves existing configuration during transition
+- **Migration Support**: Manual migration guide helps users transition from old format
+- **Backward Compatibility**: Backup-and-edit workflow preserves existing configuration during transition
 
 ### Negative
 - **Breaking Change**: Old format (`EXTERNAL_PEER_IPS`/`INTERNAL_PEER_IPS`) no longer supported
-- **Migration Required**: Existing users must migrate configuration (script provided)
+- **Migration Required**: Existing users must migrate configuration
 - **State File Migration**: Old state files not automatically migrated (new files created)
 - **Configuration Complexity**: More verbose configuration format (more lines per location)
 - **Location Name Validation**: Requires validation and sanitization of location names
@@ -71,10 +70,8 @@ We will implement a location-based configuration format that:
 - Location name included in filename for better organization
 
 ### Migration
-- **Migration Script**: `scripts/migrate-config-to-locations.sh`
-- **Modes**: Interactive (prompts for location names) and CSV (bulk import)
-- **Automatic Backup**: Creates backup before migration
-- **Validation**: Validates configuration after migration
+- **Migration**: Manual only. Edit config to replace `EXTERNAL_PEER_IPS`/`INTERNAL_PEER_IPS` with `LOCATION_<NAME>_EXTERNAL` and `LOCATION_<NAME>_INTERNAL` per peer.
+- **Backup**: Create a backup before editing. Validate with `vpn-monitor.sh --fake` after migration.
 
 ### Configuration Parsing
 - **Module**: `lib/config.sh` - `load_location_based_config()` function
@@ -89,7 +86,5 @@ We will implement a location-based configuration format that:
 
 ## References
 - CHANGELOG.md: Version 0.4.3 - Location-Based Configuration
-- docs/MIGRATION.md: Migration guide for location-based configuration
 - README.md: Location-based configuration documentation
 - lib/config.sh: `load_location_based_config()` implementation
-- scripts/migrate-config-to-locations.sh: Migration script

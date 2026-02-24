@@ -14,8 +14,8 @@
 #   load helpers/fixtures
 #   load fixtures/vpn_active
 #
-#   # Use fixture setup function
-#   setup_vpn_active_fixture "${TEST_PEER_IP}"
+#   # Use fixture setup function (check return so setup failures fail the test)
+#   setup_vpn_active_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 # This module is a placeholder for fixture-related helper functions that may
 # emerge as test patterns develop. Currently, fixtures are well-organized in

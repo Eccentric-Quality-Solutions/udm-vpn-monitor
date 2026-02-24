@@ -474,23 +474,27 @@ Routes (IP addresses on the `br0` interface) are automatically managed by the VP
    - Check if ping commands are available: `which ping ping6`
    - Restart service: `systemctl restart vpn-keepalive`
 
-3. **Manual start works but systemd doesn't**:
+3. **Daemon dies immediately after start** (e.g. "daemon process died immediately after start"):
+   - Check the main keepalive log for the cause: `tail -20 /data/vpn-monitor/logs/vpn-keepalive.log`
+   - If you see "Cannot write to daemon error log", ensure the logs directory and `logs/vpn-keepalive-errors.log` are writable by the user running the daemon (e.g. `chmod` or fix ownership).
+
+4. **Manual start works but systemd doesn't**:
    - Check systemd service file paths are correct
    - Verify systemd has permissions to execute script
    - Check systemd logs: `journalctl -u vpn-keepalive -n 50`
 
-4. **Keepalive pings failing**:
+5. **Keepalive pings failing**:
    - Verify location-based configuration is set (e.g., `LOCATION_*_EXTERNAL` and `LOCATION_*_INTERNAL`)
    - Check if VPN tunnel is actually up
    - Test ping manually: `ping -c 1 <peer_ip>`
    - Check firewall rules that might block ping
 
-5. **Service enabled but not starting on boot**:
+6. **Service enabled but not starting on boot**:
    - Enable service: `systemctl enable vpn-keepalive`
    - Check service dependencies: `systemctl list-dependencies vpn-keepalive`
    - Verify network-online.target is available
 
-6. **Reinstall systemd service**:
+7. **Reinstall systemd service**:
    ```bash
    # Stop and remove old service
    systemctl stop vpn-keepalive
@@ -622,13 +626,6 @@ LOCATION_NYC_EXTERNAL="203.0.113.1"
 LOCATION_NYC_INTERNAL="192.168.100.1"
 ```
 See [README.md Configuration section](README.md#configuration) for details on location-based configuration.
-
-**If migrating from old format**:
-If you have an existing configuration using `EXTERNAL_PEER_IPS`/`INTERNAL_PEER_IPS`, use the migration script:
-```bash
-/data/vpn-monitor/scripts/migrate-config-to-locations.sh
-```
-The migration script runs in interactive mode by default (prompts for location names). Use `--auto` for automatic generation or `--csv FILE` for bulk import. See [MIGRATION.md](docs/MIGRATION.md) for detailed migration instructions.
 
 **If config syntax error**:
 - Check for unclosed quotes

@@ -6,7 +6,7 @@
 load test_helper
 
 # Path to the anonymize-logs script
-ANONYMIZE_LOGS_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize-logs.sh"
+ANONYMIZE_LOGS_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize/anonymize-logs.sh"
 
 # Create sample log file with IPs and locations
 #
@@ -442,6 +442,67 @@ EOF
 	local unique_count
 	unique_count=$(printf '%s\n' "${locations[@]}" | sort -u | wc -l)
 	assert_equal 12 "$unique_count" "Expected 12 unique anonymized location names, got $unique_count (duplicates indicate collision bug)"
+}
+
+# bats test_tags=category:unit
+@test "anonymize-logs.sh uses shared mapping file so different locations get different anonymized names across runs" {
+	# Purpose: Without -m, script uses <input_dir>/anonymization.mapping so mappings persist.
+	# Run 1: NYC -> CITY_A. Run 2: ATLANTA (different location) -> CITY_B (not CITY_A).
+	# Prevents overwriting: each original location gets a distinct anonymized city.
+	local log_dir="${TEST_DIR}/shared_mapping_logs"
+	local input_nyc="${log_dir}/vpn-monitor-NYC.log"
+	local input_atlanta="${log_dir}/vpn-monitor-ATLANTA.log"
+	local output_nyc="${log_dir}/out-nyc.log"
+	local output_atlanta="${log_dir}/out-atlanta.log"
+	mkdir -p "$log_dir"
+	echo '[2025-01-15 10:00:00] [INFO] VPN check for location NYC (10.0.0.1): OK' >"$input_nyc"
+	echo '[2025-01-15 10:00:00] [INFO] VPN check for location ATLANTA (10.0.0.2): OK' >"$input_atlanta"
+
+	# Run 1: anonymize NYC log (no -m) -> creates anonymization.mapping with NYC -> something
+	run bash "$ANONYMIZE_LOGS_SCRIPT" -i "$input_nyc" -o "$output_nyc"
+	assert_success
+	local mapping_file="${log_dir}/anonymization.mapping"
+	assert_file_exist "$mapping_file"
+	run grep -E '^NYC -> ' "$mapping_file"
+	assert_success
+	local anon_nyc
+	anon_nyc=$(grep -E '^NYC -> ' "$mapping_file" | sed 's/^NYC -> //')
+
+	# Run 2: anonymize ATLANTA log (no -m) -> loads same mapping, ATLANTA gets a different city
+	run bash "$ANONYMIZE_LOGS_SCRIPT" -i "$input_atlanta" -o "$output_atlanta"
+	assert_success
+	run grep -E '^ATLANTA -> ' "$mapping_file"
+	assert_success
+	local anon_atlanta
+	anon_atlanta=$(grep -E '^ATLANTA -> ' "$mapping_file" | sed 's/^ATLANTA -> //')
+	assert_not_equal "$anon_nyc" "$anon_atlanta" "NYC and ATLANTA must map to different anonymized cities (semi-permanent mapping)"
+	# Mapping file should still contain NYC
+	run grep -E '^NYC -> ' "$mapping_file"
+	assert_success
+}
+
+# bats test_tags=category:unit
+@test "anonymize-logs.sh rewrites output filename when it contains real location name" {
+	# Purpose: When -o is a path like anonymized-vpn-monitor-NYC.log, output is written
+	# to vpn-monitor-<ANON>-anonymized.log so the filename does not leak the location.
+	# Expected: File is written to canonical anonymized basename in the same directory.
+	local log_dir="${TEST_DIR}/rewrite-out"
+	local input_file="${log_dir}/vpn-monitor-NYC.log"
+	local output_path="${log_dir}/anonymized-vpn-monitor-NYC.log"
+	mkdir -p "$log_dir"
+	create_sample_log_file "$input_file"
+
+	run bash "$ANONYMIZE_LOGS_SCRIPT" -i "$input_file" -o "$output_path"
+
+	assert_success
+	# Script must not write to the user-provided path that contains the real location
+	assert [ ! -f "$output_path" ]
+	# Script must write to canonical name vpn-monitor-<ANON>-anonymized.log in same dir
+	local canonical
+	canonical=$(find "$log_dir" -maxdepth 1 -name 'vpn-monitor-*-anonymized.log' -type f)
+	assert [ -n "$canonical" ]
+	assert_file_exist "$canonical"
+	refute_file_contains "$canonical" "NYC"
 }
 
 # bats test_tags=category:unit

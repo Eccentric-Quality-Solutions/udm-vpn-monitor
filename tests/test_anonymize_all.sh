@@ -7,15 +7,21 @@
 load test_helper
 
 # Path to the anonymize-all script
-ANONYMIZE_ALL_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize-all.sh"
+ANONYMIZE_ALL_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize/anonymize-all.sh"
 
 # Paths to individual anonymization scripts (for mocking/verification)
-ANONYMIZE_FIREWALL_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize-firewall.sh"
-ANONYMIZE_IP_RULES_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize-ip-rules.sh"
-ANONYMIZE_IPSET_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize-ipset.sh"
-ANONYMIZE_LOGS_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize-logs.sh"
+ANONYMIZE_FIREWALL_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize/anonymize-firewall.sh"
+ANONYMIZE_IP_RULES_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize/anonymize-ip-rules.sh"
+ANONYMIZE_IPSET_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize/anonymize-ipset.sh"
+ANONYMIZE_LOGS_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/anonymize/anonymize-logs.sh"
 
-# Create sample files for testing
+# Create sample firewall rules file for testing
+#
+# Arguments:
+#   $1: file (string) - path to write the sample firewall file
+#
+# Returns:
+#   0: success
 create_sample_firewall_file() {
 	local file="$1"
 	mkdir -p "$(dirname "$file")"
@@ -29,6 +35,13 @@ COMMIT
 EOF
 }
 
+# Create sample IPv4 routes file for testing
+#
+# Arguments:
+#   $1: file (string) - path to write the sample routes file
+#
+# Returns:
+#   0: success
 create_sample_ipv4_routes_file() {
 	local file="$1"
 	mkdir -p "$(dirname "$file")"
@@ -38,6 +51,13 @@ default via 192.168.1.1 dev eth0
 EOF
 }
 
+# Create sample IPv6 routes file for testing
+#
+# Arguments:
+#   $1: file (string) - path to write the sample routes file
+#
+# Returns:
+#   0: success
 create_sample_ipv6_routes_file() {
 	local file="$1"
 	mkdir -p "$(dirname "$file")"
@@ -47,6 +67,13 @@ default via fe80::1 dev eth0
 EOF
 }
 
+# Create sample ipset save file for testing
+#
+# Arguments:
+#   $1: file (string) - path to write the sample ipset file
+#
+# Returns:
+#   0: success
 create_sample_ipset_file() {
 	local file="$1"
 	mkdir -p "$(dirname "$file")"
@@ -58,6 +85,13 @@ add TOR 172.16.0.1
 EOF
 }
 
+# Create sample vpn-monitor log file for testing
+#
+# Arguments:
+#   $1: file (string) - path to write the sample log file
+#
+# Returns:
+#   0: success
 create_sample_log_file() {
 	local file="$1"
 	mkdir -p "$(dirname "$file")"

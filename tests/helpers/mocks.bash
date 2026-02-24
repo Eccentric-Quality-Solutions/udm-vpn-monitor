@@ -345,6 +345,13 @@ clear_mock_tracking() {
 # - To reset mock state within a test (e.g. before a second phase), use
 #   clear_xfrm_mock_state() with the same paths used when creating the mock.
 #
+# Multi-phase tests (REQUIRED):
+# - If a test runs the script (or recovery) more than once while using the
+#   same xfrm mock (mock_ip_xfrm_bidirectional_sa, mock_ip_xfrm_asymmetric_sa,
+#   mock_ip_xfrm_sa_count_mismatch, mock_ip_xfrm_timing_delay), you MUST call
+#   clear_xfrm_mock_state() between phases. Otherwise the second phase
+#   inherits stale deletion flags and the test can false-pass.
+#
 # ============================================================================
 
 # Clear state files created by xfrm mock ip commands

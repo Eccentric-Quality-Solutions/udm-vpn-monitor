@@ -3,7 +3,7 @@
 # Configuration validation for UDM VPN Monitor
 # Handles schema-based validation, type checking, and rule validation
 #
-# Version: 0.8.1
+# Version: 0.8.2
 
 # Validate configuration variable type
 # Note: parse_config_schema() is defined in config_loading.sh and available here
@@ -628,6 +628,11 @@ setup_routes_if_needed() {
 	for location_name in "${!LOCATIONS[@]}"; do
 		local internal_ips
 		internal_ips=$(get_location_internal_ips "$location_name")
+		local get_internal_ret=$?
+		if [[ $get_internal_ret -eq "${EXIT_MALFORMED_DATA:-7}" ]]; then
+			handle_error "ERROR" "SYSTEM" "Malformed location data for $location_name (cannot determine internal IPs)"
+			return 1
+		fi
 		if [[ -n "$internal_ips" ]]; then
 			has_internal_ips=1
 			break
@@ -749,15 +754,19 @@ validate_config() {
 	local location_name
 	local external_peer_ip
 	local internal_ips
-	local IFS=' '
+	local IFS=' ' # Scoped so callers' IFS is not affected (read -ra internal_ips_array uses space separator)
 	local -a internal_ips_array
 
 	for location_name in "${!LOCATIONS[@]}"; do
 		# Get external IP for this location
-		if ! external_peer_ip=$(get_location_external_ip "$location_name"); then
+		external_peer_ip=$(get_location_external_ip "$location_name")
+		local get_external_ret=$?
+		if [[ $get_external_ret -ne 0 ]]; then
+			local external_err_msg="Failed to get external IP"
+			[[ $get_external_ret -eq "${EXIT_MALFORMED_DATA:-7}" ]] && external_err_msg="Malformed location data (invalid format)"
 			# Use handle_error_or_exit_fake_mode to respect fake mode
 			# In fake mode, it returns 1; in normal mode it calls die() and never returns
-			if ! handle_error_or_exit_fake_mode "$location_name" "Failed to get external IP" "${EXIT_VALIDATION_ERROR:-3}"; then
+			if ! handle_error_or_exit_fake_mode "$location_name" "$external_err_msg" "${EXIT_VALIDATION_ERROR:-3}"; then
 				# In fake mode, handle_error_or_exit_fake_mode returns 1
 				return 1
 			fi
@@ -777,6 +786,12 @@ validate_config() {
 
 		# Get internal IPs for this location (may be empty)
 		internal_ips=$(get_location_internal_ips "$location_name")
+		local get_internal_ret=$?
+		if [[ $get_internal_ret -eq "${EXIT_MALFORMED_DATA:-7}" ]]; then
+			if ! handle_error_or_exit_fake_mode "$location_name" "Malformed location data (invalid format)" "${EXIT_VALIDATION_ERROR:-3}"; then
+				return 1
+			fi
+		fi
 
 		# When ping is enabled and location has no internal IPs, warn (ping will use external IP)
 		if [[ "${ENABLE_PING_CHECK:-0}" -eq 1 ]] && [[ -z "$internal_ips" ]]; then

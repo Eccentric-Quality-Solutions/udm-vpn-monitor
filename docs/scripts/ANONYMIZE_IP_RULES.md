@@ -21,13 +21,13 @@ All replacements are **deterministic** - the same input always produces the same
 
 ```bash
 # Anonymize routes and save to file
-/data/vpn-monitor/scripts/anonymize-ip-rules.sh -i /tmp/ip-route.txt -o anonymized-routes.txt
+/data/vpn-monitor/scripts/anonymize/anonymize-ip-rules.sh -i /tmp/ip-route.txt -o anonymized-routes.txt
 
 # Anonymize routes and output to stdout
-/data/vpn-monitor/scripts/anonymize-ip-rules.sh -i routes-ipv4.txt | less
+/data/vpn-monitor/scripts/anonymize/anonymize-ip-rules.sh -i routes-ipv4.txt | less
 
 # Verbose mode (shows progress and mappings)
-/data/vpn-monitor/scripts/anonymize-ip-rules.sh -i routes-ipv4.txt -o anonymized-routes.txt -v
+/data/vpn-monitor/scripts/anonymize/anonymize-ip-rules.sh -i routes-ipv4.txt -o anonymized-routes.txt -v
 ```
 
 ### Command Line Options
@@ -62,7 +62,7 @@ All replacements are **deterministic** - the same input always produces the same
 ip route > /tmp/my-ipv4-routes.txt
 
 # Anonymize them
-/data/vpn-monitor/scripts/anonymize-ip-rules.sh \
+/data/vpn-monitor/scripts/anonymize/anonymize-ip-rules.sh \
   -i /tmp/my-ipv4-routes.txt \
   -o /tmp/anonymized-ipv4-routes.txt
 
@@ -77,7 +77,7 @@ cat /tmp/anonymized-ipv4-routes.txt
 ip -6 route > /tmp/my-ipv6-routes.txt
 
 # Anonymize them
-/data/vpn-monitor/scripts/anonymize-ip-rules.sh \
+/data/vpn-monitor/scripts/anonymize/anonymize-ip-rules.sh \
   -i /tmp/my-ipv6-routes.txt \
   -o /tmp/anonymized-ipv6-routes.txt \
   -v
@@ -87,7 +87,7 @@ ip -6 route > /tmp/my-ipv6-routes.txt
 
 ```bash
 # Anonymize routes and search for specific patterns
-/data/vpn-monitor/scripts/anonymize-ip-rules.sh \
+/data/vpn-monitor/scripts/anonymize/anonymize-ip-rules.sh \
   -i routes.txt | grep "default"
 ```
 
@@ -99,11 +99,11 @@ ip -6 route > /tmp/my-ipv6-routes.txt
   -o /tmp/udm-export
 
 # Anonymize the exported routes
-/data/vpn-monitor/scripts/anonymize-ip-rules.sh \
+/data/vpn-monitor/scripts/anonymize/anonymize-ip-rules.sh \
   -i /tmp/udm-export/routes-ipv4-*.txt \
   -o /tmp/udm-export/routes-ipv4-anonymized.txt
 
-/data/vpn-monitor/scripts/anonymize-ip-rules.sh \
+/data/vpn-monitor/scripts/anonymize/anonymize-ip-rules.sh \
   -i /tmp/udm-export/routes-ipv6-*.txt \
   -o /tmp/udm-export/routes-ipv6-anonymized.txt
 ```
@@ -221,7 +221,7 @@ The anonymize-ip-rules script works seamlessly with the `export-udm-routes-firew
 
 # Step 2: Anonymize the exported routes
 for file in /tmp/udm-export/routes-*.txt; do
-  /data/vpn-monitor/scripts/anonymize-ip-rules.sh \
+  /data/vpn-monitor/scripts/anonymize/anonymize-ip-rules.sh \
     -i "$file" \
     -o "${file%.txt}-anonymized.txt"
 done
@@ -244,6 +244,6 @@ done
 
 ## See Also
 
-- `scripts/anonymize-ip-rules.sh` - The anonymization script
+- `scripts/anonymize/anonymize-ip-rules.sh` - The anonymization script
 - `scripts/export-udm-routes-firewall.sh` - Export script for routes and firewall rules
-- `scripts/anonymize-firewall.sh` - Firewall rules anonymization script
+- `scripts/anonymize/anonymize-firewall.sh` - Firewall rules anonymization script

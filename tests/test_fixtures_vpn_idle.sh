@@ -20,7 +20,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that vpn_idle fixture correctly sets up idle tunnel scenario
 	# Expected: Static bytes set, ping mock succeeds, ping check enabled in config
 	# Importance: Ensures fixture works correctly for idle tunnel tests
-	setup_vpn_idle_fixture "${TEST_PEER_IP}"
+	setup_vpn_idle_fixture "${TEST_PEER_IP}" || fail "Fixture setup failed"
 
 	# Verify state file has static bytes
 	ensure_state_functions_loaded
@@ -61,7 +61,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that vpn_idle fixture accepts custom bytes and internal IP
 	# Expected: Custom bytes and internal IP are set correctly
 	# Importance: Ensures fixture accepts parameters correctly
-	setup_vpn_idle_fixture "${TEST_PEER_IP}" 5000 "10.0.0.2"
+	setup_vpn_idle_fixture "${TEST_PEER_IP}" 5000 "10.0.0.2" || fail "Fixture setup failed"
 
 	# Verify state file has custom bytes
 	ensure_state_functions_loaded
@@ -88,7 +88,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that vpn_idle fixture accepts custom SPI value
 	# Expected: Custom SPI is set correctly
 	# Importance: Ensures fixture accepts SPI parameter correctly
-	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "10.0.0.1" "0xABCD1234"
+	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "10.0.0.1" "0xABCD1234" || fail "Fixture setup failed"
 
 	# Verify state file has custom SPI
 	# Note: SPI is stored as-is by fixture, but when extracted by extract_spi() it will be normalized
@@ -115,7 +115,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that vpn_idle fixture accepts additional config variables
 	# Expected: Additional config variables are set correctly
 	# Importance: Ensures fixture accepts extra config parameters correctly
-	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "10.0.0.1" "0x12345678" 'TIER1_THRESHOLD=2' 'TIER2_THRESHOLD=4'
+	setup_vpn_idle_fixture "${TEST_PEER_IP}" 1000 "10.0.0.1" "0x12345678" 'TIER1_THRESHOLD=2' 'TIER2_THRESHOLD=4' || fail "Fixture setup failed"
 
 	# Verify config has additional variables
 	assert_file_exist "$TEST_CONFIG_FILE"
