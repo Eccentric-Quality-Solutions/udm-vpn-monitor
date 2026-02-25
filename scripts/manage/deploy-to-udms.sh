@@ -315,7 +315,7 @@ main() {
 					echo ""
 					local response
 					while true; do
-						if ! read -r -p "Deployment to $host completed. Mark as successful? (y/n): " response 2>/dev/null; then
+						if ! read -r -p "Deployment to $host completed. Mark as successful? (y/n): " response; then
 							break
 						fi
 						if [[ "$response" =~ ^[yY] ]]; then
