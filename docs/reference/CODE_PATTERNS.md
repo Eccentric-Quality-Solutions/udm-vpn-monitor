@@ -44,6 +44,7 @@ These patterns should be followed consistently when writing or modifying code in
 21. [Quoting and Variable Expansion Patterns](#quoting-and-variable-expansion-patterns)
 22. [Script-Specific Patterns](#script-specific-patterns)
 23. [UDM-Specific Constraints](#udm-specific-constraints)
+24. [SSH Connection Management Patterns](#ssh-connection-management-patterns)
 
 ---
 
@@ -4528,6 +4529,111 @@ source "${LIB_DIR}/common.sh"
 
 ---
 
+## SSH Connection Management Patterns
+
+### Pattern: SSH ControlMaster with `ControlPersist` + `true`
+
+**When to Use:** Scripts that make multiple SSH/SCP calls to the same host (e.g., deployment scripts)
+
+**Pattern:**
+```bash
+# 1. Create secure socket directory
+sock_dir=$(mktemp -d /tmp/ssh-deploy-XXXXXX)
+chmod 700 "$sock_dir"
+CONTROL_SOCKET="${sock_dir}/ctrl.sock"
+
+# 2. Establish master with a trivial command (NOT ssh -fN!)
+local auth_rc=0
+SSHPASS="$password" sshpass -e ssh \
+    -o ControlMaster=yes -o ControlPath="$CONTROL_SOCKET" -o ControlPersist=60 \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -p "$port" "${user}@${host}" true || auth_rc=$?
+
+# 3. All subsequent calls multiplex (no password needed)
+ssh -o ControlPath="$CONTROL_SOCKET" -p "$port" "${user}@${host}" "command"
+scp -o ControlPath="$CONTROL_SOCKET" -P "$port" file "${user}@${host}:/path"
+
+# 4. EXIT trap cleanup (with set +e to prevent mid-cleanup abort)
+cleanup_control_master() {
+    set +e
+    if [[ -n "${CONTROL_SOCKET:-}" ]] && [[ -e "$CONTROL_SOCKET" ]]; then
+        ssh -o ControlPath="$CONTROL_SOCKET" -O exit "${user}@${host}" 2>/dev/null
+    fi
+    local dir
+    dir="$(dirname "${CONTROL_SOCKET:-}" 2>/dev/null)"
+    rm -f "${CONTROL_SOCKET:-}" 2>/dev/null
+    [[ -n "$dir" ]] && [[ "$dir" == /tmp/ssh-deploy-* ]] && rmdir "$dir" 2>/dev/null
+    set -e
+}
+trap cleanup_control_master EXIT
+```
+
+**Key Points:**
+- **Never use `sshpass` + `ssh -f`** — sshpass creates a pty and waits for EOF; ssh -f keeps the pty open forever, causing a hang
+- **`ssh ... true` + `ControlPersist=60`** is the correct pattern: ssh runs `true` synchronously, exits cleanly, ControlPersist keeps the socket alive via OpenSSH-managed background process
+- **`ControlPersist` timer** counts idle seconds (no active multiplexed connections); while ssh/scp is running, the timer is paused. 60 seconds is sufficient for gaps between deployment steps
+- **`|| auth_rc=$?`** captures auth failures without triggering `set -e`
+- **`set +e` in EXIT trap** prevents cleanup from aborting if any cleanup command fails
+- **`mktemp -d` + `chmod 700`** prevents symlink attacks (vs predictable `/tmp/ssh-$host-$$.sock`)
+- **Pattern-guard `rmdir`** with `[[ "$dir" == /tmp/ssh-deploy-* ]]` to prevent accidental deletion of wrong directory
+- **Clean up temp dir on setup failure** — if master setup fails and you set `CONTROL_SOCKET=""`, the EXIT trap won't clean up; do it explicitly before clearing the variable
+
+**Auth method cascade:**
+```bash
+# Try sshpass (best), then expect (middle), then manual /dev/tty (fallback)
+if command -v sshpass >/dev/null 2>&1; then
+    SSHPASS="$password" sshpass -e ssh $master_opts "${user}@${host}" true || auth_rc=$?
+elif command -v expect >/dev/null 2>&1; then
+    expect <<-EXPECT_EOF || auth_rc=$?
+        spawn ssh $master_opts "${user}@${host}" true
+        expect "assword:"
+        send -- "$password\r"
+        expect eof
+    EXPECT_EOF
+else
+    # Manual: let ssh prompt on /dev/tty (user types password once)
+    ssh $master_opts "${user}@${host}" true </dev/tty 2>/dev/tty || auth_rc=$?
+fi
+```
+
+**Password collection strategy:** Only collect password in `validate_params` when `sshpass` or `expect` is available (can feed it programmatically). When neither is available, let ssh prompt directly on `/dev/tty` during ControlMaster setup. For non-interactive use without `sshpass`: fail early with a clear error.
+
+**Reference implementation:** `scripts/manage/deploy-to-udm.sh` — `setup_control_master()`, `cleanup_control_master()`, `build_ssh_opts()`
+
+### Pattern: Build SSH Options Helper
+
+**When to Use:** When multiple functions need the same SSH options (ControlPath, timeouts, bind address)
+
+**Pattern:**
+```bash
+build_ssh_opts() {
+    local opts="-o ControlPath=$CONTROL_SOCKET"
+    opts="$opts -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    opts="$opts -o ConnectTimeout=$SSH_TIMEOUT"
+    [[ -n "${BIND_IP:-}" ]] && opts="$opts -o BindAddress=$BIND_IP"
+    echo "$opts"
+}
+
+execute_ssh() {
+    local cmd="$1"
+    # shellcheck disable=SC2086  # Intentional word splitting for -o flags
+    ssh $(build_ssh_opts) -p "$SSH_PORT" "${SSH_USERNAME}@${TARGET_IP}" "$cmd"
+}
+
+execute_scp() {
+    local src="$1" dest="$2"
+    # shellcheck disable=SC2086
+    scp $(build_ssh_opts) -P "$SSH_PORT" "$src" "${SSH_USERNAME}@${TARGET_IP}:${dest}"
+}
+```
+
+**Key Points:**
+- Centralizes SSH options in one place (DRY)
+- `SC2086` disable is intentional — options string must be word-split for multiple `-o` flags
+- `execute_ssh`/`execute_scp` become trivial wrappers (simplified from ~60 lines each with 3-way auth branching)
+
+---
+
 ## Summary
 
 This document consolidates code patterns used throughout the UDM VPN Monitor codebase. These patterns should be followed consistently when writing or modifying code:
@@ -4557,6 +4663,7 @@ This document consolidates code patterns used throughout the UDM VPN Monitor cod
 22. **UDM Constraints**: Target UDM OS 4.3+, use `/data` for persistent storage, check command availability, provide fallbacks
 23. **Interactive Input**: Redirect prompts to stderr (`>&2`) before `read` to prevent interference with stdin redirection in tests
 24. **Script-Specific**: Parse command-line arguments with while/case pattern, use process substitution for reading function output, define fallback functions in standalone scripts
+25. **SSH Connection Management**: Use ControlMaster + ControlPersist + `true` for connection reuse; never combine `sshpass` + `ssh -f`; secure sockets with `mktemp -d`; cascade auth methods (sshpass → expect → manual /dev/tty)
 
 For more detailed information about specific patterns, see:
 - `CODE_REVIEW_LESSONS_LEARNED.md` - Historical lessons learned from code reviews (includes bug context and how patterns were discovered)

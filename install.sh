@@ -536,8 +536,9 @@ get_script_version() {
 	fi
 
 	# Try to extract SCRIPT_VERSION="..." or SCRIPT_VERSION='...'
+	# Note: || true prevents set -e + pipefail from killing the script if grep finds no match
 	local version
-	version=$(grep -E '^SCRIPT_VERSION=["'\'']' "$script_file" 2>/dev/null | head -1 | sed -E "s/^SCRIPT_VERSION=[\"']([^\"']+)[\"'].*/\1/" | tr -d ' ')
+	version=$(grep -E '^SCRIPT_VERSION=["'\'']' "$script_file" 2>/dev/null | head -1 | sed -E "s/^SCRIPT_VERSION=[\"']([^\"']+)[\"'].*/\1/" | tr -d ' ' || true)
 
 	if [[ -n "$version" ]]; then
 		echo "$version"
@@ -1019,8 +1020,9 @@ parse_cron_schedule() {
 	fi
 
 	# Read the CRON_SCHEDULE line from config
+	# Note: || true prevents set -e + pipefail from killing the script if grep finds no match
 	local line
-	line=$(grep "^CRON_SCHEDULE=" "$config_file" 2>/dev/null | head -1)
+	line=$(grep "^CRON_SCHEDULE=" "$config_file" 2>/dev/null | head -1 || true)
 
 	if [[ -z "$line" ]]; then
 		return 1
@@ -1303,9 +1305,11 @@ enable_and_start_keepalive_service() {
 
 	# Start or restart service immediately
 	# Use restart instead of start so it works whether service is running or not
+	# Note: the || captures the exit code without triggering set -e
+	# (split local + assignment means the assignment propagates the exit code)
 	local start_output
-	start_output=$(systemctl restart vpn-keepalive 2>&1)
-	local start_exit=$?
+	local start_exit=0
+	start_output=$(systemctl restart vpn-keepalive 2>&1) || start_exit=$?
 	if [[ $start_exit -ne 0 ]]; then
 		log_error "Failed to start/restart systemd service"
 		if [[ -n "$start_output" ]]; then
@@ -1521,7 +1525,8 @@ detect_local_udm_ip() {
 	# Get first IPv4 address from br0 interface
 	# Format: "inet 192.168.1.1/24" -> extract "192.168.1.1"
 	local br0_ip
-	br0_ip=$(ip addr show br0 2>/dev/null | grep -oE 'inet [0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1 | awk '{print $2}')
+	# Note: || true prevents set -e + pipefail from killing the script if br0 has no IPv4
+	br0_ip=$(ip addr show br0 2>/dev/null | grep -oE 'inet [0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1 | awk '{print $2}' || true)
 
 	# Validate extracted IP address format before returning
 	if [[ -n "$br0_ip" ]] && validate_ip_address "$br0_ip"; then

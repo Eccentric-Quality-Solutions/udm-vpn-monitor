@@ -312,6 +312,54 @@ anonymize_log_file() {
 - This is especially important when `set -u` or `set -euo pipefail` is enabled
 - Cleanup should be idempotent (safe to run multiple times)
 
+### EXIT Traps Must Disable `set -e`
+
+**Critical:** If any command inside an EXIT trap fails under `set -e`, the trap aborts mid-cleanup. Sockets, temp dirs, and other resources are leaked.
+
+```bash
+# ❌ BAD: set -e kills cleanup mid-way if ssh -O exit fails
+cleanup() {
+    ssh -o ControlPath="$socket" -O exit user@host 2>/dev/null
+    rm -f "$socket" 2>/dev/null       # Never reached if ssh fails!
+    rmdir "$sock_dir" 2>/dev/null
+}
+trap cleanup EXIT
+
+# ✅ GOOD: Disable errexit inside cleanup
+cleanup() {
+    set +e
+    ssh -o ControlPath="$socket" -O exit user@host 2>/dev/null
+    rm -f "$socket" 2>/dev/null
+    rmdir "$sock_dir" 2>/dev/null
+    set -e
+}
+trap cleanup EXIT
+```
+
+**Why:** EXIT traps inherit the shell's `set -e` setting. A failing cleanup command (network timeout, already-removed file) triggers errexit and aborts the trap. Always `set +e` at the start and `set -e` at the end of cleanup traps.
+
+### Capture Exit Codes to Survive `set -e`
+
+When a command may fail legitimately (authentication, network checks), capture its exit code with `|| rc=$?` to prevent `set -e` from killing the script:
+
+```bash
+set -e
+
+# ❌ BAD: Wrong password kills script immediately, no cleanup, no error message
+sshpass -e ssh user@host true
+
+# ✅ GOOD: Capture exit code, handle failure gracefully
+local auth_rc=0
+sshpass -e ssh user@host true || auth_rc=$?
+if [[ $auth_rc -ne 0 ]]; then
+    log_error "Authentication failed (exit code: $auth_rc)"
+    # Cleanup temp resources before returning...
+    return 1
+fi
+```
+
+**Why:** The `||` makes it a compound command, so `set -e` doesn't fire on the left-hand side. This lets you handle failures with proper cleanup and error messages instead of abrupt script death.
+
 ### Signal Handling
 
 Handle signals (SIGINT, SIGTERM) for graceful cleanup and proper exit codes:
@@ -2588,6 +2636,54 @@ source "${STATE_MODULE_DIR}/network_partition_stats.sh" 2>/dev/null || {
 }
 # shellcheck source=lib/state/resource_monitoring_stats.sh
 source "${STATE_MODULE_DIR}/resource_monitoring_stats.sh" 2>/dev/null || {
+```
+
+---
+
+## SSH and sshpass Pitfalls
+
+### `sshpass` + `ssh -f` = Hang
+
+**Critical:** `sshpass` and `ssh -f` are incompatible. Never combine them.
+
+`sshpass` creates a pseudo-terminal (pty) and waits for the pty to close (EOF). `ssh -f` forks to background after authentication, but the backgrounded child keeps the pty slave fd open. `sshpass` blocks forever waiting for an EOF that never comes.
+
+```bash
+# ❌ BAD: Hangs forever — sshpass waits for pty EOF, ssh -f holds pty open
+SSHPASS="$pw" sshpass -e ssh -fN \
+    -o ControlMaster=yes -o ControlPath="$socket" \
+    user@host
+
+# ✅ GOOD: Run a trivial command with ControlPersist instead
+SSHPASS="$pw" sshpass -e ssh \
+    -o ControlMaster=yes -o ControlPath="$socket" -o ControlPersist=60 \
+    user@host true
+```
+
+**Why `true` + `ControlPersist` works:**
+1. `ssh ... true` runs synchronously — sshpass feeds password, ssh authenticates, runs `true`, exits. sshpass sees EOF cleanly.
+2. `ControlPersist=60` tells OpenSSH to keep the master socket alive for 60 seconds of idle time. The master process is managed by OpenSSH, not by our script.
+3. Each subsequent `ssh`/`scp` with `ControlPath=...` resets the idle timer.
+4. No `-f` backgrounding, no race conditions, no retry loops needed.
+
+### Secure Temporary Socket Directories
+
+Never use predictable paths for SSH sockets (symlink attack vector):
+
+```bash
+# ❌ BAD: PID is guessable, attacker can pre-create symlink
+socket="/tmp/ssh-deploy-${host}-$$.sock"
+
+# ✅ GOOD: Random directory with restrictive permissions
+sock_dir=$(mktemp -d /tmp/ssh-deploy-XXXXXX)
+chmod 700 "$sock_dir"
+socket="${sock_dir}/ctrl.sock"
+```
+
+**Cleanup must validate paths:**
+```bash
+# Pattern-guard rmdir to prevent accidental deletion of wrong directory
+[[ "$sock_dir" == /tmp/ssh-deploy-* ]] && rmdir "$sock_dir" 2>/dev/null
 ```
 
 ---
