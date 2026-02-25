@@ -2,6 +2,25 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
+## 0.8.3 - 2026-02-25
+
+### Added
+- **Configurable Tier 2 ipsec reload**: New config option `ENABLE_TIER2_IPSEC_RELOAD` (default 1). When 0, ipsec reload is not used at Tier 2; xfrm is still attempted if enabled, but there is no fallback to ipsec reload. Use 0 to avoid ipsec reload at Tier 2 (xfrm-only or no recovery until Tier 3).
+
+### Changed
+- **centralize-logs.conf format**: Config uses `NAME=IP` per target; displays names during run. Renamed from `centralize-logs-ips.conf` to `centralize.conf`.
+- **deploy-to-udm.sh SSH ControlMaster**: Uses SSH ControlMaster to authenticate once and multiplex all subsequent SSH/SCP operations over a single connection. Password entry (via sshpass or manual /dev/tty prompt) happens only during master setup. Eliminates repeated password prompts for package transfer, install, and optional tail-follow.
+- **centralize-logs.sh**: Uses tar.gz instead of zip for output archive (zip isn't available on UDM). Uses SSH ControlMaster per host; one SCP call fetches both log and crontab per target.
+- **deploy-to-udms.sh default package**: Default package file to `/tmp/udm-vpn-monitor.zip` instead of repo-root.
+
+### Fixed
+- **handle_error documentation**: Corrected to reflect actual behavior—exit code defaults to 0 (log only) when omitted, not 1.
+- **surgical_cleanup return value**: Tier 2 recovery now checks surgical_cleanup return value and resets failure count on success.
+- **deploy-to-udm.sh expect**: Tcl injection fix (single-quoted heredocs with `$env()` to prevent password special chars from being interpreted as Tcl commands); fix silent failures (`lassign [wait]` + exit to propagate spawned process exit codes); default PACKAGE_FILE uses REPO_ROOT so script works when invoked from any directory.
+- **deploy-to-udm.sh expect prompt**: Match "assword:" so both "password:" and "Password:" prompts are handled.
+- **deploy-to-udm.sh manual entry**: When using manual password entry (no sshpass/expect), run ssh/scp with stdin from /dev/tty so password and host-key prompts appear on the deployer's terminal.
+
+
 ## 0.8.2 - 2026-02-23
 
 ### Added

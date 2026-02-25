@@ -3,7 +3,7 @@
 # Resource monitoring functions for UDM VPN Monitor
 # Monitors CPU, RAM, and disk space usage and implements throttling
 #
-# Version: 0.8.2
+# Version: 0.8.3
 #
 
 # Source common utility functions

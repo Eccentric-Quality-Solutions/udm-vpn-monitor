@@ -12,9 +12,9 @@
 # 6. Optionally run tail -f on log file (interactive until Ctrl+C; uses same credentials)
 # 7. Log deployment output to REPO_ROOT/logs/deploy-to-udm.log (username/password never logged)
 #
-# Remote console: SSH/SCP stdout and stderr are not captured; when using manual
-# password entry (no sshpass/expect), stdin is attached to /dev/tty so prompts
-# appear on the terminal where you run the deploy.
+# Connection: Uses SSH ControlMaster to authenticate once and multiplex all
+# subsequent SSH/SCP operations over a single connection.  Password entry
+# (via sshpass or manual /dev/tty prompt) happens only during master setup.
 #
 # Usage:
 #   ./scripts/manage/deploy-to-udm.sh [OPTIONS]
@@ -81,6 +81,9 @@ TAIL_FOLLOW=0
 LOG_LINES=50
 SSH_TIMEOUT=30
 VERBOSE=0
+
+# SSH ControlMaster socket (set during setup_control_master)
+CONTROL_SOCKET=""
 
 # Colors for output (if terminal supports it)
 if [[ -t 1 ]]; then
@@ -222,7 +225,9 @@ Output Options:
   --help                   Show this help message
 
 Authentication:
-  Prompts for username and password when run interactively.
+  Uses SSH ControlMaster: authenticates once, then multiplexes all operations.
+  If sshpass is installed, password is passed automatically.
+  Otherwise, prompts for the password once on the terminal.
   Receives password via stdin when piped (e.g. from deploy-to-udms.sh).
 
 Examples:
@@ -336,21 +341,42 @@ validate_params() {
 		errors=$((errors + 1))
 	fi
 
-	# Get password: interactive prompt or stdin (when piped from deploy-to-udms.sh)
+	# Prompt for username (interactive only)
+	if [[ -z "$SSH_PASSWORD" ]] && [[ -t 0 ]] && [[ -t 1 ]]; then
+		read -rp "Username for ${TARGET_IP} [${SSH_USERNAME}]: " read_user
+		[[ -n "$read_user" ]] && SSH_USERNAME="$read_user"
+	fi
+
+	# Get password: needed for sshpass/expect to feed to ControlMaster.
+	# When neither is available and we have a tty, ssh prompts directly — skip collection.
+	local has_sshpass=0 has_expect=0
+	command -v sshpass >/dev/null 2>&1 && has_sshpass=1
+	command -v expect >/dev/null 2>&1 && has_expect=1
+
 	if [[ -z "$SSH_PASSWORD" ]]; then
-		if [[ -t 0 ]] && [[ -t 1 ]]; then
-			# Interactive: prompt for username and password
-			read -rp "Username for ${TARGET_IP} [${SSH_USERNAME}]: " read_user
-			[[ -n "$read_user" ]] && SSH_USERNAME="$read_user"
-			read -rsp "Password for ${SSH_USERNAME}@${TARGET_IP}: " SSH_PASSWORD
-			echo ""
+		if [[ $has_sshpass -eq 1 ]] || [[ $has_expect -eq 1 ]]; then
+			# We can feed the password programmatically — collect it
+			if [[ -t 0 ]] && [[ -t 1 ]]; then
+				read -rsp "Password for ${SSH_USERNAME}@${TARGET_IP}: " SSH_PASSWORD
+				echo ""
+			else
+				# Non-interactive: read password from stdin (first line)
+				SSH_PASSWORD=$(head -n 1 2>/dev/null || echo "")
+			fi
+			if [[ -z "$SSH_PASSWORD" ]]; then
+				log_error "Password is required. Run interactively or pipe password via stdin."
+				errors=$((errors + 1))
+			fi
 		else
-			# Non-interactive: read password from stdin (first line)
-			SSH_PASSWORD=$(head -n 1 2>/dev/null || echo "")
-		fi
-		if [[ -z "$SSH_PASSWORD" ]]; then
-			log_error "Password is required. Run interactively or pipe password via stdin."
-			errors=$((errors + 1))
+			# No sshpass/expect: ssh will prompt on /dev/tty during ControlMaster setup.
+			# We still need a tty for this to work.
+			if [[ ! -e /dev/tty ]]; then
+				log_error "No sshpass or expect installed, and no controlling terminal."
+				log_error "Install sshpass (apt-get install sshpass) for non-interactive use."
+				errors=$((errors + 1))
+			else
+				log_verbose "No sshpass/expect: SSH will prompt for password during connection setup."
+			fi
 		fi
 	fi
 
@@ -370,198 +396,193 @@ validate_params() {
 	fi
 }
 
-# Check if sshpass is available for password-based SSH/SCP.
+# Common SSH options used by ControlMaster setup and all ssh/scp calls.
+# Returns the options string on stdout.
 #
 # Arguments:
-#   None
+#   None (reads BIND_IP, SSH_TIMEOUT, CONTROL_SOCKET globals).
 #
 # Returns:
-#   0: sshpass found
-#   1: sshpass not found
-check_sshpass() {
+#   0: Always
+build_ssh_opts() {
+	local opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_TIMEOUT"
+	[[ -n "$BIND_IP" ]] && opts="$opts -o BindAddress=$BIND_IP"
+	[[ -n "$CONTROL_SOCKET" ]] && opts="$opts -o ControlPath=$CONTROL_SOCKET"
+	echo "$opts"
+}
+
+# Establish an SSH ControlMaster connection (authenticates once).
+# All subsequent execute_ssh/execute_scp calls multiplex over this connection.
+# Uses sshpass if available; falls back to expect; otherwise prompts on /dev/tty.
+#
+# Arguments:
+#   None (reads SSH_PASSWORD, SSH_USERNAME, TARGET_IP, SSH_PORT, SSH_TIMEOUT,
+#         BIND_IP globals).
+#
+# Returns:
+#   0: ControlMaster established
+#   1: Failed to establish connection
+#
+# Side effects:
+#   Sets CONTROL_SOCKET global, registers EXIT trap for cleanup.
+setup_control_master() {
+	# Create socket in a private temp directory (secure: no symlink attacks, mode 0700)
+	local sock_dir
+	sock_dir=$(mktemp -d /tmp/ssh-deploy-XXXXXX)
+	chmod 700 "$sock_dir"
+	CONTROL_SOCKET="${sock_dir}/ctrl.sock"
+
+	# Remove stale socket if present (e.g. from a crashed previous run)
+	rm -f "$CONTROL_SOCKET" 2>/dev/null || true
+
+	# Clean up on exit (remove socket and kill master)
+	# shellcheck disable=SC2064
+	trap "cleanup_control_master" EXIT
+
+	local master_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_TIMEOUT"
+	master_opts="$master_opts -o ControlMaster=yes -o ControlPath=$CONTROL_SOCKET -o ControlPersist=60"
+	[[ -n "$BIND_IP" ]] && master_opts="$master_opts -o BindAddress=$BIND_IP"
+
+	log_info "Establishing SSH connection to ${TARGET_IP}..."
+
 	if command -v sshpass >/dev/null 2>&1; then
-		return 0
+		log_verbose "Using sshpass for ControlMaster authentication"
+		# sshpass -e reads password from SSHPASS env var (not visible in ps)
+		# -f backgrounds after authentication, -N means no remote command
+		# shellcheck disable=SC2086
+		SSHPASS="$SSH_PASSWORD" sshpass -e ssh \
+			$master_opts \
+			-p "$SSH_PORT" \
+			-fN \
+			"${SSH_USERNAME}@${TARGET_IP}"
+	elif command -v expect >/dev/null 2>&1; then
+		log_verbose "Using expect for ControlMaster authentication"
+		# expect feeds the password to ssh's tty-based prompt.
+		# ssh -f forks to background after auth; expect handles the password
+		# prompt, then the ssh parent exits (expect sees eof).
+		DEPLOY_PASSWORD="$SSH_PASSWORD" \
+			DEPLOY_TIMEOUT="$SSH_TIMEOUT" \
+			DEPLOY_MASTER_OPTS="$master_opts" \
+			DEPLOY_PORT="$SSH_PORT" \
+			DEPLOY_USER="$SSH_USERNAME" \
+			DEPLOY_HOST="$TARGET_IP" \
+			expect <<'EXPECT_EOF'
+set timeout $env(DEPLOY_TIMEOUT)
+spawn ssh {*}$env(DEPLOY_MASTER_OPTS) -p $env(DEPLOY_PORT) -fN $env(DEPLOY_USER)@$env(DEPLOY_HOST)
+expect {
+	"assword:" {
+		send "$env(DEPLOY_PASSWORD)\r"
+		exp_continue
+	}
+	"yes/no" {
+		send "yes\r"
+		exp_continue
+	}
+	eof
+}
+lassign [wait] pid spawnid os_error value
+exit $value
+EXPECT_EOF
+	else
+		# Manual password entry: user types password once on /dev/tty.
+		# validate_params already confirmed /dev/tty exists.
+		# shellcheck disable=SC2086 # master_opts must be unquoted for ssh to receive multiple -o options
+		ssh $master_opts \
+			-p "$SSH_PORT" \
+			-fN \
+			"${SSH_USERNAME}@${TARGET_IP}" </dev/tty 2>/dev/tty
 	fi
+
+	# Wait briefly for the backgrounded master to create its socket
+	local retries=0
+	while [[ $retries -lt 10 ]]; do
+		if ssh -o ControlPath="$CONTROL_SOCKET" -O check "${SSH_USERNAME}@${TARGET_IP}" 2>/dev/null; then
+			log_success "SSH connection established (ControlMaster)"
+			return 0
+		fi
+		sleep 0.2
+		retries=$((retries + 1))
+	done
+
+	log_error "Failed to establish ControlMaster connection"
+	# Clean up the temp directory (socket was never created, but dir was)
+	rm -rf "$CONTROL_SOCKET" 2>/dev/null || true
+	local sock_dir
+	sock_dir="$(dirname "$CONTROL_SOCKET" 2>/dev/null)"
+	[[ -n "$sock_dir" ]] && [[ "$sock_dir" == /tmp/ssh-deploy-* ]] && rmdir "$sock_dir" 2>/dev/null || true
+	CONTROL_SOCKET=""
 	return 1
 }
 
-# Check if expect is available for password-based SSH/SCP fallback.
+# Tear down the ControlMaster connection and remove the socket/directory.
+# Designed to run safely inside an EXIT trap (suppresses all errors).
 #
 # Arguments:
-#   None
+#   None (reads CONTROL_SOCKET, SSH_USERNAME, TARGET_IP globals).
 #
 # Returns:
-#   0: expect found
-#   1: expect not found
-check_expect() {
-	if command -v expect >/dev/null 2>&1; then
-		return 0
+#   0: Always
+cleanup_control_master() {
+	# Guard against set -e killing the trap mid-cleanup
+	set +e
+	if [[ -n "${CONTROL_SOCKET:-}" ]]; then
+		if [[ -e "$CONTROL_SOCKET" ]]; then
+			ssh -o ControlPath="$CONTROL_SOCKET" -O exit "${SSH_USERNAME}@${TARGET_IP}" 2>/dev/null
+		fi
+		# Remove the socket and its private temp directory
+		local sock_dir
+		sock_dir="$(dirname "$CONTROL_SOCKET" 2>/dev/null)"
+		rm -f "$CONTROL_SOCKET" 2>/dev/null
+		[[ -n "$sock_dir" ]] && [[ "$sock_dir" == /tmp/ssh-deploy-* ]] && rmdir "$sock_dir" 2>/dev/null
 	fi
-	return 1
+	set -e
 }
 
-# Execute SSH command with password authentication.
-# Uses sshpass if available, otherwise falls back to expect or manual entry.
-# When using manual entry, SSH is run with stdin/stderr from /dev/tty so
-# password and host-key prompts appear on the deployer's terminal.
+# Execute SSH command over the ControlMaster connection.
+# No password entry needed — authentication was handled by setup_control_master.
 #
 # Arguments:
 #   $1: cmd - Remote shell command to run (single string).
-#   $2: interactive - Optional. If non-empty, no timeout for expect (for tail -f etc.).
+#   $2: interactive - Optional. If non-empty, allocate a TTY (for tail -f etc.).
 #
 # Returns:
-#   Exit code of ssh (or expect) invocation.
-#
-# Side effects:
-#   Connects to TARGET_IP, may prompt for password if no sshpass/expect.
+#   Exit code of ssh invocation.
 execute_ssh() {
 	local cmd="$1"
 	local interactive="${2:-}"
-	local use_sshpass=0
-	local use_expect=0
 
-	# Try sshpass first (simplest)
-	if check_sshpass; then
-		use_sshpass=1
-		log_verbose "Using sshpass for password authentication"
-	# Try expect as fallback
-	elif check_expect; then
-		use_expect=1
-		log_verbose "Using expect for password authentication"
-	else
-		log_warn "Neither sshpass nor expect found. SSH password will need to be entered manually."
-		log_warn "Consider installing sshpass: apt-get install sshpass (or equivalent)"
-	fi
-
-	local ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_TIMEOUT"
-	[[ -n "$BIND_IP" ]] && ssh_opts="$ssh_opts -o BindAddress=$BIND_IP"
+	local ssh_opts
+	ssh_opts="$(build_ssh_opts)"
 	[[ -n "$interactive" ]] && ssh_opts="$ssh_opts -t"
 
-	if [[ $use_sshpass -eq 1 ]]; then
-		# Use sshpass (password passed via environment variable to avoid ps exposure)
-		SSHPASS="$SSH_PASSWORD" sshpass -e ssh \
-			$ssh_opts \
-			-p "$SSH_PORT" \
-			"${SSH_USERNAME}@${TARGET_IP}" \
-			"$cmd"
-	elif [[ $use_expect -eq 1 ]]; then
-		# Use expect script; -1 = no timeout for interactive (tail -f)
-		# Pass all values via environment variables and use single-quoted heredoc
-		# to avoid Tcl interpolation of special characters in the password.
-		# Match "assword:" to cover "password:" and "Password:" prompts.
-		local expect_timeout=$SSH_TIMEOUT
-		[[ -n "$interactive" ]] && expect_timeout=-1
-		DEPLOY_PASSWORD="$SSH_PASSWORD" \
-			DEPLOY_TIMEOUT="$expect_timeout" \
-			DEPLOY_SSH_OPTS="$ssh_opts" \
-			DEPLOY_PORT="$SSH_PORT" \
-			DEPLOY_USER="$SSH_USERNAME" \
-			DEPLOY_HOST="$TARGET_IP" \
-			DEPLOY_CMD="$cmd" \
-			expect <<'EOF'
-set timeout $env(DEPLOY_TIMEOUT)
-spawn ssh {*}$env(DEPLOY_SSH_OPTS) -p $env(DEPLOY_PORT) $env(DEPLOY_USER)@$env(DEPLOY_HOST) "$env(DEPLOY_CMD)"
-expect {
-	"assword:" {
-		send "$env(DEPLOY_PASSWORD)\r"
-		exp_continue
-	}
-	"yes/no" {
-		send "yes\r"
-		exp_continue
-	}
-	eof
-}
-lassign [wait] pid spawnid os_error value
-exit $value
-EOF
-	else
-		# Manual entry: attach to controlling terminal so prompts and output are visible
-		if [[ -e /dev/tty ]]; then
-			ssh $ssh_opts -p "$SSH_PORT" "${SSH_USERNAME}@${TARGET_IP}" "$cmd" </dev/tty
-		else
-			ssh $ssh_opts -p "$SSH_PORT" "${SSH_USERNAME}@${TARGET_IP}" "$cmd"
-		fi
-	fi
+	# shellcheck disable=SC2086
+	ssh $ssh_opts \
+		-p "$SSH_PORT" \
+		"${SSH_USERNAME}@${TARGET_IP}" \
+		"$cmd"
 }
 
-# Execute SCP command with password authentication.
-# When using manual entry (no sshpass/expect), SCP is run with stdin from
-# /dev/tty so the password prompt appears on the deployer's terminal.
+# Execute SCP command over the ControlMaster connection.
+# No password entry needed — authentication was handled by setup_control_master.
 #
 # Arguments:
 #   $1: src_file - Local path to file to copy
-#   $2: dest_path - Remote path (user@host:path)
+#   $2: dest_path - Remote destination path
 #
 # Returns:
-#   Exit code of scp (or expect) invocation.
-#
-# Side effects:
-#   Copies file to TARGET_IP; may prompt for password if no sshpass/expect.
+#   Exit code of scp invocation.
 execute_scp() {
 	local src_file="$1"
 	local dest_path="$2"
-	local use_sshpass=0
-	local use_expect=0
 
-	# Try sshpass first
-	if check_sshpass; then
-		use_sshpass=1
-		log_verbose "Using sshpass for SCP password authentication"
-	# Try expect as fallback
-	elif check_expect; then
-		use_expect=1
-		log_verbose "Using expect for SCP password authentication"
-	else
-		log_warn "Neither sshpass nor expect found. SCP password will need to be entered manually."
-	fi
+	local scp_opts
+	scp_opts="$(build_ssh_opts)"
 
-	local scp_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_TIMEOUT"
-	[[ -n "$BIND_IP" ]] && scp_opts="$scp_opts -o BindAddress=$BIND_IP"
-
-	if [[ $use_sshpass -eq 1 ]]; then
-		# Use sshpass (password passed via environment variable)
-		SSHPASS="$SSH_PASSWORD" sshpass -e scp \
-			$scp_opts \
-			-P "$SSH_PORT" \
-			"$src_file" \
-			"${SSH_USERNAME}@${TARGET_IP}:${dest_path}"
-	elif [[ $use_expect -eq 1 ]]; then
-		# Pass all values via environment variables and use single-quoted heredoc.
-		# Match "assword:" to cover "password:" and "Password:" prompts.
-		DEPLOY_PASSWORD="$SSH_PASSWORD" \
-			DEPLOY_TIMEOUT="$SSH_TIMEOUT" \
-			DEPLOY_SCP_OPTS="$scp_opts" \
-			DEPLOY_PORT="$SSH_PORT" \
-			DEPLOY_SRC="$src_file" \
-			DEPLOY_USER="$SSH_USERNAME" \
-			DEPLOY_HOST="$TARGET_IP" \
-			DEPLOY_DEST="$dest_path" \
-			expect <<'EOF'
-set timeout $env(DEPLOY_TIMEOUT)
-spawn scp {*}$env(DEPLOY_SCP_OPTS) -P $env(DEPLOY_PORT) $env(DEPLOY_SRC) $env(DEPLOY_USER)@$env(DEPLOY_HOST):$env(DEPLOY_DEST)
-expect {
-	"assword:" {
-		send "$env(DEPLOY_PASSWORD)\r"
-		exp_continue
-	}
-	"yes/no" {
-		send "yes\r"
-		exp_continue
-	}
-	eof
-}
-lassign [wait] pid spawnid os_error value
-exit $value
-EOF
-	else
-		# Manual entry: attach stdin to controlling terminal so password prompt is visible
-		if [[ -e /dev/tty ]]; then
-			scp $scp_opts -P "$SSH_PORT" "$src_file" "${SSH_USERNAME}@${TARGET_IP}:${dest_path}" </dev/tty
-		else
-			scp $scp_opts -P "$SSH_PORT" "$src_file" "${SSH_USERNAME}@${TARGET_IP}:${dest_path}"
-		fi
-	fi
+	# shellcheck disable=SC2086
+	scp $scp_opts \
+		-P "$SSH_PORT" \
+		"$src_file" \
+		"${SSH_USERNAME}@${TARGET_IP}:${dest_path}"
 }
 
 # Main deployment function: parse args, validate, transfer package, install on UDM.
@@ -607,11 +628,15 @@ main() {
 	deploy_log_write "INFO" "  Log lines:       $LOG_LINES"
 	echo ""
 
-	# Step 1: Transfer package file (prompts appear on this terminal if not using sshpass/expect)
-	log_info "Step 1: Transferring package file to target UDM..."
-	if ! check_sshpass && ! check_expect; then
-		log_info "If the next step hangs, a password or host-key prompt may be waiting on this terminal."
+	# Establish ControlMaster (authenticates once, all subsequent ssh/scp reuse it)
+	if ! setup_control_master; then
+		log_error "Could not connect to ${TARGET_IP}. Check credentials and network."
+		exit 1
 	fi
+	echo ""
+
+	# Step 1: Transfer package file
+	log_info "Step 1: Transferring package file to target UDM..."
 	if execute_scp "$PACKAGE_FILE" "/tmp/$(basename "$PACKAGE_FILE")"; then
 		log_success "Package file transferred successfully"
 	else

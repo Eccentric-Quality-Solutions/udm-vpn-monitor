@@ -12,7 +12,7 @@
 #   This file is safe to source multiple times (idempotent).
 #   Constants are only defined if not already set.
 #
-# Version: 0.8.2
+# Version: 0.8.3
 #
 
 # shellcheck disable=SC2034

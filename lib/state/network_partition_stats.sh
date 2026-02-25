@@ -3,7 +3,7 @@
 # Network partition check statistics tracking
 # Handles success/failure counting and hourly summary logging for network partition checks
 #
-# Version: 0.8.2
+# Version: 0.8.3
 #
 
 # Track network partition check result

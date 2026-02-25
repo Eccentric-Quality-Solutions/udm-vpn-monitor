@@ -4,7 +4,7 @@
 # Provides shared anonymization functions for IP addresses, interfaces, locations,
 # MAC addresses, hostnames, and ipset set names with unified mapping support.
 #
-# Version: 0.8.2
+# Version: 0.8.3
 #
 # This library provides:
 # - Core anonymization functions (hash_string, anonymize_*)

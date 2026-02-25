@@ -3,7 +3,7 @@
 # State file path management
 # Handles path generation and sanitization for state files
 #
-# Version: 0.8.2
+# Version: 0.8.3
 #
 
 # Sanitize peer IP for use in filenames

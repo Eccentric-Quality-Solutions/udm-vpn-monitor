@@ -3,7 +3,7 @@
 # Logging functions for UDM VPN Monitor
 # Provides centralized logging functionality with timestamp and level support
 #
-# Version: 0.8.2
+# Version: 0.8.3
 #
 
 # Source common utility functions
