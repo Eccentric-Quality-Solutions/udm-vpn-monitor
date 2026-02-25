@@ -445,30 +445,34 @@ setup_control_master() {
 
 	log_info "Establishing SSH connection to ${TARGET_IP}..."
 
+	# Run a trivial remote command ("true") to establish the ControlMaster.
+	# ControlPersist=60 keeps the master socket alive after "true" exits,
+	# so sshpass/expect/ssh all exit cleanly (no -f backgrounding needed).
+	# Each subsequent ssh/scp resets the 60-second persist timer.
+	local auth_rc=0
+
 	if command -v sshpass >/dev/null 2>&1; then
 		log_verbose "Using sshpass for ControlMaster authentication"
 		# sshpass -e reads password from SSHPASS env var (not visible in ps)
-		# -f backgrounds after authentication, -N means no remote command
 		# shellcheck disable=SC2086
 		SSHPASS="$SSH_PASSWORD" sshpass -e ssh \
 			$master_opts \
 			-p "$SSH_PORT" \
-			-fN \
-			"${SSH_USERNAME}@${TARGET_IP}"
+			"${SSH_USERNAME}@${TARGET_IP}" \
+			true || auth_rc=$?
 	elif command -v expect >/dev/null 2>&1; then
 		log_verbose "Using expect for ControlMaster authentication"
-		# expect feeds the password to ssh's tty-based prompt.
-		# ssh -f forks to background after auth; expect handles the password
-		# prompt, then the ssh parent exits (expect sees eof).
+		# expect feeds the password to ssh's tty-based prompt, then ssh
+		# runs "true" and exits cleanly.
 		DEPLOY_PASSWORD="$SSH_PASSWORD" \
 			DEPLOY_TIMEOUT="$SSH_TIMEOUT" \
 			DEPLOY_MASTER_OPTS="$master_opts" \
 			DEPLOY_PORT="$SSH_PORT" \
 			DEPLOY_USER="$SSH_USERNAME" \
 			DEPLOY_HOST="$TARGET_IP" \
-			expect <<'EXPECT_EOF'
+			expect <<'EXPECT_EOF' || auth_rc=$?
 set timeout $env(DEPLOY_TIMEOUT)
-spawn ssh {*}$env(DEPLOY_MASTER_OPTS) -p $env(DEPLOY_PORT) -fN $env(DEPLOY_USER)@$env(DEPLOY_HOST)
+spawn ssh {*}$env(DEPLOY_MASTER_OPTS) -p $env(DEPLOY_PORT) $env(DEPLOY_USER)@$env(DEPLOY_HOST) true
 expect {
 	"assword:" {
 		send "$env(DEPLOY_PASSWORD)\r"
@@ -486,29 +490,23 @@ EXPECT_EOF
 	else
 		# Manual password entry: user types password once on /dev/tty.
 		# validate_params already confirmed /dev/tty exists.
-		# shellcheck disable=SC2086 # master_opts must be unquoted for ssh to receive multiple -o options
+		# shellcheck disable=SC2086
 		ssh $master_opts \
 			-p "$SSH_PORT" \
-			-fN \
-			"${SSH_USERNAME}@${TARGET_IP}" </dev/tty 2>/dev/tty
+			"${SSH_USERNAME}@${TARGET_IP}" \
+			true </dev/tty 2>/dev/tty || auth_rc=$?
 	fi
 
-	# Wait briefly for the backgrounded master to create its socket
-	local retries=0
-	while [[ $retries -lt 10 ]]; do
-		if ssh -o ControlPath="$CONTROL_SOCKET" -O check "${SSH_USERNAME}@${TARGET_IP}" 2>/dev/null; then
-			log_success "SSH connection established (ControlMaster)"
-			return 0
-		fi
-		sleep 0.2
-		retries=$((retries + 1))
-	done
+	# Verify the master socket is alive (ssh+true already exited; ControlPersist keeps it)
+	if [[ $auth_rc -eq 0 ]] && ssh -o ControlPath="$CONTROL_SOCKET" -O check "${SSH_USERNAME}@${TARGET_IP}" 2>/dev/null; then
+		log_success "SSH connection established (ControlMaster)"
+		return 0
+	fi
 
 	log_error "Failed to establish ControlMaster connection"
-	# Clean up the temp directory (socket was never created, but dir was)
-	rm -rf "$CONTROL_SOCKET" 2>/dev/null || true
-	local sock_dir
-	sock_dir="$(dirname "$CONTROL_SOCKET" 2>/dev/null)"
+	[[ $auth_rc -ne 0 ]] && log_error "SSH authentication exited with code $auth_rc"
+	# Clean up the temp directory (socket may not have been created)
+	rm -f "$CONTROL_SOCKET" 2>/dev/null || true
 	[[ -n "$sock_dir" ]] && [[ "$sock_dir" == /tmp/ssh-deploy-* ]] && rmdir "$sock_dir" 2>/dev/null || true
 	CONTROL_SOCKET=""
 	return 1
