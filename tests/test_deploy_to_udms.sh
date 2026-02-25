@@ -56,6 +56,10 @@ PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 
 # bats test_tags=category:unit
 @test "deploy-to-udms.sh fails when config has no UDMs (empty after stripping comments)" {
+	cd "$PROJECT_ROOT"
+	[[ -f udm-vpn-monitor.zip ]] || ./scripts/prepare_install_package.sh >/dev/null 2>&1 || true
+	[[ -f udm-vpn-monitor.zip ]] || skip "Package file not available"
+
 	standard_setup
 	local config_file="${TEST_DIR}/deploy-udms.conf"
 	cat >"$config_file" <<'EOF'
@@ -63,7 +67,7 @@ PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 # Another comment
 
 EOF
-	run bash "$DEPLOY_SCRIPT" --config "$config_file" 2>&1
+	run bash "$DEPLOY_SCRIPT" --config "$config_file" --file "${PROJECT_ROOT}/udm-vpn-monitor.zip" 2>&1
 	assert_failure
 	assert_output --partial "No UDMs found"
 }

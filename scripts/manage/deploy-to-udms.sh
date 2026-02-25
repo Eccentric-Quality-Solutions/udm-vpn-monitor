@@ -15,7 +15,7 @@
 #
 # Options:
 #   --config FILE    Config file with UDM list (default: deploy-udms.conf)
-#   --file PACKAGE   Package file to deploy (default: udm-vpn-monitor.zip)
+#   --file PACKAGE   Package file to deploy (default: /tmp/udm-vpn-monitor.zip)
 #   --skip-tail      Skip interactive tail -f after each deployment
 #   --force          Deploy even if registry shows host already at this version
 #   --help           Show this help message
@@ -33,7 +33,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 LOGS_DIR="${REPO_ROOT}/logs"
 DEPLOY_LOG_FILE="${DEPLOY_LOG_FILE:-${LOGS_DIR}/deploy-to-udms.log}"
 CONFIG_FILE="${REPO_ROOT}/deploy-udms.conf"
-PACKAGE_FILE="${REPO_ROOT}/udm-vpn-monitor.zip"
+PACKAGE_FILE="/tmp/udm-vpn-monitor.zip"
 SKIP_TAIL=0
 FORCE_DEPLOY=0
 
@@ -132,7 +132,7 @@ Deploy UDM VPN Monitor to multiple UDMs from a config file.
 
 Options:
   --config FILE    Config file with UDM list (default: deploy-udms.conf)
-  --file PACKAGE   Package file to deploy (default: udm-vpn-monitor.zip)
+  --file PACKAGE   Package file to deploy (default: /tmp/udm-vpn-monitor.zip)
   --skip-tail      Skip interactive tail -f after each deployment
   --force          Deploy even if registry shows host already at this version
   --help           Show this help message

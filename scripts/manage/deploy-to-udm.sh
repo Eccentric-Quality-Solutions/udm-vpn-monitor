@@ -12,6 +12,10 @@
 # 6. Optionally run tail -f on log file (interactive until Ctrl+C; uses same credentials)
 # 7. Log deployment output to REPO_ROOT/logs/deploy-to-udm.log (username/password never logged)
 #
+# Remote console: SSH/SCP stdout and stderr are not captured; when using manual
+# password entry (no sshpass/expect), stdin is attached to /dev/tty so prompts
+# appear on the terminal where you run the deploy.
+#
 # Usage:
 #   ./scripts/manage/deploy-to-udm.sh [OPTIONS]
 #
@@ -398,6 +402,8 @@ check_expect() {
 
 # Execute SSH command with password authentication.
 # Uses sshpass if available, otherwise falls back to expect or manual entry.
+# When using manual entry, SSH is run with stdin/stderr from /dev/tty so
+# password and host-key prompts appear on the deployer's terminal.
 #
 # Arguments:
 #   $1: cmd - Remote shell command to run (single string).
@@ -441,7 +447,8 @@ execute_ssh() {
 	elif [[ $use_expect -eq 1 ]]; then
 		# Use expect script; -1 = no timeout for interactive (tail -f)
 		# Pass all values via environment variables and use single-quoted heredoc
-		# to avoid Tcl interpolation of special characters in the password
+		# to avoid Tcl interpolation of special characters in the password.
+		# Match "assword:" to cover "password:" and "Password:" prompts.
 		local expect_timeout=$SSH_TIMEOUT
 		[[ -n "$interactive" ]] && expect_timeout=-1
 		DEPLOY_PASSWORD="$SSH_PASSWORD" \
@@ -455,7 +462,7 @@ execute_ssh() {
 set timeout $env(DEPLOY_TIMEOUT)
 spawn ssh {*}$env(DEPLOY_SSH_OPTS) -p $env(DEPLOY_PORT) $env(DEPLOY_USER)@$env(DEPLOY_HOST) "$env(DEPLOY_CMD)"
 expect {
-	"password:" {
+	"assword:" {
 		send "$env(DEPLOY_PASSWORD)\r"
 		exp_continue
 	}
@@ -469,16 +476,18 @@ lassign [wait] pid spawnid os_error value
 exit $value
 EOF
 	else
-		# Manual entry fallback
-		ssh \
-			$ssh_opts \
-			-p "$SSH_PORT" \
-			"${SSH_USERNAME}@${TARGET_IP}" \
-			"$cmd"
+		# Manual entry: attach to controlling terminal so prompts and output are visible
+		if [[ -e /dev/tty ]]; then
+			ssh $ssh_opts -p "$SSH_PORT" "${SSH_USERNAME}@${TARGET_IP}" "$cmd" </dev/tty
+		else
+			ssh $ssh_opts -p "$SSH_PORT" "${SSH_USERNAME}@${TARGET_IP}" "$cmd"
+		fi
 	fi
 }
 
 # Execute SCP command with password authentication.
+# When using manual entry (no sshpass/expect), SCP is run with stdin from
+# /dev/tty so the password prompt appears on the deployer's terminal.
 #
 # Arguments:
 #   $1: src_file - Local path to file to copy
@@ -518,8 +527,8 @@ execute_scp() {
 			"$src_file" \
 			"${SSH_USERNAME}@${TARGET_IP}:${dest_path}"
 	elif [[ $use_expect -eq 1 ]]; then
-		# Pass all values via environment variables and use single-quoted heredoc
-		# to avoid Tcl interpolation of special characters in the password
+		# Pass all values via environment variables and use single-quoted heredoc.
+		# Match "assword:" to cover "password:" and "Password:" prompts.
 		DEPLOY_PASSWORD="$SSH_PASSWORD" \
 			DEPLOY_TIMEOUT="$SSH_TIMEOUT" \
 			DEPLOY_SCP_OPTS="$scp_opts" \
@@ -532,7 +541,7 @@ execute_scp() {
 set timeout $env(DEPLOY_TIMEOUT)
 spawn scp {*}$env(DEPLOY_SCP_OPTS) -P $env(DEPLOY_PORT) $env(DEPLOY_SRC) $env(DEPLOY_USER)@$env(DEPLOY_HOST):$env(DEPLOY_DEST)
 expect {
-	"password:" {
+	"assword:" {
 		send "$env(DEPLOY_PASSWORD)\r"
 		exp_continue
 	}
@@ -546,12 +555,12 @@ lassign [wait] pid spawnid os_error value
 exit $value
 EOF
 	else
-		# Manual entry fallback
-		scp \
-			$scp_opts \
-			-P "$SSH_PORT" \
-			"$src_file" \
-			"${SSH_USERNAME}@${TARGET_IP}:${dest_path}"
+		# Manual entry: attach stdin to controlling terminal so password prompt is visible
+		if [[ -e /dev/tty ]]; then
+			scp $scp_opts -P "$SSH_PORT" "$src_file" "${SSH_USERNAME}@${TARGET_IP}:${dest_path}" </dev/tty
+		else
+			scp $scp_opts -P "$SSH_PORT" "$src_file" "${SSH_USERNAME}@${TARGET_IP}:${dest_path}"
+		fi
 	fi
 }
 
@@ -598,8 +607,11 @@ main() {
 	deploy_log_write "INFO" "  Log lines:       $LOG_LINES"
 	echo ""
 
-	# Step 1: Transfer package file
+	# Step 1: Transfer package file (prompts appear on this terminal if not using sshpass/expect)
 	log_info "Step 1: Transferring package file to target UDM..."
+	if ! check_sshpass && ! check_expect; then
+		log_info "If the next step hangs, a password or host-key prompt may be waiting on this terminal."
+	fi
 	if execute_scp "$PACKAGE_FILE" "/tmp/$(basename "$PACKAGE_FILE")"; then
 		log_success "Package file transferred successfully"
 	else
