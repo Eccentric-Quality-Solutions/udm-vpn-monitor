@@ -1484,9 +1484,10 @@ verify_installation() {
 	fi
 
 	# Check cron entry (only if cron setup was not skipped)
+	# Match "vpn-monitor" (not "vpn-monitor.sh") so wrapper entries also match
 	if [[ $SKIP_CRON -eq 0 ]]; then
-		if ! crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
-			log_warn "Cron entry not found (may have been skipped if already exists)"
+		if ! crontab -l 2>/dev/null | grep -q "vpn-monitor"; then
+			log_warn "Cron entry not found"
 		else
 			log_info "Cron entry verified"
 		fi
