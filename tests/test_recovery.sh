@@ -1649,7 +1649,7 @@ EOF
 	# Purpose: Test verifies that ipsec reload failure falls back to ipsec restart for Tier 2
 	# Expected: When ipsec reload fails, script falls back to ipsec restart
 	# Importance: Multiple fallback options ensure recovery succeeds even when methods fail
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1' || fail "Fixture setup failed"
 
 	# Mock ipsec - reload fails, restart succeeds; VPN must be DOWN (status_exit=1)
 	mock_ipsec_reload_restart 1 0 1
@@ -1674,7 +1674,7 @@ EOF
 	# Purpose: Test verifies that appropriate log messages are generated for each fallback step
 	# Expected: Each fallback logs appropriate warning/info messages
 	# Importance: Logging helps diagnose recovery issues and understand fallback behavior
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' || fail "Fixture setup failed"
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_TIER2_IPSEC_RELOAD=1' || fail "Fixture setup failed"
 
 	# Mock ip command - xfrm recovery fails
 	mock_ip_vpn_down
@@ -1702,7 +1702,7 @@ EOF
 	# Purpose: Test verifies that verification runs after fallback recovery actions
 	# Expected: Verification is performed after ipsec reload/restart fallback
 	# Importance: Verification ensures fallback recovery actually worked
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' || fail "Fixture setup failed"
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=1' 'ENABLE_TIER2_IPSEC_RELOAD=1' || fail "Fixture setup failed"
 
 	# Mock ip command - xfrm recovery fails (no SAs), but verification succeeds after fallback
 	# Use a counter file to track calls

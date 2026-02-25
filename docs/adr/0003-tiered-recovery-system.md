@@ -38,7 +38,7 @@ We will implement a three-tier recovery system that escalates based on consecuti
 ## Implementation Details
 - **Tier 1**: Logs failure with context (peer IP, failure type, failure count)
 - **Tier 2 Default**: Uses `ip xfrm state delete` for per-connection recovery (enabled by default, `ENABLE_XFRM_RECOVERY=1`)
-- **Tier 2 Fallback**: Uses `ipsec reload` (affects all connections) if xfrm disabled or fails. Configurable via `ENABLE_TIER2_IPSEC_RELOAD` (default 1); when 0, ipsec reload is not used at Tier 2.
+- **Tier 2 Fallback**: Uses `ipsec reload` (affects all connections) if xfrm disabled or fails. Configurable via `ENABLE_TIER2_IPSEC_RELOAD` (default 0); when 0, ipsec reload is not used at Tier 2.
 - **Tier 3 Default**: Attempts xfrm-based per-connection recovery first (enabled by default, `ENABLE_XFRM_RECOVERY=1`)
 - **Tier 3 Fallback**: Uses `ipsec restart` (affects all tunnels) if xfrm disabled or fails
 - **Rate Limiting**: Tier 3 actions are rate-limited to prevent restart loops

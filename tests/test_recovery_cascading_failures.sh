@@ -85,7 +85,7 @@ EOF
 	# Purpose: Test verifies that script handles state update failures after successful recovery
 	# Expected: Recovery action succeeds but state update fails; script logs error and continues
 	# Importance: State update failures can leave system in inconsistent state; must be handled gracefully
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1' 'ENABLE_NETWORK_PARTITION_CHECK=0' || fail "Fixture setup failed"
 
 	# Track recovery state to make VPN appear healthy after recovery action
 	local recovery_state_file="${TEST_DIR}/recovery_state"

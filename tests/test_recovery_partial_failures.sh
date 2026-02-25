@@ -53,7 +53,7 @@ load fixtures/vpn_at_tier
 	# Expected: Function attempts xfrm recovery, detects re-establishment failure, falls back to ipsec restart
 	# Importance: Partial recovery success shouldn't leave system in inconsistent state - should escalate to full restart
 	# Use fixture to set up xfrm recovery scenario with successful deletion
-	setup_vpn_xfrm_recovery_fixture "${TEST_PEER_IP}" 1 "success" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=2' || fail "Fixture setup failed"
+	setup_vpn_xfrm_recovery_fixture "${TEST_PEER_IP}" 1 "success" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=2' 'ENABLE_TIER2_IPSEC_RELOAD=1' || fail "Fixture setup failed"
 
 	# Override fixture's mock_ip with our stateful version
 	# Remove fixture's mock_ip file so we can create our own
@@ -174,7 +174,7 @@ MOCK_IP_EOF
 	# Importance: Verification timeouts shouldn't prevent detection of successful recovery on subsequent checks
 	# Use fixture to set up xfrm recovery scenario with successful deletion
 	# Enable ping check so VPN can be detected as healthy even if bytes aren't increasing
-	setup_vpn_xfrm_recovery_fixture "${TEST_PEER_IP}" 1 "success" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=2' 'ENABLE_PING_CHECK=1' || fail "Fixture setup failed"
+	setup_vpn_xfrm_recovery_fixture "${TEST_PEER_IP}" 1 "success" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_NETWORK_PARTITION_CHECK=0' 'RECOVERY_VERIFY_TIMEOUT=2' 'ENABLE_PING_CHECK=1' 'ENABLE_TIER2_IPSEC_RELOAD=1' || fail "Fixture setup failed"
 
 	# Mock check_ipsec_phase2 - timeout on first check, succeed on second
 	# Pattern: failure (call 1) -> success (call 2+)

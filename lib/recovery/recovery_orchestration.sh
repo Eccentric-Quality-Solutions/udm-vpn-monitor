@@ -98,7 +98,7 @@ _is_strategy_applicable() {
 		# Requires tier 2, ipsec command available, and ENABLE_TIER2_IPSEC_RELOAD=1
 		[[ "$tier" == "2" ]] &&
 			[[ "${_RECOVERY_IPSEC_AVAILABLE:-0}" -eq 1 ]] &&
-			[[ "${ENABLE_TIER2_IPSEC_RELOAD:-1}" -eq 1 ]]
+			[[ "${ENABLE_TIER2_IPSEC_RELOAD:-0}" -eq 1 ]]
 		;;
 	"ipsec_restart")
 		# Requires tier 3 and ipsec command available

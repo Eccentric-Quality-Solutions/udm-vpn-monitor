@@ -259,12 +259,12 @@ RATE_LIMIT_WINDOW_MINUTES=60' || fail "Fixture setup failed"
 # However, per-connection recovery IS available via xfrm (experimental, opt-in via ENABLE_XFRM_RECOVERY=1).
 # Connection names discovered from ipsec status are for logging only, not for recovery.
 # bats test_tags=category:integration
-@test "integration: Tier 2 recovery uses ipsec reload (default behavior)" {
-	# Purpose: Test verifies that Tier 2 recovery action uses ipsec reload command by default
-	# Expected: Script executes ipsec reload command when Tier 2 threshold is reached
-	# Importance: Validates default recovery strategy uses surgical cleanup (reload) rather than full restart
+@test "integration: Tier 2 recovery uses ipsec reload when enabled" {
+	# Purpose: Test verifies that Tier 2 recovery action uses ipsec reload when ENABLE_TIER2_IPSEC_RELOAD=1
+	# Expected: Script executes ipsec reload command when Tier 2 threshold is reached and ipsec reload is enabled
+	# Importance: Validates recovery strategy uses surgical cleanup (reload) rather than full restart when configured
 	# Disable xfrm recovery to force ipsec reload (xfrm is preferred when peer IP is provided)
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1' || fail "Fixture setup failed"
 
 	# Mock ipsec - track reload call (note: in fake mode, commands are logged but not executed)
 	local tracking_file="${TEST_DIR}/ipsec_called.txt"

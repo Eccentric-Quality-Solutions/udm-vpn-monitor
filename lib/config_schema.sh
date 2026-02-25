@@ -113,7 +113,7 @@ declare -gA CONFIG_SCHEMA=(
 	["ENABLE_XFRM_RECOVERY"]="optional|integer|values:0,1|default:1"
 	# Tier 2 ipsec reload fallback. When 0, ipsec reload is not used at Tier 2 (xfrm-only or no recovery).
 	# xfrm recovery (if enabled) is still attempted; if it fails, no fallback to ipsec reload.
-	["ENABLE_TIER2_IPSEC_RELOAD"]="optional|integer|values:0,1|default:1"
+	["ENABLE_TIER2_IPSEC_RELOAD"]="optional|integer|values:0,1|default:0"
 	# Recovery verification timeout (seconds) - maximum time to wait for recovery verification
 	["RECOVERY_VERIFY_TIMEOUT"]="optional|integer|min:10|max:300|default:30"
 	["LOCKFILE_TIMEOUT"]="optional|integer|min:60|max:3600|default:300"

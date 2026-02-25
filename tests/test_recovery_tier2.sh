@@ -19,13 +19,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # ============================================================================
 
 # bats test_tags=slow,category:high-risk,priority:high
-@test "tier 2: surgical cleanup uses ipsec reload (default behavior, affects all tunnels)" {
-	# Purpose: Test verifies that Tier 2 recovery action triggers ipsec reload command for surgical cleanup
-	# Expected: Script executes "ipsec reload" when failure count reaches Tier 2 threshold
-	# Importance: ipsec reload affects all VPN tunnels, which is the default surgical cleanup behavior
+@test "tier 2: surgical cleanup uses ipsec reload when enabled (affects all tunnels)" {
+	# Purpose: Test verifies that Tier 2 recovery action triggers ipsec reload when ENABLE_TIER2_IPSEC_RELOAD=1
+	# Expected: Script executes "ipsec reload" when failure count reaches Tier 2 threshold and ipsec reload is enabled
+	# Importance: ipsec reload affects all VPN tunnels when configured
 	# Note: This may impact other VPN tunnels, not just the failing one.
 	# Disable xfrm recovery to force ipsec reload (xfrm recovery is tried first if enabled)
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1' || fail "Fixture setup failed"
 
 	# Mock ipsec - reload succeeds, track reload call
 	local mock_ipsec="${TEST_DIR}/ipsec"
@@ -82,6 +82,7 @@ EOF
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'ENABLE_XFRM_RECOVERY=0' \
+		'ENABLE_TIER2_IPSEC_RELOAD=1' \
 		'ENABLE_NETWORK_PARTITION_CHECK=0'
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
@@ -426,7 +427,7 @@ EOF
 	# Purpose: Test verifies that surgical cleanup works correctly when PATH is restricted (simulating cron/systemd environment)
 	# Expected: get_command_path() finds ipsec via system directory fallback, and ipsec commands execute successfully using full path
 	# Importance: Ensures recovery works in PATH-restricted environments common in cron/systemd contexts on UDM OS
-	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
+	setup_vpn_at_tier_fixture 2 "${TEST_PEER_IP}" 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1' || fail "Fixture setup failed"
 
 	# Save original PATH
 	local original_path="${PATH}"

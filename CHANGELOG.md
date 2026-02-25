@@ -5,9 +5,10 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 ## 0.8.3 - 2026-02-25
 
 ### Added
-- **Configurable Tier 2 ipsec reload**: New config option `ENABLE_TIER2_IPSEC_RELOAD` (default 1). When 0, ipsec reload is not used at Tier 2; xfrm is still attempted if enabled, but there is no fallback to ipsec reload. Use 0 to avoid ipsec reload at Tier 2 (xfrm-only or no recovery until Tier 3).
+- **Configurable Tier 2 ipsec reload**: New config option `ENABLE_TIER2_IPSEC_RELOAD` (default 0). When 0, ipsec reload is not used at Tier 2; xfrm is still attempted if enabled, but there is no fallback to ipsec reload. Use 1 to enable ipsec reload at Tier 2; use 0 for xfrm-only or no recovery until Tier 3.
 
 ### Changed
+- **ENABLE_TIER2_IPSEC_RELOAD default**: Default changed from 1 to 0. Tier 2 ipsec reload is now opt-in; set to 1 to restore previous behavior.
 - **centralize-logs.conf format**: Config uses `NAME=IP` per target; displays names during run. Renamed from `centralize-logs-ips.conf` to `centralize.conf`.
 - **deploy-to-udm.sh SSH ControlMaster**: Uses SSH ControlMaster to authenticate once and multiplex all subsequent SSH/SCP operations over a single connection. Password entry (via sshpass or manual /dev/tty prompt) happens only during master setup. Eliminates repeated password prompts for package transfer, install, and optional tail-follow.
 - **centralize-logs.sh**: Uses tar.gz instead of zip for output archive (zip isn't available on UDM). Uses SSH ControlMaster per host; one SCP call fetches both log and crontab per target.

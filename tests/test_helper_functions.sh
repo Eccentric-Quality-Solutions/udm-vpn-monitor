@@ -4132,7 +4132,7 @@ source_lockfile_module() {
 		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
 	fi
 
-	# Set up environment - xfrm disabled, ipsec reload enabled (default)
+	# Set up environment - xfrm disabled, ipsec reload enabled (explicit)
 	ENABLE_XFRM_RECOVERY=0
 	ENABLE_TIER2_IPSEC_RELOAD=1
 	# Mock ipsec command available
@@ -4253,6 +4253,7 @@ source_lockfile_module() {
 
 	# Set up environment
 	ENABLE_XFRM_RECOVERY=1
+	ENABLE_TIER2_IPSEC_RELOAD=1
 	# Mock ipsec command available
 	local mock_ipsec="${TEST_DIR}/ipsec"
 	echo '#!/bin/bash' >"$mock_ipsec"

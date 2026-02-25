@@ -226,7 +226,7 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 | `KEEPALIVE_PING_COUNT` | Number of ping packets per keepalive ping (1-5) | 1 |
 | `DEBUG` | Enable verbose logging (0 or 1) | 0 |
 | `ENABLE_XFRM_RECOVERY` | Enable xfrm-based per-connection recovery (0 or 1, enabled by default for UDM OS 4.3+) | 1 |
-| `ENABLE_TIER2_IPSEC_RELOAD` | Enable ipsec reload at Tier 2 (0 or 1). When 0, ipsec reload is not used; xfrm is still attempted if enabled, but there is no fallback to ipsec reload. | 1 |
+| `ENABLE_TIER2_IPSEC_RELOAD` | Enable ipsec reload at Tier 2 (0 or 1). When 0, ipsec reload is not used; xfrm is still attempted if enabled, but there is no fallback to ipsec reload. | 0 |
 | `ENABLE_NETWORK_PARTITION_CHECK` | Enable network partition detection (0 or 1). When enabled, checks default route, DNS resolution, and interface state before VPN checks. If network is partitioned, VPN checks are skipped. | 1 |
 | `NETWORK_PARTITION_DNS_SERVER` | DNS server to query for network partition detection | "8.8.8.8" |
 | `NETWORK_PARTITION_DNS_HOSTNAME` | Hostname to resolve for network partition detection | "google.com" |
