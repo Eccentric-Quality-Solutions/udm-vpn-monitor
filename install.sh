@@ -1142,8 +1142,12 @@ setup_cron() {
 	local crontab_content
 	crontab_content=$(crontab -l 2>/dev/null || echo "")
 	if echo "$crontab_content" | grep -q "vpn-monitor"; then
+		# Note: grep -v "vpn-monitor" returns exit 1 when no lines survive
+		# the filter (every entry contains "vpn-monitor").  || true prevents
+		# set -e + pipefail from killing the script; the empty-string check
+		# below handles that case correctly via crontab -r.
 		local filtered_content
-		filtered_content=$(echo "$crontab_content" | grep -v "vpn-monitor")
+		filtered_content=$(echo "$crontab_content" | grep -v "vpn-monitor" || true)
 		if [[ -n "$filtered_content" ]]; then
 			echo "$filtered_content" | crontab -
 		else
