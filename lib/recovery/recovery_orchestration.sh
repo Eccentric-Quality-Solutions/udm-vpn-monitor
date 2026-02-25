@@ -95,9 +95,10 @@ _is_strategy_applicable() {
 			[[ "${_RECOVERY_IP_AVAILABLE:-0}" -eq 1 ]]
 		;;
 	"ipsec_reload")
-		# Requires tier 2 and ipsec command available
+		# Requires tier 2, ipsec command available, and ENABLE_TIER2_IPSEC_RELOAD=1
 		[[ "$tier" == "2" ]] &&
-			[[ "${_RECOVERY_IPSEC_AVAILABLE:-0}" -eq 1 ]]
+			[[ "${_RECOVERY_IPSEC_AVAILABLE:-0}" -eq 1 ]] &&
+			[[ "${ENABLE_TIER2_IPSEC_RELOAD:-1}" -eq 1 ]]
 		;;
 	"ipsec_restart")
 		# Requires tier 3 and ipsec command available
@@ -1020,11 +1021,11 @@ determine_recovery_action() {
 		fi
 	fi
 
-	# Tier 2: Surgical cleanup
+	# Tier 2: Surgical cleanup (xfrm or ipsec reload)
 	local recovery_attempted=0
 	if [[ "$failure_count" -ge "$TIER2_THRESHOLD" ]] && [[ "$failure_count" -lt "$TIER3_THRESHOLD" ]]; then
-		recovery_attempted=1
 		if [[ "${NO_ESCALATE:-0}" -eq 1 ]]; then
+			recovery_attempted=1
 			declare -A recovery_info
 			if ! select_recovery_strategy "$external_peer_ip" 2 "recovery_info"; then
 				# No recovery strategy available - log Tier 2 reached but no strategy available
@@ -1037,6 +1038,7 @@ determine_recovery_action() {
 				log_message "INFO" "$location_name" "Tier 2: Would attempt surgical SA cleanup for $ip_display via $command_display (skipped in fake mode)"
 			fi
 		else
+			recovery_attempted=1
 			log_message "INFO" "$location_name" "Tier 2: Attempting surgical SA cleanup for $ip_display"
 			if surgical_cleanup "$external_peer_ip" "$location_name"; then
 				reset_failure_count "$location_name" "$external_peer_ip"

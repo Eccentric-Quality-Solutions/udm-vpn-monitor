@@ -170,7 +170,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Mock surgical_cleanup to track calls
 	local surgical_cleanup_called="${TEST_DIR}/surgical_cleanup_called"
-	# Override surgical_cleanup function
+	# Test mock: overrides surgical_cleanup to record that it was invoked.
 	surgical_cleanup() {
 		echo "called" >"$surgical_cleanup_called"
 		return 0
@@ -230,6 +230,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Mock surgical_cleanup to track calls (should not be called)
 	local surgical_cleanup_called="${TEST_DIR}/surgical_cleanup_called"
+	# Test mock: overrides surgical_cleanup to record that it was invoked.
 	surgical_cleanup() {
 		echo "called" >"$surgical_cleanup_called"
 		return 0
@@ -249,6 +250,56 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_log_contains_any "$LOG_FILE" "Would attempt" "skipped in fake mode" "Tier 2"
 
 	unset NO_ESCALATE
+	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "determine_recovery_action: Tier 2 no strategy when ENABLE_TIER2_IPSEC_RELOAD=0 and xfrm disabled" {
+	# Purpose: Test verifies that when ENABLE_TIER2_IPSEC_RELOAD=0 and ENABLE_XFRM_RECOVERY=0,
+	# no Tier 2 recovery strategy is available (ipsec reload disabled, xfrm disabled)
+	# Expected: surgical_cleanup runs but logs "No recovery strategy available" (ipsec reload not used)
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	# Source required functions
+	source_recovery_module
+
+	# Set up config - ipsec reload disabled at Tier 2, xfrm disabled
+	export TIER1_THRESHOLD=1
+	export TIER2_THRESHOLD=3
+	export TIER3_THRESHOLD=5
+	export ENABLE_XFRM_RECOVERY=0
+	export ENABLE_TIER2_IPSEC_RELOAD=0
+	export ENABLE_NETWORK_PARTITION_CHECK=0
+
+	local location_name="TEST"
+	local external_peer_ip="${TEST_PEER_IP}"
+	local failure_count=3
+
+	# Set failure count in state
+	ensure_state_functions_loaded
+	set_peer_state "$location_name" "$external_peer_ip" "failure_count" "$failure_count" || true
+
+	# Mock commands for detection
+	mock_ip_vpn_down
+	mock_ipsec_reload_restart 0 0 1
+	add_mock_to_path
+
+	# Initialize logging
+	LOG_FILE="${TEST_DIR}/vpn-monitor.log"
+	LOGS_DIR="${TEST_DIR}/logs"
+	mkdir -p "$LOGS_DIR"
+
+	# Test determine_recovery_action - surgical_cleanup will be called, select_recovery_strategy
+	# returns no strategy (ipsec_reload disabled, xfrm disabled), so surgical_cleanup logs and returns 1
+	run determine_recovery_action "$location_name" "$external_peer_ip" "$failure_count" ""
+
+	# Should return 0 (recovery was attempted - we entered Tier 2 block)
+	assert_success
+
+	# Should log "No recovery strategy available" - ipsec reload was not used
+	assert_file_exist "$LOG_FILE"
+	assert_file_contains "$LOG_FILE" "No recovery strategy available"
+
 	remove_mock_from_path
 }
 
@@ -289,6 +340,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Mock surgical_cleanup to track calls
 	local surgical_cleanup_called="${TEST_DIR}/surgical_cleanup_called"
+	# Test mock: overrides surgical_cleanup to record that it was invoked.
 	surgical_cleanup() {
 		echo "called" >"$surgical_cleanup_called"
 		return 0
@@ -354,6 +406,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Mock full_restart to track calls
 	local full_restart_called="${TEST_DIR}/full_restart_called"
+	# Test mock: overrides full_restart to record that it was invoked.
 	full_restart() {
 		echo "called" >"$full_restart_called"
 		return 0
@@ -421,6 +474,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Mock full_restart to track calls (should not be called)
 	local full_restart_called="${TEST_DIR}/full_restart_called"
+	# Test mock: overrides full_restart to record that it was invoked.
 	full_restart() {
 		echo "called" >"$full_restart_called"
 		return 0
@@ -489,6 +543,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Mock full_restart to track calls (should not be called)
 	local full_restart_called="${TEST_DIR}/full_restart_called"
+	# Test mock: overrides full_restart to record that it was invoked.
 	full_restart() {
 		echo "called" >"$full_restart_called"
 		return 0
@@ -554,7 +609,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	LOGS_DIR="${TEST_DIR}/logs"
 	mkdir -p "$LOGS_DIR"
 
-	# Mock full_restart to succeed
+	# Mock full_restart to succeed.
 	full_restart() {
 		return 0
 	}
@@ -566,6 +621,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Mock reset_failure_count to track calls
 	local reset_called="${TEST_DIR}/reset_called"
+	# Test mock: overrides reset_failure_count to record that it was invoked.
+	# Arguments: none (uses enclosing test scope).
+	# Returns: 0.
 	reset_failure_count() {
 		echo "called" >"$reset_called"
 		# Actually reset the failure count
@@ -642,6 +700,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Mock full_restart to track calls (should not be called)
 	local full_restart_called="${TEST_DIR}/full_restart_called"
+	# Test mock: overrides full_restart to record that it was invoked.
 	full_restart() {
 		echo "called" >"$full_restart_called"
 		return 0
@@ -711,6 +770,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Mock full_restart to track calls
 	local full_restart_called="${TEST_DIR}/full_restart_called"
+	# Test mock: overrides full_restart to record that it was invoked.
 	full_restart() {
 		echo "called" >"$full_restart_called"
 		return 0
@@ -796,6 +856,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Mock full_restart to track calls
 	local full_restart_called="${TEST_DIR}/full_restart_called"
+	# Test mock: overrides full_restart to record that it was invoked.
 	full_restart() {
 		echo "called" >"$full_restart_called"
 		return 0
@@ -880,6 +941,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Mock surgical_cleanup to track calls (should not be called)
 	local surgical_cleanup_called="${TEST_DIR}/surgical_cleanup_called"
+	# Test mock: overrides surgical_cleanup to record that it was invoked.
 	surgical_cleanup() {
 		echo "called" >"$surgical_cleanup_called"
 		return 0
@@ -956,6 +1018,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Mock surgical_cleanup to track calls
 	local surgical_cleanup_called="${TEST_DIR}/surgical_cleanup_called"
+	# Test mock: overrides surgical_cleanup to record that it was invoked.
 	surgical_cleanup() {
 		echo "called" >"$surgical_cleanup_called"
 		return 0
@@ -1020,6 +1083,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Mock surgical_cleanup to track calls
 	local surgical_cleanup_called="${TEST_DIR}/surgical_cleanup_called"
+	# Test mock: overrides surgical_cleanup to record that it was invoked.
 	surgical_cleanup() {
 		echo "called" >"$surgical_cleanup_called"
 		return 0
@@ -1081,6 +1145,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Mock full_restart to track calls
 	local full_restart_called="${TEST_DIR}/full_restart_called"
+	# Test mock: overrides full_restart to record that it was invoked.
 	full_restart() {
 		echo "called" >"$full_restart_called"
 		return 0
@@ -1144,6 +1209,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Mock surgical_cleanup to track calls
 	local surgical_cleanup_called="${TEST_DIR}/surgical_cleanup_called"
+	# Test mock: overrides surgical_cleanup to record that it was invoked.
 	surgical_cleanup() {
 		echo "called" >"$surgical_cleanup_called"
 		return 0
@@ -1205,6 +1271,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	# Mock full_restart to track calls
 	local full_restart_called="${TEST_DIR}/full_restart_called"
+	# Test mock: overrides full_restart to record that it was invoked.
 	full_restart() {
 		echo "called" >"$full_restart_called"
 		return 0

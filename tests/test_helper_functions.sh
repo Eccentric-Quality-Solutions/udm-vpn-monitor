@@ -4132,8 +4132,9 @@ source_lockfile_module() {
 		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
 	fi
 
-	# Set up environment
+	# Set up environment - xfrm disabled, ipsec reload enabled (default)
 	ENABLE_XFRM_RECOVERY=0
+	ENABLE_TIER2_IPSEC_RELOAD=1
 	# Mock ipsec command available
 	local mock_ipsec="${TEST_DIR}/ipsec"
 	echo '#!/bin/bash' >"$mock_ipsec"
@@ -4150,6 +4151,46 @@ source_lockfile_module() {
 	assert_equal "${recovery_info[impact]}" "all-tunnels"
 	assert_equal "${recovery_info[available]}" "1"
 
+	remove_mock_from_path
+}
+
+# bats test_tags=category:unit
+@test "select_recovery_strategy returns no strategy for tier 2 when ENABLE_TIER2_IPSEC_RELOAD=0 and xfrm disabled" {
+	# Purpose: Test verifies that when ENABLE_TIER2_IPSEC_RELOAD=0 and ENABLE_XFRM_RECOVERY=0,
+	# select_recovery_strategy returns no strategy for tier 2 (ipsec reload disabled)
+	if [[ -f "${LIB_DIR}/recovery.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		if [[ -f "${LIB_DIR}/config.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/config.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/recovery.sh" 2>/dev/null || true
+	fi
+
+	# Set up environment - both xfrm and ipsec reload disabled at tier 2
+	ENABLE_XFRM_RECOVERY=0
+	ENABLE_TIER2_IPSEC_RELOAD=0
+	# Mock ipsec command available (but we won't use it - strategy disabled)
+	local mock_ipsec="${TEST_DIR}/ipsec"
+	echo '#!/bin/bash' >"$mock_ipsec"
+	chmod +x "$mock_ipsec"
+	add_mock_to_path
+
+	# Test strategy selection - should fail (no strategy available)
+	declare -A recovery_info
+	if select_recovery_strategy "203.0.113.1" 2 "recovery_info"; then
+		echo "Expected select_recovery_strategy to fail but it succeeded"
+		exit 1
+	fi
+
+	# When no strategy available, result[strategy] is set to "unavailable"
+	assert_equal "${recovery_info[strategy]}" "unavailable"
+
+	unset ENABLE_TIER2_IPSEC_RELOAD
 	remove_mock_from_path
 }
 
