@@ -283,46 +283,43 @@ If pings time out repeatedly but the monitor never triggers recovery:
 
 ### Symptoms
 - Ping checks always fail
-- Logs show "Ping check failed" warnings
+- Logs show "Ping check failed" warnings (packet loss is computed from transmitted/received, so odd reported percentages like 3333% are corrected)
 - VPN is working but ping fails
-- "Route not found on br0" or "Failed to add route" messages in logs
+- Log messages such as **“Ping source IP not on default LAN”** or **“Failed to add ping source address”**
 
-### How Routes Work
+### Default LAN address for ping (`LOCAL_UDM_IP`)
 
-Routes (IP addresses on the `br0` interface) are automatically managed by the VPN monitor in three scenarios:
+The monitor ensures **`LOCAL_UDM_IP`** is assigned on the **default LAN interface** (`DEFAULT_LAN_INTERFACE` in `lib/constants.sh`, **`br0`** on typical UDMs). That is done with **`ip addr add <LOCAL_UDM_IP>/32 dev <iface>`** (a **local address**, not `ip route add`). Three places run this logic:
 
 1. **During Installation** (`install.sh`):
-   - Function: `check_and_setup_routes()`
-   - When: Runs during installation if `ENABLE_PING_CHECK=1` and internal IPs are configured
-   - What it does:
-     - Checks if `LOCAL_UDM_IP` is configured (auto-detects from br0 if not)
-     - Adds route: `ip addr add <LOCAL_UDM_IP>/32 dev br0`
-     - Tests ping connectivity to all internal IPs from all locations
+   - Function: `ensure_default_lan_local_ip_for_ping_install()`
+   - When: `ENABLE_PING_CHECK=1` and internal IPs are configured
+   - Auto-detects `LOCAL_UDM_IP` from the default LAN interface if unset (`detect_local_udm_ip_from_default_lan()`)
+   - Adds `/32` on the default LAN if missing; tests pings to all internal IPs
 
-2. **During Config Validation** (`lib/config.sh`):
-   - Function: `setup_routes_if_needed()`
-   - When: Called automatically during `validate_config()` when config is loaded
-   - What it does:
-     - Checks if ping checks are enabled and internal IPs are configured
-     - Retrieves `LOCAL_UDM_IP` using `get_local_ip_for_ping()`
-     - Checks if route exists via `check_route_exists()`
-     - If route doesn't exist, calls `add_route_if_needed()` to add it
-     - Fails validation if route setup fails when routes are actually needed
-   - **Key Benefit:** Routes are set up proactively before any checks run, ensuring they're available even if VPN checks are skipped
+2. **During Config Validation** (`validate_config()` in `lib/config/config_validation.sh`):
+   - Function: `ensure_default_lan_local_ip_for_ping()`
+   - Ensures the ping source is on the default LAN before monitoring runs
 
-3. **During Normal Operation** (`lib/detection.sh`):
-   - Function: `check_ping_connectivity()`
-   - When: Called during VPN monitoring when ping checks are enabled
-   - What it does:
-     - Checks if route exists via `check_route_exists()`
-     - If route doesn't exist, calls `add_route_if_needed()` to add it
-     - Then performs ping check with `-I <local_ip>` flag
-   - **Note:** This now serves as a fallback/re-check mechanism, since routes should already be set up during config validation
+3. **During Normal Operation** (`check_ping_connectivity()` in `lib/detection/ping_detection.sh`):
+   - Re-checks and adds if needed, then runs **`ping -I <LOCAL_UDM_IP>`**
 
-**Key Functions:**
-- `check_route_exists()`: Checks if IP exists on br0 interface
-- `add_route_if_needed()`: Adds IP to br0 if it doesn't exist
-- `get_local_ip_for_ping()`: Retrieves `LOCAL_UDM_IP` from config
+**Key functions:**
+- `check_local_ip_on_default_lan()` — is this IPv4 on `DEFAULT_LAN_INTERFACE`?
+- `add_local_ip_to_default_lan_if_needed()` — `ip addr add …/32` if missing
+- `get_local_ip_for_ping()` — reads `LOCAL_UDM_IP` from config
+
+**UniFi UI: route policy vs this setup**
+
+1. **Route policy** in UniFi steers *where* traffic is forwarded; it does not assign a local address for **`ping -I`**.
+
+2. The monitor makes **`LOCAL_UDM_IP`** a **local address on the default LAN bridge** so sourced pings work. It uses **`ip addr show $DEFAULT_LAN_INTERFACE`**; if the IP is absent, it adds **`ip addr add LOCAL_UDM_IP/32 dev $DEFAULT_LAN_INTERFACE`**.
+
+**Typical asymmetry:** Clients can reach the UDM, but **UDM-originated** probes with **`ping -I LOCAL_UDM_IP`** fail until that address is correctly on the default LAN interface—**having the script add the `/32` is expected on some sites.**
+
+**What to put in `LOCAL_UDM_IP`:** Your UDM’s **LAN gateway IP** (same as clients’ default gateway on that LAN), unless you deliberately use another IPv4 that must appear on **`DEFAULT_LAN_INTERFACE`**.
+
+**Sanity check:** `ip addr show br0 | grep <LOCAL_UDM_IP>` (or the interface name you set as `DEFAULT_LAN_INTERFACE` in `lib/constants.sh`) — if missing, the monitor adds the `/32`. **Route policy** does not replace this.
 
 ### Diagnosis Steps
 
@@ -344,11 +341,11 @@ Routes (IP addresses on the `br0` interface) are automatically managed by the VP
    ```
    Should be set to your local UDM's internal IP address (e.g., "192.168.1.1").
 
-4. **Check if route exists on br0**:
+4. **Check if `LOCAL_UDM_IP` is on the default LAN interface** (usually `br0`):
    ```bash
    ip addr show br0 | grep <LOCAL_UDM_IP>
    ```
-   Should show the IP address configured on br0 interface.
+   Should list that address on the interface (see `DEFAULT_LAN_INTERFACE` in `lib/constants.sh` if you override it).
 
 5. **Test ping with source IP** (if LOCAL_UDM_IP is configured):
    ```bash
@@ -381,25 +378,24 @@ Routes (IP addresses on the `br0` interface) are automatically managed by the VP
 **If LOCAL_UDM_IP is not configured**:
 - Set `LOCAL_UDM_IP` to your local UDM's internal IP address
 - Example: `LOCAL_UDM_IP="192.168.1.1"`
-- The installer will attempt to auto-detect this from br0 if not set
+- The installer will attempt to auto-detect this from the default LAN interface (`br0` by default) if not set
 - You can manually detect it: `ip addr show br0 | grep "inet " | awk '{print $2}' | cut -d/ -f1`
 
-**If route addition fails**:
-- Check if you have root privileges (required for `ip addr add`)
-- Manually add route: `ip addr add <LOCAL_UDM_IP>/32 dev br0`
-- Verify route exists: `ip addr show br0 | grep <LOCAL_UDM_IP>`
-- The script will automatically re-add the route when needed (route is temporary and lost on reboot)
-- **Verify route setup during config validation:**
+**If adding the ping source address on the default LAN fails**:
+- Root is required for `ip addr add`
+- Manual fix: `ip addr add <LOCAL_UDM_IP>/32 dev br0` (or `dev $DEFAULT_LAN_INTERFACE` if you change the constant)
+- Verify: `ip addr show br0 | grep <LOCAL_UDM_IP>`
+- The `/32` is not persistent across reboot unless something reapplies it; the monitor will try again on the next run
+- **After config validation:**
   ```bash
-  # Routes should be added automatically when config is validated
   /data/vpn-monitor/vpn-monitor.sh --check-config
   ip addr show br0 | grep <LOCAL_UDM_IP>
   ```
-- **Check logs for route setup messages:**
+- **Logs:**
   ```bash
-  grep -i "route" /data/vpn-monitor/logs/vpn-monitor.log
+  grep -iE 'ping source|default LAN' /data/vpn-monitor/logs/vpn-monitor.log
   ```
-- If route setup fails during validation, you'll see clear ERROR messages with manual fix instructions
+- Validation errors include a suggested `ip addr add … dev <iface>` line
 
 **If ping command not available**:
 - Install ping: `apt-get install iputils-ping`

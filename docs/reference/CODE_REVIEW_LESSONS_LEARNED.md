@@ -1,7 +1,7 @@
 # Code Review Lessons Learned
 
 **Date:** 2025-01-15
-**Last Updated:** 2026-02-23
+**Last Updated:** 2026-04-06
 **Context:** Comprehensive codebase review for errors, bugs, DRY violations, and bad practices
 
 **Note:** For a pragmatic assessment of this document's value and recommendations for improvement, see `CODE_REVIEW_LESSONS_LEARNED_ASSESSMENT.md`.
@@ -11,6 +11,10 @@
 This document captures lessons learned from conducting systematic code reviews. These patterns should be applied systematically to prevent similar issues in the future.
 
 **Note:** Many of these lessons have been consolidated into actionable patterns in `CODE_PATTERNS.md`. This document preserves the historical context of how patterns were discovered, including specific bugs found, their impact, and how they were fixed. For current coding patterns and best practices, see `CODE_PATTERNS.md`.
+
+### Sidebar: Name operations by what `ip` actually does (2026-04)
+
+Ensuring `LOCAL_UDM_IP` for `ping -I` uses **`ip addr add … dev <iface>`** (local address on an interface), not **`ip route add`**. Calling that a “route” in function names or logs confused it with UniFi route policy and FIB routes. Prefer names like **default LAN interface** / **ping source address** and a single constant (**`DEFAULT_LAN_INTERFACE`**, default `br0`).
 
 ---
 
@@ -89,7 +93,7 @@ atomic_write_file "$state_file" "$value"
 During review, we found duplicate IP validation logic:
 - `validate_ipv4()` function exists with proper validation (regex + octet range checks)
 - Inline regex checks in `check_ping_connectivity()` (line 702) ✅ **FIXED**
-- `check_route_exists()` already uses `validate_ip_address()` ✅ **ALREADY CORRECT**
+- `check_local_ip_on_default_lan()` already uses `validate_ip_address()` ✅ **ALREADY CORRECT**
 
 ### Impact
 - Inconsistent validation logic across codebase

@@ -19,6 +19,7 @@ if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	[[ -z "${MAX_IPV4_OCTET:-}" ]] && readonly MAX_IPV4_OCTET=255
 	[[ -z "${IPV4_OCTET_COUNT:-}" ]] && readonly IPV4_OCTET_COUNT=4
 	[[ -z "${IPV4_CIDR_SINGLE_HOST:-}" ]] && readonly IPV4_CIDR_SINGLE_HOST=32
+	[[ -z "${DEFAULT_LAN_INTERFACE:-}" ]] && readonly DEFAULT_LAN_INTERFACE=br0
 	[[ -z "${PING_PACKET_LOSS_THRESHOLD:-}" ]] && readonly PING_PACKET_LOSS_THRESHOLD=100
 	[[ -z "${PING_SUCCESS_THRESHOLD:-}" ]] && readonly PING_SUCCESS_THRESHOLD=0.3
 	[[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && readonly XFRM_OUTPUT_CONTEXT_LINES=10
@@ -202,8 +203,9 @@ build_ping_command() {
 # Check ping connectivity to target IP
 #
 # Performs a ping connectivity check to the specified target IP address.
-# Optionally uses a local source IP for the ping. Manages routes on br0 interface
-# if local_ip is provided. Supports both IPv4 and IPv6 addresses.
+# Optionally uses a local source IP for the ping. Ensures LOCAL_UDM_IP is on the
+# default LAN interface (DEFAULT_LAN_INTERFACE, typically br0) if local_ip is provided.
+# Supports both IPv4 and IPv6 addresses.
 #
 # Arguments:
 #   $1: Target IP address to ping (required)
@@ -215,8 +217,13 @@ build_ping_command() {
 #   1: Ping failed (packet loss above threshold, command error, or timeout)
 #
 # Side effects:
-#   - Adds route to br0 interface if local_ip provided and route doesn't exist
+#   - Adds /32 on default LAN interface if local_ip provided and address not present
 #   - Logs ping results at DEBUG/INFO/WARNING levels
+#
+# Note:
+#   Packet loss is computed from "N packets transmitted, M received" when present,
+#   so the result is accurate even when ping reports a bogus percentage (e.g. UDM
+#   reporting 3333%). If that line is missing, the reported % is used and clamped to 0-100.
 check_ping_connectivity() {
 	local target_ip="$1"
 	local local_ip="${2:-}"
@@ -235,14 +242,14 @@ check_ping_connectivity() {
 		return 1
 	fi
 
-	# If local_ip is provided, manage route on br0 before pinging
+	# If local_ip is provided, ensure ping source address on default LAN before pinging
 	if [[ -n "$local_ip" ]]; then
-		# Check if route exists, add if needed. add_route_if_needed may still log "already exists"
-		# if another process (e.g. vpn-keepalive or a concurrent cron run) added it between the two checks.
-		if ! check_route_exists "$local_ip"; then
-			log_message "INFO" "${location_name:-SYSTEM}" "Route not found on br0, attempting to add: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
-			if ! add_route_if_needed "$local_ip"; then
-				handle_error "WARNING" "${location_name:-SYSTEM}" "Failed to add route for ping check, continuing anyway"
+		# add_local_ip_to_default_lan_if_needed may still log "already on" if another process
+		# (e.g. vpn-keepalive or a concurrent cron run) added it between the two checks.
+		if ! check_local_ip_on_default_lan "$local_ip"; then
+			log_message "INFO" "${location_name:-SYSTEM}" "Ping source IP not on default LAN (${DEFAULT_LAN_INTERFACE:-br0}), attempting to add: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
+			if ! add_local_ip_to_default_lan_if_needed "$local_ip"; then
+				handle_error "WARNING" "${location_name:-SYSTEM}" "Failed to add ping source address for ping check, continuing anyway"
 				# Continue with ping attempt - it may still work or fail naturally
 			fi
 		fi
@@ -308,10 +315,31 @@ check_ping_connectivity() {
 	fi
 
 	if [[ $ping_success -eq 1 ]]; then
-		# Extract packet loss percentage
+		# Prefer computing packet loss from transmitted/received so we're accurate even when
+		# ping reports a bogus percentage (e.g. UDM reporting 3333% for 3 sent / 0 received).
+		# Format: "N packets transmitted, M received, ..." (e.g. Linux/BusyBox ping -q).
 		local packet_loss
-		if [[ "$ping_result" =~ ([0-9]+)%[[:space:]]+packet[[:space:]]+loss ]]; then
+		if [[ "$ping_result" =~ ([0-9]+)[[:space:]]+packets[[:space:]]+transmitted,[[:space:]]+([0-9]+)[[:space:]]+received ]]; then
+			local transmitted="${BASH_REMATCH[1]}"
+			local received="${BASH_REMATCH[2]}"
+			if [[ "$transmitted" -gt 0 ]]; then
+				local lost=$((transmitted - received))
+				# Integer percentage: (lost * 100) / transmitted
+				packet_loss=$((lost * 100 / transmitted))
+				# Clamp to 0-100 (paranoia; math should already be in range)
+				[[ "$packet_loss" -lt 0 ]] && packet_loss=0
+				[[ "$packet_loss" -gt 100 ]] && packet_loss=100
+			else
+				packet_loss="0"
+			fi
+		elif [[ "$ping_result" =~ ([0-9]+)%[[:space:]]+packet[[:space:]]+loss ]]; then
+			# Fallback: use reported percentage (e.g. if format differs), clamp to 0-100
 			packet_loss="${BASH_REMATCH[1]}"
+			if [[ -z "$packet_loss" ]] || [[ ! "$packet_loss" =~ ^[0-9]+$ ]]; then
+				packet_loss="0"
+			elif [[ "$packet_loss" -gt 100 ]]; then
+				packet_loss="100"
+			fi
 		else
 			packet_loss="0"
 		fi

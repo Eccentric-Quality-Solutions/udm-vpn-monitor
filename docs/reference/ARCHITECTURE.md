@@ -944,7 +944,7 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │   ├── constants.sh            # Named constants for magic numbers
 │   ├── detection.sh            # VPN status detection (main entry point, compatibility layer)
 │   ├── detection/               # Detection module subdirectory
-│   │   ├── network_validation.sh  # IP validation, route checks
+│   │   ├── network_validation.sh  # IP validation, default LAN ping source (ip addr on DEFAULT_LAN_INTERFACE)
 │   │   ├── xfrm_detection.sh      # xfrm state and byte counter detection
 │   │   ├── ping_detection.sh      # Ping-based detection
 │   │   ├── failure_analysis.sh    # Failure type classification
@@ -1104,7 +1104,7 @@ The system uses a modular library architecture where functionality is organized 
 **Purpose**: VPN status detection using multiple methods with automatic fallback. Main entry point that sources all detection modules.
 
 **Module Structure**: The detection functionality is organized into focused modules in the `lib/detection/` subdirectory:
-- **`lib/detection/network_validation.sh`**: IP validation (IPv4/IPv6), route checks, DNS resolution, interface state checks
+- **`lib/detection/network_validation.sh`**: IP validation (IPv4/IPv6), default LAN ping source (`check_local_ip_on_default_lan`, `add_local_ip_to_default_lan_if_needed`), DNS resolution, interface state checks
 - **`lib/detection/xfrm_detection.sh`**: xfrm state checks, byte counter detection, SA rekey detection, IPsec status fallback. Includes timeout protection (`XFRM_STATE_TIMEOUT=5`) to prevent indefinite hangs during system stress (netlink socket timeouts, XFRM lock contention).
 - **`lib/detection/ping_detection.sh`**: Ping-based connectivity verification, multiple IP support, ping summary logging
 - **`lib/detection/failure_analysis.sh`**: Failure type classification, VPN status determination, network partition detection

@@ -4,6 +4,11 @@ Considerations for the future, but want to avoid overarchitecting and premature 
 
 **Context (current codebase):** Deploy and related management scripts live under `scripts/manage/`. Anonymization scripts under `scripts/anonymize/`. State modules in `lib/state/` (no `location_state.sh`; per-location state is per-peer with location as parameter). Test suite: 93 test files; see `docs/testing/RELEVANT_TESTS.md` for code-to-test mapping.
 
+- **`DEFAULT_LAN_INTERFACE` in config (optional)**
+  - Today: `lib/constants.sh` sets `DEFAULT_LAN_INTERFACE=br0` (readonly). Changing it requires editing the constant or setting it before sourcing (advanced).
+  - Nice-to-have: optional `vpn-monitor.conf` key or auto-detect which interface owns `LOCAL_UDM_IP` (`ip -o addr show` scan) for non-`br0` layouts.
+  - Priority: LOW — current UDM default-LAN assumption matches most deployments.
+
 - Consider routing issue detection during ipsec status fallback periods
   - Current state: When xfrm unavailable, system falls back to ipsec status (no byte counters)
   - Issue: Routing issues (ping failures) may go undetected longer when byte counters unavailable

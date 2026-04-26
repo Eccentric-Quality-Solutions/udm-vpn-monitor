@@ -4,7 +4,7 @@
 # Anonymizes location names, IP addresses (IPv4/IPv6), MAC addresses, and hostnames
 # in vpn-monitor.log files while maintaining consistency so logs remain understandable
 #
-# Version: 0.1.0
+# Version: 0.1.1
 #
 
 set -euo pipefail
@@ -46,7 +46,7 @@ show_usage() {
 	cat <<EOF
 Usage: $0 [OPTIONS]
 
-UDM VPN Monitor Log Anonymization Tool v0.1.0
+UDM VPN Monitor Log Anonymization Tool v0.1.1
 Anonymizes location names and IP addresses in vpn-monitor.log files
 while maintaining consistency so logs remain understandable.
 
@@ -64,6 +64,7 @@ Examples:
   $0 -i /data/vpn-monitor/logs/vpn-monitor.log -o anonymized.log
   $0 -i vpn-monitor.log | less
   $0 -i vpn-monitor.log -o anonymized.log -v
+  $0 -i vpn-monitor-172.31.11.1.log -o out.log  # IP-based filenames get anonymized output names
 
 EOF
 }
@@ -132,9 +133,11 @@ parse_args() {
 
 # Generate anonymized output filename based on input filename
 #
-# Extracts location name from input filename (if present) and replaces it with
-# anonymized location name in the output filename.
-# Pattern: vpn-monitor-<location>.log -> vpn-monitor-<anonymized_location>-anonymized.log
+# Extracts location name or IP address from input filename (if present) and replaces
+# it with anonymized value in the output filename.
+# Patterns:
+#   vpn-monitor-<location>.log -> vpn-monitor-<anonymized_location>-anonymized.log
+#   vpn-monitor-<ipv4>.log -> vpn-monitor-<anonymized_ip>-anonymized.log
 # If -o path contains the real location (e.g. anonymized-vpn-monitor-Denver.log), the
 # script rewrites it to the canonical name so the filename does not leak the location.
 #
@@ -151,6 +154,7 @@ parse_args() {
 generate_anonymized_output_filename() {
 	local input_file="$1"
 	local output_file="${2:-}"
+	# shellcheck disable=SC2034
 	local log_file="$3"
 
 	# Extract basename from input file
@@ -158,12 +162,36 @@ generate_anonymized_output_filename() {
 	input_basename=$(basename "$input_file")
 
 	# Check if input filename matches pattern: vpn-monitor-<location>.log
-	# Accept both uppercase and lowercase location names
+	# Accept both uppercase and lowercase location names (alpha identifier)
 	local location=""
 	if [[ "$input_basename" =~ ^vpn-monitor-([A-Za-z][A-Za-z0-9_]+)\.log$ ]]; then
 		location="${BASH_REMATCH[1]}"
 		# Convert to uppercase for consistency (location names in logs are uppercase)
 		location=$(echo "$location" | tr '[:lower:]' '[:upper:]')
+	fi
+
+	# Check if input filename matches pattern: vpn-monitor-<ipv4>.log (IP-based identifier)
+	# Handles UDM exports where the host IP is used instead of a location name
+	local ip_in_filename=""
+	if [[ -z "$location" ]] && [[ "$input_basename" =~ ^vpn-monitor-([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})\.log$ ]]; then
+		ip_in_filename="${BASH_REMATCH[1]}"
+	fi
+
+	# If IP in filename, anonymize it so output filename does not leak the real IP
+	if [[ -n "$ip_in_filename" ]]; then
+		[[ $VERBOSE -eq 1 ]] && echo "Extracting IP '$ip_in_filename' from filename to create mapping..." >&2
+		get_or_create_ipv4_mapping "$ip_in_filename" >/dev/null
+		local anonymized_ip="${ANON_IPV4_MAP[$ip_in_filename]}"
+		local output_dir="."
+		if [[ -n "$output_file" ]]; then
+			output_dir=$(dirname "$output_file")
+		fi
+		if [[ "$output_dir" != "." ]]; then
+			echo "${output_dir}/vpn-monitor-${anonymized_ip}-anonymized.log"
+		else
+			echo "vpn-monitor-${anonymized_ip}-anonymized.log"
+		fi
+		return 0
 	fi
 
 	# If no location found in filename, use output file as-is (or generate default)

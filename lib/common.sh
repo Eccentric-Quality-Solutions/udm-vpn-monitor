@@ -1366,7 +1366,7 @@ get_ip_command_path() {
 #
 # Arguments:
 #   $1: Command name to check
-#   $2: Optional context message for the warning (e.g., "Cannot add route", "Ping check enabled")
+#   $2: Optional context message for the warning (e.g., "Cannot add ping source on default LAN", "Ping check enabled")
 #
 # Returns:
 #   0: Command is available (found in PATH)
@@ -1378,7 +1378,7 @@ get_ip_command_path() {
 #     or "<command> command not available" if no context provided
 #
 # Examples:
-#   if ! check_command_or_warn "ip" "Cannot add route"; then
+#   if ! check_command_or_warn "ip" "Cannot add ping source on default LAN"; then
 #       return 1
 #   fi
 #   if ! check_command_or_warn "ping"; then

@@ -463,31 +463,29 @@ EOF
 	mock_ping_success >/dev/null
 	add_mock_to_path
 
-	# Mock route check
-	# Mock function to simulate route existence check
+	# Mock default LAN address check
 	#
 	# Arguments:
 	#   None
 	#
 	# Returns:
-	#   0: Always succeeds (route exists)
-	check_route_exists() {
+	#   0: Always succeeds (ping source IP on default LAN)
+	check_local_ip_on_default_lan() {
 		return 0
 	}
-	export -f check_route_exists
+	export -f check_local_ip_on_default_lan
 
-	# Mock add_route_if_needed
-	# Mock function to simulate adding route if needed
+	# Mock add_local_ip_to_default_lan_if_needed
 	#
 	# Arguments:
 	#   None
 	#
 	# Returns:
 	#   0: Always succeeds
-	add_route_if_needed() {
+	add_local_ip_to_default_lan_if_needed() {
 		return 0
 	}
-	export -f add_route_if_needed
+	export -f add_local_ip_to_default_lan_if_needed
 
 	# Source logging for handle_error
 	# shellcheck source=../lib/logging.sh

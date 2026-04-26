@@ -1685,7 +1685,7 @@ EOF
 # bats test_tags=category:high-risk,priority:high
 @test "route setup works when detection.sh functions are available" {
 	# Purpose: Test verifies that route setup works correctly when detection.sh functions are available
-	# Expected: Route setup succeeds when detection.sh functions (get_local_ip_for_ping, check_route_exists, add_route_if_needed) are available
+	# Expected: Default LAN ping source setup succeeds when detection.sh functions (get_local_ip_for_ping, check_local_ip_on_default_lan, add_local_ip_to_default_lan_if_needed) are available
 	# Importance: Ensures route setup works in normal execution path where detection.sh is sourced
 	# Test Category: Route setup, detection.sh integration
 	local config_file="${TEST_DIR}/vpn-monitor.conf"

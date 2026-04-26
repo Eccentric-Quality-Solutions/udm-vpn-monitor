@@ -590,33 +590,32 @@ validate_config_schema() {
 	return 0
 }
 
-# Setup routes for ping connectivity if needed
+# Ensure LOCAL_UDM_IP is on the default LAN interface for ping (-I) if needed
 #
-# Checks if routes need to be added based on configuration:
-# - ENABLE_PING_CHECK must be enabled
-# - At least one location must have internal IPs configured
-# - LOCAL_UDM_IP must be configured
+# Runs when:
+# - ENABLE_PING_CHECK is enabled
+# - At least one location has internal IPs configured
+# - LOCAL_UDM_IP is configured
 #
-# This function is called during config validation to ensure routes are set up
-# proactively, not just when ping checks run. Routes are added to the br0
-# interface to enable ping connectivity between UDM devices.
+# This function is called during config validation to ensure IPs are set up
+# proactively, not just when ping checks run. IPs are added on
+# DEFAULT_LAN_INTERFACE (typically br0) to enable sourced pings between UDMs.
 #
 # Arguments:
 #   None
 #
 # Returns:
-#   0: Routes setup completed (or not needed)
-#   1: Route setup failed (logged as ERROR if routes are needed, non-critical in test contexts)
+#   0: Setup completed (or not needed)
+#   1: Setup failed (logged as ERROR if ping source on default LAN is required; non-critical in some test contexts)
 #
 # Side effects:
-#   - Adds route to br0 interface if needed
+#   - May add host address on default LAN interface
 #   - Logs actions and results
 #
 # Note:
-#   Requires detection.sh functions: get_local_ip_for_ping(), check_route_exists(), add_route_if_needed()
-#   These functions may not be available if config.sh is sourced independently (e.g., in tests)
-#   Function gracefully handles missing dependencies by skipping route setup
-setup_routes_if_needed() {
+#   Requires: get_local_ip_for_ping(), check_local_ip_on_default_lan(), add_local_ip_to_default_lan_if_needed()
+#   These may be unavailable if config.sh is sourced without detection.sh (e.g. in tests)
+ensure_default_lan_local_ip_for_ping() {
 	# Check if ping checks enabled
 	if [[ "${ENABLE_PING_CHECK:-0}" -ne 1 ]]; then
 		return 0
@@ -639,51 +638,35 @@ setup_routes_if_needed() {
 		fi
 	done
 
-	# If no internal IPs configured, routes aren't needed
+	# If no internal IPs configured, default LAN address setup is not needed
 	if [[ $has_internal_ips -eq 0 ]]; then
 		return 0
 	fi
 
-	# Routes are needed - check if detection.sh functions are available
-	# These functions are required for route setup but may not be available
-	# if config.sh is sourced independently (e.g., in check-config.sh or tests)
 	local missing_deps=()
 	command -v get_local_ip_for_ping >/dev/null 2>&1 || missing_deps+=("get_local_ip_for_ping")
-	command -v check_route_exists >/dev/null 2>&1 || missing_deps+=("check_route_exists")
-	command -v add_route_if_needed >/dev/null 2>&1 || missing_deps+=("add_route_if_needed")
+	command -v check_local_ip_on_default_lan >/dev/null 2>&1 || missing_deps+=("check_local_ip_on_default_lan")
+	command -v add_local_ip_to_default_lan_if_needed >/dev/null 2>&1 || missing_deps+=("add_local_ip_to_default_lan_if_needed")
 
 	if [[ ${#missing_deps[@]} -gt 0 ]]; then
-		# Detection functions not available - this is critical if routes are needed
-		# Check if log_message is available before using it (may not be available in all contexts)
 		if command -v log_message >/dev/null 2>&1; then
-			# If log_message is available, we're likely in the main execution path
-			# where detection.sh should have been sourced. This is a critical error because:
-			# - Routes are needed (ping checks enabled, internal IPs configured)
-			# - Routes won't be added during ping checks if VPN checks are skipped (network partition, cooldown, etc.)
-			# - This will cause ping checks to fail silently
-			handle_error "ERROR" "SYSTEM" "Cannot set up routes during config validation: missing detection.sh functions: ${missing_deps[*]}. Routes are required for ping checks but may not be added if VPN checks are skipped. Ensure detection.sh is sourced before config.sh."
+			handle_error "ERROR" "SYSTEM" "Cannot set up default LAN ping source during config validation: missing detection.sh functions: ${missing_deps[*]}. Ping source address on default LAN is required for internal IP ping checks but may not be added if VPN checks are skipped. Ensure detection.sh is sourced before config.sh."
 		fi
-		# Return error to indicate route setup failed (non-critical in test contexts)
 		return 1
 	fi
 
-	# Get LOCAL_UDM_IP
 	local local_ip
 	local_ip=$(get_local_ip_for_ping)
 	if [[ -z "$local_ip" ]]; then
-		# LOCAL_UDM_IP not configured - route setup not needed
-		# (warning already logged during validation)
+		# LOCAL_UDM_IP not configured (warning may already be logged during validation)
 		return 0
 	fi
 
-	# Check if route exists, add if needed
-	if ! check_route_exists "$local_ip"; then
-		log_message "INFO" "SYSTEM" "Route not found on br0 during config validation, attempting to add: $local_ip/${IPV4_CIDR_SINGLE_HOST:-32}"
-		if ! add_route_if_needed "$local_ip"; then
-			# Route setup failed - this is critical because routes are needed for ping checks
-			# and may not be added later if VPN checks are skipped
-			# Use exit_code=0 so we don't exit the script, but return 1 to fail validation
-			handle_error "ERROR" "SYSTEM" "Failed to add route during config validation: $local_ip/${IPV4_CIDR_SINGLE_HOST:-32}. Routes are required for ping checks but may not be added if VPN checks are skipped (network partition, cooldown, etc.). Manual route setup may be required: ip addr add $local_ip/32 dev br0" 0
+	local lan_if="${DEFAULT_LAN_INTERFACE:-br0}"
+	if ! check_local_ip_on_default_lan "$local_ip"; then
+		log_message "INFO" "SYSTEM" "Ping source IP not on default LAN ($lan_if) during config validation, attempting to add: $local_ip/${IPV4_CIDR_SINGLE_HOST:-32}"
+		if ! add_local_ip_to_default_lan_if_needed "$local_ip"; then
+			handle_error "ERROR" "SYSTEM" "Failed to add ping source address during config validation: $local_ip/${IPV4_CIDR_SINGLE_HOST:-32}. Internal IP ping checks require LOCAL_UDM_IP on default LAN; manual fix: ip addr add $local_ip/32 dev $lan_if" 0
 			return 1
 		fi
 	fi
@@ -853,28 +836,13 @@ validate_config() {
 		handle_error "WARNING" "SYSTEM" "LOG_FILE directory is not writable: $log_file_dir (log writes may fail, output will go to stderr)" 0
 	fi
 
-	# Setup routes for ping connectivity if needed
-	# This ensures routes are added proactively when config is loaded,
-	# not just when ping checks run during VPN monitoring
-	# Route setup failure fails validation when routes are actually needed
-	# (setup_routes_if_needed only returns 1 when routes are needed but setup failed)
-	if ! setup_routes_if_needed; then
-		# Route setup failed - if we're in main execution path, fail validation
-		# This ensures routes are available before ping checks run
-		# In test contexts (log_message not available), don't fail to allow tests to work
+	# Ensure LOCAL_UDM_IP on default LAN for ping (-I) when internal IPs are used
+	if ! ensure_default_lan_local_ip_for_ping; then
 		if command -v log_message >/dev/null 2>&1; then
-			# Main execution path - routes are needed, setup failed, fail validation
-			# setup_routes_if_needed already logged ERROR with details
-			# Use handle_error_or_exit_fake_mode to respect fake mode
-			# In fake mode, it returns 1; in normal mode it calls die() and never returns
-			if ! handle_error_or_exit_fake_mode "SYSTEM" "Route setup failed during config validation and routes are required for ping checks. See previous error messages for details." "${EXIT_VALIDATION_ERROR:-3}"; then
-				# In fake mode, handle_error_or_exit_fake_mode returns 1
+			if ! handle_error_or_exit_fake_mode "SYSTEM" "Default LAN ping source setup failed during config validation. See previous error messages for details." "${EXIT_VALIDATION_ERROR:-3}"; then
 				return 1
 			fi
-			# In normal mode, handle_error_or_exit_fake_mode calls die() and never returns
 		fi
-		# Test context - don't fail validation (allows tests to work)
-		# ERROR was already logged by setup_routes_if_needed if log_message was available
 	fi
 
 	return 0

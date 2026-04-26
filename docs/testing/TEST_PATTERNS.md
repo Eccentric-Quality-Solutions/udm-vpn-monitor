@@ -84,12 +84,12 @@ run bash "$TEST_SCRIPT" --fake
 
 #### Assertion guidance for fake mode
 
-- Use `assert_failure` when the test is about detecting execution-blocking errors (validation failures, required route setup failures, permission issues). Fake mode should still fail so tests prove the error blocks execution.
+- Use `assert_failure` when the test is about detecting execution-blocking errors (validation failures, required default LAN ping source setup failures, permission issues). Fake mode should still fail so tests prove the error blocks execution.
 - Use `assert_success` plus log assertions when the test is about error logging/formatting for parsing or setup errors that we only need to observe (e.g., config parse errors, directory creation failures). Fake mode should exit `0` so the test can inspect logs.
 
 | Error under test | Fake mode assertion | Why |
 |------------------|---------------------|-----|
-| Validation or route setup failure | `assert_failure` | Prove we fail fast even in fake mode |
+| Validation or default LAN ping source setup failure | `assert_failure` | Prove we fail fast even in fake mode |
 | Permission/state file errors | `assert_failure` | Blocking condition must fail the run |
 | Config parse / malformed input | `assert_success` + log check | Focus on log format/content |
 | Directory creation/log path issues | `assert_success` + log check | Need to inspect logged error formatting |
@@ -966,11 +966,11 @@ echo "      1000(bytes), 10(packets)"
 
 **When to use**: Any test that sets `ENABLE_PING_CHECK=1` and `LOCAL_UDM_IP` in the configuration.
 
-**Why this is required**: The `setup_routes_if_needed()` function is called during `validate_config()`. It checks if routes exist using `ip addr show br0` and adds them using `ip addr add` if needed. If these commands aren't mocked, tests will fail during config validation with route setup errors.
+**Why this is required**: The `ensure_default_lan_local_ip_for_ping()` function is called during `validate_config()`. It checks if `LOCAL_UDM_IP` is on the default LAN interface (`DEFAULT_LAN_INTERFACE`, typically `br0`) using `ip addr show` and adds a `/32` with `ip addr add` if needed. If these commands aren't mocked, tests will fail during config validation.
 
 **Standard Pattern**:
 ```bash
-# ✅ CORRECT: Mock route setup commands
+# ✅ CORRECT: Mock default LAN / `ip addr` commands for ping source setup
 local mock_ip="${TEST_DIR}/ip"
 cat >"$mock_ip" <<'EOF'
 #!/bin/bash
@@ -1013,7 +1013,7 @@ EOF
 chmod +x "$mock_ip"
 ```
 
-**Note**: Both patterns work because `check_route_exists()` uses `ip addr show br0 2>/dev/null | grep -q "inet ${local_ip}/"`. If the command exits with 1, the pipe fails and the function returns 1. If it exits with 0 but outputs something without the target IP, the grep fails and the function also returns 1.
+**Note**: Both patterns work because `check_local_ip_on_default_lan()` uses `ip addr show <DEFAULT_LAN_INTERFACE> 2>/dev/null | grep -q "inet ${local_ip}/"`. If the command exits with 1, the pipe fails and the function returns 1. If it exits with 0 but outputs something without the target IP, the grep fails and the function also returns 1.
 - `mock_ip_vpn_down()` - handles both formats
 - `mock_ip_xfrm_empty()` - handles both formats
 - `mock_ip_xfrm_with_incrementing_bytes()` - handles both formats

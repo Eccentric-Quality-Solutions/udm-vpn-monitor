@@ -146,7 +146,7 @@ Scripts work without mapping files for backward compatibility:
 
 In standalone mode, each script generates its own mappings internally, but mappings are not shared across scripts.
 
-**Log script (anonymize-logs.sh)**: When `-m` is omitted, the script uses a **shared mapping file** in the input file's directory: `<input_dir>/anonymization.mapping`. This file is loaded (if present) before anonymizing and saved after. So location mappings persist across runs: e.g. first run NYC→DENVER, second run ATLANTA→SACRAMENTO (a different city), without overwriting. Use `-m` to point to a different mapping file (e.g. for anonymize-all.sh consistency).
+**Log script (anonymize-logs.sh)**: When `-m` is omitted, the script uses a **shared mapping file** in the input file's directory: `<input_dir>/anonymization.mapping`. This file is loaded (if present) before anonymizing and saved after. So location mappings persist across runs: e.g. first run NYC→DENVER, second run ATLANTA→SACRAMENTO (a different city), without overwriting. Use `-m` to point to a different mapping file (e.g. for anonymize-all.sh consistency). **Output filename anonymization**: When the input filename is `vpn-monitor-<location>.log` or `vpn-monitor-<ip>.log` (e.g. UDM exports using host IP), the output filename uses the anonymized value so filenames do not leak real locations or UDM IPs.
 
 ## Mapping File Format
 

@@ -2,6 +2,11 @@
 
 All notable changes to the UDM VPN Monitor project will be documented in this file.
 
+## Unreleased
+
+### Changed
+- **Ping source / default LAN naming**: Replaced misleading “route” function names with terminology for `ip addr add` on the default LAN bridge: `check_local_ip_on_default_lan`, `add_local_ip_to_default_lan_if_needed`, `ensure_default_lan_local_ip_for_ping` (config validation), `ensure_default_lan_local_ip_for_ping_install` (install), `detect_local_udm_ip_from_default_lan`. Added `DEFAULT_LAN_INTERFACE` in `lib/constants.sh` (default `br0` on UDM). Log messages updated accordingly.
+
 ## 0.8.3 - 2026-02-25
 
 ### Added
@@ -342,7 +347,7 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
   - Additional fallback: attempts to execute command with `--help`/`--version` flags to verify availability
   - Better compatibility with UDM OS environments where PATH may be restricted
 - **Detection Reliability Test Suite**: New `tests/test_recovery_detection_reliability.sh` test file with comprehensive tests for the detection reliability safeguard, ensuring recovery escalation is properly blocked when detection tools are unavailable
-- **Installation Route Testing Enhancement**: Enhanced `check_and_setup_routes()` in `install.sh` to test ping connectivity to all internal IPs from all configured locations (not just the first IP). Uses `check_ping_connectivity()` from detection.sh which provides proper fallback logic for ping commands (ping vs ping6, timeout handling, etc.) and proper logging.
+- **Installation Route Testing Enhancement**: Enhanced `ensure_default_lan_local_ip_for_ping_install()` (formerly `check_and_setup_routes()`) in `install.sh` to test ping connectivity to all internal IPs from all configured locations (not just the first IP). Uses `check_ping_connectivity()` from detection.sh which provides proper fallback logic for ping commands (ping vs ping6, timeout handling, etc.) and proper logging.
 - Migration script tests for interactive mode with mocked input
 - Migration script test for fallback `sanitize_location_name` when library fails to load
 - Migration script test for `CONFIG_FILE` environment variable override

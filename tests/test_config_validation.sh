@@ -236,7 +236,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 # bats test_tags=category:high-risk,priority:high
 @test "validate_config calls route setup when routes are needed" {
-	# Purpose: Test verifies that validate_config() calls setup_routes_if_needed() when routes are needed
+	# Purpose: Test verifies that validate_config() calls ensure_default_lan_local_ip_for_ping() when needed
 	# Expected: Route setup functions are called during validation when ENABLE_PING_CHECK=1 and internal IPs are configured
 	# Importance: Ensures routes are set up proactively during config validation, not just during ping checks
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
@@ -258,12 +258,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 #!/bin/bash
 if [[ "\$1" == "addr" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "br0" ]]; then
     # Log the check
-    echo "check_route_exists: \$*" >> "$route_check_log"
+    echo "check_local_ip_on_default_lan: \$*" >> "$route_check_log"
     # Simulate route does not exist (so it will try to add)
     exit 1
 elif [[ "\$1" == "addr" ]] && [[ "\$2" == "add" ]]; then
     # Log the add attempt
-    echo "add_route: \$*" >> "$route_check_log"
+    echo "add_local_ip_to_default_lan_if_needed: \$*" >> "$route_check_log"
     # Simulate successful route add
     exit 0
 fi
@@ -291,9 +291,9 @@ EOF
 
 	# Verify route check was called during validation
 	assert_file_exist "$route_check_log"
-	assert_file_contains "$route_check_log" "check_route_exists"
+	assert_file_contains "$route_check_log" "check_local_ip_on_default_lan"
 	# Route add should be called if route doesn't exist
-	assert_file_contains "$route_check_log" "add_route"
+	assert_file_contains "$route_check_log" "add_local_ip_to_default_lan_if_needed"
 
 	remove_mock_from_path
 }
@@ -346,7 +346,7 @@ EOF
 	# Should fail validation (exit code 3 = EXIT_VALIDATION_ERROR)
 	assert_failure
 	# Should contain route setup error message
-	assert_log_contains_any "$LOG_FILE" "Route setup failed" "Failed to add route"
+	assert_log_contains_any "$LOG_FILE" "Default LAN ping source setup failed" "Failed to add ping source address"
 
 	remove_mock_from_path
 }
@@ -519,12 +519,12 @@ EOF
 #!/bin/bash
 if [[ "\$1" == "addr" ]] && [[ "\$2" == "show" ]] && [[ "\$3" == "br0" ]]; then
     # Log the check
-    echo "check_route_exists: \$*" >> "$route_check_log"
+    echo "check_local_ip_on_default_lan: \$*" >> "$route_check_log"
     # Simulate route does not exist (so it will try to add)
     exit 1
 elif [[ "\$1" == "addr" ]] && [[ "\$2" == "add" ]]; then
     # Log the add attempt
-    echo "add_route: \$*" >> "$route_check_log"
+    echo "add_local_ip_to_default_lan_if_needed: \$*" >> "$route_check_log"
     # Simulate successful route add
     exit 0
 fi
@@ -552,16 +552,16 @@ EOF
 
 	# Verify route check was called during validation
 	assert_file_exist "$route_check_log"
-	assert_file_contains "$route_check_log" "check_route_exists"
+	assert_file_contains "$route_check_log" "check_local_ip_on_default_lan"
 	# Route add should be called if route doesn't exist
-	assert_file_contains "$route_check_log" "add_route"
+	assert_file_contains "$route_check_log" "add_local_ip_to_default_lan_if_needed"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "setup_routes_if_needed gracefully handles missing detection.sh functions" {
-	# Purpose: Test verifies that setup_routes_if_needed() gracefully handles missing detection.sh functions
+@test "ensure_default_lan_local_ip_for_ping gracefully handles missing detection.sh functions" {
+	# Purpose: Test verifies that ensure_default_lan_local_ip_for_ping() gracefully handles missing detection.sh functions
 	# Expected: Function returns error code but doesn't crash when detection.sh functions are unavailable
 	# Importance: Ensures route setup doesn't break when config.sh is sourced independently (e.g., in check-config.sh or tests)
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
@@ -573,7 +573,7 @@ EOF
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
-	# Source config.sh functions to test setup_routes_if_needed directly
+	# Source config.sh functions to test ensure_default_lan_local_ip_for_ping directly
 	# Note: We intentionally do NOT source detection.sh to simulate the scenario where
 	# config.sh is sourced independently (e.g., in check-config.sh or standalone tests)
 	# shellcheck source=../lib/common.sh
@@ -602,14 +602,14 @@ EOF
 	# This simulates the scenario where config.sh is sourced independently
 	run command -v get_local_ip_for_ping
 	assert_failure
-	run command -v check_route_exists
+	run command -v check_local_ip_on_default_lan
 	assert_failure
-	run command -v add_route_if_needed
+	run command -v add_local_ip_to_default_lan_if_needed
 	assert_failure
 
-	# Call setup_routes_if_needed - should return error but not crash
+	# Call ensure_default_lan_local_ip_for_ping - should return error but not crash
 	# The function should detect missing functions and return 1 gracefully
-	run setup_routes_if_needed
+	run ensure_default_lan_local_ip_for_ping
 
 	# Should return error code (1) because detection.sh functions are missing
 	assert_failure
@@ -665,7 +665,7 @@ EOF
 	# Should fail validation (exit code 3 = EXIT_VALIDATION_ERROR)
 	assert_failure
 	# Should contain route setup error message
-	assert_log_contains_any "$LOG_FILE" "Route setup failed" "Failed to add route"
+	assert_log_contains_any "$LOG_FILE" "Default LAN ping source setup failed" "Failed to add ping source address"
 
 	remove_mock_from_path
 }

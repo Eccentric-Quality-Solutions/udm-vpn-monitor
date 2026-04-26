@@ -506,6 +506,34 @@ EOF
 }
 
 # bats test_tags=category:unit
+@test "anonymize-logs.sh anonymizes output filename when input has IP instead of location" {
+	# Purpose: When input is vpn-monitor-<ip>.log (UDM exports use host IP), output filename
+	# must use anonymized IP so the filename does not leak the real UDM IP.
+	# Expected: vpn-monitor-172.31.11.1.log -> vpn-monitor-<anonymized_ip>-anonymized.log
+	local log_dir="${TEST_DIR}/ip-filename"
+	local input_file="${log_dir}/vpn-monitor-172.31.11.1.log"
+	local output_path="${log_dir}/out.log"
+	mkdir -p "$log_dir"
+	echo '[2025-01-15 10:00:00] [INFO] VPN check for location NYC (10.0.0.1): OK' >"$input_file"
+
+	run bash "$ANONYMIZE_LOGS_SCRIPT" -i "$input_file" -o "$output_path" -m "${log_dir}/mapping.txt"
+
+	assert_success
+	# Output must not be named with the real IP
+	assert [ ! -f "${log_dir}/vpn-monitor-172.31.11.1-anonymized.log" ]
+	# Output must be vpn-monitor-<anon_ip>-anonymized.log (anon IP is in 10.x.x.x range)
+	local canonical
+	canonical=$(find "$log_dir" -maxdepth 1 -name 'vpn-monitor-*-anonymized.log' -type f)
+	[[ -n "$canonical" ]] || (echo "No vpn-monitor-*-anonymized.log found in $log_dir" && ls -la "$log_dir" && return 1)
+	# Basename must match pattern vpn-monitor-10.x.x.x-anonymized.log (anonymized IP)
+	local basename_canonical
+	basename_canonical=$(basename "$canonical")
+	[[ "$basename_canonical" =~ ^vpn-monitor-10\.[0-9]+\.[0-9]+\.[0-9]+-anonymized\.log$ ]] || (echo "Filename must use anonymized IP, got: $basename_canonical" && return 1)
+	# Must not contain real UDM IP in filename
+	refute [[ "$basename_canonical" == *"172.31.11.1"* ]]
+}
+
+# bats test_tags=category:unit
 @test "anonymize-logs.sh preserves log file structure and formatting" {
 	# Purpose: Test verifies that the anonymize-logs script preserves the structure and formatting of the log file
 	# Expected: Anonymized log maintains the same line count, timestamp format, and log level format as original

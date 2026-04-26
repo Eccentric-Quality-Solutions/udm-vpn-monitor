@@ -172,7 +172,7 @@ fi
 
 #### Fake Mode Exit Behavior (when to fail vs succeed)
 
-- Execution-blocking and failure-focused (validation failures, route setup failures, permission errors): exit with the appropriate error code in both normal and fake mode so tests can `assert_failure`.
+- Execution-blocking and failure-focused (validation failures, default LAN ping source setup failures, permission errors): exit with the appropriate error code in both normal and fake mode so tests can `assert_failure`.
 - Logging-focused (config parse errors, directory creation failures when testing log format): exit with the error code in normal mode but exit `0` in fake mode so tests can `assert_success` and check log output.
 - Both categories are functionally blocking; the difference is what the test asserts. Document the intent in code comments when the choice is non-obvious.
 

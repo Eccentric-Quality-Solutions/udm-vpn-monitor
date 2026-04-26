@@ -6,7 +6,7 @@
 # Version: 0.8.3
 #
 # This file sources all detection modules:
-# - network_validation.sh: IP validation, route checks
+# - network_validation.sh: IP validation, default LAN ping source (ip addr on DEFAULT_LAN_INTERFACE)
 # - xfrm_detection.sh: xfrm state and byte counter detection
 # - ping_detection.sh: Ping-based detection
 # - failure_analysis.sh: Failure type classification

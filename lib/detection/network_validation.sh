@@ -18,6 +18,7 @@ if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
 	[[ -z "${MAX_IPV4_OCTET:-}" ]] && readonly MAX_IPV4_OCTET=255
 	[[ -z "${IPV4_OCTET_COUNT:-}" ]] && readonly IPV4_OCTET_COUNT=4
 	[[ -z "${IPV4_CIDR_SINGLE_HOST:-}" ]] && readonly IPV4_CIDR_SINGLE_HOST=32
+	[[ -z "${DEFAULT_LAN_INTERFACE:-}" ]] && readonly DEFAULT_LAN_INTERFACE=br0
 	[[ -z "${PING_PACKET_LOSS_THRESHOLD:-}" ]] && readonly PING_PACKET_LOSS_THRESHOLD=100
 	[[ -z "${PING_SUCCESS_THRESHOLD:-}" ]] && readonly PING_SUCCESS_THRESHOLD=0.3
 	[[ -z "${XFRM_OUTPUT_CONTEXT_LINES:-}" ]] && readonly XFRM_OUTPUT_CONTEXT_LINES=10
@@ -683,23 +684,24 @@ get_local_ip_for_ping() {
 	return 0
 }
 
-# Check if route (IP address) exists on br0 interface
+# Check if an IPv4 address is assigned on the default LAN interface
 #
-# Checks if a specific IP address is already configured on the br0 interface.
-# Used to determine if route needs to be added before pinging.
+# Checks if a specific IP address is already configured on DEFAULT_LAN_INTERFACE
+# (typically br0 on UDM). Used before sourced pings (ping -I LOCAL_UDM_IP).
 #
 # Arguments:
 #   $1: IP address to check (IPv4 format, e.g., "192.168.1.1")
 #
 # Returns:
-#   0: Route exists (IP address is on br0)
-#   1: Route does not exist or check failed
+#   0: IP is present on the default LAN interface
+#   1: IP not present or check failed
 #
 # Note:
-#   Uses 'ip addr show br0' to check for IP address
+#   Uses 'ip addr show <DEFAULT_LAN_INTERFACE>'
 #   Requires 'ip' command to be available
-check_route_exists() {
+check_local_ip_on_default_lan() {
 	local local_ip="$1"
+	local lan_if="${DEFAULT_LAN_INTERFACE:-br0}"
 
 	if [[ -z "$local_ip" ]]; then
 		return 1
@@ -711,72 +713,70 @@ check_route_exists() {
 		return 1
 	fi
 
-	if ! check_command_or_warn "ip" "Route check"; then
+	if ! check_command_or_warn "ip" "Default LAN interface check"; then
 		return 1
 	fi
 
-	# Check if IP address exists on br0 interface
 	# Format: "inet 192.168.1.1/${IPV4_CIDR_SINGLE_HOST}" or "inet 192.168.1.1/24" etc.
-	if ip addr show br0 2>/dev/null | grep -q "inet ${local_ip}/"; then
+	if ip addr show "$lan_if" 2>/dev/null | grep -q "inet ${local_ip}/"; then
 		return 0
 	fi
 
 	return 1
 }
 
-# Add route (IP address) to br0 interface if needed
+# Add LOCAL_UDM_IP to default LAN interface if missing (ip addr add /32)
 #
-# Adds the local UDM IP address to the br0 interface using 'ip addr add'.
-# This enables ping connectivity between UDM devices at each end of S2S VPN tunnels.
-# The route is temporary (not persistent across reboots).
+# Adds the IPv4 to DEFAULT_LAN_INTERFACE using `ip addr add` (/32 host address).
+# Enables sourced pings (`ping -I`) toward VPN-internal targets.
+# The assignment is temporary (not persistent across reboot unless something reapplies it).
 #
 # Arguments:
 #   $1: IP address to add (IPv4 format, e.g., "192.168.1.1")
 #
 # Returns:
-#   0: Route added successfully or already exists
-#   1: Failed to add route
+#   0: Address present or add succeeded
+#   1: Failed to add address
 #
 # Side effects:
-#   - Adds IP address to br0 interface: ip addr add <local_ip>/${IPV4_CIDR_SINGLE_HOST} dev br0
+#   - Adds host address on default LAN interface
 #   - Logs actions and results
 #
 # Note:
 #   Idempotent - safe to call multiple times
-#   If route already exists, command will fail but function returns success
+#   If address already exists, ip addr add may fail but function returns success when verify passes
 #   Requires 'ip' command and root privileges
-add_route_if_needed() {
+add_local_ip_to_default_lan_if_needed() {
 	local local_ip="$1"
+	local lan_if="${DEFAULT_LAN_INTERFACE:-br0}"
 
 	if [[ -z "$local_ip" ]]; then
-		handle_error "WARNING" "SYSTEM" "Cannot add route: LOCAL_UDM_IP is not configured"
+		handle_error "WARNING" "SYSTEM" "Cannot add ping source address: LOCAL_UDM_IP is not configured"
 		return 1
 	fi
 
-	if ! check_command_or_warn "ip" "Cannot add route"; then
+	if ! check_command_or_warn "ip" "Cannot add ping source address on default LAN"; then
 		return 1
 	fi
 
-	# Check if route already exists (e.g. added by another process since caller's check)
-	if check_route_exists "$local_ip"; then
-		log_message "INFO" "SYSTEM" "Route already exists on br0: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
+	# Check if already present (e.g. added by another process since caller's check)
+	if check_local_ip_on_default_lan "$local_ip"; then
+		log_message "INFO" "SYSTEM" "Ping source IP already on default LAN interface ($lan_if): $local_ip/${IPV4_CIDR_SINGLE_HOST}"
 		return 0
 	fi
 
-	# Add route: ip addr add <local_ip>/${IPV4_CIDR_SINGLE_HOST} dev br0
-	log_message "INFO" "SYSTEM" "Adding route to br0: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
-	if ip addr add "${local_ip}/${IPV4_CIDR_SINGLE_HOST}" dev br0 2>/dev/null; then
-		log_message "INFO" "SYSTEM" "Route added successfully: $local_ip/${IPV4_CIDR_SINGLE_HOST} on br0"
+	log_message "INFO" "SYSTEM" "Adding /32 on default LAN interface ($lan_if) for ping source: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
+	if ip addr add "${local_ip}/${IPV4_CIDR_SINGLE_HOST}" dev "$lan_if" 2>/dev/null; then
+		log_message "INFO" "SYSTEM" "Ping source address added on default LAN interface ($lan_if): $local_ip/${IPV4_CIDR_SINGLE_HOST}"
 		return 0
 	else
-		# Check if error is "File exists" (route already present, race condition)
-		if check_route_exists "$local_ip"; then
-			log_message "INFO" "SYSTEM" "Route exists on br0 (added by another process): $local_ip/${IPV4_CIDR_SINGLE_HOST}"
+		# Race: another process added it between check and add
+		if check_local_ip_on_default_lan "$local_ip"; then
+			log_message "INFO" "SYSTEM" "Ping source IP now on default LAN interface ($lan_if, added elsewhere): $local_ip/${IPV4_CIDR_SINGLE_HOST}"
 			return 0
 		fi
 
-		# Other error occurred
-		handle_error "WARNING" "SYSTEM" "Failed to add route to br0: $local_ip/${IPV4_CIDR_SINGLE_HOST}"
+		handle_error "WARNING" "SYSTEM" "Failed to add ping source address on default LAN interface ($lan_if): $local_ip/${IPV4_CIDR_SINGLE_HOST}"
 		return 1
 	fi
 }

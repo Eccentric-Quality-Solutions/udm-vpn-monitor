@@ -565,6 +565,7 @@ The `anonymize-logs.sh` script anonymizes IP addresses, location names, MAC addr
 - **MAC Address Anonymization**: Replaces MAC addresses with anonymized MACs
 - **Hostname Anonymization**: Replaces hostnames/FQDNs with anonymized hostnames
 - **Consistency**: Same identifiers always map to the same anonymized values (when using unified mapping)
+- **Output Filename Anonymization**: When input is `vpn-monitor-<location>.log` or `vpn-monitor-<ip>.log`, the output filename uses the anonymized value so filenames do not leak real locations or UDM IPs
 - **Preserves Log Structure**: Maintains log formatting, timestamps, and structure for readability
 
 ### Anonymize Firewall Rules

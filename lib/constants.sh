@@ -41,6 +41,10 @@
 # CIDR notation for single host (used when adding IP addresses to interfaces)
 [[ -z "${IPV4_CIDR_SINGLE_HOST:-}" ]] && readonly IPV4_CIDR_SINGLE_HOST=32
 
+# Linux interface for the UDM default LAN bridge (ping source / LOCAL_UDM_IP binding).
+# Typical UniFi Dream Machine deployments use br0; override only if your layout differs.
+[[ -z "${DEFAULT_LAN_INTERFACE:-}" ]] && readonly DEFAULT_LAN_INTERFACE=br0
+
 # Ping check constants
 # Packet loss threshold for ping failure (100% = complete failure)
 [[ -z "${PING_PACKET_LOSS_THRESHOLD:-}" ]] && readonly PING_PACKET_LOSS_THRESHOLD=100

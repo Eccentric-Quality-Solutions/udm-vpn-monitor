@@ -213,10 +213,10 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 	#
 	# Returns:
 	#   0: Always succeeds (route exists)
-	check_route_exists() {
+	check_local_ip_on_default_lan() {
 		return 0
 	}
-	export -f check_route_exists
+	export -f check_local_ip_on_default_lan
 
 	run check_ping_connectivity "${TEST_PEER_IP}" ""
 
@@ -252,10 +252,10 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 	#
 	# Returns:
 	#   0: Always succeeds (route exists)
-	check_route_exists() {
+	check_local_ip_on_default_lan() {
 		return 0
 	}
-	export -f check_route_exists
+	export -f check_local_ip_on_default_lan
 
 	run check_ping_connectivity "${TEST_PEER_IP}" ""
 
@@ -290,10 +290,10 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 	#
 	# Returns:
 	#   0: Always succeeds (route exists)
-	check_route_exists() {
+	check_local_ip_on_default_lan() {
 		return 0
 	}
-	export -f check_route_exists
+	export -f check_local_ip_on_default_lan
 
 	# Mock timestamp for consistent testing
 	setup_mock_timestamp 1000
@@ -305,6 +305,91 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 	# Verify state files were created (summary function was called)
 	assert_file_exist "${STATE_DIR}/ping_summary_last_time"
 	assert_file_exist "${STATE_DIR}/ping_summary_count"
+}
+
+# bats test_tags=category:unit
+@test "check_ping_connectivity - computes packet loss from transmitted/received (0/3 = 100%)" {
+	# Purpose: Packet loss is derived from transmitted/received, not ping's reported %.
+	# When 0/3 received, we compute 100% and fail; log shows 100%, not bogus 3333%.
+	setup_ping_summary_test
+
+	export ENABLE_PING_CHECK=1
+	export PING_COUNT=1
+	export PING_TIMEOUT=1
+
+	# Mock ping: 0 received, buggy implementation reports 3333%
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<'EOF'
+#!/bin/bash
+echo "3 packets transmitted, 0 received, 3333% packet loss"
+exit 0
+EOF
+	chmod +x "$mock_ping"
+	export PATH="${TEST_DIR}:${PATH}"
+
+	# Mock default LAN check: skip ip addr path (this test targets ping output parsing)
+	# Mock function to simulate LOCAL_UDM_IP already on default LAN
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	check_local_ip_on_default_lan() {
+		return 0
+	}
+	export -f check_local_ip_on_default_lan
+
+	run check_ping_connectivity "${TEST_PEER_IP}" ""
+
+	assert_failure
+	assert_file_contains "$LOG_FILE" "100% packet loss"
+	run grep -q "3333% packet loss" "$LOG_FILE" || true
+	assert_failure
+}
+
+# bats test_tags=category:unit
+@test "check_ping_connectivity - computes packet loss from transmitted/received (2/3 = 33%)" {
+	# Purpose: When 2/3 received we compute 33% loss; we must not use bogus reported %.
+	# If we used reported 3333% we'd wrongly fail; with computed 33% we pass (below 100% threshold).
+	setup_ping_summary_test
+
+	export ENABLE_PING_CHECK=1
+	export PING_COUNT=1
+	export PING_TIMEOUT=1
+	export DEBUG=1
+
+	# Mock ping: 2 received (33% loss), but buggy implementation reports 3333%
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<'EOF'
+#!/bin/bash
+echo "3 packets transmitted, 2 received, 3333% packet loss"
+exit 0
+EOF
+	chmod +x "$mock_ping"
+	export PATH="${TEST_DIR}:${PATH}"
+
+	# Mock default LAN check: skip ip addr path (this test targets ping output parsing)
+	# Mock function to simulate LOCAL_UDM_IP already on default LAN
+	#
+	# Arguments:
+	#   None
+	#
+	# Returns:
+	#   0: Always succeeds
+	check_local_ip_on_default_lan() {
+		return 0
+	}
+	export -f check_local_ip_on_default_lan
+
+	run check_ping_connectivity "${TEST_PEER_IP}" ""
+
+	# Should succeed (33% < 100% threshold)
+	assert_success
+	# Log must show computed 33%, not reported 3333%
+	assert_file_contains "$LOG_FILE" "33% packet loss"
+	run grep -q "3333% packet loss" "$LOG_FILE" || true
+	assert_failure
 }
 
 # bats test_tags=category:unit

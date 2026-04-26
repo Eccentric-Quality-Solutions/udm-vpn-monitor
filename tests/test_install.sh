@@ -626,8 +626,8 @@ EOF
 }
 
 # bats test_tags=category:unit,priority:high
-@test "install.sh check_and_setup_routes tests all IPs from all locations with proper fallback" {
-	# Purpose: Test verifies that check_and_setup_routes() tests all internal IPs from all locations,
+@test "install.sh ensure_default_lan_local_ip_for_ping_install tests all IPs from all locations with proper fallback" {
+	# Purpose: Test verifies that ensure_default_lan_local_ip_for_ping_install() tests all internal IPs from all locations,
 	#          uses proper ping fallback logic, and sets LOG_FILE correctly
 	# Expected: All configured internal IPs are tested, ping fallback logic is used, LOG_FILE is set
 	# Importance: Ensures ping connectivity testing works correctly during installation with multiple locations/IPs
@@ -693,7 +693,7 @@ EOF
 	# Add mocks to PATH
 	add_mock_to_path
 
-	# Run install script in dev mode - this will call check_and_setup_routes()
+	# Run install script in dev mode - this will call ensure_default_lan_local_ip_for_ping_install()
 	run bash "$test_install" --dev --silent --no-cron
 
 	# Installation should succeed

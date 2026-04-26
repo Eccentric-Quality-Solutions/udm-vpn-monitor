@@ -74,10 +74,10 @@ EOF
 	#
 	# Returns:
 	#   0: Always succeeds (route exists)
-	check_route_exists() {
+	check_local_ip_on_default_lan() {
 		return 0
 	}
-	export -f check_route_exists
+	export -f check_local_ip_on_default_lan
 
 	# Mock build_route_message to return empty (not needed for this test)
 	# Mock function to simulate route message building
@@ -150,10 +150,10 @@ EOF
 	#
 	# Returns:
 	#   0: Always succeeds (route exists)
-	check_route_exists() {
+	check_local_ip_on_default_lan() {
 		return 0
 	}
-	export -f check_route_exists
+	export -f check_local_ip_on_default_lan
 
 	# Mock build_route_message
 	# Mock function to simulate route message building
@@ -226,10 +226,10 @@ EOF
 	#
 	# Returns:
 	#   0: Always succeeds (route exists)
-	check_route_exists() {
+	check_local_ip_on_default_lan() {
 		return 0
 	}
-	export -f check_route_exists
+	export -f check_local_ip_on_default_lan
 
 	# Mock build_route_message
 	# Mock function to simulate route message building
@@ -377,10 +377,10 @@ EOF
 	#
 	# Returns:
 	#   0: Always succeeds (route exists)
-	check_route_exists() {
+	check_local_ip_on_default_lan() {
 		return 0
 	}
-	export -f check_route_exists
+	export -f check_local_ip_on_default_lan
 
 	# Call check_ping_if_enabled with sa_exists=1
 	run check_ping_if_enabled 1 "$ping_target" "" "$location_name"
@@ -418,10 +418,10 @@ EOF
 	#
 	# Returns:
 	#   0: Always succeeds (route exists)
-	check_route_exists() {
+	check_local_ip_on_default_lan() {
 		return 0
 	}
-	export -f check_route_exists
+	export -f check_local_ip_on_default_lan
 
 	# Call check_ping_if_enabled with sa_exists=1
 	run check_ping_if_enabled 1 "$ping_target" "" "$location_name"
@@ -458,10 +458,10 @@ EOF
 	#
 	# Returns:
 	#   0: Always succeeds (route exists)
-	check_route_exists() {
+	check_local_ip_on_default_lan() {
 		return 0
 	}
-	export -f check_route_exists
+	export -f check_local_ip_on_default_lan
 
 	# Mock build_route_message
 	# Mock function to simulate route message building
@@ -512,10 +512,10 @@ EOF
 	#
 	# Returns:
 	#   0: Always succeeds (route exists)
-	check_route_exists() {
+	check_local_ip_on_default_lan() {
 		return 0
 	}
-	export -f check_route_exists
+	export -f check_local_ip_on_default_lan
 
 	# Call check_ping_if_enabled with sa_exists=0
 	run check_ping_if_enabled 0 "$ping_target" "" "$location_name"
@@ -558,10 +558,10 @@ EOF
 	#
 	# Returns:
 	#   0: Always succeeds (route exists)
-	check_route_exists() {
+	check_local_ip_on_default_lan() {
 		return 0
 	}
-	export -f check_route_exists
+	export -f check_local_ip_on_default_lan
 
 	# Call check_ping_if_enabled with sa_exists=1 and multiple IPs
 	run check_ping_if_enabled 1 "$ping_target" "" "$location_name"
@@ -648,10 +648,10 @@ EOF
 	#
 	# Returns:
 	#   0: Always succeeds (route exists)
-	check_route_exists() {
+	check_local_ip_on_default_lan() {
 		return 0
 	}
-	export -f check_route_exists
+	export -f check_local_ip_on_default_lan
 
 	# Mock function to build route message
 	#

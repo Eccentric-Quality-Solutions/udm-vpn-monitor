@@ -334,12 +334,10 @@ start_daemon() {
 			local local_udm_ip
 			local_udm_ip=$(get_local_ip_for_ping 2>/dev/null || echo "")
 
-			# If LOCAL_UDM_IP is configured and we have locations with internal IPs, ensure route exists on br0
-			# This matches the behavior of vpn-monitor.sh ping checks
+			# If LOCAL_UDM_IP is set and we have locations, ensure ping source on default LAN (matches vpn-monitor.sh)
 			if [[ -n "$local_udm_ip" ]] && [[ ${#locations[@]} -gt 0 ]]; then
-				# Check if route exists, add if needed (errors ignored to prevent daemon exit)
-				if ! check_route_exists "$local_udm_ip" 2>/dev/null; then
-					add_route_if_needed "$local_udm_ip" >/dev/null 2>&1 || true
+				if ! check_local_ip_on_default_lan "$local_udm_ip" 2>/dev/null; then
+					add_local_ip_to_default_lan_if_needed "$local_udm_ip" >/dev/null 2>&1 || true
 				fi
 			fi
 

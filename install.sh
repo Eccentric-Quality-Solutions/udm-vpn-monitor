@@ -1504,10 +1504,10 @@ verify_installation() {
 	fi
 }
 
-# Detect local UDM IP from br0 interface
+# Detect local UDM IP from default LAN interface
 #
-# Attempts to auto-detect the local UDM internal IP address from the br0 interface.
-# Used during installation to help configure LOCAL_UDM_IP if not manually set.
+# Attempts to auto-detect the local UDM internal IP from DEFAULT_LAN_INTERFACE
+# (typically br0 on UDM). Used during installation to configure LOCAL_UDM_IP if unset.
 #
 # Arguments:
 #   None
@@ -1520,48 +1520,45 @@ verify_installation() {
 #   Prints detected IP address to stdout if found, empty string otherwise
 #
 # Note:
-#   Uses 'ip addr show br0' to extract the first IPv4 address
-#   Requires 'ip' command to be available
-detect_local_udm_ip() {
+#   Requires 'ip' command; uses first IPv4 on the default LAN interface
+detect_local_udm_ip_from_default_lan() {
+	local lan_if="${DEFAULT_LAN_INTERFACE:-br0}"
+
 	if ! check_command_available "ip"; then
 		return 1
 	fi
 
-	# Get first IPv4 address from br0 interface
-	# Format: "inet 192.168.1.1/24" -> extract "192.168.1.1"
-	local br0_ip
-	# Note: || true prevents set -e + pipefail from killing the script if br0 has no IPv4
-	br0_ip=$(ip addr show br0 2>/dev/null | grep -oE 'inet [0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1 | awk '{print $2}' || true)
+	local lan_ip
+	# Note: || true prevents set -e + pipefail from killing the script if the interface has no IPv4
+	lan_ip=$(ip addr show "$lan_if" 2>/dev/null | grep -oE 'inet [0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1 | awk '{print $2}' || true)
 
-	# Validate extracted IP address format before returning
-	if [[ -n "$br0_ip" ]] && validate_ip_address "$br0_ip"; then
-		echo "$br0_ip"
+	if [[ -n "$lan_ip" ]] && validate_ip_address "$lan_ip"; then
+		echo "$lan_ip"
 		return 0
 	fi
 
 	return 1
 }
 
-# Check and setup routes for ping connectivity
+# Ensure LOCAL_UDM_IP on default LAN and verify internal ping connectivity (install)
 #
-# Verifies that LOCAL_UDM_IP is configured and route exists on br0 interface.
-# If LOCAL_UDM_IP is not configured, attempts auto-detection from br0.
-# Adds route if needed and tests ping connectivity to all internal IPs from all locations.
-# Uses check_ping_connectivity() from detection.sh which has proper fallback logic
-# for finding ping commands (ping vs ping6, timeout handling, etc.).
+# Verifies LOCAL_UDM_IP and that it is assigned on DEFAULT_LAN_INTERFACE (typically br0).
+# Auto-detects from the default LAN interface if unset. Adds /32 via ip addr if needed.
+# Tests ping to all internal IPs from all locations using check_ping_connectivity().
 #
 # Arguments:
 #   None
 #
 # Returns:
-#   0: Route setup successful (or not needed)
-#   1: Route setup failed
+#   0: Success (or not needed)
+#   1: Failed (e.g. could not add address on default LAN)
 #
 # Side effects:
-#   - May update config file with detected LOCAL_UDM_IP
-#   - Adds route to br0 interface if needed
-#   - Tests ping connectivity to all INTERNAL_PEER_IPs from all configured locations
-check_and_setup_routes() {
+#   - May update config with detected LOCAL_UDM_IP
+#   - May run ip addr add on default LAN interface
+#   - Runs connectivity tests to configured internal IPs
+ensure_default_lan_local_ip_for_ping_install() {
+	local lan_if="${DEFAULT_LAN_INTERFACE:-br0}"
 	# Only proceed if ping checks are enabled and internal peer IPs are configured
 	if [[ "${ENABLE_PING_CHECK:-0}" -ne 1 ]]; then
 		return 0
@@ -1591,19 +1588,18 @@ check_and_setup_routes() {
 	fi
 
 	if [[ $has_internal_ips -eq 0 ]]; then
-		# No internal peer IPs configured - route setup not needed
 		return 0
 	fi
 
-	log_info "Checking route setup for ping connectivity..."
+	log_info "Checking default LAN (${lan_if}) ping source (LOCAL_UDM_IP) setup..."
 
 	# Get LOCAL_UDM_IP from config
 	local local_udm_ip="${LOCAL_UDM_IP:-}"
 
 	# If LOCAL_UDM_IP is not configured, attempt auto-detection
 	if [[ -z "$local_udm_ip" ]]; then
-		log_info "LOCAL_UDM_IP not configured, attempting auto-detection from br0 interface..."
-		if local_udm_ip=$(detect_local_udm_ip 2>/dev/null); then
+		log_info "LOCAL_UDM_IP not configured, attempting auto-detection from default LAN interface (${lan_if})..."
+		if local_udm_ip=$(detect_local_udm_ip_from_default_lan 2>/dev/null); then
 			log_info "Auto-detected LOCAL_UDM_IP: $local_udm_ip"
 			# Update config file with detected IP (reuse existing config_file variable)
 			if [[ -f "$config_file" ]]; then
@@ -1611,7 +1607,7 @@ check_and_setup_routes() {
 				log_info "Updated config file with LOCAL_UDM_IP: $local_udm_ip"
 			fi
 		else
-			log_warn "Failed to auto-detect LOCAL_UDM_IP from br0 interface"
+			log_warn "Failed to auto-detect LOCAL_UDM_IP from default LAN interface (${lan_if})"
 			log_warn "Please configure LOCAL_UDM_IP manually in ${INSTALL_DIR}/${CONFIG_NAME}"
 			return 1
 		fi
@@ -1624,25 +1620,22 @@ check_and_setup_routes() {
 		return 1
 	fi
 
-	# Check if route exists, add if needed
-	if ! check_command_or_warn "ip" "Cannot detect local IP"; then
+	if ! check_command_or_warn "ip" "Cannot check default LAN interface"; then
 		return 1
 	fi
 
-	# Check if route exists on br0
-	if ip addr show br0 2>/dev/null | grep -q "inet ${local_udm_ip}/"; then
-		log_info "Route already exists on br0: $local_udm_ip/32"
+	if ip addr show "$lan_if" 2>/dev/null | grep -q "inet ${local_udm_ip}/"; then
+		log_info "Ping source IP already on default LAN (${lan_if}): $local_udm_ip/32"
 	else
-		log_info "Adding route to br0: $local_udm_ip/32"
-		if ip addr add "${local_udm_ip}/32" dev br0 2>/dev/null; then
-			log_info "Route added successfully: $local_udm_ip/32 on br0"
+		log_info "Adding /32 on default LAN (${lan_if}) for ping source: $local_udm_ip/32"
+		if ip addr add "${local_udm_ip}/32" dev "$lan_if" 2>/dev/null; then
+			log_info "Ping source address added on default LAN (${lan_if}): $local_udm_ip/32"
 		else
-			# Check if route was added by another process (race condition)
-			if ip addr show br0 2>/dev/null | grep -q "inet ${local_udm_ip}/"; then
-				log_info "Route exists on br0 (added by another process): $local_udm_ip/32"
+			if ip addr show "$lan_if" 2>/dev/null | grep -q "inet ${local_udm_ip}/"; then
+				log_info "Ping source IP now on default LAN (${lan_if}, added elsewhere): $local_udm_ip/32"
 			else
-				log_warn "Failed to add route to br0: $local_udm_ip/32"
-				log_warn "You may need to add it manually: ip addr add $local_udm_ip/32 dev br0"
+				log_warn "Failed to add ping source address on default LAN (${lan_if}): $local_udm_ip/32"
+				log_warn "You may need to add it manually: ip addr add $local_udm_ip/32 dev $lan_if"
 				return 1
 			fi
 		fi
@@ -1707,7 +1700,7 @@ check_and_setup_routes() {
 		if [[ $tested_any -eq 0 ]]; then
 			log_info "No internal IPs configured for ping testing"
 		else
-			log_info "Ping connectivity tests completed (route has been added and will be used during monitoring)"
+			log_info "Ping connectivity tests completed (default LAN ping source will be used during monitoring)"
 			# Log VPN tunnel warning once if any ping tests failed (reduces noise)
 			if [[ $ping_failed_any -eq 1 ]]; then
 				log_warn "Some ping tests failed - this may be normal if the VPN tunnel is not yet established"
@@ -2195,16 +2188,13 @@ main() {
 	# Validate configuration after installation
 	validate_config_after_install
 
-	# Check and setup routes for ping connectivity (if ping checks enabled)
-	# Load config values needed for route setup
+	# Ensure default LAN ping source and test internal connectivity (if ping checks enabled)
 	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
-		# Source config to get ENABLE_PING_CHECK, LOCAL_UDM_IP
-		# Note: Internal IPs are now checked from location-based config in check_and_setup_routes()
 		# shellcheck source=/dev/null
 		source "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null || true
 		ENABLE_PING_CHECK="${ENABLE_PING_CHECK:-1}"
 		LOCAL_UDM_IP="${LOCAL_UDM_IP:-}"
-		check_and_setup_routes || log_warn "Route setup completed with warnings (ping checks may not work until LOCAL_UDM_IP is configured)"
+		ensure_default_lan_local_ip_for_ping_install || log_warn "Default LAN ping source setup completed with warnings (ping checks may not work until LOCAL_UDM_IP is configured)"
 	fi
 
 	# Setup cron only if not skipped
