@@ -4,6 +4,8 @@
 
 **Last updated**: 2026-04-26
 
+**Integration tests on developer/CI hosts:** If `check_system_resources` sees critically low disk space, `vpn-monitor.sh` can exit before VPN logic. Multi-run tests that drive the real monitor entrypoint should set `ENABLE_RESOURCE_MONITORING=0` in fixture config when the goal is to exercise detection/recovery (see `tests/test_cron_cycle_e2e.sh`).
+
 ---
 
 ## How to Run Relevant Tests
@@ -31,7 +33,8 @@ Use this table to choose which test files to run for a given path or area. When 
 |--------------|----------------------|
 | **Root / entry scripts** | |
 | `vpn-monitor.sh` | `test_vpn_monitor.sh`, `test_main.sh` |
-| `vpn-monitor-wrapper.sh` | `test_vpn_monitor.sh`, `test_main.sh` |
+| `vpn-monitor-wrapper.sh` | `test_vpn_monitor_wrapper.sh`, `test_vpn_monitor.sh`, `test_main.sh` |
+| **Integration (multi-run / cron-style)** | `test_cron_cycle_e2e.sh`, `test_integration_e2e_recovery.sh` |
 | `vpn-keepalive.sh` | `test_vpn_keepalive.sh` |
 | `install.sh` | `test_install.sh` |
 | `uninstall.sh` | `test_uninstall.sh` |

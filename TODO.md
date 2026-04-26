@@ -2,8 +2,8 @@
 
 This file tracks planned improvements and tasks for the UDM VPN Monitor project.
 
-**Last Reviewed:** 2026-01-20  
-**Last Updated:** 2026-01-20
+**Last Reviewed:** 2026-04-26  
+**Last Updated:** 2026-04-26
 
 ## Human
 
@@ -18,6 +18,10 @@ This file tracks planned improvements and tasks for the UDM VPN Monitor project.
 - If you don't enter a locaiton it seems like the app doesn't fully install/start (makes sense, but probably want to handle differently).
 
 ## Medium Priority
+
+### Deploy test: password prompt when non-interactive
+**Status:** Pending  
+**Action:** `tests/test_deploy_to_udm.sh` test *requires password when not interactive and stdin empty* can fail in environments without `/dev/tty` (script errors at ControlMaster setup before printing "password"). Mock or stub the SSH path earlier, or assert on the connection-failure message when TTY is absent.
 
 ### 5. Add Explicit File Permissions
 **Source:** Codebase Review (Section 8.2.2)

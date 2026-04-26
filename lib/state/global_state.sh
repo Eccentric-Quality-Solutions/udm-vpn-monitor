@@ -968,8 +968,8 @@ validate_state_files_by_pattern() {
 # Automatically recovers corrupted files by backing them up and resetting to defaults.
 #
 # Returns:
-#   0: All state files are valid (or successfully recovered)
-#   1: One or more state files are invalid and recovery failed
+#   0: All state files were already valid (no repair performed)
+#   1: One or more state files were invalid and underwent recovery (backup + reset); see logs
 #
 # Side effects:
 #   - Logs warnings for corrupted state files

@@ -2,7 +2,10 @@ Considerations for the future, but want to avoid overarchitecting and premature 
 
 **Note:** Items marked with ✅ COMPLETED have been finished and can be considered resolved.
 
-**Context (current codebase):** Deploy and related management scripts live under `scripts/manage/`. Anonymization scripts under `scripts/anonymize/`. State modules in `lib/state/` (no `location_state.sh`; per-location state is per-peer with location as parameter). Test suite: 88 test files; see `docs/testing/RELEVANT_TESTS.md` for code-to-test mapping.
+**Context (current codebase):** Deploy and related management scripts live under `scripts/manage/`. Anonymization scripts under `scripts/anonymize/`. State modules in `lib/state/` (no `location_state.sh`; per-location state is per-peer with location as parameter). Test suite: 88+ test files; see `docs/testing/RELEVANT_TESTS.md` for code-to-test mapping.
+
+- **DRY: dynamic `ip` mock (xfrm + route + link)** — `tests/test_cron_cycle_e2e.sh` embeds `_mock_ip_xfrm_and_route_from_files`. If more tests need the same pattern, move it to `tests/test_helper.bash` (or `tests/helpers/detection.bash`) behind a single helper name.
+- **Wrapper timing** — `test_vpn_monitor_wrapper.sh` uses `sleep 2` for the first monitor invocation; if CI flakes, replace with a short polling loop on the invocation counter with an upper time bound.
 
 - **`DEFAULT_LAN_INTERFACE` in config (optional)**
   - Today: `lib/constants.sh` sets `DEFAULT_LAN_INTERFACE=br0` (readonly). Changing it requires editing the constant or setting it before sourcing (advanced).

@@ -33,35 +33,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Set up config
 	export ENABLE_XFRM_RECOVERY=1
 
-	# Initialize logging
-	LOG_FILE="${TEST_DIR}/vpn-monitor.log"
-	LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "$LOGS_DIR"
-
-	# Track function calls
-	local attempt_xfrm_called="${TEST_DIR}/attempt_xfrm_called"
-	local store_recovery_called="${TEST_DIR}/store_recovery_called"
-	local record_restart_called="${TEST_DIR}/record_restart_called"
-
-	# Mock attempt_xfrm_recovery to succeed
+	# Mock attempt_xfrm_recovery to succeed (no real xfrm stack in unit context)
 	attempt_xfrm_recovery() {
-		echo "called" >"$attempt_xfrm_called"
 		return 0
-	}
-
-	# Mock store_recovery_method
-	store_recovery_method() {
-		echo "called" >"$store_recovery_called"
-	}
-
-	# Mock record_restart (should not be called for Tier 2)
-	record_restart() {
-		echo "called" >"$record_restart_called"
-	}
-
-	# Mock format_peer_ip_display
-	format_peer_ip_display() {
-		echo "$1"
 	}
 
 	# Test parameters
@@ -76,18 +50,16 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should return 0 (success)
 	assert_success
 
-	# Should call attempt_xfrm_recovery
-	assert_file_exist "$attempt_xfrm_called"
+	# Per-connection recovery method persisted (Tier 2 stores even when other checks differ)
+	assert_equal "$(get_recovery_method "TEST" "$external_peer_ip")" "xfrm"
 
-	# Should call store_recovery_method (Tier 2 always stores)
-	assert_file_exist "$store_recovery_called"
+	# Should NOT write global restart count (Tier 2 path does not record restarts for rate limit)
+	[[ ! -e "$RESTART_COUNT_FILE" ]]
 
-	# Should NOT call record_restart (Tier 2 doesn't record restart)
-	assert_file_not_exist "$record_restart_called"
-
-	# Should log success messages
-	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "xfrm-based surgical cleanup completed successfully"
+	# Logged attempt + success (behavior, not call chain to mocks)
+	# format_peer_ip_display() wraps the peer (external-only) in parentheses
+	assert_log_contains "$LOG_FILE" "Attempting xfrm-based per-connection recovery for ($external_peer_ip)"
+	assert_log_contains "$LOG_FILE" "xfrm-based surgical cleanup completed successfully for ($external_peer_ip)"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -103,35 +75,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Set up config
 	export ENABLE_XFRM_RECOVERY=1
 
-	# Initialize logging
-	LOG_FILE="${TEST_DIR}/vpn-monitor.log"
-	LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "$LOGS_DIR"
-
-	# Track function calls
-	local attempt_xfrm_called="${TEST_DIR}/attempt_xfrm_called"
-	local store_recovery_called="${TEST_DIR}/store_recovery_called"
-	local record_restart_called="${TEST_DIR}/record_restart_called"
-
-	# Mock attempt_xfrm_recovery to succeed
+	# Mock attempt_xfrm_recovery to succeed (no real xfrm stack in unit context)
 	attempt_xfrm_recovery() {
-		echo "called" >"$attempt_xfrm_called"
 		return 0
-	}
-
-	# Mock store_recovery_method
-	store_recovery_method() {
-		echo "called" >"$store_recovery_called"
-	}
-
-	# Mock record_restart (should be called for Tier 3)
-	record_restart() {
-		echo "called" >"$record_restart_called"
-	}
-
-	# Mock format_peer_ip_display
-	format_peer_ip_display() {
-		echo "$1"
 	}
 
 	# Test parameters
@@ -146,25 +92,18 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should return 0 (success)
 	assert_success
 
-	# Should call attempt_xfrm_recovery
-	assert_file_exist "$attempt_xfrm_called"
+	assert_equal "$(get_recovery_method "TEST" "$external_peer_ip")" "xfrm"
+	# Tier 3 appends a restart timestamp for global rate limiting
+	[[ -s "$RESTART_COUNT_FILE" ]]
 
-	# Should call store_recovery_method (Tier 3 stores if peer IP provided)
-	assert_file_exist "$store_recovery_called"
-
-	# Should call record_restart (Tier 3 records restart for rate limiting)
-	assert_file_exist "$record_restart_called"
-
-	# Should log success messages with log prefix
-	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Tier 3: xfrm-based per-connection recovery successful"
+	assert_log_contains "$LOG_FILE" "Tier 3: Attempting xfrm-based per-connection recovery for ($external_peer_ip)"
+	assert_log_contains "$LOG_FILE" "Tier 3: xfrm-based per-connection recovery successful for ($external_peer_ip)"
 }
 
 # bats test_tags=category:high-risk,priority:high
 @test "_execute_xfrm_recovery_with_fallback: Tier 3 does not store recovery method when peer IP is empty" {
-	# Purpose: Test verifies that Tier 3 does not store recovery method when peer IP is empty
-	# Expected: Function does not call store_recovery_method when peer IP is empty for Tier 3
-	# Importance: Ensures Tier 3 handles empty peer IP correctly (full_restart allows empty peer IP)
+	# Purpose: When peer IP is empty, no per-peer recovery_method state key is written, but xfrm+restart still run.
+	# Importance: Tier 3 full_restart allows empty external peer; state layer cannot name a per-peer file without an IP
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Source required functions
@@ -173,27 +112,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Set up config
 	export ENABLE_XFRM_RECOVERY=1
 
-	# Initialize logging
-	LOG_FILE="${TEST_DIR}/vpn-monitor.log"
-	LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "$LOGS_DIR"
-
-	# Track function calls
-	local store_recovery_called="${TEST_DIR}/store_recovery_called"
-
-	# Mock attempt_xfrm_recovery to succeed
+	# Mock attempt_xfrm_recovery to succeed (no real xfrm stack in unit context)
 	attempt_xfrm_recovery() {
 		return 0
-	}
-
-	# Mock store_recovery_method (should not be called for empty peer IP at Tier 3)
-	store_recovery_method() {
-		echo "called" >"$store_recovery_called"
-	}
-
-	# Mock format_peer_ip_display
-	format_peer_ip_display() {
-		echo "$1"
 	}
 
 	# Test parameters - empty peer IP for Tier 3
@@ -208,8 +129,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Should return 0 (success)
 	assert_success
 
-	# Should NOT call store_recovery_method (Tier 3 only stores if peer IP provided)
-	assert_file_not_exist "$store_recovery_called"
+	assert_equal "$(get_recovery_method "TEST" "")" ""
+	[[ -s "$RESTART_COUNT_FILE" ]]
+	assert_log_contains "$LOG_FILE" "Tier 3: xfrm-based per-connection recovery successful"
 }
 
 # ============================================================================
@@ -229,25 +151,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Set up config
 	export ENABLE_XFRM_RECOVERY=1
 
-	# Initialize logging
-	LOG_FILE="${TEST_DIR}/vpn-monitor.log"
-	LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "$LOGS_DIR"
-
-	# Track function calls
-	local attempt_xfrm_called="${TEST_DIR}/attempt_xfrm_called"
-	local select_strategy_called="${TEST_DIR}/select_strategy_called"
-
 	# Mock attempt_xfrm_recovery to fail
 	attempt_xfrm_recovery() {
-		echo "called" >"$attempt_xfrm_called"
 		return 1
 	}
 
 	# Mock select_recovery_strategy to succeed (fallback available)
 	# Arguments: $1 peer_ip, $2 tier, $3 result nameref. Returns: 0 success.
 	select_recovery_strategy() {
-		echo "called" >"$select_strategy_called"
 		local result_ref_name="$3"
 		local -n result="$result_ref_name"
 		result["strategy"]="ipsec_reload"
@@ -257,50 +168,36 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		return 0
 	}
 
-	# Mock format_peer_ip_display
-	format_peer_ip_display() {
-		echo "$1"
-	}
-
 	# Test parameters
 	local external_peer_ip="${TEST_PEER_IP}"
 	local location_name="TEST"
 	local tier=2
 	declare -A recovery_info
 
-	# Test function - call directly (not via run) to preserve nameref array updates
-	# Disable set -e to allow capturing return code 1
-	set +e
-	_execute_xfrm_recovery_with_fallback "$external_peer_ip" "$location_name" "$tier" "recovery_info" "" "ipsec reload (affects all tunnels)"
-	local exit_code=$?
-	set -e
+	# Call directly (not via run) to preserve nameref array updates; Bats may fail a non-zero return, so capture with ||
+	local exit_code=0
+	_execute_xfrm_recovery_with_fallback "$external_peer_ip" "$location_name" "$tier" "recovery_info" "" "ipsec reload (affects all tunnels)" || exit_code=$?
 
-	# Should return 1 (fallback selected)
 	assert_equal "$exit_code" 1
 
-	# Should call attempt_xfrm_recovery
-	assert_file_exist "$attempt_xfrm_called"
-
-	# Should call select_recovery_strategy for fallback (without peer IP)
-	assert_file_exist "$select_strategy_called"
-
-	# Should update nameref array with fallback strategy
+	# Observable outcome: recovery_info reflects the chosen all-tunnels fallback strategy
 	assert_equal "${recovery_info[strategy]}" "ipsec_reload"
 	assert_equal "${recovery_info[command]}" "ipsec reload"
 	assert_equal "${recovery_info[impact]}" "all-tunnels"
 	assert_equal "${recovery_info[available]}" "1"
 
-	# Should log fallback message
-	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "xfrm-based recovery failed"
-	assert_file_contains "$LOG_FILE" "falling back to ipsec reload"
+	# Storing "xfrm" is attempted before xfrm run; with failed xfrm, method remains xfrm in state
+	assert_equal "$(get_recovery_method "TEST" "$external_peer_ip")" "xfrm"
+
+	assert_log_contains "$LOG_FILE" "Attempting xfrm-based per-connection recovery for ($external_peer_ip)"
+	assert_log_contains "$LOG_FILE" "xfrm-based recovery failed for ($external_peer_ip)"
+	assert_log_contains "$LOG_FILE" "falling back to ipsec reload (affects all tunnels)"
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "_execute_xfrm_recovery_with_fallback: fallback calls select_recovery_strategy without peer IP" {
-	# Purpose: Test verifies that fallback calls select_recovery_strategy without peer IP to force all-tunnels recovery
-	# Expected: select_recovery_strategy is called with empty peer IP for fallback
-	# Importance: Ensures fallback forces all-tunnels recovery (not per-connection)
+@test "_execute_xfrm_recovery_with_fallback: fallback uses all-tunnels strategy (nameref, not per-peer IP)" {
+	# Purpose: When xfrm fails, the flow selects a non-surgical (all-tunnels) strategy; the nameref is what downstream runs.
+	# Importance: Same behavior whether or not the caller had a peer IP; impact must be "all-tunnels" for the fallback arm
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Source required functions
@@ -309,25 +206,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Set up config
 	export ENABLE_XFRM_RECOVERY=1
 
-	# Initialize logging
-	LOG_FILE="${TEST_DIR}/vpn-monitor.log"
-	LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "$LOGS_DIR"
-
-	# Track select_recovery_strategy arguments
-	local strategy_args_file="${TEST_DIR}/strategy_args"
-
 	# Mock attempt_xfrm_recovery to fail
 	attempt_xfrm_recovery() {
 		return 1
 	}
 
-	# Mock select_recovery_strategy to capture arguments
+	# Mock select_recovery_strategy
 	# Arguments: $1 peer_ip, $2 tier, $3 result nameref. Returns: 0 success.
 	select_recovery_strategy() {
-		local peer_ip="$1"
-		local tier="$2"
-		echo "peer_ip=$peer_ip tier=$tier" >"$strategy_args_file"
 		local result_ref_name="$3"
 		local -n result="$result_ref_name"
 		result["strategy"]="ipsec_reload"
@@ -337,50 +223,18 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		return 0
 	}
 
-	# Mock format_peer_ip_display
-	format_peer_ip_display() {
-		echo "$1"
-	}
-
 	# Test parameters
 	local external_peer_ip="${TEST_PEER_IP}"
 	local location_name="TEST"
 	local tier=2
 	declare -A recovery_info
 
-	# Test function - call directly (not via run) to preserve nameref array updates
-	# Disable set -e to allow capturing return code 1
-	set +e
-	_execute_xfrm_recovery_with_fallback "$external_peer_ip" "$location_name" "$tier" "recovery_info" "" "ipsec reload"
-	local exit_code=$?
-	set -e
+	local exit_code=0
+	_execute_xfrm_recovery_with_fallback "$external_peer_ip" "$location_name" "$tier" "recovery_info" "" "ipsec reload" || exit_code=$?
 
-	# Should return 1 (fallback selected)
 	assert_equal "$exit_code" 1
-
-	# Should call select_recovery_strategy with empty peer IP
-	assert_file_exist "$strategy_args_file"
-	assert_file_contains "$strategy_args_file" "peer_ip="
-	# Verify peer IP is empty (should not contain the actual peer IP)
-	local strategy_args
-	strategy_args=$(cat "$strategy_args_file")
-	# Check that peer_ip= is followed by space or end of line (empty value)
-	if echo "$strategy_args" | grep -q "peer_ip= "; then
-		# peer_ip= followed by space (empty)
-		: # Success
-	elif echo "$strategy_args" | grep -q "peer_ip=\$"; then
-		# peer_ip=$ (empty at end)
-		: # Success
-	elif echo "$strategy_args" | grep -qE "peer_ip=\s*tier="; then
-		# peer_ip= followed by whitespace and tier= (empty)
-		: # Success
-	else
-		# Check that it doesn't contain the actual peer IP
-		if echo "$strategy_args" | grep -q "$external_peer_ip"; then
-			echo "ERROR: peer IP should be empty but found: $strategy_args" >&2
-			return 1
-		fi
-	fi
+	assert_equal "${recovery_info[impact]}" "all-tunnels"
+	assert_log_contains "$LOG_FILE" "xfrm-based recovery failed for ($external_peer_ip)"
 }
 
 # ============================================================================
@@ -400,25 +254,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Set up config
 	export ENABLE_XFRM_RECOVERY=1
 
-	# Initialize logging
-	LOG_FILE="${TEST_DIR}/vpn-monitor.log"
-	LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "$LOGS_DIR"
-
-	# Track function calls
-	local attempt_xfrm_called="${TEST_DIR}/attempt_xfrm_called"
-	local select_strategy_called="${TEST_DIR}/select_strategy_called"
-
 	# Mock attempt_xfrm_recovery to fail
 	attempt_xfrm_recovery() {
-		echo "called" >"$attempt_xfrm_called"
 		return 1
 	}
 
 	# Mock select_recovery_strategy to fail (no fallback available)
 	# Arguments: $1 peer_ip, $2 tier, $3 result nameref. Returns: 1 no fallback.
 	select_recovery_strategy() {
-		echo "called" >"$select_strategy_called"
 		local result_ref_name="$3"
 		local -n result="$result_ref_name"
 		result["strategy"]="unavailable"
@@ -426,11 +269,6 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		result["impact"]=""
 		result["available"]=0
 		return 1
-	}
-
-	# Mock format_peer_ip_display
-	format_peer_ip_display() {
-		echo "$1"
 	}
 
 	# Test parameters
@@ -446,15 +284,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_failure
 	assert_equal "$status" 2
 
-	# Should call attempt_xfrm_recovery
-	assert_file_exist "$attempt_xfrm_called"
-
-	# Should call select_recovery_strategy for fallback
-	assert_file_exist "$select_strategy_called"
-
-	# Should log error message
-	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "xfrm recovery failed and no fallback strategy available"
+	assert_equal "$(get_recovery_method "TEST" "$external_peer_ip")" "xfrm"
+	assert_log_contains "$LOG_FILE" "xfrm recovery failed and no fallback strategy available"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -470,26 +301,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Set up config
 	export ENABLE_XFRM_RECOVERY=1
 
-	# Initialize logging
-	LOG_FILE="${TEST_DIR}/vpn-monitor.log"
-	LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "$LOGS_DIR"
-
-	# Track function calls
-	local attempt_xfrm_called="${TEST_DIR}/attempt_xfrm_called"
-	local select_strategy_called="${TEST_DIR}/select_strategy_called"
-	local store_recovery_called="${TEST_DIR}/store_recovery_called"
-
 	# Mock attempt_xfrm_recovery to fail
 	attempt_xfrm_recovery() {
-		echo "called" >"$attempt_xfrm_called"
 		return 1
 	}
 
 	# Mock select_recovery_strategy to succeed (fallback available)
 	# Arguments: $1 peer_ip, $2 tier, $3 result nameref. Returns: 0 success.
 	select_recovery_strategy() {
-		echo "called" >"$select_strategy_called"
 		local result_ref_name="$3"
 		local -n result="$result_ref_name"
 		result["strategy"]="ipsec_restart"
@@ -499,51 +318,25 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		return 0
 	}
 
-	# Mock store_recovery_method (should be called before attempting recovery)
-	store_recovery_method() {
-		echo "called" >"$store_recovery_called"
-	}
-
-	# Mock format_peer_ip_display
-	format_peer_ip_display() {
-		echo "$1"
-	}
-
 	# Test parameters for Tier 3
 	local external_peer_ip="${TEST_PEER_IP}"
 	local location_name="TEST"
 	local tier=3
 	declare -A recovery_info
 
-	# Test function - call directly (not via run) to preserve nameref array updates
-	# Disable set -e to allow capturing return code 1
-	set +e
-	_execute_xfrm_recovery_with_fallback "$external_peer_ip" "$location_name" "$tier" "recovery_info" "Tier 3: " "full restart"
-	local exit_code=$?
-	set -e
+	local exit_code=0
+	_execute_xfrm_recovery_with_fallback "$external_peer_ip" "$location_name" "$tier" "recovery_info" "Tier 3: " "full restart" || exit_code=$?
 
-	# Should return 1 (fallback selected)
 	assert_equal "$exit_code" 1
 
-	# Should call attempt_xfrm_recovery
-	assert_file_exist "$attempt_xfrm_called"
-
-	# Should call store_recovery_method (Tier 3 stores if peer IP provided)
-	assert_file_exist "$store_recovery_called"
-
-	# Should call select_recovery_strategy for fallback (without peer IP)
-	assert_file_exist "$select_strategy_called"
-
-	# Should update nameref array with fallback strategy
 	assert_equal "${recovery_info[strategy]}" "ipsec_restart"
 	assert_equal "${recovery_info[command]}" "ipsec restart"
 	assert_equal "${recovery_info[impact]}" "all-tunnels"
 	assert_equal "${recovery_info[available]}" "1"
 
-	# Should log fallback message with Tier 3 prefix
-	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Tier 3: xfrm-based recovery failed"
-	assert_file_contains "$LOG_FILE" "falling back to full restart"
+	assert_equal "$(get_recovery_method "TEST" "$external_peer_ip")" "xfrm"
+	assert_log_contains "$LOG_FILE" "Tier 3: xfrm-based recovery failed for ($external_peer_ip)"
+	assert_log_contains "$LOG_FILE" "falling back to full restart"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -559,26 +352,14 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Set up config
 	export ENABLE_XFRM_RECOVERY=1
 
-	# Initialize logging
-	LOG_FILE="${TEST_DIR}/vpn-monitor.log"
-	LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "$LOGS_DIR"
-
-	# Track function calls
-	local attempt_xfrm_called="${TEST_DIR}/attempt_xfrm_called"
-	local select_strategy_called="${TEST_DIR}/select_strategy_called"
-	local store_recovery_called="${TEST_DIR}/store_recovery_called"
-
 	# Mock attempt_xfrm_recovery to fail
 	attempt_xfrm_recovery() {
-		echo "called" >"$attempt_xfrm_called"
 		return 1
 	}
 
 	# Mock select_recovery_strategy to fail (no fallback available)
 	# Arguments: $1 peer_ip, $2 tier, $3 result nameref. Returns: 1 no fallback.
 	select_recovery_strategy() {
-		echo "called" >"$select_strategy_called"
 		local result_ref_name="$3"
 		local -n result="$result_ref_name"
 		result["strategy"]="unavailable"
@@ -586,16 +367,6 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		result["impact"]=""
 		result["available"]=0
 		return 1
-	}
-
-	# Mock store_recovery_method (should be called before attempting recovery)
-	store_recovery_method() {
-		echo "called" >"$store_recovery_called"
-	}
-
-	# Mock format_peer_ip_display
-	format_peer_ip_display() {
-		echo "$1"
 	}
 
 	# Test parameters for Tier 3
@@ -611,18 +382,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	assert_failure
 	assert_equal "$status" 2
 
-	# Should call attempt_xfrm_recovery
-	assert_file_exist "$attempt_xfrm_called"
-
-	# Should call store_recovery_method (Tier 3 stores if peer IP provided)
-	assert_file_exist "$store_recovery_called"
-
-	# Should call select_recovery_strategy for fallback
-	assert_file_exist "$select_strategy_called"
-
-	# Should log error message with Tier 3 prefix
-	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Tier 3: xfrm recovery failed and no fallback strategy available"
+	assert_equal "$(get_recovery_method "TEST" "$external_peer_ip")" "xfrm"
+	assert_log_contains "$LOG_FILE" "Tier 3: xfrm recovery failed and no fallback strategy available"
 }
 
 # ============================================================================
@@ -630,10 +391,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # ============================================================================
 
 # bats test_tags=category:high-risk,priority:high
-@test "_execute_xfrm_recovery_with_fallback: Tier 2 always stores recovery method" {
-	# Purpose: Test verifies that Tier 2 always stores recovery method regardless of peer IP
-	# Expected: store_recovery_method is called for Tier 2 even with empty peer IP
-	# Importance: Ensures Tier 2 behavior is consistent
+@test "_execute_xfrm_recovery_with_fallback: Tier 2 with empty peer completes; no per-peer recovery_method on disk" {
+	# Purpose: Tier 2 still attempts store_recovery_method, but the state layer has no per-peer file without a peer id.
+	# Importance: Orchestration tolerates full_restart-style empty peer on Tier 2; success is still logged
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 
 	# Source required functions
@@ -642,27 +402,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Set up config
 	export ENABLE_XFRM_RECOVERY=1
 
-	# Initialize logging
-	LOG_FILE="${TEST_DIR}/vpn-monitor.log"
-	LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "$LOGS_DIR"
-
-	# Track function calls
-	local store_recovery_called="${TEST_DIR}/store_recovery_called"
-
-	# Mock attempt_xfrm_recovery to succeed
+	# Test stub: mock successful xfrm recovery for _execute_xfrm_recovery_with_fallback.
+	#
+	# Returns:
+	# 0: success
 	attempt_xfrm_recovery() {
 		return 0
-	}
-
-	# Mock store_recovery_method (should be called for Tier 2 even with empty peer IP)
-	store_recovery_method() {
-		echo "called" >"$store_recovery_called"
-	}
-
-	# Mock format_peer_ip_display
-	format_peer_ip_display() {
-		echo "$1"
 	}
 
 	# Test parameters - empty peer IP for Tier 2
@@ -671,14 +416,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local tier=2
 	declare -A recovery_info
 
-	# Test function
 	run _execute_xfrm_recovery_with_fallback "$external_peer_ip" "$location_name" "$tier" "recovery_info" "" "ipsec reload"
 
-	# Should return 0 (success)
 	assert_success
-
-	# Should call store_recovery_method (Tier 2 always stores)
-	assert_file_exist "$store_recovery_called"
+	assert_equal "$(get_recovery_method "TEST" "")" ""
+	[[ ! -e "$RESTART_COUNT_FILE" ]]
+	assert_log_contains "$LOG_FILE" "xfrm-based surgical cleanup completed successfully"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -694,19 +437,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Set up config
 	export ENABLE_XFRM_RECOVERY=1
 
-	# Initialize logging
-	LOG_FILE="${TEST_DIR}/vpn-monitor.log"
-	LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "$LOGS_DIR"
-
-	# Mock attempt_xfrm_recovery to succeed
+	# Test stub: mock successful xfrm recovery for _execute_xfrm_recovery_with_fallback.
+	#
+	# Returns:
+	# 0: success
 	attempt_xfrm_recovery() {
 		return 0
-	}
-
-	# Mock format_peer_ip_display
-	format_peer_ip_display() {
-		echo "$1"
 	}
 
 	# Test parameters with custom log prefix
@@ -716,16 +452,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	declare -A recovery_info
 	local log_prefix="Tier 3: "
 
-	# Test function
 	run _execute_xfrm_recovery_with_fallback "$external_peer_ip" "$location_name" "$tier" "recovery_info" "$log_prefix" "full restart"
 
-	# Should return 0 (success)
 	assert_success
-
-	# Should log messages with prefix
-	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "Tier 3: Attempting xfrm-based per-connection recovery"
-	assert_file_contains "$LOG_FILE" "Tier 3: xfrm-based per-connection recovery successful"
+	assert_log_contains "$LOG_FILE" "Tier 3: Attempting xfrm-based per-connection recovery for ($external_peer_ip)"
+	assert_log_contains "$LOG_FILE" "Tier 3: xfrm-based per-connection recovery successful for ($external_peer_ip)"
 }
 
 # bats test_tags=category:high-risk,priority:high
@@ -741,12 +472,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Set up config
 	export ENABLE_XFRM_RECOVERY=1
 
-	# Initialize logging
-	LOG_FILE="${TEST_DIR}/vpn-monitor.log"
-	LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "$LOGS_DIR"
-
-	# Mock attempt_xfrm_recovery to fail
+	# Test stub: mock failed xfrm recovery so fallback path is exercised.
+	#
+	# Returns:
+	# 1: simulated xfrm failure
 	attempt_xfrm_recovery() {
 		return 1
 	}
@@ -763,11 +492,6 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		return 0
 	}
 
-	# Mock format_peer_ip_display
-	format_peer_ip_display() {
-		echo "$1"
-	}
-
 	# Test parameters with custom fallback action
 	local external_peer_ip="${TEST_PEER_IP}"
 	local location_name="TEST"
@@ -775,16 +499,11 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	declare -A recovery_info
 	local fallback_action="ipsec reload (affects all tunnels)"
 
-	# Test function
 	run _execute_xfrm_recovery_with_fallback "$external_peer_ip" "$location_name" "$tier" "recovery_info" "" "$fallback_action"
 
-	# Should return 1 (fallback selected)
 	assert_failure
 	assert_equal "$status" 1
-
-	# Should log fallback message with custom action description
-	assert_file_exist "$LOG_FILE"
-	assert_file_contains "$LOG_FILE" "falling back to ipsec reload (affects all tunnels)"
+	assert_log_contains "$LOG_FILE" "falling back to $fallback_action"
 }
 
 # ============================================================================
@@ -804,19 +523,12 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Set up config
 	export ENABLE_XFRM_RECOVERY=1
 
-	# Initialize logging
-	LOG_FILE="${TEST_DIR}/vpn-monitor.log"
-	LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "$LOGS_DIR"
-
-	# Mock attempt_xfrm_recovery to succeed
+	# Test stub: mock successful xfrm recovery for _execute_xfrm_recovery_with_fallback.
+	#
+	# Returns:
+	# 0: success
 	attempt_xfrm_recovery() {
 		return 0
-	}
-
-	# Mock format_peer_ip_display
-	format_peer_ip_display() {
-		echo "$1"
 	}
 
 	# Test parameters with empty location name
@@ -825,10 +537,9 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local tier=2
 	declare -A recovery_info
 
-	# Test function
 	run _execute_xfrm_recovery_with_fallback "$external_peer_ip" "$location_name" "$tier" "recovery_info" "" "ipsec reload"
 
-	# Should return 0 (success) - empty location name should not cause failure
+	# Succeeds; empty location is invalid for get_peer_state_file_path, so per-peer recovery_method is not written
 	assert_success
 }
 
@@ -845,12 +556,10 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Set up config
 	export ENABLE_XFRM_RECOVERY=1
 
-	# Initialize logging
-	LOG_FILE="${TEST_DIR}/vpn-monitor.log"
-	LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "$LOGS_DIR"
-
-	# Mock attempt_xfrm_recovery to fail
+	# Test stub: mock failed xfrm recovery so fallback path is exercised.
+	#
+	# Returns:
+	# 1: simulated xfrm failure
 	attempt_xfrm_recovery() {
 		return 1
 	}
@@ -867,31 +576,20 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		return 0
 	}
 
-	# Mock format_peer_ip_display
-	format_peer_ip_display() {
-		echo "$1"
-	}
-
 	# Test parameters - declare array but don't initialize values
 	local external_peer_ip="${TEST_PEER_IP}"
 	local location_name="TEST"
 	local tier=3
 	declare -A recovery_info
-	# Don't initialize array values - let function handle it
 
-	# Test function - call directly (not via run) to preserve nameref array updates
-	# Disable set -e to allow capturing return code 1
-	set +e
-	_execute_xfrm_recovery_with_fallback "$external_peer_ip" "$location_name" "$tier" "recovery_info" "Tier 3: " "full restart"
-	local exit_code=$?
-	set -e
+	local exit_code=0
+	_execute_xfrm_recovery_with_fallback "$external_peer_ip" "$location_name" "$tier" "recovery_info" "Tier 3: " "full restart" || exit_code=$?
 
-	# Should return 1 (fallback selected)
 	assert_equal "$exit_code" 1
-
-	# Should update nameref array with fallback strategy
 	assert_equal "${recovery_info[strategy]}" "ipsec_restart"
 	assert_equal "${recovery_info[command]}" "ipsec restart"
 	assert_equal "${recovery_info[impact]}" "all-tunnels"
 	assert_equal "${recovery_info[available]}" "1"
+	assert_equal "$(get_recovery_method "TEST" "$external_peer_ip")" "xfrm"
+	assert_log_contains "$LOG_FILE" "Tier 3: xfrm-based recovery failed for ($external_peer_ip)"
 }

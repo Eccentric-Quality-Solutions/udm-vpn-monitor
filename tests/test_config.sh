@@ -215,10 +215,10 @@ EOF
 # ============================================================================
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid MAX_RESTARTS_PER_WINDOW (negative) - should use default or fail gracefully" {
-	# Purpose: Test verifies that the script handles negative MAX_RESTARTS_PER_WINDOW values gracefully.
-	# Expected: Script either uses default value or fails gracefully with error message when negative restart limit is specified.
-	# Importance: Invalid restart limits can cause unexpected rate limiting behavior; script must validate and handle them.
+@test "invalid MAX_RESTARTS_PER_WINDOW (negative) - should reject in fake mode (exit 3)" {
+	# Purpose: MAX_RESTARTS_PER_WINDOW is required; invalid values fail schema validation.
+	# Expected: Fake mode exits with EXIT_VALIDATION_ERROR (3), stderr and log show validation failure.
+	# Importance: Invalid restart limits must not be silently accepted.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
@@ -237,16 +237,21 @@ EOF
 
 	run bash "$test_script" --fake
 
+	assert_failure
+	assert_equal "$status" 3
+	assert_output --partial "MAX_RESTARTS_PER_WINDOW"
+	assert_output --partial "Configuration validation failed"
 	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "MAX_RESTARTS_PER_WINDOW" "ERROR" "integer"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid MAX_RESTARTS_PER_WINDOW (zero) - should use default or fail gracefully" {
-	# Purpose: Test verifies that the script handles zero MAX_RESTARTS_PER_WINDOW values gracefully.
-	# Expected: Script either uses default value or fails gracefully with error message when zero restart limit is specified.
-	# Importance: Zero restart limit can disable rate limiting; script must validate and handle them.
+@test "invalid MAX_RESTARTS_PER_WINDOW (zero) - should reject in fake mode (exit 3)" {
+	# Purpose: Zero is an integer but below min:1 for required MAX_RESTARTS_PER_WINDOW.
+	# Expected: Validation failure, exit 3 in fake mode.
+	# Importance: Zero must not be treated as valid for rate-limit bounds.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
@@ -265,16 +270,21 @@ EOF
 
 	run bash "$test_script" --fake
 
+	assert_failure
+	assert_equal "$status" 3
+	assert_output --partial "MAX_RESTARTS_PER_WINDOW"
+	assert_output --partial "Configuration validation failed"
 	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "MAX_RESTARTS_PER_WINDOW" "ERROR" "at least"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid LOCKFILE_TIMEOUT (negative) - should use default or fail gracefully" {
-	# Purpose: Test verifies that the script handles negative LOCKFILE_TIMEOUT values gracefully.
-	# Expected: Script either uses default value or fails gracefully with error message when negative timeout is specified.
-	# Importance: Invalid lockfile timeout can cause lockfile handling issues; script must validate and handle them.
+@test "invalid LOCKFILE_TIMEOUT (negative) - should log warning and use schema default" {
+	# Purpose: LOCKFILE_TIMEOUT is optional; values below min:60 (e.g. -1) are corrected to the schema default.
+	# Expected: Run succeeds; log records WARNING and \"using default\" for LOCKFILE_TIMEOUT.
+	# Importance: Optional tuning vars must not abort the run when correctable.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
@@ -293,16 +303,19 @@ EOF
 
 	run bash "$test_script" --fake
 
+	assert_success
 	assert_file_exist "$LOG_FILE"
+	assert_log_contains "$LOG_FILE" "LOCKFILE_TIMEOUT"
+	assert_log_contains "$LOG_FILE" "using default"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid LOCKFILE_TIMEOUT (zero) - should use default or fail gracefully" {
-	# Purpose: Test verifies that the script handles zero LOCKFILE_TIMEOUT values gracefully.
-	# Expected: Script either uses default value or fails gracefully with error message when zero timeout is specified.
-	# Importance: Zero timeout can cause immediate lockfile failures; script must validate and handle them.
+@test "invalid LOCKFILE_TIMEOUT (zero) - should log warning and use schema default" {
+	# Purpose: Zero is below min:60; optional variable is corrected to default (300).
+	# Expected: Run succeeds; log shows correction with \"using default\".
+	# Importance: Lock timing must not be silently wrong; correction should be visible in logs.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
@@ -321,16 +334,19 @@ EOF
 
 	run bash "$test_script" --fake
 
+	assert_success
 	assert_file_exist "$LOG_FILE"
+	assert_log_contains "$LOG_FILE" "LOCKFILE_TIMEOUT"
+	assert_log_contains "$LOG_FILE" "using default"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid PING_COUNT (negative) - should use default or fail gracefully" {
-	# Purpose: Test verifies that the script handles negative PING_COUNT values gracefully.
-	# Expected: Script either uses default value or fails gracefully with error message when negative ping count is specified.
-	# Importance: Invalid ping count can cause ping check failures; script must validate and handle them.
+@test "invalid PING_COUNT (negative) - should log warning and use schema default" {
+	# Purpose: PING_COUNT is optional; invalid integer form is corrected to default (3).
+	# Expected: Run succeeds; log contains PING_COUNT and \"using default\".
+	# Importance: Bad ping settings should not break the monitor; defaults keep checks usable.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
@@ -349,16 +365,19 @@ EOF
 
 	run bash "$test_script" --fake
 
+	assert_success
 	assert_file_exist "$LOG_FILE"
+	assert_log_contains "$LOG_FILE" "PING_COUNT"
+	assert_log_contains "$LOG_FILE" "using default"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid PING_COUNT (zero) - should use default or fail gracefully" {
-	# Purpose: Test verifies that the script handles zero PING_COUNT values gracefully.
-	# Expected: Script either uses default value or fails gracefully with error message when zero ping count is specified.
-	# Importance: Zero ping count can disable ping checks; script must validate and handle them.
+@test "invalid PING_COUNT (zero) - should log warning and use schema default" {
+	# Purpose: Zero is below min:1; optional PING_COUNT is corrected to default.
+	# Expected: Run succeeds; log shows min violation and default application.
+	# Importance: Zero pings would not verify connectivity; schema default preserves behavior.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
@@ -377,16 +396,19 @@ EOF
 
 	run bash "$test_script" --fake
 
+	assert_success
 	assert_file_exist "$LOG_FILE"
+	assert_log_contains "$LOG_FILE" "PING_COUNT"
+	assert_log_contains "$LOG_FILE" "using default"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid PING_TIMEOUT (negative) - should use default or fail gracefully" {
-	# Purpose: Test verifies that the script handles negative PING_TIMEOUT values gracefully.
-	# Expected: Script either uses default value or fails gracefully with error message when negative ping timeout is specified.
-	# Importance: Invalid ping timeout can cause ping check failures; script must validate and handle them.
+@test "invalid PING_TIMEOUT (negative) - should log warning and use schema default" {
+	# Purpose: PING_TIMEOUT is optional; non-integer values are corrected to default (2).
+	# Expected: Run succeeds; log contains PING_TIMEOUT and \"using default\".
+	# Importance: Invalid timeouts should not break ping checks; default keeps timing sane.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
@@ -405,16 +427,19 @@ EOF
 
 	run bash "$test_script" --fake
 
+	assert_success
 	assert_file_exist "$LOG_FILE"
+	assert_log_contains "$LOG_FILE" "PING_TIMEOUT"
+	assert_log_contains "$LOG_FILE" "using default"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid PING_TIMEOUT (zero) - should use default or fail gracefully" {
-	# Purpose: Test verifies that the script handles zero PING_TIMEOUT values gracefully.
-	# Expected: Script either uses default value or fails gracefully with error message when zero ping timeout is specified.
-	# Importance: Zero timeout can cause immediate ping failures; script must validate and handle them.
+@test "invalid PING_TIMEOUT (zero) - should log warning and use schema default" {
+	# Purpose: Zero is below min:1; optional PING_TIMEOUT is corrected to default.
+	# Expected: Run succeeds; log shows correction.
+	# Importance: Zero second timeout is unusable; default avoids flaky immediate failures.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
@@ -433,7 +458,10 @@ EOF
 
 	run bash "$test_script" --fake
 
+	assert_success
 	assert_file_exist "$LOG_FILE"
+	assert_log_contains "$LOG_FILE" "PING_TIMEOUT"
+	assert_log_contains "$LOG_FILE" "using default"
 
 	remove_mock_from_path
 }
@@ -443,10 +471,10 @@ EOF
 # ============================================================================
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid MAX_RESTARTS_PER_WINDOW (very large) - should use default or fail gracefully" {
-	# Purpose: Test verifies that the script handles very large MAX_RESTARTS_PER_WINDOW values gracefully.
-	# Expected: Script either uses default value or fails gracefully with error message when very large restart limit is specified.
-	# Importance: Very large restart limits can disable rate limiting; script must validate and handle them.
+@test "invalid MAX_RESTARTS_PER_WINDOW (very large) - should reject in fake mode (exit 3)" {
+	# Purpose: Value above max:20 fails validation for required MAX_RESTARTS_PER_WINDOW.
+	# Expected: Exit 3 in fake mode with validation message.
+	# Importance: Absurdly high limits defeat rate limiting; must be rejected like other out-of-range values.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
@@ -465,16 +493,21 @@ EOF
 
 	run bash "$test_script" --fake
 
+	assert_failure
+	assert_equal "$status" 3
+	assert_output --partial "MAX_RESTARTS_PER_WINDOW"
+	assert_output --partial "Configuration validation failed"
 	assert_file_exist "$LOG_FILE"
+	assert_log_contains_any "$LOG_FILE" "MAX_RESTARTS_PER_WINDOW" "ERROR" "at most"
 
 	remove_mock_from_path
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "invalid PING_COUNT (very large) - should use default or fail gracefully" {
-	# Purpose: Test verifies that the script handles very large PING_COUNT values gracefully.
-	# Expected: Script either uses default value or fails gracefully with error message when very large ping count is specified.
-	# Importance: Very large ping counts can cause excessive delays; script must validate and handle them.
+@test "invalid PING_COUNT (very large) - should log warning and use schema default" {
+	# Purpose: Value above max:10 is corrected for optional PING_COUNT.
+	# Expected: Run succeeds; log shows max rule and \"using default\".
+	# Importance: Excessive ping counts delay detection cycles; capping via default bounds runtime impact.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
@@ -493,7 +526,10 @@ EOF
 
 	run bash "$test_script" --fake
 
+	assert_success
 	assert_file_exist "$LOG_FILE"
+	assert_log_contains "$LOG_FILE" "PING_COUNT"
+	assert_log_contains "$LOG_FILE" "using default"
 
 	remove_mock_from_path
 }
@@ -573,10 +609,10 @@ EOF
 }
 
 # bats test_tags=category:high-risk,priority:high
-@test "environment variable sets invalid value - should handle gracefully" {
-	# Purpose: Test verifies that the script handles invalid values set via environment variables gracefully.
-	# Expected: Script detects invalid environment variable value and either uses default or fails gracefully with error message.
-	# Importance: Invalid environment variables can cause unexpected behavior; script must validate and handle them.
+@test "environment variable sets invalid PING_COUNT - should log warning and use schema default" {
+	# Purpose: Variables set in the environment before launch are not overwritten by apply_schema_defaults; invalid optional values are corrected at validation.
+	# Expected: Run succeeds; log shows PING_COUNT correction with \"using default\".
+	# Importance: Runtime env overrides must go through the same optional-variable correction path as the config file.
 	# Test Category: Error handling, Configuration validation
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
@@ -592,12 +628,11 @@ EOF
 	mv "${TEST_DIR}/mock_ip" "${TEST_DIR}/ip" 2>/dev/null || true
 	add_mock_to_path
 
-	# Set invalid value via environment variable (using a different variable for testing)
-	run bash "$test_script" --fake
+	PING_COUNT=-1 run bash "$test_script" --fake
 	assert_success
-
-	# Script should handle invalid environment variable value gracefully
 	assert_file_exist "$LOG_FILE"
+	assert_log_contains "$LOG_FILE" "PING_COUNT"
+	assert_log_contains "$LOG_FILE" "using default"
 
 	remove_mock_from_path
 }

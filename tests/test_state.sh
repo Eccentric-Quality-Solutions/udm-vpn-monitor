@@ -1456,6 +1456,41 @@ EOF
 	trap - EXIT
 }
 
+# bats test_tags=category:integration,priority:high
+@test "validate_state recovers malformed per-peer integer files to consistent zeros" {
+	# Purpose: Corrupted failure_count and last_bytes on disk are detected and reset in one validate_state pass.
+	# Expected: Non-numeric contents are replaced with 0 after backup/recovery; no stale mixed content remains.
+	# Importance: Simulates partial writes or manual edits; ensures cron next run sees consistent integers.
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+
+	# shellcheck source=../lib/state.sh
+	source "${BATS_TEST_DIRNAME}/../lib/state.sh" || true
+	source_function "get_peer_state_file_path"
+
+	export STATE_DIR LOGS_DIR
+	export RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
+
+	local failure_counter last_bytes_path
+	failure_counter=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "failure_count")
+	last_bytes_path=$(get_peer_state_file_path "TEST" "${TEST_PEER_IP}" "last_bytes")
+
+	printf '%s\n' 'not-an-integer' >"$failure_counter"
+	printf '%s\n' 'garbage-bytes' >"$last_bytes_path"
+
+	# validate_state returns 1 when it repaired any file (expected here); recovery must still succeed.
+	run bash -c "
+		source '${BATS_TEST_DIRNAME}/../lib/logging.sh' || exit 1
+		source '${BATS_TEST_DIRNAME}/../lib/state.sh' || exit 1
+		export STATE_DIR='${STATE_DIR}' LOGS_DIR='${LOGS_DIR}'
+		export RESTART_COUNT_FILE='${STATE_DIR}/restart_count'
+		export LOG_FILE='${LOGS_DIR}/vpn-monitor.log'
+		validate_state
+	"
+	assert [ "$status" -eq 1 ]
+	assert_equal "$(cat "$failure_counter")" "0"
+	assert_equal "$(cat "$last_bytes_path")" "0"
+}
+
 # ============================================================================
 # 6.7 INPUT VALIDATION TESTS
 # ============================================================================

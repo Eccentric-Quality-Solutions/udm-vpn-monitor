@@ -193,7 +193,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Purpose: Test verifies that each peer IP maintains its own independent failure counter.
 	# Expected: Each peer has a separate counter file that increments independently based on that peer's status.
 	# Importance: Ensures failures in one VPN tunnel don't affect monitoring of other tunnels.
-	setup_test_vpn_monitor "${TEST_PEER_IP} ${TEST_PEER_IP2}" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5'
+	# Resource check can exit before process_locations, leaving pre-seeded counters unchanged.
+	setup_test_vpn_monitor "${TEST_PEER_IP} ${TEST_PEER_IP2}" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_RESOURCE_MONITORING=0'
 	# Set up state files using location-aware functions
 	# setup_test_vpn_monitor creates locations TEST1 and TEST2 for the two IPs
 	source_function "set_peer_state"
@@ -488,21 +489,23 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 # bats test_tags=category:unit
 @test "vpn-monitor.sh validate_monitor_state checks cron persistence on first run - should verify cron entry" {
 	# Purpose: Test verifies that validate_monitor_state function checks for cron job persistence on first execution.
-	# Expected: Script verifies cron entry exists and may warn if missing, only checking once per installation.
+	# Expected: Script verifies cron entry exists and may warn if missing; after the check,
+	#   creates ${STATE_DIR}/.cron_checked so cron is not re-checked on every run.
 	# Importance: Ensures script continues to run on schedule and alerts if cron job is removed.
-	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
+	# Resource check can exit before the cron block; disable so this test reaches .cron_checked creation.
+	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_RESOURCE_MONITORING=0' || fail "Fixture setup failed"
 
 	# Remove cron entry if it exists
 	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
 
-	# Remove .cron_checked file if it exists
-	rm -f "${TEST_DIR}/.cron_checked"
+	# Remove .cron_checked so this run performs the cron persistence check
+	rm -f "${STATE_DIR}/.cron_checked"
 
 	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
 
 	assert_success
-	# Should check cron persistence (may warn if cron not found)
-	# The check happens in validate_monitor_state
+	# validate_monitor_state creates the sentinel after check_cron_persistence
+	assert_file_exist "${STATE_DIR}/.cron_checked"
 
 	remove_mock_from_path
 }

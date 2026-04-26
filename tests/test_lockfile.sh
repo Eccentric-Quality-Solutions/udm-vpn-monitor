@@ -178,6 +178,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	remove_mock_from_path
 }
 
+# Intentional split: deterministic "live PID in lockfile" conflict; parallel acquisition is covered below (flock and fallback paths).
 # bats test_tags=category:high-risk,priority:high
 @test "lockfile acquisition prevents concurrent execution" {
 	# Purpose: Test verifies that lockfile acquisition prevents multiple script instances from running simultaneously

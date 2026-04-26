@@ -390,9 +390,9 @@ EOF
 
 # bats test_tags=category:unit
 @test "install.sh sets up cron job when not skipped" {
-	# Purpose: Test verifies that the install script creates cron job for scheduled execution when not disabled
-	# Expected: Script creates cron entry with default or configured schedule for automated monitoring
-	# Importance: Cron job ensures VPN monitoring runs automatically on schedule without manual intervention
+	# Purpose: Test verifies that the install script creates a direct vpn-monitor.sh cron line when not disabled
+	# Expected: Default schedule */1 * * * * and log redirection to INSTALL_DIR/logs/cron.log (dev: TEST_DIR/vpn-monitor)
+	# Importance: Cron job ensures VPN monitoring runs automatically; exact line guards wrapper vs direct regressions
 	cd "$TEST_DIR"
 
 	# Create source files with install.sh and lib directory
@@ -402,19 +402,34 @@ EOF
 	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
-	# Remove any existing cron entries first
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	# Remove any existing vpn-monitor entries first (match install.sh: direct and wrapper)
+	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
 
 	# Run install script - may fail if crontab has issues, but should at least attempt setup
 	run bash "$test_install" --dev --silent
 
+	# In dev mode, INSTALL_DIR is ${PWD}/vpn-monitor (we cd to TEST_DIR). Minimal source config
+	# has no ENABLE_MONITOR_WRAPPER= line; setup_cron treats that as not wrapper, so expect direct
+	# vpn-monitor.sh (not wrapper) and default schedule from setup_cron: */1 * * * *
+	local install_dir="${TEST_DIR}/vpn-monitor"
+	local expected_cron
+	expected_cron="*/1 * * * * ${install_dir}/vpn-monitor.sh >> ${install_dir}/logs/cron.log 2>&1"
+
 	# Check if cron entry was created (even if script had warnings)
 	run crontab -l 2>/dev/null
 	if [[ $status -eq 0 ]]; then
-		# If crontab works, check for entry
-		if echo "$output" | grep -q "vpn-monitor.sh"; then
-			# Cron entry exists - test passes
-			assert_success "Cron entry was created"
+		# If crontab works, require the exact line (prevents wrong schedule, wrapper vs direct, or log path)
+		local cron_line
+		# -F: match the direct script path; avoids matching vpn-monitor-wrapper.sh
+		cron_line=$(crontab -l 2>/dev/null | grep -F "${install_dir}/vpn-monitor.sh" || true)
+		if [[ -n "$cron_line" ]]; then
+			[[ "$cron_line" == "$expected_cron" ]] || {
+				echo "Expected exact cron line:" >&2
+				echo "  $expected_cron" >&2
+				echo "Got:" >&2
+				echo "  $cron_line" >&2
+				return 1
+			}
 		else
 			# Skip condition: Cron entry creation may fail in test environment without proper permissions
 			# Script may have failed to create cron entry, but that's acceptable in test environment
@@ -428,7 +443,7 @@ EOF
 	fi
 
 	# Clean up
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
 }
 
 # bats test_tags=category:unit
@@ -448,8 +463,8 @@ EOF
 		'CRON_SCHEDULE="*/5 * * * *"'
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
-	# Remove any existing cron entries first
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	# Remove any existing vpn-monitor entries first (match install.sh: direct and wrapper)
+	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
 
 	run bash "$test_install" --dev --silent
 	assert_success
@@ -962,8 +977,8 @@ EOF
 	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
-	# Remove any existing cron entries first
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	# Remove any existing vpn-monitor entries first (match install.sh: direct and wrapper)
+	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
 
 	# First installation - creates cron entry
 	run bash "$test_install" --dev --silent
@@ -996,7 +1011,7 @@ EOF
 	fi
 
 	# Clean up
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
 }
 
 # bats test_tags=category:unit
@@ -1013,8 +1028,8 @@ EOF
 	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
-	# Remove any existing cron entries first
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	# Remove any existing vpn-monitor entries first (match install.sh: direct and wrapper)
+	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
 
 	# Manually create multiple cron entries (simulating user error or previous issues)
 	local test_cron_entry
@@ -1049,7 +1064,7 @@ EOF
 	fi
 
 	# Clean up
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
 }
 
 # bats test_tags=category:unit
@@ -1140,4 +1155,50 @@ EOF
 	assert_dir_exist "${TEST_DIR}/vpn-monitor/lib"
 	assert_file_exist "${TEST_DIR}/vpn-monitor/lib/common.sh"
 	assert_file_exist "${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
+}
+
+# bats test_tags=category:unit
+@test "install.sh idempotent: consecutive installs yield single cron line and single config keys" {
+	# Purpose: Re-running install after a successful install must not stack duplicate crontab lines or duplicate KEY= rows.
+	# Expected: Two full installs leave exactly one vpn-monitor cron entry and one ENABLE_MONITOR_WRAPPER= line.
+	# Importance: Operator mistakes and automation may invoke install twice; duplicates break schedules and parsing.
+	cd "$TEST_DIR"
+
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
+	cat >"${TEST_DIR}/source/vpn-monitor.sh" <<'EOF'
+#!/bin/bash
+SCRIPT_VERSION="0.8.0"
+EOF
+	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+
+	load helpers/config
+	create_test_config "${TEST_DIR}/source/vpn-monitor.conf" \
+		'LOCATION_TEST_EXTERNAL="203.0.113.10"' \
+		'LOCATION_TEST_INTERNAL="192.0.2.1"' \
+		'ENABLE_MONITOR_WRAPPER=1' \
+		'MONITOR_INTERVAL=30'
+
+	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+
+	run bash "$test_install" --dev --silent
+	assert_success
+
+	local cron_lines
+	cron_lines=$(crontab -l 2>/dev/null | grep -c "vpn-monitor" || echo 0)
+	if [[ "$cron_lines" -eq 0 ]]; then
+		skip "Cron entry not available (requires crontab permissions)"
+	fi
+	assert_equal "$cron_lines" 1
+
+	run bash "$test_install" --dev --silent
+	assert_success
+	cron_lines=$(crontab -l 2>/dev/null | grep -c "vpn-monitor" || echo 0)
+	assert_equal "$cron_lines" 1
+
+	local key_count
+	key_count=$(grep -c '^ENABLE_MONITOR_WRAPPER=' "${TEST_DIR}/vpn-monitor/vpn-monitor.conf")
+	assert_equal "$key_count" 1
+
+	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
 }

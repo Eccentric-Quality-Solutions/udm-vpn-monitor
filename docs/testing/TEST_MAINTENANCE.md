@@ -1,7 +1,7 @@
 # Test Maintenance Procedures
 
 **Date**: 2026-01-02  
-**Last Updated**: 2026-01-19  
+**Last Updated**: 2026-04-26  
 **Status**: Active
 
 ---
@@ -329,6 +329,14 @@ setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'TIER1_THRESHOLD=1' 'TIE
 **Related Documentation**:
 - See [tests/fixtures/README.md](../../tests/fixtures/README.md) for complete fixture reference
 - See [Test Patterns](TEST_PATTERNS.md) for fixture usage patterns
+
+### Resource monitoring vs. full `vpn-monitor.sh` run
+
+**Problem**: A test runs `vpn-monitor.sh` (or a generated test copy) and expects state after `process_locations`—for example, incremented per-peer failure counters or `${STATE_DIR}/.cron_checked`—but assertions fail intermittently. The script still exits 0.
+
+**Root cause**: `validate_monitor_state` calls `check_system_resources` before the cron check and before `process_locations` (via `main()`). If resource monitoring is enabled and the host appears constrained, `check_system_resources` fails and the script **exits 0 early**, so later logic never runs. Pre-seeded state files and logs may look “unchanged.”
+
+**Mitigation (when the test is not about resource throttling)**: set `ENABLE_RESOURCE_MONITORING=0` in the test config (e.g. in `setup_test_vpn_monitor` or `setup_vpn_active_fixture` extra config) so the run is deterministic. Keep dedicated coverage in `test_resources.sh` (and similar) for the resource-monitoring path itself.
 
 ### Common Mock Pattern Issues
 

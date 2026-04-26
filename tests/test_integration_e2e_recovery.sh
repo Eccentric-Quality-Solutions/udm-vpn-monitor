@@ -18,7 +18,7 @@ load fixtures/vpn_failing
 	# Purpose: Test verifies complete end-to-end recovery flow from initial failure through all tiers to successful recovery
 	# Expected: Script escalates through all tiers, performs recovery, and VPN recovers successfully
 	# Importance: Validates complete recovery workflow from failure detection to successful recovery
-	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1'
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_RESOURCE_MONITORING=0' 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1'
 
 	# Mock ipsec for recovery actions
 	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
@@ -26,7 +26,7 @@ load fixtures/vpn_failing
 	add_mock_to_path
 
 	# Step 1: VPN fails - Tier 1 (logging)
-	setup_vpn_down_fixture "${TEST_PEER_IP}" 0 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1' || fail "Fixture setup failed"
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 0 'ENABLE_RESOURCE_MONITORING=0' 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1' || fail "Fixture setup failed"
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_file_contains "$LOG_FILE" "Tier 1"
@@ -34,7 +34,7 @@ load fixtures/vpn_failing
 	# Step 2: VPN still fails - Tier 2 (surgical cleanup)
 	# setup_vpn_down_fixture sets failure count to 1, which becomes 2 after increment (TIER2_THRESHOLD=2)
 	# This triggers Tier 2 recovery (failure_count=2 >= TIER2_THRESHOLD=2 and < TIER3_THRESHOLD=3)
-	setup_vpn_down_fixture "${TEST_PEER_IP}" 1 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1' || fail "Fixture setup failed"
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 1 'ENABLE_RESOURCE_MONITORING=0' 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1' || fail "Fixture setup failed"
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_file_contains "$LOG_FILE" "Tier 2"
@@ -43,7 +43,7 @@ load fixtures/vpn_failing
 	# setup_vpn_down_fixture sets failure count to 2, which becomes 3 after increment (TIER3_THRESHOLD=3)
 	# This triggers Tier 3 recovery
 	# Pass ENABLE_XFRM_RECOVERY=0 to ensure ipsec restart strategy is selected
-	setup_vpn_down_fixture "${TEST_PEER_IP}" 2 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1' || fail "Fixture setup failed"
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 2 'ENABLE_RESOURCE_MONITORING=0' 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1' || fail "Fixture setup failed"
 	# Recreate mock ipsec after fixture (fixture may have recreated TEST_DIR structure)
 	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
 	mock_ipsec_reload_restart 0 0 1
@@ -63,7 +63,7 @@ load fixtures/vpn_failing
 
 	# Step 4: VPN recovers after Tier 3 recovery
 	# Use setup_detection_test() helper for simple active VPN setup with mocks in PATH
-	setup_detection_test "${TEST_PEER_IP}" 1000 2000 || fail "Fixture setup failed"
+	setup_detection_test "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_RESOURCE_MONITORING=0' || fail "Fixture setup failed"
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 	# Get state file path using helper
@@ -87,7 +87,7 @@ load fixtures/vpn_failing
 	# Importance: Ensures recovery detection works correctly and prevents false escalation
 	# Step 1: VPN fails - Tier 1
 	# setup_vpn_down_fixture will set up the config and environment
-	setup_vpn_down_fixture "${TEST_PEER_IP}" 0 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' || fail "Fixture setup failed"
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 0 'ENABLE_RESOURCE_MONITORING=0' 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' || fail "Fixture setup failed"
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_file_contains "$LOG_FILE" "Tier 1"
@@ -131,7 +131,7 @@ load fixtures/vpn_failing
 	# Purpose: Test verifies that multiple peers fail and recover independently
 	# Expected: Each peer maintains independent failure counters and recovery actions
 	# Importance: Ensures multi-peer deployments handle failures independently
-	setup_test_vpn_monitor "${TEST_PEER_IP} ${TEST_PEER_IP2}" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_XFRM_RECOVERY=0'
+	setup_test_vpn_monitor "${TEST_PEER_IP} ${TEST_PEER_IP2}" "${TEST_DIR}" 'ENABLE_RESOURCE_MONITORING=0' 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=3' 'TIER3_THRESHOLD=5' 'ENABLE_XFRM_RECOVERY=0'
 
 	# Mock ipsec for recovery
 	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
@@ -195,7 +195,7 @@ load fixtures/vpn_failing
 	# Purpose: Test verifies that recovery actions succeed but VPN continues to fail on subsequent checks
 	# Expected: Recovery actions are performed but failure counter continues incrementing if VPN doesn't recover
 	# Importance: Ensures recovery actions don't prevent continued failure tracking
-	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1'
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_RESOURCE_MONITORING=0' 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1'
 
 	# Mock ipsec - recovery succeeds
 	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
@@ -203,13 +203,13 @@ load fixtures/vpn_failing
 	add_mock_to_path
 
 	# VPN fails, reaches Tier 2
-	setup_vpn_down_fixture "${TEST_PEER_IP}" 2 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 2 'ENABLE_RESOURCE_MONITORING=0' 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_file_contains "$LOG_FILE" "Tier 2"
 
 	# Recovery action succeeds but VPN still fails on next check
-	setup_vpn_down_fixture "${TEST_PEER_IP}" 2 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 2 'ENABLE_RESOURCE_MONITORING=0' 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
@@ -233,7 +233,7 @@ load fixtures/vpn_failing
 	# Purpose: Test verifies that when recovery actions fail, failure counter continues incrementing
 	# Expected: Failed recovery actions don't prevent failure counter from incrementing
 	# Importance: Ensures failure tracking continues even when recovery actions fail
-	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1'
+	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" 'ENABLE_RESOURCE_MONITORING=0' 'TIER1_THRESHOLD=1' 'TIER2_THRESHOLD=2' 'TIER3_THRESHOLD=3' 'MAX_RESTARTS_PER_WINDOW=10' 'RATE_LIMIT_WINDOW_MINUTES=60' 'ENABLE_XFRM_RECOVERY=0' 'ENABLE_TIER2_IPSEC_RELOAD=1'
 
 	# Mock ipsec - recovery fails
 	# VPN must be DOWN for recovery to trigger: status_exit=1 so ipsec status fails
@@ -241,14 +241,14 @@ load fixtures/vpn_failing
 	add_mock_to_path
 
 	# VPN fails, reaches Tier 2
-	setup_vpn_down_fixture "${TEST_PEER_IP}" 2 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 2 'ENABLE_RESOURCE_MONITORING=0' 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
 	assert_file_contains "$LOG_FILE" "Tier 2"
 
 	# Recovery fails, VPN still fails
-	setup_vpn_down_fixture "${TEST_PEER_IP}" 2 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
+	setup_vpn_down_fixture "${TEST_PEER_IP}" 2 'ENABLE_RESOURCE_MONITORING=0' 'ENABLE_XFRM_RECOVERY=0' || fail "Fixture setup failed"
 	add_mock_to_path
 	run bash "$TEST_SCRIPT" --fake
 	assert_success
@@ -276,6 +276,7 @@ load fixtures/vpn_failing
 	setup_location_test_vpn_monitor "${TEST_DIR}" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
 		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'ENABLE_RESOURCE_MONITORING=0' \
 		'TIER1_THRESHOLD=1' \
 		'TIER2_THRESHOLD=3' \
 		'TIER3_THRESHOLD=5' \

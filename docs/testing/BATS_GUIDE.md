@@ -94,7 +94,7 @@ The `run` command:
 - Captures exit status to `$status`
 - Splits output into lines in `$lines` array
 
-**Important**: Because `run` executes in a subshell, global variables set with `declare -g` inside the function will not persist to the parent shell. If you need to check return values from a function that uses nameref arrays, call the function directly (not with `run`) and use `set +e` / `set -e` to handle non-zero exit codes:
+**Important**: Because `run` executes in a subshell, global variables set with `declare -g` inside the function will not persist to the parent shell. If you need to check return values from a function that uses nameref arrays, call the function directly (not with `run`) and capture a non-zero exit without letting Bats treat the failed command as a test failure. Prefer `||` over `set +e` (a function that returns 1 can still be reported as a failed command in some Bats/errexit situations):
 
 ```bash
 # ❌ Wrong: Nameref arrays won't persist in subshell
@@ -102,16 +102,16 @@ run select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
 assert_failure
 assert_equal "${recovery_info[strategy]}" "unavailable"  # This will be empty!
 
-# ✅ Correct: Call directly to preserve nameref array values
+# ✅ Correct: Call directly; capture status with `||` (works with expected non-zero)
 declare -A recovery_info
-set +e
-select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info"
-local exit_code=$?
-set -e
+local exit_code=0
+select_recovery_strategy "${TEST_PEER_IP}" 2 "recovery_info" || exit_code=$?
 assert_equal "$exit_code" 1
 assert_equal "${recovery_info[strategy]}" "unavailable"  # This will work
 assert_equal "${recovery_info[available]}" "0"
 ```
+
+**Log assertions and `format_peer_ip_display`**: Log lines from recovery/orchestration code use `format_peer_ip_display` for the peer, which formats a single address as `($ip)` (parentheses), not a bare IP. Assert on the same format when matching full messages.
 
 ## BATS Helper Libraries
 
@@ -1002,6 +1002,8 @@ assert_file_permission 755 "$file"
 assert_log_contains "$LOG_FILE" "message"
 assert_log_not_contains "$LOG_FILE" "message"
 ```
+
+**Config invalid-value tests:** Do not assert vague outcomes such as "uses default or fails gracefully" (that accepts any behavior). Use `lib/config_schema.sh` and validation code: for **required** settings, expect validation failure in fake mode (typically exit `3` with stderr/log hints); for **optional** settings with schema defaults, expect success and a log line containing the variable and `using default`.
 
 **Value Comparisons**:
 ```bash

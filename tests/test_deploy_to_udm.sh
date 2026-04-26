@@ -152,6 +152,54 @@ MOCK
 }
 
 # bats test_tags=category:unit
+@test "deploy-to-udm.sh ssh invocations include ControlMaster, ControlPath, and BindAddress" {
+	# Purpose: Regression guard for ControlMaster / argument construction (no real network).
+	# Expected: Mock ssh receives -o ControlMaster=yes, -o ControlPath=..., and BindAddress when --bind-ip is set.
+	cd "$PROJECT_ROOT"
+	[[ -f udm-vpn-monitor.zip ]] || ./scripts/prepare_install_package.sh >/dev/null 2>&1 || true
+	[[ -f udm-vpn-monitor.zip ]] || skip "Package file not available"
+
+	standard_setup
+	local mock_bin="${TEST_DIR}/mock_bin"
+	local ssh_log="${TEST_DIR}/ssh_argv.log"
+	rm -f "$ssh_log"
+	mkdir -p "$mock_bin"
+	cat >"${mock_bin}/ssh" <<EOF
+#!/bin/bash
+printf '%s\\n' "\$0 \$*" >>"${ssh_log}"
+if [[ "\$*" == *"-O check"* ]] || [[ "\$*" == *"-O exit"* ]]; then
+	exit 0
+fi
+exit 0
+EOF
+	cat >"${mock_bin}/scp" <<'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+	cat >"${mock_bin}/sshpass" <<'MOCK'
+#!/bin/bash
+shift 2
+exec ssh "$@"
+MOCK
+	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
+	export PATH="${mock_bin}:${PATH}"
+
+	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
+		--target-ip 192.168.1.100 \
+		--bind-ip 192.168.50.1 \
+		--file \"${PROJECT_ROOT}/udm-vpn-monitor.zip\"" 2>&1
+
+	assert_success
+	assert_file_exist "$ssh_log"
+	run grep -q "ControlMaster=yes" "$ssh_log"
+	assert_success
+	run grep -q "ControlPath=" "$ssh_log"
+	assert_success
+	run grep -q "BindAddress=192.168.50.1" "$ssh_log"
+	assert_success
+}
+
+# bats test_tags=category:unit
 @test "deploy-to-udm.sh full deploy flow succeeds with mocked ssh/scp/sshpass" {
 	cd "$PROJECT_ROOT"
 	[[ -f udm-vpn-monitor.zip ]] || ./scripts/prepare_install_package.sh >/dev/null 2>&1 || true
