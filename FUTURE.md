@@ -2,7 +2,7 @@ Considerations for the future, but want to avoid overarchitecting and premature 
 
 **Note:** Items marked with ✅ COMPLETED have been finished and can be considered resolved.
 
-**Context (current codebase):** Deploy and related management scripts live under `scripts/manage/`. Anonymization scripts under `scripts/anonymize/`. State modules in `lib/state/` (no `location_state.sh`; per-location state is per-peer with location as parameter). Test suite: 93 test files; see `docs/testing/RELEVANT_TESTS.md` for code-to-test mapping.
+**Context (current codebase):** Deploy and related management scripts live under `scripts/manage/`. Anonymization scripts under `scripts/anonymize/`. State modules in `lib/state/` (no `location_state.sh`; per-location state is per-peer with location as parameter). Test suite: 88 test files; see `docs/testing/RELEVANT_TESTS.md` for code-to-test mapping.
 
 - **`DEFAULT_LAN_INTERFACE` in config (optional)**
   - Today: `lib/constants.sh` sets `DEFAULT_LAN_INTERFACE=br0` (readonly). Changing it requires editing the constant or setting it before sourcing (advanced).
@@ -101,7 +101,7 @@ Considerations for the future, but want to avoid overarchitecting and premature 
   - Benefit: Faster test execution, easier debugging of module-specific issues
   - Note: Decomposition completed 2026-01-11, enables this future enhancement
   - Current coverage:
-    - `lib/config/config_defaults.sh`: ⚠️ Partial coverage (some tests in `test_config_schema.sh` and `test_helper_functions.sh`)
+    - `lib/config/config_defaults.sh`: ⚠️ Partial coverage (some tests in `test_config.sh`, `test_config_validation.sh`, and `test_helper_functions.sh`)
     - `lib/config/config_loading.sh`: ⚠️ Mostly integration tests, not focused module-level unit tests
     - `lib/config/config_validation.sh`: ⚠️ Partial coverage (some tests in `tests/test_config_validation.sh`)
 

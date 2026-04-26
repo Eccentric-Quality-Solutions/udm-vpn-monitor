@@ -169,8 +169,8 @@ function_name() {
 ## Testing
 
 - **Framework**: BATS with helpers in `tests/helpers/` and fixtures in `tests/fixtures/`
-- **91 test files**, ~1740 test cases total
-- **Test helpers** (12 modules): `mocks.bash`, `config.bash`, `detection.bash`, `recovery.bash`, `logging.bash`, `resources.bash`, `test_data.bash`, `state.bash`, `assertions.bash`, `lockfile.bash`, `fixtures.bash`
+- **88 test files**, ~1734 test cases total
+- **Test helpers** (13 modules): `mocks.bash`, `config.bash`, `detection.bash`, `recovery.bash`, `logging.bash`, `resources.bash`, `test_data.bash`, `state.bash`, `assertions.bash`, `lockfile.bash`, `fixtures.bash`, `anonymize.bash`
 - **Test fixtures** (15 scenarios): `vpn_active`, `vpn_down`, `vpn_failing`, `vpn_at_tier`, `vpn_idle`, `vpn_rekey`, `vpn_flapping`, `vpn_multiple_peers`, `vpn_mixed_peers`, `vpn_recovery_disabled`, `vpn_network_partition`, `vpn_rate_limited`, `vpn_xfrm_recovery`, `vpn_bytes_zero`, `vpn_recovery_test`
 - **Test data**: `tests/data/` contains mock output templates and config generators
 - **Tag system**: Tests use category tags (`category:unit`, `category:high-risk`, `category:integration`) and priority tags (`priority:high`, `priority:critical`, `priority:medium`, `priority:low`)

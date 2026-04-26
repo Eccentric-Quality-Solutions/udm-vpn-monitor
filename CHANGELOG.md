@@ -5,7 +5,11 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 ## Unreleased
 
 ### Changed
+- **Tests**: Merged `test_anonymize_*.sh` (ipset, ip-rules, firewall, logs, all) into `tests/test_anonymize.sh` with BATS tags `anonymize:ipset`, `anonymize:ip-rules`, `anonymize:firewall`, `anonymize:logs`, `anonymize:all` for targeted runs. Shared patterns moved to `tests/helpers/anonymize.bash` (help/input errors/diff/verbose partials).
 - **Ping source / default LAN naming**: Replaced misleading “route” function names with terminology for `ip addr add` on the default LAN bridge: `check_local_ip_on_default_lan`, `add_local_ip_to_default_lan_if_needed`, `ensure_default_lan_local_ip_for_ping` (config validation), `ensure_default_lan_local_ip_for_ping_install` (install), `detect_local_udm_ip_from_default_lan`. Added `DEFAULT_LAN_INTERFACE` in `lib/constants.sh` (default `br0` on UDM). Log messages updated accordingly.
+
+### Removed
+- `test_config_schema.sh` - Tests for configuration schema validation - covered by `test_config.sh`.
 
 ## 0.8.3 - 2026-02-25
 

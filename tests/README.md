@@ -38,11 +38,11 @@ bats tests/test_install.sh
 
 ### Test Files by Category
 
-**Script-Specific Tests**: `test_install.sh`, `test_uninstall.sh`, `test_vpn_monitor.sh`, `test_analyze_logs.sh`, `test_anonymize_logs.sh`, `test_check_config.sh`, `test_compare_config.sh`, `test_check_utilities.sh`, `test_vpn_keepalive.sh`, `test_prepare_install_package.sh`, `test_deploy_to_udm.sh`, `test_deploy_to_udms.sh`
+**Script-Specific Tests**: `test_install.sh`, `test_uninstall.sh`, `test_vpn_monitor.sh`, `test_analyze_logs.sh`, `test_anonymize.sh`, `test_check_config.sh`, `test_compare_config.sh`, `test_check_utilities.sh`, `test_vpn_keepalive.sh`, `test_prepare_install_package.sh`, `test_deploy_to_udm.sh`, `test_deploy_to_udms.sh`
 
 **Integration Tests**: `test_integration.sh`, `test_integration_e2e_recovery.sh`, `test_integration_location.sh`
 
-**Configuration Tests**: `test_config.sh`, `test_config_loading.sh`, `test_config_validation.sh`, `test_config_large_values.sh`, `test_config_overrides.sh`, `test_config_security.sh`, `test_config_order.sh`, `test_config_schema.sh`, `test_config_location.sh`
+**Configuration Tests**: `test_config.sh`, `test_config_loading.sh`, `test_config_validation.sh`, `test_config_large_values.sh`, `test_config_overrides.sh`, `test_config_security.sh`, `test_config_order.sh`, `test_config_location.sh`
 
 **Detection Tests**: `test_detection.sh`, `test_detection_status.sh`, `test_detection_fallback.sh`, `test_detection_network_partition.sh`, `test_detection_rekey.sh`, `test_detection_failure_type.sh`, `test_detection_idle.sh`, `test_detection_xfrm_edge_cases.sh`, `test_detection_ping_multiple.sh`, `test_detection_ping_optional.sh`, `test_detection_ping_summary.sh`, `test_detection_error_recovery.sh`, `test_detection_system_wide_failure.sh`, `test_multiple_peer_edge_cases.sh`, `test_ping_command_building.sh`
 

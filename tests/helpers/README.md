@@ -219,6 +219,27 @@ assert_log_contains_any "${LOG_FILE}" "ipsec reload failed" "reload failed"
 }
 ```
 
+### `helpers/anonymize.bash` - Anonymize CLI test helpers
+
+Shared assertion helpers for `tests/test_anonymize.sh` (scripts under `scripts/anonymize/`). Reduces repeated `run` / `assert_output --partial` blocks for help text, missing/unreadable input, `diff` equality, and “no `grep -E` match” leak checks.
+
+**Key functions:**
+
+- `anonymize_assert_script_exists_executable` — `assert_file_exist` + `assert_file_executable`
+- `anonymize_assert_help` / `anonymize_assert_help_h` — `--help` / `-h` and required substrings
+- `anonymize_assert_input_file_not_found` / `anonymize_assert_input_file_unreadable` / `anonymize_assert_input_file_required`
+- `anonymize_assert_files_identical` — `diff` with empty output
+- `anonymize_assert_output_path_same_as_input_fails` — `-o` same as `-i` rejected
+- `anonymize_assert_eregex_no_line_in_file` — `grep -E` must not match (sensitive data absent)
+- `anonymize_assert_success_with_output_partials` / `anonymize_assert_success_with_line_partials` — after `run`, assert multiple `assert_output` / `assert_line` partials
+
+**Usage:**
+
+```bash
+load test_helper
+load helpers/anonymize
+```
+
 ### `helpers/fixtures.bash` - Fixture Test Helpers
 
 Provides helpers for working with test fixtures. This module is a placeholder for fixture-related helper functions that may emerge as test patterns develop. Currently, fixtures are well-organized in `tests/fixtures/` and provide their own setup functions.
