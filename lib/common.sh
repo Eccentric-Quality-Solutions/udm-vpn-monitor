@@ -6,7 +6,8 @@
 # Version: 0.8.3
 #
 # This module provides shared utility functions used throughout the codebase to reduce duplication:
-# - File operations: file_exists_and_readable(), ensure_file_exists(), atomic_write_file(), read_counter_file()
+# - File operations: file_exists_and_readable(), ensure_file_exists(), atomic_write_file(), read_counter_file(), read_unix_timestamp_from_file(), atomic_write_state_file_or_warn(), increment_counter_file()
+# - Periodic summary helpers: summary_interval_is_due()
 # - Directory operations: directory_exists(), directory_writable()
 # - Timestamp operations: get_unix_timestamp(), validate_timestamp(), safe_timestamp_subtract(), safe_timestamp_add(), safe_timestamp_diff(), calculate_duration(), start_timer(), stop_timer()
 # - String escaping: escape_sed_replacement(), escape_sed_regex()
@@ -697,6 +698,118 @@ read_counter_file() {
 	[[ "$value" =~ ^[0-9]+$ ]] || value=0
 
 	echo "$value"
+}
+
+# Read a Unix timestamp (seconds) stored as digits in a state file
+#
+# Same semantics as read_counter_file(); used at summary call sites where the value
+# is a last-summary timestamp rather than an event counter.
+#
+# Arguments:
+#   $1: State file path
+#
+# Output:
+#   Prints timestamp (non-negative integer), or 0 if missing/unreadable/non-numeric
+#
+# Returns:
+#   0: Always
+read_unix_timestamp_from_file() {
+	read_counter_file "$1"
+}
+
+# Whether a periodic summary interval has elapsed since the last run
+#
+# A summary is due when no prior timestamp was recorded (last_time is 0) or when
+# at least interval_seconds have passed since last_time relative to current_time.
+#
+# Arguments:
+#   $1: current_time (Unix seconds)
+#   $2: last_time (Unix seconds from state; 0 means uninitialized)
+#   $3: interval_seconds (positive)
+#
+# Returns:
+#   0: Interval elapsed or last_time uninitialized (caller should emit summary)
+#   1: Not yet time
+summary_interval_is_due() {
+	local current_time="$1"
+	local last_time="$2"
+	local interval_seconds="$3"
+	local elapsed=$((current_time - last_time))
+
+	if [[ $last_time -eq 0 ]] || [[ $elapsed -ge $interval_seconds ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# Atomic write to a state file; log standard read-only STATE_DIR warning on failure
+#
+# Arguments:
+#   $1: Target file path
+#   $2: Content to write
+#
+# Returns:
+#   0: Written successfully
+#   1: Write failed after logging (or stderr fallback if log_message unavailable)
+#
+# Side effects:
+#   May log WARNING via log_message()
+atomic_write_state_file_or_warn() {
+	local file="$1"
+	local content="$2"
+
+	if atomic_write_file "$file" "$content"; then
+		return 0
+	fi
+
+	local warn_msg="State write failed (STATE_DIR may be read-only): $file"
+	if type log_message >/dev/null 2>&1; then
+		log_message "WARNING" "SYSTEM" "$warn_msg"
+	else
+		echo "Warning: $warn_msg" >&2
+	fi
+	return 1
+}
+
+# Increment a numeric counter file atomically
+#
+# Ensures the file exists, reads the current value via read_counter_file(), increments,
+# and writes with atomic_write_file(). Used for non-fatal statistics counters
+# (network partition checks, resource monitoring, etc.).
+#
+# Arguments:
+#   $1: Counter file path to increment
+#
+# Returns:
+#   0: Always (increment/write failures are non-fatal; may log a warning)
+#
+# Side effects:
+#   - Creates counter file with content "0" if missing (via ensure_file_exists)
+#   - Writes incremented value via atomic_write_file
+#
+# Note:
+#   Uses log_message "WARNING" when available; otherwise echoes to stderr.
+#   Uses atomic writes per ADR-0012 for state file integrity.
+increment_counter_file() {
+	local counter_file="$1"
+
+	ensure_file_exists "$counter_file" "0" 2>/dev/null || return 0
+
+	local current_count
+	current_count=$(read_counter_file "$counter_file")
+
+	current_count=$((current_count + 1))
+
+	if ! atomic_write_file "$counter_file" "$current_count"; then
+		local warn_msg="State write failed (STATE_DIR may be read-only): $counter_file"
+		if type log_message >/dev/null 2>&1; then
+			log_message "WARNING" "SYSTEM" "$warn_msg"
+		else
+			echo "Warning: $warn_msg" >&2
+		fi
+	fi
+
+	return 0
 }
 
 # Escape string for sed replacement

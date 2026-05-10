@@ -114,11 +114,10 @@ if ! ensure_directory_exists "$LOGS_DIR" "logs"; then
 	exit "${EXIT_GENERAL_ERROR:-1}"
 fi
 
-# State files
-# Note: Failure counters are per-peer: ${STATE_DIR}/failure_count_<location>_<peer_ip_sanitized>
+# State files (global paths; per-peer byte/failure state uses get_peer_state_file_path in lib/state)
+# Per-peer examples: failure_count_<location>_<peer_sanitized>, last_bytes_<location>_<peer_sanitized>
 RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 TIER2_RECOVERY_COUNT_FILE="${STATE_DIR}/tier2_recovery_count"
-# LAST_BYTES_FILE will be per-peer: ${STATE_DIR}/last_bytes_<peer_ip_sanitized>
 #
 # Touch default LOG_FILE before load_config so the default log path is writable if config
 # load fails. After load, LOG_FILE may move; this probe and the DEBUG line below stay under
@@ -175,11 +174,10 @@ check_cron_persistence() {
 #
 # Returns:
 #   0: Arguments are valid
-#   1: Invalid arguments or conflicts detected (calls die() and exits script)
 #
 # Side effects:
-#   - Exits script with error message via die() if validation fails
-#   - Logs warnings for unknown arguments and exits with error
+#   - Exits via die() (does not return) if validation fails
+#   - Logs warnings for unknown arguments before die() on unknown non-path args
 validate_args() {
 	local unknown_args=()
 
@@ -243,7 +241,7 @@ parse_args() {
 	validate_args "$@"
 
 	# Process arguments
-	# Note: --help and --version are handled early (lines 43-64) and exit before this function is called
+	# Note: --help and --version are handled in the early loop above and exit before this runs
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--fake)
@@ -270,10 +268,10 @@ parse_args() {
 #   $@: Command-line arguments to parse (passed to parse_args)
 #
 # Returns:
-#   0: Always succeeds (may exit script for --help/--version)
+#   0: Always returns after successful setup (--help/--version exit earlier in this script)
 #
 # Side effects:
-#   - Parses arguments via parse_args() (may exit for --help/--version)
+#   - Parses arguments via parse_args()
 #   - Logs script start message with PID
 #   - Logs fake mode status if enabled
 #   - Initializes state files via init_state()
@@ -303,20 +301,19 @@ initialize_monitor() {
 	compact_tier2_recovery_count_file
 }
 
-# Validate monitor state and check cooldown
+# Validate monitor state (resources, partition flag, cron persistence)
 #
-# Validates state files for corruption, checks for network partition, and checks if script should exit due to cooldown.
-# Network partition check happens before cooldown check to ensure partition detection works even during cooldown periods.
+# Validates state files for corruption, checks system resources, optionally runs the network
+# partition probe, and records partition state for downstream recovery/monitoring (does not exit
+# on partition — recovery skips actions when partitioned). Restart spacing uses
+# MIN_RESTART_INTERVAL_SECONDS (see recovery); there is no separate cooldown_until phase here.
 # Performs cron persistence check once per run (tracked via .cron_checked file).
-# This ensures state integrity before proceeding with monitoring.
 #
 # Returns:
-#   0: State is valid, network is healthy (or partition check disabled), and not in cooldown (continues execution)
-#   Exits script with code 0 if network is partitioned or in cooldown
+#   0: Always returns (may exit 0 early only if resources are constrained — see check_system_resources)
 #
 # Side effects:
-#   - May exit script if network is partitioned (logs message, exits with code 0)
-#   - May exit script if in cooldown (logs message, exits with code 0)
+#   - May exit 0 if system resources are constrained (throttle path)
 #   - Updates network partition state file if partition status changed
 #   - Logs warnings about state file issues (but doesn't fail)
 #   - Checks cron persistence once per run (creates .cron_checked file)
@@ -336,9 +333,8 @@ validate_monitor_state() {
 	# Log summary if hour has elapsed (tracks statistics for CPU, RAM, and disk checks)
 	log_resource_monitoring_summary_if_due
 
-	# Check for network partition before cooldown check
-	# Partition check should happen first because if network is partitioned,
-	# we should skip VPN checks regardless of cooldown status
+	# Network partition check (sets state for downstream code; does not exit here)
+	# If partitioned, monitor/recovery paths should skip VPN work until connectivity returns
 	if [[ "${ENABLE_NETWORK_PARTITION_CHECK:-1}" -eq 1 ]]; then
 		local dns_server="${NETWORK_PARTITION_DNS_SERVER:-8.8.8.8}"
 		local dns_hostname="${NETWORK_PARTITION_DNS_HOSTNAME:-google.com}"
@@ -530,8 +526,8 @@ process_locations() {
 #
 # Execution flow:
 #   1. Initializes the monitor (parse args, log start, init state)
-#   2. Validates state, checks network partition, and checks cooldown (may exit if partitioned or in cooldown)
-#   3. Processes all peer IPs (monitors each configured peer)
+#   2. Validates state, resources, and network partition probe (may exit 0 if resources constrained)
+#   3. Applies startup grace period when first/stale run is detected, then processes all locations/peers
 #   4. Logs completion status and exits with appropriate status code
 #
 # Arguments:
@@ -550,7 +546,7 @@ main() {
 	# Initialize monitor script
 	initialize_monitor "$@"
 
-	# Validate state and check cooldown (may exit if in cooldown)
+	# Validate state, resources, partition probe (may exit 0 if resources constrained)
 	validate_monitor_state
 
 	# Apply startup grace period if this is first run after restart
@@ -559,7 +555,7 @@ main() {
 	# We consider it a "fresh start" if:
 	#   1. The timestamp file doesn't exist (first run ever, or state directory was cleared)
 	#   2. The timestamp file is older than 5 minutes (likely system restart or script hasn't run in a while)
-	#      Note: 5-minute threshold assumes cron runs at least every minute. If file is older than 5 minutes
+	#      Note: matches find -mmin -5 below; assumes cron runs often enough that a fresh mtime means recent runs
 	local last_run_timestamp_file="${STATE_DIR}/.last_run_timestamp"
 	local apply_grace_period=0
 	local grace_period="${STARTUP_GRACE_PERIOD:-5}"

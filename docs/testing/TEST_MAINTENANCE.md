@@ -338,6 +338,14 @@ setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'TIER1_THRESHOLD=1' 'TIE
 
 **Mitigation (when the test is not about resource throttling)**: set `ENABLE_RESOURCE_MONITORING=0` in the test config (e.g. in `setup_test_vpn_monitor` or `setup_vpn_active_fixture` extra config) so the run is deterministic. Keep dedicated coverage in `test_resources.sh` (and similar) for the resource-monitoring path itself.
 
+### Restricted `/var/spool/cron` (sandboxes, minimal runners)
+
+**Problem**: Full-entrypoint runs in `tests/test_state.sh` (and similar) sometimes print `mkstemp: Permission denied` under `/var/spool/cron/` and assertions on per-peer counter files diverge—for example expecting `0` after recovery but observing `1`—even though `run bash "$TEST_SCRIPT" --fake` reports success.
+
+**Root cause**: The monitor touches system cron bookkeeping during its run when that directory is not writable (e.g. locked-down sandbox or stripped CI image).
+
+**Mitigation**: Run those files in an environment where the normal filesystem is visible, or recognize the stderr signature as environmental noise. Optional longer-term fix: steer install/cron side effects fully away from the global spool in test-generated scripts (tracked as broader test-hardening in `FUTURE.md`).
+
 ### Common Mock Pattern Issues
 
 **Problem**: Mock `ip` commands that only handle `ip xfrm state` but not `ip -s xfrm state` (with `-s` flag) may fail silently.

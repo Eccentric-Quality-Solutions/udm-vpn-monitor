@@ -22,31 +22,25 @@
 #   - config/config_defaults.sh: Default value application
 #   - config/config_validation.sh: Schema validation and type checking
 #   - config/location_parsing.sh: Location-based configuration parsing
+#
+# Sourcing prerequisites:
+#   lib/constants.sh is required (bundled). Missing or unloadable constants exit
+#   the shell immediately so partial defaults cannot diverge from lib/constants.sh.
 
-# Source constants for magic numbers
+# Determine lib directory (where this file is located), then load constants (fail-fast)
 # shellcheck source=lib/constants.sh
-# Determine lib directory (where this file is located)
-# Always set LIB_DIR, even if empty (handles cases where BASH_SOURCE[0] resolution fails)
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" 2>/dev/null || LIB_DIR=""
-# Note: safe_source_lib not available here since constants.sh is sourced before common.sh
-source "${LIB_DIR}/constants.sh" 2>/dev/null || {
-	# Fallback if constants.sh not found (shouldn't happen in normal operation)
-	# Only set if not already set (to avoid readonly variable errors)
-	if ! declare -p LOCKFILE_TIMEOUT_DEFAULT &>/dev/null; then
-		readonly LOCKFILE_TIMEOUT_DEFAULT=300
-	fi
-	if ! declare -p SECONDS_PER_MINUTE &>/dev/null; then
-		readonly SECONDS_PER_MINUTE=60
-	fi
-	if ! declare -p SECONDS_PER_HOUR &>/dev/null; then
-		readonly SECONDS_PER_HOUR=3600
-	fi
-	if ! declare -p SECONDS_PER_DAY &>/dev/null; then
-		readonly SECONDS_PER_DAY=86400
-	fi
-	if ! declare -p MAX_IPV6_SEGMENTS &>/dev/null; then
-		readonly MAX_IPV6_SEGMENTS=8
-	fi
+if [[ -z "${LIB_DIR:-}" ]] || [[ ! -d "${LIB_DIR}" ]]; then
+	echo "ERROR: Cannot determine lib directory from ${BASH_SOURCE[0]:-<unknown>}" >&2
+	exit 1
+fi
+if [[ ! -f "${LIB_DIR}/constants.sh" ]] || [[ ! -r "${LIB_DIR}/constants.sh" ]]; then
+	echo "ERROR: Required file missing or unreadable: ${LIB_DIR}/constants.sh" >&2
+	exit 1
+fi
+source "${LIB_DIR}/constants.sh" || {
+	echo "ERROR: Failed to source lib/constants.sh" >&2
+	exit 1
 }
 
 # Source common utility functions

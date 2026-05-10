@@ -8,21 +8,12 @@
 # Apply default values from schema
 #
 # Sets default values for all configuration variables from the schema definition.
-# This ensures variables have values before config file is parsed, allowing scripts
-# to reference config variables safely. Defaults are read from config_schema.sh,
-# making it the single source of truth for default values.
-#
-# Returns:
-#   0: Success
+# Defaults are read from config_schema.sh, making it the single source of truth for
+# default values.
 #
 # Side effects:
 #   - Sets global configuration variables to their schema-defined defaults if not already set
 #   - Variables are set via indirect assignment (declare -g + printf -v)
-#
-# Note:
-#   Requires CONFIG_SCHEMA to be defined (from config_schema.sh)
-#   For required variables without schema defaults, backward compatibility defaults
-#   are applied (see function body for details)
 apply_schema_defaults() {
 	local var_name
 	local default_val
@@ -66,8 +57,6 @@ apply_schema_defaults() {
 # Apply default value for optional variable (centralized logic)
 #
 # Centralized function for applying default values to optional configuration variables.
-# This function ensures consistent behavior across all validation functions when
-# applying defaults for optional variables that are empty or invalid.
 #
 # Arguments:
 #   $1: Variable name (used for error messages and indirect variable assignment)
@@ -130,8 +119,7 @@ apply_optional_default() {
 # Apply default value to configuration variable
 #
 # Applies a default value from schema if the variable is empty.
-# Works for both optional and required variables (required variables may have
-# backward compatibility defaults in the schema).
+# Works for both optional and required variables.
 # Also corrects invalid optional values by applying schema defaults.
 # For required variables without defaults, exits script if value is empty.
 #

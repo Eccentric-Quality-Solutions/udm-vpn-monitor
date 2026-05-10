@@ -468,9 +468,9 @@ detect_failure_type() {
 
 	# Unable to determine failure type (fallback)
 	# This should be unreachable in normal operation since:
-	#   - If ipsec_phase2_up=0, we return "tunnel_down" at line 380
-	#   - If ipsec_phase2_up=1, we enter the elif block at line 382 and return one of:
-	#     "rekey" (line 414), "routing_issue" (line 429), or "unknown" (line 444 or 471)
+	#   - If ipsec_phase2_up=0, we return "tunnel_down" in that branch
+	#   - If ipsec_phase2_up=1, the Phase-2-up branch returns "rekey", "routing_issue", or
+	#     "unknown" without falling through to this point
 	# This fallback exists as a defensive guard for unexpected code paths (e.g., if
 	# check_sa_existence_for_failure_type() has a bug or ipsec_phase2_up is corrupted).
 	# If this code is reached, it indicates a logic error that should be investigated.

@@ -833,14 +833,13 @@ EOF
 }
 
 # bats test_tags=category:high-risk,priority:medium
-# NOTE: This test is currently failing due to date mock/permission issues in sandbox environment
-# The test logic is correct but needs investigation of the date mock setup
+# NOTE: Test is skipped (skip below) pending date mock / permission investigation — not exercising assertions when skipped
 @test "retry_xfrm_recovery: SA count increase detection (second SA appears after initial re-establishment)" {
 	# Purpose: Test verifies that retry_xfrm_recovery detects when SA count increases after initial re-establishment
 	# Expected: Function logs SA count increase when second SA appears after initial re-establishment
 	# Importance: SA count increase detection helps diagnose timing issues where second SA takes longer
-	# Known Issue: Test fails with date mock/permission errors - needs investigation
-	skip "Test failing due to date mock/permission issues - needs investigation"
+	# Skipped: date mock / permission setup needs investigation before this case can run in CI
+	skip "Skipped pending date mock/permission investigation"
 	setup_test_environment "${TEST_DIR}"
 
 	# Set up base time for testing (don't use setup_controllable_time - we'll create custom date mock)

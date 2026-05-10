@@ -57,7 +57,7 @@ source "${LIB_DIR}/detection/network_validation.sh"
 #   Uses PING_SUMMARY_INTERVAL_MINUTES from config (default: 7 minutes)
 #
 # Note:
-#   Requires STATE_DIR, SECONDS_PER_MINUTE, PING_SUMMARY_INTERVAL_MINUTES, get_unix_timestamp, log_message, and ensure_file_exists
+#   Requires STATE_DIR, SECONDS_PER_MINUTE, PING_SUMMARY_INTERVAL_MINUTES, get_unix_timestamp, log_message, ensure_file_exists, atomic_write_state_file_or_warn, read_unix_timestamp_from_file, read_counter_file, and summary_interval_is_due
 log_ping_summary_if_due() {
 	local target_ip="$1"
 	local local_ip="${2:-}"
@@ -83,28 +83,18 @@ log_ping_summary_if_due() {
 	ensure_file_exists "$last_time_file" "0" 2>/dev/null || return 0
 	ensure_file_exists "$count_file" "0" 2>/dev/null || return 0
 
-	# Read last summary time and current count
-	# Check readability before reading to prevent hangs on unreadable files
+	# Read last summary time (validated digits; unreadable/non-numeric -> 0)
 	local last_time
-	if file_exists_and_readable "$last_time_file"; then
-		last_time=$(cat "$last_time_file" 2>/dev/null || echo "0")
-	else
-		last_time="0"
-	fi
+	last_time=$(read_unix_timestamp_from_file "$last_time_file")
 	local ping_count
 	ping_count=$(read_counter_file "$count_file")
 
 	# Increment ping count
 	ping_count=$((ping_count + 1))
 	# Use atomic write for state file (per ADR-0012)
-	if ! atomic_write_file "$count_file" "$ping_count"; then
-		log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $count_file"
-	fi
+	atomic_write_state_file_or_warn "$count_file" "$ping_count"
 
-	# Check if configured interval has elapsed since last summary
-	local time_since_last=$((current_time - last_time))
-
-	if [[ $time_since_last -ge $summary_interval_seconds ]] || [[ $last_time -eq 0 ]]; then
+	if summary_interval_is_due "$current_time" "$last_time" "$summary_interval_seconds"; then
 		# Time to log summary
 		if [[ $ping_count -gt 0 ]]; then
 			local source_info=""
@@ -113,12 +103,8 @@ log_ping_summary_if_due() {
 		fi
 
 		# Reset count and update last time (use atomic writes per ADR-0012)
-		if ! atomic_write_file "$count_file" "0"; then
-			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $count_file"
-		fi
-		if ! atomic_write_file "$last_time_file" "$current_time"; then
-			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $last_time_file"
-		fi
+		atomic_write_state_file_or_warn "$count_file" "0"
+		atomic_write_state_file_or_warn "$last_time_file" "$current_time"
 	fi
 
 	return 0

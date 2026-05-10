@@ -73,8 +73,7 @@ sanitize_peer_ip() {
 #   For connection_name key, location name is ignored (per-peer only, no location).
 #
 #   Files intentionally outside this abstraction layer (global state, not per-peer/location):
-#   - RESTART_COUNT_FILE: Global restart tracking
-#   - COOLDOWN_UNTIL_FILE: Global cooldown
+#   - RESTART_COUNT_FILE: Global restart timestamps for rate limiting (with MIN_RESTART_INTERVAL_SECONDS; no separate cooldown_until file)
 #   - NETWORK_PARTITION_STATE_FILE: Global network partition state
 #   - LOCKFILE: Global lockfile
 #   - PIDFILE: Global PID file for keepalive daemon

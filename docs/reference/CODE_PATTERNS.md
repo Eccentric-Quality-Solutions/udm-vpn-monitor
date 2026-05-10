@@ -3626,7 +3626,7 @@ readonly XFRM_RECOVERY_SLEEP_SECONDS=3  # Error if already set!
 - Use conditional readonly (`[[ -z "${VAR:-}" ]] && readonly VAR=value`) when modules may be sourced multiple times
 - **Constants files should be idempotent** - use conditional readonly even in constants files, as they may be sourced from multiple modules
 - Prevents "readonly variable already set" errors
-- Allows modules to have fallback constants if constants.sh isn't available
+- **Bundled loaders** (`lib/config.sh`, `lib/state.sh`): require `lib/constants.sh`; they exit if it is missing or fails to load (no inline duplicate defaults). Nested modules may still rely on conditional `readonly` because `constants.sh` is idempotent.
 - Example: `lib/recovery/constants.sh` uses conditional readonly because it's sourced by multiple recovery modules
 
 ### Pattern: Default Parameter Values

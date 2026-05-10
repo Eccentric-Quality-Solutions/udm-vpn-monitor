@@ -9,7 +9,8 @@ This document describes the architecture and design of the UDM VPN Monitor syste
 │                    UniFi Dream Machine (UDM)                    │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │              Cron Scheduler (every 1 min)                │  │
+│  │  Cron (every 1 min) → vpn-monitor.sh                      │  │
+│  │  or vpn-monitor-wrapper.sh (sub-minute, if enabled)      │  │
 │  └────────────────────┬─────────────────────────────────────┘  │
 │                       │                                         │
 │                       ▼                                         │
@@ -80,6 +81,10 @@ This document describes the architecture and design of the UDM VPN Monitor syste
 │  │  • vpn-monitor.lock  # System-wide                      │  │
 │  │  • .cron_checked  # System-wide                        │  │
 │  │  • .last_run_timestamp  # System-wide                  │  │
+│  │  • + counter / last-time files for hourly summaries     │  │
+│  │    (network partition stats, resource monitoring stats, │  │
+│  │     ping summary) — see lib/state/*_stats.sh,          │  │
+│  │     ping_detection.sh                                  │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
@@ -930,6 +935,7 @@ The following structure shows the file layout. **All paths are relative to the s
 ```
 ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 ├── vpn-monitor.sh              # Main monitoring script
+├── vpn-monitor-wrapper.sh      # Sub-minute wrapper (optional; cron runs this when ENABLE_MONITOR_WRAPPER=1)
 ├── vpn-monitor.conf            # Configuration file
 │
 ├── lib/                        # Library modules
@@ -1009,23 +1015,23 @@ The system uses a modular library architecture where functionality is organized 
 ### Library Modules
 
 #### `lib/common.sh`
-**Purpose**: Shared utility functions used across installation, uninstallation, and monitoring scripts.
+**Purpose**: Shared utility functions used across installation, uninstallation, and monitoring scripts (file and state helpers, timestamps, directory checks, safe parsing).
 
-**Key Functions**:
-- `get_formatted_timestamp()` - Consistent date/time formatting
-- `ensure_directory_exists()` - Centralized directory creation
-- `check_command_available()` - Enhanced command availability checking with three-tier fallback (handles restricted PATH environments in cron/systemd contexts). See Design Decision #11 for details.
-- `file_exists_and_readable()` - Check file existence and readability
-- `directory_exists()` / `directory_writable()` - Directory checks
-- `atomic_write_file()` - Atomic file write operations
-- `sanitize_peer_ip()` - IP address sanitization for filenames
+**Key Functions** (representative):
+- `check_command_available()` - Command availability with PATH fallbacks for cron/systemd contexts. See Design Decision #11 for details.
+- `file_exists_and_readable()`, `ensure_file_exists()`, `directory_exists()`, `directory_writable()` - Path checks
+- `atomic_write_file()`, `atomic_write_state_file_or_warn()`, `increment_counter_file()`, `read_counter_file()`, `read_unix_timestamp_from_file()` - Atomic state patterns (aligns with ADR-0012)
+- `summary_interval_is_due()` - Shared “last summary time + interval” logic for hourly/periodic summaries
+- `get_unix_timestamp()`, `validate_timestamp()`, `safe_timestamp_diff()` - Time handling for state and logging
+- `sanitize_location_name()` - Location name sanitization for filenames
+- `validate_spi_format()` - SPI format validation
 - `safe_set_variable()` - Safe variable assignment (prevents code injection)
-- `validate_ip_address()` - Robust IP address validation (IPv4/IPv6)
-- `get_file_mtime()` - File modification time retrieval
-- `is_process_running()` - Process existence checking
-- `log_info()`, `log_warn()`, `log_error()` - Colored console logging
+- `update_config_value()` - Config file updates
+- `check_root()` - Root privilege check (installer scripts)
+- `log_info()`, `log_warn()`, `log_error()` - Colored console logging (stderr/stdout helpers distinct from `log_message` in `logging.sh`)
+- `resolve_lib_dir()` - Library path resolution
 
-**Used By**: `vpn-monitor.sh`, `install.sh`, `uninstall.sh`
+**Used By**: Most library modules, `vpn-monitor.sh`, `install.sh`, `uninstall.sh`, and other root scripts
 
 #### `lib/config.sh`
 **Purpose**: Configuration file loading, validation, and management. Compatibility layer that sources all config modules.
@@ -1060,9 +1066,9 @@ The system uses a modular library architecture where functionality is organized 
 
 **Module Dependency Pattern**: Each config module sources its direct dependencies, making modules independently sourceable (useful for testing). The main `config.sh` entry point sources all modules in dependency order. This design allows modules to be sourced independently while maintaining backward compatibility with existing code that sources `config.sh`.
 
-**Dependencies**: `lib/config_schema.sh`, `lib/logging.sh`, `lib/common.sh`
+**Dependencies**: `lib/constants.sh`, `lib/common.sh`; config submodules integrate `lib/config_schema.sh` and `lib/logging.sh` as needed
 
-**Note**: The module split (completed 2026-01-11) decomposes the original 2393-line monolithic file into 4 focused modules for better organization and maintainability.
+**Note**: The module split (completed 2026-01-11) decomposes the original 2393-line monolithic file into four focused modules under `lib/config/` for better organization and maintainability.
 
 #### `lib/config_schema.sh`
 **Purpose**: Defines configuration schema, validation rules, and default values.
@@ -1098,6 +1104,8 @@ The system uses a modular library architecture where functionality is organized 
 
 **Usage**: Called early in execution flow (`validate_monitor_state()`) to throttle execution if system resources are severely constrained. Exits script gracefully if resources are too constrained to avoid adding load to an already stressed system.
 
+**Statistics**: When `track_resource_check()` / `track_resource_constraint()` from `lib/state/resource_monitoring_stats.sh` are available in the environment (normal `vpn-monitor.sh` path after `state.sh` is sourced), `check_system_resources()` records per-check success/failure and constraint events; `log_resource_monitoring_summary_if_due()` logs an hourly INFO summary. Tracking calls are optional (`command -v`) so resource checks still work if state modules are not loaded.
+
 **Dependencies**: `lib/common.sh`
 
 #### `lib/detection.sh`
@@ -1106,7 +1114,7 @@ The system uses a modular library architecture where functionality is organized 
 **Module Structure**: The detection functionality is organized into focused modules in the `lib/detection/` subdirectory:
 - **`lib/detection/network_validation.sh`**: IP validation (IPv4/IPv6), default LAN ping source (`check_local_ip_on_default_lan`, `add_local_ip_to_default_lan_if_needed`), DNS resolution, interface state checks
 - **`lib/detection/xfrm_detection.sh`**: xfrm state checks, byte counter detection, SA rekey detection, IPsec status fallback. Includes timeout protection (`XFRM_STATE_TIMEOUT=5`) to prevent indefinite hangs during system stress (netlink socket timeouts, XFRM lock contention).
-- **`lib/detection/ping_detection.sh`**: Ping-based connectivity verification, multiple IP support, ping summary logging
+- **`lib/detection/ping_detection.sh`**: Ping-based connectivity verification, multiple IP support, periodic ping summary via `log_ping_summary_if_due()` (`PING_SUMMARY_INTERVAL_MINUTES`, state files `ping_summary_last_time` / `ping_summary_count` under `STATE_DIR`)
 - **`lib/detection/failure_analysis.sh`**: Failure type classification, VPN status determination, network partition detection
 - **`lib/detection/system_wide_failure.sh`**: System-wide failure detection and coordination (detects when all/majority of VPNs fail simultaneously)
 
@@ -1115,6 +1123,7 @@ The system uses a modular library architecture where functionality is organized 
 - `check_xfrm_status()` - Checks Security Associations via `ip xfrm state` (in `xfrm_detection.sh`)
 - `check_ipsec_status()` - Fallback detection via `ipsec status` (in `xfrm_detection.sh`)
 - `check_ping_connectivity()` - Ping-based connectivity verification (in `ping_detection.sh`). When ENABLE_PING_CHECK=1, ping runs for each location; failure is treated as VPN failed.
+- `log_ping_summary_if_due()` - Logs a periodic INFO summary of successful ping checks (in `ping_detection.sh`)
 - `validate_ip_address()` - IP address validation (in `network_validation.sh`)
 - `detect_failure_type()` - Failure type classification (in `failure_analysis.sh`)
 - `detect_system_wide_failure()` - Detects system-wide failure across all locations (in `system_wide_failure.sh`)
@@ -1137,7 +1146,7 @@ The system uses a modular library architecture where functionality is organized 
 - Coordinates recovery so only one location (coordinator) attempts recovery
 - Clears system-wide failure state when failures drop below threshold
 
-**Note**: See Design Decision #5 for detection strategy details. The module split (completed 2026-01-15) decomposes the original 3005-line monolithic file into 4 focused modules for better organization and maintainability. System-wide failure detection was added in 2026-01-12.
+**Note**: See Design Decision #5 for detection strategy details. The module split (completed 2026-01-15) decomposes the original 3005-line monolithic file into five focused modules (`network_validation`, `xfrm_detection`, `ping_detection`, `failure_analysis`, `system_wide_failure`) for better organization and maintainability. System-wide failure detection was added in 2026-01-12.
 
 #### `lib/lockfile.sh`
 **Purpose**: Lockfile management to prevent concurrent script execution.
@@ -1175,6 +1184,7 @@ The system uses a modular library architecture where functionality is organized 
 - **`lib/recovery/xfrm_recovery.sh`**: xfrm-based recovery operations (per-connection SA deletion, recovery attempts)
 - **`lib/recovery/ipsec_recovery.sh`**: IPsec recovery operations (ipsec reload, ipsec restart)
 - **`lib/recovery/recovery_orchestration.sh`**: Recovery orchestration and coordination (monitor_location, surgical_cleanup, full_restart, recovery strategy selection)
+- **`lib/recovery/constants.sh`**: Recovery-tier and recovery-flow named constants
 
 **Key Functions** (distributed across modules):
 - `monitor_location()` - Main orchestration function (in `recovery_orchestration.sh`)
@@ -1195,7 +1205,7 @@ The system uses a modular library architecture where functionality is organized 
 
 **Dependencies**: `lib/logging.sh`, `lib/state.sh`, `lib/common.sh`, `lib/detection.sh`
 
-**Note**: See Design Decision #3 and Recovery Tier Flow diagram for recovery strategy details. The module split (completed 2026-01-16) decomposes the original 2633-line monolithic file into 5 focused modules for better organization and maintainability.
+**Note**: See Design Decision #3 and Recovery Tier Flow diagram for recovery strategy details. The module split (completed 2026-01-16) decomposes the original 2633-line monolithic file into six files under `lib/recovery/` (five behavior modules plus `constants.sh`) for better organization and maintainability.
 
 #### `lib/state.sh`
 **Purpose**: State file management for failure counters, cooldown periods, and rate limiting. Compatibility layer that sources all state modules.
@@ -1218,7 +1228,6 @@ The system uses a modular library architecture where functionality is organized 
 - `get_peer_state()` - Retrieves per-location state values (in `peer_state.sh`)
 - `get_peer_state_file_path()` - Generates state file path with proper sanitization (in `state_paths.sh`)
 - `sanitize_peer_ip()` - Sanitizes IP addresses for use in filenames (in `state_paths.sh`)
-- `sanitize_location_name()` - Sanitizes location names for use in filenames (in `state_paths.sh`)
 - `validate_state_file()` - Validates state file format and detects corruption (in `state_init.sh`)
 - `track_network_partition_check()` - Tracks success/failure statistics for network partition checks (in `network_partition_stats.sh`)
 - `log_network_partition_summary_if_due()` - Logs hourly summary of network partition check statistics (in `network_partition_stats.sh`)
@@ -1237,9 +1246,9 @@ The system uses a modular library architecture where functionality is organized 
 
 **Module Dependency Pattern**: Each state module sources its direct dependencies, making modules independently sourceable (useful for testing). The main `state.sh` entry point sources all modules in dependency order. This design allows modules to be sourced independently while maintaining backward compatibility with existing code that sources `state.sh`.
 
-**Dependencies**: `lib/logging.sh`, `lib/common.sh`
+**Dependencies**: `lib/constants.sh` (required first), `lib/common.sh`
 
-**Note**: See File Structure section and Design Decision #4 for state file details. The module split (completed 2026-01-11) decomposes the original 1404-line monolithic file into 7 focused modules for better organization and maintainability. Network partition statistics tracking and resource monitoring statistics tracking were added as separate modules to handle success/failure counting and hourly summary logging for network partition checks and resource monitoring checks respectively.
+**Note**: See File Structure section and Design Decision #4 for state file details. The module split (completed 2026-01-11) decomposes the original 1404-line monolithic file into six focused modules (`state_paths`, `global_state`, `peer_state`, `state_init`, `network_partition_stats`, `resource_monitoring_stats`) for better organization and maintainability. Network partition statistics tracking and resource monitoring statistics tracking live in the last two modules and handle success/failure counting plus hourly summary logging for partition checks and resource checks respectively.
 
 ## VPN Keepalive Daemon
 

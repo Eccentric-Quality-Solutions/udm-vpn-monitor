@@ -27,7 +27,7 @@
 #   track_network_partition_check "route" 0  # Track route failure
 #
 # Note:
-#   Requires STATE_DIR, atomic_write_file, ensure_file_exists, and read_counter_file to be set
+#   Requires STATE_DIR, increment_counter_file (lib/common.sh)
 #   Uses atomic writes per ADR-0012 for state file integrity
 track_network_partition_check() {
 	local check_type="$1"
@@ -57,20 +57,7 @@ track_network_partition_check() {
 		counter_file="${STATE_DIR}/network_partition_${check_type}_fail_count"
 	fi
 
-	# Initialize state file if it doesn't exist
-	ensure_file_exists "$counter_file" "0" 2>/dev/null || return 0
-
-	# Read current count using shared helper
-	local current_count
-	current_count=$(read_counter_file "$counter_file")
-
-	# Increment count
-	current_count=$((current_count + 1))
-
-	# Use atomic write for state file (per ADR-0012)
-	if ! atomic_write_file "$counter_file" "$current_count"; then
-		log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $counter_file"
-	fi
+	increment_counter_file "$counter_file"
 
 	return 0
 }
@@ -97,7 +84,7 @@ track_network_partition_check() {
 #   # Logs: "Network partition check summary (past hour): DNS resolution succeeded 60 times, failed 0 times; Default route check succeeded 60 times, failed 0 times; Interface state check succeeded 60 times, failed 0 times"
 #
 # Note:
-#   Requires STATE_DIR, SECONDS_PER_HOUR, get_unix_timestamp, log_message, ensure_file_exists, atomic_write_file, and read_counter_file to be set
+#   Requires STATE_DIR, SECONDS_PER_HOUR, get_unix_timestamp, log_message, ensure_file_exists, atomic_write_state_file_or_warn, read_unix_timestamp_from_file, read_counter_file, and summary_interval_is_due
 #   Uses atomic writes per ADR-0012 for state file integrity
 log_network_partition_summary_if_due() {
 	# Only proceed if STATE_DIR is set
@@ -130,24 +117,11 @@ log_network_partition_summary_if_due() {
 	ensure_file_exists "$interface_success_file" "0" 2>/dev/null || return 0
 	ensure_file_exists "$interface_fail_file" "0" 2>/dev/null || return 0
 
-	# Read last summary time
-	# Check readability before reading to prevent hangs on unreadable files
+	# Read last summary time (validated digits; unreadable/non-numeric -> 0)
 	local last_time
-	if file_exists_and_readable "$last_time_file"; then
-		last_time=$(cat "$last_time_file" 2>/dev/null || echo "0")
-	else
-		last_time="0"
-	fi
+	last_time=$(read_unix_timestamp_from_file "$last_time_file")
 
-	# Validate last_time is numeric (handle corruption)
-	if ! [[ "$last_time" =~ ^[0-9]+$ ]]; then
-		last_time=0
-	fi
-
-	# Check if configured interval has elapsed since last summary
-	local time_since_last=$((current_time - last_time))
-
-	if [[ $time_since_last -ge $summary_interval_seconds ]] || [[ $last_time -eq 0 ]]; then
+	if summary_interval_is_due "$current_time" "$last_time" "$summary_interval_seconds"; then
 		# Time to log summary - read all counters using shared helper
 		local dns_success=$(read_counter_file "$dns_success_file")
 		local dns_fail=$(read_counter_file "$dns_fail_file")
@@ -165,27 +139,13 @@ log_network_partition_summary_if_due() {
 		fi
 
 		# Reset all counters and update last time (use atomic writes per ADR-0012)
-		if ! atomic_write_file "$dns_success_file" "0"; then
-			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $dns_success_file"
-		fi
-		if ! atomic_write_file "$dns_fail_file" "0"; then
-			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $dns_fail_file"
-		fi
-		if ! atomic_write_file "$route_success_file" "0"; then
-			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $route_success_file"
-		fi
-		if ! atomic_write_file "$route_fail_file" "0"; then
-			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $route_fail_file"
-		fi
-		if ! atomic_write_file "$interface_success_file" "0"; then
-			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $interface_success_file"
-		fi
-		if ! atomic_write_file "$interface_fail_file" "0"; then
-			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $interface_fail_file"
-		fi
-		if ! atomic_write_file "$last_time_file" "$current_time"; then
-			log_message "WARNING" "SYSTEM" "State write failed (STATE_DIR may be read-only): $last_time_file"
-		fi
+		atomic_write_state_file_or_warn "$dns_success_file" "0"
+		atomic_write_state_file_or_warn "$dns_fail_file" "0"
+		atomic_write_state_file_or_warn "$route_success_file" "0"
+		atomic_write_state_file_or_warn "$route_fail_file" "0"
+		atomic_write_state_file_or_warn "$interface_success_file" "0"
+		atomic_write_state_file_or_warn "$interface_fail_file" "0"
+		atomic_write_state_file_or_warn "$last_time_file" "$current_time"
 	fi
 
 	return 0

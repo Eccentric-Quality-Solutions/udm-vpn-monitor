@@ -1,36 +1,37 @@
 #!/bin/bash
 #
 # State file management for UDM VPN Monitor
-# Handles failure counters, cooldown periods, rate limiting, and restart tracking
+# Handles failure counters, rate limiting, restart tracking, and related global/per-peer state
 #
 # Version: 0.8.3
 #
 # This file sources modular state management components:
 #   - state_paths.sh: Path generation and sanitization
-#   - global_state.sh: Global state (cooldown, restart count, etc.)
+#   - global_state.sh: Global state (restart timestamps, partition flag, etc.)
 #   - peer_state.sh: Per-peer state operations
 #   - state_init.sh: State initialization
 #   - network_partition_stats.sh: Network partition statistics tracking
 #   - resource_monitoring_stats.sh: Resource monitoring statistics tracking
+#
+# Sourcing prerequisites:
+#   lib/constants.sh is required (bundled). Missing or unloadable constants exit
+#   the shell immediately so SECONDS_* and exit codes cannot drift.
 
-# Source constants for magic numbers
+# Determine lib directory, then load constants (fail-fast; before common.sh)
 # shellcheck source=lib/constants.sh
-# Determine lib directory (where this file is located)
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Note: safe_source_lib not available here since constants.sh is sourced before common.sh
-if ! source "${LIB_DIR}/constants.sh" 2>/dev/null; then
-	# Fallback if constants.sh not found (shouldn't happen in normal operation)
-	# Only set if not already set (to avoid readonly variable errors)
-	if [[ -z "${SECONDS_PER_MINUTE:-}" ]]; then
-		readonly SECONDS_PER_MINUTE=60
-	fi
-	if [[ -z "${SECONDS_PER_HOUR:-}" ]]; then
-		readonly SECONDS_PER_HOUR=3600
-	fi
-	if [[ -z "${SECONDS_PER_DAY:-}" ]]; then
-		readonly SECONDS_PER_DAY=86400
-	fi
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" 2>/dev/null || LIB_DIR=""
+if [[ -z "${LIB_DIR:-}" ]] || [[ ! -d "${LIB_DIR}" ]]; then
+	echo "ERROR: Cannot determine lib directory from ${BASH_SOURCE[0]:-<unknown>}" >&2
+	exit 1
 fi
+if [[ ! -f "${LIB_DIR}/constants.sh" ]] || [[ ! -r "${LIB_DIR}/constants.sh" ]]; then
+	echo "ERROR: Required file missing or unreadable: ${LIB_DIR}/constants.sh" >&2
+	exit 1
+fi
+source "${LIB_DIR}/constants.sh" || {
+	echo "ERROR: Failed to source lib/constants.sh" >&2
+	exit 1
+}
 
 # Source common utility functions
 # shellcheck source=lib/common.sh
