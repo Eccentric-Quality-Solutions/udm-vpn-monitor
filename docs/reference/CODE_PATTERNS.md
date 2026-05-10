@@ -3638,7 +3638,7 @@ readonly XFRM_RECOVERY_SLEEP_SECONDS=3  # Error if already set!
 # ✅ GOOD: Use parameter expansion with defaults
 check_lockfile() {
     local lockfile="${1:-$LOCKFILE}"  # Use $1 if provided, else $LOCKFILE
-    local timeout="${2:-$LOCKFILE_TIMEOUT_DEFAULT}"  # Use $2 if provided, else default
+    local staleness_seconds="${2:-300}"  # Example default; production uses LOCKFILE_TIMEOUT (config) and LOCKFILE_MAX_AGE_SECONDS (lib/lockfile.sh)
     # ...
 }
 

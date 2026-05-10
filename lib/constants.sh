@@ -15,10 +15,6 @@
 # Version: 0.8.3
 #
 
-# Lockfile timeout default (in seconds)
-# Used to detect stale lockfiles from hung or crashed processes
-[[ -z "${LOCKFILE_TIMEOUT_DEFAULT:-}" ]] && readonly LOCKFILE_TIMEOUT_DEFAULT=300
-
 # Time conversion constants (in seconds)
 # Used for time-based calculations throughout the codebase
 [[ -z "${SECONDS_PER_MINUTE:-}" ]] && readonly SECONDS_PER_MINUTE=60
