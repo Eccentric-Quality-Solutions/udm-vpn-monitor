@@ -11,10 +11,10 @@ UDM VPN Monitor monitors Site-to-Site VPN connections on UniFi Dream Machines (U
 ## Build and Test Commands
 
 ```bash
-# Run fast tests (default, ~1650 tests)
+# Run fast tests (default, ~1460 tests; excludes slow/high-risk file set)
 ./tests/run_tests.sh
 
-# Run all tests including slow tests (~86 additional slow-tagged tests)
+# Run all tests including slow file set (~335 additional tests)
 ./tests/run_tests.sh --slow
 
 # Run tests with coverage reporting
@@ -169,12 +169,12 @@ function_name() {
 ## Testing
 
 - **Framework**: BATS with helpers in `tests/helpers/` and fixtures in `tests/fixtures/`
-- **88 test files**, ~1734 test cases total
+- **90 test files** (`tests/test_*.sh`), ~1795 test cases total
 - **Test helpers** (13 modules): `mocks.bash`, `config.bash`, `detection.bash`, `recovery.bash`, `logging.bash`, `resources.bash`, `test_data.bash`, `state.bash`, `assertions.bash`, `lockfile.bash`, `fixtures.bash`, `anonymize.bash`
 - **Test fixtures** (15 scenarios): `vpn_active`, `vpn_down`, `vpn_failing`, `vpn_at_tier`, `vpn_idle`, `vpn_rekey`, `vpn_flapping`, `vpn_multiple_peers`, `vpn_mixed_peers`, `vpn_recovery_disabled`, `vpn_network_partition`, `vpn_rate_limited`, `vpn_xfrm_recovery`, `vpn_bytes_zero`, `vpn_recovery_test`
 - **Test data**: `tests/data/` contains mock output templates and config generators
 - **Tag system**: Tests use category tags (`category:unit`, `category:high-risk`, `category:integration`) and priority tags (`priority:high`, `priority:critical`, `priority:medium`, `priority:low`)
-- **Slow tests**: Tag with `# bats test_tags=slow` to exclude from default runs
+- **Slow / high-risk files**: `run_tests.sh` excludes a fixed set of integration and high-risk files unless `--slow` (see `filter_test_files()` in `tests/run_tests.sh`). Tests may also use `# bats test_tags=slow` for tags and `--filter-tags`
 - When tests are slow, tag them appropriately
 
 ## Important Guidelines

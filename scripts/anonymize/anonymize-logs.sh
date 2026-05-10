@@ -37,9 +37,6 @@ VERBOSE=0
 #
 # Displays help text for the script.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 show_usage() {
@@ -361,9 +358,6 @@ anonymize_log_file() {
 	# Cleanup temporary files
 	#
 	# Removes temporary sed script files created during anonymization.
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds

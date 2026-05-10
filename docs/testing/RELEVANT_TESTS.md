@@ -1,6 +1,6 @@
 # Running Relevant Tests
 
-**Purpose**: When you change code, run the **relevant** tests for that change—not the full test suite. The full suite (~1650+ fast tests, ~86+ slow) is for CI and pre-release; during development and code reviews, run only the tests that cover what you changed.
+**Purpose**: When you change code, run the **relevant** tests for that change—not the full test suite. The full suite (~1460 tests with default `run_tests.sh`, ~1795 with `--slow`) is for CI and pre-release; during development and code reviews, run only the tests that cover what you changed.
 
 **Last updated**: 2026-04-26
 

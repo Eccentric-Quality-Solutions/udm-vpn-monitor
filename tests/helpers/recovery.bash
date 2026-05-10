@@ -132,9 +132,6 @@ override_calculate_duration_with_increment() {
 # time calculation failure. This is useful for testing iteration limits when
 # time calculation fails.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 #

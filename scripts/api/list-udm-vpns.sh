@@ -33,9 +33,6 @@ LIST_SITES_ONLY=0
 #
 # Displays help text for the script.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 show_usage() {
@@ -164,9 +161,6 @@ parse_args() {
 #
 # Verifies that curl command is available in PATH.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: curl is available
 #   1: curl is not available
@@ -182,9 +176,6 @@ check_curl_available() {
 #
 # Verifies that jq command is available in PATH.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: jq is available
 #   1: jq is not available
@@ -198,9 +189,6 @@ check_jq_available() {
 # Authenticate to UDM API
 #
 # Authenticates with the UDM API and returns session cookies.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Authentication successful

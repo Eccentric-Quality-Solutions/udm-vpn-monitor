@@ -2834,50 +2834,47 @@ The test suite includes comprehensive tests for critical paths and error handlin
 
 ### Test Categories
 
-**1. Lockfile Management** (`test_lockfile.sh` - 18 tests)
+**1. Lockfile Management** (`test_lockfile.sh`)
 Tests lockfile cleanup, error handling, race conditions, and edge cases.
 
-**2. Configuration Loading and Validation** (`test_config.sh` and split files - 120 tests total)
+**2. Configuration Loading and Validation** (`test_config.sh` and split `test_config_*.sh` files)
 Tests configuration file error handling, security, validation, location-based configuration, and edge cases.
 
-**3. VPN Status Detection** (`test_detection.sh` and split files - 105 tests total)
+**3. VPN Status Detection** (`test_detection.sh` and split `test_detection_*.sh` files)
 Tests VPN detection edge cases, byte counter handling, fallback mechanisms, network partitions, rekey detection, and XFRM edge cases.
 
-**4. Recovery Actions** (`test_recovery.sh` and split files - 51 tests total)
+**4. Recovery Actions** (`test_recovery.sh` and split `test_recovery_*.sh` files)
 Tests recovery action execution, error handling, tier-based recovery, rate limiting, and partial failures.
 
-**5. State and File Management** (`test_state.sh`, `test_state_concurrent_updates.sh`, and `test_state_location.sh` - 56 tests total)
+**5. State and File Management** (`test_state.sh`, `test_state_concurrent_updates.sh`, `test_state_location.sh`, and related state tests)
 Tests state file handling, permissions, corruption, concurrent updates, location-based state management, and edge cases.
 
-**6. Logging** (`test_logging.sh` - 8 tests)
+**6. Logging** (`test_logging.sh`)
 Tests logging failure scenarios and error handling.
 
-**7. Connection Management** (`test_connection.sh` - 8 tests)
+**7. Connection Management** (`test_connection.sh`)
 Tests connection name discovery, caching, and edge cases.
 
-**8. Error Handling** (`test_errors.sh` - 3 tests)
+**8. Error Handling** (`test_errors.sh`)
 Tests error handling during critical operations.
 
-**9. Main Execution** (`test_main.sh` - 25 tests)
+**9. Main Execution** (`test_main.sh`)
 Tests main execution edge cases and error scenarios.
 
-**10. Rapid State Changes** (`test_rapid_state_changes.sh` - 6 tests)
+**10. Rapid State Changes** (`test_rapid_state_changes.sh`)
 Tests handling of rapid state changes and race conditions.
 
 ### Test Statistics
 
-- **Total High-Risk Tests**: ~222 tests across multiple files (marked as slow tests)
-- **Test Categories**: 10 main categories
+- **Slow / high-risk file set (default exclusion)**: ~335 tests in a **fixed list of files** omitted by default `./tests/run_tests.sh` (see `filter_test_files()` in `tests/run_tests.sh`), including consolidated `test_config.sh`, `test_detection.sh`, `test_recovery.sh`, `test_state.sh`, `test_lockfile.sh`, `test_integration.sh`, and several other high-impact files
+- **Tags**: Tests may also declare `category:high-risk` (and related tags) for `--filter-tags`; that is separate from the default slow file list
 - **Focus Areas**: Critical error handling, edge cases, security, race conditions, resource management
 
 ### CI Integration
 
-The high-risk tests are automatically included in CI when `RUN_SLOW_TESTS=1` is set because:
-1. `run_tests.sh` automatically discovers all `test_*.sh` files
-2. High-risk test files are marked as slow tests
-3. CI runs `./tests/run_tests.sh --slow` which includes all test files
+CI runs the full suite (including the slow file set) because it invokes `./tests/run_tests.sh` with slow tests enabled (for example `RUN_SLOW_TESTS=1` / `--slow`—see `.github/workflows/tests.yml`). Locally, the same files are skipped unless you pass `--slow`.
 
-For more information on test coverage gaps, see [TEST_COVERAGE_GAPS.md](../TEST_COVERAGE_GAPS.md).
+For coverage goals and gap tracking, see [Test Coverage](TEST_PATTERNS.md#test-coverage) in this document.
 
 ## Individual Script Test Coverage
 

@@ -626,9 +626,6 @@ resolve_dns() {
 # Retrieves and validates the LOCAL_UDM_IP configuration value.
 # This is the internal IP address of the local UDM device used as source IP for ping checks.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: LOCAL_UDM_IP is configured and valid
 #   1: LOCAL_UDM_IP is not configured or invalid
@@ -661,9 +658,6 @@ get_local_udm_ip() {
 #
 # Retrieves LOCAL_UDM_IP for use as ping source IP.
 # Returns empty string if not configured (ping will work without -I flag).
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds
@@ -898,9 +892,6 @@ build_route_message() {
 #
 # Verifies that a default route exists in the routing table.
 # A missing default route indicates network partition (no internet connectivity).
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Default route exists

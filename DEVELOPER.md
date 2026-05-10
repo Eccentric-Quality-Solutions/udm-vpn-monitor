@@ -68,7 +68,7 @@ This guide provides information for developers contributing to the UDM VPN Monit
      - State files are named with location names: `<key>_<location>_<peer_ip>` (e.g., `failure_count_NYC_203_0_113_1`)
      - Each location's state is tracked independently (failure counters, byte counters, etc.)
      - Location names and IP addresses are sanitized for safe filenames (invalid chars → underscores, max 64 chars for locations)
-     - See [STATE_SYSTEM.md](docs/STATE_SYSTEM.md) for comprehensive state management documentation
+     - See [STATE_SYSTEM.md](docs/reference/STATE_SYSTEM.md) for comprehensive state management documentation
      - See [CODE_PATTERNS.md](docs/CODE_PATTERNS.md) "Pattern: Per-Location State Tracking" section for usage patterns
      - See [ADR-0024](docs/adr/0024-location-based-configuration.md) for design decision rationale
 
@@ -99,7 +99,7 @@ For comprehensive state management documentation including:
 - State file lifecycle and operations
 - State validation and recovery from corruption
 
-See [STATE_SYSTEM.md](docs/STATE_SYSTEM.md).
+See [STATE_SYSTEM.md](docs/reference/STATE_SYSTEM.md).
 
 For state management patterns and usage examples, see [CODE_PATTERNS.md](docs/CODE_PATTERNS.md) "Pattern: Per-Location State Tracking" section.
 
@@ -107,12 +107,12 @@ For state management patterns and usage examples, see [CODE_PATTERNS.md](docs/CO
 
 For comprehensive testing documentation including test structure, running tests, writing new tests, coverage reporting, and CI/CD integration, see [tests/README.md](tests/README.md).
 
-The test suite includes **827 tests** across multiple test files:
-- **Fast tests** (~605 tests): Run by default, include unit tests, script-specific tests, and split high-risk test files
-- **Slow tests** (~222 tests): High-risk tests and integration tests, excluded by default (use `--slow` flag to include)
+The test suite includes **~1795 tests** across **90** `tests/test_*.sh` files:
+- **Fast tests** (~1460 tests): Run by default; `run_tests.sh` omits a fixed set of high-risk and integration files (see `filter_test_files()` in `tests/run_tests.sh`)
+- **Slow file set** (~335 tests): Those omitted files; included with `./tests/run_tests.sh --slow`
 
-For test patterns and best practices, see [docs/TEST_PATTERNS.md](docs/TEST_PATTERNS.md).
-For BATS framework guide and advanced features, see [docs/BATS_GUIDE.md](docs/BATS_GUIDE.md).
+For test patterns and best practices, see [docs/testing/TEST_PATTERNS.md](docs/testing/TEST_PATTERNS.md).
+For BATS framework guide and advanced features, see [docs/testing/BATS_GUIDE.md](docs/testing/BATS_GUIDE.md).
 
 ### Common Development Tasks
 

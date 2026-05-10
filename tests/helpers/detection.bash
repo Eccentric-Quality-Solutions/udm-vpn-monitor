@@ -24,9 +24,6 @@
 # Initializes test directories and environment variables for ping summary tests.
 # Sets up STATE_DIR, LOGS_DIR, LOG_FILE, and PING_SUMMARY_INTERVAL_MINUTES.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 #
@@ -82,12 +79,6 @@ setup_mock_timestamp() {
 #
 # Initializes test directories and environment variables for ping-related tests.
 # Sets up STATE_DIR, LOGS_DIR, LOG_FILE, and ping-related configuration.
-#
-# Arguments:
-#   None
-#
-# Returns:
-#   0: Always succeeds
 #
 # Side effects:
 #   - Creates ${TEST_DIR}/state and ${TEST_DIR}/logs directories

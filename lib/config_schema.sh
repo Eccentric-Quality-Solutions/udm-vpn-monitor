@@ -159,12 +159,6 @@ declare -gA CONFIG_SCHEMA=(
 # Output:
 #   Prints schema string to stdout in format: "required|type|rules|default"
 #
-# Examples:
-#   schema=$(get_config_schema "LOCATION_NYC_EXTERNAL")
-#   # Returns: "required|string|non-empty"
-#   schema=$(get_config_schema "LOCATION_NYC_INTERNAL")
-#   # Returns: "optional|string"
-#
 # Note:
 #   Requires CONFIG_SCHEMA associative array to be defined (from this file)
 get_config_schema() {
@@ -202,14 +196,6 @@ get_config_schema() {
 # Returns:
 #   0: Variable is required
 #   1: Variable is optional or not found in schema
-#
-# Examples:
-#   if is_config_required "EXTERNAL_PEER_IPS"; then
-#       echo "EXTERNAL_PEER_IPS is required"
-#   fi
-#
-# Note:
-#   Requires CONFIG_SCHEMA array to be defined (from this file)
 is_config_required() {
 	local var_name="$1"
 	local schema

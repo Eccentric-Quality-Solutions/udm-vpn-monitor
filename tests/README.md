@@ -56,14 +56,14 @@ bats tests/test_install.sh
 
 **Test Infrastructure Tests**: `test_test_data_generators.sh`, `test_test_isolation.sh`, `test_fixtures_vpn_at_tier.sh`, `test_fixtures_vpn_idle.sh`
 
-**Total**: ~1530 tests across 77 test files
+**Total**: ~1795 tests across 90 test files (see [Test categories](../docs/testing/BATS_GUIDE.md#test-categories) for default fast vs `--slow` split)
 
 ## Test Categories
 
 - **Fast Tests** (default): Run quickly, exclude slow integration and high-risk tests
 - **Slow Tests**: Integration tests and high-risk tests that take longer to run
 
-See [BATS Guide](../docs/BATS_GUIDE.md#test-categories) for detailed test categorization.
+See [BATS Guide](../docs/testing/BATS_GUIDE.md#test-categories) for detailed test categorization.
 
 ## Basic Requirements
 
@@ -75,7 +75,7 @@ Optional (recommended):
 - **GNU parallel** or **rush** - For parallel execution (3-4x faster)
 - **kcov** - For coverage reporting
 
-See [BATS Guide - Test Environment Requirements](../docs/BATS_GUIDE.md#test-environment-requirements) for detailed installation instructions.
+See [BATS Guide - Test Environment Requirements](../docs/testing/BATS_GUIDE.md#test-environment-requirements) for detailed installation instructions.
 
 ## Common Commands
 
@@ -103,7 +103,7 @@ bats tests/test_install.sh -t "install.sh creates installation directory"
 ./tests/run_tests.sh --individual --resume
 ```
 
-See [BATS Guide - Running Tests](../docs/BATS_GUIDE.md#running-tests) for all available options.
+See [BATS Guide - Running Tests](../docs/testing/BATS_GUIDE.md#running-tests) for all available options.
 
 ## Troubleshooting
 
@@ -118,7 +118,7 @@ See [BATS Guide - Running Tests](../docs/BATS_GUIDE.md#running-tests) for all av
 - Install kcov: `brew install kcov` (macOS) or `sudo apt-get install kcov` (Linux)
 - Coverage is optional - tests can run without it
 
-See [BATS Guide - Troubleshooting](../docs/BATS_GUIDE.md#troubleshooting) for detailed troubleshooting information.
+See [BATS Guide - Troubleshooting](../docs/testing/BATS_GUIDE.md#troubleshooting) for detailed troubleshooting information.
 
 ## Test Infrastructure Components
 
@@ -211,7 +211,7 @@ For comprehensive guidance on writing new tests, see:
 
 Current test coverage: **46.9%** (1141/2433 lines)
 
-See [Test Patterns - Test Coverage](../docs/TEST_PATTERNS.md#test-coverage) for coverage goals, module-specific targets, and improvement strategy.
+See [Test Patterns - Test Coverage](../docs/testing/TEST_PATTERNS.md#test-coverage) for coverage goals, module-specific targets, and improvement strategy.
 
 ## External Resources
 

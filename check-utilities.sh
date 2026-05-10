@@ -67,9 +67,6 @@ check_utility() {
 # Prints results with color coding: green for available, red for missing.
 # Provides a summary at the end.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: All utilities are available
 #   1: One or more utilities are missing

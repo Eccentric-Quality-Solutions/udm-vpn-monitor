@@ -264,9 +264,6 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
 	# Importance: Function uses declare -g to ensure global scope
 	# Test helper function to set a global variable
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds
 	set_global_var() {

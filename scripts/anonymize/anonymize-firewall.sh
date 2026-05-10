@@ -191,9 +191,6 @@ extract_comment_identifiers() {
 #
 # Displays help text for the script.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 show_usage() {
@@ -405,9 +402,6 @@ anonymize_firewall_file() {
 	# Cleanup temporary files
 	#
 	# Removes temporary sed script files created during anonymization.
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds

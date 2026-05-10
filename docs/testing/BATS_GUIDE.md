@@ -271,7 +271,7 @@ For detailed CI/CD integration information, see [CI/CD Integration](#cicd-integr
 
 ### Usage Pattern Examples
 
-> **Note**: For standardized patterns and best practices, see **[Test Patterns](../tests/TEST_PATTERNS.md)**. The examples below demonstrate common usage patterns.
+> **Note**: For standardized patterns and best practices, see **[Test Patterns](TEST_PATTERNS.md)**. The examples below demonstrate common usage patterns.
 
 **1. Test Structure**:
 ```bash
@@ -441,7 +441,7 @@ load fixtures/vpn_active
 }
 ```
 
-See [Test Patterns - Test Fixtures](../docs/TEST_PATTERNS.md#4-test-fixtures) for detailed fixture documentation with all arguments, examples, and usage patterns.
+See [Test Patterns - Test Fixtures](TEST_PATTERNS.md#4-test-fixtures) for detailed fixture documentation with all arguments, examples, and usage patterns.
 
 **8. Direct Library Function Testing**:
 For testing library functions directly (unit testing), source the library files in your test:
@@ -892,7 +892,7 @@ BATS is a powerful testing framework for Bash scripts. Our current implementatio
 For current test suite statistics including test counts, coverage, and organization, see:
 
 - **[Test Categories](#test-categories)** - Current test counts and organization
-- **[Test Coverage](../docs/TEST_PATTERNS.md#test-coverage)** - Current coverage statistics and goals
+- **[Test Coverage](TEST_PATTERNS.md#test-coverage)** - Current coverage statistics and goals
 
 ### Key Features Implemented
 
@@ -920,7 +920,7 @@ Our test suite leverages BATS best practices and includes:
 
 This section provides quick access to the most common patterns and commands used in our BATS test suite.
 
-> **Note**: For standardized patterns and best practices, see **[Test Patterns](../tests/TEST_PATTERNS.md)**. This Quick Reference is for quick lookup of common syntax and patterns.
+> **Note**: For standardized patterns and best practices, see **[Test Patterns](TEST_PATTERNS.md)**. This Quick Reference is for quick lookup of common syntax and patterns.
 
 ### Essential Test Structure
 
@@ -1808,7 +1808,7 @@ This runs all test files except the slow test files listed below. Fast tests inc
 - Integration tests: `test_integration_e2e_recovery.sh`, `test_integration_location.sh`
 - Other tests: `test_state_concurrent_updates.sh`, `test_state_location.sh`, `test_rapid_state_changes.sh`, `test_resources.sh`
 
-**Total**: ~605 fast tests
+**Total**: ~1460 fast tests (approximate; see `filter_test_files()` in `tests/run_tests.sh`)
 
 ### Run All Tests (Including Slow Tests)
 
@@ -1820,19 +1820,19 @@ To include slow tests (integration and high-risk tests):
 RUN_SLOW_TESTS=1 ./tests/run_tests.sh
 ```
 
-Slow tests include:
+Slow tests include (same fixed list as `filter_test_files()` in `tests/run_tests.sh`):
 - `test_integration.sh` - Integration tests for full monitoring flow (18 tests)
-- `test_config.sh` - Main configuration tests (55 tests)
+- `test_config.sh` - Main configuration tests (52 tests)
 - `test_detection.sh` - Main detection tests (51 tests)
-- `test_recovery.sh` - Recovery strategy selection, XFRM recovery, and fallback logic tests (39 tests)
-- `test_lockfile.sh` - Lockfile management tests (18 tests)
-- `test_state.sh` - State file management tests (27 tests)
+- `test_recovery.sh` - Recovery strategy selection, XFRM recovery, and fallback logic tests (50 tests)
+- `test_lockfile.sh` - Lockfile management tests (48 tests)
+- `test_state.sh` - State file management tests (48 tests)
 - `test_logging.sh` - Logging failure scenario tests (8 tests)
 - `test_connection.sh` - Connection name discovery and caching tests (8 tests)
-- `test_errors.sh` - Error handling during critical operations tests (3 tests)
-- `test_main.sh` - Main execution edge cases tests (28 tests)
+- `test_errors.sh` - Error handling during critical operations tests (15 tests)
+- `test_main.sh` - Main execution edge cases tests (37 tests)
 
-**Total**: ~925 slow tests
+**Total**: ~335 slow tests
 
 ### Run with Coverage
 
@@ -2124,23 +2124,25 @@ Fast tests include all test files except the slow test files listed below. This 
 - Integration tests: `test_integration_e2e_recovery.sh`, `test_integration_location.sh`
 - Other tests: `test_state_concurrent_updates.sh`, `test_state_location.sh`, `test_rapid_state_changes.sh`, `test_resources.sh`
 
-**Total**: ~605 fast tests
+**Total**: ~1460 fast tests (approximate; see `filter_test_files()` in `tests/run_tests.sh`)
 
 ### Slow Tests (excluded by default)
 
-Slow tests are high-risk tests and integration tests that take longer to run:
+Slow tests are high-risk tests and integration tests that take longer to run (same fixed list as `filter_test_files()` in `tests/run_tests.sh`):
 - `test_integration.sh` - Integration tests for full monitoring flow (18 tests)
-- `test_config.sh` - Main configuration tests (55 tests)
+- `test_config.sh` - Main configuration tests (52 tests)
 - `test_detection.sh` - Main detection tests (51 tests)
-- `test_recovery.sh` - Recovery strategy selection, XFRM recovery, and fallback logic tests (39 tests)
-- `test_lockfile.sh` - Lockfile management tests (18 tests)
-- `test_state.sh` - State file management tests (27 tests)
+- `test_recovery.sh` - Recovery strategy selection, XFRM recovery, and fallback logic tests (50 tests)
+- `test_lockfile.sh` - Lockfile management tests (48 tests)
+- `test_state.sh` - State file management tests (48 tests)
 - `test_logging.sh` - Logging failure scenario tests (8 tests)
 - `test_connection.sh` - Connection name discovery and caching tests (8 tests)
-- `test_errors.sh` - Error handling during critical operations tests (3 tests)
-- `test_main.sh` - Main execution edge cases tests (28 tests)
+- `test_errors.sh` - Error handling during critical operations tests (15 tests)
+- `test_main.sh` - Main execution edge cases tests (37 tests)
 
-**Total Test Count**: ~1530 tests across 77 test files (~605 fast, ~925 slow)
+**Total (slow file set)**: ~335 tests
+
+**Total Test Count**: ~1795 tests across 90 test files (~1460 fast by default, ~335 in the slow file set)
 
 **Note**: Slow tests are automatically included in CI/CD via the `RUN_SLOW_TESTS=1` environment variable (see `.github/workflows/tests.yml`).
 

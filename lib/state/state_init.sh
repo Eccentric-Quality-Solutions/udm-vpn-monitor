@@ -20,9 +20,6 @@
 #   - Per-peer failure counters: Created on-demand as failure_count_<location>_<external_peer_ip>
 #   - Per-peer byte counters: Created on-demand as last_bytes_<location>_<external_peer_ip>
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: State initialization succeeded (warnings may be logged for non-critical failures)
 #   Exits script with error code if required variables are unset (validation failure)

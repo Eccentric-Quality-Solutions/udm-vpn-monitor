@@ -34,9 +34,6 @@ VERBOSE=0
 #
 # Displays help text for the script.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 show_usage() {

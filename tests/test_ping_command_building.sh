@@ -465,9 +465,6 @@ EOF
 
 	# Mock default LAN address check
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds (ping source IP on default LAN)
 	check_local_ip_on_default_lan() {
@@ -476,9 +473,6 @@ EOF
 	export -f check_local_ip_on_default_lan
 
 	# Mock add_local_ip_to_default_lan_if_needed
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds

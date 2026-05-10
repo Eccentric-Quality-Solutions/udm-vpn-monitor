@@ -23,9 +23,6 @@ INTERRUPTED=0
 # Handles SIGINT (Ctrl+C) and SIGTERM signals to gracefully terminate test execution.
 # Kills all child processes in the process group and exits with code 130 (standard for SIGINT).
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   Exits with code 130 (standard for SIGINT)
 #
@@ -119,9 +116,6 @@ RESUME_MODE="${RESUME_MODE:-0}"
 # Displays installation instructions for bats (Bash Automated Testing System).
 # Shows platform-specific installation commands for macOS, Linux, Ubuntu/Debian, and Fedora/RHEL.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   None (outputs to stderr)
 #
@@ -148,9 +142,6 @@ show_bats_instructions() {
 #
 # Verifies that bats (Bash Automated Testing System) is installed and available.
 # Checks bats version and warns if outdated. Shows installation instructions if not found.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: bats is installed and available
@@ -198,9 +189,6 @@ check_bats() {
 # Checks if kcov is installed and available for test coverage reporting.
 # Sets COVERAGE_TOOL global variable if kcov is found.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: kcov is installed
 #   1: kcov is not installed
@@ -219,9 +207,6 @@ check_kcov() {
 # Detects the number of CPU cores available on the system.
 # Uses nproc on Linux, falls back to default of 4 if nproc is unavailable.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   Outputs number of CPU cores to stdout (default: 4)
 #
@@ -239,9 +224,6 @@ detect_cpu_cores() {
 #
 # Checks if GNU parallel or rush is available for parallel test execution.
 # Sets PARALLEL_TOOL global variable if a tool is found.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Parallel tool is available
@@ -268,9 +250,6 @@ check_parallel_tool() {
 #
 # Displays installation instructions for GNU parallel.
 # Shows platform-specific installation commands for macOS, Ubuntu/Debian, Fedora/RHEL, and from source.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   None (outputs to stderr)
@@ -303,9 +282,6 @@ show_parallel_instructions() {
 #
 # Determines the number of parallel jobs to use based on PARALLEL_JOBS setting.
 # Supports "auto" (auto-detect CPU cores), "0" (disabled), or a specific number.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   Outputs number of parallel jobs to stdout (0, auto-detected number, or specified number)
@@ -341,9 +317,6 @@ get_parallel_jobs() {
 # Displays installation instructions for kcov (code coverage tool).
 # Shows platform-specific installation commands for macOS, Ubuntu/Debian, Fedora/RHEL, and from source.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   None (outputs to stderr)
 #
@@ -373,9 +346,6 @@ show_kcov_instructions() {
 #
 # Checks if coverage tools (kcov) are available when coverage is enabled.
 # Shows installation instructions if kcov is not found and coverage is requested.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Coverage tool is available or coverage is disabled
@@ -417,9 +387,6 @@ check_coverage_tools() {
 #
 # Checks if optional bats helper libraries (bats-support, bats-assert, bats-file) are installed.
 # Prompts user to install if missing and in interactive mode.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   None (warnings logged but function always succeeds)
@@ -500,9 +467,6 @@ check_bats_helpers() {
 # Filters test files based on RUN_SLOW_TESTS setting.
 # Slow tests (integration and high-risk tests) are excluded unless RUN_SLOW_TESTS=1.
 # Outputs filtered file list to stdout (one per line).
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   Outputs filtered test file paths to stdout (one per line)
@@ -585,9 +549,6 @@ escape_test_name_for_filter() {
 # Returns the path to the checkpoint file used for resuming test execution.
 # Creates logs directory if it doesn't exist.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   Outputs checkpoint file path to stdout
 #
@@ -622,9 +583,6 @@ save_checkpoint() {
 #
 # Loads checkpoint file and populates CHECKPOINT_PASSED associative array with passed test IDs.
 # Returns associative array of passed test IDs (via global variable CHECKPOINT_PASSED).
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   None (populates global CHECKPOINT_PASSED array)
@@ -666,9 +624,6 @@ should_skip_test() {
 #
 # Removes the checkpoint file to start a fresh test run.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   None
 #
@@ -682,9 +637,6 @@ clear_checkpoint() {
 #
 # Builds and returns array of kcov arguments for coverage reporting.
 # Returns array of kcov arguments via global variable KCOV_ARGS.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   None (populates global KCOV_ARGS array)
@@ -1356,9 +1308,6 @@ run_tests_parallel() {
 # Supports checkpoint/resume functionality and coverage reporting.
 # Results are saved to logs/test_results_TIMESTAMP.txt.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: All tests passed
 #   1: One or more tests failed or timed out (exits script)
@@ -1732,9 +1681,6 @@ run_tests_individual() {
 #
 # Main test runner function. Routes to individual mode, sequential mode, or parallel mode.
 # Handles coverage reporting when enabled.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: All tests passed
@@ -2252,9 +2198,6 @@ print_test_summary() {
 # Extracts and prints coverage summary from kcov-generated reports.
 # Supports both JavaScript format (kcov v43+) and JSON format (older versions).
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   None (outputs coverage summary to stdout)
 #
@@ -2420,9 +2363,6 @@ parse_args() {
 # Show help message
 #
 # Displays comprehensive help message with usage information, options, and examples.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   None (outputs help message to stdout)

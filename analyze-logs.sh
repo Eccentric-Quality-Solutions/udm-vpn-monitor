@@ -23,9 +23,6 @@ source "${SCRIPT_DIR}/lib/logging.sh" 2>/dev/null || {
 	# Generates a formatted timestamp string in the format YYYY-MM-DD HH:MM:SS.
 	# This is a fallback implementation used when logging.sh is not available.
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds
 	#
@@ -46,9 +43,6 @@ VERBOSE=0
 # Print usage information
 #
 # Displays help text for the script.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds
@@ -517,9 +511,6 @@ calculate_float_division() {
 #
 # Calculates failure frequency and recovery success rate from parsed data.
 # Distinguishes between app-managed recoveries (with recovery actions) and self-healed recoveries.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Success

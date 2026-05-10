@@ -12,9 +12,6 @@
 # to reference config variables safely. Defaults are read from config_schema.sh,
 # making it the single source of truth for default values.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Success
 #

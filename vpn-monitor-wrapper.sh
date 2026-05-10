@@ -29,9 +29,6 @@ PIDFILE="${STATE_DIR}/vpn-monitor-wrapper.pid"
 # Parses vpn-monitor.conf for MONITOR_INTERVAL, clamping to 10-60 second range.
 # Range: 10-60 seconds per docs/research/SUB_MINUTE_EXECUTION_OPTIONS.md
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 #
@@ -56,9 +53,6 @@ get_monitor_interval() {
 #
 # Uses flock (preferred) or mkdir (fallback) for atomic lock acquisition.
 # Eliminates TOCTOU race in the previous is_running/echo PID approach.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Lock acquired (caller holds exclusive lock)
@@ -106,9 +100,6 @@ acquire_wrapper_lock() {
 # instance is already running. Does not return (runs until interrupted).
 # Monitor stdout/stderr are appended to CRON_LOG. If the monitor exits non-zero,
 # a timestamped line is appended to CRON_LOG so failures are not silent.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   Does not return; exits 0 on SIGINT/SIGTERM

@@ -12,9 +12,6 @@
 # Returns the full file path for the system-wide failure state file.
 # Uses SYSTEM_WIDE_FAILURE_STATE_FILE if set, otherwise defaults to ${STATE_DIR}/system_wide_failure_state.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 #
@@ -37,9 +34,6 @@ get_system_wide_failure_state_file() {
 # Retrieves the current system-wide failure state (0 = no system-wide failure, 1 = system-wide failure detected).
 # System-wide failure state is global since infrastructure issues affect all peers.
 # Validates file format, recovering corrupted files automatically.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds
@@ -137,9 +131,6 @@ set_system_wide_failure_state() {
 # Returns the full file path for the system-wide failure detection timestamp file.
 # This tracks when a system-wide failure was first detected.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 #
@@ -160,9 +151,6 @@ get_system_wide_failure_timestamp_file() {
 #
 # Retrieves the Unix timestamp when system-wide failure was first detected.
 # Returns 0 if no timestamp is stored or file is corrupted.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds
@@ -341,9 +329,6 @@ detect_system_wide_failure() {
 # Determines if recovery should be coordinated (only one location attempts recovery)
 # when a system-wide failure is detected. This prevents recovery cascades and rate limiting.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Recovery should be coordinated
 #   1: Normal per-location recovery should proceed
@@ -383,9 +368,6 @@ should_coordinate_recovery() {
 #
 # Returns the full file path for the system-wide failure recovery coordinator file.
 # This tracks which location is designated to attempt recovery during system-wide failures.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds
@@ -485,9 +467,6 @@ should_location_attempt_recovery() {
 #
 # Clears the recovery coordinator when system-wide failure is resolved.
 # Should be called when system-wide failure state is cleared.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds (non-fatal if file doesn't exist)

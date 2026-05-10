@@ -18,9 +18,6 @@ source "${LIB_DIR}/common.sh"
 # Uses a simple method: compares CPU idle time before and after a 1-second sleep.
 # This provides a reasonable approximation of current CPU load.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Success, prints CPU usage percentage (0-100) to stdout
 #   1: Failed to calculate CPU usage (fallback to 0)
@@ -113,9 +110,6 @@ get_cpu_usage() {
 # Calculates current memory usage percentage using the 'free' command.
 # Uses MemTotal and MemAvailable (or MemFree if MemAvailable not available) to calculate usage.
 # This provides an accurate view of actual memory pressure.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Success, prints memory usage percentage (0-100) to stdout

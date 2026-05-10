@@ -69,9 +69,6 @@ EOF
 	# Mock route check
 	# Mock function to simulate route existence check
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds (route exists)
 	check_local_ip_on_default_lan() {
@@ -81,9 +78,6 @@ EOF
 
 	# Mock build_route_message to return empty (not needed for this test)
 	# Mock function to simulate route message building
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds, prints empty string
@@ -145,9 +139,6 @@ EOF
 	# Mock route check
 	# Mock function to simulate route existence check
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds (route exists)
 	check_local_ip_on_default_lan() {
@@ -157,9 +148,6 @@ EOF
 
 	# Mock build_route_message
 	# Mock function to simulate route message building
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds, prints route message
@@ -221,9 +209,6 @@ EOF
 	# Mock route check
 	# Mock function to simulate route existence check
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds (route exists)
 	check_local_ip_on_default_lan() {
@@ -233,9 +218,6 @@ EOF
 
 	# Mock build_route_message
 	# Mock function to simulate route message building
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds, prints empty string
@@ -372,9 +354,6 @@ EOF
 	# Mock route check
 	# Mock function to simulate route existence check
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds (route exists)
 	check_local_ip_on_default_lan() {
@@ -413,9 +392,6 @@ EOF
 	# Mock route check
 	# Mock function to simulate route existence check
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds (route exists)
 	check_local_ip_on_default_lan() {
@@ -453,9 +429,6 @@ EOF
 	# Mock route check
 	# Mock function to simulate route existence check
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds (route exists)
 	check_local_ip_on_default_lan() {
@@ -465,9 +438,6 @@ EOF
 
 	# Mock build_route_message
 	# Mock function to simulate route message building
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds, prints route message
@@ -506,9 +476,6 @@ EOF
 
 	# Mock route check
 	# Mock function to simulate route existence check
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds (route exists)
@@ -552,9 +519,6 @@ EOF
 
 	# Mock route check
 	# Mock function to simulate route existence check
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds (route exists)
@@ -643,9 +607,6 @@ EOF
 	# Mock route check
 	# Mock function to simulate route existence check
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds (route exists)
 	check_local_ip_on_default_lan() {
@@ -654,9 +615,6 @@ EOF
 	export -f check_local_ip_on_default_lan
 
 	# Mock function to build route message
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds

@@ -157,9 +157,6 @@ track_resource_constraint() {
 # if one hour has elapsed since the last summary. Tracks successes and failures
 # for CPU, RAM, and disk checks separately, as well as constraint events.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds (logging failures are non-fatal)
 #

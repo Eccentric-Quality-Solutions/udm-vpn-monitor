@@ -24,9 +24,6 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 # Sets up test environment for network partition statistics tests.
 # Initializes state and log directories and sets required environment variables.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 #

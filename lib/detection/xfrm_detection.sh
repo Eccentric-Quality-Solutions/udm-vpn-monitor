@@ -259,9 +259,6 @@ extract_spi() {
 # Executes the xfrm state command, trying with statistics first (ip -s xfrm state)
 # and falling back to regular ip xfrm state if the first attempt fails or returns empty.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Success (output printed to stdout)
 #   1: Failed to query xfrm state or command unavailable
@@ -457,9 +454,6 @@ execute_xfrm_state_command() {
 # can have the same src/dst IP addresses but different SPI values (e.g., during rekey
 # transitions or mixed SA configurations). Using only the header line for deduplication
 # would incorrectly treat such SAs as duplicates and skip them.
-#
-# Arguments:
-#   None (reads from stdin)
 #
 # Returns:
 #   0: Always succeeds

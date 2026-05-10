@@ -21,9 +21,6 @@
 # Creates test environment with mocked system commands for resource monitoring.
 # Sets up mocks for /proc/stat, free, df, and date commands.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 #
@@ -89,9 +86,6 @@ EOF
 #
 # Sources the resources.sh library file, setting up necessary dependencies.
 # This function handles the /proc/stat mocking that resources.sh requires.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds (even if library doesn't exist, to avoid test failures)

@@ -85,9 +85,6 @@ extract_interfaces_from_route_file() {
 #
 # Displays help text for the script.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 show_usage() {
@@ -250,9 +247,6 @@ anonymize_ip_rules_file() {
 	# Cleanup temporary files
 	#
 	# Removes temporary sed script files created during anonymization.
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds

@@ -111,9 +111,6 @@ fi
 #
 # Checks if the VPN keepalive daemon is currently running by verifying PID file and process.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Daemon is running
 #   1: Daemon is not running (PID file doesn't exist, is unreadable, or process is not running)
@@ -149,9 +146,6 @@ is_running() {
 #
 # Starts the VPN keepalive daemon in the background.
 # Validates configuration and ensures at least one location is configured before starting.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Daemon started successfully
@@ -236,9 +230,6 @@ start_daemon() {
 		# Parses location-based configuration and populates local locations array.
 		# Clears and repopulates locations array from global LOCATIONS array.
 		#
-		# Arguments:
-		#   None
-		#
 		# Returns:
 		#   None (populates local locations array)
 		#
@@ -268,9 +259,6 @@ start_daemon() {
 		# Note: We call load_config directly (not in subshell) so variables persist.
 		# With set +e, most errors won't kill the daemon. If config is so broken that
 		# load_config calls exit/die, the daemon will restart via systemd (Restart=on-failure).
-		#
-		# Arguments:
-		#   None
 		#
 		# Returns:
 		#   None
@@ -482,9 +470,6 @@ start_daemon() {
 # Stops the VPN keepalive daemon gracefully by sending TERM signal.
 # Force kills if daemon doesn't exit within 10 seconds.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Daemon stopped successfully
 #   1: Failed to stop daemon (exits script)
@@ -549,9 +534,6 @@ stop_daemon() {
 # Check daemon status
 #
 # Checks and displays the current status of the VPN keepalive daemon.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Daemon is running

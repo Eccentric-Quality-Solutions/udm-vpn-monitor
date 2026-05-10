@@ -1132,9 +1132,6 @@ RATE_LIMIT_WINDOW_MINUTES=60
 
 # Check if restart is within rate limit
 #
-# Arguments:
-#   None (uses RESTART_COUNT_FILE, MAX_RESTARTS_PER_WINDOW, and RATE_LIMIT_WINDOW_MINUTES variables)
-#
 # Returns:
 #   0: Within rate limit (restart allowed)
 #   1: Over rate limit (restart blocked)
@@ -1217,9 +1214,6 @@ SCRIPT
 RESTART_COUNT_FILE="$1"
 
 # Record a restart timestamp
-#
-# Arguments:
-#   None (uses RESTART_COUNT_FILE variable)
 #
 # Returns:
 #   0: Always succeeds
@@ -2793,9 +2787,6 @@ EOF
 	# Mock is_fake_mode to return false (normal mode)
 	# Mock function to simulate normal mode (not fake mode)
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   1: Always returns false (not in fake mode)
 	is_fake_mode() {
@@ -2962,9 +2953,6 @@ setup_parse_assignment_test() {
 # Sources lockfile module and its dependencies, sets up required environment
 # variables for lockfile tests.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 source_lockfile_module() {
@@ -3001,9 +2989,6 @@ source_lockfile_module() {
 
 	# Test function that will be executed after lock acquisition
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds
 	test_main_func() {
@@ -3037,9 +3022,6 @@ source_lockfile_module() {
 	touch "$LOCKFILE"
 
 	# Test function (should not be executed)
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds
@@ -3079,9 +3061,6 @@ source_lockfile_module() {
 
 	# Test function that will be executed after lock acquisition
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds
 	test_main_func() {
@@ -3111,9 +3090,6 @@ source_lockfile_module() {
 	source_lockfile_module
 
 	# Test function that will be executed after lock acquisition
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds
@@ -3167,9 +3143,6 @@ source_lockfile_module() {
 
 	# Test function that exits successfully
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds
 	test_main_func() {
@@ -3199,9 +3172,6 @@ source_lockfile_module() {
 
 	# Test function that exits with error
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   1: Always fails (for testing error handling)
 	test_main_func() {
@@ -3227,9 +3197,6 @@ source_lockfile_module() {
 	source_lockfile_module
 
 	# Test function that will be executed after lock acquisition
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds
@@ -3259,9 +3226,6 @@ source_lockfile_module() {
 	touch "$LOCKFILE"
 
 	# Test function (should not be executed)
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds
@@ -3296,9 +3260,6 @@ source_lockfile_module() {
 
 	# Test function that will be executed after lock acquisition
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds
 	test_main_func() {
@@ -3323,9 +3284,6 @@ source_lockfile_module() {
 	source_lockfile_module
 
 	# Test function that will be executed after lock acquisition
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds
@@ -3391,9 +3349,6 @@ source_lockfile_module() {
 
 	# Test function that will be executed after lock acquisition
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds
 	test_main_func() {
@@ -3425,9 +3380,6 @@ source_lockfile_module() {
 
 	# Test function that exits successfully
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds
 	test_main_func() {
@@ -3451,9 +3403,6 @@ source_lockfile_module() {
 	source_lockfile_module
 
 	# Test function that exits with error
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   1: Always fails (for testing error handling)
@@ -3483,9 +3432,6 @@ source_lockfile_module() {
 
 	# Test function that will be executed after lock acquisition
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds
 	test_main_func() {
@@ -3510,9 +3456,6 @@ source_lockfile_module() {
 	source_lockfile_module
 
 	# Test function that will be executed after lock acquisition
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds

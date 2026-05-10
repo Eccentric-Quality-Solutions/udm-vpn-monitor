@@ -9,7 +9,7 @@ This document consolidates code patterns identified from:
 - Code review lessons learned (`CODE_REVIEW_LESSONS_LEARNED.md`)
 - Developer guidelines (`DEVELOPER.md`)
 - Architecture documentation (`ARCHITECTURE.md`)
-- Testing patterns (`BATS_GUIDE.md`)
+- Testing patterns (`docs/testing/BATS_GUIDE.md`)
 - Actual codebase implementation
 
 These patterns should be followed consistently when writing or modifying code in this project.
@@ -3185,7 +3185,7 @@ fi
 
 **Related Patterns:**
 - See `CODE_REVIEW_LESSONS_LEARNED.md` section 6 for code duplication detection patterns
-- See TODO.md item 3 for current duplication in `get_xfrm_state_for_peer()`
+- When refactoring duplicated awk used by `get_xfrm_state_for_peer()`, compare call sites in `lib/detection/xfrm_detection.sh` (and related helpers) so behavior stays consistent
 
 ### Pattern: Character-by-Character Parsing for Complex Syntax
 
@@ -4666,6 +4666,6 @@ For more detailed information about specific patterns, see:
 - `CODE_REVIEW_LESSONS_LEARNED.md` - Historical lessons learned from code reviews (includes bug context and how patterns were discovered)
 - `DEVELOPER.md` - Developer guidelines and coding standards
 - `ARCHITECTURE.md` - Architecture documentation and design decisions
-- `BATS_GUIDE.md` - Testing framework guide and patterns
+- `docs/testing/BATS_GUIDE.md` - Testing framework guide and patterns
 
 **Note:** This document (`CODE_PATTERNS.md`) consolidates actionable patterns from multiple sources, including `CODE_REVIEW_LESSONS_LEARNED.md`. For the historical context of how patterns were discovered (including specific bugs, their impact, and fixes), see `CODE_REVIEW_LESSONS_LEARNED.md`.

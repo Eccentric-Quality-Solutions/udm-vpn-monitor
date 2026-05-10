@@ -74,9 +74,6 @@ extract_set_names_from_ipset() {
 #
 # Displays help text for the script.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 show_usage() {
@@ -306,9 +303,6 @@ anonymize_ipset_file() {
 	# Cleanup temporary files
 	#
 	# Removes temporary sed script files created during anonymization.
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds

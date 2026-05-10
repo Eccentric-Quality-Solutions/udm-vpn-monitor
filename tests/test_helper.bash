@@ -1924,9 +1924,6 @@ EOF
 # This is a convenience wrapper around mock_ipsec_status(1) for tests that need
 # ipsec to fail but don't need custom output.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 #
@@ -3082,9 +3079,6 @@ EOF
 # Creates a mock 'ping' command that always succeeds and outputs packet loss info
 # in the format expected by check_ping_connectivity. Handles all common ping arguments.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 #
@@ -3110,9 +3104,6 @@ EOF
 #
 # Creates a mock 'ping' command that always fails.
 # Used to test ping connectivity checks that should fail.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds
@@ -3177,9 +3168,6 @@ EOF
 #
 # Creates a mock 'nslookup' command that always fails.
 # Used to prevent DNS fallback from succeeding in tests.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds

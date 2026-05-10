@@ -7,3 +7,5 @@ alwaysApply: true
 
 - When hardcoding dates, use the **local system date** (do not assume the current date).
 - When you learn something project-specific (e.g. BATS behavior or UDM OS command availability), **update a project document** with the learning and use that document for future decisions.
+- Don't add in-code comments that are unnecessarily verbose but do make them clear.
+- Don't add an arguments line to in-code comments if the code doens't take any arguments.

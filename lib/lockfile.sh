@@ -32,17 +32,8 @@ readonly LOCKFILE_MAX_AGE_SECONDS=3600
 # Arguments:
 #   $1: Optional lockfile path (defaults to $LOCKFILE if not provided)
 #
-# Returns:
-#   0: Always succeeds (even if file doesn't exist)
-#
 # Output:
 #   Prints PID (integer) to stdout, or empty string if unavailable
-#
-# Examples:
-#   pid=$(extract_lockfile_pid)
-#   if [[ -n "$pid" ]]; then
-#       echo "Lockfile PID: $pid"
-#   fi
 #
 # Note:
 #   Requires LOCKFILE to be set (from config.sh) if argument not provided
@@ -71,11 +62,6 @@ extract_lockfile_pid() {
 # Returns:
 #   0: Process is running (PID is valid and process exists)
 #   1: Process is not running or PID is empty/invalid
-#
-# Examples:
-#   if is_process_running "$pid"; then
-#       echo "Process $pid is still running"
-#   fi
 #
 # Note:
 #   Uses kill -0 which sends signal 0 (no-op) to check process existence
@@ -112,13 +98,6 @@ is_process_running() {
 #   - Creates lockfile with timestamp:pid format
 #   - Lockfile contains: "$(get_unix_timestamp):$$"
 #
-# Examples:
-#   if create_lockfile_atomically; then
-#       echo "Lock acquired"
-#   else
-#       echo "Lock already exists"
-#   fi
-#
 # Note:
 #   Requires LOCKFILE to be set (from config.sh) if argument not provided
 #   Uses set -C (noclobber) in subshell for atomic check-and-create
@@ -143,18 +122,9 @@ create_lockfile_atomically() {
 # Stale lockfiles indicate a hung or crashed previous instance that didn't clean up.
 # Compares file modification time to current time using safe timestamp arithmetic.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Lockfile is stale (exceeded timeout) or unreadable
 #   1: Lockfile is not stale (within timeout) or doesn't exist
-#
-# Examples:
-#   if check_lockfile_stale; then
-#       echo "Lockfile is stale, removing..."
-#       rm -f "$LOCKFILE"
-#   fi
 #
 # Note:
 #   Uses get_file_mtime to get file modification time
@@ -226,9 +196,6 @@ check_lockfile_stale() {
 # This is a helper function to reduce code duplication across lockfile functions.
 # Extracts PID from lockfile before removal for warning message.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Lockfile was stale and removed (or didn't exist)
 #   1: Lockfile exists and is not stale (still valid)
@@ -236,11 +203,6 @@ check_lockfile_stale() {
 # Side effects:
 #   - Removes stale lockfile if it exists and is stale
 #   - Logs warning message to stderr with PID if removed
-#
-# Examples:
-#   if remove_stale_lockfile_if_needed; then
-#       echo "Stale lockfile removed, can proceed"
-#   fi
 #
 # Note:
 #   Requires LOCKFILE, extract_lockfile_pid, and check_lockfile_stale to be set
@@ -280,10 +242,6 @@ remove_stale_lockfile_if_needed() {
 #   - Writes info message to log file (if possible, errors ignored)
 #   - Outputs info message to stderr
 #   - Exits script with code 0 (success, to avoid cron failures)
-#
-# Examples:
-#   log_and_exit_lockfile_conflict "$pid"
-#   log_and_exit_lockfile_conflict "" "Custom conflict message"
 #
 # Note:
 #   Requires log_message() function to be available (from logging.sh)
@@ -369,9 +327,6 @@ acquire_lockfile_flock() {
 
 		# Cleanup function for signal handlers
 		# Ensures file descriptor is closed; removes lockfile only if we acquired the lock
-		#
-		# Arguments:
-		#   None (uses $? to capture exit code from trap context)
 		#
 		# Returns:
 		#   Never returns (exits script with appropriate exit code)
@@ -565,9 +520,6 @@ acquire_lockfile_fallback() {
 
 		# Cleanup function for signal handlers
 		# Ensures lockfile is removed on exit.
-		#
-		# Arguments:
-		#   None (uses $? to capture exit code from trap context)
 		#
 		# Returns:
 		#   Never returns (exits script with appropriate exit code)

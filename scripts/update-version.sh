@@ -350,9 +350,6 @@ stage_file() {
 # (install.sh, uninstall.sh), utility scripts (analyze-logs.sh, etc.),
 # and all library files in lib/ directory.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 #
@@ -420,9 +417,6 @@ find_files_with_versions() {
 # determines the current version from vpn-monitor.sh, finds all files that
 # need updates, updates each file, and verifies the updates were successful.
 # Supports dry-run mode to preview changes without modifying files.
-#
-# Arguments:
-#   None (uses global NEW_VERSION and DRY_RUN variables set by argument parsing)
 #
 # Returns:
 #   0: All files updated successfully

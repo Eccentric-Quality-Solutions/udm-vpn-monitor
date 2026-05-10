@@ -16,9 +16,6 @@ KEEPALIVE_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-keepalive.sh"
 # BATS teardown function that runs after each test case to clean up resources.
 # This extends the standard teardown with keepalive-specific cleanup.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 #
@@ -107,9 +104,6 @@ setup_keepalive_test() {
 #
 # Stops and removes PID file if daemon is running.
 # Also kills any child processes to ensure complete cleanup.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds

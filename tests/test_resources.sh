@@ -17,9 +17,6 @@ RESOURCES_LIB="${BATS_TEST_DIRNAME}/../lib/resources.sh"
 # Initializes state and log directories, sources required libraries,
 # and prepares the environment for testing resource monitoring statistics.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 #
@@ -647,9 +644,6 @@ EOF
 	#
 	# Returns mock CPU usage value for testing.
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds
 	#   Outputs: "10" (mock CPU usage percentage)
@@ -661,9 +655,6 @@ EOF
 	#
 	# Returns mock memory usage value for testing.
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds
 	#   Outputs: "20" (mock memory usage percentage)
@@ -674,9 +665,6 @@ EOF
 	# Mock function for get_free_disk_space
 	#
 	# Returns mock free disk space value for testing.
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds
@@ -712,9 +700,6 @@ EOF
 	#
 	# Returns mock high CPU usage value for testing.
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds
 	#   Outputs: "95" (mock CPU usage percentage)
@@ -726,9 +711,6 @@ EOF
 	#
 	# Returns mock memory usage value for testing.
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds
 	#   Outputs: "20" (mock memory usage percentage)
@@ -739,9 +721,6 @@ EOF
 	# Mock function for get_free_disk_space
 	#
 	# Returns mock free disk space value for testing.
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds
@@ -768,18 +747,12 @@ EOF
 	#
 	# Returns failure to simulate CPU check error.
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   1: Always fails (simulates CPU check error)
 	get_cpu_usage() { return 1; }
 	# Mock function for get_memory_usage
 	#
 	# Returns mock memory usage value for testing.
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds
@@ -791,9 +764,6 @@ EOF
 	# Mock function for get_free_disk_space
 	#
 	# Returns mock free disk space value for testing.
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds
@@ -820,9 +790,6 @@ EOF
 	#
 	# Returns mock CPU usage value for testing.
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds
 	#   Outputs: "15" (mock CPU usage percentage)
@@ -834,9 +801,6 @@ EOF
 	#
 	# Returns mock memory usage value for testing.
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds
 	#   Outputs: "25" (mock memory usage percentage)
@@ -847,9 +811,6 @@ EOF
 	# Mock function for get_free_disk_space
 	#
 	# Returns mock free disk space value for testing.
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds

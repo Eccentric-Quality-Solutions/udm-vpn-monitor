@@ -22,6 +22,9 @@ DEPLOY_REGISTRY_FILE="${DEPLOY_REGISTRY_FILE:-}"
 # Arguments:
 #   None (uses REPO_ROOT and DEPLOY_REGISTRY_FILE from environment)
 #
+# Arguments:
+#   None (uses REPO_ROOT and DEPLOY_REGISTRY_FILE from environment)
+#
 # Returns:
 #   0: Path printed to stdout
 #   1: REPO_ROOT not set

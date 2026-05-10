@@ -160,9 +160,6 @@ log_verbose() {
 # Checks /data/vpn-monitor/vpn-monitor.conf and repo vpn-monitor.conf.
 # LOCAL_UDM_IP is the local system's IP, used as source for SCP/SSH when deploying.
 #
-# Arguments:
-#   None (reads config file paths internally).
-#
 # Returns:
 #   0: Bind IP resolved and printed to stdout
 #   1: No config found or LOCAL_UDM_IP not set
@@ -184,9 +181,6 @@ resolve_bind_ip_from_config() {
 }
 
 # Display help message and usage to stdout.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always
@@ -322,9 +316,6 @@ parse_args() {
 
 # Validate required parameters and resolve bind IP from config if needed.
 #
-# Arguments:
-#   None (uses global option variables).
-#
 # Returns:
 #   0: All validations passed
 #   Exits 1 after printing errors and help if validation fails
@@ -399,9 +390,6 @@ validate_params() {
 # Common SSH options used by ControlMaster setup and all ssh/scp calls.
 # Returns the options string on stdout.
 #
-# Arguments:
-#   None (reads BIND_IP, SSH_TIMEOUT, CONTROL_SOCKET globals).
-#
 # Returns:
 #   0: Always
 build_ssh_opts() {
@@ -414,6 +402,10 @@ build_ssh_opts() {
 # Establish an SSH ControlMaster connection (authenticates once).
 # All subsequent execute_ssh/execute_scp calls multiplex over this connection.
 # Uses sshpass if available; falls back to expect; otherwise prompts on /dev/tty.
+#
+# Arguments:
+#   None (reads SSH_PASSWORD, SSH_USERNAME, TARGET_IP, SSH_PORT, SSH_TIMEOUT,
+#         BIND_IP globals).
 #
 # Arguments:
 #   None (reads SSH_PASSWORD, SSH_USERNAME, TARGET_IP, SSH_PORT, SSH_TIMEOUT,
@@ -514,6 +506,9 @@ EXPECT_EOF
 
 # Tear down the ControlMaster connection and remove the socket/directory.
 # Designed to run safely inside an EXIT trap (suppresses all errors).
+#
+# Arguments:
+#   None (reads CONTROL_SOCKET, SSH_USERNAME, TARGET_IP globals).
 #
 # Arguments:
 #   None (reads CONTROL_SOCKET, SSH_USERNAME, TARGET_IP globals).

@@ -30,9 +30,6 @@
 #   Returns "0" if both fail (file doesn't exist or stat unavailable)
 get_file_mtime() {
 	local file="$1"
-	# Try Linux stat format first, then BSD/macOS format
-	# -c %Y: Linux format, modification time as seconds since epoch
-	# -f %m: BSD/macOS format, modification time as seconds since epoch
 	stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null || echo "0"
 }
 
@@ -176,19 +173,8 @@ _format_rate_limit_error() {
 #       return 1
 #   fi
 #
-# Note:
-#   Checks RESTART_COUNT_FILE for timestamps within the configured window
-#   Requires RESTART_COUNT_FILE, MAX_RESTARTS_PER_WINDOW, RATE_LIMIT_WINDOW_MINUTES,
-#   MIN_RESTART_INTERVAL_SECONDS, SECONDS_PER_MINUTE, get_formatted_timestamp,
-#   safe_timestamp_add, safe_timestamp_diff, and handle_error to be set
-#   Uses awk to filter timestamps > (now - window_seconds)
-#   Counts filtered lines with wc -l
-#   When rate limit is exceeded, logs detailed information including:
-#   - Reset timestamp (when oldest restart will expire)
-#   - Countdown (time remaining until reset)
-#   - List of restart timestamps that count toward the limit
-#   Coordinator bypass: If location is coordinator during system-wide failure, window limit is bypassed
-#   but minimum interval is still enforced to protect system stability
+# Note: Counts recent timestamps in RESTART_COUNT_FILE inside the configured window; coordinator
+#   bypass during system-wide failure is described above. See implementation for filtering and logs.
 check_rate_limit() {
 	local location_name="${1:-}"
 	local now
@@ -304,18 +290,13 @@ check_rate_limit() {
 # atomically writes back. Prevents unbounded file growth. Safe to call once per
 # run at startup (under main lock); avoids read-modify-write in record_restart.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds (logs warnings on errors but continues)
 #
 # Side effects:
 #   - May overwrite RESTART_COUNT_FILE with filtered content
 #
-# Note:
-#   Requires RESTART_COUNT_FILE, SECONDS_PER_DAY, file_exists_and_readable,
-#   atomic_write_file, safe_timestamp_subtract, get_unix_timestamp, handle_error.
+# Note: Uses RESTART_COUNT_FILE and timestamp/IO helpers (see implementation).
 compact_restart_count_file() {
 	if ! file_exists_and_readable "$RESTART_COUNT_FILE"; then
 		return 0
@@ -351,9 +332,6 @@ compact_restart_count_file() {
 #
 # Side effects:
 #   - Appends one line (timestamp) to RESTART_COUNT_FILE
-#
-# Arguments:
-#   None
 #
 # Note:
 #   Requires RESTART_COUNT_FILE, get_unix_timestamp, handle_error.
@@ -462,9 +440,6 @@ check_tier2_rate_limit() {
 # Appends the current Unix timestamp to TIER2_RECOVERY_COUNT_FILE for rate limiting.
 # Uses append-only writes. File growth is limited by compact_tier2_recovery_count_file().
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds (logs warnings on errors but continues)
 #
@@ -491,15 +466,10 @@ record_tier2_recovery() {
 # Reads TIER2_RECOVERY_COUNT_FILE, keeps only timestamps from the last 24 hours, and
 # atomically writes back. Prevents unbounded file growth.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds (logs warnings on errors but continues)
 #
-# Note:
-#   Requires TIER2_RECOVERY_COUNT_FILE, SECONDS_PER_DAY, file_exists_and_readable,
-#   atomic_write_file, safe_timestamp_subtract, get_unix_timestamp, handle_error.
+# Note: Same 24h compaction pattern as compact_restart_count_file(); uses TIER2_RECOVERY_COUNT_FILE.
 compact_tier2_recovery_count_file() {
 	local count_file="${TIER2_RECOVERY_COUNT_FILE:-}"
 	[[ -z "$count_file" ]] && return 0
@@ -528,9 +498,6 @@ compact_tier2_recovery_count_file() {
 # Retrieves the current network partition state (0 = healthy, 1 = partitioned).
 # Network partition state is global (not per-peer) since network issues affect all peers.
 # Validates file format, recovering corrupted files automatically.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds
@@ -576,7 +543,6 @@ get_network_partition_state() {
 # Set network partition state
 #
 # Sets the network partition state (0 = healthy, 1 = partitioned).
-# Network partition state is global (not per-peer) since network issues affect all peers.
 # Uses atomic writes for safe file operations.
 #
 # Arguments:
@@ -977,9 +943,6 @@ validate_state_files_by_pattern() {
 #   - Logs warnings for corrupted state files
 #   - Backs up corrupted files before recovery
 #   - Resets corrupted files to safe defaults
-#
-# Arguments:
-#   None
 #
 # Note:
 #   Requires RESTART_COUNT_FILE, LOGS_DIR, STATE_DIR, and log_message

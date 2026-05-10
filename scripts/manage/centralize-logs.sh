@@ -48,9 +48,6 @@ SCP_CONNECT_TIMEOUT=30
 
 # Print usage to stderr and exit with code 1.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   Does not return (exits with 1)
 #

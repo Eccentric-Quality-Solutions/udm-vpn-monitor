@@ -164,9 +164,6 @@ get_formatted_default() {
 # - Deprecated variables (in config but not in schema)
 # - Valid variables (in both)
 #
-# Arguments:
-#   None (command-line arguments are parsed before this function is called)
-#
 # Returns:
 #   0: Config is valid (may have warnings)
 #   1: Config file not found

@@ -63,9 +63,6 @@ source "${INSTALL_SCRIPT_DIR}/lib/config/config_loading.sh"
 # Verifies that the system is a UniFi Dream Machine by checking for /data directory.
 # Skips check if DEV_MODE is enabled (for testing on non-UDM systems).
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: UDM detected or dev mode enabled
 #   1: Not a UDM system (exits script with error)
@@ -88,9 +85,6 @@ check_udm() {
 # Creates the installation directory (INSTALL_DIR) if it doesn't exist.
 # In production mode: /data/vpn-monitor
 # In dev mode: ./vpn-monitor (current working directory)
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds (exits script on failure)
@@ -316,9 +310,6 @@ sanitize_location_name_for_config() {
 #
 # Prompts the user for each configuration value with defaults.
 # Creates the config file with user-provided values.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds (exits script on failure)
@@ -557,9 +548,6 @@ get_script_version() {
 # Extracts the version from the source vpn-monitor.sh script.
 # Falls back to install script version comment if not found.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Version found and printed to stdout
 #   1: Version not found
@@ -591,9 +579,6 @@ get_current_version() {
 #
 # Detects if an existing installation exists and displays version upgrade information
 # including old version, new version, and changelog summary.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds (warnings logged but don't fail)
@@ -643,9 +628,6 @@ display_upgrade_info() {
 #
 # Runs compare-config.sh to show differences between template and existing config.
 # Only runs when config file is preserved (not overwritten) and not in silent mode.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Comparison completed (or skipped)
@@ -700,9 +682,6 @@ compare_template_with_existing_config() {
 # are missing from the existing config. If any are found, asks the user if they
 # want to append them to the end of the config file with template default values.
 # Paths containing /data/vpn-monitor are substituted with the actual INSTALL_DIR.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Completed (appended or user declined)
@@ -771,9 +750,6 @@ offer_append_missing_config_values() {
 # that are missing from the existing config, without prompting.
 # Paths containing /data/vpn-monitor are substituted with the actual INSTALL_DIR.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Completed (appended or nothing to append)
 #
@@ -819,9 +795,6 @@ auto_append_missing_config_values() {
 #
 # Copies the main VPN monitor script, library files, and configuration file to the installation directory.
 # Handles existing config files based on SILENT and OVERWRITE_CONF flags.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds (exits script on failure)
@@ -1070,9 +1043,6 @@ parse_cron_schedule() {
 # Reads CRON_SCHEDULE from config file if available, otherwise uses default (*/1 * * * *).
 # Skips if cron entry already exists (to avoid duplicates).
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds (warnings logged but don't fail)
 #
@@ -1157,9 +1127,6 @@ setup_cron() {
 # Installs the systemd service file for the VPN keepalive daemon.
 # Only installs if systemd is available and not in dev mode.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Service installed successfully (or skipped if not applicable)
 #   1: Failed to install service
@@ -1233,9 +1200,6 @@ install_keepalive_service() {
 # Enables and starts (or restarts) the systemd service for the VPN keepalive daemon.
 # Only works if systemd is available and service is installed.
 # Uses restart instead of start so it works whether the service is already running or not.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Service enabled/started successfully (or skipped if not applicable)
@@ -1331,9 +1295,6 @@ enable_and_start_keepalive_service() {
 # compresses old logs. Only installs in production mode (not dev mode) and
 # if logrotate is available.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Logrotate config installed successfully (or skipped if not applicable)
 #   1: Failed to install logrotate config
@@ -1403,9 +1364,6 @@ EOF
 #   - Library directory exists with required files
 #   - Config file exists
 #   - Cron entry exists (if cron setup was not skipped)
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Installation verified successfully
@@ -1495,9 +1453,6 @@ verify_installation() {
 # Attempts to auto-detect the local UDM internal IP from DEFAULT_LAN_INTERFACE
 # (typically br0 on UDM). Used during installation to configure LOCAL_UDM_IP if unset.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: IP address detected and printed to stdout
 #   1: Failed to detect IP address
@@ -1531,9 +1486,6 @@ detect_local_udm_ip_from_default_lan() {
 # Verifies LOCAL_UDM_IP and that it is assigned on DEFAULT_LAN_INTERFACE (typically br0).
 # Auto-detects from the default LAN interface if unset. Adds /32 via ip addr if needed.
 # Tests ping to all internal IPs from all locations using check_ping_connectivity().
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Success (or not needed)
@@ -1703,9 +1655,6 @@ ensure_default_lan_local_ip_for_ping_install() {
 # If no locations found and not in silent mode, prompts the user to configure it.
 # This helps catch configuration issues early during installation.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Configuration is valid (or silent mode)
 #   1: Configuration is invalid (no locations configured)
@@ -1833,9 +1782,6 @@ validate_config_after_install() {
 # Shows configuration file location, testing instructions, and persistence notes.
 # Skips output in silent mode.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 display_next_steps() {
@@ -1912,9 +1858,6 @@ display_next_steps() {
 # Display help message
 #
 # Prints usage information and available options for the install script.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds

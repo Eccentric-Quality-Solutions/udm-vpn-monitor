@@ -27,9 +27,6 @@ VERBOSE=0
 #
 # Displays help text for the script.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 show_usage() {
@@ -145,9 +142,6 @@ validate_output_directory() {
 # Generate timestamp string
 #
 # Generates a timestamp string in the format YYYY-MM-DD-HH-MM-SS.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds

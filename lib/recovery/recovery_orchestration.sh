@@ -21,9 +21,6 @@ source "${RECOVERY_DIR}/ipsec_recovery.sh" 2>/dev/null || true
 # Checks which recovery commands are available and stores results in global variables.
 # This centralizes command availability checks to simplify strategy selection logic.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds (results stored in global variables)
 #

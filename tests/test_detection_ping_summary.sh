@@ -208,9 +208,6 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 	# Mock route check to succeed (no route management needed)
 	# Mock function to simulate route existence check
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds (route exists)
 	check_local_ip_on_default_lan() {
@@ -247,9 +244,6 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 	# Mock route check
 	# Mock function to simulate route existence check
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds (route exists)
 	check_local_ip_on_default_lan() {
@@ -284,9 +278,6 @@ source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 
 	# Mock route check
 	# Mock function to simulate route existence check
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds (route exists)
@@ -330,9 +321,6 @@ EOF
 	# Mock default LAN check: skip ip addr path (this test targets ping output parsing)
 	# Mock function to simulate LOCAL_UDM_IP already on default LAN
 	#
-	# Arguments:
-	#   None
-	#
 	# Returns:
 	#   0: Always succeeds
 	check_local_ip_on_default_lan() {
@@ -371,9 +359,6 @@ EOF
 
 	# Mock default LAN check: skip ip addr path (this test targets ping output parsing)
 	# Mock function to simulate LOCAL_UDM_IP already on default LAN
-	#
-	# Arguments:
-	#   None
 	#
 	# Returns:
 	#   0: Always succeeds

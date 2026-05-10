@@ -17,12 +17,6 @@ source "${LIB_DIR}/common.sh"
 # Returns a formatted timestamp string suitable for log entries.
 # Format: YYYY-MM-DD HH:MM:SS (e.g., "2025-01-15 14:30:45")
 #
-# Arguments:
-#   None
-#
-# Returns:
-#   0: Always succeeds
-#
 # Output:
 #   Prints formatted timestamp string to stdout
 #
@@ -156,20 +150,9 @@ log_message() {
 # Fake mode allows the script to run checks and log errors but exit gracefully
 # instead of crashing on configuration or initialization errors.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Script is in fake mode (NO_ESCALATE=1)
 #   1: Script is not in fake mode (NO_ESCALATE=0 or unset)
-#
-# Examples:
-#   if is_fake_mode; then
-#       handle_error "ERROR" "Config error" 0
-#       exit 0
-#   else
-#       die "Config error"
-#   fi
 #
 # Note:
 #   Checks the NO_ESCALATE environment variable
@@ -212,9 +195,6 @@ die() {
 #
 # Arguments:
 #   $@ - Message arguments, optionally ending with numeric exit code
-#
-# Returns:
-#   0: Always succeeds
 #
 # Output:
 #   Prints pipe-delimited values to stdout: "message|exit_code|exit_code_provided"
@@ -436,13 +416,7 @@ handle_error_or_exit_fake_mode() {
 #   - Logs warning message via log_message if command is not available
 #   - Does not exit script (allows graceful degradation)
 #
-# Examples:
-#   if warn_if_missing "ipsec"; then
-#       ipsec status
-#   fi
-#
 # Note:
-#   Requires log_message function to be available (from this file)
 #   Uses command -v to check command availability
 #   This function should be used for optional commands that enhance functionality
 #   but are not critical for script operation

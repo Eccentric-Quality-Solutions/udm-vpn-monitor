@@ -62,9 +62,6 @@ TEMP_DIR=$(mktemp -d)
 # This function is registered as an EXIT trap to ensure cleanup happens
 # even if the script exits unexpectedly.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds
 #

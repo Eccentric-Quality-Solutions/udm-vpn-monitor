@@ -49,12 +49,6 @@ declare -gA ANON_HOSTNAME_MAP
 #
 # Arguments:
 #   $1: String to hash
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints hash value to stdout
 hash_string() {
 	local str="$1"
 	# Use a simple hash function (sum of character codes)
@@ -78,12 +72,6 @@ hash_string() {
 #
 # Arguments:
 #   $1: Original IP address
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints anonymized IP address to stdout
 anonymize_ipv4() {
 	local original_ip="$1"
 	local hash
@@ -110,16 +98,6 @@ anonymize_ipv4() {
 # Anonymize IPv6 address
 #
 # Maps an IPv6 address to a consistent anonymized address in the fc00::/7 range (ULA).
-# Uses deterministic hashing to ensure same input always produces same output.
-#
-# Arguments:
-#   $1: Original IPv6 address
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints anonymized IPv6 address to stdout
 anonymize_ipv6() {
 	local original_ip="$1"
 	local hash
@@ -143,16 +121,6 @@ anonymize_ipv6() {
 # Anonymize interface name
 #
 # Maps an interface name to a consistent anonymized name.
-# Uses deterministic hashing to ensure same input always produces same output.
-#
-# Arguments:
-#   $1: Original interface name
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints anonymized interface name to stdout
 anonymize_interface() {
 	local original_iface="$1"
 	local hash
@@ -177,16 +145,6 @@ anonymize_interface() {
 # Anonymize location name
 #
 # Maps a location name to a consistent anonymized city name.
-# Uses deterministic hashing to ensure same input always produces same output.
-#
-# Arguments:
-#   $1: Original location name
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints anonymized location name to stdout
 anonymize_location() {
 	local original_location="$1"
 	local hash
@@ -200,16 +158,6 @@ anonymize_location() {
 # Anonymize ipset set name
 #
 # Maps an ipset set name to a consistent anonymized name.
-# Uses deterministic hashing to ensure same input always produces same output.
-#
-# Arguments:
-#   $1: Original set name
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints anonymized set name to stdout (format: SET_<number>)
 anonymize_set_name() {
 	local original_set="$1"
 	local hash
@@ -224,16 +172,6 @@ anonymize_set_name() {
 # Anonymize MAC address
 #
 # Maps a MAC address to a consistent anonymized MAC in the locally-administered range (02:xx:xx:xx:xx:xx).
-# Uses deterministic hashing to ensure same input always produces same output.
-#
-# Arguments:
-#   $1: Original MAC address (format: aa:bb:cc:dd:ee:ff)
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints anonymized MAC address to stdout
 anonymize_mac_address() {
 	local original_mac="$1"
 	local hash
@@ -257,15 +195,6 @@ anonymize_mac_address() {
 #
 # Maps a hostname or FQDN to a consistent anonymized hostname.
 # Uses deterministic hashing to ensure same input always produces same output.
-#
-# Arguments:
-#   $1: Original hostname/FQDN
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints anonymized hostname to stdout (format: host-<number>.local)
 anonymize_hostname() {
 	local original_hostname="$1"
 	local hash
@@ -280,15 +209,6 @@ anonymize_hostname() {
 # Get or create IPv4 mapping
 #
 # Returns existing mapping if available, otherwise creates new one and stores it.
-#
-# Arguments:
-#   $1: Original IPv4 address (with optional CIDR)
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints anonymized IPv4 address to stdout
 get_or_create_ipv4_mapping() {
 	local original="$1"
 	if [[ -n "${ANON_IPV4_MAP[$original]:-}" ]]; then
@@ -323,15 +243,6 @@ get_or_create_ipv4_mapping() {
 # Get or create IPv6 mapping
 #
 # Returns existing mapping if available, otherwise creates new one and stores it.
-#
-# Arguments:
-#   $1: Original IPv6 address (with optional CIDR)
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints anonymized IPv6 address to stdout
 get_or_create_ipv6_mapping() {
 	local original="$1"
 	if [[ -n "${ANON_IPV6_MAP[$original]:-}" ]]; then
@@ -357,15 +268,6 @@ get_or_create_ipv6_mapping() {
 # Get or create interface mapping
 #
 # Returns existing mapping if available, otherwise creates new one and stores it.
-#
-# Arguments:
-#   $1: Original interface name
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints anonymized interface name to stdout
 get_or_create_interface_mapping() {
 	local original="$1"
 	if [[ -n "${ANON_INTERFACE_MAP[$original]:-}" ]]; then
@@ -379,6 +281,7 @@ get_or_create_interface_mapping() {
 }
 
 # Check if a city name is already used as a value in ANON_LOCATION_MAP.
+#
 # ANON_LOCATION_MAP keys are original location names; values are anonymized city names.
 # We must check values, not keys, to avoid hash collisions (different originals → same city).
 #
@@ -403,15 +306,6 @@ _is_location_city_used() {
 #
 # Returns existing mapping if available, otherwise creates new one and stores it.
 # Tracks used city names to ensure uniqueness (checks VALUES in map, not keys).
-#
-# Arguments:
-#   $1: Original location name
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints anonymized location name to stdout
 get_or_create_location_mapping() {
 	local original="$1"
 	if [[ -n "${ANON_LOCATION_MAP[$original]:-}" ]]; then
@@ -456,15 +350,6 @@ get_or_create_location_mapping() {
 # Get or create set name mapping
 #
 # Returns existing mapping if available, otherwise creates new one and stores it.
-#
-# Arguments:
-#   $1: Original set name
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints anonymized set name to stdout
 get_or_create_set_name_mapping() {
 	local original="$1"
 	if [[ -n "${ANON_SET_NAME_MAP[$original]:-}" ]]; then
@@ -480,15 +365,6 @@ get_or_create_set_name_mapping() {
 # Get or create MAC address mapping
 #
 # Returns existing mapping if available, otherwise creates new one and stores it.
-#
-# Arguments:
-#   $1: Original MAC address
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints anonymized MAC address to stdout
 get_or_create_mac_mapping() {
 	local original="$1"
 	if [[ -n "${ANON_MAC_MAP[$original]:-}" ]]; then
@@ -504,15 +380,6 @@ get_or_create_mac_mapping() {
 # Get or create hostname mapping
 #
 # Returns existing mapping if available, otherwise creates new one and stores it.
-#
-# Arguments:
-#   $1: Original hostname/FQDN
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints anonymized hostname to stdout
 get_or_create_hostname_mapping() {
 	local original="$1"
 	if [[ -n "${ANON_HOSTNAME_MAP[$original]:-}" ]]; then
@@ -620,13 +487,6 @@ load_mapping_file() {
 # Save mapping file
 #
 # Saves all mappings from global arrays to a human-readable file.
-#
-# Arguments:
-#   $1: Mapping file path
-#
-# Returns:
-#   0: Success
-#   1: Error
 save_mapping_file() {
 	local mapping_file="$1"
 	local timestamp
@@ -736,15 +596,6 @@ save_mapping_file() {
 #
 # Scans the file and extracts all unique IPv4 addresses.
 # Handles CIDR notation, single IPs, and IP ranges.
-#
-# Arguments:
-#   $1: Input file path
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints unique IPv4 addresses (one per line) to stdout
 extract_ipv4_from_file() {
 	local input_file="$1"
 	# Extract IPv4 addresses (with optional CIDR notation)
@@ -756,15 +607,6 @@ extract_ipv4_from_file() {
 #
 # Scans the file and extracts all unique IPv6 addresses.
 # Handles compressed notation, CIDR notation, and full addresses.
-#
-# Arguments:
-#   $1: Input file path
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints unique IPv6 addresses (one per line) to stdout
 extract_ipv6_from_file() {
 	local input_file="$1"
 	# Extract IPv6 addresses (more specific pattern to avoid false positives)
@@ -792,15 +634,6 @@ extract_ipv6_from_file() {
 #
 # Scans the file and extracts all unique interface names.
 # Handles interface names in -i, -o, --in-interface, --out-interface options.
-#
-# Arguments:
-#   $1: Input file path
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints unique interface names (one per line) to stdout
 extract_interfaces_from_file() {
 	local input_file="$1"
 	local interfaces=()
@@ -841,15 +674,6 @@ extract_interfaces_from_file() {
 #
 # Scans the log file and extracts all unique IPv4 addresses.
 # Handles various formats: "for IP", "location NAME (IP)", etc.
-#
-# Arguments:
-#   $1: Log file path
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints unique IP addresses (one per line) to stdout
 extract_ips_from_log() {
 	local log_file="$1"
 	# Extract IPv4 addresses (pattern: 1-3 digits, dot, 1-3 digits, dot, 1-3 digits, dot, 1-3 digits)
@@ -861,15 +685,6 @@ extract_ips_from_log() {
 #
 # Scans the log file and extracts all unique location names.
 # Handles formats: "for location NAME", "location NAME (IP)", etc.
-#
-# Arguments:
-#   $1: Log file path
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints unique location names (one per line) to stdout
 extract_locations_from_log() {
 	local log_file="$1"
 	local locations=()
@@ -932,15 +747,6 @@ extract_locations_from_log() {
 #
 # Scans the file and extracts all unique MAC addresses.
 # Handles standard MAC format: aa:bb:cc:dd:ee:ff
-#
-# Arguments:
-#   $1: Input file path
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints unique MAC addresses (one per line) to stdout
 extract_mac_addresses_from_file() {
 	local input_file="$1"
 	# Extract MAC addresses (format: aa:bb:cc:dd:ee:ff)
@@ -952,15 +758,6 @@ extract_mac_addresses_from_file() {
 #
 # Scans the file and extracts all unique hostnames and FQDNs.
 # Handles various formats: hostname, hostname.domain, hostname.domain.tld
-#
-# Arguments:
-#   $1: Input file path
-#
-# Returns:
-#   0: Success
-#
-# Output:
-#   Prints unique hostnames/FQDNs (one per line) to stdout
 extract_hostnames_from_file() {
 	local input_file="$1"
 	# Extract hostnames/FQDNs

@@ -103,9 +103,6 @@ check_installation() {
 # Removes the VPN monitor cron job entry from the root crontab.
 # Filters out lines containing "vpn-monitor.sh" and updates crontab.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Cron entry removed successfully (or didn't exist)
 #   1: Failed to remove cron entry
@@ -152,9 +149,6 @@ remove_cron() {
 #
 # Removes the logrotate configuration file for application log rotation.
 # Only removes if the file exists and we have write access.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Logrotate config removed successfully (or didn't exist)
@@ -614,9 +608,6 @@ remove_installation_dir() {
 # Disables, stops, and removes the systemd service file for the VPN keepalive daemon.
 # Only removes if systemd is available and service exists.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds (warnings logged but don't fail)
 #
@@ -664,9 +655,6 @@ remove_keepalive_service() {
 # Stops the VPN keepalive daemon if it is running.
 # This ensures the daemon is cleanly stopped before uninstallation.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds (warnings logged but don't fail)
 #
@@ -711,9 +699,6 @@ stop_keepalive_daemon() {
 # When config is kept in-place, the find command should remove the lockfile,
 # but this provides an additional safety net.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds (warnings logged but don't fail)
 #
@@ -744,9 +729,6 @@ cleanup_lockfile() {
 #   - Cron entry no longer exists
 #   - Logrotate configuration no longer exists
 # Logs errors for any components that still exist unexpectedly.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Uninstallation verified successfully (all components removed or properly preserved)
@@ -925,9 +907,6 @@ verify_uninstallation() {
 # Displays a summary of what was removed during uninstallation.
 # Shows confirmation that VPN Monitor has been completely removed.
 # Lists any preserved items (config, logs, state) if they were kept.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds

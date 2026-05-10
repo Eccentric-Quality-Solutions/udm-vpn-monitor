@@ -19,8 +19,6 @@
 # - Path resolution: resolve_lib_dir()
 #
 # All modules should use these shared functions instead of duplicating logic.
-# See ARCHITECTURAL_REVIEW.md section 8.3 for code duplication reduction guidelines.
-#
 
 # Colors for output (only set if not already defined to allow re-sourcing)
 [[ -z "${RED:-}" ]] && readonly RED='\033[0;31m'
@@ -36,18 +34,8 @@
 # Arguments:
 #   $@: Message text (all arguments are concatenated with spaces)
 #
-# Returns:
-#   0: Always succeeds
-#
 # Output:
 #   Prints colored message to stdout: "[INFO] <message>"
-#
-# Examples:
-#   log_info "Installation started"
-#   log_info "Processing file:" "$filename"
-#
-# Note:
-#   Requires RED, GREEN, YELLOW, NC color variables to be defined
 log_info() {
 	echo -e "${GREEN}[INFO]${NC} $*"
 }
@@ -60,18 +48,8 @@ log_info() {
 # Arguments:
 #   $@: Message text (all arguments are concatenated with spaces)
 #
-# Returns:
-#   0: Always succeeds
-#
 # Output:
 #   Prints colored message to stdout: "[WARN] <message>"
-#
-# Examples:
-#   log_warn "Config file not found, using defaults"
-#   log_warn "Cron job already exists, skipping"
-#
-# Note:
-#   Requires YELLOW and NC color variables to be defined
 log_warn() {
 	echo -e "${YELLOW}[WARN]${NC} $*"
 }
@@ -84,18 +62,8 @@ log_warn() {
 # Arguments:
 #   $@: Message text (all arguments are concatenated with spaces)
 #
-# Returns:
-#   0: Always succeeds
-#
 # Output:
 #   Prints colored message to stdout: "[ERROR] <message>"
-#
-# Examples:
-#   log_error "Cannot create directory:" "$dir"
-#   log_error "Script must be run as root"
-#
-# Note:
-#   Requires RED and NC color variables to be defined
 log_error() {
 	echo -e "${RED}[ERROR]${NC} $*"
 }
@@ -109,16 +77,8 @@ log_error() {
 # Arguments:
 #   $@: Debug message text (all arguments are concatenated with spaces)
 #
-# Returns:
-#   0: Always succeeds
-#
 # Output:
 #   Prints to stderr if DEBUG=1: "[timestamp] [DEBUG] SYSTEM: <message>"
-#
-# Examples:
-#   debug_log "Starting main() function, PID: $$"
-#   debug_log "After log_message call"
-#   debug_log "Validating EXTERNAL_PEER_IPS (value: '${EXTERNAL_PEER_IPS}')"
 #
 # Note:
 #   Only outputs if DEBUG environment variable is set to 1
@@ -138,18 +98,12 @@ debug_log() {
 # Required for installing to /data/ and modifying crontab.
 # Exits script with error code 1 if not running as root.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Running as root (continues execution)
 #   1: Not running as root (exits script with error)
 #
 # Side effects:
 #   Exits script with code 1 if not running as root
-#
-# Examples:
-#   check_root  # Will exit if not root
 #
 # Note:
 #   Uses $EUID to check effective user ID
@@ -174,11 +128,6 @@ check_root() {
 # Returns:
 #   0: File exists and is readable
 #   1: File does not exist or is not readable
-#
-# Examples:
-#   if file_exists_and_readable "$config_file"; then
-#       safe_parse_config_file "$config_file"  # Use safe parser, not source
-#   fi
 #
 # Note:
 #   Uses timeout wrapper (if available) to prevent hangs on unreadable files.
@@ -223,18 +172,6 @@ file_exists_and_readable() {
 # Output:
 #   Captures and returns stdout/stderr of the command (for use in command substitution)
 #
-# Examples:
-#   # Simple command
-#   if run_with_timeout 1 grep -qE '^[0-9]+$' "$file"; then
-#       echo "File contains only digits"
-#   fi
-#
-#   # Command with pipes (wrap in sh -c)
-#   result=$(run_with_timeout 1 sh -c "grep -E '^[0-9]+$' \"$file\" | sort -n | tail -n 1")
-#
-#   # Capture output
-#   output=$(run_with_timeout 1 cat "$file")
-#
 # Note:
 #   For commands with pipes or complex redirections, wrap in sh -c.
 #   Timeout exit code is 124 if command times out.
@@ -272,10 +209,6 @@ run_with_timeout() {
 #
 # Output:
 #   Captures and returns stdout/stderr of the command (for use in command substitution)
-#
-# Examples:
-#   # Find command with kill-after
-#   run_with_timeout_kill_after 5 1 find "$dir" -name "*.txt" -print0 >"$output_file" 2>/dev/null || true
 #
 # Note:
 #   For commands with pipes or complex redirections, wrap in sh -c.
@@ -316,14 +249,6 @@ run_with_timeout_kill_after() {
 # Side effects:
 #   Creates parent directories and file with default content if they don't exist
 #
-# Examples:
-#   ensure_file_exists "$counter_file" "0"
-#   ensure_file_exists "$log_file"
-#   # Callers should handle errors:
-#   if ! ensure_file_exists "$file" "0"; then
-#       handle_error "WARNING" "Failed to create file: $file" 0
-#   fi
-#
 # Note:
 #   Returns error code on failure - callers should handle errors appropriately.
 #   Some callers may want to log and continue, others may want to die().
@@ -354,20 +279,8 @@ ensure_file_exists() {
 # This provides a consistent way to get timestamps throughout the codebase,
 # replacing direct calls to 'date +%s'.
 #
-# Arguments:
-#   None
-#
-# Returns:
-#   0: Always succeeds
-#
 # Output:
 #   Prints Unix timestamp (integer) to stdout
-#
-# Examples:
-#   timestamp=$(get_unix_timestamp)
-#   if [[ $timestamp -gt $last_check ]]; then
-#       # do something
-#   fi
 #
 # Note:
 #   Uses 'date +%s' command internally
@@ -390,11 +303,6 @@ get_unix_timestamp() {
 # Returns:
 #   0: Timestamp is valid
 #   1: Timestamp is invalid (negative, too large, or not a number)
-#
-# Examples:
-#   if validate_timestamp "$timestamp"; then
-#       # use timestamp safely
-#   fi
 #
 # Note:
 #   Upper bound is set to year 2100 (4102444800) to allow reasonable future dates
@@ -434,10 +342,6 @@ validate_timestamp() {
 #
 # Output:
 #   Prints the result timestamp to stdout if successful
-#
-# Examples:
-#   result=$(safe_timestamp_subtract "$now" "$SECONDS_PER_HOUR")
-#   one_day_ago=$(safe_timestamp_subtract "$timestamp" "$SECONDS_PER_DAY" 2>/dev/null || echo "0")
 #
 # Note:
 #   If subtraction would result in negative value, returns error code 3
@@ -493,12 +397,6 @@ safe_timestamp_subtract() {
 # Output:
 #   Prints the result timestamp to stdout if successful
 #
-# Examples:
-#   future_time=$(safe_timestamp_add "$now" "$SECONDS_PER_HOUR")
-#   if result=$(safe_timestamp_add "$timestamp" 3600); then
-#       future_timestamp=$result
-#   fi
-#
 # Note:
 #   If addition would result in value exceeding maximum timestamp, returns error code 3
 #   Caller should handle this case appropriately
@@ -547,10 +445,6 @@ safe_timestamp_add() {
 #   Prints the difference (timestamp1 - timestamp2) to stdout if successful
 #   Result may be negative if timestamp2 > timestamp1
 #
-# Examples:
-#   elapsed=$(safe_timestamp_diff "$end_time" "$start_time")
-#   remaining=$(safe_timestamp_diff "$cooldown_until" "$now")
-#
 # Note:
 #   Returns the raw difference, which may be negative
 #   Caller should handle negative results appropriately
@@ -586,15 +480,8 @@ safe_timestamp_diff() {
 #   $1: Start timestamp (required)
 #   $2: End timestamp (optional, defaults to current time)
 #
-# Returns:
-#   0: Always succeeds
-#
 # Output:
 #   Prints duration in seconds (non-negative integer) to stdout
-#
-# Examples:
-#   duration=$(calculate_duration "$start_time")
-#   duration=$(calculate_duration "$start_time" "$end_time")
 #
 # Note:
 #   Requires get_unix_timestamp() and safe_timestamp_diff() to be available
@@ -617,16 +504,8 @@ calculate_duration() {
 # to measure command execution duration. Handles errors gracefully by
 # returning "0" if timestamp retrieval fails.
 #
-# Returns:
-#   0: Always succeeds
-#
 # Output:
 #   Prints timer identifier (Unix timestamp) to stdout, or "0" if measurement failed
-#
-# Example:
-#   timer=$(start_timer)
-#   # ... execute command ...
-#   duration=$(stop_timer "$timer")
 #
 # Note:
 #   Requires get_unix_timestamp() to be available
@@ -644,16 +523,8 @@ start_timer() {
 # Arguments:
 #   $1: Timer identifier from start_timer() (Unix timestamp)
 #
-# Returns:
-#   0: Always succeeds
-#
 # Output:
 #   Prints duration in seconds to stdout, or "0" if measurement failed
-#
-# Example:
-#   timer=$(start_timer)
-#   # ... execute command ...
-#   duration=$(stop_timer "$timer")
 #
 # Note:
 #   Requires get_unix_timestamp() and calculate_duration() to be available
@@ -683,11 +554,6 @@ stop_timer() {
 #   0: Directory exists
 #   1: Directory does not exist
 #
-# Examples:
-#   if directory_exists "$STATE_DIR"; then
-#       # process directory
-#   fi
-#
 # Note:
 #   Uses [[ -d "$1" ]] test internally
 directory_exists() {
@@ -706,11 +572,6 @@ directory_exists() {
 # Returns:
 #   0: Directory exists and is writable
 #   1: Directory does not exist or is not writable
-#
-# Examples:
-#   if directory_writable "$STATE_DIR"; then
-#       # write to directory
-#   fi
 #
 # Note:
 #   Uses [[ -d "$1" ]] && [[ -w "$1" ]] test internally
@@ -734,13 +595,6 @@ directory_writable() {
 #
 # Side effects:
 #   Creates directory with mkdir -p if it doesn't exist
-#
-# Examples:
-#   if try_ensure_directory_exists "$log_dir"; then
-#       # directory exists or was created
-#   else
-#       # handle error without exiting
-#   fi
 #
 # Note:
 #   Returns error code on failure - callers should handle errors appropriately.
@@ -774,11 +628,6 @@ try_ensure_directory_exists() {
 # Side effects:
 #   Creates temporary file ${file}.tmp, then renames it to target file
 #   Removes temporary file on success
-#
-# Examples:
-#   if atomic_write_file "$state_file" "$value"; then
-#       echo "State updated successfully"
-#   fi
 #
 # Note:
 #   Uses pattern: echo "$content" >"${file}.tmp" && mv "${file}.tmp" "$file"
@@ -830,13 +679,6 @@ atomic_write_file() {
 # Output:
 #   Prints counter value (0 if file doesn't exist, is unreadable, or corrupted)
 #
-# Side effects:
-#   None
-#
-# Examples:
-#   local count=$(read_counter_file "$counter_file")
-#   local dns_success=$(read_counter_file "$dns_success_file")
-#
 # Note:
 #   Handles file corruption by returning 0
 #   Uses file_exists_and_readable() to prevent hangs on unreadable files
@@ -867,19 +709,8 @@ read_counter_file() {
 #   $1: Value to escape
 #   $2: Optional delimiter character used in sed command (default: |)
 #
-# Returns:
-#   0: Always succeeds
-#
 # Output:
 #   Prints escaped string to stdout
-#
-# Examples:
-#   escaped=$(escape_sed_replacement "$peer_ips")
-#   sed -i "s|^EXTERNAL_PEER_IPS=.*|EXTERNAL_PEER_IPS=\"${escaped}\"|" "$config_file"
-#
-#   # With custom delimiter
-#   escaped=$(escape_sed_replacement "$value" "/")
-#   sed -i "s/^KEY=.*/KEY=\"${escaped}\"/" "$file"
 #
 # Note:
 #   Escapes: \ (backslash), & (matched text), and delimiter character
@@ -905,15 +736,8 @@ escape_sed_replacement() {
 # Arguments:
 #   $1: Value to escape
 #
-# Returns:
-#   0: Always succeeds
-#
 # Output:
 #   Prints escaped string to stdout
-#
-# Examples:
-#   escaped=$(escape_sed_regex "$config_file")
-#   sed -i "s|^CONFIG_FILE=.*|CONFIG_FILE=\"${escaped}\"|" "$file"
 #
 # Note:
 #   Escapes regex special characters: [ \ . * ^ $ ( ) + ? { |
@@ -931,15 +755,8 @@ escape_sed_regex() {
 # Arguments:
 #   $1: Location name to sanitize
 #
-# Returns:
-#   0: Always succeeds
-#
 # Output:
 #   Prints sanitized location name to stdout
-#
-# Examples:
-#   sanitized=$(sanitize_location_name "NYC-Office")
-#   # Returns: "NYC_Office"
 #
 # Note:
 #   - Replaces invalid chars (non-alphanumeric, non-underscore) with underscore
@@ -986,15 +803,6 @@ sanitize_location_name() {
 #   0: Valid SPI format (hex or decimal)
 #   1: Invalid SPI format (empty, malformed, or contains invalid characters)
 #
-# Examples:
-#   if validate_spi_format "$spi"; then
-#       echo "SPI is valid"
-#   fi
-#
-#   if ! validate_spi_format "$current_spi"; then
-#       return 1
-#   fi
-#
 # Note:
 #   - Accepts hex format: 0x[0-9a-fA-F]+ (e.g., "0x12345678", "0xABC")
 #   - Accepts decimal format: [0-9]+ (e.g., "305419896", "123")
@@ -1013,20 +821,8 @@ validate_spi_format() {
 # Arguments:
 #   $1: String to trim
 #
-# Returns:
-#   0: Always succeeds
-#
 # Output:
 #   Prints trimmed string to stdout
-#
-# Examples:
-#   trimmed=$(trim "  hello world  ")
-#   # Returns: "hello world"
-#
-#   value=$(trim "$input_value")
-#   if [[ -z "$value" ]]; then
-#       echo "Empty after trimming"
-#   fi
 #
 # Note:
 #   - Uses bash parameter expansion for performance (faster than sed)
@@ -1066,11 +862,6 @@ trim() {
 # Returns:
 #   0: Success
 #   1: Failed to update config file (file doesn't exist, unreadable, or write failed)
-#
-# Examples:
-#   update_config_value "$config_file" "LOCAL_UDM_IP" "$local_udm_ip"
-#   update_config_value "$config_file" "EXTERNAL_PEER_IPS" "$peer_ips"
-#   update_config_value "$config_file" "LOCAL_UDM_IP" "$ip" "^ENABLE_PING_CHECK="
 #
 # Note:
 #   Uses escape_sed_regex() to safely escape variable names for regex matching
@@ -1144,10 +935,6 @@ update_config_value() {
 # Side effects:
 #   Sets global variable via declare -g + printf -v
 #
-# Examples:
-#   safe_set_variable "PING_COUNT" "5"
-#   safe_set_variable "$var_name" "$var_value"
-#
 # Note:
 #   This function is used throughout config.sh to safely set configuration
 #   variables without risk of code injection. It replaces the repeated pattern
@@ -1182,14 +969,6 @@ safe_set_variable() {
 # Returns:
 #   0: Command is available (found in PATH or executable)
 #   1: Command is not available
-#
-# Examples:
-#   if ! check_command_available "ip"; then
-#       return 1
-#   fi
-#   if check_command_available "ping6"; then
-#       ping_cmd="ping6"
-#   fi
 #
 # Note:
 #   Uses command -v to check command availability (POSIX compliant)
@@ -1266,18 +1045,8 @@ check_command_available() {
 # Arguments:
 #   $1: Command name to find (e.g., "ip", "ipsec", "ping")
 #
-# Returns:
-#   0: Always succeeds
-#
 # Output:
 #   Prints full path to stdout if found, or command name if not found
-#
-# Examples:
-#   ip_path=$(get_command_path "ip")
-#   # Returns: "/usr/sbin/ip" or "ip" if not found
-#
-#   ipsec_cmd=$(get_command_path "ipsec")
-#   "$ipsec_cmd" reload
 #
 # Note:
 #   Since this script always runs in cron/systemd with restricted PATH,
@@ -1327,18 +1096,8 @@ get_command_path() {
 # This function consolidates the common pattern of resolving the IP command
 # path used throughout the codebase, especially in recovery and detection code.
 #
-# Arguments:
-#   None
-#
-# Returns:
-#   0: Always succeeds
-#
 # Output:
 #   Prints command path to stdout (full path or "ip" as fallback)
-#
-# Examples:
-#   ip_cmd=$(get_ip_command_path)
-#   "$ip_cmd" xfrm state delete ...
 #
 # Note:
 #   Uses _RECOVERY_IP_PATH if available (set by recovery orchestration for
@@ -1376,14 +1135,6 @@ get_ip_command_path() {
 #   - Logs a warning message via handle_error() if command is not available
 #   - Warning message format: "<context> but <command> command not available"
 #     or "<command> command not available" if no context provided
-#
-# Examples:
-#   if ! check_command_or_warn "ip" "Cannot add ping source on default LAN"; then
-#       return 1
-#   fi
-#   if ! check_command_or_warn "ping"; then
-#       return 1
-#   fi
 #
 # Note:
 #   Requires handle_error() function to be available (from logging.sh)
@@ -1428,12 +1179,6 @@ check_command_or_warn() {
 # Returns:
 #   Prints formatted IP string to stdout: "($internal_peer_ip, $external_peer_ip)" or "($external_peer_ip)"
 #
-# Examples:
-#   ip_display=$(format_peer_ip_display "203.0.113.1" "192.168.1.1")
-#   # Output: "(192.168.1.1, 203.0.113.1)"
-#   ip_display=$(format_peer_ip_display "203.0.113.1" "")
-#   # Output: "(203.0.113.1)"
-#
 # Note:
 #   This function is used throughout the codebase to ensure consistent IP display
 #   in log messages. It removes redundant location names and shows both IPs when available.
@@ -1472,17 +1217,6 @@ format_peer_ip_display() {
 # Returns:
 #   0: File was sourced successfully
 #   1: File could not be sourced (doesn't exist or has errors)
-#
-# Examples:
-#   if ! safe_source_lib "${LIB_DIR}/constants.sh"; then
-#       # Fallback constants
-#       readonly SECONDS_PER_MINUTE=60
-#   fi
-#
-#   safe_source_lib "${LIB_DIR}/common.sh" || {
-#       # Fallback functions
-#       get_unix_timestamp() { date +%s; }
-#   }
 #
 # Note:
 #   Suppresses stderr output (2>/dev/null) to avoid error messages when
@@ -1523,16 +1257,6 @@ safe_source_lib() {
 # Side effects:
 #   Sets global variable LIB_DIR to the resolved path
 #   In fake mode (NO_ESCALATE=1), continues execution even if resolution fails
-#
-# Examples:
-#   # Resolve lib/ directory from lib/config/config_loading.sh (go up one level)
-#   resolve_lib_dir "${BASH_SOURCE[0]}" 1
-#
-#   # Resolve lib/ directory from lib/config.sh (no levels up needed)
-#   resolve_lib_dir "${BASH_SOURCE[0]}" 0
-#
-#   # Use default (BASH_SOURCE[0], 0 levels)
-#   resolve_lib_dir
 #
 # Note:
 #   - Uses readlink -f if available for better symlink resolution
@@ -1607,16 +1331,9 @@ resolve_lib_dir() {
 # Arguments:
 #   $1: Error message to log
 #
-# Returns:
-#   0: Always succeeds (logging never fails)
-#
 # Output:
 #   - If log_message is available: logs via log_message to LOG_FILE and stderr
 #   - Otherwise: prints error message to stderr
-#
-# Examples:
-#   log_module_error "Failed to source detection/network_validation.sh"
-#   log_module_error "Failed to source state_paths.sh"
 #
 # Note:
 #   This function is used during module loading when log_message may not be available yet.

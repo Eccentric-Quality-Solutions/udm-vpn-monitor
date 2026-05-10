@@ -664,9 +664,6 @@ parse_config_schema() {
 # This ensures that even if parsing partially failed, we catch missing critical variables
 # before proceeding with incomplete configuration.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: All required variables are declared
 #   1: One or more required variables are missing
@@ -760,9 +757,6 @@ handle_fatal_config_error() {
 # Updates paths that depend on STATE_DIR:
 #   - LOCKFILE -> ${STATE_DIR}/vpn-monitor.lock
 #   - PIDFILE -> ${STATE_DIR}/vpn-keepalive.pid (if PIDFILE was set)
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Always succeeds

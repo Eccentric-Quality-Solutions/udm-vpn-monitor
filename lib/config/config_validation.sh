@@ -530,9 +530,6 @@ validate_config_var() {
 # Validates all configuration variables against the schema definition.
 # Uses schema-based validation for type checking and rule validation.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Configuration is valid
 #   1: Configuration is invalid (exits script)
@@ -600,9 +597,6 @@ validate_config_schema() {
 # This function is called during config validation to ensure IPs are set up
 # proactively, not just when ping checks run. IPs are added on
 # DEFAULT_LAN_INTERFACE (typically br0) to enable sourced pings between UDMs.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Setup completed (or not needed)
@@ -679,9 +673,6 @@ ensure_default_lan_local_ip_for_ping() {
 # Validates that required configuration variables are set and have valid values.
 # Uses schema-based validation for type checking and rules, plus custom validation
 # for complex cases (IP addresses, location-based configuration).
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Configuration is valid

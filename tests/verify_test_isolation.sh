@@ -175,9 +175,6 @@ compare_env_states() {
 
 # Check for files created outside TEST_DIR that may indicate test pollution
 #
-# Arguments:
-#   None (uses TEST_DIR from environment)
-#
 # Returns:
 #   0: no suspicious files found
 #   1: files found outside TEST_DIR

@@ -23,9 +23,6 @@
 # command, while preserving essential directories like /bin and /usr/bin.
 # This is used to test fallback lockfile acquisition when flock is unavailable.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   Outputs the modified PATH (via stdout)
 #   0: Always succeeds

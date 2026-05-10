@@ -81,9 +81,6 @@ track_network_partition_check() {
 # if one hour has elapsed since the last summary. Tracks successes and failures
 # for DNS resolution, default route, and interface state checks separately.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always succeeds (logging failures are non-fatal)
 #

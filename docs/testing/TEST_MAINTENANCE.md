@@ -64,7 +64,7 @@ This document describes comprehensive procedures for maintaining the test suite,
 When reviewing code changes, ensure:
 
 - [ ] **New Code Has Tests**: All new functionality has corresponding tests
-- [ ] **Tests Follow Patterns**: Tests use established patterns from `tests/TEST_PATTERNS.md`
+- [ ] **Tests Follow Patterns**: Tests use established patterns from `docs/testing/TEST_PATTERNS.md`
 - [ ] **Tests Are Isolated**: Tests don't depend on other tests
 - [ ] **Tests Are Clear**: Test names and comments clearly describe what is being tested
 - [ ] **Tests Cover Edge Cases**: Error paths and edge cases are tested
@@ -252,9 +252,9 @@ EOF
 
 For comprehensive troubleshooting information including common issues, debugging procedures, and solutions, see:
 
-- **[BATS Guide - Troubleshooting](../docs/BATS_GUIDE.md#troubleshooting)** - Common test issues, advanced debugging techniques, and solutions
-- **[BATS Guide - Mock Setup Debugging](../docs/BATS_GUIDE.md#mock-setup-debugging-checklist)** - Mock-specific troubleshooting
-- **[Flaky Test Detection](../docs/BATS_GUIDE.md#flaky-test-detection)** - Identifying and fixing flaky tests
+- **[BATS Guide - Troubleshooting](BATS_GUIDE.md#troubleshooting)** - Common test issues, advanced debugging techniques, and solutions
+- **[BATS Guide - Mock Setup Debugging](BATS_GUIDE.md#mock-setup-debugging-checklist)** - Mock-specific troubleshooting
+- **[Flaky Test Detection](BATS_GUIDE.md#flaky-test-detection)** - Identifying and fixing flaky tests
 
 **Quick Reference**:
 - **Test Failures**: Run with `bats --verbose` or `BATSLIB_TEMP_PRESERVE_ON_FAILURE=1`
@@ -600,7 +600,7 @@ bats --timing tests/
 ### General Principles
 
 1. **Keep Tests Simple**: Tests should be easy to understand and maintain
-2. **Use Patterns**: Follow established patterns from `tests/TEST_PATTERNS.md`
+2. **Use Patterns**: Follow established patterns from `docs/testing/TEST_PATTERNS.md`
 3. **Maintain Isolation**: Ensure tests don't depend on each other
 4. **Clean Up**: Always clean up mocks, temp files, and state
 5. **Document Changes**: Update documentation when patterns change

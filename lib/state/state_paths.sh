@@ -159,9 +159,6 @@ get_peer_state_file_path() {
 # Returns the full file path for the network partition state file.
 # Uses NETWORK_PARTITION_STATE_FILE if set, otherwise defaults to ${STATE_DIR}/network_partition_state.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Success (path printed)
 #   1: STATE_DIR unset/empty and NETWORK_PARTITION_STATE_FILE not set (no path printed)

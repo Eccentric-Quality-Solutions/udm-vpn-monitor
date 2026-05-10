@@ -163,9 +163,6 @@ parse_single_location() {
 # Performs final validation that at least one valid location was found.
 # This catches cases where no locations exist or all were skipped.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: At least one location found
 #   1: No locations found (critical error)
@@ -197,9 +194,6 @@ validate_location_config() {
 #
 # Scans all variables matching LOCATION_*_EXTERNAL pattern and extracts location data
 # into a structured associative array format.
-#
-# Arguments:
-#   None
 #
 # Returns:
 #   0: Configuration parsed successfully

@@ -119,10 +119,10 @@ This document outlines the comprehensive test strategy for the UDM VPN Monitor p
 For detailed information about test structure, file organization, test categories, and fast vs. slow tests, see:
 
 - **[Test Structure](../tests/README.md#test-structure)** - Test file organization and structure overview
-- **[Test Categories](../docs/BATS_GUIDE.md#test-categories)** - Fast vs. slow tests, test categorization, and test counts
-- **[Test Environment Requirements](../docs/BATS_GUIDE.md#test-environment-requirements)** - System requirements and tool installation
+- **[Test Categories](BATS_GUIDE.md#test-categories)** - Fast vs. slow tests, test categorization, and test counts
+- **[Test Environment Requirements](BATS_GUIDE.md#test-environment-requirements)** - System requirements and tool installation
 
-**Summary**: The test suite consists of ~1530 tests across 77 test files organized by functionality (configuration, detection, recovery, integration, etc.) and categorized as fast (~605 tests, run by default) or slow (~925 tests, excluded by default for faster development feedback).
+**Summary**: The test suite consists of ~1795 tests across 90 `tests/test_*.sh` files organized by functionality (configuration, detection, recovery, integration, etc.). Default `./tests/run_tests.sh` runs ~1460 tests and skips a fixed high-risk/integration file set; `./tests/run_tests.sh --slow` runs the full ~1795 (see `filter_test_files()` in `tests/run_tests.sh`).
 
 ## Testing Approach
 
@@ -181,24 +181,24 @@ For detailed information about test structure, file organization, test categorie
 
 For comprehensive mocking documentation including patterns, best practices, helper functions, and common pitfalls, see:
 
-- **[Test Patterns](../tests/TEST_PATTERNS.md)** - Standardized mock patterns and best practices
-- **[BATS Guide - Mock Patterns](../docs/BATS_GUIDE.md#common-mock-patterns)** - Detailed mock examples and patterns
-- **[BATS Guide - Mock Setup Debugging](../docs/BATS_GUIDE.md#mock-setup-debugging-checklist)** - Troubleshooting mock issues
+- **[Test Patterns](TEST_PATTERNS.md)** - Standardized mock patterns and best practices
+- **[BATS Guide - Mock Patterns](BATS_GUIDE.md#common-mock-patterns)** - Detailed mock examples and patterns
+- **[BATS Guide - Mock Setup Debugging](BATS_GUIDE.md#mock-setup-debugging-checklist)** - Troubleshooting mock issues
 
 **Summary**:
 - **Mock External Dependencies**: System commands (`ip`, `ipsec`, `ping`, `dig`, `date`)
 - **Don't Mock Internal Functions**: Test internal functions directly by sourcing modules
-- **Use Fixtures**: Reusable mock setups for common VPN states (see [Test Patterns](../tests/TEST_PATTERNS.md#4-test-fixtures))
+- **Use Fixtures**: Reusable mock setups for common VPN states (see [Test Patterns](TEST_PATTERNS.md#4-test-fixtures))
 - **Always Clean Up**: Pair `add_mock_to_path()` with `remove_mock_from_path()`
 
 ## Test Execution Strategy
 
 For comprehensive information about running tests, including all command-line options, parallel execution, coverage reporting, and CI/CD integration, see:
 
-- **[Running Tests](../docs/BATS_GUIDE.md#running-tests)** - Complete guide to running tests with all options
-- **[Test Coverage Reporting](../docs/BATS_GUIDE.md#coverage-reports-location)** - Coverage reporting setup and usage
-- **[Flaky Test Detection](../docs/BATS_GUIDE.md#flaky-test-detection)** - Automated flaky test detection
-- **[CI/CD Integration](../docs/BATS_GUIDE.md#cicd-integration)** - CI/CD integration details
+- **[Running Tests](BATS_GUIDE.md#running-tests)** - Complete guide to running tests with all options
+- **[Test Coverage Reporting](BATS_GUIDE.md#coverage-reports-location)** - Coverage reporting setup and usage
+- **[Flaky Test Detection](BATS_GUIDE.md#flaky-test-detection)** - Automated flaky test detection
+- **[CI/CD Integration](BATS_GUIDE.md#cicd-integration)** - CI/CD integration details
 
 **Quick Reference**:
 - **Local Development**: `./tests/run_tests.sh` (fast tests only)
@@ -210,13 +210,13 @@ For comprehensive information about running tests, including all command-line op
 
 For detailed coverage information including goals, measurement, reporting, and analysis, see:
 
-- **[Test Coverage](../docs/TEST_PATTERNS.md#test-coverage)** - Complete coverage documentation including goals, current coverage, and module-specific targets
-- **[Test Coverage Reporting](../docs/BATS_GUIDE.md#coverage-reports-location)** - How to generate and view coverage reports
+- **[Test Coverage](TEST_PATTERNS.md#test-coverage)** - Complete coverage documentation including goals, current coverage, and module-specific targets
+- **[Test Coverage Reporting](BATS_GUIDE.md#coverage-reports-location)** - How to generate and view coverage reports
 
 **Summary**:
 - **Tool**: kcov for line coverage
 - **Current Coverage**: 46.9% (1141/2433 lines)
-- **Coverage Goals**: See [Test Coverage Goals](../docs/TEST_PATTERNS.md#test-coverage) for detailed targets by module
+- **Coverage Goals**: See [Test Coverage Goals](TEST_PATTERNS.md#test-coverage) for detailed targets by module
 - **Strategy**: Focus on critical paths (P0) first, then high priority (P1), with reasonable coverage for all code
 
 ## Test Maintenance Strategy
@@ -275,8 +275,8 @@ For detailed test patterns and standards, see:
 
 For current test metrics including test counts, execution times, and quality indicators, see:
 
-- **[Test Categories](../docs/BATS_GUIDE.md#test-categories)** - Current test counts and organization
-- **[Running Tests](../docs/BATS_GUIDE.md#running-tests)** - Test execution times and performance
+- **[Test Categories](BATS_GUIDE.md#test-categories)** - Current test counts and organization
+- **[Running Tests](BATS_GUIDE.md#running-tests)** - Test execution times and performance
 
 **Summary**:
 - **Test Pass Rate**: Target 100% (all tests should pass)
@@ -319,14 +319,14 @@ For current test metrics including test counts, execution times, and quality ind
 Our test suite follows the test pyramid principle:
 
 1. **Unit Tests** (Base - Most Tests): Fast, isolated tests of individual functions
-   - ~605 fast tests covering unit-level functionality
+   - ~1460 tests in the default `run_tests.sh` run (excludes the slow/high-risk file set)
    - High isolation with mocked dependencies
    - Fast execution (< 1 second per test)
 
-2. **Integration Tests** (Middle): Tests of component interactions
-   - ~925 slow tests covering integration scenarios
-   - Tests interactions between modules
-   - Moderate execution time (1-5 seconds per test)
+2. **Integration / consolidated high-risk** (Middle): Tests of component interactions and consolidated suites
+   - ~335 tests in the slow file set (included with `--slow`; see `filter_test_files()` in `tests/run_tests.sh`)
+   - Tests interactions between modules and high-risk consolidated files
+   - Moderate execution time (varies by file)
 
 3. **End-to-End Tests** (Top - Fewest Tests): Full system tests
    - Critical path tests covering complete workflows

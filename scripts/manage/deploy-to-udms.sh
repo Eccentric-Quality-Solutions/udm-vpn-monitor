@@ -119,9 +119,6 @@ resolve_bind_ip_from_config() {
 
 # Print usage and options to stdout.
 #
-# Arguments:
-#   None
-#
 # Returns:
 #   0: Always
 display_help() {
@@ -184,9 +181,6 @@ parse_args() {
 }
 
 # Ensure package file exists; run prepare_install_package.sh if missing.
-#
-# Arguments:
-#   None (uses global PACKAGE_FILE, SCRIPT_DIR, REPO_ROOT).
 #
 # Returns:
 #   0: Package exists or was created
