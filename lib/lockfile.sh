@@ -314,11 +314,14 @@ log_and_exit_lockfile_conflict() {
 # Acquire lockfile using flock (preferred method)
 #
 # Attempts to acquire lockfile using flock command.
-# Handles stale lockfiles and retries as needed.
+# Handles stale, unlocked lockfiles by locking the existing inode and overwriting
+# its contents after flock succeeds. If flock fails, another live process owns
+# that inode, so this function exits without unlinking the path.
 #
-# This implementation uses explicit fd opening inside the subshell (not the
-# `( ... ) 9>file` pattern) to avoid a TOCTOU race condition where the file
-# would be created/truncated before any lock logic runs.
+# Opens the lock path with read-write (`exec 9<>`) **without truncating**, then
+# takes a non-blocking exclusive flock on that fd, then writes timestamp:pid.
+# This avoids truncating or unlinking another process's lock inode before flock
+# (see acquire_lockfile cleanup: we only rm the path when this instance held the lock).
 #
 # Arguments:
 #   $1: Function to execute after lock is acquired (typically main function)
@@ -328,40 +331,34 @@ log_and_exit_lockfile_conflict() {
 #   Never returns directly (exits via log_and_exit_lockfile_conflict or executes function)
 #
 # Side effects:
-#   - Creates lockfile with timestamp:pid
+#   - Creates or updates lockfile with timestamp:pid after lock is acquired
 #   - Executes provided function with arguments
-#   - Removes lockfile on exit (always, since we created/truncated it)
+#   - Removes lockfile on exit only when the lock was acquired (caller owned the run)
 #
 # Note:
-#   Requires LOCKFILE, check_lockfile_stale, log_and_exit_lockfile_conflict to be set
+#   Requires LOCKFILE and log_and_exit_lockfile_conflict to be set
 acquire_lockfile_flock() {
 	local main_func="$1"
 	shift
 
-	# Save existing lockfile info BEFORE entering subshell (before truncation)
+	# Save existing lockfile info BEFORE entering subshell (before open/flock)
 	# This allows us to:
-	# 1. Report the correct PID in conflict messages (file will be truncated when we open it)
-	# 2. Know if the lockfile was stale (for retry logic after flock fails)
-	# 3. Exit early if another instance is running (don't truncate their lockfile)
+	# 1. Report the correct PID in conflict messages
+	# 2. Exit early if another instance is running (avoid competing for their lockfile)
 	local existing_pid=""
-	local was_stale=0
 	if file_exists_and_readable "$LOCKFILE"; then
 		existing_pid=$(extract_lockfile_pid "$LOCKFILE" 2>/dev/null || echo "")
 		# If lockfile has a running PID, exit immediately
-		# This prevents us from truncating another process's lockfile
+		# Avoids opening the path and competing with a known-live instance
 		if [[ -n "$existing_pid" ]] && is_process_running "$existing_pid"; then
 			log_and_exit_lockfile_conflict "$existing_pid"
-		fi
-		# Check if stale for retry logic (used if flock fails)
-		if check_lockfile_stale; then
-			was_stale=1
 		fi
 	fi
 
 	# Use subshell to isolate traps and ensure cleanup
 	# NOTE: We do NOT use `) 9>"$LOCKFILE"` because that opens the file
 	# BEFORE any subshell code runs, causing TOCTOU issues. Instead, we
-	# use explicit `exec 9>` inside the subshell for control.
+	# use explicit `exec 9<>` inside the subshell (no truncate until after flock).
 	(
 		# Track signal type for proper exit code
 		local signal_exit_code=0
@@ -369,11 +366,9 @@ acquire_lockfile_flock() {
 		local lock_acquired=0
 		# Track if cleanup has already run (prevents double cleanup)
 		local cleanup_done=0
-		# Track if we opened the file (for cleanup purposes)
-		local file_opened=0
 
 		# Cleanup function for signal handlers
-		# Ensures file descriptor is closed and lockfile is removed
+		# Ensures file descriptor is closed; removes lockfile only if we acquired the lock
 		#
 		# Arguments:
 		#   None (uses $? to capture exit code from trap context)
@@ -383,7 +378,7 @@ acquire_lockfile_flock() {
 		#
 		# Side effects:
 		#   - Closes file descriptor 9
-		#   - Removes lockfile if we opened it (we always clean up what we create)
+		#   - Removes lockfile if we acquired the lock (never rm on failed acquisition)
 		#   - Exits script with appropriate exit code
 		cleanup_and_exit() {
 			local actual_exit_code=$?
@@ -401,10 +396,9 @@ acquire_lockfile_flock() {
 			# Close file descriptor first (more critical than removing lockfile)
 			exec 9>&- 2>/dev/null || true
 
-			# Always remove lockfile if we opened it
-			# We created/truncated it via our redirect, so we should clean it up
-			# regardless of whether we acquired the lock. This prevents orphan lockfiles.
-			if [[ $file_opened -eq 1 ]]; then
+			# Only remove lockfile if we acquired the lock; otherwise unlink could
+			# drop the path while another process still holds flock on the inode.
+			if [[ $lock_acquired -eq 1 ]]; then
 				rm -f "$LOCKFILE" 2>/dev/null || true
 			fi
 
@@ -421,16 +415,21 @@ acquire_lockfile_flock() {
 		trap 'signal_exit_code=143; cleanup_and_exit' TERM
 		trap 'cleanup_and_exit' EXIT
 
-		# Open lockfile for writing (creates/truncates the file)
-		# This is explicit so we control when it happens and can track it
-		exec 9>"$LOCKFILE"
-		file_opened=1
+		# Open lockfile read-write without truncating; then flock; then overwrite content.
+		exec 9<>"$LOCKFILE"
 
 		# Try non-blocking flock
 		if flock -n 9; then
-			# Lock acquired - write our PID
+			# Lock acquired - write our PID (truncate+write same inode we hold locked)
 			echo "$(get_unix_timestamp):$$" >"$LOCKFILE"
 			lock_acquired=1
+
+			# If a predecessor's pid was present but not running, we just reclaimed
+			# a stale lockfile via flock instead of the old "rm + retry" dance. Log
+			# that fact so the stale-reclaim signal isn't lost.
+			if [[ -n "$existing_pid" ]]; then
+				log_message "INFO" "SYSTEM" "Reclaimed stale lockfile (previous PID was: $existing_pid, no longer running)"
+			fi
 
 			# Run main function and capture its exit code
 			"$main_func" "$@"
@@ -440,43 +439,15 @@ acquire_lockfile_flock() {
 				signal_exit_code=$main_exit_code
 			fi
 		else
-			# flock failed - another process might have the lock
-			# Check if the lockfile WAS stale (before we truncated it)
-			# We saved this info before entering the subshell
-			if [[ "$was_stale" -eq 1 ]]; then
-				# Lockfile was stale - close fd, remove file, reopen, retry
-				# This is the proper sequence: we must close and reopen to get a new inode
-				exec 9>&- 2>/dev/null || true
-				rm -f "$LOCKFILE"
-				log_message "INFO" "SYSTEM" "Removed stale lockfile (timeout exceeded, previous PID was: ${existing_pid:-unknown})"
-
-				# Reopen fd to new file
-				exec 9>"$LOCKFILE"
-
-				if flock -n 9; then
-					# Got the lock on second try
-					echo "$(get_unix_timestamp):$$" >"$LOCKFILE"
-					lock_acquired=1
-
-					"$main_func" "$@"
-					local main_exit_code=$?
-
-					if [[ $signal_exit_code -eq 0 ]]; then
-						signal_exit_code=$main_exit_code
-					fi
-				else
-					# Still can't get lock - another process beat us to it
-					log_and_exit_lockfile_conflict "${existing_pid:-}"
-				fi
-			else
-				# Lockfile was not stale - another instance is actually running
-				log_and_exit_lockfile_conflict "${existing_pid:-}"
-			fi
+			# A failed flock means another live process holds the lock on this inode.
+			# Do not remove the path here, even if pre-checks considered the old
+			# file stale; a racing winner may have just reused that stale inode.
+			log_and_exit_lockfile_conflict "${existing_pid:-}"
 		fi
 
 		# Explicit cleanup (EXIT trap also runs but cleanup_done prevents double)
 		exec 9>&- 2>/dev/null || true
-		if [[ $file_opened -eq 1 ]]; then
+		if [[ $lock_acquired -eq 1 ]]; then
 			rm -f "$LOCKFILE" 2>/dev/null || true
 		fi
 		cleanup_done=1

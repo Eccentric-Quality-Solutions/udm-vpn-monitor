@@ -393,6 +393,36 @@ EOF
 }
 
 # bats test_tags=category:unit
+@test "check_ping_connectivity - BusyBox style \"N packets received\" in summary line" {
+	# Purpose: Some toolchains emit "M packets received" after transmitted; we still compute loss from counts.
+	setup_ping_summary_test
+
+	export ENABLE_PING_CHECK=1
+	export PING_COUNT=1
+	export PING_TIMEOUT=1
+	export DEBUG=1
+
+	local mock_ping="${TEST_DIR}/ping"
+	cat >"$mock_ping" <<'EOF'
+#!/bin/bash
+echo "3 packets transmitted, 0 packets received, 0% packet loss"
+exit 0
+EOF
+	chmod +x "$mock_ping"
+	export PATH="${TEST_DIR}:${PATH}"
+
+	check_local_ip_on_default_lan() {
+		return 0
+	}
+	export -f check_local_ip_on_default_lan
+
+	run check_ping_connectivity "${TEST_PEER_IP}" ""
+
+	assert_failure
+	assert_file_contains "$LOG_FILE" "100% packet loss"
+}
+
+# bats test_tags=category:unit
 @test "log_ping_summary_if_due - handles first call (last_time=0)" {
 	# Purpose: Test that first call logs summary immediately
 	# Expected: Summary logged on first call when last_time is 0

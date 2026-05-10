@@ -271,9 +271,11 @@ check_rate_limit() {
 	local recent_timestamps
 	recent_timestamps=$(awk -v cutoff="$window_start" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null | sort -n)
 
-	# Count recent restarts
+	# Count recent restarts. The `|| echo "0"` is load-bearing under set -o pipefail:
+	# grep -c on empty input prints 0 but exits 1, which would otherwise propagate and
+	# (if a future caller invokes us outside a conditional context) terminate the script.
 	local recent_restarts
-	recent_restarts=$(echo "$recent_timestamps" | grep -c . || echo "0")
+	recent_restarts=$(echo "$recent_timestamps" | grep -c . 2>/dev/null || echo "0")
 
 	local max_restarts="${MAX_RESTARTS_PER_WINDOW:-3}"
 	if [[ "$recent_restarts" -ge "$max_restarts" ]]; then

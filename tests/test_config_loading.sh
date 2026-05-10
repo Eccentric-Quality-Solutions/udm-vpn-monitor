@@ -534,3 +534,42 @@ EOF
 
 	remove_mock_from_path
 }
+
+# bats test_tags=category:unit
+@test "get_config_var_value_from_file returns quoted value without trailing comment" {
+	# Purpose: Install and tooling read single vars; must match safe_parse (comments after quoted values).
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh"
+	local cf="${TEST_DIR}/sample.conf"
+	cat >"$cf" <<'EOF'
+CRON_SCHEDULE="*/5 * * * *"  # not part of value
+EOF
+	local out
+	out=$(get_config_var_value_from_file "$cf" "CRON_SCHEDULE" 2>/dev/null)
+	[[ "$out" == "*/5 * * * *" ]]
+}
+
+# bats test_tags=category:unit
+@test "get_config_var_value_from_file last assignment wins" {
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh"
+	local cf="${TEST_DIR}/sample.conf"
+	cat >"$cf" <<'EOF'
+ENABLE_KEEPALIVE=0
+# middle
+ENABLE_KEEPALIVE=1
+EOF
+	local out
+	out=$(get_config_var_value_from_file "$cf" "ENABLE_KEEPALIVE" 2>/dev/null)
+	[[ "$out" == "1" ]]
+}
+
+# bats test_tags=category:unit
+@test "get_config_var_value_from_file returns 1 when variable unset" {
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh"
+	local cf="${TEST_DIR}/sample.conf"
+	echo 'FOO=bar' >"$cf"
+	run get_config_var_value_from_file "$cf" "MISSING_VAR" 2>/dev/null
+	assert_failure
+}

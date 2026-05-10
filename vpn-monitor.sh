@@ -100,8 +100,6 @@ done
 
 # Ensure state directory exists (needed before logging)
 if ! ensure_directory_exists "$STATE_DIR" "state"; then
-	# In fake mode, exit gracefully (code 0) to allow tests to verify error handling
-	# In normal mode, exit with error code to prevent incorrect operation
 	if is_fake_mode; then
 		exit "${EXIT_SUCCESS:-0}"
 	fi
@@ -110,8 +108,6 @@ fi
 
 # Ensure logs directory exists (needed before logging)
 if ! ensure_directory_exists "$LOGS_DIR" "logs"; then
-	# In fake mode, exit gracefully (code 0) to allow tests to verify error handling
-	# In normal mode, exit with error code to prevent incorrect operation
 	if is_fake_mode; then
 		exit "${EXIT_SUCCESS:-0}"
 	fi
@@ -123,62 +119,36 @@ fi
 RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 TIER2_RECOVERY_COUNT_FILE="${STATE_DIR}/tier2_recovery_count"
 # LAST_BYTES_FILE will be per-peer: ${STATE_DIR}/last_bytes_<peer_ip_sanitized>
-# COOLDOWN_UNTIL_FILE removed - cooldown functionality replaced by MIN_RESTART_INTERVAL_SECONDS
-
-# Test log file write capability early (before config loading)
 #
-# This test uses the default LOG_FILE path (${LOGS_DIR}/vpn-monitor.log).
-# If LOG_FILE is later overridden in config, subsequent logs will go to the new location,
-# but this initial test message will remain in the default location. This is intentional:
-# the early test validates that the default log location is writable, which is important
-# for error handling during config loading. If config loading fails, error messages can
-# still be written to the default location.
-#
-# Note:
-#   After config loading, path recalculation (log paths and state paths) is handled
-#   automatically inside load_config(). The new log directory is created at that point.
-#   If log file write fails, we output to stderr and continue (log_message handles this gracefully)
+# Touch default LOG_FILE before load_config so the default log path is writable if config
+# load fails. After load, LOG_FILE may move; this probe and the DEBUG line below stay under
+# the pre-config default. Paths and log dirs are reconciled in load_config().
 if ! touch "$LOG_FILE" 2>/dev/null; then
 	# Log file write failed - output to stderr and continue
 	# log_message() will handle subsequent write failures gracefully
 	log_message "WARNING" "SYSTEM" "Cannot write to log file: $LOG_FILE (check permissions on directory: $(dirname "$LOG_FILE")) - continuing execution with log messages output to stderr"
 fi
 
-# Verify logging works by writing a test message (DEBUG so cron runs don't clutter the log)
-# If this fails, log_message() will handle it gracefully by outputting to stderr
+# DEBUG so scheduled runs do not generate an INFO line every execution.
 log_message "DEBUG" "SYSTEM" "Log file initialized"
 
 # Load configuration
-# Note: Path recalculation (log paths and state paths) is now handled inside load_config()
-# In fake mode, config errors are logged but don't cause exit (handle_error_or_exit_fake_mode handles this)
-# In normal mode, config errors cause exit (set -e will trigger, or handle_error_or_exit_fake_mode calls die)
 if ! load_config "$CONFIG_FILE"; then
 	# load_config failed - in fake mode this returns 1, in normal mode it exits via handle_error_or_exit_fake_mode
-	# In fake mode, we should exit gracefully (exit 0) since errors are logged but don't cause failure
 	if is_fake_mode; then
 		exit "${EXIT_SUCCESS:-0}"
 	fi
-	# In normal mode, load_config should have already exited via handle_error_or_exit_fake_mode
-	# But if we get here, exit with error code
 	exit "${EXIT_VALIDATION_ERROR:-3}"
 fi
 
 # Validate configuration early (before network partition check)
-# This ensures configuration errors are caught before other checks
-# Configuration validation includes location-based config validation
 if ! validate_config; then
-	# validate_config calls handle_error_or_exit_fake_mode which exits in normal mode
-	# or returns 1 in fake mode
-	# In fake mode, handle_error_or_exit_fake_mode logs the error and returns 1
-	# Validation errors are execution-blocking, so they should exit with error code even in fake mode
-	# to allow tests to assert failure (see fake-mode exit behavior in CODE_PATTERNS/TEST_PATTERNS)
-	# In normal mode, validate_config should have already exited via handle_error_or_exit_fake_mode
-	# But if we get here, exit with error code
+	# Normal: fatal errors never return (die in validate_config). If we are here, fake mode
+	# got return 1—exit non-zero (unlike load_config above) so tests can assert validation failure.
 	exit "${EXIT_VALIDATION_ERROR:-3}"
 fi
 
 # Update state file paths that depend on LOGS_DIR
-# Note: Failure counters are per-peer: ${STATE_DIR}/failure_count_<location>_<peer_ip_sanitized>
 RESTART_COUNT_FILE="${STATE_DIR}/restart_count"
 TIER2_RECOVERY_COUNT_FILE="${STATE_DIR}/tier2_recovery_count"
 
@@ -188,32 +158,6 @@ TIER2_RECOVERY_COUNT_FILE="${STATE_DIR}/tier2_recovery_count"
 # This helps detect if cron jobs were removed during UniFi OS upgrades.
 # Checks root crontab for lines containing "vpn-monitor" (matches both
 # vpn-monitor.sh and vpn-monitor-wrapper.sh, since either is a valid install).
-#
-# Returns:
-#   0: Always succeeds (warnings logged but don't fail script)
-#
-# Side effects:
-#   - Logs warning if cron job not found
-#   - Suggests re-running install.sh to restore cron job
-#
-# Examples:
-#   check_cron_persistence
-#   # Logs warning if cron job missing
-#
-# Note:
-#   This check is performed once per script run (tracked via .cron_checked file)
-#   to avoid log spam on every execution.
-#   Uses crontab -l and grep to check for vpn-monitor entry (direct or wrapper).
-#   Note: The grep operation operates on command output (crontab -l), not a file,
-#   so no file_exists_and_readable() check is needed here.
-#   Requires log_message function to be available
-#
-# Arguments:
-#   None
-#
-# Returns:
-#   0: Always succeeds (warnings logged but don't fail script)
-#
 check_cron_persistence() {
 	if ! crontab -l 2>/dev/null | grep -q "vpn-monitor"; then
 		log_message "WARNING" "SYSTEM" "Cron job not found! Persistence may have been lost. Re-run install.sh to restore cron job."
@@ -236,21 +180,10 @@ check_cron_persistence() {
 # Side effects:
 #   - Exits script with error message via die() if validation fails
 #   - Logs warnings for unknown arguments and exits with error
-#
-# Examples:
-#   validate_args "$@"
-#   # Exits if conflicts detected (e.g., --help and --version together)
-#
-# Note:
-#   Requires die and log_message functions to be available
-#   Conflicting flags: --help/--version cannot be used together or with --fake
-#   File paths are checked for existence and readability/accessibility
 validate_args() {
 	local unknown_args=()
 
 	# Check for conflicts and unknown arguments
-	# Note: --help and --version are handled early (lines 43-64) and exit before this function is called
-	# So we only need to validate --fake and unknown arguments here
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--fake)
@@ -302,21 +235,9 @@ validate_args() {
 # Supported options:
 #   --fake: Enable fake mode (NO_ESCALATE=1) - runs checks but doesn't escalate tiers
 #
-# Returns:
-#   0: Always succeeds
-#
 # Side effects:
 #   - Sets NO_ESCALATE flag if --fake is provided
 #   - Logs fake mode enablement if --fake is used
-#
-# Examples:
-#   parse_args "$@"
-#   # Processes arguments, sets flags
-#
-# Note:
-#   --help and --version are handled early and exit before this function is called.
-#   Requires validate_args, log_message, and SCRIPT_VERSION to be set.
-#   Unknown arguments are handled by validate_args (warnings logged).
 parse_args() {
 	# Validate arguments first
 	validate_args "$@"
@@ -340,31 +261,6 @@ parse_args() {
 	done
 }
 
-# Main execution
-#
-# Main entry point for the VPN monitor script.
-# Initializes state, validates configuration, and monitors all configured peers.
-#
-# Arguments:
-#   $@: Command-line arguments (passed to parse_args)
-#
-# Returns:
-#   0: All peers healthy or checks completed successfully
-#   1: One or more peers failed checks or configuration error
-#
-# Execution flow:
-#   1. Parse command-line arguments
-#   2. Initialize state files
-#   3. Check cooldown period (exit if in cooldown)
-#   4. Check cron persistence (once per run)
-#   5. Validate EXTERNAL_PEER_IPS configuration
-#   6. Monitor each configured peer IP (external and internal)
-#   7. Exit with appropriate status code
-#
-# Side effects:
-#   - Creates state files and directories
-#   - Writes to log file
-#   - May execute recovery actions (if not in fake mode)
 # Initialize monitor script
 #
 # Parses command-line arguments, logs script start, and initializes state.
@@ -383,14 +279,6 @@ parse_args() {
 #   - Initializes state files via init_state()
 #   - Compacts restart count file via compact_restart_count_file()
 #   - Enables debug output if DEBUG=1
-#
-# Examples:
-#   initialize_monitor "$@"
-#   # Sets up script environment, parses args, logs start
-#
-# Note:
-#   Requires parse_args, log_message, init_state, compact_restart_count_file, NO_ESCALATE, DEBUG to be set
-#   Debug output goes to stderr (>&2)
 initialize_monitor() {
 	# Parse command-line arguments
 	parse_args "$@"
@@ -433,24 +321,6 @@ initialize_monitor() {
 #   - Logs warnings about state file issues (but doesn't fail)
 #   - Checks cron persistence once per run (creates .cron_checked file)
 #   - Enables debug output if DEBUG=1
-#
-# Examples:
-#   validate_monitor_state
-#   # Validates state, checks partition, checks cooldown, may exit if partitioned or in cooldown
-#
-# Note:
-#   Requires validate_state, check_cron_persistence, check_network_partition,
-#   get_network_partition_state, set_network_partition_state, log_message, STATE_DIR, DEBUG to be set
-#   Cron check is performed once per run to avoid log spam
-#   Network partition check runs before cooldown check to ensure partition detection works during cooldown
-#
-# Arguments:
-#   None
-#
-# Returns:
-#   0: State is valid, network is healthy (or partition check disabled), and not in cooldown (continues execution)
-#   Exits script with code 0 if network is partitioned or in cooldown
-#
 validate_monitor_state() {
 	# Validate state files (check for corruption)
 	if ! validate_state; then
@@ -459,7 +329,6 @@ validate_monitor_state() {
 
 	# Check system resources (CPU, RAM, disk space)
 	# This check happens early to throttle execution if resources are constrained
-	# Resource monitoring may exit early if resources are severely constrained
 	if ! check_system_resources "$STATE_DIR"; then
 		log_message "ERROR" "SYSTEM" "Script exiting: system resources constrained"
 		exit "${EXIT_SUCCESS:-0}"
@@ -476,7 +345,7 @@ validate_monitor_state() {
 		local dns_timeout="${NETWORK_PARTITION_DNS_TIMEOUT:-2}"
 		local interfaces="${NETWORK_PARTITION_INTERFACES:-br0,eth0}"
 
-		# Get current partition state once (DRY principle)
+		# Get current partition state once
 		local prev_partition_state
 		prev_partition_state=$(get_network_partition_state)
 
@@ -497,8 +366,6 @@ validate_monitor_state() {
 		log_network_partition_summary_if_due
 	fi
 
-	# Cooldown removed - rate limiting now handles restart spacing via MIN_RESTART_INTERVAL_SECONDS
-
 	# Check cron persistence (first run only, to avoid log spam)
 	if [[ ! -f "${STATE_DIR}/.cron_checked" ]]; then
 		debug_log "Checking cron persistence"
@@ -513,9 +380,6 @@ validate_monitor_state() {
 # Process all locations
 #
 # Iterates through configured locations and monitors each one.
-# Configuration is validated earlier in main() before network partition check.
-# Network partition check is performed earlier in validate_monitor_state() before this function is called.
-# Skips invalid locations with a warning.
 # Uses location external IP for xfrm state checks and location internal IPs for ping checks.
 #
 # Returns:
@@ -523,34 +387,14 @@ validate_monitor_state() {
 #   1: One or more locations have issues (at least one monitor_location call failed)
 #
 # Side effects:
-#   - Uses LOCATIONS array populated by validate_config() (called earlier)
+#   - Uses LOCATIONS array populated by validate_config()
 #   - Calls monitor_location() for each location
 #   - Logs warnings for invalid locations (skips them)
 #   - Enables debug output if DEBUG=1
-#
-# Examples:
-#   if ! process_locations; then
-#       echo "Some locations have issues"
-#   fi
-#
-# Note:
-#   Requires LOCATIONS array to be populated (via validate_config() called earlier)
-#   Requires monitor_location, log_message, DEBUG to be set
-#   Network partition check is performed in validate_monitor_state() before this function is called
-#
-# Arguments:
-#   None
-#
-# Returns:
-#   0: All locations are healthy (all monitor_location calls succeeded)
-#   1: One or more locations have issues (at least one monitor_location call failed)
-#
 process_locations() {
 	local all_ok=0
 
-	# Configuration is already validated early in main() before network partition check
-	# parse_location_config() was called by validate_config(), so LOCATIONS array should be populated
-	# Defensive check: verify LOCATIONS is populated (should never be empty if validation succeeded)
+	# Defensive check: verify LOCATIONS is populated
 	if [[ ${#LOCATIONS[@]} -eq 0 ]]; then
 		handle_error_or_exit_fake_mode "SYSTEM" "No locations configured" "${EXIT_VALIDATION_ERROR:-3}"
 		return 1
@@ -589,15 +433,8 @@ process_locations() {
 	#   - If a VPN recovers naturally between cycles, it may still be counted as "failing" for one cycle
 	#   - This can cause unnecessary recovery coordination, but this is safer than missing failures
 	#   - The impact is minimal: one location (coordinator) still attempts recovery, others just skip
-	#
-	# Alternative (not implemented):
-	#   - Check VPN status before system-wide detection for immediate accuracy
-	#   - Cost: Performance hit (double-checking), more complex code
-	#   - Benefit: Slightly more accurate (one cycle earlier), but benefit is minimal
-	#
+
 	# Step 1: Check existing failure counts from previous cycle
-	# This allows us to detect system-wide failures before attempting recovery
-	# Uses existing state (failure counts) rather than re-checking VPNs, avoiding double work
 	declare -A location_failure_status
 	for location_name in "${!LOCATIONS[@]}"; do
 		# Get external IP for this location
@@ -611,7 +448,6 @@ process_locations() {
 
 		# Check existing failure count from previous cycle
 		# If failure count > 0, location was failing in the previous cycle
-		# This is more efficient than re-checking VPNs and still provides immediate detection
 		local failure_count
 		failure_count=$(get_failure_count "$location_name" "$external_peer_ip")
 		if [[ "$failure_count" -gt 0 ]]; then
@@ -710,15 +546,6 @@ process_locations() {
 #   - Writes to log file
 #   - May execute recovery actions (if not in fake mode)
 #   - Exits script with status code (0 = success, 1 = warnings/errors)
-#
-# Examples:
-#   main "$@"
-#   # Runs complete monitoring process
-#
-# Note:
-#   Requires initialize_monitor, validate_monitor_state, process_locations,
-#   log_message to be set
-#   Called by acquire_lockfile to ensure single instance execution
 main() {
 	# Initialize monitor script
 	initialize_monitor "$@"
@@ -728,12 +555,11 @@ main() {
 
 	# Apply startup grace period if this is first run after restart
 	# This prevents false positives when IPsec/xfrm subsystems are still initializing
-	# Check if this is a fresh start (no state file indicating recent run)
+	#
 	# We consider it a "fresh start" if:
 	#   1. The timestamp file doesn't exist (first run ever, or state directory was cleared)
 	#   2. The timestamp file is older than 5 minutes (likely system restart or script hasn't run in a while)
-	#      Note: 5-minute threshold assumes cron runs at least every minute. If file is older than 5 minutes,
-	#      it indicates the script hasn't run recently (likely due to system restart or cron being disabled)
+	#      Note: 5-minute threshold assumes cron runs at least every minute. If file is older than 5 minutes
 	local last_run_timestamp_file="${STATE_DIR}/.last_run_timestamp"
 	local apply_grace_period=0
 	local grace_period="${STARTUP_GRACE_PERIOD:-5}"
@@ -743,7 +569,6 @@ main() {
 		apply_grace_period=1
 	elif [[ "$grace_period" -gt 0 ]]; then
 		# File exists - check if it's recent (within last 5 minutes)
-		# If file is older than 5 minutes, likely a system restart or script hasn't run in a while
 		# Use find to check file age (more portable than stat).
 		# Capture stdout only; stderr is discarded so error messages are not treated as result.
 		local find_result

@@ -46,6 +46,7 @@ create_test_config() {
 
 	cat >"$config_file" <<EOF
 # Test configuration file
+ENABLE_RESOURCE_MONITORING=0
 EOF
 
 	# Add each variable assignment

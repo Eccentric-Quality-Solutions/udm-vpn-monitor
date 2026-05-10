@@ -2832,6 +2832,76 @@ EOF
 	assert_failure
 }
 
+# Shared bootstrap for parse_assignment unit tests.
+# Sources logging/common/config (which pulls config_loading.sh). Then shims
+# handle_config_error so a parse failure returns 1 to the caller instead of
+# routing through handle_error_or_exit_fake_mode — that escalation path is
+# out of scope at the unit level; we only want the parser's own success/fail
+# return value.
+setup_parse_assignment_test() {
+	if [[ -f "${LIB_DIR}/config.sh" ]]; then
+		if [[ -f "${LIB_DIR}/logging.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/logging.sh" 2>/dev/null || true
+		fi
+		if [[ -f "${LIB_DIR}/common.sh" ]]; then
+			# shellcheck source=/dev/null
+			source "${LIB_DIR}/common.sh" 2>/dev/null || true
+		fi
+		# shellcheck source=/dev/null
+		source "${LIB_DIR}/config.sh" 2>/dev/null || true
+	fi
+	handle_config_error() { return 1; }
+}
+
+# bats test_tags=category:unit
+@test "parse_assignment allows # inside double-quoted values" {
+	# Purpose: Regression for naive %%#* stripping which broke hostnames like vpn#1.example.com.
+	# Expected: Hash inside quotes is literal; value is preserved.
+	setup_parse_assignment_test
+
+	declare -A parse_result
+	if ! parse_assignment 'LOC_EXTERNAL="vpn#1.example.com"' 1 "parse_result"; then
+		fail "parse_assignment should accept quoted value containing #"
+	fi
+	assert_equal "${parse_result[name]}" "LOC_EXTERNAL"
+	assert_equal "${parse_result[value]}" "vpn#1.example.com"
+}
+
+# bats test_tags=category:unit
+@test "parse_assignment allows trailing comment after quoted value" {
+	# Purpose: Inline comments after a closing quote remain valid.
+	setup_parse_assignment_test
+
+	declare -A parse_result
+	if ! parse_assignment 'PING_COUNT="5"  # threads' 1 "parse_result"; then
+		fail "parse_assignment should accept trailing comment after quoted value"
+	fi
+	assert_equal "${parse_result[value]}" "5"
+}
+
+# bats test_tags=category:unit
+@test "parse_assignment rejects unquoted value containing #" {
+	# Purpose: # in an unquoted token must be quoted (avoid silent truncation).
+	setup_parse_assignment_test
+
+	declare -A parse_result
+	run parse_assignment 'HOST=vpn#1.example.com' 1 "parse_result"
+	assert_failure
+}
+
+# bats test_tags=category:unit
+@test "parse_assignment accepts unquoted value with spaced comment suffix" {
+	# Purpose: KEY=value # remark remains valid for unquoted tokens.
+	setup_parse_assignment_test
+
+	declare -A parse_result
+	if ! parse_assignment 'PING_COUNT=5  # default' 1 "parse_result"; then
+		fail "parse_assignment should strip spaced trailing comment for unquoted value"
+	fi
+	assert_equal "${parse_result[value]}" "5"
+}
+
 # bats test_tags=category:unit
 @test "safe_parse_config_file parses multiple lines correctly" {
 	# Purpose: Test verifies that safe_parse_config_file properly parses multiple config lines

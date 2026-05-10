@@ -319,19 +319,29 @@ setup_readonly_state_file() {
 	# Set up trap to restore permissions on EXIT. Chain with any existing EXIT trap
 	# so multiple calls to setup_readonly_state_file() in one test all get restored.
 	# Use actual path value, not variable, since trap executes after function returns.
-	local restore_cmd existing_trap existing_cmd new_trap
-	restore_cmd="chmod $original_perms \"$state_file\" 2>/dev/null || true"
-	existing_trap=$(trap -p EXIT 2>/dev/null) || true
-	if [[ -n "$existing_trap" ]]; then
-		# Extract command from "trap -- 'command' EXIT" (strip trap -- ' and ' EXIT)
-		existing_cmd=${existing_trap#trap -- \'}
-		existing_cmd=${existing_cmd%\' EXIT}
-		new_trap="$restore_cmd; ${existing_cmd}"
-	else
-		new_trap="$restore_cmd"
+	#
+	# IMPORTANT: Skip trap setup when running inside a subshell (e.g. when this
+	# function is called via $(...) command substitution). The parent's EXIT trap
+	# (bats_teardown_trap) is inherited by the subshell, and installing a chained
+	# trap would cause bats_teardown_trap to fire on subshell exit, prematurely
+	# tearing down the test (deleting TEST_DIR while the test body is still
+	# running). Permissions don't need restoring in subshell context: standard_teardown
+	# rm -rf's TEST_DIR regardless of file mode bits.
+	if [[ "$BASHPID" == "$$" ]]; then
+		local restore_cmd existing_trap existing_cmd new_trap
+		restore_cmd="chmod $original_perms \"$state_file\" 2>/dev/null || true"
+		existing_trap=$(trap -p EXIT 2>/dev/null) || true
+		if [[ -n "$existing_trap" ]]; then
+			# Extract command from "trap -- 'command' EXIT" (strip trap -- ' and ' EXIT)
+			existing_cmd=${existing_trap#trap -- \'}
+			existing_cmd=${existing_cmd%\' EXIT}
+			new_trap="$restore_cmd; ${existing_cmd}"
+		else
+			new_trap="$restore_cmd"
+		fi
+		# shellcheck disable=SC2064 # We want variable expansion at trap definition time
+		trap "$new_trap" EXIT
 	fi
-	# shellcheck disable=SC2064 # We want variable expansion at trap definition time
-	trap "$new_trap" EXIT
 
 	# Return the path for use in tests
 	echo "$state_file"

@@ -319,6 +319,9 @@ check_ping_connectivity() {
 		# ping reports a bogus percentage (e.g. UDM reporting 3333% for 3 sent / 0 received).
 		# Format: "N packets transmitted, M received, ..." (e.g. Linux/BusyBox ping -q).
 		local packet_loss
+		# Prefer counts from summary line: "N packets transmitted, M received" (Linux) or
+		# "N packets transmitted, M packets received" (some BusyBox/inetutils builds). Ignore
+		# bogus % packet loss on the same line (e.g. 3333% when 3 sent, 0 received).
 		if [[ "$ping_result" =~ ([0-9]+)[[:space:]]+packets[[:space:]]+transmitted,[[:space:]]+([0-9]+)[[:space:]]+received ]]; then
 			local transmitted="${BASH_REMATCH[1]}"
 			local received="${BASH_REMATCH[2]}"
@@ -327,6 +330,17 @@ check_ping_connectivity() {
 				# Integer percentage: (lost * 100) / transmitted
 				packet_loss=$((lost * 100 / transmitted))
 				# Clamp to 0-100 (paranoia; math should already be in range)
+				[[ "$packet_loss" -lt 0 ]] && packet_loss=0
+				[[ "$packet_loss" -gt 100 ]] && packet_loss=100
+			else
+				packet_loss="0"
+			fi
+		elif [[ "$ping_result" =~ ([0-9]+)[[:space:]]+packets[[:space:]]+transmitted,[[:space:]]+([0-9]+)[[:space:]]+packets[[:space:]]+received ]]; then
+			local transmitted="${BASH_REMATCH[1]}"
+			local received="${BASH_REMATCH[2]}"
+			if [[ "$transmitted" -gt 0 ]]; then
+				local lost=$((transmitted - received))
+				packet_loss=$((lost * 100 / transmitted))
 				[[ "$packet_loss" -lt 0 ]] && packet_loss=0
 				[[ "$packet_loss" -gt 100 ]] && packet_loss=100
 			else

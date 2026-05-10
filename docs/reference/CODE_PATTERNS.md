@@ -1577,14 +1577,11 @@ check_vpn_status() {
 - **Notes**: Dependencies, requirements, warnings, implementation details
 
 **Key Points:**
-- All functions must have documentation blocks before their definition
-- Documentation must include required sections: Arguments, Returns
-- Optional but recommended: Side effects, Examples, Notes
+- All functions should have documentation blocks before their definition
+- Documentation should include Arguments and Returns where non-obvious; optional: Side effects, Examples, Notes
 - Use consistent format across all functions
-- Documentation is enforced by `scripts/check-documentation.sh` pre-commit hook
-- The documentation checker shows all errors at once (not just the first error) for better developer experience
-- Fallback functions in library files (used when primary libraries fail to load) must also be documented
-- Nested functions (defined inside other functions) must be documented as they're part of the public API
+- Fallback functions in library files (used when primary libraries fail to load) should also be documented
+- Nested functions (defined inside other functions) should be documented when they carry non-obvious behavior
 
 ---
 

@@ -35,6 +35,7 @@ We will implement lockfile protection using `flock` (preferred) with atomic file
 
 ## Implementation Details
 - **Preferred Method**: Uses `flock` command with file descriptor locking
+- **Flock ordering (2026-04-26)**: Open the lock path with `exec 9<>` (no truncate), then `flock`, then write `timestamp:pid`. Cleanup removes the lock **path** only when this instance acquired the lock (`lock_acquired=1`). Truncating or `rm` before a failed flock could unlink another process’s inode or let a second instance create a new file at the same path.
 - **Fallback Method**: Atomic file creation using `set -C` (noclobber mode)
 - **Lockfile Format**: `timestamp:pid` for timeout detection
 - **Timeout Detection**: Checks lockfile age against `LOCKFILE_TIMEOUT` (default: 300 seconds)

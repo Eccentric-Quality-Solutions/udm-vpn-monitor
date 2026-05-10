@@ -404,3 +404,248 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 
 	remove_mock_from_path
 }
+
+# ============================================================================
+# CONTRACT: VALUES ARE LITERAL STRINGS, NEVER SHELL-EVALUATED
+# ============================================================================
+# The loader's security model is:
+#   1. parse_assignment validates KEY=VALUE shape
+#   2. Schema whitelist gates which KEYs may be set
+#   3. safe_set_variable assigns via printf -v (no expansion)
+# Because of (3), values containing $(...), backticks, or substrings like
+# "source"/"exec"/"eval" are stored as literal strings — not executed.
+# These tests pin that contract so a future refactor can't quietly re-introduce
+# eval/source on config values.
+
+# bats test_tags=category:high-risk,priority:critical
+@test "value containing 'source' as a substring is accepted (no false positive)" {
+	# Regression: previously, a substring "dangerous content" check rejected
+	# legitimate values like LOCATION_..._EXTERNAL="source.example.com".
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config_schema.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config_schema.sh" 2>/dev/null || true
+
+	export STATE_DIR="${TEST_DIR}"
+	export LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
+	export LOGS_DIR="${TEST_DIR}/logs"
+	enable_fake_mode
+	mkdir -p "$LOGS_DIR"
+
+	local config_file="${TEST_DIR}/false-positive.conf"
+	cat >"$config_file" <<'EOF'
+LOCATION_NYC_EXTERNAL="source.example.com"
+LOCATION_NYC_INTERNAL="exec.internal.example.com"
+NETWORK_PARTITION_DNS_HOSTNAME="eval.test.example.com"
+EOF
+
+	# Call directly (not via 'run'): we need the assigned globals in this
+	# shell to assert against. 'run' executes in a subshell.
+	safe_parse_config_file "$config_file"
+
+	assert_equal "${LOCATION_NYC_EXTERNAL:-}" "source.example.com"
+	assert_equal "${LOCATION_NYC_INTERNAL:-}" "exec.internal.example.com"
+	assert_equal "${NETWORK_PARTITION_DNS_HOSTNAME:-}" "eval.test.example.com"
+
+	rm -f "$config_file"
+}
+
+# bats test_tags=category:high-risk,priority:critical
+@test "command-substitution syntax in a value is stored as a literal, not executed" {
+	# Pins the no-execution invariant: even if a config contains $(...) or
+	# backticks, safe_set_variable's printf -v assigns the literal string.
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config_schema.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config_schema.sh" 2>/dev/null || true
+
+	export STATE_DIR="${TEST_DIR}"
+	export LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
+	export LOGS_DIR="${TEST_DIR}/logs"
+	enable_fake_mode
+	mkdir -p "$LOGS_DIR"
+
+	local pwn_marker="${TEST_DIR}/pwn-marker"
+	rm -f "$pwn_marker"
+
+	local config_file="${TEST_DIR}/no-exec.conf"
+	# Unquoted heredoc: a leading \ on $ stops command substitution; the line is
+	# written with a literal $(...) in the file (same effect as <<'EOF' would be).
+	cat >"$config_file" <<EOF
+LOCATION_NYC_EXTERNAL="\$(touch ${pwn_marker})"
+EOF
+
+	# Parse the config. We don't care whether the parser accepts or rejects
+	# this specific value — only that the marker file is NOT created.
+	safe_parse_config_file "$config_file" || true
+
+	# The critical assertion: nothing executed.
+	[ ! -e "$pwn_marker" ] || {
+		echo "FAIL: command substitution in config value was executed (marker created)" >&2
+		return 1
+	}
+
+	# If the value was accepted, it must be the literal string, not the result
+	# of running 'touch'. (If rejected, the variable is just unset/empty —
+	# which is also fine; the no-execution invariant is what matters.)
+	if [[ -n "${LOCATION_NYC_EXTERNAL:-}" ]]; then
+		[[ "${LOCATION_NYC_EXTERNAL}" == "\$(touch ${pwn_marker})" ]] || {
+			echo "FAIL: value was transformed; expected literal, got: ${LOCATION_NYC_EXTERNAL}" >&2
+			return 1
+		}
+	fi
+
+	rm -f "$config_file"
+}
+
+# bats test_tags=category:high-risk,priority:critical
+@test "install.sh config-value extraction does not shell-evaluate the file" {
+	# install.sh used to 'source' the config to read ENABLE_PING_CHECK and
+	# LOCAL_UDM_IP. It now uses get_config_var_value_from_file, the same
+	# quote/comment-aware safe extractor used elsewhere in install.sh.
+	# This pins that contract: malicious-looking values remain literal and are not executed.
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config/config_loading.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config/config_loading.sh" 2>/dev/null || true
+
+	local pwn_marker="${TEST_DIR}/install-pwn-marker"
+	rm -f "$pwn_marker"
+
+	local config_file="${TEST_DIR}/malicious.conf"
+	cat >"$config_file" <<EOF
+ENABLE_PING_CHECK=1 # keep ping enabled
+LOCAL_UDM_IP="\$(touch ${pwn_marker})" # literal value, not shell
+EOF
+
+	# Mirror the exact extraction helper used in install.sh (search for
+	# get_config_var_value_from_file near install.sh:~2190).
+	local enable_ping local_ip
+	enable_ping=$(get_config_var_value_from_file "$config_file" "ENABLE_PING_CHECK" 2>/dev/null)
+	local_ip=$(get_config_var_value_from_file "$config_file" "LOCAL_UDM_IP" 2>/dev/null)
+
+	[ ! -e "$pwn_marker" ] || {
+		echo "FAIL: install.sh config extraction executed config value" >&2
+		return 1
+	}
+
+	# Extracted values should use the shared parser rules: comments stripped,
+	# quotes stripped, command substitution preserved as a literal string.
+	assert_equal "$enable_ping" "1"
+	assert_equal "$local_ip" "\$(touch ${pwn_marker})"
+
+	rm -f "$config_file"
+}
+
+# ============================================================================
+# CONTRACT: '#' HANDLING RESPECTS QUOTING
+# ============================================================================
+# parse_assignment used to do `assignment="${assignment%%#*}"` before parsing,
+# which silently corrupted quoted values like LOCATION_X="vpn#1.example.com"
+# (truncated to "vpn → "unclosed quote" error). Comment handling now lives in
+# parse_quoted_value and respects whether we're inside a quoted string.
+
+# Shared loader-bootstrap for the tests below; keeps each test focused on the
+# assertion rather than the sourcing dance.
+setup_loader_for_security_test() {
+	# shellcheck source=../lib/common.sh
+	source "${BATS_TEST_DIRNAME}/../lib/common.sh" 2>/dev/null || true
+	# shellcheck source=../lib/logging.sh
+	source "${BATS_TEST_DIRNAME}/../lib/logging.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config.sh" 2>/dev/null || true
+	# shellcheck source=../lib/config_schema.sh
+	source "${BATS_TEST_DIRNAME}/../lib/config_schema.sh" 2>/dev/null || true
+
+	export STATE_DIR="${TEST_DIR}"
+	export LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
+	export LOGS_DIR="${TEST_DIR}/logs"
+	enable_fake_mode
+	mkdir -p "$LOGS_DIR"
+}
+
+# bats test_tags=category:high-risk,priority:critical
+@test "'#' inside double-quoted value is preserved (regression for naive %%#* strip)" {
+	# This is the bug the parse_assignment / parse_quoted_value rework fixes:
+	# previously KEY="vpn#1.example.com" was truncated to KEY="vpn before quote
+	# parsing even ran, then errored as an unclosed quote.
+	setup_loader_for_security_test
+
+	local config_file="${TEST_DIR}/hash-in-value.conf"
+	cat >"$config_file" <<'EOF'
+LOCATION_NYC_EXTERNAL="vpn#1.example.com"
+LOCATION_NYC_INTERNAL='lan#2.internal'
+EOF
+
+	safe_parse_config_file "$config_file"
+
+	assert_equal "${LOCATION_NYC_EXTERNAL:-}" "vpn#1.example.com"
+	assert_equal "${LOCATION_NYC_INTERNAL:-}" "lan#2.internal"
+
+	rm -f "$config_file"
+}
+
+# bats test_tags=category:unit
+@test "trailing '# comment' is stripped from unquoted value" {
+	setup_loader_for_security_test
+
+	local config_file="${TEST_DIR}/unquoted-comment.conf"
+	cat >"$config_file" <<'EOF'
+PING_COUNT=5 # how many pings per check
+EOF
+
+	safe_parse_config_file "$config_file"
+
+	assert_equal "${PING_COUNT:-}" "5"
+
+	rm -f "$config_file"
+}
+
+# bats test_tags=category:unit
+@test "unquoted value with embedded '#' is rejected (must quote)" {
+	# Without whitespace before '#', the parser can't tell value from comment,
+	# so it errors rather than silently picking one. Ambiguity → loud error.
+	setup_loader_for_security_test
+
+	local config_file="${TEST_DIR}/embedded-hash.conf"
+	cat >"$config_file" <<'EOF'
+LOCATION_NYC_EXTERNAL=vpn#1.example.com
+EOF
+
+	# Parse should fail (or skip the line). The critical assertion is that
+	# the value is NOT silently set to "vpn" via naive comment-stripping.
+	safe_parse_config_file "$config_file" || true
+
+	[[ "${LOCATION_NYC_EXTERNAL:-}" != "vpn" ]] || {
+		echo "FAIL: unquoted value was silently truncated at '#' (the old bug)" >&2
+		return 1
+	}
+
+	rm -f "$config_file"
+}
+
+# bats test_tags=category:unit
+@test "trailing '# comment' after closing quote is stripped" {
+	setup_loader_for_security_test
+
+	local config_file="${TEST_DIR}/quoted-then-comment.conf"
+	cat >"$config_file" <<'EOF'
+LOCATION_NYC_EXTERNAL="vpn.example.com" # primary site
+EOF
+
+	safe_parse_config_file "$config_file"
+
+	assert_equal "${LOCATION_NYC_EXTERNAL:-}" "vpn.example.com"
+
+	rm -f "$config_file"
+}

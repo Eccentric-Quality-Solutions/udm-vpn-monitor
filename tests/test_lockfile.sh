@@ -1523,13 +1523,13 @@ test_pid=\$!
 # Make directory read-only after a short delay (simulating race condition)
 # Note: This is a best-effort test - timing may vary
 sleep 0.01
-chmod 555 "$state_dir" 2>/dev/null || true
+chmod 555 "$STATE_DIR" 2>/dev/null || true
 
 # Wait for test script to complete
 wait \$test_pid 2>/dev/null || true
 
 # Restore permissions
-chmod 755 "$state_dir" 2>/dev/null || true
+chmod 755 "$STATE_DIR" 2>/dev/null || true
 EOF
 	chmod +x "$race_script"
 
@@ -2314,4 +2314,197 @@ EOF
 	rm -f "$lockfile" "$race_script" 2>/dev/null || true
 
 	remove_mock_from_path
+}
+
+# bats test_tags=category:high-risk,priority:critical
+@test "acquire_lockfile_flock: loser must not unlink the winner's lockfile path" {
+	# Regression for the bug fixed by reworking acquire_lockfile_flock to open with
+	# `exec 9<>` (no truncate) and only `rm -f` the lockfile when *this* instance
+	# held the lock. In the old code, a losing contender's cleanup unlinked the
+	# path even though it never acquired flock. flock is held on the inode, so the
+	# winner kept running fine — but the now-orphaned path let a third process
+	# create a fresh inode and acquire flock concurrently, breaking mutual exclusion.
+	#
+	# Test plan:
+	#   A acquires the lock and holds it (via a sleep inside main_work).
+	#   B contends and fails. After B exits, the lockfile path MUST still exist
+	#     and contain A's pid — that's the direct invariant the diff enforces.
+	#   C contends after B has exited. With the bug, B's cleanup unlinked the
+	#     path; C would then succeed and ran main_work concurrently with A.
+	#     With the fix, C sees A's lockfile and exits with conflict.
+	#   At the end, exactly one main_work marker exists (A's).
+	if ! command -v flock >/dev/null 2>&1; then
+		skip "flock command not available"
+	fi
+
+	local lib_dir="${BATS_TEST_DIRNAME}/../lib"
+	local lockfile="${TEST_DIR}/regression.lock"
+	local marker_dir="${TEST_DIR}/markers"
+	local ready_marker="${TEST_DIR}/A.ready"
+	mkdir -p "$marker_dir"
+	export STATE_DIR="${TEST_DIR}"
+	export LOG_FILE="${TEST_DIR}/test.log"
+	mkdir -p "$(dirname "$LOG_FILE")"
+
+	# Tiny driver: source lockfile.sh, call acquire_lockfile_flock with a
+	# main_work that announces it ran and (optionally) sleeps. Each contender
+	# uses its own ready/marker files derived from $$.
+	local driver="${TEST_DIR}/lock_driver.sh"
+	cat >"$driver" <<'EOF'
+#!/bin/bash
+# args: <hold_seconds> <lockfile> <marker_dir> <lib_dir> [ready_marker]
+hold="$1"
+LOCKFILE="$2"
+marker_dir="$3"
+LIB_DIR="$4"
+ready_marker="${5:-}"
+export LIB_DIR LOCKFILE
+export LOCKFILE_TIMEOUT=300
+export STATE_DIR="$(dirname "$LOCKFILE")"
+export LOG_FILE="${STATE_DIR}/driver.log"
+# shellcheck source=/dev/null
+source "${LIB_DIR}/common.sh"
+# shellcheck source=/dev/null
+source "${LIB_DIR}/logging.sh"
+# shellcheck source=/dev/null
+source "${LIB_DIR}/lockfile.sh"
+
+main_work() {
+	: >"${marker_dir}/ran.$$"
+	if [[ -n "$ready_marker" ]]; then
+		: >"$ready_marker"
+	fi
+	if [[ "$hold" != "0" ]]; then
+		sleep "$hold"
+	fi
+}
+acquire_lockfile_flock main_work
+EOF
+	chmod +x "$driver"
+
+	# A: winner. Holds the lock for ~2s; signals readiness via $ready_marker.
+	bash "$driver" 2 "$lockfile" "$marker_dir" "$lib_dir" "$ready_marker" >"${TEST_DIR}/A.out" 2>&1 &
+	local pid_a=$!
+
+	# Wait for A to acquire the lock (bounded — fail loudly if not).
+	local waited=0
+	while [[ ! -e "$ready_marker" ]] && [[ $waited -lt 50 ]]; do
+		sleep 0.1
+		waited=$((waited + 1))
+	done
+	[[ -e "$ready_marker" ]] || {
+		kill "$pid_a" 2>/dev/null || true
+		fail "Process A did not acquire lock within 5s"
+	}
+
+	# Capture A's lockfile content for the post-B assertion.
+	local content_before_b
+	content_before_b=$(cat "$lockfile")
+	[[ -n "$content_before_b" ]] || fail "Lockfile empty after A acquired (expected timestamp:pid)"
+
+	# B: contender. Should fail to acquire, exit cleanly. CRITICAL: must NOT rm the path.
+	bash "$driver" 0 "$lockfile" "$marker_dir" "$lib_dir" "" >"${TEST_DIR}/B.out" 2>&1 &
+	local pid_b=$!
+	wait "$pid_b" || true
+
+	# === The regression assertion ===
+	[[ -e "$lockfile" ]] || fail "Loser unlinked the winner's lockfile path (the bug)"
+	local content_after_b
+	content_after_b=$(cat "$lockfile")
+	[[ "$content_after_b" == "$content_before_b" ]] ||
+		fail "Loser corrupted lockfile content: before='${content_before_b}' after='${content_after_b}'"
+
+	# C: with the bug, B's unlink would have let C acquire a fresh inode here.
+	# With the fix, C sees A's still-present lockfile and exits with conflict.
+	bash "$driver" 0 "$lockfile" "$marker_dir" "$lib_dir" "" >"${TEST_DIR}/C.out" 2>&1 &
+	local pid_c=$!
+	wait "$pid_c" || true
+
+	# Wait for A to finish its hold.
+	wait "$pid_a" || true
+
+	# Exactly one marker should exist — A's. If C had also acquired (the bug),
+	# we'd see two markers.
+	local marker_count
+	marker_count=$(find "$marker_dir" -name 'ran.*' -type f | wc -l)
+	[[ "$marker_count" -eq 1 ]] || {
+		echo "FAIL: expected 1 ran marker (only winner runs main_work), got $marker_count" >&2
+		ls -la "$marker_dir" >&2
+		fail "Mutual exclusion broken: a contender ran main_work while A still held the lock"
+	}
+
+	# A should have cleaned up its own lockfile on exit.
+	[[ ! -e "$lockfile" ]] || {
+		echo "WARN: lockfile not cleaned up after winner exit: $lockfile" >&2
+	}
+
+	rm -f "$lockfile" "$driver" "$ready_marker"
+	rm -rf "$marker_dir"
+}
+
+# bats test_tags=category:high-risk,priority:critical
+@test "acquire_lockfile_flock: concurrent stale-lock contenders allow only one winner" {
+	# Regression: if two processes observed the same stale lockfile, the loser
+	# used to remove the path after failing flock. That unlinked the winner's
+	# locked inode and let the loser acquire a fresh inode, so both ran main_work.
+	if ! command -v flock >/dev/null 2>&1; then
+		skip "flock command not available"
+	fi
+
+	local lib_dir="${BATS_TEST_DIRNAME}/../lib"
+	local driver="${TEST_DIR}/stale_lock_driver.sh"
+
+	cat >"$driver" <<'EOF'
+#!/bin/bash
+# args: <name> <hold_seconds> <lockfile> <marker_dir> <lib_dir>
+name="$1"
+hold="$2"
+LOCKFILE="$3"
+marker_dir="$4"
+LIB_DIR="$5"
+export LIB_DIR LOCKFILE
+export LOCKFILE_TIMEOUT=1
+export STATE_DIR="$(dirname "$LOCKFILE")"
+export LOG_FILE="${STATE_DIR}/driver.log"
+# shellcheck source=/dev/null
+source "${LIB_DIR}/common.sh"
+# shellcheck source=/dev/null
+source "${LIB_DIR}/logging.sh"
+# shellcheck source=/dev/null
+source "${LIB_DIR}/lockfile.sh"
+
+main_work() {
+	: >"${marker_dir}/ran.${name}.$$"
+	sleep "$hold"
+}
+acquire_lockfile_flock main_work
+EOF
+	chmod +x "$driver"
+
+	local i
+	for i in {1..10}; do
+		local iter_dir="${TEST_DIR}/stale-race-${i}"
+		local lockfile="${iter_dir}/vpn-monitor.lock"
+		local marker_dir="${iter_dir}/markers"
+		mkdir -p "$marker_dir"
+		printf '1:999999\n' >"$lockfile"
+		touch -d "@1" "$lockfile" 2>/dev/null || skip "touch -d unavailable"
+
+		bash "$driver" "A${i}" 0.2 "$lockfile" "$marker_dir" "$lib_dir" >"${iter_dir}/A.out" 2>&1 &
+		local pid_a=$!
+		bash "$driver" "B${i}" 0.2 "$lockfile" "$marker_dir" "$lib_dir" >"${iter_dir}/B.out" 2>&1 &
+		local pid_b=$!
+		wait "$pid_a" || true
+		wait "$pid_b" || true
+
+		local marker_count
+		marker_count=$(find "$marker_dir" -name 'ran.*' -type f | wc -l)
+		[[ "$marker_count" -eq 1 ]] || {
+			echo "FAIL: iteration $i expected 1 winner, got $marker_count" >&2
+			ls -la "$marker_dir" >&2
+			fail "Mutual exclusion broken for concurrent stale-lock contenders"
+		}
+	done
+
+	rm -f "$driver"
 }

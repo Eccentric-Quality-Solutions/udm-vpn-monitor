@@ -156,12 +156,15 @@ handle_config_error() {
 # Extracts and validates the value portion of a configuration assignment.
 # Handles double-quoted, single-quoted, and unquoted values.
 # Properly handles escaped quotes and validates quote pairing.
+# Unquoted values may use a trailing comment only as: token, whitespace, #, rest of line.
+# A # inside the token requires quoting. After a closing quote, optional whitespace and #... are ignored.
 #
 # Arguments:
-#   $1: Assignment value (the part after VAR=, already trimmed and comment-removed)
+#   $1: Assignment value (the part after VAR=; line is trimmed before parse_assignment)
 #   $2: Original configuration line (for error messages)
 #   $3: Line number (for error messages)
 #   $4: Name of associative array to store result (passed by reference)
+#   $5: (optional) If "1", do not log errors (for tooling that skips bad lines)
 #
 # Returns:
 #   0: Value parsed successfully (result["value"] is set)
@@ -173,7 +176,7 @@ handle_config_error() {
 #
 # Side effects:
 #   - Sets associative array element via nameref
-#   - Logs error messages on syntax errors
+#   - Logs error messages on syntax errors (unless quiet)
 #
 # Examples:
 #   declare -A parse_result
@@ -193,6 +196,7 @@ parse_quoted_value() {
 	local line="$2"
 	local line_num="$3"
 	local -n result_array="$4"
+	local quiet="${5:-0}"
 	local i=0
 	local len=${#assignment}
 	local in_quotes=false
@@ -218,15 +222,29 @@ parse_quoted_value() {
 		i=1
 	fi
 
-	# If not quoted, validate it's a simple unquoted value
+	# If not quoted, validate it's a simple unquoted value (optional trailing comment:
+	# whitespace + # ... only; a # inside the token requires quoting)
 	if [[ "$in_quotes" == false ]]; then
-		# Unquoted value must not contain spaces, quotes, or comment markers
-		if [[ "$assignment" =~ [[:space:]\"\'\#] ]]; then
-			log_message "ERROR" "SYSTEM" "Invalid configuration line: $line (value must be quoted if it contains spaces, quotes, or comment markers) (line $line_num)"
-			return 1
+		local at="${assignment#"${assignment%%[![:space:]]*}"}"
+		at="${at%"${at##*[![:space:]]}"}"
+		if [[ -z "$at" ]]; then
+			result_array["value"]=""
+			return 0
 		fi
-		result_array["value"]="$assignment"
-		return 0
+		if [[ "$at" == "#"* ]]; then
+			# 'at' is already trimmed above, so a leading # means the value is empty
+			# and the rest of the line is a comment.
+			result_array["value"]=""
+			return 0
+		fi
+		if [[ "$at" =~ ^([^[:space:]\"#]+)([[:space:]]+#.*)?$ ]]; then
+			result_array["value"]="${BASH_REMATCH[1]}"
+			return 0
+		fi
+		if [[ "$quiet" != "1" ]]; then
+			log_message "ERROR" "SYSTEM" "Invalid configuration line: $line (value must be quoted if it contains spaces, quotes, or comment markers) (line $line_num)"
+		fi
+		return 1
 	fi
 
 	# Parse quoted string character by character
@@ -242,14 +260,15 @@ parse_quoted_value() {
 				# Check if there's any content after the closing quote
 				if [[ $((i + 1)) -lt $len ]]; then
 					local remaining="${assignment:$((i + 1))}"
-					# Allow trailing whitespace after closing quote
-					if [[ "$remaining" =~ ^[[:space:]]*$ ]]; then
-						# Only whitespace after quote - valid
+					# Allow trailing whitespace and/or shell-style comment after closing quote
+					if [[ "$remaining" =~ ^[[:space:]]*(#.*)?$ ]]; then
 						quote_closed=true
 						break
 					else
 						# Non-whitespace after quote - invalid (unexpected content)
-						log_message "ERROR" "SYSTEM" "Invalid configuration line: $line (unexpected content after closing quote) (line $line_num)"
+						if [[ "$quiet" != "1" ]]; then
+							log_message "ERROR" "SYSTEM" "Invalid configuration line: $line (unexpected content after closing quote) (line $line_num)"
+						fi
 						return 1
 					fi
 				else
@@ -287,14 +306,15 @@ parse_quoted_value() {
 				# Check if there's any content after the closing quote
 				if [[ $((i + 1)) -lt $len ]]; then
 					local remaining="${assignment:$((i + 1))}"
-					# Allow trailing whitespace after closing quote
-					if [[ "$remaining" =~ ^[[:space:]]*$ ]]; then
-						# Only whitespace after quote - valid
+					# Allow trailing whitespace and/or shell-style comment after closing quote
+					if [[ "$remaining" =~ ^[[:space:]]*(#.*)?$ ]]; then
 						quote_closed=true
 						break
 					else
 						# Non-whitespace after quote - invalid (unexpected content)
-						log_message "ERROR" "SYSTEM" "Invalid configuration line: $line (unexpected content after closing quote) (line $line_num)"
+						if [[ "$quiet" != "1" ]]; then
+							log_message "ERROR" "SYSTEM" "Invalid configuration line: $line (unexpected content after closing quote) (line $line_num)"
+						fi
 						return 1
 					fi
 				else
@@ -315,7 +335,9 @@ parse_quoted_value() {
 	# If quote_closed is true, we successfully found and processed the closing quote
 	if [[ "$in_quotes" == true ]] && [[ "$quote_closed" == false ]]; then
 		# Quote was not closed - this is an error
-		log_message "ERROR" "SYSTEM" "Unclosed ${quote_char} quote in configuration line: $line (line $line_num)"
+		if [[ "$quiet" != "1" ]]; then
+			log_message "ERROR" "SYSTEM" "Unclosed ${quote_char} quote in configuration line: $line (line $line_num)"
+		fi
 		return 1
 	fi
 
@@ -334,6 +356,7 @@ parse_quoted_value() {
 #   $1: Configuration line to parse (should already be trimmed)
 #   $2: Line number (for error messages)
 #   $3: Name of associative array to store result (passed by reference)
+#   $4: (optional) If "1", do not log parse errors (for get_config_var_value_from_file)
 #
 # Returns:
 #   0: Assignment parsed successfully (result["name"] and result["value"] are set)
@@ -346,7 +369,7 @@ parse_quoted_value() {
 #
 # Side effects:
 #   - Sets associative array elements via nameref
-#   - Logs error messages on syntax errors
+#   - Logs error messages on syntax errors (unless quiet)
 #
 # Examples:
 #   declare -A parse_result
@@ -357,31 +380,93 @@ parse_quoted_value() {
 # Note:
 #   Requires log_message function to be available (from logging.sh)
 #   Requires parse_quoted_value function to be available
+#   Trailing comments (after the value) are handled inside parse_quoted_value; do not
+#   strip # from the RHS here or quoted values like "vpn#1.example.com" break.
 parse_assignment() {
 	local line="$1"
 	local line_num="$2"
 	local -n result_array="$3"
+	local quiet="${4:-0}"
 
 	# Check if line matches VAR=value pattern
 	if ! [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
-		log_message "ERROR" "SYSTEM" "Invalid configuration line: $line (expected VAR=value or VAR=\"value\") (line $line_num)"
+		if [[ "$quiet" != "1" ]]; then
+			log_message "ERROR" "SYSTEM" "Invalid configuration line: $line (expected VAR=value or VAR=\"value\") (line $line_num)"
+		fi
 		return 1
 	fi
 
 	result_array["name"]="${BASH_REMATCH[1]}"
 	local assignment="${BASH_REMATCH[2]}"
 
-	# Remove trailing comment if present
-	assignment="${assignment%%#*}"
-	# Remove trailing whitespace after removing comment
-	assignment="${assignment%"${assignment##*[![:space:]]}"}"
-
-	# Parse value (quoted or unquoted)
-	if ! parse_quoted_value "$assignment" "$line" "$line_num" "$3"; then
+	# Parse value (quoted or unquoted); # inside quoted values and trailing # comments
+	# are handled inside parse_quoted_value (naive %%#* would break values like "vpn#1.example.com")
+	if ! parse_quoted_value "$assignment" "$line" "$line_num" "$3" "$quiet"; then
 		return 1
 	fi
 
 	return 0
+}
+
+# Read one variable from a config file (same parse rules as safe_parse, no schema check)
+#
+# For install.sh and other callers that must read a value without sourcing the file.
+# Uses parse_assignment in quiet mode: invalid lines are skipped, last matching assignment wins.
+#
+# Arguments:
+#   $1: Path to configuration file
+#   $2: Variable name to extract (e.g. ENABLE_KEEPALIVE)
+#
+# Returns:
+#   0: Variable is assigned at least once in the file (value may be empty)
+#   1: File missing, unreadable, or variable not present
+#
+# Output:
+#   Prints the value to stdout
+#
+# Note:
+#   Requires file_exists_and_readable() and parse_assignment from this file. Callers need
+#   common.sh (and logging.sh if other code paths run). Trimming matches safe_parse (lines
+#   are trimmed before parse_assignment; values are normalized inside the parser).
+get_config_var_value_from_file() {
+	local config_file="$1"
+	local var_name="$2"
+	local line_num=0
+	local line
+	local -A parse_result
+	local found=0
+	local last_value=""
+
+	if [[ -z "$config_file" ]] || [[ ! -f "$config_file" ]]; then
+		return 1
+	fi
+	if ! file_exists_and_readable "$config_file"; then
+		return 1
+	fi
+
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		line_num=$((line_num + 1))
+		parse_result=()
+		line="${line#"${line%%[![:space:]]*}"}"
+		line="${line%"${line##*[![:space:]]}"}"
+		[[ -z "$line" ]] && continue
+		if [[ "$line" =~ ^[[:space:]]*# ]]; then
+			continue
+		fi
+		if ! parse_assignment "$line" "$line_num" "parse_result" "1"; then
+			continue
+		fi
+		if [[ "${parse_result[name]}" == "$var_name" ]]; then
+			last_value="${parse_result[value]}"
+			found=1
+		fi
+	done <"$config_file"
+
+	if [[ $found -eq 1 ]]; then
+		printf '%s' "$last_value"
+		return 0
+	fi
+	return 1
 }
 
 # Safely parse configuration file
@@ -463,12 +548,6 @@ safe_parse_config_file() {
 		# Skip comment lines (lines starting with #)
 		if [[ "$line" =~ ^[[:space:]]*# ]]; then
 			continue
-		fi
-
-		# Validate security - reject lines with dangerous patterns
-		# Use [[:space:]] not \s: bash ERE does not support \s (it matches literal 's')
-		if [[ "$line" =~ [\`\$\(] ]] || [[ "$line" =~ (eval|source|exec|\.[[:space:]]*\/) ]]; then
-			handle_config_error "Configuration file contains dangerous content: $line" "$line_num" || parse_error=1
 		fi
 
 		# Parse assignment

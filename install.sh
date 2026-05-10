@@ -54,6 +54,10 @@ source "${INSTALL_SCRIPT_DIR}/lib/detection.sh"
 # shellcheck source=lib/config_schema.sh
 source "${INSTALL_SCRIPT_DIR}/lib/config_schema.sh"
 
+# Safe single-variable config reads (quote/comment-aware, same rules as the monitor loader)
+# shellcheck source=lib/config/config_loading.sh
+source "${INSTALL_SCRIPT_DIR}/lib/config/config_loading.sh"
+
 # Check if we're on a UDM
 #
 # Verifies that the system is a UniFi Dream Machine by checking for /data directory.
@@ -994,7 +998,6 @@ install_scripts() {
 # Parse and validate cron schedule from config file
 #
 # Extracts CRON_SCHEDULE from config file and validates it has proper format.
-# Handles quoted and unquoted values cleanly.
 #
 # Arguments:
 #   $1: Path to config file
@@ -1014,37 +1017,16 @@ parse_cron_schedule() {
 		return 1
 	fi
 
-	# Check file readability before grep operation (prevents hangs on unreadable files)
+	# Check file readability (prevents hangs on unreadable files)
 	if ! file_exists_and_readable "$config_file"; then
 		return 1
 	fi
 
-	# Read the CRON_SCHEDULE line from config
-	# Note: || true prevents set -e + pipefail from killing the script if grep finds no match
-	local line
-	line=$(grep "^CRON_SCHEDULE=" "$config_file" 2>/dev/null | head -1 || true)
-
-	if [[ -z "$line" ]]; then
+	if ! schedule=$(get_config_var_value_from_file "$config_file" "CRON_SCHEDULE" 2>/dev/null); then
 		return 1
 	fi
 
-	# Extract value after the equals sign
-	schedule="${line#CRON_SCHEDULE=}"
-
-	# Remove surrounding quotes (handles both single and double quotes)
-	# Trim leading/trailing whitespace first
-	schedule=$(trim "$schedule")
-
-	# Remove quotes if present
-	if [[ "$schedule" =~ ^\".*\"$ ]]; then
-		schedule="${schedule#\"}"
-		schedule="${schedule%\"}"
-	elif [[ "$schedule" =~ ^\'.*\'$ ]]; then
-		schedule="${schedule#\'}"
-		schedule="${schedule%\'}"
-	fi
-
-	# Trim whitespace again after quote removal
+	# Defensive: parser output should already be trimmed; normalize whitespace
 	schedule=$(trim "$schedule")
 
 	# Validate: must be non-empty
@@ -1122,7 +1104,9 @@ setup_cron() {
 	local enable_wrapper=0
 	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
 		local val
-		val=$(grep -E "^ENABLE_MONITOR_WRAPPER=" "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "1")
+		if ! val=$(get_config_var_value_from_file "${INSTALL_DIR}/${CONFIG_NAME}" "ENABLE_MONITOR_WRAPPER" 2>/dev/null); then
+			val="1"
+		fi
 		[[ "$val" == "1" ]] && enable_wrapper=1
 	fi
 
@@ -1285,7 +1269,9 @@ enable_and_start_keepalive_service() {
 	# Check if keepalive is enabled in config
 	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
 		local enable_keepalive
-		enable_keepalive=$(grep -E "^ENABLE_KEEPALIVE=" "${INSTALL_DIR}/${CONFIG_NAME}" | cut -d'=' -f2 | tr -d '"' || echo "0")
+		if ! enable_keepalive=$(get_config_var_value_from_file "${INSTALL_DIR}/${CONFIG_NAME}" "ENABLE_KEEPALIVE" 2>/dev/null); then
+			enable_keepalive="0"
+		fi
 		if [[ "$enable_keepalive" != "1" ]]; then
 			log_warn "ENABLE_KEEPALIVE is not set to 1 in config file"
 			log_warn "Set ENABLE_KEEPALIVE=1 in ${INSTALL_DIR}/${CONFIG_NAME}, then enable service"
@@ -1897,7 +1883,12 @@ display_next_steps() {
 			echo ""
 			echo "  Or manually restore the cron job:"
 			echo "    crontab -e"
-			echo "    # Add: $(grep CRON_SCHEDULE "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "*/1 * * * *") ${INSTALL_DIR}/${SCRIPT_NAME} >> ${INSTALL_DIR}/logs/cron.log 2>&1"
+			local _cron_user_hint="*/1 * * * *"
+			local _h=""
+			if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]] && _h=$(get_config_var_value_from_file "${INSTALL_DIR}/${CONFIG_NAME}" "CRON_SCHEDULE" 2>/dev/null) && [[ -n "$_h" ]]; then
+				_cron_user_hint="$_h"
+			fi
+			echo "    # Add: ${_cron_user_hint} ${INSTALL_DIR}/${SCRIPT_NAME} >> ${INSTALL_DIR}/logs/cron.log 2>&1"
 			log_warn "═══════════════════════════════════════════════════════════════"
 			echo ""
 			log_info "Persistence Notes:"
@@ -2138,9 +2129,10 @@ main() {
 		fi
 
 		# Ensure ENABLE_KEEPALIVE=1 in config file
-		if grep -q "^ENABLE_KEEPALIVE=" "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null; then
+		local _cur_ka
+		if _cur_ka=$(get_config_var_value_from_file "${INSTALL_DIR}/${CONFIG_NAME}" "ENABLE_KEEPALIVE" 2>/dev/null); then
 			# Update existing setting
-			if [[ "$(grep "^ENABLE_KEEPALIVE=" "${INSTALL_DIR}/${CONFIG_NAME}" | cut -d'=' -f2 | tr -d '"')" != "1" ]]; then
+			if [[ "$_cur_ka" != "1" ]]; then
 				log_info "Setting ENABLE_KEEPALIVE=1 in config file..."
 				sed -i 's/^ENABLE_KEEPALIVE=.*/ENABLE_KEEPALIVE=1/' "${INSTALL_DIR}/${CONFIG_NAME}"
 			fi
@@ -2188,12 +2180,16 @@ main() {
 	# Validate configuration after installation
 	validate_config_after_install
 
-	# Ensure default LAN ping source and test internal connectivity (if ping checks enabled)
+	# Ensure default LAN ping source and test internal connectivity (if ping checks enabled).
 	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
-		# shellcheck source=/dev/null
-		source "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null || true
-		ENABLE_PING_CHECK="${ENABLE_PING_CHECK:-1}"
-		LOCAL_UDM_IP="${LOCAL_UDM_IP:-}"
+		# Treat a missing key OR an empty assignment (ENABLE_PING_CHECK=) as the default.
+		if ! ENABLE_PING_CHECK=$(get_config_var_value_from_file "${INSTALL_DIR}/${CONFIG_NAME}" "ENABLE_PING_CHECK" 2>/dev/null) || [[ -z "$ENABLE_PING_CHECK" ]]; then
+			ENABLE_PING_CHECK="1"
+		fi
+		if ! LOCAL_UDM_IP=$(get_config_var_value_from_file "${INSTALL_DIR}/${CONFIG_NAME}" "LOCAL_UDM_IP" 2>/dev/null); then
+			LOCAL_UDM_IP=""
+		fi
+		export ENABLE_PING_CHECK LOCAL_UDM_IP
 		ensure_default_lan_local_ip_for_ping_install || log_warn "Default LAN ping source setup completed with warnings (ping checks may not work until LOCAL_UDM_IP is configured)"
 	fi
 
@@ -2212,7 +2208,9 @@ main() {
 	# Enable and start keepalive service if enabled in config
 	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
 		local enable_keepalive
-		enable_keepalive=$(grep -E "^ENABLE_KEEPALIVE=" "${INSTALL_DIR}/${CONFIG_NAME}" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "0")
+		if ! enable_keepalive=$(get_config_var_value_from_file "${INSTALL_DIR}/${CONFIG_NAME}" "ENABLE_KEEPALIVE" 2>/dev/null); then
+			enable_keepalive="0"
+		fi
 		if [[ "$enable_keepalive" == "1" ]]; then
 			enable_and_start_keepalive_service
 		else
