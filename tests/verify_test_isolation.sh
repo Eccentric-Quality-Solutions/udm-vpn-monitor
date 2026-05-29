@@ -366,7 +366,7 @@ parse_args() {
 			shift
 			;;
 		--sample)
-			if [[ -z "${2:-}" ]] || ! [[ "$2" =~ ^[0-9]+$ ]]; then
+			if [[ -z "${2:-}" ]] || ! is_non_negative_integer "$2"; then
 				print_error "--sample requires a number (e.g., --sample 5)"
 				exit 1
 			fi

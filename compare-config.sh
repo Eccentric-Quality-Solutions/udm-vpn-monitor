@@ -21,6 +21,12 @@ if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
 	source "${SCRIPT_DIR}/lib/common.sh"
 fi
 
+# Location variable predicates (lib/config/location_parsing.sh)
+# shellcheck source=lib/config/location_parsing.sh
+if [[ -f "${SCRIPT_DIR}/lib/config/location_parsing.sh" ]]; then
+	source "${SCRIPT_DIR}/lib/config/location_parsing.sh"
+fi
+
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -338,10 +344,10 @@ main() {
 	has_template_location_internal=0
 	for var_name in "${!template_vars_map[@]}"; do
 		# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
-		if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
+		if is_location_external_var "$var_name"; then
 			has_template_location_external=1
 		fi
-		if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_INTERNAL$ ]]; then
+		if is_location_internal_var "$var_name"; then
 			has_template_location_internal=1
 		fi
 	done
@@ -353,10 +359,10 @@ main() {
 	has_existing_location_internal=0
 	for var_name in "${!existing_vars_map[@]}"; do
 		# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
-		if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
+		if is_location_external_var "$var_name"; then
 			has_existing_location_external=1
 		fi
-		if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_INTERNAL$ ]]; then
+		if is_location_internal_var "$var_name"; then
 			has_existing_location_internal=1
 		fi
 	done
@@ -374,12 +380,12 @@ main() {
 		# This allows template example locations (e.g., LOCATION_NYC_EXTERNAL) to be skipped
 		# when existing config already has LOCATION variables matching the pattern (e.g., LOCATION_CUSTOMER1_EXTERNAL)
 		# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
-		if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
+		if is_location_external_var "$var_name"; then
 			# Existing config has LOCATION_*_EXTERNAL pattern, so template example is not needed
 			if [[ $has_existing_location_external -eq 1 ]]; then
 				continue
 			fi
-		elif [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_INTERNAL$ ]]; then
+		elif is_location_internal_var "$var_name"; then
 			# Existing config has LOCATION_*_INTERNAL pattern, so template example is not needed
 			if [[ $has_existing_location_internal -eq 1 ]]; then
 				continue
@@ -418,7 +424,7 @@ main() {
 
 		# LOCATION_* variables are user-defined (location names); never flag as deprecated.
 		# Template may ship no location vars (user adds their own) or example names (e.g. LOCATION_NYC_*).
-		if [[ "$var_name" =~ ^LOCATION_.+_EXTERNAL$ ]] || [[ "$var_name" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+		if is_location_var "$var_name"; then
 			continue
 		fi
 

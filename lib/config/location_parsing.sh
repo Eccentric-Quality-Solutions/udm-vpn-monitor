@@ -13,10 +13,47 @@ if ! declare -f sanitize_location_name >/dev/null 2>&1; then
 	echo "ERROR: location_parsing.sh requires sanitize_location_name from common.sh" >&2
 	return 1 2>/dev/null || exit 1
 fi
-if ! declare -f parse_assignment >/dev/null 2>&1; then
-	echo "ERROR: location_parsing.sh requires parse_assignment from config_loading.sh" >&2
-	return 1 2>/dev/null || exit 1
+# Regex constants for location variable names (lib/constants.sh)
+if [[ -z "${REGEX_LOCATION_EXTERNAL_VAR:-}" ]]; then
+	# shellcheck source=../constants.sh
+	source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../constants.sh"
 fi
+
+# Test whether a variable name is a LOCATION_*_EXTERNAL config key
+#
+# Arguments:
+#   $1: Variable name
+#
+# Returns:
+#   0: Matches REGEX_LOCATION_EXTERNAL_VAR
+#   1: Does not match
+is_location_external_var() {
+	[[ "${1-}" =~ ${REGEX_LOCATION_EXTERNAL_VAR} ]]
+}
+
+# Test whether a variable name is a LOCATION_*_INTERNAL config key
+#
+# Arguments:
+#   $1: Variable name
+#
+# Returns:
+#   0: Matches REGEX_LOCATION_INTERNAL_VAR
+#   1: Does not match
+is_location_internal_var() {
+	[[ "${1-}" =~ ${REGEX_LOCATION_INTERNAL_VAR} ]]
+}
+
+# Test whether a variable name is a location config key (EXTERNAL or INTERNAL)
+#
+# Arguments:
+#   $1: Variable name
+#
+# Returns:
+#   0: Matches a location config variable pattern
+#   1: Does not match
+is_location_var() {
+	is_location_external_var "$1" || is_location_internal_var "$1"
+}
 
 # Extract location name from variable name
 #
@@ -38,23 +75,18 @@ fi
 #   # Returns: "NYC"
 #
 # Note:
-#   Validates that extracted name is a valid identifier (alphanumeric + underscore)
+#   Name segment must match [A-Za-z0-9_]+ (enforced by is_location_*_var predicates)
 extract_location_name() {
 	local var_name="$1"
 	local location_name=""
 
-	# Extract location name from LOCATION_<NAME>_EXTERNAL pattern
-	if [[ "$var_name" =~ ^LOCATION_(.+)_EXTERNAL$ ]]; then
-		location_name="${BASH_REMATCH[1]}"
-	# Extract location name from LOCATION_<NAME>_INTERNAL pattern
-	elif [[ "$var_name" =~ ^LOCATION_(.+)_INTERNAL$ ]]; then
-		location_name="${BASH_REMATCH[1]}"
+	if is_location_external_var "$var_name"; then
+		location_name="${var_name#LOCATION_}"
+		location_name="${location_name%_EXTERNAL}"
+	elif is_location_internal_var "$var_name"; then
+		location_name="${var_name#LOCATION_}"
+		location_name="${location_name%_INTERNAL}"
 	else
-		return 1
-	fi
-
-	# Validate location name is a valid identifier (alphanumeric + underscore)
-	if ! [[ "$location_name" =~ ^[A-Za-z0-9_]+$ ]]; then
 		return 1
 	fi
 
@@ -307,6 +339,10 @@ validate_location_config() {
 #   Validates location names are unique
 #   Validates each location has external IP (required)
 parse_location_config() {
+	if ! declare -f parse_assignment >/dev/null 2>&1; then
+		echo "ERROR: parse_location_config requires parse_assignment from config_loading.sh" >&2
+		return 1
+	fi
 	# Declare LOCATIONS array if it doesn't exist, otherwise clear it
 	# This ensures it works both when called directly and when called via 'run' in tests
 	if ! declare -p LOCATIONS &>/dev/null; then
@@ -380,7 +416,7 @@ parse_location_config() {
 		# Filter: Only process LOCATION_* variables matching pattern
 		# Pattern: LOCATION_<name>_(EXTERNAL|INTERNAL)
 		# Examples: LOCATION_NYC_EXTERNAL, LOCATION_SF_OFFICE_INTERNAL
-		if [[ "$var_name" =~ ^LOCATION_.+_(EXTERNAL|INTERNAL)$ ]]; then
+		if is_location_var "$var_name"; then
 			# Duplicate detection: Check if we've seen this exact variable name before
 			# This catches cases like:
 			#   LOCATION_NYC_EXTERNAL="203.0.113.1"
@@ -415,7 +451,7 @@ parse_location_config() {
 		# Filter: Only process EXTERNAL variables (they define locations)
 		# INTERNAL variables are looked up later when processing their corresponding EXTERNAL
 		# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
-		if [[ ! "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
+		if ! is_location_external_var "$var_name"; then
 			continue
 		fi
 

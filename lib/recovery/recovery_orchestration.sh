@@ -876,7 +876,7 @@ update_location_state() {
 				last_status_log=$(get_peer_state "$location_name" "$external_peer_ip" "last_status_log" "0")
 				local current_time
 				current_time=$(get_unix_timestamp)
-				if [[ -z "$current_time" ]] || [[ ! "$current_time" =~ ^[0-9]+$ ]]; then
+				if [[ -z "$current_time" ]] || ! is_non_negative_integer "$current_time"; then
 					handle_error "WARNING" "SYSTEM" "Invalid timestamp from get_unix_timestamp, skipping periodic status log" 0
 				else
 					local time_diff

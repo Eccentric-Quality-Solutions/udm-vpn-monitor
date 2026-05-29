@@ -14,6 +14,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=lib/common.sh
+source "${PROJECT_ROOT}/lib/common.sh"
 TESTS_DIR="${PROJECT_ROOT}/tests"
 
 # Check arguments
@@ -27,7 +29,7 @@ GROUP_NUM="$1"
 TOTAL_GROUPS="$2"
 
 # Validate arguments
-if ! [[ "$GROUP_NUM" =~ ^[0-9]+$ ]] || ! [[ "$TOTAL_GROUPS" =~ ^[0-9]+$ ]]; then
+if ! is_non_negative_integer "$GROUP_NUM" || ! is_non_negative_integer "$TOTAL_GROUPS"; then
 	echo "Error: Group number and total groups must be positive integers" >&2
 	exit 1
 fi

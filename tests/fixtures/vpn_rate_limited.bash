@@ -47,7 +47,7 @@ setup_vpn_rate_limited_fixture() {
 	local collecting_timestamps=true
 
 	for arg in "$@"; do
-		if [[ "$collecting_timestamps" == "true" ]] && [[ "$arg" =~ ^[0-9]+$ ]]; then
+		if [[ "$collecting_timestamps" == "true" ]] && is_non_negative_integer "$arg"; then
 			# Numeric argument - treat as timestamp
 			timestamps+=("$arg")
 		else

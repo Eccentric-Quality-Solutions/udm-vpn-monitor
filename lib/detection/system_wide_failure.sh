@@ -175,7 +175,7 @@ get_system_wide_failure_timestamp() {
 		local value
 		value=$(cat "$timestamp_file" 2>/dev/null || echo "0")
 		# Validate value (must be numeric)
-		if [[ "$value" =~ ^[0-9]+$ ]]; then
+		if is_non_negative_integer "$value"; then
 			echo "$value"
 		else
 			# Corrupted file, backup and recover
@@ -217,7 +217,7 @@ set_system_wide_failure_timestamp() {
 	timestamp_file=$(get_system_wide_failure_timestamp_file)
 
 	# Validate value (must be numeric)
-	if [[ ! "$timestamp_value" =~ ^[0-9]+$ ]]; then
+	if ! is_non_negative_integer "$timestamp_value"; then
 		handle_error "ERROR" "SYSTEM" "Invalid system-wide failure timestamp value (expected numeric): $timestamp_value" 0
 		return 1
 	fi

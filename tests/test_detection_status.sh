@@ -178,7 +178,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# File should contain a numeric value (current bytes from mock)
 	local file_content
 	file_content=$(cat "$last_bytes_file")
-	if [[ ! "$file_content" =~ ^[0-9]+$ ]]; then
+	if ! is_non_negative_integer "$file_content"; then
 		fail "Byte counter file should contain numeric value, got: $file_content"
 	fi
 

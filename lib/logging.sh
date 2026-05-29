@@ -224,7 +224,7 @@ _parse_message_and_exit_code() {
 		# Use array indexing to get last argument (shellcheck SC2124)
 		local args_array=("$@")
 		local last_arg="${args_array[$((arg_count - 1))]}"
-		if [[ "$last_arg" =~ ^[0-9]+$ ]]; then
+		if is_non_negative_integer "$last_arg"; then
 			# Last argument is numeric - treat as exit code
 			exit_code="$last_arg"
 			exit_code_provided=1

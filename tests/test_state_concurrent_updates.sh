@@ -225,7 +225,7 @@ load test_helper
 		current_count=$(get_peer_state "TEST" "$peer_ip" "failure_count" "0")
 		# Should be numeric and match expected value
 		# Use pattern matching that works in test environment
-		if [[ ! "$current_count" =~ ^[0-9]+$ ]]; then
+		if ! is_non_negative_integer "$current_count"; then
 			fail "Expected current_count to be numeric, but got: '$current_count'"
 		fi
 		assert_equal "$current_count" "$i"
@@ -341,7 +341,7 @@ load test_helper
 		recovered_value=$(cat "$state_file")
 		# Should be valid integer (0) after recovery
 		# Use pattern matching that works in test environment
-		if [[ ! "$recovered_value" =~ ^[0-9]+$ ]]; then
+		if ! is_non_negative_integer "$recovered_value"; then
 			fail "Expected recovered value to be numeric, but got: '$recovered_value'"
 		fi
 		assert_equal "$recovered_value" "0"

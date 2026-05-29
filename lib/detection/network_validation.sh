@@ -419,7 +419,7 @@ validate_dns_name() {
 
 	# Cannot be all numeric (to avoid confusion with IP addresses)
 	# Check if it's a pure number (digits only)
-	if [[ "$dns_name" =~ ^[0-9]+$ ]]; then
+	if is_non_negative_integer "$dns_name"; then
 		return 1
 	fi
 

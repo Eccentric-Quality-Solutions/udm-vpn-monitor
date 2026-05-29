@@ -54,6 +54,8 @@ trap cleanup_on_signal INT TERM
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=lib/common.sh
+source "${PROJECT_ROOT}/lib/common.sh"
 
 # Coverage settings
 COVERAGE_DIR="${PROJECT_ROOT}/coverage"
@@ -160,7 +162,7 @@ check_bats() {
 			read -r response
 			response="${response:-yes}"
 
-			if [[ "$response" =~ ^[Yy][Ee][Ss]$ ]]; then
+			if is_affirmative_reply "$response"; then
 				echo "" >&2
 				show_bats_instructions
 			fi
@@ -367,7 +369,7 @@ check_coverage_tools() {
 				read -r response
 				response="${response:-no}"
 
-				if [[ "$response" =~ ^[Yy][Ee][Ss]$ ]]; then
+				if is_affirmative_reply "$response"; then
 					echo "" >&2
 					show_kcov_instructions
 				fi
@@ -426,7 +428,7 @@ check_bats_helpers() {
 			read -r response
 			response="${response:-yes}"
 
-			if [[ "$response" =~ ^[Yy][Ee][Ss]$ ]]; then
+			if is_affirmative_reply "$response"; then
 				echo "" >&2
 				echo -e "${GREEN}Installing bats helper libraries...${NC}" >&2
 				echo "" >&2

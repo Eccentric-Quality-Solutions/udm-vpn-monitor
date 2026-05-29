@@ -15,6 +15,64 @@ readonly MAX_TIMESTAMP=4102444800 # Year 2100
 readonly CURRENT_TIMESTAMP=$(date +%s)
 
 # ============================================================================
+# IS_NON_NEGATIVE_INTEGER TESTS
+# ============================================================================
+
+# bats test_tags=category:unit
+@test "is_non_negative_integer: accepts digit strings" {
+	run is_non_negative_integer "0"
+	assert_success
+	run is_non_negative_integer "42"
+	assert_success
+	run is_non_negative_integer "9999999999"
+	assert_success
+}
+
+# bats test_tags=category:unit
+@test "is_non_negative_integer: rejects non-digit strings" {
+	run is_non_negative_integer ""
+	assert_failure
+	run is_non_negative_integer "-1"
+	assert_failure
+	run is_non_negative_integer "12.3"
+	assert_failure
+	run is_non_negative_integer "12abc"
+	assert_failure
+	run is_non_negative_integer "12 34"
+	assert_failure
+}
+
+# ============================================================================
+# IS_AFFIRMATIVE_REPLY TESTS
+# ============================================================================
+
+# bats test_tags=category:unit
+@test "is_affirmative_reply: accepts yes variants" {
+	run is_affirmative_reply "y"
+	assert_success
+	run is_affirmative_reply "Y"
+	assert_success
+	run is_affirmative_reply "yes"
+	assert_success
+	run is_affirmative_reply "Yes"
+	assert_success
+	run is_affirmative_reply "YES"
+	assert_success
+}
+
+# bats test_tags=category:unit
+@test "is_affirmative_reply: rejects non-affirmative replies" {
+	run is_affirmative_reply ""
+	assert_failure
+	run is_affirmative_reply "n"
+	assert_failure
+	run is_affirmative_reply "no"
+	assert_failure
+	run is_affirmative_reply "maybe"
+	assert_failure
+}
+
+# ============================================================================
 # VALIDATE_TIMESTAMP TESTS
 # ============================================================================
 

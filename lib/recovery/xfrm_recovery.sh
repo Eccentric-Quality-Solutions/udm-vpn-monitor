@@ -1321,7 +1321,7 @@ retry_xfrm_recovery() {
 					if [[ -n "$xfrm_output" ]] && command -v extract_byte_counter >/dev/null 2>&1; then
 						if initial_byte_counter=$(extract_byte_counter "$xfrm_output" 2>/dev/null); then
 							# Validate initial_byte_counter is numeric (default to 0 if not)
-							if [[ ! "$initial_byte_counter" =~ ^[0-9]+$ ]]; then
+							if ! is_non_negative_integer "$initial_byte_counter"; then
 								initial_byte_counter=0
 							fi
 							initial_byte_counter_set=1

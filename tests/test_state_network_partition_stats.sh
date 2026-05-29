@@ -420,11 +420,11 @@ setup_network_partition_stats_test() {
 	# Verify files contain valid data (not corrupted)
 	local timestamp
 	timestamp=$(cat "${STATE_DIR}/network_partition_summary_last_time" 2>/dev/null || echo "invalid")
-	[[ "$timestamp" =~ ^[0-9]+$ ]] || false # Should be numeric
+	is_non_negative_integer "$timestamp" || false # Should be numeric
 
 	local count
 	count=$(cat "${STATE_DIR}/network_partition_dns_success_count" 2>/dev/null || echo "invalid")
-	[[ "$count" =~ ^[0-9]+$ ]] || false # Should be numeric
+	is_non_negative_integer "$count" || false # Should be numeric
 }
 
 # bats test_tags=category:unit

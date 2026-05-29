@@ -446,9 +446,9 @@ EOF
 	# Verify files contain valid data (not corrupted)
 	local count
 	count=$(cat "${STATE_DIR}/ping_summary_count" 2>/dev/null || echo "invalid")
-	[[ "$count" =~ ^[0-9]+$ ]] || false # Should be numeric
+	is_non_negative_integer "$count" || false # Should be numeric
 
 	local timestamp
 	timestamp=$(cat "${STATE_DIR}/ping_summary_last_time" 2>/dev/null || echo "invalid")
-	[[ "$timestamp" =~ ^[0-9]+$ ]] || false # Should be numeric
+	is_non_negative_integer "$timestamp" || false # Should be numeric
 }

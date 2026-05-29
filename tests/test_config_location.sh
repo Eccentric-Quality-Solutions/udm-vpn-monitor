@@ -371,6 +371,40 @@ declare -gA LOCATIONS
 }
 
 # bats test_tags=category:high-risk,priority:high
+@test "is_location_external_var: accepts valid external variable names" {
+	run is_location_external_var "LOCATION_NYC_EXTERNAL"
+	assert_success
+	run is_location_external_var "LOCATION_NYC_Office_EXTERNAL"
+	assert_success
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "is_location_internal_var: accepts valid internal variable names" {
+	run is_location_internal_var "LOCATION_NYC_INTERNAL"
+	assert_success
+	run is_location_internal_var "LOCATION_LA_Main_Office_INTERNAL"
+	assert_success
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "is_location_var: rejects invalid location variable names" {
+	run is_location_external_var "LOCATION_NYC-Office_EXTERNAL"
+	assert_failure
+	run is_location_external_var "LOCATION_NYC EXTERNAL"
+	assert_failure
+	run is_location_var "INVALID_FORMAT"
+	assert_failure
+}
+
+# bats test_tags=category:high-risk,priority:high
+@test "is_location_var: accepts external or internal names" {
+	run is_location_var "LOCATION_NYC_EXTERNAL"
+	assert_success
+	run is_location_var "LOCATION_NYC_INTERNAL"
+	assert_success
+}
+
+# bats test_tags=category:high-risk,priority:high
 @test "extract_location_name - valid external variable name" {
 	# Purpose: Test extracting location name from EXTERNAL variable name
 	# Expected: Location name is extracted correctly

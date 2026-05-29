@@ -63,7 +63,7 @@ get_peer_state() {
 		# Validate numeric keys
 		case "$key" in
 		failure_count | last_bytes | last_status_log)
-			if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+			if ! is_non_negative_integer "$value"; then
 				handle_error "WARNING" "SYSTEM" "Corrupted peer state file (recovering): $state_file" 0
 				recover_corrupted_state_file "$state_file" "$default_value" "integer"
 				echo "$default_value"
@@ -132,7 +132,7 @@ set_peer_state() {
 	# Validate numeric keys
 	case "$key" in
 	failure_count | last_bytes | last_status_log)
-		if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+		if ! is_non_negative_integer "$value"; then
 			handle_error "ERROR" "SYSTEM" "Invalid value for $key (expected integer): $value" 0
 			return 1
 		fi

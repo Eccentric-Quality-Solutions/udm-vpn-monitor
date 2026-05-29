@@ -96,7 +96,7 @@ extract_byte_counter() {
 	fi
 
 	# Fallback: Single-line format "lifetime current: 123456 bytes" (in case format differs)
-	if [[ -z "$bytes" ]] || [[ ! "$bytes" =~ ^[0-9]+$ ]]; then
+	if [[ -z "$bytes" ]] || ! is_non_negative_integer "$bytes"; then
 		local lifetime_line
 		lifetime_line=$(echo "$lifetime_section" | grep "lifetime current:" | head -1)
 		if [[ -n "$lifetime_line" ]]; then
@@ -109,7 +109,7 @@ extract_byte_counter() {
 
 	# Validate extracted value
 	# Note: Regex ^[0-9]+$ ensures bytes is non-negative (only matches digits 0-9)
-	if [[ -z "$bytes" ]] || [[ ! "$bytes" =~ ^[0-9]+$ ]]; then
+	if [[ -z "$bytes" ]] || ! is_non_negative_integer "$bytes"; then
 		# Lifetime section was found but byte counter extraction failed
 		# This may indicate an unexpected xfrm output format change
 		log_message "WARNING" "SYSTEM" "extract_byte_counter: Found 'lifetime current:' section but failed to extract byte counter. xfrm format may have changed."
@@ -168,7 +168,7 @@ normalize_spi() {
 	fi
 
 	# If decimal format, convert to hex
-	if [[ "$spi" =~ ^[0-9]+$ ]]; then
+	if is_non_negative_integer "$spi"; then
 		# Convert decimal to hex using printf (ensures 8-digit hex format)
 		# Note: SPI is a 32-bit value, so we use %08x to pad to 8 hex digits
 		printf "0x%08x" "$spi"

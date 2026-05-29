@@ -132,7 +132,7 @@ create_test_lib() {
 # Side effects:
 #   - Copies compare-config.sh to test directory
 #   - Creates lib directory in test directory
-#   - Copies lib/common.sh to test directory
+#   - Copies lib/common.sh, lib/constants.sh, and lib/config/location_parsing.sh
 #   - Makes script executable
 #
 # Example:
@@ -142,6 +142,7 @@ create_test_lib() {
 copy_compare_config_script() {
 	local test_dir="$1"
 	local script_path="${BATS_TEST_DIRNAME}/../compare-config.sh"
+	local repo_lib="${BATS_TEST_DIRNAME}/../lib"
 
 	# Copy script to test directory
 	if [[ -f "$script_path" ]]; then
@@ -149,9 +150,15 @@ copy_compare_config_script() {
 		chmod +x "${test_dir}/compare-config.sh"
 	fi
 
-	# Copy lib directory so script can find lib/common.sh
-	mkdir -p "${test_dir}/lib"
-	if [[ -f "${BATS_TEST_DIRNAME}/../lib/common.sh" ]]; then
-		cp "${BATS_TEST_DIRNAME}/../lib/common.sh" "${test_dir}/lib/common.sh"
+	# Copy lib dependencies so script can source common.sh and location predicates
+	mkdir -p "${test_dir}/lib/config"
+	if [[ -f "${repo_lib}/common.sh" ]]; then
+		cp "${repo_lib}/common.sh" "${test_dir}/lib/common.sh"
+	fi
+	if [[ -f "${repo_lib}/constants.sh" ]]; then
+		cp "${repo_lib}/constants.sh" "${test_dir}/lib/constants.sh"
+	fi
+	if [[ -f "${repo_lib}/config/location_parsing.sh" ]]; then
+		cp "${repo_lib}/config/location_parsing.sh" "${test_dir}/lib/config/location_parsing.sh"
 	fi
 }

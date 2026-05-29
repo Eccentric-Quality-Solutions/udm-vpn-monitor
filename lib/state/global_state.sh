@@ -183,7 +183,7 @@ check_rate_limit() {
 	# Get configured window size in seconds
 	local window_minutes="${RATE_LIMIT_WINDOW_MINUTES:-60}"
 	# Validate window size (defensive check)
-	if [[ ! "$window_minutes" =~ ^[0-9]+$ ]] || [[ "$window_minutes" -lt 5 ]] || [[ "$window_minutes" -gt 1440 ]]; then
+	if ! is_non_negative_integer "$window_minutes" || [[ "$window_minutes" -lt 5 ]] || [[ "$window_minutes" -gt 1440 ]]; then
 		handle_error "WARNING" "SYSTEM" "Invalid RATE_LIMIT_WINDOW_MINUTES=$window_minutes (range: 5-1440), using default 60"
 		window_minutes=60
 	fi
@@ -202,8 +202,8 @@ check_rate_limit() {
 			# extra protection for edge cases (race conditions, test suite timing issues, etc.)
 			# Use helper function to standardize timeout command availability check
 			local last_restart
-			last_restart=$(run_with_timeout "$STATE_FILE_READ_TIMEOUT" sh -c "grep -E '^[0-9]+$' \"$RESTART_COUNT_FILE\" 2>/dev/null | sort -n | tail -n 1" || echo "0")
-			if [[ "$last_restart" != "0" ]] && [[ "$last_restart" =~ ^[0-9]+$ ]]; then
+			last_restart=$(run_with_timeout "$STATE_FILE_READ_TIMEOUT" sh -c "grep -E '${REGEX_NON_NEGATIVE_INTEGER}' \"\$1\" 2>/dev/null | sort -n | tail -n 1" _ "$RESTART_COUNT_FILE" || echo "0")
+			if [[ "$last_restart" != "0" ]] && is_non_negative_integer "$last_restart"; then
 				local time_since_last
 				time_since_last=$(calculate_duration "$last_restart" "$now" 2>/dev/null || echo "0")
 				if [[ "$time_since_last" -lt "$min_interval" ]]; then
@@ -269,7 +269,7 @@ check_rate_limit() {
 		local oldest_restart
 		oldest_restart=$(echo "$recent_timestamps" | head -n 1)
 		# Defensive check: if oldest_restart is empty or invalid, allow restart
-		if [[ -z "$oldest_restart" ]] || [[ ! "$oldest_restart" =~ ^[0-9]+$ ]]; then
+		if [[ -z "$oldest_restart" ]] || ! is_non_negative_integer "$oldest_restart"; then
 			handle_error "WARNING" "SYSTEM" "Cannot determine oldest restart timestamp, allowing restart"
 			return 0
 		fi
@@ -379,7 +379,7 @@ check_tier2_rate_limit() {
 	now=$(get_unix_timestamp)
 
 	local window_minutes="${RATE_LIMIT_WINDOW_MINUTES:-60}"
-	if [[ ! "$window_minutes" =~ ^[0-9]+$ ]] || [[ "$window_minutes" -lt 5 ]] || [[ "$window_minutes" -gt 1440 ]]; then
+	if ! is_non_negative_integer "$window_minutes" || [[ "$window_minutes" -lt 5 ]] || [[ "$window_minutes" -gt 1440 ]]; then
 		window_minutes=60
 	fi
 	local window_seconds=$((window_minutes * SECONDS_PER_MINUTE))
@@ -389,8 +389,8 @@ check_tier2_rate_limit() {
 	local min_interval="${MIN_TIER2_INTERVAL_SECONDS:-20}"
 	if [[ $min_interval -gt 0 ]] && [[ -f "$count_file" ]] && file_exists_and_readable "$count_file"; then
 		local last_recovery
-		last_recovery=$(run_with_timeout "$STATE_FILE_READ_TIMEOUT" sh -c "grep -E '^[0-9]+$' \"$count_file\" 2>/dev/null | sort -n | tail -n 1" || echo "0")
-		if [[ "$last_recovery" != "0" ]] && [[ "$last_recovery" =~ ^[0-9]+$ ]]; then
+		last_recovery=$(run_with_timeout "$STATE_FILE_READ_TIMEOUT" sh -c "grep -E '${REGEX_NON_NEGATIVE_INTEGER}' \"\$1\" 2>/dev/null | sort -n | tail -n 1" _ "$count_file" || echo "0")
+		if [[ "$last_recovery" != "0" ]] && is_non_negative_integer "$last_recovery"; then
 			local time_since_last
 			time_since_last=$(calculate_duration "$last_recovery" "$now" 2>/dev/null || echo "0")
 			if [[ "$time_since_last" -lt "$min_interval" ]]; then
@@ -410,20 +410,20 @@ check_tier2_rate_limit() {
 	fi
 
 	local max_recoveries="${MAX_TIER2_RECOVERIES_PER_WINDOW:-30}"
-	if [[ ! "$max_recoveries" =~ ^[0-9]+$ ]] || [[ "$max_recoveries" -lt 1 ]]; then
+	if ! is_non_negative_integer "$max_recoveries" || [[ "$max_recoveries" -lt 1 ]]; then
 		max_recoveries=30
 	fi
 
 	local recent_timestamps
 	recent_timestamps=$(awk -v cutoff="$window_start" '$1 > cutoff' "$count_file" 2>/dev/null | sort -n)
 	local recent_count
-	recent_count=$(echo "$recent_timestamps" | grep -E '^[0-9]+$' 2>/dev/null | wc -l | tr -d ' ')
+	recent_count=$(echo "$recent_timestamps" | grep_non_negative_integer_lines 2>/dev/null | wc -l | tr -d ' ')
 	[[ -z "$recent_count" ]] && recent_count=0
 
 	if [[ "$recent_count" -ge "$max_recoveries" ]]; then
 		local oldest_recovery
-		oldest_recovery=$(echo "$recent_timestamps" | grep -E '^[0-9]+$' | head -n 1)
-		if [[ -z "$oldest_recovery" ]] || [[ ! "$oldest_recovery" =~ ^[0-9]+$ ]]; then
+		oldest_recovery=$(echo "$recent_timestamps" | grep_non_negative_integer_lines | head -n 1)
+		if [[ -z "$oldest_recovery" ]] || ! is_non_negative_integer "$oldest_recovery"; then
 			handle_error "WARNING" "SYSTEM" "Cannot determine oldest Tier 2 recovery timestamp, allowing recovery"
 			return 0
 		fi
@@ -617,7 +617,7 @@ backup_corrupted_state_file() {
 	local max_attempts="${2:-3}"
 
 	# Validate max_attempts is a positive integer
-	if [[ ! "$max_attempts" =~ ^[0-9]+$ ]] || [[ "$max_attempts" -lt 1 ]]; then
+	if ! is_non_negative_integer "$max_attempts" || [[ "$max_attempts" -lt 1 ]]; then
 		handle_error "WARNING" "SYSTEM" "Invalid max_attempts value: $max_attempts (using default 3)" 0
 		max_attempts=3
 	fi
@@ -793,7 +793,8 @@ validate_state_file() {
 	integer)
 		# Should contain only digits (0-9), possibly with newlines
 		local grep_result=1
-		run_with_timeout "$STATE_FILE_READ_TIMEOUT" grep -qE '^[0-9]+$' "$file" && grep_result=0 || grep_result=1
+		# Use grep binary (not grep_non_negative_integer_lines): run_with_timeout execs via timeout(1)
+		run_with_timeout "$STATE_FILE_READ_TIMEOUT" grep -qE "${REGEX_NON_NEGATIVE_INTEGER}" "$file" && grep_result=0 || grep_result=1
 		if [[ $grep_result -ne 0 ]]; then
 			handle_error "WARNING" "SYSTEM" "State file corrupted (expected integer): $file"
 			return 1
@@ -803,7 +804,7 @@ validate_state_file() {
 		# Should contain a single Unix timestamp (digits only)
 		local grep_result=1
 		local line_count=0
-		run_with_timeout "$STATE_FILE_READ_TIMEOUT" grep -qE '^[0-9]+$' "$file" && grep_result=0 || grep_result=1
+		run_with_timeout "$STATE_FILE_READ_TIMEOUT" grep -qE "${REGEX_NON_NEGATIVE_INTEGER}" "$file" && grep_result=0 || grep_result=1
 		line_count=$(run_with_timeout "$STATE_FILE_READ_TIMEOUT" wc -l <"$file" || echo "0")
 		if [[ $grep_result -ne 0 ]] || [[ "$line_count" -ne 1 ]]; then
 			handle_error "WARNING" "SYSTEM" "State file corrupted (expected single timestamp): $file"
@@ -815,7 +816,7 @@ validate_state_file() {
 		# Empty file is valid (no restarts recorded)
 		if [[ -s "$file" ]]; then
 			local grep_result=1
-			run_with_timeout "$STATE_FILE_READ_TIMEOUT" grep -qE '^[0-9]+$' "$file" && grep_result=0 || grep_result=1
+			run_with_timeout "$STATE_FILE_READ_TIMEOUT" grep -qE "${REGEX_NON_NEGATIVE_INTEGER}" "$file" && grep_result=0 || grep_result=1
 			if [[ $grep_result -ne 0 ]]; then
 				handle_error "WARNING" "SYSTEM" "State file corrupted (expected timestamp list): $file"
 				return 1

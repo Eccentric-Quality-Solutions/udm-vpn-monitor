@@ -1434,9 +1434,13 @@ fi
 - More secure (proper validation prevents injection attacks)
 
 **Available Validation Functions:**
+- `is_non_negative_integer()` - Validates strings contain only ASCII digits (`REGEX_NON_NEGATIVE_INTEGER`)
+- `is_affirmative_reply()` - Validates y/yes prompt replies (`REGEX_AFFIRMATIVE_REPLY`)
+- `is_location_external_var()` / `is_location_internal_var()` / `is_location_var()` - Validates location config variable names (`REGEX_LOCATION_*_VAR` in `lib/constants.sh`)
+- `grep_non_negative_integer_lines()` - grep wrapper using the same integer pattern (pipelines/local reads only; with `run_with_timeout`, use `grep -qE "${REGEX_NON_NEGATIVE_INTEGER}"` because `timeout(1)` cannot exec shell functions)
 - `validate_ipv4()` - Validates IPv4 addresses with octet range checks
 - `validate_ip_address()` - Validates IPv4 or IPv6 addresses
-- `validate_timestamp()` - Validates Unix timestamps (0 to year 2100)
+- `validate_timestamp()` - Validates Unix timestamps (0 to year 2100); uses `is_non_negative_integer()` internally
 - `validate_state_file()` - Validates state file format (integer, timestamp, timestamp_list)
 
 ### Pattern: Use Supplementary Diagnostics to Reduce False Positives

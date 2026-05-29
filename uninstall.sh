@@ -238,7 +238,7 @@ handle_config_file() {
 			log_info "Configuration file found: $CONFIG_FILE"
 			read -p "Do you want to remove the configuration file? (yes/no) [no]: " -r
 			echo ""
-			if [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+			if is_affirmative_reply "$REPLY"; then
 				should_remove="yes"
 			else
 				should_remove="no"
@@ -317,7 +317,7 @@ handle_logs_dir() {
 			log_info "Logs directory found: $LOGS_DIR"
 			read -p "Do you want to remove the logs directory? (yes/no) [no]: " -r
 			echo ""
-			if [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+			if is_affirmative_reply "$REPLY"; then
 				should_remove="yes"
 			else
 				should_remove="no"
@@ -391,7 +391,7 @@ handle_state_dir() {
 			log_info "State directory found: $STATE_DIR"
 			read -p "Do you want to remove the state directory? (yes/no) [no]: " -r
 			echo ""
-			if [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+			if is_affirmative_reply "$REPLY"; then
 				should_remove="yes"
 			else
 				should_remove="no"
@@ -1135,7 +1135,7 @@ main() {
 		echo ""
 		read -p "Are you sure you want to continue? (yes/no): " -r
 		echo ""
-		if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+		if ! is_affirmative_reply "$REPLY"; then
 			log_info "Uninstallation cancelled"
 			exit 0
 		fi

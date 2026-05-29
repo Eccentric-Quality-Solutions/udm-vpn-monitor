@@ -38,7 +38,7 @@
 #
 # Note:
 #   Requires die and log_message functions to be available
-#   Integer validation uses regex: ^[0-9]+$
+#   Integer validation uses is_non_negative_integer()
 validate_config_type() {
 	local var_name="$1"
 	local var_value="$2"
@@ -48,7 +48,7 @@ validate_config_type() {
 
 	case "$var_type" in
 	integer)
-		if ! [[ "$var_value" =~ ^[0-9]+$ ]]; then
+		if ! is_non_negative_integer "$var_value"; then
 			if [[ "$required" == "required" ]]; then
 				# Use handle_error_or_exit_fake_mode to respect fake mode
 				# In fake mode, it returns 1; in normal mode it calls die() and never returns
@@ -63,7 +63,7 @@ validate_config_type() {
 					# No default available
 					handle_error "WARNING" "SYSTEM" "$var_name must be an integer (current value: '$var_value'), no default available"
 					return 1
-				elif ! [[ "$default_val" =~ ^[0-9]+$ ]]; then
+				elif ! is_non_negative_integer "$default_val"; then
 					# Default value is invalid - don't apply it
 					handle_error "ERROR" "SYSTEM" "Default value for $var_name is invalid (default: '$default_val'), cannot apply default" 0
 					return 1

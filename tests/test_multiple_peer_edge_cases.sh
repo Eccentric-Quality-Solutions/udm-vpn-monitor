@@ -62,7 +62,7 @@ load fixtures/vpn_failing
 		local content
 		content=$(cat "$corrupted_state_file" 2>/dev/null || echo "")
 		# State file should be recovered (valid number) or reset
-		if [[ -n "$content" ]] && [[ ! "$content" =~ ^[0-9]+$ ]]; then
+		if [[ -n "$content" ]] && ! is_non_negative_integer "$content"; then
 			# If still corrupted, that's okay - system should handle it gracefully
 			# But ideally it should be recovered
 			:

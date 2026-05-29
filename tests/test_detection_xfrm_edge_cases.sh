@@ -177,7 +177,6 @@ EOF
 	remove_mock_from_path
 }
 
-
 # bats test_tags=category:detection,priority:high
 @test "get_xfrm_state_for_peer does not match peer IP prefixes" {
 	# Purpose: Ensure xfrm peer matching is exact, not prefix-based.

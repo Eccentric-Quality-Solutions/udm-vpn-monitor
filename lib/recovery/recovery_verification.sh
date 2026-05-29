@@ -166,7 +166,7 @@ count_sas_for_peer() {
 	fi
 
 	# Validate count is numeric
-	if [[ ! "$sa_count" =~ ^[0-9]+$ ]]; then
+	if ! is_non_negative_integer "$sa_count"; then
 		return 1
 	fi
 
@@ -292,11 +292,11 @@ verify_byte_counters_increment() {
 	local current_bytes
 	if current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null); then
 		# Validate initial_bytes is numeric (default to 0 if not)
-		if [[ ! "$initial_bytes" =~ ^[0-9]+$ ]]; then
+		if ! is_non_negative_integer "$initial_bytes"; then
 			initial_bytes=0
 		fi
 		# Validate current_bytes is numeric
-		if [[ ! "$current_bytes" =~ ^[0-9]+$ ]]; then
+		if ! is_non_negative_integer "$current_bytes"; then
 			handle_error "WARNING" "$location_name" "Recovery verification: Invalid byte counter value for $ip_display (current=$current_bytes)"
 			return 1
 		fi
@@ -448,7 +448,7 @@ verify_ipsec_connections_active() {
 		if command -v count_sas_for_peer >/dev/null 2>&1; then
 			sa_count=$(count_sas_for_peer "$external_peer_ip" "" 2>/dev/null || echo "0")
 			# Ensure sa_count is numeric
-			if ! [[ "$sa_count" =~ ^[0-9]+$ ]]; then
+			if ! is_non_negative_integer "$sa_count"; then
 				sa_count=0
 			fi
 		fi

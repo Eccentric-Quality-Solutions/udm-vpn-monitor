@@ -335,7 +335,7 @@ check_ping_connectivity() {
 		elif [[ "$ping_result" =~ ([0-9]+)%[[:space:]]+packet[[:space:]]+loss ]]; then
 			# Fallback: use reported percentage (e.g. if format differs), clamp to 0-100
 			packet_loss="${BASH_REMATCH[1]}"
-			if [[ -z "$packet_loss" ]] || [[ ! "$packet_loss" =~ ^[0-9]+$ ]]; then
+			if [[ -z "$packet_loss" ]] || ! is_non_negative_integer "$packet_loss"; then
 				packet_loss="0"
 			elif [[ "$packet_loss" -gt 100 ]]; then
 				packet_loss="100"

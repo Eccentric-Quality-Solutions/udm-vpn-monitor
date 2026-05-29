@@ -17,6 +17,8 @@ set -euo pipefail
 
 # Get script directory (install dir when deployed)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "${SCRIPT_DIR}/lib/common.sh"
 MONITOR_SCRIPT="${SCRIPT_DIR}/vpn-monitor.sh"
 CONFIG_FILE="${SCRIPT_DIR}/vpn-monitor.conf"
 STATE_DIR="${SCRIPT_DIR}/state"
@@ -39,7 +41,7 @@ get_monitor_interval() {
 	if [[ -f "$CONFIG_FILE" ]]; then
 		local val
 		val=$(grep "^MONITOR_INTERVAL=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr -d "'" || true)
-		if [[ -n "$val" ]] && [[ "$val" =~ ^[0-9]+$ ]]; then
+		if [[ -n "$val" ]] && is_non_negative_integer "$val"; then
 			interval="$val"
 			# Clamp to valid range
 			[[ $interval -lt 10 ]] && interval=10

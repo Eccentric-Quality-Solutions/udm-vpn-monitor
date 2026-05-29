@@ -179,7 +179,7 @@ check_routing_issue_for_failure_type() {
 	local has_routing_issue=0
 
 	# Check byte counters using abstraction layer (peer IP is available)
-	if [[ -n "$current_bytes" ]] && [[ "$current_bytes" =~ ^[0-9]+$ ]]; then
+	if [[ -n "$current_bytes" ]] && is_non_negative_integer "$current_bytes"; then
 		byte_counters_available=1
 		local last_bytes
 		last_bytes=$(get_peer_state "$location_name" "$external_peer_ip" "last_bytes" "0")
@@ -849,7 +849,7 @@ check_vpn_status() {
 	# Update last_bytes after failure type detection when primary passed via xfrm (not ipsec fallback)
 	if [[ $xfrm_primary_passed -eq 1 ]] && [[ $primary_before_failure_type -eq 1 ]] && [[ -n "$xfrm_output" ]]; then
 		local current_bytes
-		if current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null) && [[ -n "$current_bytes" ]] && [[ "$current_bytes" =~ ^[0-9]+$ ]]; then
+		if current_bytes=$(extract_byte_counter "$xfrm_output" 2>/dev/null) && [[ -n "$current_bytes" ]] && is_non_negative_integer "$current_bytes"; then
 			local prev_bytes
 			prev_bytes=$(get_peer_state "$location_name" "$external_peer_ip" "last_bytes" "0")
 			set_peer_state "$location_name" "$external_peer_ip" "last_bytes" "$current_bytes" || true

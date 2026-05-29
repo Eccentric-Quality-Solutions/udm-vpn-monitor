@@ -885,7 +885,6 @@ EOF
 	remove_mock_from_path
 }
 
-
 # bats test_tags=category:high-risk,priority:high
 @test "count_sas_for_peer - does not count peer IP prefixes" {
 	# Purpose: Ensure recovery verification counts exact peer IP matches only.

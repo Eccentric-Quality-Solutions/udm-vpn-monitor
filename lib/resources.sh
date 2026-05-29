@@ -90,7 +90,7 @@ get_cpu_usage() {
 	cpu_usage=$(awk "BEGIN {printf \"%.0f\", (1 - $idle_diff/$total_diff) * 100}")
 
 	# Reject non-integer or negative output (awk can produce nan, inf, or scientific notation on overflow/unexpected input)
-	if [[ ! $cpu_usage =~ ^[0-9]+$ ]]; then
+	if ! is_non_negative_integer "$cpu_usage"; then
 		return 1
 	fi
 
@@ -344,7 +344,7 @@ check_resource_constrained() {
 			# Read when it first became constrained
 			local constrained_since
 			constrained_since=$(cat "$state_file" 2>/dev/null)
-			if [[ -n "$constrained_since" ]] && [[ "$constrained_since" =~ ^[0-9]+$ ]]; then
+			if [[ -n "$constrained_since" ]] && is_non_negative_integer "$constrained_since"; then
 				# Check if it's been constrained long enough
 				local elapsed=$((current_time - constrained_since))
 				if [[ $elapsed -ge $duration ]]; then

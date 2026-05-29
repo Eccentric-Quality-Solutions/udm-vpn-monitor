@@ -13,7 +13,7 @@
 # - String escaping: escape_sed_replacement(), escape_sed_regex()
 # - String sanitization: sanitize_location_name()
 # - String trimming: trim()
-# - Validation: validate_spi_format()
+# - Validation: is_non_negative_integer(), is_affirmative_reply(), validate_spi_format()
 # - Config file operations: update_config_value()
 # - Logging: log_info(), log_warn(), log_error()
 # - System checks: check_root()
@@ -26,6 +26,54 @@
 [[ -z "${GREEN:-}" ]] && readonly GREEN='\033[0;32m'
 [[ -z "${YELLOW:-}" ]] && readonly YELLOW='\033[1;33m'
 [[ -z "${NC:-}" ]] && readonly NC='\033[0m' # No Color
+
+# Regex constants for shared predicates (lib/constants.sh)
+if [[ -z "${REGEX_NON_NEGATIVE_INTEGER:-}" ]]; then
+	# shellcheck source=constants.sh
+	source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/constants.sh"
+fi
+
+# Test whether a string is a non-negative integer (ASCII digits only, including "0")
+#
+# Arguments:
+#   $1: Value to test
+#
+# Returns:
+#   0: Value matches REGEX_NON_NEGATIVE_INTEGER
+#   1: Value is empty or contains non-digits
+is_non_negative_integer() {
+	[[ "${1-}" =~ ${REGEX_NON_NEGATIVE_INTEGER} ]]
+}
+
+# Grep for lines that contain only a non-negative integer
+#
+# Wrapper around grep -E using REGEX_NON_NEGATIVE_INTEGER (same rule as is_non_negative_integer).
+#
+# Arguments:
+#   Passed through to grep (e.g. -q, file path, or read stdin from a pipe)
+#
+# Returns:
+#   grep exit status
+#
+# Note:
+#   Cannot be used as the command to run_with_timeout() — timeout(1) execs a binary and
+#   cannot invoke bash functions. Use grep -qE "${REGEX_NON_NEGATIVE_INTEGER}" with
+#   run_with_timeout, or call this wrapper directly for unpiped local reads.
+grep_non_negative_integer_lines() {
+	grep -E "${REGEX_NON_NEGATIVE_INTEGER}" "$@"
+}
+
+# Test whether a prompt reply is affirmative (y, Y, yes, Yes, YES, etc.)
+#
+# Arguments:
+#   $1: Reply string
+#
+# Returns:
+#   0: Affirmative reply
+#   1: Not affirmative (including empty)
+is_affirmative_reply() {
+	[[ "${1-}" =~ ${REGEX_AFFIRMATIVE_REPLY} ]]
+}
 
 # Log an informational message
 #
@@ -312,7 +360,7 @@ validate_timestamp() {
 	local timestamp="$1"
 
 	# Check if timestamp is a valid integer
-	if [[ ! "$timestamp" =~ ^[0-9]+$ ]]; then
+	if ! is_non_negative_integer "$timestamp"; then
 		return 1
 	fi
 
@@ -357,8 +405,7 @@ safe_timestamp_subtract() {
 	fi
 
 	# Validate seconds_to_subtract is a non-negative integer
-	# Note: Negative check is redundant since ^[0-9]+ won't match negatives
-	if [[ ! "$seconds_to_subtract" =~ ^[0-9]+$ ]]; then
+	if ! is_non_negative_integer "$seconds_to_subtract"; then
 		return 2
 	fi
 
@@ -411,7 +458,7 @@ safe_timestamp_add() {
 	fi
 
 	# Validate seconds_to_add is a non-negative integer
-	if [[ ! "$seconds_to_add" =~ ^[0-9]+$ ]]; then
+	if ! is_non_negative_integer "$seconds_to_add"; then
 		return 2
 	fi
 
@@ -695,7 +742,7 @@ read_counter_file() {
 	fi
 
 	# Validate value is numeric (handle corruption)
-	[[ "$value" =~ ^[0-9]+$ ]] || value=0
+	is_non_negative_integer "$value" || value=0
 
 	echo "$value"
 }

@@ -58,6 +58,9 @@ source "${INSTALL_SCRIPT_DIR}/lib/config_schema.sh"
 # shellcheck source=lib/config/config_loading.sh
 source "${INSTALL_SCRIPT_DIR}/lib/config/config_loading.sh"
 
+# shellcheck source=lib/config/location_parsing.sh
+source "${INSTALL_SCRIPT_DIR}/lib/config/location_parsing.sh"
+
 # Check if we're on a UDM
 #
 # Verifies that the system is a UniFi Dream Machine by checking for /data directory.
@@ -724,7 +727,7 @@ offer_append_missing_config_values() {
 	echo ""
 	read -rp "Append these values to the end of your config file? (yes/no) [no]: " REPLY
 	echo ""
-	if [[ ! "$REPLY" =~ ^[Yy][Ee][Ss]$ ]]; then
+	if ! is_affirmative_reply "$REPLY"; then
 		log_info "Skipping append (user declined)"
 		return 0
 	fi
@@ -952,7 +955,7 @@ install_scripts() {
 			log_warn "Config file already exists: ${INSTALL_DIR}/${CONFIG_NAME}"
 			read -rp "Overwrite existing config file? (yes/no) [no]: " REPLY
 			echo ""
-			if [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+			if is_affirmative_reply "$REPLY"; then
 				install_config_file "Overwriting existing config file"
 			else
 				log_info "Preserving existing config file: ${INSTALL_DIR}/${CONFIG_NAME}"
@@ -1513,7 +1516,7 @@ ensure_default_lan_local_ip_for_ping_install() {
 			[[ -z "$key" ]] && continue
 
 			# Check for LOCATION_*_INTERNAL pattern
-			if [[ "$key" =~ ^LOCATION_.+_INTERNAL$ ]]; then
+			if is_location_internal_var "$key"; then
 				# Remove quotes and trim whitespace
 				value=$(echo "$value" | sed "s/^[\"']//" | sed "s/[\"']$//")
 				value=$(trim "$value")
@@ -1604,9 +1607,11 @@ ensure_default_lan_local_ip_for_ping_install() {
 			[[ -z "$key" ]] && continue
 
 			# Check for LOCATION_*_INTERNAL pattern
-			if [[ "$key" =~ ^LOCATION_(.+)_INTERNAL$ ]]; then
+			if is_location_internal_var "$key"; then
 				# Extract location name from variable name (e.g., LOCATION_NYC_INTERNAL -> NYC)
-				location_name="${BASH_REMATCH[1]}"
+				if ! location_name=$(extract_location_name "$key"); then
+					continue
+				fi
 
 				# Remove quotes and trim whitespace
 				value=$(echo "$value" | sed "s/^[\"']//" | sed "s/[\"']$//")
@@ -1680,7 +1685,7 @@ validate_config_after_install() {
 		[[ -z "$key" ]] && continue
 
 		# Check for LOCATION_*_EXTERNAL pattern
-		if [[ "$key" =~ ^LOCATION_.+_EXTERNAL$ ]]; then
+		if is_location_external_var "$key"; then
 			# Remove quotes and trim whitespace
 			value=$(echo "$value" | sed "s/^[\"']//" | sed "s/[\"']$//")
 			value=$(trim "$value")
@@ -1704,7 +1709,7 @@ validate_config_after_install() {
 			# Not in interactive mode, but config is empty - prompt user
 			read -rp "Configure a location now? (yes/no) [yes]: " REPLY
 			echo ""
-			if [[ -z "$REPLY" ]] || [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]] || [[ $REPLY =~ ^[Yy]$ ]]; then
+			if [[ -z "$REPLY" ]] || is_affirmative_reply "$REPLY"; then
 				local added_at_least_one=0
 				local first_location=1
 				local local_udm_ip_value=""
@@ -1753,7 +1758,7 @@ validate_config_after_install() {
 					if [[ -z "$REPLY" ]] || [[ $REPLY =~ ^[Nn][Oo]$ ]] || [[ $REPLY =~ ^[Nn]$ ]]; then
 						break
 					fi
-					[[ "$REPLY" =~ ^[Yy][Ee][Ss]$ ]] || [[ "$REPLY" =~ ^[Yy]$ ]] || break
+					is_affirmative_reply "$REPLY" || break
 				done
 				if [[ $added_at_least_one -eq 1 ]]; then
 					log_info "Note: IP addresses will be validated when the monitor runs"

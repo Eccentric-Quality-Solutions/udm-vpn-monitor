@@ -6,6 +6,12 @@
 # Version: 0.8.3
 #
 
+# Location variable regex constants (lib/constants.sh); predicates live in location_parsing.sh
+if [[ -z "${REGEX_LOCATION_EXTERNAL_VAR:-}" ]]; then
+	# shellcheck source=constants.sh
+	source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/constants.sh"
+fi
+
 # Configuration schema definition
 #
 # Format: CONFIG_SCHEMA["variable_name"]="required|type|rules|default"
@@ -170,13 +176,12 @@ get_config_schema() {
 		return 0
 	fi
 
-	# Check pattern matches for location-based variables
-	# Pattern restricts to valid identifier characters (A-Za-z0-9_) to match extract_location_name() validation
-	if [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_EXTERNAL$ ]]; then
+	# Check pattern matches for location-based variables (REGEX_LOCATION_*; see is_location_*_var in location_parsing.sh)
+	if [[ "$var_name" =~ ${REGEX_LOCATION_EXTERNAL_VAR} ]]; then
 		# LOCATION_*_EXTERNAL pattern: required, string, non-empty
 		echo "required|string|non-empty"
 		return 0
-	elif [[ "$var_name" =~ ^LOCATION_[A-Za-z0-9_]+_INTERNAL$ ]]; then
+	elif [[ "$var_name" =~ ${REGEX_LOCATION_INTERNAL_VAR} ]]; then
 		# LOCATION_*_INTERNAL pattern: optional, string
 		echo "optional|string"
 		return 0
