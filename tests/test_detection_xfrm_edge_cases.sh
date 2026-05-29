@@ -177,6 +177,43 @@ EOF
 	remove_mock_from_path
 }
 
+
+# bats test_tags=category:detection,priority:high
+@test "get_xfrm_state_for_peer does not match peer IP prefixes" {
+	# Purpose: Ensure xfrm peer matching is exact, not prefix-based.
+	# Expected: Searching for 192.168.1.1 must not match an SA for 192.168.1.10.
+	setup_test_environment "${TEST_DIR}"
+	local target_peer="192.168.1.1"
+	local other_peer="192.168.1.10"
+
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<EOF
+#!/bin/bash
+if [[ "\$1" == "-s" ]] && [[ "\$2" == "xfrm" ]] && [[ "\$3" == "state" ]]; then
+    echo "src 10.0.0.1 dst ${other_peer}"
+    echo "    proto esp spi 0x11111111 reqid 1 mode tunnel"
+    echo "    lifetime current: 5000 bytes, 10 packets"
+    exit 0
+elif [[ "\$1" == "xfrm" ]] && [[ "\$2" == "state" ]]; then
+    echo "src 10.0.0.1 dst ${other_peer}"
+    echo "    proto esp spi 0x11111111 reqid 1 mode tunnel"
+    echo "    lifetime current: 5000 bytes, 10 packets"
+    exit 0
+fi
+exit 1
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	source_function "get_xfrm_state_for_peer"
+
+	run get_xfrm_state_for_peer "$target_peer"
+	assert_failure
+	assert_output ""
+
+	remove_mock_from_path
+}
+
 # bats test_tags=category:detection,priority:medium
 @test "check_xfrm_status handles special characters in IP addresses" {
 	# Purpose: Test verifies that check_xfrm_status handles IP addresses with special characters correctly.

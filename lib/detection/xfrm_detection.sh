@@ -701,14 +701,14 @@ get_xfrm_state_for_peer() {
 	local forward_output=""
 	local reverse_output=""
 
-	# Find forward SAs (dst=$external_peer_ip) - matches forward SA header lines "src <local_ip> dst $external_peer_ip"
+	# Find matching SA header lines exactly. Escape the peer IP before regex use so
+	# IPv4 dots are literal, then require whitespace or end-of-line after the IP.
+	local external_peer_ip_regex
+	external_peer_ip_regex=$(escape_sed_regex "$external_peer_ip")
 	log_message "DEBUG" "SYSTEM" "get_xfrm_state_for_peer: Searching for SAs in output (length=${#full_xfrm_output})"
-	forward_output=$(echo "$full_xfrm_output" | grep -F "dst ${external_peer_ip}" -A "${extended_context}" 2>/dev/null || true)
+	forward_output=$(echo "$full_xfrm_output" | grep -E "^[[:space:]]*src[[:space:]]+[^[:space:]]+[[:space:]]+dst[[:space:]]+${external_peer_ip_regex}([[:space:]]|$)" -A "${extended_context}" 2>/dev/null || true)
 	# Find reverse SAs (src=$external_peer_ip) - matches reverse SA header lines "src $external_peer_ip dst <local_ip>"
-	# Use grep -E with anchored pattern to match lines starting with "src $external_peer_ip"
-	# Safe because external_peer_ip is validated above to prevent regex injection
-	# The pattern "^[[:space:]]*src $external_peer_ip[[:space:]]" matches SA header lines for reverse SAs
-	reverse_output=$(echo "$full_xfrm_output" | grep -E "^[[:space:]]*src ${external_peer_ip}[[:space:]]" -A "${extended_context}" 2>/dev/null || true)
+	reverse_output=$(echo "$full_xfrm_output" | grep -E "^[[:space:]]*src[[:space:]]+${external_peer_ip_regex}([[:space:]]|$)" -A "${extended_context}" 2>/dev/null || true)
 	log_message "DEBUG" "SYSTEM" "get_xfrm_state_for_peer: forward_output length=${#forward_output}, reverse_output length=${#reverse_output}"
 
 	# Combine outputs if both exist (they represent different SAs in a bidirectional tunnel)

@@ -110,13 +110,13 @@ graph TB
 
     subgraph "Library Modules"
         LockfileLib[lib/lockfile.sh<br/>Lockfile Management]
-        ConfigLib[lib/config.sh<br/>Config Loading<br/>Compatibility Layer]
+        ConfigLib[lib/config.sh<br/>Config Loading<br/>Aggregate Entry]
         SchemaLib[lib/config_schema.sh<br/>Schema Validation]
-        StateLib[lib/state.sh<br/>State Management<br/>Compatibility Layer]
+        StateLib[lib/state.sh<br/>State Management<br/>Aggregate Entry]
         LoggingLib[lib/logging.sh<br/>Logging Functions]
         ResourcesLib[lib/resources.sh<br/>Resource Monitoring]
-        DetectionLib[lib/detection.sh<br/>VPN Detection<br/>Compatibility Layer]
-        RecoveryLib[lib/recovery.sh<br/>Recovery Actions<br/>Compatibility Layer]
+        DetectionLib[lib/detection.sh<br/>VPN Detection<br/>Aggregate Entry]
+        RecoveryLib[lib/recovery.sh<br/>Recovery Actions<br/>Aggregate Entry]
         CommonLib[lib/common.sh<br/>Shared Utilities]
         ConstantsLib[lib/constants.sh<br/>Named Constants]
     end
@@ -174,8 +174,10 @@ graph TB
     MainScript --> ResourcesLib
     MainScript --> StateDir
     MainScript --> LogDir
-    Keepalive -.->|Optional| XfrmCheck
+    Keepalive -.->|reads| Config
 ```
+
+**Diagram note:** `vpn-keepalive.sh` is not part of the cron → monitor → detection → recovery chain. In addition to the config file, it sources `lib/config.sh` and `lib/detection.sh` for shared ping/DNS/LAN helpers (see [VPN Keepalive Daemon](#vpn-keepalive-daemon)).
 
 ## Execution Flow
 
@@ -940,7 +942,7 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │
 ├── lib/                        # Library modules
 │   ├── common.sh               # Shared utilities (logging, validation, helpers)
-│   ├── config.sh               # Configuration loading and management (compatibility layer)
+│   ├── config.sh               # Configuration loading and management (aggregate entry; sources lib/config/)
 │   ├── config/                  # Configuration module subdirectory
 │   │   ├── config_loading.sh      # Configuration file loading and parsing
 │   │   ├── config_validation.sh   # Configuration validation logic
@@ -948,7 +950,7 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │   │   └── config_defaults.sh     # Default value application logic
 │   ├── config_schema.sh        # Configuration schema definitions and validation
 │   ├── constants.sh            # Named constants for magic numbers
-│   ├── detection.sh            # VPN status detection (main entry point, compatibility layer)
+│   ├── detection.sh            # VPN status detection (aggregate entry; sources lib/detection/)
 │   ├── detection/               # Detection module subdirectory
 │   │   ├── network_validation.sh  # IP validation, default LAN ping source (ip addr on DEFAULT_LAN_INTERFACE)
 │   │   ├── xfrm_detection.sh      # xfrm state and byte counter detection
@@ -957,7 +959,7 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │   │   └── system_wide_failure.sh # System-wide failure detection and coordination
 │   ├── lockfile.sh             # Lockfile management (flock/atomic)
 │   ├── logging.sh              # Centralized logging functionality
-│   ├── recovery.sh             # Tiered recovery actions (compatibility layer)
+│   ├── recovery.sh             # Tiered recovery actions (aggregate entry; sources lib/recovery/)
 │   ├── recovery/                # Recovery module subdirectory
 │   │   ├── recovery_verification.sh  # Recovery verification functions
 │   │   ├── recovery_state.sh         # Recovery state management
@@ -966,7 +968,7 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │   │   ├── recovery_orchestration.sh # Recovery orchestration and coordination
 │   │   └── constants.sh              # Recovery-specific constants
 │   ├── resources.sh            # Resource monitoring and throttling
-│   ├── state.sh                # State file management (compatibility layer)
+│   ├── state.sh                # State file management (aggregate entry; sources lib/state/)
 │   └── state/                   # State module subdirectory
 │       ├── state_paths.sh         # State file path generation and sanitization
 │       ├── peer_state.sh          # Per-peer state operations
@@ -1034,7 +1036,7 @@ The system uses a modular library architecture where functionality is organized 
 **Used By**: Most library modules, `vpn-monitor.sh`, `install.sh`, `uninstall.sh`, and other root scripts
 
 #### `lib/config.sh`
-**Purpose**: Configuration file loading, validation, and management. Compatibility layer that sources all config modules.
+**Purpose**: Configuration file loading, validation, and management. Aggregate entry point that sources all `lib/config/*.sh` modules.
 
 **Module Structure**: The configuration functionality is organized into focused modules in the `lib/config/` subdirectory:
 - **`lib/config/config_loading.sh`**: Configuration file loading, parsing, and file operations
@@ -1062,9 +1064,9 @@ The system uses a modular library architecture where functionality is organized 
   # LOG_FILE is preserved if filename is not "vpn-monitor.log"
   ```
 
-**Backward Compatibility**: The `lib/config.sh` file serves as a compatibility layer that sources all config modules, ensuring existing code continues to work unchanged. All functions are accessible via `lib/config.sh` as before.
+**Aggregate entry point**: `lib/config.sh` sources every `lib/config/*.sh` module in dependency order so one `source` loads the full configuration subsystem. Submodules remain individually sourceable (e.g. in tests) when they pull in their own dependencies.
 
-**Module Dependency Pattern**: Each config module sources its direct dependencies, making modules independently sourceable (useful for testing). The main `config.sh` entry point sources all modules in dependency order. This design allows modules to be sourced independently while maintaining backward compatibility with existing code that sources `config.sh`.
+**Module Dependency Pattern**: Each config module sources its direct dependencies, making modules independently sourceable (useful for testing). The main `config.sh` entry point sources all modules in dependency order. Callers that need the full API use `config.sh`; narrow tests can source submodules directly.
 
 **Dependencies**: `lib/constants.sh`, `lib/common.sh`; config submodules integrate `lib/config_schema.sh` and `lib/logging.sh` as needed
 
@@ -1109,7 +1111,7 @@ The system uses a modular library architecture where functionality is organized 
 **Dependencies**: `lib/common.sh`
 
 #### `lib/detection.sh`
-**Purpose**: VPN status detection using multiple methods with automatic fallback. Main entry point that sources all detection modules.
+**Purpose**: VPN status detection using multiple methods with automatic fallback. Aggregate entry point that sources all detection modules.
 
 **Module Structure**: The detection functionality is organized into focused modules in the `lib/detection/` subdirectory:
 - **`lib/detection/network_validation.sh`**: IP validation (IPv4/IPv6), default LAN ping source (`check_local_ip_on_default_lan`, `add_local_ip_to_default_lan_if_needed`), DNS resolution, interface state checks
@@ -1133,7 +1135,7 @@ The system uses a modular library architecture where functionality is organized 
 
 **State Passing Pattern**: The detection system uses a state passing pattern to optimize performance and ensure consistency. Expensive system state checks (like SA existence) are performed once at the source (`check_xfrm_status()`) and passed explicitly to downstream functions (`check_ping_optional()`, `detect_failure_type()`) via function parameters. This eliminates duplicate system calls, reducing `ip xfrm state` calls by 66-75% (from 3 calls to 1 per VPN check cycle) and ensures all functions use the same state snapshot, eliminating temporal inconsistencies. See Design Decision #12 and ADR-0028 for details.
 
-**Module Dependency Pattern**: Each detection module sources its direct dependencies, making modules independently sourceable (useful for testing). The main `detection.sh` entry point sources all modules in dependency order. This design allows modules to be sourced independently while maintaining backward compatibility with existing code that sources `detection.sh`.
+**Module Dependency Pattern**: Each detection module sources its direct dependencies, making modules independently sourceable (useful for testing). The main `detection.sh` entry point sources all modules in dependency order. Callers that need the full API use `detection.sh`; narrow tests can source submodules directly.
 
 **Dependencies**: `lib/logging.sh`, `lib/common.sh`, `lib/state.sh`, `lib/constants.sh`
 
@@ -1176,7 +1178,7 @@ The system uses a modular library architecture where functionality is organized 
 **Used By**: All modules for consistent logging
 
 #### `lib/recovery.sh`
-**Purpose**: Tiered recovery actions (logging → surgical cleanup → full restart). Compatibility layer that sources all recovery modules.
+**Purpose**: Tiered recovery actions (logging → surgical cleanup → full restart). Aggregate entry point that sources all recovery modules.
 
 **Module Structure**: The recovery functionality is organized into focused modules in the `lib/recovery/` subdirectory:
 - **`lib/recovery/recovery_verification.sh`**: Recovery verification functions (SA re-establishment, byte counter resumption)
@@ -1199,16 +1201,16 @@ The system uses a modular library architecture where functionality is organized 
 
 **Recovery Verification**: After xfrm-based recovery actions, the system performs verification to ensure SAs are re-established and byte counters resume. Uses exponential backoff polling (2s → 4s → 8s → 16s intervals) with configurable timeout (`RECOVERY_VERIFY_TIMEOUT`, default: 30 seconds). If verification fails or times out, the system falls back to full IPsec restart/reload. Verification functions are in `recovery_verification.sh`.
 
-**Backward Compatibility**: The `lib/recovery.sh` file serves as a compatibility layer that sources all recovery modules, ensuring existing code continues to work unchanged. All functions are accessible via `lib/recovery.sh` as before.
+**Aggregate entry point**: `lib/recovery.sh` sources every `lib/recovery/*.sh` module in dependency order so one `source` loads the full recovery subsystem.
 
-**Module Dependency Pattern**: Each recovery module sources its direct dependencies, making modules independently sourceable (useful for testing). The main `recovery.sh` entry point sources all modules in dependency order. This design allows modules to be sourced independently while maintaining backward compatibility with existing code that sources `recovery.sh`.
+**Module Dependency Pattern**: Each recovery module sources its direct dependencies, making modules independently sourceable (useful for testing). The main `recovery.sh` entry point sources all modules in dependency order. Callers that need the full API use `recovery.sh`; narrow tests can source submodules directly.
 
 **Dependencies**: `lib/logging.sh`, `lib/state.sh`, `lib/common.sh`, `lib/detection.sh`
 
 **Note**: See Design Decision #3 and Recovery Tier Flow diagram for recovery strategy details. The module split (completed 2026-01-16) decomposes the original 2633-line monolithic file into six files under `lib/recovery/` (five behavior modules plus `constants.sh`) for better organization and maintainability.
 
 #### `lib/state.sh`
-**Purpose**: State file management for failure counters, cooldown periods, and rate limiting. Compatibility layer that sources all state modules.
+**Purpose**: State file management for failure counters, cooldown periods, and rate limiting. Aggregate entry point that sources all state modules.
 
 **Module Structure**: The state management functionality is organized into focused modules in the `lib/state/` subdirectory:
 - **`lib/state/state_paths.sh`**: State file path generation, sanitization, and path management utilities
@@ -1242,9 +1244,9 @@ The system uses a modular library architecture where functionality is organized 
 - Per-location state isolation
 - Location-based state file naming (format: `<key>_<location>_<peer_ip>`)
 
-**Backward Compatibility**: The `lib/state.sh` file serves as a compatibility layer that sources all state modules, ensuring existing code continues to work unchanged. All functions are accessible via `lib/state.sh` as before.
+**Aggregate entry point**: `lib/state.sh` sources every `lib/state/*.sh` module in dependency order so one `source` loads the full state subsystem.
 
-**Module Dependency Pattern**: Each state module sources its direct dependencies, making modules independently sourceable (useful for testing). The main `state.sh` entry point sources all modules in dependency order. This design allows modules to be sourced independently while maintaining backward compatibility with existing code that sources `state.sh`.
+**Module Dependency Pattern**: Each state module sources its direct dependencies, making modules independently sourceable (useful for testing). The main `state.sh` entry point sources all modules in dependency order. Callers that need the full API use `state.sh`; narrow tests can source submodules directly.
 
 **Dependencies**: `lib/constants.sh` (required first), `lib/common.sh`
 
@@ -1263,6 +1265,7 @@ The system includes an optional VPN keepalive daemon (`vpn-keepalive.sh`) that r
 - Script: `vpn-keepalive.sh` (daemon implementation)
 - Configuration: Uses same `vpn-monitor.conf` configuration
 - Operation: Runs continuously, sends pings at configured intervals
+- **Libraries**: Sources `lib/logging.sh`, `lib/config.sh`, and `lib/detection.sh` so keepalive reuses the same ping, DNS, and LAN-source helpers as `vpn-monitor.sh`. This is a **one-way dependency** (keepalive → libraries); `lib/detection` does not source or call `vpn-keepalive.sh` (detection may only log suggestions that reference the keepalive PID file when tunnels look idle).
 - **Log File Separation**: Uses its own log file (`vpn-keepalive.log`) separate from the monitor log (`vpn-monitor.log`). The keepalive script sets `LOG_FILE="${LOGS_DIR}/vpn-keepalive.log"` before calling `load_config()`, and `load_config()` preserves custom log files (see `lib/config.sh` documentation above for LOG_FILE preservation behavior).
 - **Config Reloading**: Automatically reloads configuration every 10 iterations (or every 5 minutes, whichever is longer) to pick up configuration changes without requiring service restart. This allows configuration updates (e.g., adding/removing locations, changing intervals) to take effect automatically.
 - **LOCAL_UDM_IP Support**: Supports `LOCAL_UDM_IP` configuration for proper ping source routing when using `INTERNAL_PEER_IPS`, matching the behavior of `vpn-monitor.sh` ping checks.

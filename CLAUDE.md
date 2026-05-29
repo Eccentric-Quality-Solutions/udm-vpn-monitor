@@ -91,10 +91,10 @@ lib/
 ├── lockfile.sh        # Lockfile management
 ├── resources.sh       # Resource monitoring and throttling
 ├── anonymize.sh       # Data anonymization utilities
-├── config.sh          # Compatibility layer → sources lib/config/
-├── detection.sh       # Compatibility layer → sources lib/detection/
-├── recovery.sh        # Compatibility layer → sources lib/recovery/
-├── state.sh           # Compatibility layer → sources lib/state/
+├── config.sh          # Aggregate entry → sources lib/config/
+├── detection.sh       # Aggregate entry → sources lib/detection/
+├── recovery.sh        # Aggregate entry → sources lib/recovery/
+├── state.sh           # Aggregate entry → sources lib/state/
 ├── config/
 │   ├── config_defaults.sh, config_loading.sh
 │   ├── config_validation.sh, location_parsing.sh

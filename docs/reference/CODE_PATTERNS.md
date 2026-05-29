@@ -2242,13 +2242,12 @@ source "${LIB_DIR}/config.sh"
 
 **Pattern:**
 ```bash
-# Main module file (lib/recovery.sh) - Compatibility layer
+# Main module file (lib/recovery.sh) - Aggregate entry point
 #!/bin/bash
 #
 # Recovery actions for UDM VPN Monitor
-# This file serves as a compatibility layer that sources the decomposed
-# recovery modules. All recovery functionality has been moved to lib/recovery/
-# subdirectory for better organization and maintainability.
+# Aggregate entry point: sources the decomposed recovery modules in dependency
+# order. Implementation lives under lib/recovery/ for organization and testing.
 #
 
 # Determine lib directory (where this file is located)
@@ -2270,21 +2269,21 @@ source "${RECOVERY_DIR}/recovery_state.sh" 2>/dev/null || {
 ```
 
 **Module Structure:**
-- **Main module file** (`lib/recovery.sh`): Compatibility layer that sources all submodules
+- **Main module file** (`lib/recovery.sh`): Aggregate entry point that sources all submodules
 - **Subdirectory** (`lib/recovery/`): Contains focused modules with single responsibilities
 - **Module naming**: Use descriptive names that indicate purpose (e.g., `recovery_verification.sh`, `xfrm_recovery.sh`)
 
 **Decomposition Guidelines:**
 1. **Single Responsibility**: Each module should have one clear purpose
 2. **Dependency Order**: Source modules in dependency order (dependencies first)
-3. **Backward Compatibility**: Main module file serves as compatibility layer
+3. **Aggregate entry point**: Main module file sources all submodules in dependency order
 4. **Independent Sourceability**: Each module should be independently sourceable (useful for testing)
 5. **Fail Fast**: Modules should fail fast if dependencies can't be sourced - this is better than silent degradation
 
 **Module Organization Example:**
 ```
 lib/
-├── recovery.sh                    # Compatibility layer (sources all modules)
+├── recovery.sh                    # Aggregate entry (sources all modules)
 └── recovery/                      # Recovery module subdirectory
     ├── recovery_verification.sh  # Verification functions
     ├── recovery_state.sh         # State management
@@ -2297,11 +2296,11 @@ lib/
 - **Maintainability**: Smaller, focused files are easier to understand and modify
 - **Organization**: Related functionality grouped together
 - **Testability**: Modules can be tested independently
-- **Backward Compatibility**: Existing code continues to work unchanged
+- **Stable import surface**: One `source` loads the full subsystem without listing every submodule
 - **Clear Dependencies**: Module structure makes dependencies explicit
 
 **Key Points:**
-- Keep main module file as compatibility layer (don't remove it)
+- Keep the main module file as the aggregate entry point (don't remove it)
 - Source modules in dependency order
 - Use descriptive module names
 - Each module should be independently sourceable

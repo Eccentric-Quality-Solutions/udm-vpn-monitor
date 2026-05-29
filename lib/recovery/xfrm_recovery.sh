@@ -762,7 +762,9 @@ delete_sas_from_list() {
 		local ip_xfrm_exit=$?
 		if [[ $ip_xfrm_exit -eq 0 ]]; then
 			# Use || true so grep's exit 1 (no match) does not trigger set -e
-			pre_delete_xfrm_output=$(printf '%s' "$ip_xfrm_raw" | grep -F "dst $sa_dst" -A 20 2>/dev/null || true)
+			local sa_dst_regex
+			sa_dst_regex=$(escape_sed_regex "$sa_dst")
+			pre_delete_xfrm_output=$(printf '%s' "$ip_xfrm_raw" | grep -E "^[[:space:]]*src[[:space:]]+[^[:space:]]+[[:space:]]+dst[[:space:]]+${sa_dst_regex}([[:space:]]|$)" -A 20 2>/dev/null || true)
 			if [[ -n "$pre_delete_xfrm_output" ]]; then
 				pre_delete_query_success=1
 				# Check if this specific SA (with all selectors) appears in a single block
@@ -996,7 +998,9 @@ delete_xfrm_policies() {
 	#
 	# Note: external_peer_ip is the external IP of remote locations (from LOCATION_*_EXTERNAL config)
 	local existing_policies
-	existing_policies=$("$ip_cmd" xfrm policy 2>/dev/null | grep -F "dst $external_peer_ip" -A 5 2>/dev/null || echo "")
+	local external_peer_ip_regex
+	external_peer_ip_regex=$(escape_sed_regex "$external_peer_ip")
+	existing_policies=$("$ip_cmd" xfrm policy 2>/dev/null | grep -E "^[[:space:]]*src[[:space:]]+[^[:space:]]+[[:space:]]+dst[[:space:]]+${external_peer_ip_regex}([[:space:]]|$)" -A 5 2>/dev/null || echo "")
 
 	local policy_deleted_count=0
 	local policy_failed_count=0

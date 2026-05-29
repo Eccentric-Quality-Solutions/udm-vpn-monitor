@@ -107,8 +107,10 @@ count_sas_for_peer() {
 	# Use ([[:space:]]|$) so we match when IP is followed by space or end-of-line
 	local forward_headers
 	local reverse_headers
-	forward_headers=$(echo "$xfrm_output" | grep -F "dst $external_peer_ip" | grep -E "^[[:space:]]*src" || true)
-	reverse_headers=$(echo "$xfrm_output" | grep -E "^[[:space:]]*src ${external_peer_ip}([[:space:]]|$)" || true)
+	local external_peer_ip_regex
+	external_peer_ip_regex=$(escape_sed_regex "$external_peer_ip")
+	forward_headers=$(echo "$xfrm_output" | grep -E "^[[:space:]]*src[[:space:]]+[^[:space:]]+[[:space:]]+dst[[:space:]]+${external_peer_ip_regex}([[:space:]]|$)" || true)
+	reverse_headers=$(echo "$xfrm_output" | grep -E "^[[:space:]]*src[[:space:]]+${external_peer_ip_regex}([[:space:]]|$)" || true)
 
 	# Combine headers, deduplicating by SA header line (src ... dst ...)
 	# Use awk to deduplicate since the same SA might appear in both if grep -A includes context

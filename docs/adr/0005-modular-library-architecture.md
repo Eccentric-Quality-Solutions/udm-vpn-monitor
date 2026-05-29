@@ -33,7 +33,7 @@ We will refactor the codebase into a modular library architecture with dedicated
 ## Implementation Details
 - **Library Modules**:
   - `lib/common.sh` - Shared utilities (logging, validation, helpers)
-  - `lib/config.sh` - Configuration loading and validation (compatibility layer)
+  - `lib/config.sh` - Configuration loading and validation (aggregate entry; sources `lib/config/`)
   - `lib/config/` - Configuration module subdirectory:
     - `lib/config/config_loading.sh` - File parsing and loading
     - `lib/config/config_defaults.sh` - Default value application
@@ -41,7 +41,7 @@ We will refactor the codebase into a modular library architecture with dedicated
     - `lib/config/location_parsing.sh` - Location-based configuration parsing
   - `lib/config_schema.sh` - Configuration schema definitions and validation rules
   - `lib/constants.sh` - Named constants for magic numbers
-  - `lib/detection.sh` - VPN status detection (main entry point, compatibility layer)
+  - `lib/detection.sh` - VPN status detection (aggregate entry; sources `lib/detection/`)
   - `lib/detection/` - Detection module subdirectory:
     - `lib/detection/network_validation.sh` - IP validation, route checks
     - `lib/detection/xfrm_detection.sh` - xfrm state and byte counter detection
@@ -49,7 +49,7 @@ We will refactor the codebase into a modular library architecture with dedicated
     - `lib/detection/failure_analysis.sh` - Failure type classification
   - `lib/lockfile.sh` - Lockfile management (flock/atomic)
   - `lib/logging.sh` - Centralized logging functionality
-  - `lib/recovery.sh` - Tiered recovery actions (compatibility layer)
+  - `lib/recovery.sh` - Tiered recovery actions (aggregate entry; sources `lib/recovery/`)
   - `lib/recovery/` - Recovery module subdirectory:
     - `lib/recovery/recovery_orchestration.sh` - Recovery orchestration and coordination
     - `lib/recovery/xfrm_recovery.sh` - xfrm-based recovery operations
@@ -57,7 +57,7 @@ We will refactor the codebase into a modular library architecture with dedicated
     - `lib/recovery/recovery_verification.sh` - Recovery verification functions
     - `lib/recovery/recovery_state.sh` - Recovery state management
     - `lib/recovery/constants.sh` - Recovery-related constants
-  - `lib/state.sh` - State file management (compatibility layer)
+  - `lib/state.sh` - State file management (aggregate entry; sources `lib/state/`)
   - `lib/state/` - State module subdirectory:
     - `lib/state/state_paths.sh` - Path generation and sanitization
     - `lib/state/peer_state.sh` - Per-peer state operations
@@ -67,7 +67,7 @@ We will refactor the codebase into a modular library architecture with dedicated
 - **Function Documentation**: All functions include comprehensive documentation blocks
 - **Dependency Management**: Clear documentation of module dependencies
 - **Module Dependency Pattern**: When modules are split into subdirectories, each submodule sources its direct dependencies, making modules independently sourceable (useful for testing). The main entry point sources all modules in dependency order.
-- **Compatibility Layers**: Large modules that have been split into subdirectories maintain compatibility layers (e.g., `lib/config.sh`, `lib/detection.sh`, `lib/recovery.sh`, `lib/state.sh`) that source all submodules, ensuring backward compatibility with existing code that sources the main module file.
+- **Aggregate entry points**: Large modules split into subdirectories keep a top-level file (e.g. `lib/config.sh`, `lib/detection.sh`, `lib/recovery.sh`, `lib/state.sh`) that sources all submodules in dependency order. One `source` loads the full subsystem; submodules stay individually sourceable for narrow tests.
 
 ## Related ADRs
 - ADR-0007: Comprehensive In-Code Documentation
@@ -80,7 +80,7 @@ We will refactor the codebase into a modular library architecture with dedicated
   - `lib/recovery.sh` (2633 lines) → `lib/recovery/` subdirectory with 6 modules
   - `lib/state.sh` (1421 lines) → `lib/state/` subdirectory with 5 modules
   - ~~Added `lib/fallbacks.sh` module for centralized fallback function definitions~~ (Removed 2026-01-18 - see `docs/reviews/fallback-system-removal-review.md`)
-  - All main module files maintained as compatibility layers that source submodules
+  - All main module files maintained as aggregate entry points that source submodules
   - This demonstrates the evolution of the modular architecture principle - large modules can be further decomposed when they grow too large
 
 ## References

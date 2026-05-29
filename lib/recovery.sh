@@ -5,9 +5,8 @@
 #
 # Version: 0.8.3
 #
-# This file now serves as a compatibility layer that sources the decomposed
-# recovery modules. All recovery functionality has been moved to lib/recovery/
-# subdirectory for better organization and maintainability.
+# Aggregate entry point: sources the decomposed recovery modules in dependency
+# order. Implementation lives under lib/recovery/ for organization and testing.
 #
 
 # Determine lib directory (where this file is located)

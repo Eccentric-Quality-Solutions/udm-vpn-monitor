@@ -885,6 +885,35 @@ EOF
 	remove_mock_from_path
 }
 
+
+# bats test_tags=category:high-risk,priority:high
+@test "count_sas_for_peer - does not count peer IP prefixes" {
+	# Purpose: Ensure recovery verification counts exact peer IP matches only.
+	# Expected: 192.168.1.1 must not count an SA for 192.168.1.10.
+	source_recovery_module
+
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "src 192.168.1.2 dst 192.168.1.10
+  proto esp spi 0x12345678
+  mode tunnel"
+    exit 0
+fi
+exec /usr/bin/ip "$@"
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+	export _RECOVERY_IP_PATH="$mock_ip"
+
+	run count_sas_for_peer "192.168.1.1" "TEST"
+	assert_success
+	assert_output "0"
+
+	remove_mock_from_path
+}
+
 # bats test_tags=category:high-risk,priority:high
 @test "count_sas_for_peer - filters SAs by peer IP" {
 	# Purpose: Test verifies that count_sas_for_peer only counts SAs matching the target peer IP
