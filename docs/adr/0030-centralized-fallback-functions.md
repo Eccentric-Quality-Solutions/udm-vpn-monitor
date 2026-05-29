@@ -1,11 +1,11 @@
 # ADR-0030: Centralized Fallback Functions
 
 ## Status
-Deprecated
+Superseded (Removed 2026-01-18)
 
-**Note:** This ADR was superseded by a pragmatic engineering decision to remove the centralized fallback system. The fallback system was removed on 2026-01-18 because it addressed theoretical edge cases that are extremely unlikely in production. Modules now fail fast if dependencies can't be sourced, which is a better approach than silent degradation with minimal functionality.
+**Note:** This ADR documented a centralized fallback module (`lib/fallbacks.sh`). That approach was **removed** on 2026-01-18: it addressed theoretical edge cases unlikely in production, and indirection hurt clarity. Modules now **fail fast** if dependencies cannot be sourced — explicit sourcing in tests and install paths, not silent degradation.
 
-**See:** `docs/reviews/fallback-system-removal-review.md` for details on the removal decision.
+**See:** [ADR-0005](0005-modular-library-architecture.md) Change History, CHANGELOG.md v0.6.0–v0.7.x, and removal notes in codebase reviews.
 
 ## Context
 As the codebase evolved into a modular architecture (ADR-0005), modules became independently sourceable for testing and installation scenarios. However, when modules are sourced independently, their dependencies may not be available, leading to failures.

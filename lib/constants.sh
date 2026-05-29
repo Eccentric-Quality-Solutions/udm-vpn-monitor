@@ -107,7 +107,9 @@
 # Shared extended-regex patterns (single source for bash =~ and grep -E)
 # Used by predicate helpers in lib/common.sh
 [[ -z "${REGEX_NON_NEGATIVE_INTEGER:-}" ]] && readonly REGEX_NON_NEGATIVE_INTEGER='^[0-9]+$'
-[[ -z "${REGEX_AFFIRMATIVE_REPLY:-}" ]] && readonly REGEX_AFFIRMATIVE_REPLY='^[Yy]([Ee][Ss])?$'
+# Require the full word "yes" (case-insensitive); a bare "y" is intentionally NOT accepted,
+# so destructive prompts (uninstall, config overwrite) need a deliberate confirmation.
+[[ -z "${REGEX_AFFIRMATIVE_REPLY:-}" ]] && readonly REGEX_AFFIRMATIVE_REPLY='^[Yy][Ee][Ss]$'
 # Location config variable names: LOCATION_<name>_EXTERNAL / _INTERNAL (<name> is A-Za-z0-9_ only)
 [[ -z "${REGEX_LOCATION_EXTERNAL_VAR:-}" ]] && readonly REGEX_LOCATION_EXTERNAL_VAR='^LOCATION_[A-Za-z0-9_]+_EXTERNAL$'
 [[ -z "${REGEX_LOCATION_INTERNAL_VAR:-}" ]] && readonly REGEX_LOCATION_INTERNAL_VAR='^LOCATION_[A-Za-z0-9_]+_INTERNAL$'

@@ -29,7 +29,7 @@ PIDFILE="${STATE_DIR}/vpn-monitor-wrapper.pid"
 # Read MONITOR_INTERVAL from config (default: 20 seconds)
 #
 # Parses vpn-monitor.conf for MONITOR_INTERVAL, clamping to 10-60 second range.
-# Range: 10-60 seconds per docs/research/SUB_MINUTE_EXECUTION_OPTIONS.md
+# Range: 10-60 seconds per ADR-0032
 #
 # Returns:
 #   0: Always succeeds

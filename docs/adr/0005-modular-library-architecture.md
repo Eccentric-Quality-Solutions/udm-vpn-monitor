@@ -63,6 +63,7 @@ We will refactor the codebase into a modular library architecture with dedicated
     - `lib/state/peer_state.sh` - Per-peer state operations
     - `lib/state/global_state.sh` - Global state operations
     - `lib/state/state_init.sh` - State initialization
+    - Per-location state is tracked via per-peer files with location as a parameter (no separate `location_state.sh` module)
 - **Module Loading**: Modules are sourced at script startup
 - **Function Documentation**: All functions include comprehensive documentation blocks
 - **Dependency Management**: Clear documentation of module dependencies
@@ -71,7 +72,7 @@ We will refactor the codebase into a modular library architecture with dedicated
 
 ## Related ADRs
 - ADR-0007: Comprehensive In-Code Documentation
-- ADR-0030: Centralized Fallback Functions (deprecated - removed 2026-01-18)
+- ADR-0030: Centralized Fallback Functions (superseded — removed 2026-01-18; modules fail fast if dependencies cannot be sourced)
 
 ## Change History
 - **2026-01-11**: Major refactoring in v0.6.0 - All large monolithic modules split into focused subdirectories:
@@ -79,9 +80,10 @@ We will refactor the codebase into a modular library architecture with dedicated
   - `lib/detection.sh` (3004 lines) → `lib/detection/` subdirectory with 4 modules
   - `lib/recovery.sh` (2633 lines) → `lib/recovery/` subdirectory with 6 modules
   - `lib/state.sh` (1421 lines) → `lib/state/` subdirectory with 5 modules
-  - ~~Added `lib/fallbacks.sh` module for centralized fallback function definitions~~ (Removed 2026-01-18 - see `docs/reviews/fallback-system-removal-review.md`)
+  - ~~Added `lib/fallbacks.sh` module for centralized fallback function definitions~~ (Removed 2026-01-18 — see ADR-0030 and CHANGELOG.md)
   - All main module files maintained as aggregate entry points that source submodules
   - This demonstrates the evolution of the modular architecture principle - large modules can be further decomposed when they grow too large
+- **v0.8.0 (2026-02-14)**: Removed empty `lib/state/location_state.sh` stub; per-location state remains via per-peer files with location as a parameter. See CHANGELOG.md v0.8.0.
 
 ## References
 - ARCHITECTURE.md: "Key Design Decisions #6: Modular Library Architecture"

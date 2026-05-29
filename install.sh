@@ -529,21 +529,7 @@ EOF
 #   Prints version string to stdout (e.g., "0.0.1")
 get_script_version() {
 	local script_file="$1"
-	if [[ ! -f "$script_file" ]]; then
-		return 1
-	fi
-
-	# Try to extract SCRIPT_VERSION="..." or SCRIPT_VERSION='...'
-	# Note: || true prevents set -e + pipefail from killing the script if grep finds no match
-	local version
-	version=$(grep -E '^SCRIPT_VERSION=["'\'']' "$script_file" 2>/dev/null | head -1 | sed -E "s/^SCRIPT_VERSION=[\"']([^\"']+)[\"'].*/\1/" | tr -d ' ' || true)
-
-	if [[ -n "$version" ]]; then
-		echo "$version"
-		return 0
-	fi
-
-	return 1
+	extract_script_version "$script_file"
 }
 
 # Get current version being installed
@@ -567,7 +553,7 @@ get_current_version() {
 
 	# Fallback to install script version comment
 	if [[ -z "$version" ]]; then
-		version=$(grep -E '^# Version:' "${INSTALL_SCRIPT_DIR}/install.sh" 2>/dev/null | head -1 | sed -E 's/^# Version:[[:space:]]*//' | tr -d ' ')
+		version=$(extract_file_version_comment "${INSTALL_SCRIPT_DIR}/install.sh" || true)
 	fi
 
 	if [[ -n "$version" ]]; then
@@ -1512,7 +1498,7 @@ ensure_default_lan_local_ip_for_ping_install() {
 	if [[ -f "$config_file" ]]; then
 		while IFS='=' read -r key value || [[ -n "$key" ]]; do
 			# Skip comments and empty lines
-			[[ "$key" =~ ^# ]] && continue
+			is_config_comment_line "$key" && continue
 			[[ -z "$key" ]] && continue
 
 			# Check for LOCATION_*_INTERNAL pattern
@@ -1603,7 +1589,7 @@ ensure_default_lan_local_ip_for_ping_install() {
 		# Collect all internal IPs from all locations
 		while IFS='=' read -r key value || [[ -n "$key" ]]; do
 			# Skip comments and empty lines
-			[[ "$key" =~ ^# ]] && continue
+			is_config_comment_line "$key" && continue
 			[[ -z "$key" ]] && continue
 
 			# Check for LOCATION_*_INTERNAL pattern
@@ -1681,7 +1667,7 @@ validate_config_after_install() {
 	local location_found=0
 	while IFS='=' read -r key value || [[ -n "$key" ]]; do
 		# Skip comments and empty lines
-		[[ "$key" =~ ^# ]] && continue
+		is_config_comment_line "$key" && continue
 		[[ -z "$key" ]] && continue
 
 		# Check for LOCATION_*_EXTERNAL pattern

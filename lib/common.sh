@@ -13,7 +13,11 @@
 # - String escaping: escape_sed_replacement(), escape_sed_regex()
 # - String sanitization: sanitize_location_name()
 # - String trimming: trim()
-# - Validation: is_non_negative_integer(), is_affirmative_reply(), validate_spi_format()
+# - Validation: is_non_negative_integer(), is_affirmative_reply(), is_config_comment_line(),
+#   config_value_needs_quoting(), is_positive_integer(), is_binary_flag(), validate_spi_format(),
+#   extract_spi_from_xfrm_line(), parse_script_version_line(), extract_script_version(),
+#   extract_file_version_comment()
+# - XFRM grep patterns: build_xfrm_forward_dst_grep_pattern(), build_xfrm_reverse_src_grep_pattern()
 # - Config file operations: update_config_value()
 # - Logging: log_info(), log_warn(), log_error()
 # - System checks: check_root()
@@ -25,6 +29,7 @@
 [[ -z "${RED:-}" ]] && readonly RED='\033[0;31m'
 [[ -z "${GREEN:-}" ]] && readonly GREEN='\033[0;32m'
 [[ -z "${YELLOW:-}" ]] && readonly YELLOW='\033[1;33m'
+[[ -z "${BLUE:-}" ]] && readonly BLUE='\033[0;34m'
 [[ -z "${NC:-}" ]] && readonly NC='\033[0m' # No Color
 
 # Regex constants for shared predicates (lib/constants.sh)
@@ -63,7 +68,8 @@ grep_non_negative_integer_lines() {
 	grep -E "${REGEX_NON_NEGATIVE_INTEGER}" "$@"
 }
 
-# Test whether a prompt reply is affirmative (y, Y, yes, Yes, YES, etc.)
+# Test whether a prompt reply is affirmative — the full word "yes"
+# (case-insensitive: yes, Yes, YES). A bare "y" is intentionally NOT accepted.
 #
 # Arguments:
 #   $1: Reply string
@@ -73,6 +79,124 @@ grep_non_negative_integer_lines() {
 #   1: Not affirmative (including empty)
 is_affirmative_reply() {
 	[[ "${1-}" =~ ${REGEX_AFFIRMATIVE_REPLY} ]]
+}
+
+# Test whether a line is a shell/config comment (optional leading whitespace, then #)
+#
+# Unifies bare `^#` and `^[[:space:]]*#` checks. Does not treat `# bats test_tags=`
+# differently from other comments when the goal is to skip comment lines in parsers.
+#
+# Arguments:
+#   $1: Line to test
+#
+# Returns:
+#   0: Comment line
+#   1: Not a comment line
+is_config_comment_line() {
+	[[ "${1-}" =~ ^[[:space:]]*# ]]
+}
+
+# Test whether a config default value should be displayed with quotes
+#
+# Arguments:
+#   $1: Value string
+#
+# Returns:
+#   0: Value contains whitespace or single/double quotes
+#   1: Value is safe unquoted
+config_value_needs_quoting() {
+	local value="${1-}"
+	[[ "$value" =~ [[:space:]] || "$value" =~ [\"\'] ]]
+}
+
+# Test whether a string is a positive integer (1, 2, 10, …; excludes 0)
+#
+# Arguments:
+#   $1: String to test
+#
+# Returns:
+#   0: Positive integer
+#   1: Otherwise
+is_positive_integer() {
+	[[ "${1-}" =~ ^[1-9][0-9]*$ ]]
+}
+
+# Test whether a string is a binary flag (0 or 1)
+#
+# Arguments:
+#   $1: String to test
+#
+# Returns:
+#   0: Exactly "0" or "1"
+#   1: Otherwise
+is_binary_flag() {
+	[[ "${1-}" =~ ^[01]$ ]]
+}
+
+# Parse SCRIPT_VERSION=… from one assignment line
+#
+# Arguments:
+#   $1: Line containing SCRIPT_VERSION assignment
+#
+# Returns:
+#   0: Version extracted
+#   1: Line empty or not a SCRIPT_VERSION assignment
+#
+# Output:
+#   Prints version string to stdout
+parse_script_version_line() {
+	local line="$1"
+	local version=""
+
+	[[ -n "$line" ]] || return 1
+	if [[ "$line" =~ ^SCRIPT_VERSION= ]]; then
+		version=$(echo "$line" | sed -E 's/^SCRIPT_VERSION=["'\'']?([^"'\'' ]+).*/\1/' | tr -d ' ')
+	fi
+	[[ -n "$version" ]] || return 1
+	printf '%s' "$version"
+	return 0
+}
+
+# Extract SCRIPT_VERSION from a script file
+#
+# Arguments:
+#   $1: Path to file
+#
+# Returns:
+#   0: Version found
+#   1: File missing or no SCRIPT_VERSION line
+#
+# Output:
+#   Prints version to stdout
+extract_script_version() {
+	local file="$1"
+	local line
+
+	[[ -f "$file" ]] || return 1
+	line=$(grep -E '^SCRIPT_VERSION=' "$file" 2>/dev/null | head -1) || return 1
+	parse_script_version_line "$line"
+}
+
+# Extract # Version: comment from a file
+#
+# Arguments:
+#   $1: Path to file
+#
+# Returns:
+#   0: Version found
+#   1: File missing or no version comment
+#
+# Output:
+#   Prints version to stdout
+extract_file_version_comment() {
+	local file="$1"
+	local version
+
+	[[ -f "$file" ]] || return 1
+	version=$(grep -E '^# Version:' "$file" 2>/dev/null | head -1 | sed -E 's/^# Version:[[:space:]]*//' | tr -d ' ')
+	[[ -n "$version" ]] || return 1
+	printf '%s' "$version"
+	return 0
 }
 
 # Log an informational message
@@ -971,6 +1095,69 @@ sanitize_location_name() {
 validate_spi_format() {
 	local spi="$1"
 	[[ "$spi" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]]
+}
+
+# Extract SPI token from a single xfrm state/policy line
+#
+# Matches common kernel output formats: "proto esp spi 0x…", inline "… spi 0x…",
+# or a standalone "spi 0x…" line. Validates with validate_spi_format().
+#
+# Arguments:
+#   $1: One line of xfrm output
+#
+# Returns:
+#   0: Valid SPI extracted
+#   1: No SPI found or format invalid
+#
+# Output:
+#   Prints SPI value (hex or decimal as in the line) to stdout
+extract_spi_from_xfrm_line() {
+	local line="$1"
+	local spi=""
+
+	if [[ "$line" =~ ^[[:space:]]*proto[[:space:]]+[a-zA-Z0-9]+[[:space:]]+spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+) ]]; then
+		spi="${BASH_REMATCH[1]}"
+	elif [[ "$line" =~ [[:space:]]+spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+) ]]; then
+		spi="${BASH_REMATCH[1]}"
+	elif [[ "$line" =~ ^[[:space:]]*spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+) ]]; then
+		spi="${BASH_REMATCH[1]}"
+	else
+		spi=$(echo "$line" | sed -n 's/.*[[:space:]]spi[[:space:]]*\(0x[0-9a-fA-F]\+\|[0-9]\+\)[[:space:]].*/\1/p' 2>/dev/null || echo "")
+	fi
+
+	if [[ -z "$spi" ]] || ! validate_spi_format "$spi"; then
+		return 1
+	fi
+	printf '%s' "$spi"
+	return 0
+}
+
+# Build grep -E pattern for forward xfrm SA/policy header (dst matches peer IP)
+#
+# Arguments:
+#   $1: Peer IP address (escaped internally)
+#
+# Output:
+#   Prints extended-regex pattern to stdout
+build_xfrm_forward_dst_grep_pattern() {
+	local peer_ip="$1"
+	local peer_ip_regex
+	peer_ip_regex=$(escape_sed_regex "$peer_ip")
+	printf '^[[:space:]]*src[[:space:]]+[^[:space:]]+[[:space:]]+dst[[:space:]]+%s([[:space:]]|$)' "$peer_ip_regex"
+}
+
+# Build grep -E pattern for reverse xfrm SA header (src matches peer IP)
+#
+# Arguments:
+#   $1: Peer IP address (escaped internally)
+#
+# Output:
+#   Prints extended-regex pattern to stdout
+build_xfrm_reverse_src_grep_pattern() {
+	local peer_ip="$1"
+	local peer_ip_regex
+	peer_ip_regex=$(escape_sed_regex "$peer_ip")
+	printf '^[[:space:]]*src[[:space:]]+%s([[:space:]]|$)' "$peer_ip_regex"
 }
 
 # Trim leading and trailing whitespace from a string

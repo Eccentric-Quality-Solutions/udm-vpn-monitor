@@ -459,7 +459,7 @@ MOCK
 	assert_file_contains "$reg_file" "192.168.1.100"
 	# Version comes from package (vpn-monitor.sh SCRIPT_VERSION)
 	local pkg_version
-	pkg_version=$(unzip -p "${PROJECT_ROOT}/udm-vpn-monitor.zip" vpn-monitor.sh 2>/dev/null | grep -E '^SCRIPT_VERSION=' | head -1 | sed -E 's/^SCRIPT_VERSION=["'\'']?([^"'\'' ]+).*/\1/' | tr -d ' ')
+	pkg_version=$(parse_script_version_line "$(unzip -p "${PROJECT_ROOT}/udm-vpn-monitor.zip" vpn-monitor.sh 2>/dev/null | grep -E '^SCRIPT_VERSION=' | head -1)")
 	[[ -n "$pkg_version" ]] || skip "Could not get package version"
 	assert_file_contains "$reg_file" "$pkg_version"
 }

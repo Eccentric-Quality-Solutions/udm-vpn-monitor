@@ -59,7 +59,7 @@ get_system_wide_failure_state() {
 		local value
 		value=$(cat "$state_file" 2>/dev/null || echo "0")
 		# Validate value (must be 0 or 1)
-		if [[ "$value" =~ ^[01]$ ]]; then
+		if is_binary_flag "$value"; then
 			echo "$value"
 		else
 			# Corrupted file, backup and recover
@@ -105,7 +105,7 @@ set_system_wide_failure_state() {
 	state_file=$(get_system_wide_failure_state_file)
 
 	# Validate value (must be 0 or 1)
-	if [[ ! "$state_value" =~ ^[01]$ ]]; then
+	if ! is_binary_flag "$state_value"; then
 		handle_error "ERROR" "SYSTEM" "Invalid system-wide failure state value (expected 0 or 1): $state_value" 0
 		return 1
 	fi

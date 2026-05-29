@@ -85,19 +85,19 @@ VERBOSE=0
 # SSH ControlMaster socket (set during setup_control_master)
 CONTROL_SOCKET=""
 
-# Colors for output (if terminal supports it)
+# Colors for output (if terminal supports it; skip if already set e.g. from common.sh)
 if [[ -t 1 ]]; then
-	RED='\033[0;31m'
-	GREEN='\033[0;32m'
-	YELLOW='\033[1;33m'
-	BLUE='\033[0;34m'
-	NC='\033[0m' # No Color
+	[[ -z "${RED:-}" ]] && RED='\033[0;31m'
+	[[ -z "${GREEN:-}" ]] && GREEN='\033[0;32m'
+	[[ -z "${YELLOW:-}" ]] && YELLOW='\033[1;33m'
+	[[ -z "${BLUE:-}" ]] && BLUE='\033[0;34m'
+	[[ -z "${NC:-}" ]] && NC='\033[0m' # No Color
 else
-	RED=''
-	GREEN=''
-	YELLOW=''
-	BLUE=''
-	NC=''
+	[[ -z "${RED:-}" ]] && RED=''
+	[[ -z "${GREEN:-}" ]] && GREEN=''
+	[[ -z "${YELLOW:-}" ]] && YELLOW=''
+	[[ -z "${BLUE:-}" ]] && BLUE=''
+	[[ -z "${NC:-}" ]] && NC=''
 fi
 
 # Append message to deploy log file (sanitized: no username or password).

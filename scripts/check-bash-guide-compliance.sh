@@ -40,6 +40,9 @@ FILES_CHECKED=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# shellcheck source=lib/common.sh
+source "${REPO_ROOT}/lib/common.sh"
+
 # Check for array iteration using [*] instead of [@]
 #
 # Arguments:
@@ -293,7 +296,7 @@ check_associative_array_declaration() {
 		# Extract array name
 		local array_name
 		array_name=$(echo "$line" | sed -E 's/^[^[]*([A-Za-z_][A-Za-z0-9_]*)\[.*/\1/')
-		
+
 		# Look backwards for declare -A or local -A (limit to 30 lines for performance)
 		local found_declare=false
 		local i=$idx
@@ -384,14 +387,14 @@ check_file() {
 		check_array_iteration "$file" "$line_num" "$line" || true
 		check_script_directory "$file" "$line_num" "$line" || true
 		check_array_empty "$file" "$line_num" "$line" || true
-		
+
 		# Run expensive checks only on non-empty, non-comment lines
 		# and only if we haven't found too many issues
 		if [[ $ISSUES_FOUND -lt 50 ]] && [[ $WARNINGS_FOUND -lt 200 ]]; then
-			if [[ ! "$line" =~ ^[[:space:]]*# ]] && [[ -n "${line// /}" ]]; then
+			if ! is_config_comment_line "$line" && [[ -n "${line// /}" ]]; then
 				# Skip unquoted variables check - ShellCheck does this better
 				# check_unquoted_variables "$file" "$line_num" "$line" || true
-				
+
 				# Only check missing local and associative arrays on lines that look relevant
 				if echo "$line" | grep -qE '^\s*[A-Z_][A-Z0-9_]*='; then
 					check_missing_local "$file" "$line_num" "$line" "lines" "$i" "$current_func_start" || true

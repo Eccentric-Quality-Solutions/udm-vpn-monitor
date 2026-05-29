@@ -44,15 +44,19 @@ if [[ -f "${SCRIPT_DIR}/deploy-registry.sh" ]]; then
 	source "${SCRIPT_DIR}/deploy-registry.sh"
 fi
 
-# Colors
+# Colors (skip if already set e.g. from common.sh in test harness)
 if [[ -t 1 ]]; then
-	RED='\033[0;31m'
-	GREEN='\033[0;32m'
-	YELLOW='\033[1;33m'
-	BLUE='\033[0;34m'
-	NC='\033[0m'
+	[[ -z "${RED:-}" ]] && RED='\033[0;31m'
+	[[ -z "${GREEN:-}" ]] && GREEN='\033[0;32m'
+	[[ -z "${YELLOW:-}" ]] && YELLOW='\033[1;33m'
+	[[ -z "${BLUE:-}" ]] && BLUE='\033[0;34m'
+	[[ -z "${NC:-}" ]] && NC='\033[0m'
 else
-	RED='' GREEN='' YELLOW='' BLUE='' NC=''
+	[[ -z "${RED:-}" ]] && RED=''
+	[[ -z "${GREEN:-}" ]] && GREEN=''
+	[[ -z "${YELLOW:-}" ]] && YELLOW=''
+	[[ -z "${BLUE:-}" ]] && BLUE=''
+	[[ -z "${NC:-}" ]] && NC=''
 fi
 
 # Append message to deploy log file.

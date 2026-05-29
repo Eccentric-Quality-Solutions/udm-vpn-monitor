@@ -58,7 +58,7 @@ if [[ -z "$CONFIG_FILE" ]]; then
 	fi
 fi
 
-# Source library modules (needed for schema)
+# Source library modules (needed for schema and config parsing)
 # shellcheck source=lib/config_schema.sh
 if [[ -f "${SCRIPT_DIR}/lib/config_schema.sh" ]]; then
 	source "${SCRIPT_DIR}/lib/config_schema.sh"
@@ -67,66 +67,21 @@ else
 	exit 1
 fi
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# shellcheck source=lib/logging.sh
+if [[ -f "${SCRIPT_DIR}/lib/logging.sh" ]]; then
+	source "${SCRIPT_DIR}/lib/logging.sh"
+else
+	echo "Error: logging.sh not found. Run this script from the installation directory." >&2
+	exit 1
+fi
 
-# Parse config file to extract variable names
-#
-# Reads the config file and extracts all variable names that are set.
-# Only extracts valid VAR=value lines, ignoring comments and empty lines.
-#
-# Arguments:
-#   $1: Path to config file
-#
-# Returns:
-#   0: Success
-#   1: Config file not found or unreadable
-#
-# Output:
-#   Prints variable names (one per line) to stdout
-parse_config_variables() {
-	local config_file="$1"
-	local line
-	local var_name
-
-	if [[ ! -f "$config_file" ]] || [[ ! -r "$config_file" ]]; then
-		return 1
-	fi
-
-	# Read config file line by line
-	while IFS= read -r line || [[ -n "$line" ]]; do
-		# Skip empty lines
-		if [[ -z "${line// /}" ]]; then
-			continue
-		fi
-
-		# Skip comment lines (lines starting with #)
-		if [[ "$line" =~ ^[[:space:]]*# ]]; then
-			continue
-		fi
-
-		# Remove leading/trailing whitespace
-		line="${line#"${line%%[![:space:]]*}"}"
-		line="${line%"${line##*[![:space:]]}"}"
-
-		# Skip empty lines after trimming
-		if [[ -z "$line" ]]; then
-			continue
-		fi
-
-		# Parse variable assignment: VAR=value
-		if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)= ]]; then
-			var_name="${BASH_REMATCH[1]}"
-			echo "$var_name"
-		fi
-	done <"$config_file"
-
-	return 0
-}
+# shellcheck source=lib/config/config_loading.sh
+if [[ -f "${SCRIPT_DIR}/lib/config/config_loading.sh" ]]; then
+	source "${SCRIPT_DIR}/lib/config/config_loading.sh"
+else
+	echo "Error: config_loading.sh not found. Run this script from the installation directory." >&2
+	exit 1
+fi
 
 # Get default value for a config variable
 #
@@ -146,8 +101,7 @@ get_formatted_default() {
 	default_val=$(get_config_default "$var_name" 2>/dev/null || echo "")
 
 	if [[ -n "$default_val" ]]; then
-		# Check if value needs quoting (contains spaces or special chars)
-		if [[ "$default_val" =~ [[:space:]] ]] || [[ "$default_val" =~ [\"\'] ]]; then
+		if config_value_needs_quoting "$default_val"; then
 			echo "\"${default_val}\""
 		else
 			echo "$default_val"
@@ -173,6 +127,7 @@ main() {
 	local valid_vars=()
 	local config_vars=()
 	local var_name
+	local entry
 	local has_issues=0
 
 	echo "Checking configuration file: $CONFIG_FILE"
@@ -189,7 +144,7 @@ main() {
 	# Parse variables from config file
 	# Use mapfile to safely read output into array (avoids word splitting issues)
 	local temp_output
-	if ! temp_output=$(parse_config_variables "$CONFIG_FILE"); then
+	if ! temp_output=$(list_config_variable_names "$CONFIG_FILE"); then
 		echo -e "${RED}[ERROR]${NC} Failed to parse configuration file"
 		return 1
 	fi
@@ -205,6 +160,15 @@ main() {
 	for var_name in "${config_vars[@]}"; do
 		config_vars_map["$var_name"]=1
 	done
+
+	# Detect assignment-looking lines the parser rejects (malformed values).
+	# safe_parse silently skips these at runtime, so surface them here.
+	local malformed_lines=()
+	local malformed_output
+	malformed_output=$(list_malformed_config_lines "$CONFIG_FILE" || true)
+	if [[ -n "$malformed_output" ]]; then
+		mapfile -t malformed_lines <<<"$malformed_output"
+	fi
 
 	# Check for missing variables (in schema but not in config)
 	echo -e "${BLUE}Checking for missing settings...${NC}"
@@ -280,15 +244,33 @@ main() {
 		echo ""
 	fi
 
+	# Report malformed lines (look like settings but the parser rejects them)
+	if [[ ${#malformed_lines[@]} -gt 0 ]]; then
+		has_issues=1
+		echo -e "${RED}[!] Malformed Settings (${#malformed_lines[@]})${NC}"
+		echo "These lines look like settings but cannot be parsed, so they are"
+		echo "SILENTLY IGNORED when the monitor loads the config:"
+		echo ""
+		for entry in "${malformed_lines[@]}"; do
+			echo -e "  ${RED}*${NC} line ${entry%%:*}: ${entry#*:}"
+		done
+		echo ""
+		echo "Quote values containing spaces, quotes, or '#'. Example: VAR=\"value with spaces\""
+		echo ""
+	fi
+
 	# Summary
 	echo "=========================================="
 	echo "Summary:"
-	echo "  Valid settings: ${GREEN}${#valid_vars[@]}${NC}"
+	echo -e "  Valid settings: ${GREEN}${#valid_vars[@]}${NC}"
 	if [[ ${#missing_vars[@]} -gt 0 ]]; then
-		echo "  Missing settings: ${YELLOW}${#missing_vars[@]}${NC}"
+		echo -e "  Missing settings: ${YELLOW}${#missing_vars[@]}${NC}"
 	fi
 	if [[ ${#deprecated_vars[@]} -gt 0 ]]; then
-		echo "  Deprecated settings: ${RED}${#deprecated_vars[@]}${NC}"
+		echo -e "  Deprecated settings: ${RED}${#deprecated_vars[@]}${NC}"
+	fi
+	if [[ ${#malformed_lines[@]} -gt 0 ]]; then
+		echo -e "  Malformed settings: ${RED}${#malformed_lines[@]}${NC}"
 	fi
 	echo ""
 
@@ -316,6 +298,14 @@ main() {
 			echo ""
 			for var_name in "${deprecated_vars[@]}"; do
 				echo "# ${var_name}=..."
+			done
+			echo ""
+		fi
+		if [[ ${#malformed_lines[@]} -gt 0 ]]; then
+			echo "Fix or quote these malformed lines (otherwise they are ignored):"
+			echo ""
+			for entry in "${malformed_lines[@]}"; do
+				echo "  line ${entry%%:*}: ${entry#*:}"
 			done
 			echo ""
 		fi

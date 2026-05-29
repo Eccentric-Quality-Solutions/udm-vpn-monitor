@@ -144,7 +144,7 @@ EOF
 	mkdir -p "$(dirname "$DEPLOY_REGISTRY_FILE")"
 	# Get package version so registry matches (skip logic requires exact version match)
 	local pkg_version
-	pkg_version=$(unzip -p "${PROJECT_ROOT}/udm-vpn-monitor.zip" vpn-monitor.sh 2>/dev/null | grep -E '^SCRIPT_VERSION=' | head -1 | sed -E 's/^SCRIPT_VERSION=["'\'']?([^"'\'' ]+).*/\1/' | tr -d ' ')
+	pkg_version=$(parse_script_version_line "$(unzip -p "${PROJECT_ROOT}/udm-vpn-monitor.zip" vpn-monitor.sh 2>/dev/null | grep -E '^SCRIPT_VERSION=' | head -1)")
 	[[ -z "$pkg_version" ]] && skip "Could not get package version"
 	# Pre-populate registry: 192.168.1.100 already at package version
 	echo -e "192.168.1.100\t${pkg_version}\t2025-02-14T12:00:00" >"$DEPLOY_REGISTRY_FILE"

@@ -1,7 +1,7 @@
 # ADR-0013: State File Checksum Validation
 
 ## Status
-Deprecated (Removed in v0.2.0)
+Superseded (Removed in v0.2.0)
 
 ## Context
 State files contain critical system state:

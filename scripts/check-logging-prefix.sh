@@ -23,6 +23,9 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# shellcheck source=lib/common.sh
+source "${PROJECT_ROOT}/lib/common.sh"
+
 cd "$PROJECT_ROOT"
 
 # Find all shell script files
@@ -54,7 +57,7 @@ for file in "${script_files[@]}"; do
 		line_num="${grep_line%%:*}"
 		line_content="${grep_line#*:}"
 		# Skip comment lines
-		if [[ "$line_content" =~ ^[[:space:]]*# ]]; then
+		if is_config_comment_line "$line_content"; then
 			continue
 		fi
 

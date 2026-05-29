@@ -252,7 +252,7 @@ Edit `/data/vpn-monitor/vpn-monitor.conf` to customize behavior:
 
 **Sub-Minute Execution (Monitor Wrapper):**
 
-Enabled by default for faster failure detection. The installer configures cron to run vpn-monitor-wrapper.sh, which runs checks every `MONITOR_INTERVAL` seconds (default: 20). You get checks at :00, :20, and :40 within each minute instead of once per minute.
+Enabled by default for faster failure detection. The installer configures cron to run vpn-monitor-wrapper.sh, which runs checks every `MONITOR_INTERVAL` seconds (default: 20, roughly three per minute). Timing is offset from when the wrapper starts, not fixed clock marks.
 
 To disable, set `ENABLE_MONITOR_WRAPPER=0` in vpn-monitor.conf and re-run `./install.sh`. With 20-second intervals and default thresholds (TIER2_THRESHOLD=2), Tier 2 triggers after ~40 seconds instead of ~1-2 minutes.
 

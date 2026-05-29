@@ -82,7 +82,7 @@ extract_chain_names_from_firewall() {
 	# Extract chain names from various patterns
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		# Skip comments and table declarations
-		[[ "$line" =~ ^# ]] && continue
+		is_config_comment_line "$line" && continue
 		[[ "$line" =~ ^\* ]] && continue
 		[[ "$line" == "COMMIT" ]] && continue
 
@@ -130,7 +130,7 @@ extract_set_names_from_firewall() {
 	# Extract set names from --match-set patterns
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		# Skip comments and table/chain declarations
-		[[ "$line" =~ ^# ]] && continue
+		is_config_comment_line "$line" && continue
 		[[ "$line" =~ ^[*:] ]] && continue
 		[[ "$line" == "COMMIT" ]] && continue
 
@@ -167,7 +167,7 @@ extract_comment_identifiers() {
 	# This is a simple heuristic - looks for words that might be identifiers
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		# Only process comment lines
-		[[ ! "$line" =~ ^# ]] && continue
+		is_config_comment_line "$line" || continue
 
 		# Remove the # and leading whitespace
 		local comment="${line#\#}"

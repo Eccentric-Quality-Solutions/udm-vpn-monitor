@@ -33,27 +33,28 @@ We will implement a multi-method detection system with automatic fallback:
 ### Negative
 - **Complexity**: Multiple detection methods require coordination logic
 - **Performance**: Multiple checks may take longer
-- **False Positives**: Ping checks may fail due to firewall rules (mitigated by making ping optional and non-blocking)
+- **False Positives**: Ping checks may fail due to firewall rules (mitigated by `ENABLE_PING_CHECK=0`)
 
 ## Implementation Details
 - **Detection Flow**:
   1. Check `ip xfrm state` for SA existence and byte counters
   2. If SA found: Check if byte counters are increasing
   3. If SA not found: Fall back to `ipsec status` check
-  4. If ping enabled: Perform ping check (warns but doesn't fail if ping fails)
+  4. If ping enabled (`ENABLE_PING_CHECK=1`): Perform ping check; results combine with byte counters and SA state (see ADR-0014)
 - **Failure Types**:
   - "Tunnel Down": No Phase 2 SA exists
   - "Routing Issue": SA exists but byte counters not increasing
   - "Unknown": Unable to determine failure type
 - **Ping Check Behavior**:
-  - Ping failures log warnings but don't cause VPN failure
-  - SA state + byte counters are authoritative
-  - Ping provides supplementary diagnostic information
+  - When `ENABLE_PING_CHECK=1`, ping failure can mark the VPN failed and count toward tier thresholds (v0.8.0); when `0`, ping is not run
+  - SA state + byte counters remain primary signals; ping supplements idle/static-byte scenarios
+  - See ADR-0014 for scenarios; use `ENABLE_PING_CHECK=0` if firewall rules make ping unreliable
 - **Module**: Implemented in `lib/detection/failure_analysis.sh` with `check_vpn_status()` function (main entry point: `lib/detection.sh`)
 
 ## Related ADRs
 - ADR-0004: Per-Peer State Tracking
 - ADR-0003: Tiered Recovery System
+- ADR-0014: Ping Check as Supplementary Diagnostic Tool
 
 ## References
 - ARCHITECTURE.md: "Key Design Decisions #5: Multi-Method Detection with Fallback"

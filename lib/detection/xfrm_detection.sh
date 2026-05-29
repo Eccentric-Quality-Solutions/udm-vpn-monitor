@@ -221,25 +221,8 @@ extract_spi() {
 		return 1
 	fi
 
-	# Extract SPI value (hex format: 0x[0-9a-fA-F]+ or decimal: [0-9]+)
-	# Pattern matches: optional whitespace, "spi", whitespace, then hex or decimal value
-	if [[ "$spi_line" =~ ^[[:space:]]*proto[[:space:]]+[a-zA-Z0-9]+[[:space:]]+spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+) ]]; then
-		spi="${BASH_REMATCH[1]}"
-	elif [[ "$spi_line" =~ ^[[:space:]]*spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+) ]]; then
-		# Fallback: match "spi" directly if proto pattern doesn't match
-		spi="${BASH_REMATCH[1]}"
-	else
-		# Fallback: try sed pattern matching
-		spi=$(echo "$spi_line" | sed -n 's/.*[[:space:]]spi[[:space:]]*\(0x[0-9a-fA-F]\+\|[0-9]\+\)[[:space:]].*/\1/p' 2>/dev/null || echo "")
-	fi
-
-	# Validate extracted value
-	if [[ -z "$spi" ]]; then
-		return 1
-	fi
-
-	# Validate format: must be hex (0x...) or decimal (all digits)
-	if ! validate_spi_format "$spi"; then
+	# Extract SPI value using shared xfrm line parser
+	if ! spi=$(extract_spi_from_xfrm_line "$spi_line"); then
 		return 1
 	fi
 
@@ -700,15 +683,15 @@ get_xfrm_state_for_peer() {
 	local extended_context=$((context_lines + 10))
 	local forward_output=""
 	local reverse_output=""
+	local forward_pattern
+	local reverse_pattern
 
-	# Find matching SA header lines exactly. Escape the peer IP before regex use so
-	# IPv4 dots are literal, then require whitespace or end-of-line after the IP.
-	local external_peer_ip_regex
-	external_peer_ip_regex=$(escape_sed_regex "$external_peer_ip")
+	forward_pattern=$(build_xfrm_forward_dst_grep_pattern "$external_peer_ip")
+	reverse_pattern=$(build_xfrm_reverse_src_grep_pattern "$external_peer_ip")
 	log_message "DEBUG" "SYSTEM" "get_xfrm_state_for_peer: Searching for SAs in output (length=${#full_xfrm_output})"
-	forward_output=$(echo "$full_xfrm_output" | grep -E "^[[:space:]]*src[[:space:]]+[^[:space:]]+[[:space:]]+dst[[:space:]]+${external_peer_ip_regex}([[:space:]]|$)" -A "${extended_context}" 2>/dev/null || true)
+	forward_output=$(echo "$full_xfrm_output" | grep -E "$forward_pattern" -A "${extended_context}" 2>/dev/null || true)
 	# Find reverse SAs (src=$external_peer_ip) - matches reverse SA header lines "src $external_peer_ip dst <local_ip>"
-	reverse_output=$(echo "$full_xfrm_output" | grep -E "^[[:space:]]*src[[:space:]]+${external_peer_ip_regex}([[:space:]]|$)" -A "${extended_context}" 2>/dev/null || true)
+	reverse_output=$(echo "$full_xfrm_output" | grep -E "$reverse_pattern" -A "${extended_context}" 2>/dev/null || true)
 	log_message "DEBUG" "SYSTEM" "get_xfrm_state_for_peer: forward_output length=${#forward_output}, reverse_output length=${#reverse_output}"
 
 	# Combine outputs if both exist (they represent different SAs in a bidirectional tunnel)

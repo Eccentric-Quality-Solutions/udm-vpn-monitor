@@ -577,18 +577,11 @@ parse_xfrm_output_to_sa_list() {
 				current_proto="${BASH_REMATCH[1]:-}"
 				# Normalize to lowercase for consistency (xfrm uses lowercase internally)
 				current_proto=$(echo "$current_proto" | tr '[:upper:]' '[:lower:]')
-				# Check if "spi" is on the same line as "proto" (common format)
-				# If found, extract SPI immediately (avoids needing separate line)
-				if [[ "$line" =~ [[:space:]]+spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+) ]]; then
-					current_spi="${BASH_REMATCH[1]:-}"
-				fi
 			fi
-			# Look for "spi <spi_value>" on its own line (alternative format)
-			# This regex runs after proto check, so it will overwrite SPI if proto line had SPI
-			# This is intentional: handles both "proto esp spi 0x123" and separate "spi 0x123" lines
-			# Supports hex (0x12345678) and decimal (12345678) formats
-			if [[ "$line" =~ ^[[:space:]]*spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+) ]]; then
-				current_spi="${BASH_REMATCH[1]:-}"
+			# Extract SPI from proto+spi line, inline spi, or standalone "spi …" line
+			local line_spi=""
+			if line_spi=$(extract_spi_from_xfrm_line "$line"); then
+				current_spi="$line_spi"
 			fi
 			# Look for "mark <value>/<mask>" line (optional selector, format: "mark 0x<value>/0x<mask>")
 			# Mark is a required selector when present - must be included in deletion commands
@@ -762,9 +755,9 @@ delete_sas_from_list() {
 		local ip_xfrm_exit=$?
 		if [[ $ip_xfrm_exit -eq 0 ]]; then
 			# Use || true so grep's exit 1 (no match) does not trigger set -e
-			local sa_dst_regex
-			sa_dst_regex=$(escape_sed_regex "$sa_dst")
-			pre_delete_xfrm_output=$(printf '%s' "$ip_xfrm_raw" | grep -E "^[[:space:]]*src[[:space:]]+[^[:space:]]+[[:space:]]+dst[[:space:]]+${sa_dst_regex}([[:space:]]|$)" -A 20 2>/dev/null || true)
+			local forward_pattern
+			forward_pattern=$(build_xfrm_forward_dst_grep_pattern "$sa_dst")
+			pre_delete_xfrm_output=$(printf '%s' "$ip_xfrm_raw" | grep -E "$forward_pattern" -A 20 2>/dev/null || true)
 			if [[ -n "$pre_delete_xfrm_output" ]]; then
 				pre_delete_query_success=1
 				# Check if this specific SA (with all selectors) appears in a single block
@@ -998,9 +991,9 @@ delete_xfrm_policies() {
 	#
 	# Note: external_peer_ip is the external IP of remote locations (from LOCATION_*_EXTERNAL config)
 	local existing_policies
-	local external_peer_ip_regex
-	external_peer_ip_regex=$(escape_sed_regex "$external_peer_ip")
-	existing_policies=$("$ip_cmd" xfrm policy 2>/dev/null | grep -E "^[[:space:]]*src[[:space:]]+[^[:space:]]+[[:space:]]+dst[[:space:]]+${external_peer_ip_regex}([[:space:]]|$)" -A 5 2>/dev/null || echo "")
+	local forward_pattern
+	forward_pattern=$(build_xfrm_forward_dst_grep_pattern "$external_peer_ip")
+	existing_policies=$("$ip_cmd" xfrm policy 2>/dev/null | grep -E "$forward_pattern" -A 5 2>/dev/null || echo "")
 
 	local policy_deleted_count=0
 	local policy_failed_count=0

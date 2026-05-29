@@ -89,7 +89,7 @@ We will use byte counters from `ip xfrm state` as the primary method for detecti
 
 ## Related ADRs
 - ADR-0006: Multi-Method Detection with Fallback (byte counters are primary method)
-- ADR-0014: Ping Check as Supplementary Diagnostic (ping supplements byte counter detection for idle tunnels)
+- ADR-0014: Ping Check as Supplementary Diagnostic (ping combines with byte counters when `ENABLE_PING_CHECK=1`)
 - ADR-0020: SA Rekey Detection and Handling (handles byte counter resets during rekey)
 - ADR-0004: Per-Peer State Tracking (byte counters tracked per-location, per-peer)
 - ADR-0009: VPN Keepalive Daemon (keepalive prevents idle tunnel timeouts)
@@ -97,6 +97,8 @@ We will use byte counters from `ip xfrm state` as the primary method for detecti
 
 ## Change History
 - **v0.2.0 (2025-12-26)**: Simplified byte counter detection by removing complex traffic pattern analysis (historical samples, automatic pruning, rate calculations). Replaced with simple heuristics: bytes increasing = healthy, bytes not increasing + ping fails = broken. See CHANGELOG.md v0.2.0 for details.
+- **v0.8.1 (2026-02-14)**: Deferred `last_bytes` persistence until after failure-type/routing logic in the same run — prevents false "routing issue" when `current_bytes == last_bytes` within one invocation. See CHANGELOG.md v0.8.1.
+- **Startup grace period**: `STARTUP_GRACE_PERIOD` (default 5s) delays VPN checks after script restart or stale `.last_run_timestamp`, reducing false failures while xfrm/IPsec settles. See `vpn-monitor.conf` and `tests/test_startup_grace_period.sh`.
 
 ## References
 - ARCHITECTURE.md: "Detection Method Flow" section

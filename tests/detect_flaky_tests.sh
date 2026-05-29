@@ -18,6 +18,9 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# shellcheck source=../lib/common.sh
+source "${PROJECT_ROOT}/lib/common.sh"
+
 # Default number of test runs
 DEFAULT_RUNS=3
 NUM_RUNS="${NUM_RUNS:-${DEFAULT_RUNS}}"
@@ -93,7 +96,7 @@ parse_args() {
 				echo -e "${RED}Error: --runs requires a value${NC}" >&2
 				exit 1
 			fi
-			if ! [[ "$2" =~ ^[1-9][0-9]*$ ]] || [[ "$2" -lt "$MIN_RUNS" ]]; then
+			if ! is_positive_integer "$2" || [[ "$2" -lt "$MIN_RUNS" ]]; then
 				echo -e "${RED}Error: --runs must be at least ${MIN_RUNS}${NC}" >&2
 				exit 1
 			fi

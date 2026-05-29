@@ -29,6 +29,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# shellcheck source=lib/common.sh
+source "${PROJECT_ROOT}/lib/common.sh"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -160,17 +163,14 @@ escape_sed_regex() {
 #   Returns first match if multiple version declarations exist
 get_current_version_from_file() {
 	local file="$1"
+	local version
+
 	if [[ ! -f "$file" ]]; then
 		return 1
 	fi
 
-	# Try SCRIPT_VERSION first
-	local version
-	version=$(grep -E '^SCRIPT_VERSION=["'\'']' "$file" 2>/dev/null | head -1 | sed -E "s/^SCRIPT_VERSION=[\"']([^\"']+)[\"'].*/\1/" | tr -d ' ')
-
-	# Fallback to # Version: comment
-	if [[ -z "$version" ]]; then
-		version=$(grep -E '^# Version:' "$file" 2>/dev/null | head -1 | sed -E 's/^# Version:[[:space:]]*//' | tr -d ' ')
+	if ! version=$(extract_script_version "$file"); then
+		version=$(extract_file_version_comment "$file" || true)
 	fi
 
 	if [[ -n "$version" ]]; then

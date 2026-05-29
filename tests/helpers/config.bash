@@ -83,11 +83,12 @@ create_valid_config() {
 		'RATE_LIMIT_WINDOW_MINUTES=60'
 }
 
-# Create a test lib directory with config_schema.sh
+# Create a test lib directory with config_schema.sh and config-loading deps
 #
-# Creates a lib directory and copies the project's lib/config_schema.sh into it
-# so tests use the real schema and can catch schema validation regressions.
-# Requires the repository lib/config_schema.sh to exist (run tests from repo root).
+# Creates a lib directory and copies the project's lib/config_schema.sh, constants.sh,
+# common.sh, logging.sh, and config/config_loading.sh so check-config.sh and similar
+# tools can run from an isolated test install directory.
+# Requires the repository lib/ files to exist (run tests from repo root).
 #
 # Arguments:
 #   $1: Base directory (lib will be created here)
@@ -106,22 +107,30 @@ create_valid_config() {
 create_test_lib() {
 	local base_dir="$1"
 	local lib_dir="${base_dir}/lib"
-	local real_schema="${BATS_TEST_DIRNAME}/../lib/config_schema.sh"
+	local repo_lib="${BATS_TEST_DIRNAME}/../lib"
+	local real_schema="${repo_lib}/config_schema.sh"
 
-	mkdir -p "$lib_dir"
+	mkdir -p "${lib_dir}/config"
 
 	if [[ ! -f "$real_schema" ]]; then
 		echo "create_test_lib: project lib/config_schema.sh not found at $real_schema (run tests from repository root)" >&2
 		return 1
 	fi
 	cp "$real_schema" "${lib_dir}/config_schema.sh"
+	for dep in constants.sh common.sh logging.sh; do
+		if [[ -f "${repo_lib}/${dep}" ]]; then
+			cp "${repo_lib}/${dep}" "${lib_dir}/${dep}"
+		fi
+	done
+	if [[ -f "${repo_lib}/config/config_loading.sh" ]]; then
+		cp "${repo_lib}/config/config_loading.sh" "${lib_dir}/config/config_loading.sh"
+	fi
 }
 
 # Copy compare-config.sh script and its dependencies to test directory
 #
-# Copies the compare-config.sh script to the test directory along with
-# lib/common.sh which it depends on. This allows the script to run
-# from the test directory and find its dependencies.
+# Copies the compare-config.sh script to the test directory along with lib/
+# dependencies it sources (common, logging, config_loading, location_parsing).
 #
 # Arguments:
 #   $1: Test directory where script should be copied
@@ -132,7 +141,8 @@ create_test_lib() {
 # Side effects:
 #   - Copies compare-config.sh to test directory
 #   - Creates lib directory in test directory
-#   - Copies lib/common.sh, lib/constants.sh, and lib/config/location_parsing.sh
+#   - Copies lib/common.sh, lib/constants.sh, lib/logging.sh,
+#     lib/config/location_parsing.sh, lib/config/config_loading.sh
 #   - Makes script executable
 #
 # Example:
@@ -150,15 +160,17 @@ copy_compare_config_script() {
 		chmod +x "${test_dir}/compare-config.sh"
 	fi
 
-	# Copy lib dependencies so script can source common.sh and location predicates
+	# Copy lib dependencies so script can source common.sh and config helpers
 	mkdir -p "${test_dir}/lib/config"
-	if [[ -f "${repo_lib}/common.sh" ]]; then
-		cp "${repo_lib}/common.sh" "${test_dir}/lib/common.sh"
-	fi
-	if [[ -f "${repo_lib}/constants.sh" ]]; then
-		cp "${repo_lib}/constants.sh" "${test_dir}/lib/constants.sh"
-	fi
+	for dep in common.sh constants.sh logging.sh; do
+		if [[ -f "${repo_lib}/${dep}" ]]; then
+			cp "${repo_lib}/${dep}" "${test_dir}/lib/${dep}"
+		fi
+	done
 	if [[ -f "${repo_lib}/config/location_parsing.sh" ]]; then
 		cp "${repo_lib}/config/location_parsing.sh" "${test_dir}/lib/config/location_parsing.sh"
+	fi
+	if [[ -f "${repo_lib}/config/config_loading.sh" ]]; then
+		cp "${repo_lib}/config/config_loading.sh" "${test_dir}/lib/config/config_loading.sh"
 	fi
 }

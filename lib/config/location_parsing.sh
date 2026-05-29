@@ -395,7 +395,7 @@ parse_location_config() {
 		parse_result=()
 
 		# Skip comments and empty lines (don't affect parsing state)
-		[[ "$line" =~ ^[[:space:]]*# ]] && continue
+		is_config_comment_line "$line" && continue
 		[[ -z "${line// /}" ]] && continue
 
 		# Normalize whitespace: remove leading/trailing spaces

@@ -304,7 +304,7 @@ get_parallel_jobs() {
 	fi
 
 	# Validate that jobs is a positive integer if it's not "auto" or "0"
-	if ! [[ "$jobs" =~ ^[1-9][0-9]*$ ]]; then
+	if ! is_positive_integer "$jobs"; then
 		echo -e "${YELLOW}Warning: Invalid PARALLEL_JOBS value '$jobs'. Using auto-detection.${NC}" >&2
 		detect_cpu_cores
 		return
@@ -2315,7 +2315,7 @@ parse_args() {
 				exit 1
 			fi
 			# Validate the value is either "auto", "0", or a positive integer
-			if [[ "$2" != "auto" ]] && [[ "$2" != "0" ]] && ! [[ "$2" =~ ^[1-9][0-9]*$ ]]; then
+			if [[ "$2" != "auto" ]] && [[ "$2" != "0" ]] && ! is_positive_integer "$2"; then
 				echo -e "${RED}Error: --jobs must be 'auto', '0', or a positive integer${NC}" >&2
 				echo "Got: $2" >&2
 				exit 1

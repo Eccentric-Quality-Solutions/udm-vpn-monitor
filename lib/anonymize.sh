@@ -418,7 +418,7 @@ load_mapping_file() {
 
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		# Skip comments and empty lines
-		[[ "$line" =~ ^# ]] && continue
+		is_config_comment_line "$line" && continue
 		[[ -z "${line// /}" ]] && continue
 
 		# Detect section headers
@@ -644,7 +644,7 @@ extract_interfaces_from_file() {
 	# Pattern 3: -i! interface or -o! interface (negated)
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		# Skip comments and table/chain declarations
-		[[ "$line" =~ ^# ]] && continue
+		is_config_comment_line "$line" && continue
 		[[ "$line" =~ ^[*:] ]] && continue
 		[[ "$line" == "COMMIT" ]] && continue
 

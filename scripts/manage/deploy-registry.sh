@@ -16,6 +16,17 @@
 # Default registry path (caller should set REPO_ROOT)
 DEPLOY_REGISTRY_FILE="${DEPLOY_REGISTRY_FILE:-}"
 
+# Version parsing helpers (parse_script_version_line, etc.)
+_REGISTRY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_REGISTRY_REPO_ROOT="${REPO_ROOT:-$(cd "${_REGISTRY_SCRIPT_DIR}/../.." && pwd)}"
+# shellcheck source=lib/common.sh
+if [[ ! -f "${_REGISTRY_REPO_ROOT}/lib/common.sh" ]]; then
+	echo "Error: lib/common.sh not found at ${_REGISTRY_REPO_ROOT}/lib/common.sh" >&2
+	return 1 2>/dev/null || exit 1
+fi
+# shellcheck source=lib/common.sh
+source "${_REGISTRY_REPO_ROOT}/lib/common.sh"
+
 # Get registry file path.
 # Requires REPO_ROOT to be set by caller.
 #
@@ -51,16 +62,19 @@ get_registry_path() {
 get_package_version() {
 	local pkg="${1:-}"
 	local v=""
+	local line=""
 
 	[[ -f "$pkg" ]] || return 1
 
 	if [[ "$pkg" == *.zip ]]; then
-		v=$(unzip -p "$pkg" vpn-monitor.sh 2>/dev/null | grep -E '^SCRIPT_VERSION=' | head -1 | sed -E 's/^SCRIPT_VERSION=["'\'']?([^"'\'' ]+).*/\1/' | tr -d ' ')
+		line=$(unzip -p "$pkg" vpn-monitor.sh 2>/dev/null | grep -E '^SCRIPT_VERSION=' | head -1)
 	elif [[ "$pkg" == *.tar.gz ]] || [[ "$pkg" == *.tgz ]]; then
-		v=$(tar -xzf "$pkg" -O vpn-monitor.sh 2>/dev/null | grep -E '^SCRIPT_VERSION=' | head -1 | sed -E 's/^SCRIPT_VERSION=["'\'']?([^"'\'' ]+).*/\1/' | tr -d ' ')
+		line=$(tar -xzf "$pkg" -O vpn-monitor.sh 2>/dev/null | grep -E '^SCRIPT_VERSION=' | head -1)
 	else
 		return 1
 	fi
+
+	v=$(parse_script_version_line "$line" 2>/dev/null || true)
 
 	[[ -n "$v" ]] && echo "$v" && return 0
 	return 1

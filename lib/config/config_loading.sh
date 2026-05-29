@@ -450,7 +450,7 @@ get_config_var_value_from_file() {
 		line="${line#"${line%%[![:space:]]*}"}"
 		line="${line%"${line##*[![:space:]]}"}"
 		[[ -z "$line" ]] && continue
-		if [[ "$line" =~ ^[[:space:]]*# ]]; then
+		if is_config_comment_line "$line"; then
 			continue
 		fi
 		if ! parse_assignment "$line" "$line_num" "parse_result" "1"; then
@@ -467,6 +467,68 @@ get_config_var_value_from_file() {
 		return 0
 	fi
 	return 1
+}
+
+# List variable names assigned in a config file (names only, one per line)
+#
+# Uses parse_assignment() in quiet mode so lines follow the same rules as safe_parse
+# and get_config_var_value_from_file() (quoted values, trailing comments, etc.).
+#
+# Arguments:
+#   $1: Path to configuration file
+#
+# Returns:
+#   0: File read successfully (may print nothing if no assignments)
+#   1: File missing or unreadable
+#
+# Output:
+#   Prints each assigned variable name once per assignment line (duplicates allowed)
+list_config_variable_names() {
+	local config_file="$1"
+	local line_num=0
+	local line
+	local -A parse_result
+
+	if [[ -z "$config_file" ]] || [[ ! -f "$config_file" ]]; then
+		return 1
+	fi
+	if ! file_exists_and_readable "$config_file"; then
+		return 1
+	fi
+
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		line_num=$((line_num + 1))
+		parse_result=()
+		line="${line#"${line%%[![:space:]]*}"}"
+		line="${line%"${line##*[![:space:]]}"}"
+		[[ -z "$line" ]] && continue
+		if is_config_comment_line "$line"; then
+			continue
+		fi
+		if ! parse_assignment "$line" "$line_num" "parse_result" "1"; then
+			continue
+		fi
+		echo "${parse_result[name]}"
+	done <"$config_file"
+
+	return 0
+}
+
+# Config lines that look like "VAR=..." (valid identifier) but fail to parse —
+# safe_parse silently skips these at runtime. Prints "<line_num>:<trimmed line>".
+list_malformed_config_lines() {
+	local config_file="$1" line_num=0 line
+	local -A parse_result
+	[[ -n "$config_file" && -f "$config_file" ]] && file_exists_and_readable "$config_file" || return 1
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		line_num=$((line_num + 1))
+		line="${line#"${line%%[![:space:]]*}"}"
+		line="${line%"${line##*[![:space:]]}"}"
+		[[ -z "$line" ]] && continue
+		is_config_comment_line "$line" && continue
+		[[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+		parse_assignment "$line" "$line_num" "parse_result" "1" || printf '%s:%s\n' "$line_num" "$line"
+	done <"$config_file"
 }
 
 # Safely parse configuration file
@@ -546,7 +608,7 @@ safe_parse_config_file() {
 		fi
 
 		# Skip comment lines (lines starting with #)
-		if [[ "$line" =~ ^[[:space:]]*# ]]; then
+		if is_config_comment_line "$line"; then
 			continue
 		fi
 

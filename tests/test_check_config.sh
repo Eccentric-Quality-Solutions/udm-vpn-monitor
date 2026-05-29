@@ -139,6 +139,34 @@ RATE_LIMIT_WINDOW_MINUTES=60' \
 }
 
 # bats test_tags=category:unit
+@test "check-config.sh detects malformed settings" {
+	# Purpose: Test verifies that lines which look like settings but fail to parse are reported
+	# Expected: Script reports the malformed line (with its number) and fails; a properly quoted
+	#           value on a similar line is NOT flagged as malformed
+	# Importance: safe_parse silently skips malformed lines at runtime, so surfacing them here
+	#             prevents config typos from being silently ignored
+	local test_dir="${TEST_DIR}/test-install"
+	mkdir -p "$test_dir"
+	create_test_lib "$test_dir"
+
+	local config_file="${test_dir}/vpn-monitor.conf"
+	cat >"$config_file" <<'EOF'
+# valid settings
+TIER1_THRESHOLD=1
+BAD_VALUE=has spaces without quotes
+GOOD_QUOTED="has spaces with quotes"
+EOF
+
+	run bash "$CHECK_CONFIG_SCRIPT" --config "$config_file"
+
+	assert_failure
+	assert_output --partial "Malformed Settings"
+	assert_output --partial "BAD_VALUE=has spaces without quotes"
+	# A properly quoted value must not be reported as malformed
+	refute_output --partial 'GOOD_QUOTED="has spaces with quotes"'
+}
+
+# bats test_tags=category:unit
 @test "check-config.sh reports valid config correctly" {
 	# Purpose: Test verifies that the script correctly identifies when config is valid and up-to-date
 	# Expected: Script reports success when all settings are present and no deprecated settings exist

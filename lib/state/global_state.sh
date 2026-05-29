@@ -527,7 +527,7 @@ get_network_partition_state() {
 		local value
 		value=$(cat "$state_file" 2>/dev/null || echo "0")
 		# Validate value (must be 0 or 1)
-		if [[ "$value" =~ ^[01]$ ]]; then
+		if is_binary_flag "$value"; then
 			echo "$value"
 		else
 			# Corrupted file, backup and recover
@@ -570,7 +570,7 @@ set_network_partition_state() {
 	[[ -z "$state_file" ]] && return 1
 
 	# Validate value (must be 0 or 1)
-	if [[ ! "$state_value" =~ ^[01]$ ]]; then
+	if ! is_binary_flag "$state_value"; then
 		handle_error "ERROR" "SYSTEM" "Invalid network partition state value (expected 0 or 1): $state_value" 0
 		return 1
 	fi

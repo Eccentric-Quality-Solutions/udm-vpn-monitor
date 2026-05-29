@@ -510,6 +510,44 @@ fi
 - Return error status at end of function if any errors occurred
 - In fake mode, error handlers return 1; in normal mode they exit
 
+### Pattern: Shared Config and XFRM Regex Helpers
+
+**When to Use:** Listing config variable names, parsing SPI from xfrm lines, or grepping xfrm SA/policy headers by peer IP
+
+**Pattern:**
+```bash
+# Comment / config value helpers
+is_config_comment_line "$line"
+config_value_needs_quoting "$default_val"
+
+# List assignment names (same parse rules as safe_parse; quiet mode skips invalid lines)
+list_config_variable_names "$config_file"
+
+# Version extraction
+extract_script_version "$script_file"
+extract_file_version_comment "$lib_file"
+parse_script_version_line "$grep_line"
+
+# Integer / flag predicates
+is_positive_integer "$jobs"
+is_binary_flag "$state_value"
+
+# Extract SPI from one xfrm line (validates with validate_spi_format)
+spi=$(extract_spi_from_xfrm_line "$line")
+
+# Grep xfrm output for forward/reverse SA headers (IP escaped internally)
+grep -E "$(build_xfrm_forward_dst_grep_pattern "$peer_ip")" <<<"$xfrm_output"
+grep -E "$(build_xfrm_reverse_src_grep_pattern "$peer_ip")" <<<"$xfrm_output"
+```
+
+**Key Points:**
+- Use `is_config_comment_line()` instead of bare `^#` or `^[[:space:]]*#`
+- Prefer `list_config_variable_names()` over inline assignment regex when only names are needed
+- Use `parse_assignment()` when you need name **and** value
+- Use `config_value_needs_quoting()` for default-value display in check/compare-config
+- Use `extract_spi_from_xfrm_line()` for line parsing; `validate_spi_format()` for values already extracted
+- XFRM grep builders live in `lib/common.sh` alongside `escape_sed_regex()`
+
 ---
 
 ## File Operation Patterns
@@ -1435,7 +1473,7 @@ fi
 
 **Available Validation Functions:**
 - `is_non_negative_integer()` - Validates strings contain only ASCII digits (`REGEX_NON_NEGATIVE_INTEGER`)
-- `is_affirmative_reply()` - Validates y/yes prompt replies (`REGEX_AFFIRMATIVE_REPLY`)
+- `is_affirmative_reply()` - Validates prompt replies; requires full word "yes" (case-insensitive), bare "y" rejected (`REGEX_AFFIRMATIVE_REPLY`)
 - `is_location_external_var()` / `is_location_internal_var()` / `is_location_var()` - Validates location config variable names (`REGEX_LOCATION_*_VAR` in `lib/constants.sh`)
 - `grep_non_negative_integer_lines()` - grep wrapper using the same integer pattern (pipelines/local reads only; with `run_with_timeout`, use `grep -qE "${REGEX_NON_NEGATIVE_INTEGER}"` because `timeout(1)` cannot exec shell functions)
 - `validate_ipv4()` - Validates IPv4 addresses with octet range checks

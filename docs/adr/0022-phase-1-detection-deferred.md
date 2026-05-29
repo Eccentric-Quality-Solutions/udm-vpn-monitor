@@ -32,7 +32,7 @@ We will **not implement Phase 1 detection at this time**. Instead, we will treat
 **Rationale**:
 1. **Recovery effectiveness**: The current recovery system already handles both failure types correctly:
    - xfrm recovery (Phase 2 SA deletion) works when Phase 1 is up but Phase 2 failed
-   - When xfrm recovery times out (indicating Phase 1 may be down), the system falls back to `ipsec reload`/`ipsec restart`, which fixes Phase 1 failures
+   - When xfrm recovery times out (indicating Phase 1 may be down), the system falls back to more aggressive recovery: **`ipsec restart` at Tier 3**; at Tier 2, **`ipsec reload` only if `ENABLE_TIER2_IPSEC_RELOAD=1`** (default **0** — see ADR-0003)
 2. **Minimal practical impact**: The only impact is a bounded delay (up to 30 seconds) when Phase 1 is down, as xfrm recovery attempts before falling back to more aggressive recovery
 3. **Investigation required**: Implementing Phase 1 detection would require:
    - Empirical testing of `ipsec status` output reliability when Phase 1 is up but Phase 2 is down
@@ -49,7 +49,7 @@ We will **not implement Phase 1 detection at this time**. Instead, we will treat
 - **Consistent behavior**: All tunnel-down scenarios handled uniformly, reducing complexity
 
 ### Negative
-- **Recovery delay**: When Phase 1 is down, xfrm recovery attempts first (up to 30 seconds timeout) before falling back to `ipsec reload`/`ipsec restart`
+- **Recovery delay**: When Phase 1 is down, xfrm recovery attempts first (up to 30 seconds timeout) before falling back to `ipsec restart` (Tier 3) or optional `ipsec reload` (Tier 2, if enabled)
 - **Less targeted recovery**: Cannot optimize recovery strategy based on failure phase (e.g., skip xfrm recovery when Phase 1 is known to be down)
 - **Diagnostic limitation**: Cannot distinguish Phase 1 vs Phase 2 failures in logs and monitoring
 
@@ -85,19 +85,19 @@ Phase 1 detection **could be implemented in the future** if:
 **Current Behavior**:
 - When Phase 2 SA doesn't exist, failure type is detected as "tunnel_down"
 - Recovery attempts xfrm-based recovery first (Tier 2/Tier 3)
-- If xfrm recovery times out (30 seconds), falls back to `ipsec reload`/`ipsec restart`
+- If xfrm recovery times out (30 seconds): at Tier 2, no global reload unless `ENABLE_TIER2_IPSEC_RELOAD=1`; at Tier 3, falls back to `ipsec restart`
 - Fallback recovery fixes both Phase 1 and Phase 2 failures
 
 **Recovery Flow**:
 1. Tier 2/Tier 3: Attempt xfrm recovery (deletes Phase 2 SAs, waits for re-establishment)
 2. If xfrm recovery succeeds: Phase 2 was the issue, recovery complete
-3. If xfrm recovery times out: Phase 1 likely down, fallback to `ipsec reload`/`ipsec restart`
+3. If xfrm recovery times out: Phase 1 likely down; Tier 2 may log/skip global reload (default); Tier 3 falls back to `ipsec restart`
 4. Fallback recovery: Fixes Phase 1 failures and re-establishes both phases
 
 **Code References**:
 - `lib/detection/failure_analysis.sh`: `detect_failure_type()` - detects "tunnel_down" but cannot distinguish Phase 1 vs Phase 2
-- `lib/recovery.sh`: `attempt_xfrm_recovery()` - attempts Phase 2 SA deletion, times out after 30 seconds
-- `lib/recovery.sh`: `surgical_cleanup()` / `full_restart()` - fallback to `ipsec reload`/`ipsec restart` when xfrm fails
+- `lib/recovery/xfrm_recovery.sh`: `attempt_xfrm_recovery()` - attempts Phase 2 SA deletion, times out after 30 seconds
+- `lib/recovery/recovery_orchestration.sh`: `surgical_cleanup()` / `full_restart()` — fallback to `ipsec restart` (Tier 3) or optional `ipsec reload` (Tier 2) when xfrm fails
 
 ## Related ADRs
 - ADR-0003: Tiered Recovery System (recovery fallback mechanism)
@@ -109,5 +109,5 @@ Phase 1 detection **could be implemented in the future** if:
 - ARCHITECTURE.md: Detection Method Flow
 - UDM-Linux-Tools.md: Available tools on UDM OS
 - lib/detection/failure_analysis.sh: `detect_failure_type()` implementation
-- lib/recovery.sh: Recovery strategy selection and fallback logic
+- lib/recovery/recovery_orchestration.sh: Recovery strategy selection and fallback logic
 

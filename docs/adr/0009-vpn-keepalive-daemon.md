@@ -55,6 +55,7 @@ We will implement an optional VPN keepalive daemon that:
 - ADR-0006: Multi-Method Detection with Fallback
 - ADR-0001: Cron-Based Execution Instead of Daemon
 - ADR-0024: Location-Based Configuration Format
+- ADR-0032: Sub-Minute Execution via Wrapper Script (other optional long-running process; cron-driven, different purpose)
 
 ## References
 - ARCHITECTURE.md: "Key Design Decisions #10: VPN Keepalive Daemon"

@@ -26,7 +26,7 @@ Architecture Decision Records are documents that capture important architectural
 | [ADR-0010](0010-configuration-schema-validation.md) | Configuration Schema Validation | Accepted |
 | [ADR-0011](0011-security-measures-ip-validation-fixed-string-matching.md) | Security Measures (IP Validation, Fixed-String Matching) | Accepted |
 | [ADR-0012](0012-atomic-file-operations.md) | Atomic File Operations | Accepted |
-| [ADR-0013](0013-state-file-checksum-validation.md) | State File Checksum Validation | Deprecated (Removed in v0.2.0) |
+| [ADR-0013](0013-state-file-checksum-validation.md) | State File Checksum Validation | Superseded (Removed in v0.2.0) |
 | [ADR-0014](0014-ping-check-as-supplementary-diagnostic.md) | Ping Check as Supplementary Diagnostic Tool | Accepted |
 | [ADR-0015](0015-file-based-state-storage.md) | File-Based State Storage | Accepted |
 | [ADR-0016](0016-state-file-location-data-vpn-monitor.md) | State File Location (/data/vpn-monitor/) | Accepted |
@@ -43,8 +43,9 @@ Architecture Decision Records are documents that capture important architectural
 | [ADR-0027](0027-enhanced-command-availability-checking.md) | Enhanced Command Availability Checking | Accepted |
 | [ADR-0028](0028-state-passing-pattern-for-detection-functions.md) | State Passing Pattern for Detection Functions | Accepted |
 | [ADR-0029](0029-recovery-type-distinction.md) | Recovery Type Distinction | Accepted |
-| [ADR-0030](0030-centralized-fallback-functions.md) | Centralized Fallback Functions | Deprecated (Removed 2026-01-18) |
+| [ADR-0030](0030-centralized-fallback-functions.md) | Centralized Fallback Functions | Superseded (Removed 2026-01-18) |
 | [ADR-0031](0031-system-wide-failure-detection-and-coordination.md) | System-Wide Failure Detection and Coordination | Accepted |
+| [ADR-0032](0032-sub-minute-execution-via-wrapper.md) | Sub-Minute Execution via Wrapper Script | Accepted |
 
 ## ADR Format
 
@@ -71,12 +72,11 @@ When making a significant architectural decision:
 
 - **Proposed**: Decision is under consideration
 - **Accepted**: Decision has been made and implemented
-- **Deprecated**: Decision has been superseded or is no longer relevant
-- **Superseded**: Decision has been replaced by a newer ADR
+- **Deprecated**: Decision is no longer recommended but record kept for history (prefer **Superseded** when replaced or removed)
+- **Superseded**: Decision was implemented then removed or replaced (e.g. ADR-0013, ADR-0030); record kept for history
 
 ## References
 
-- [Architecture Documentation](../ARCHITECTURE.md) - Detailed architecture documentation
-- [Architectural Review](../ARCHITECTURAL_REVIEW.md) - Comprehensive architectural review
-- [Changelog](../CHANGELOG.md) - Project changelog with implementation history
+- [Architecture Documentation](../reference/ARCHITECTURE.md) - Detailed architecture documentation
+- [Changelog](../../CHANGELOG.md) - Project changelog with implementation history
 

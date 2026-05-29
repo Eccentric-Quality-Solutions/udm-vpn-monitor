@@ -19,6 +19,13 @@ source "${PROJECT_ROOT}/lib/anonymize.sh" 2>/dev/null || {
 	exit 1
 }
 
+# anonymize.sh uses is_config_comment_line() from common.sh (e.g. load_mapping_file)
+# shellcheck source=../../lib/common.sh
+source "${PROJECT_ROOT}/lib/common.sh" 2>/dev/null || {
+	echo "Error: Could not source lib/common.sh" >&2
+	exit 1
+}
+
 # Default values
 FIREWALL_FILE=""
 IP_ROUTES_IPV4_FILE=""

@@ -47,11 +47,7 @@ readonly CURRENT_TIMESTAMP=$(date +%s)
 # ============================================================================
 
 # bats test_tags=category:unit
-@test "is_affirmative_reply: accepts yes variants" {
-	run is_affirmative_reply "y"
-	assert_success
-	run is_affirmative_reply "Y"
-	assert_success
+@test "is_affirmative_reply: accepts full-word yes variants" {
 	run is_affirmative_reply "yes"
 	assert_success
 	run is_affirmative_reply "Yes"
@@ -61,7 +57,12 @@ readonly CURRENT_TIMESTAMP=$(date +%s)
 }
 
 # bats test_tags=category:unit
-@test "is_affirmative_reply: rejects non-affirmative replies" {
+@test "is_affirmative_reply: rejects bare y and non-affirmative replies" {
+	# Bare "y"/"Y" is intentionally rejected: destructive prompts require full "yes"
+	run is_affirmative_reply "y"
+	assert_failure
+	run is_affirmative_reply "Y"
+	assert_failure
 	run is_affirmative_reply ""
 	assert_failure
 	run is_affirmative_reply "n"

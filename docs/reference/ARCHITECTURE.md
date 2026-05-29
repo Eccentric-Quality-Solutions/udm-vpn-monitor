@@ -264,7 +264,7 @@ flowchart TD
 
 **Note**:
 - **Execution Order**: The actual execution flow includes more steps than shown in simplified form above. Full order: Directory creation (state, logs) → Log file initialization → Config loading → Config validation → Lockfile acquisition → Initialize monitor (parse args, log start, init state) → State validation → Resource check → Network partition check → Cooldown check → Cron persistence check → Location processing.
-- **Sub-minute Execution (Optional)**: When `ENABLE_MONITOR_WRAPPER=1` (default), cron runs `vpn-monitor-wrapper.sh` instead of `vpn-monitor.sh` directly. The wrapper loops with `MONITOR_INTERVAL`-second sleeps (default: 20s), running checks at :00, :20, :40 within each minute. Cron resurrects the wrapper every minute if it exits. See `vpn-monitor-wrapper.sh` and config options `ENABLE_MONITOR_WRAPPER`, `MONITOR_INTERVAL`.
+- **Sub-minute Execution (Optional)**: When `ENABLE_MONITOR_WRAPPER=1` (default), cron runs `vpn-monitor-wrapper.sh` instead of `vpn-monitor.sh` directly. The wrapper loops with `MONITOR_INTERVAL`-second sleeps (default: 20s). Cron resurrects the wrapper every minute if it exits. See [ADR-0032](../adr/0032-sub-minute-execution-via-wrapper.md), `vpn-monitor-wrapper.sh`, and config options `ENABLE_MONITOR_WRAPPER`, `MONITOR_INTERVAL`.
 
 - **State Validation**: State files are validated for format correctness (integer, timestamp, timestamp_list) early in execution (after state initialization). Corrupted files are automatically detected, backed up, and recovered with safe defaults. This validation step ensures state file integrity before proceeding.
 
@@ -276,7 +276,7 @@ flowchart TD
 
 - **Ping Check** (enabled by default): When `ENABLE_PING_CHECK=1`, ping runs for every location (target = internal IP(s) or external IP). Ping failure is treated as VPN failed (routing_issue) and counts toward the recovery threshold; the diagram’s "Ping Success?" → No leads to VPN Failed.
 
-- **System-Wide Failure Detection**: (if enabled via `ENABLE_SYSTEM_WIDE_FAILURE_DETECTION`) occurs after all locations are checked but before recovery attempts. The system checks all locations' VPN status (read-only, doesn't update state) and compares failure count to configured threshold. If threshold exceeded, system-wide failure state is set and recovery coordination is enabled. Only the designated coordinator location attempts recovery during system-wide failures, preventing cascades and rate limiting issues. System-wide failure state is cleared when failures drop below threshold. This detection happens in `process_locations()` before individual location recovery attempts in `monitor_location()`. See the "System-Wide Failure Detection" section below for detailed documentation.
+- **System-Wide Failure Detection**: (if enabled via `ENABLE_SYSTEM_WIDE_FAILURE_DETECTION`) occurs in `process_locations()` after location names are resolved but before per-location recovery in `monitor_location()`. The system reads each location's **failure count from the previous cycle** (not a fresh VPN re-check) and compares the failing percentage to the configured threshold. If threshold exceeded, system-wide failure state is set and recovery coordination is enabled. Only the designated coordinator location attempts recovery during system-wide failures, preventing cascades and rate limiting issues. System-wide failure state is cleared when failures drop below threshold. See the "System-Wide Failure Detection" section below for detailed documentation.
 
 ## System-Wide Failure Detection
 
@@ -400,7 +400,6 @@ See ADR-0031 for detailed design rationale and alternative approaches considered
 ### Related Documentation
 
 - **ADR-0031**: System-Wide Failure Detection and Coordination (detailed design rationale)
-- **Code Diagram**: `docs/code-diagrams/system-wide-failure-flow.md` (function flow diagrams)
 - **Implementation**: `lib/detection/system_wide_failure.sh` (detection and coordination functions)
 - **Integration**: `vpn-monitor.sh` → `process_locations()` (detection integration)
 - **Recovery Integration**: `lib/recovery/recovery_orchestration.sh` → `monitor_location()` (coordination integration)
@@ -1141,9 +1140,9 @@ The system uses a modular library architecture where functionality is organized 
 
 **Dependency Handling**: `detection.sh` sources `logging.sh` conditionally with fallback functions (`log_message`, `handle_error`) to ensure it works when sourced independently (e.g., during installation by `install.sh`). The fallback functions output to stderr only and provide basic error handling.
 
-**System-Wide Failure Detection**: The system includes system-wide failure detection to identify infrastructure-level issues when multiple VPN locations fail simultaneously. Detection occurs before individual location recovery attempts, allowing coordinated recovery to prevent cascades. The detection mechanism:
-- Checks all locations' VPN status before recovery attempts
-- Compares failure count to configured threshold (default: 100% of locations)
+**System-Wide Failure Detection**: The system includes system-wide failure detection to identify infrastructure-level issues when multiple VPN locations fail simultaneously. Detection occurs in `process_locations()` before individual location recovery attempts, allowing coordinated recovery to prevent cascades. The detection mechanism:
+- Reads each location's failure count from the previous monitoring cycle (one-cycle staleness is intentional; see `process_locations()` in `vpn-monitor.sh`)
+- Compares failing location percentage to configured threshold (default: 100% of locations)
 - Sets system-wide failure state when threshold exceeded
 - Coordinates recovery so only one location (coordinator) attempts recovery
 - Clears system-wide failure state when failures drop below threshold
@@ -1338,7 +1337,7 @@ The following improvements have been implemented to enhance system reliability a
 
 - **False Positive Recovery Messages Fix** (Issue #17): Recovery messages are now only logged when `failure_count > 0`, preventing false positive recovery messages from stale state files.
 
-- **XFRM Command Timeout Protection** (2026-01-23): Added timeout protection for `ip xfrm state` commands to prevent indefinite hangs during system stress. Commands now timeout after 5 seconds (`XFRM_STATE_TIMEOUT=5`) and gracefully fall back to `ipsec status` when timeouts occur. This prevents detection from appearing as if xfrm is unavailable when commands are actually hanging due to netlink socket timeouts or XFRM lock contention. See "Network Command Timeout Handling" in Error Handling Strategy section and [XFRM_TIMEOUT_ISSUE_RESEARCH.md](../../docs/research/XFRM_TIMEOUT_ISSUE_RESEARCH.md) for details.
+- **XFRM Command Timeout Protection** (2026-01-23): Added timeout protection for `ip xfrm state` commands to prevent indefinite hangs during system stress. Commands now timeout after 5 seconds (`XFRM_STATE_TIMEOUT=5`) and gracefully fall back to `ipsec status` when timeouts occur. This prevents detection from appearing as if xfrm is unavailable when commands are actually hanging due to netlink socket timeouts or XFRM lock contention. See "Network Command Timeout Handling" in Error Handling Strategy section and [IP_XFRM_GUIDE.md](IP_XFRM_GUIDE.md) for details.
 
 ## Key Design Decisions
 
@@ -1361,7 +1360,7 @@ The following improvements have been implemented to enhance system reliability a
   - When triggered: Tier 1 logging continues for monitoring purposes, but Tier 2/3 recovery escalation is skipped
   - Error message logged: "Detection unreliable: Both 'ip' and 'ipsec' commands unavailable - skipping recovery escalation for <location> (<peer_ip>) to prevent false recovery actions"
   - **Rationale**: When detection tools are unavailable, the system cannot reliably determine if a VPN tunnel is actually down or if the detection failure is due to missing tools. Escalating recovery in this scenario could disrupt working VPN connections unnecessarily.
-  - **Implementation**: Implemented in `lib/recovery.sh` in the `handle_vpn_failure()` function. Uses enhanced command availability checking that handles restricted PATH environments (see Design Decision #11).
+  - **Implementation**: Implemented in `lib/recovery/recovery_orchestration.sh` in `determine_recovery_action()`. Uses enhanced command availability checking that handles restricted PATH environments (see Design Decision #11).
   - **Related**: See ADR-0026 for detailed design rationale and ADR-0027 for command availability checking mechanism.
 - **Tier 2 Details**:
   - Default: xfrm-based per-connection recovery (uses `ip xfrm state delete`) if `ENABLE_XFRM_RECOVERY=1` (enabled by default for UDM OS 4.3+) - affects only the failing tunnel
@@ -1396,7 +1395,7 @@ The following improvements have been implemented to enhance system reliability a
   - Single responsibility per module
   - Code reuse across scripts (install, uninstall, monitor)
   - Easier testing and maintenance
-  - Reduced main script from ~1900 lines to ~530 lines
+  - Reduced main script from ~1900 lines to ~620 lines
   - Better separation of concerns
 - **Note**: See "Modular Library Architecture" section above for detailed module documentation
 
@@ -1485,11 +1484,11 @@ The following improvements have been implemented to enhance system reliability a
    - **Fallback**: If `timeout` command unavailable, run command without wrapper (shouldn't happen on UDM)
    - **Examples**:
      - `ip xfrm state` wrapped with `XFRM_STATE_TIMEOUT` (5 seconds) in `lib/detection/xfrm_detection.sh`. This prevents indefinite hangs during system stress when netlink sockets timeout (12-13 seconds documented) or XFRM lock contention occurs. When timeout occurs, the system logs a warning and gracefully falls back to `ipsec status` for detection.
-     - `ipsec status` wrapped with `IPSEC_STATUS_TIMEOUT` (5 seconds) in `lib/detection/xfrm_detection.sh` and `lib/recovery.sh`
+     - `ipsec status` wrapped with `IPSEC_STATUS_TIMEOUT` (5 seconds) in `lib/detection/xfrm_detection.sh` and `lib/recovery/recovery_verification.sh`
      - `ping` commands wrapped with calculated timeout in `check_ping_connectivity()` (`lib/detection/ping_detection.sh`)
      - `dig` and `nslookup` wrapped with DNS timeout in `check_dns_resolution()` (`lib/detection/network_validation.sh`)
    - **Benefit**: Prevents script from hanging indefinitely when network commands hang due to network issues, system stress, or kernel subsystem lock contention. Ensures predictable execution time and enables graceful fallback to alternative detection methods.
-   - **Related**: See [XFRM_TIMEOUT_ISSUE_RESEARCH.md](../../docs/research/XFRM_TIMEOUT_ISSUE_RESEARCH.md) for detailed analysis of xfrm timeout issues and resolution.
+   - **Related**: See [IP_XFRM_GUIDE.md](IP_XFRM_GUIDE.md) for xfrm timeout behavior and troubleshooting.
 
 ## Performance Considerations
 

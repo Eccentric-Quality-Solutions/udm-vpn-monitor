@@ -63,6 +63,12 @@ These tools are **not** available on UDM OS 4.3+ and should not be used:
 - **logread** - Not available (use `journalctl` or `dmesg` instead)
 - **swanctl** - StrongSwan control utility (not available, use `ipsec` instead)
 - **bc** - Calculator (use `awk` for floating-point math instead)
+- **python3** / **python** - Not available by default
+- **node** / **nodejs** - Not available by default
+- **jq** - JSON processor (not available)
+- **perl** - Not available by default
+- **ruby** - Not available by default
+- **zip** - Not available (use `tar.gz` for on-device packages)
 
 ## Command-Specific Notes
 

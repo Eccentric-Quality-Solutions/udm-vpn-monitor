@@ -19,12 +19,34 @@ LIST_MISSING_WITH_VALUES=0
 # shellcheck source=lib/common.sh
 if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
 	source "${SCRIPT_DIR}/lib/common.sh"
+else
+	echo "Error: common.sh not found. Run this script from the installation directory." >&2
+	exit 1
 fi
 
 # Location variable predicates (lib/config/location_parsing.sh)
 # shellcheck source=lib/config/location_parsing.sh
 if [[ -f "${SCRIPT_DIR}/lib/config/location_parsing.sh" ]]; then
 	source "${SCRIPT_DIR}/lib/config/location_parsing.sh"
+else
+	echo "Error: location_parsing.sh not found. Run this script from the installation directory." >&2
+	exit 1
+fi
+
+# Config parsing (list_config_variable_names uses parse_assignment)
+# shellcheck source=lib/logging.sh
+if [[ -f "${SCRIPT_DIR}/lib/logging.sh" ]]; then
+	source "${SCRIPT_DIR}/lib/logging.sh"
+else
+	echo "Error: logging.sh not found. Run this script from the installation directory." >&2
+	exit 1
+fi
+# shellcheck source=lib/config/config_loading.sh
+if [[ -f "${SCRIPT_DIR}/lib/config/config_loading.sh" ]]; then
+	source "${SCRIPT_DIR}/lib/config/config_loading.sh"
+else
+	echo "Error: config_loading.sh not found. Run this script from the installation directory." >&2
+	exit 1
 fi
 
 # Parse command line arguments
@@ -100,61 +122,6 @@ fi
 [[ -z "${GREEN:-}" ]] && GREEN='\033[0;32m'
 [[ -z "${YELLOW:-}" ]] && YELLOW='\033[1;33m'
 [[ -z "${NC:-}" ]] && NC='\033[0m' # No Color
-
-# Parse config file to extract variable names
-#
-# Reads the config file and extracts all variable names that are set.
-# Only extracts valid VAR=value lines, ignoring comments and empty lines.
-#
-# Arguments:
-#   $1: Path to config file
-#
-# Returns:
-#   0: Success
-#   1: Config file not found or unreadable
-#
-# Output:
-#   Prints variable names (one per line) to stdout
-parse_config_variables() {
-	local config_file="$1"
-	local line
-	local var_name
-
-	# Check file readability before read operation (prevents hangs on unreadable files)
-	if ! file_exists_and_readable "$config_file"; then
-		return 1
-	fi
-
-	# Read config file line by line
-	while IFS= read -r line || [[ -n "$line" ]]; do
-		# Skip empty lines
-		if [[ -z "${line// /}" ]]; then
-			continue
-		fi
-
-		# Skip comment lines (lines starting with #)
-		if [[ "$line" =~ ^[[:space:]]*# ]]; then
-			continue
-		fi
-
-		# Remove leading/trailing whitespace
-		line="${line#"${line%%[![:space:]]*}"}"
-		line="${line%"${line##*[![:space:]]}"}"
-
-		# Skip empty lines after trimming
-		if [[ -z "$line" ]]; then
-			continue
-		fi
-
-		# Parse variable assignment: VAR=value
-		if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)= ]]; then
-			var_name="${BASH_REMATCH[1]}"
-			echo "$var_name"
-		fi
-	done <"$config_file"
-
-	return 0
-}
 
 # Get variable value from config file
 #
@@ -274,7 +241,7 @@ main() {
 
 	# Parse variables from template config file
 	local temp_output
-	if ! temp_output=$(parse_config_variables "$TEMPLATE_CONFIG"); then
+	if ! temp_output=$(list_config_variable_names "$TEMPLATE_CONFIG"); then
 		echo -e "${RED}[ERROR]${NC} Failed to parse template configuration file" >&2
 		return 1
 	fi
@@ -296,7 +263,7 @@ main() {
 	done
 
 	# Parse variables from existing config file
-	if ! temp_output=$(parse_config_variables "$EXISTING_CONFIG"); then
+	if ! temp_output=$(list_config_variable_names "$EXISTING_CONFIG"); then
 		echo -e "${RED}[ERROR]${NC} Failed to parse existing configuration file" >&2
 		return 1
 	fi
@@ -402,7 +369,7 @@ main() {
 			local default_val
 			default_val=$(get_config_value "$TEMPLATE_CONFIG" "$var_name" 2>/dev/null || echo "")
 			if [[ -n "$default_val" ]]; then
-				if [[ "$default_val" =~ [[:space:]] ]] || [[ "$default_val" =~ [\"\'] ]]; then
+				if config_value_needs_quoting "$default_val"; then
 					echo "${var_name}=\"${default_val}\""
 				else
 					echo "${var_name}=${default_val}"
@@ -475,7 +442,7 @@ main() {
 			echo -e "  ${YELLOW}*${NC} ${var_name}"
 			if [[ -n "$default_val" ]]; then
 				# Check if value needs quoting (contains spaces or special chars)
-				if [[ "$default_val" =~ [[:space:]] ]] || [[ "$default_val" =~ [\"\'] ]]; then
+				if config_value_needs_quoting "$default_val"; then
 					echo "      Template value: \"${default_val}\""
 					echo "      Add to your config: ${var_name}=\"${default_val}\""
 				else
@@ -541,7 +508,7 @@ main() {
 				default_val=$(get_config_value "$TEMPLATE_CONFIG" "$var_name" 2>/dev/null || echo "")
 				if [[ -n "$default_val" ]]; then
 					# Check if value needs quoting
-					if [[ "$default_val" =~ [[:space:]] ]] || [[ "$default_val" =~ [\"\'] ]]; then
+					if config_value_needs_quoting "$default_val"; then
 						echo "${var_name}=\"${default_val}\""
 					else
 						echo "${var_name}=${default_val}"

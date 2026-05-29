@@ -10,18 +10,18 @@ VPN tunnel health detection needs to distinguish between different failure scena
 - Tunnel healthy but idle (SA exists, no current traffic, but tunnel is functional)
 - Transient network issues causing temporary ping failures
 
-If ping checks were used as a hard failure condition:
-- Transient ping failures (firewall rules, network congestion) would trigger false positives
-- Healthy idle tunnels would be incorrectly detected as failed
-- Recovery actions would be triggered unnecessarily
-- SA state and byte counters are more reliable indicators of tunnel health
+Byte counters from `ip xfrm state` are the primary signal for traffic flow (see ADR-0019). Ping adds end-to-end connectivity verification — especially for idle tunnels where bytes are static.
+
+**Historical note:** Ping was originally warning-only (failures did not count toward recovery). That left a gap: SA up + ping failing + bytes static could not escalate tiers reliably. **v0.8.0** changed behavior when `ENABLE_PING_CHECK=1`.
 
 ## Decision
-We will design ping checks as a **supplementary diagnostic tool** that:
-- Provides warnings but does not cause VPN failures
-- SA state + byte counters remain the authoritative source for tunnel health
-- Ping failures log warnings to help diagnose connectivity issues
-- Ping successes when SA doesn't exist help identify alternative connectivity routes
+When **`ENABLE_PING_CHECK=1`** (and internal IPs are configured), ping results **participate in failure determination** alongside byte counters and SA state:
+
+- Ping failure with SA present can mark the VPN as failed (`routing_issue` or idle/broken) and count toward tier thresholds
+- Ping success with no SA logs a warning about alternative routing (VPN already failed due to missing SA)
+- When **`ENABLE_PING_CHECK=0`** or no internal IPs are configured, ping is not run; detection relies on xfrm/byte counters only
+
+Ping is still **optional** and **supplementary** in the sense that it is not the sole signal — it combines with byte counter analysis rather than replacing it.
 
 ## Consequences
 
@@ -47,7 +47,7 @@ We will design ping checks as a **supplementary diagnostic tool** that:
   - Early warning of connectivity issues
   - Diagnostic information for troubleshooting
   - Helps distinguish between different failure types
-- **Failure Detection**: Based on SA state and byte counter analysis, not ping results
+- **Failure Detection**: Combines SA state, byte counter analysis, and ping (when enabled); ipsec fallback is skipped when xfrm reports SA exists but ping/bytes indicate failure (v0.8.0)
 - **Route Detection**:
   - When ping succeeds but SA doesn't exist (Scenario 2), the system attempts to identify the alternative route being used
   - Uses `ip route get` command to determine gateway and interface for the destination IP
@@ -63,14 +63,18 @@ We will design ping checks as a **supplementary diagnostic tool** that:
   - Route detection uses first IP in multiple IP configurations
 - **Module**: Implemented in `lib/detection/ping_detection.sh` (`check_ping_connectivity()`) and `lib/detection/network_validation.sh` (`get_route_info()`, `build_route_message()`)
 
+## Change History
+- **v0.8.0 (2026-02-14)**: When `ENABLE_PING_CHECK=1`, ping failure counts toward failure/tier escalation (previously warning-only). See CHANGELOG.md v0.8.0.
+
 ## Related ADRs
 - ADR-0006: Multi-Method Detection with Fallback
 - ADR-0003: Tiered Recovery System
+- ADR-0019: Byte Counter Detection Method
 - ADR-0024: Location-Based Configuration Format
 
 ## References
 - README.md: "Ping Check Behavior" section
 - README.md: "Why This Design?" explanation
+- TROUBLESHOOTING.md: "Ping timeouts but VPN never restarts"
 - lib/detection/ping_detection.sh: Ping check implementation
 - lib/detection/network_validation.sh: Route detection implementation
-

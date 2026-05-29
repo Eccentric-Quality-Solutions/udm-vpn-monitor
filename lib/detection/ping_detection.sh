@@ -612,8 +612,8 @@ handle_ping_single_target() {
 
 # Check ping connectivity if enabled (optional check)
 #
-# Performs ping check if enabled. This is informational and doesn't affect
-# the VPN status determination, but provides additional connectivity verification.
+# Performs ping check if enabled for supplemental logging (alternative-route warnings).
+# VPN pass/fail when ping is enabled is determined in check_byte_counters before this runs.
 # Uses provided SA existence state to ensure accurate log messages.
 #
 # Arguments:
@@ -623,7 +623,7 @@ handle_ping_single_target() {
 #   $4: Location name (optional, used for logging)
 #
 # Returns:
-#   0: Always returns 0 (doesn't affect VPN status)
+#   0: Always returns 0
 #
 # Side effects:
 #   - Logs ping check results
@@ -653,7 +653,7 @@ check_ping_optional() {
 		fi
 	fi
 
-	# Perform ping check if enabled (informational, doesn't affect primary_check_passed)
+	# Supplemental logging (e.g. alternative-route warnings); pass/fail set in check_byte_counters when ping enabled
 	# Use internal IP if provided, otherwise fall back to external IP
 	local ping_ip="${internal_peer_ip:-$external_peer_ip}"
 	# Pass SA existence status to check_ping_if_enabled for accurate messaging

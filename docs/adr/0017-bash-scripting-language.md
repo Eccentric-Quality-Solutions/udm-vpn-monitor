@@ -46,6 +46,16 @@ We will implement the monitoring system using Bash shell scripting.
 - **Testing**: Uses bats (Bash Automated Testing System) for testing
 - **Code Quality**: ShellCheck and shfmt for linting and formatting
 
+### UDM platform constraints (short)
+
+Bash is chosen partly because common alternatives and utilities are **not available on UDM OS** without fragile post-upgrade package installs. In practice:
+
+- **No** Python, Node.js, jq, Perl, or Ruby — use shell plus awk/sed/grep for text processing
+- **`bc` not packaged** — use `awk` for numeric calculations
+- **`zip` not on UDM** — on-device install packages use **tar.gz**; zip is optional for dev-only workflows
+
+See [UDM-Linux-Tools.md](../../UDM-Linux-Tools.md) for the canonical tool list.
+
 ## Related ADRs
 - ADR-0005: Modular Library Architecture
 - ADR-0001: Cron-Based Execution Instead of Daemon
@@ -53,5 +63,6 @@ We will implement the monitoring system using Bash shell scripting.
 ## References
 - README.md: "Requirements" section
 - DEVELOPER.md: "Development Tooling" section
+- [UDM-Linux-Tools.md](../../UDM-Linux-Tools.md): Available and unavailable tools on UDM OS
 - All source files: Bash implementation
 
