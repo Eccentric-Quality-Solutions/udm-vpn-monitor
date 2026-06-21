@@ -101,7 +101,7 @@ check_installation() {
 # Remove cron entry
 #
 # Removes the VPN monitor cron job entry from the root crontab.
-# Filters out lines containing "vpn-monitor.sh" and updates crontab.
+# Filters out lines containing "vpn-monitor" and updates crontab.
 #
 # Returns:
 #   0: Cron entry removed successfully (or didn't exist)
@@ -867,8 +867,8 @@ verify_uninstallation() {
 		fi
 	fi
 
-	# Check cron entry is gone
-	if crontab -l 2>/dev/null | grep -q "vpn-monitor.sh"; then
+	# Check cron entry is gone (matches both vpn-monitor.sh and vpn-monitor-wrapper.sh)
+	if crontab -l 2>/dev/null | grep -q "vpn-monitor"; then
 		log_error "Cron entry still exists"
 		errors=$((errors + 1))
 	else

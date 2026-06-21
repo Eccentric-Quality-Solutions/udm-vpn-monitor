@@ -316,7 +316,7 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	echo "test" >"${install_dir}/vpn-monitor.sh"
 
 	# Create logrotate config file
-	local logrotate_config="/etc/logrotate.d/vpn-monitor-cron"
+	local logrotate_config="/etc/logrotate.d/vpn-monitor"
 	mkdir -p "$(dirname "$logrotate_config")"
 	echo "# Test logrotate config" >"$logrotate_config"
 
@@ -346,7 +346,7 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	echo "test" >"${install_dir}/vpn-monitor.sh"
 
 	# Ensure logrotate config doesn't exist
-	local logrotate_config="/etc/logrotate.d/vpn-monitor-cron"
+	local logrotate_config="/etc/logrotate.d/vpn-monitor"
 	rm -f "$logrotate_config" 2>/dev/null || true
 
 	run bash "$UNINSTALL_SCRIPT" --yes
@@ -373,7 +373,7 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	echo "test" >"${install_dir}/vpn-monitor.sh"
 
 	# Create logrotate config file
-	local logrotate_config="/etc/logrotate.d/vpn-monitor-cron"
+	local logrotate_config="/etc/logrotate.d/vpn-monitor"
 	mkdir -p "$(dirname "$logrotate_config")"
 	echo "# Test logrotate config" >"$logrotate_config"
 
@@ -407,7 +407,7 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	echo "test" >"${install_dir}/vpn-monitor.sh"
 
 	# Create logrotate config file
-	local logrotate_config="/etc/logrotate.d/vpn-monitor-cron"
+	local logrotate_config="/etc/logrotate.d/vpn-monitor"
 	mkdir -p "$(dirname "$logrotate_config")"
 	echo "# Test logrotate config" >"$logrotate_config"
 
@@ -437,7 +437,7 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	echo "test" >"${install_dir}/vpn-monitor.sh"
 
 	# Create logrotate config file that we'll make read-only to prevent removal
-	local logrotate_config="/etc/logrotate.d/vpn-monitor-cron"
+	local logrotate_config="/etc/logrotate.d/vpn-monitor"
 	mkdir -p "$(dirname "$logrotate_config")"
 	echo "# Test logrotate config" >"$logrotate_config"
 	local original_perms
@@ -576,7 +576,7 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	echo "test" >"${install_dir}/vpn-monitor.sh"
 
 	# Create logrotate config file
-	local logrotate_config="/etc/logrotate.d/vpn-monitor-cron"
+	local logrotate_config="/etc/logrotate.d/vpn-monitor"
 	mkdir -p "$(dirname "$logrotate_config")"
 	echo "# Test logrotate config" >"$logrotate_config"
 
@@ -736,8 +736,70 @@ EOF
 	assert_output --partial "Uninstallation verification failed"
 
 	# Clean up
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
 	rm -f "$test_script" 2>/dev/null || true
+}
+
+# bats test_tags=category:unit
+@test "uninstall.sh verify_uninstallation detects wrapper cron entry still exists" {
+	# Purpose: Test verifies that verify_uninstallation detects wrapper cron entries (default install path)
+	# Expected: Function returns failure status when vpn-monitor-wrapper.sh cron entry still exists
+	# Importance: Default install (ENABLE_MONITOR_WRAPPER=1) uses wrapper in cron; verification must catch leftovers
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
+
+	# Create wrapper cron entry (default install with ENABLE_MONITOR_WRAPPER=1)
+	create_test_cron_entry "*/1 * * * *" "/data/vpn-monitor/vpn-monitor-wrapper.sh"
+
+	# Simulate partial removal: directory gone, cron left behind
+	local install_dir="/data/vpn-monitor"
+	mkdir -p "$install_dir"
+	echo "test" >"${install_dir}/vpn-monitor-wrapper.sh"
+	rm -rf "$install_dir"
+
+	local test_script="${BATS_TEST_TMPDIR}/test_verify_wrapper.sh"
+	cat >"$test_script" <<EOF
+#!/bin/bash
+source "$UNINSTALL_SCRIPT"
+verify_uninstallation
+EOF
+	chmod +x "$test_script"
+
+	run bash "$test_script"
+	assert_failure
+	assert_output --partial "Cron entry still exists"
+	assert_output --partial "Uninstallation verification failed"
+
+	# Clean up
+	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+	rm -f "$test_script" 2>/dev/null || true
+}
+
+# bats test_tags=category:unit
+@test "uninstall.sh remove_cron handles vpn-monitor-wrapper.sh cron entry" {
+	# Purpose: Test verifies remove_cron removes wrapper cron entries used by default install
+	# Expected: Function removes vpn-monitor-wrapper.sh cron entry and verification passes
+	# Importance: Ensures uninstall cleans up the default ENABLE_MONITOR_WRAPPER=1 cron path
+	# Skip condition: Requires root access to test uninstall functionality (uninstall.sh requires root privileges)
+	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
+
+	create_test_cron_entry "*/1 * * * *" "/data/vpn-monitor/vpn-monitor-wrapper.sh"
+
+	local install_dir="/data/vpn-monitor"
+	mkdir -p "$install_dir"
+	echo "test" >"${install_dir}/vpn-monitor-wrapper.sh"
+
+	run bash "$UNINSTALL_SCRIPT" --yes
+	assert_success
+	assert_output --partial "Cron job removed"
+
+	run crontab -l 2>/dev/null
+	if [[ $status -eq 0 ]]; then
+		refute_output --partial "vpn-monitor-wrapper.sh"
+	fi
+
+	rm -rf "$install_dir" 2>/dev/null || true
+	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
 }
 
 # bats test_tags=category:unit
@@ -793,7 +855,7 @@ EOF
 	create_test_cron_entry "*/1 * * * *" "/data/vpn-monitor/vpn-monitor.sh"
 
 	# Create logrotate config file
-	local logrotate_config="/etc/logrotate.d/vpn-monitor-cron"
+	local logrotate_config="/etc/logrotate.d/vpn-monitor"
 	mkdir -p "$(dirname "$logrotate_config")"
 	echo "# Test logrotate config" >"$logrotate_config"
 
@@ -833,7 +895,7 @@ EOF
 	# Ensure all components are removed
 	rm -rf /data/vpn-monitor 2>/dev/null || true
 	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
-	rm -f /etc/logrotate.d/vpn-monitor-cron 2>/dev/null || true
+	rm -f /etc/logrotate.d/vpn-monitor 2>/dev/null || true
 
 	# Create a wrapper script that calls verify_uninstallation
 	local test_script="${BATS_TEST_TMPDIR}/test_verify.sh"
@@ -876,7 +938,7 @@ EOF
 	create_test_cron_entry "*/1 * * * *" "/data/vpn-monitor/vpn-monitor.sh"
 
 	# Create logrotate config file
-	local logrotate_config="/etc/logrotate.d/vpn-monitor-cron"
+	local logrotate_config="/etc/logrotate.d/vpn-monitor"
 	mkdir -p "$(dirname "$logrotate_config")"
 	echo "# Test logrotate config" >"$logrotate_config"
 
