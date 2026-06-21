@@ -10,39 +10,55 @@
 #
 
 # Determine lib directory (where this file is located)
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RECOVERY_DIR="${LIB_DIR}/recovery"
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" 2>/dev/null || {
+	echo "ERROR: Cannot determine lib directory from ${BASH_SOURCE[0]:-<unknown>}" >&2
+	exit 1
+}
 
-# Source all recovery modules
+# Validate LIB_DIR was set correctly
+if [[ -z "${LIB_DIR:-}" ]] || [[ ! -d "${LIB_DIR}" ]]; then
+	echo "ERROR: Invalid lib directory: ${LIB_DIR:-<empty>}" >&2
+	exit 1
+fi
+
+# Validate recovery module directory exists
+RECOVERY_DIR="${LIB_DIR}/recovery"
+if [[ ! -d "${RECOVERY_DIR}" ]]; then
+	echo "ERROR: Recovery module directory does not exist: ${RECOVERY_DIR}" >&2
+	exit 1
+fi
+
+# Source common utility functions (needed for log_module_error)
+# shellcheck source=lib/common.sh
+source "${LIB_DIR}/common.sh"
+
+# Source all recovery modules in dependency order
 # shellcheck source=lib/recovery/recovery_verification.sh
-source "${RECOVERY_DIR}/recovery_verification.sh" 2>/dev/null || {
-	echo "Warning: Failed to source recovery_verification.sh" >&2
+source "${RECOVERY_DIR}/recovery_verification.sh" || {
+	log_module_error "Failed to source recovery/recovery_verification.sh"
+	exit 1
 }
 
 # shellcheck source=lib/recovery/recovery_state.sh
-source "${RECOVERY_DIR}/recovery_state.sh" 2>/dev/null || {
-	echo "Warning: Failed to source recovery_state.sh" >&2
+source "${RECOVERY_DIR}/recovery_state.sh" || {
+	log_module_error "Failed to source recovery/recovery_state.sh"
+	exit 1
 }
 
 # shellcheck source=lib/recovery/xfrm_recovery.sh
-source "${RECOVERY_DIR}/xfrm_recovery.sh" 2>/dev/null || {
-	echo "Warning: Failed to source xfrm_recovery.sh" >&2
+source "${RECOVERY_DIR}/xfrm_recovery.sh" || {
+	log_module_error "Failed to source recovery/xfrm_recovery.sh"
+	exit 1
 }
 
 # shellcheck source=lib/recovery/ipsec_recovery.sh
-source "${RECOVERY_DIR}/ipsec_recovery.sh" 2>/dev/null || {
-	echo "Warning: Failed to source ipsec_recovery.sh" >&2
+source "${RECOVERY_DIR}/ipsec_recovery.sh" || {
+	log_module_error "Failed to source recovery/ipsec_recovery.sh"
+	exit 1
 }
 
 # shellcheck source=lib/recovery/recovery_orchestration.sh
-source "${RECOVERY_DIR}/recovery_orchestration.sh" 2>/dev/null || {
-	echo "Warning: Failed to source recovery_orchestration.sh" >&2
+source "${RECOVERY_DIR}/recovery_orchestration.sh" || {
+	log_module_error "Failed to source recovery/recovery_orchestration.sh"
+	exit 1
 }
-
-# Verify critical recovery function is available after sourcing
-# This ensures that if recovery_orchestration.sh failed to source, we fail fast
-# rather than continuing and causing "command not found" errors at runtime
-if ! command -v monitor_location >/dev/null 2>&1; then
-	echo "ERROR: Critical recovery function monitor_location not available after sourcing recovery modules" >&2
-	return 1
-fi
