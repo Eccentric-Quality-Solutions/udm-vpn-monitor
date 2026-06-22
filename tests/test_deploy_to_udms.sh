@@ -308,10 +308,11 @@ MOCK
 EOF
 
 	local fake_root="${TEST_DIR}/fake_repo"
-	mkdir -p "${fake_root}/scripts"
+	mkdir -p "${fake_root}/scripts" "${fake_root}/lib"
 	cp "$DEPLOY_SCRIPT" "${fake_root}/scripts/deploy-to-udms.sh"
-	cp "${PROJECT_ROOT}/scripts/manage/deploy-to-udm.sh" "${fake_root}/scripts/deploy-to-udm.sh" 2>/dev/null || true
-	cp "${PROJECT_ROOT}/scripts/manage/deploy-registry.sh" "${fake_root}/scripts/deploy-registry.sh" 2>/dev/null || true
+	cp "${PROJECT_ROOT}/scripts/manage/deploy-registry.sh" "${fake_root}/scripts/deploy-registry.sh"
+	cp "${PROJECT_ROOT}/lib/common.sh" "${fake_root}/lib/common.sh"
+	cp "${PROJECT_ROOT}/lib/constants.sh" "${fake_root}/lib/constants.sh"
 	# Mock deploy-to-udm to succeed (so we get to the prompt)
 	cat >"${fake_root}/scripts/deploy-to-udm.sh" <<'MOCK'
 #!/bin/bash

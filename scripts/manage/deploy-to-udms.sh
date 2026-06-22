@@ -37,9 +37,16 @@ PACKAGE_FILE="/tmp/udm-vpn-monitor.zip"
 SKIP_TAIL=0
 FORCE_DEPLOY=0
 
-# Source deployment registry helpers
+# Shared helpers (version parsing); required by deploy-registry.sh
+# shellcheck source=lib/common.sh
+if [[ -f "${REPO_ROOT}/lib/common.sh" ]]; then
+	# shellcheck source=lib/common.sh
+	source "${REPO_ROOT}/lib/common.sh"
+fi
+
+# Source deployment registry helpers (requires lib/common.sh)
 # shellcheck source=scripts/deploy-registry.sh
-if [[ -f "${SCRIPT_DIR}/deploy-registry.sh" ]]; then
+if [[ -f "${SCRIPT_DIR}/deploy-registry.sh" ]] && [[ -f "${REPO_ROOT}/lib/common.sh" ]]; then
 	# shellcheck source=scripts/deploy-registry.sh
 	source "${SCRIPT_DIR}/deploy-registry.sh"
 fi

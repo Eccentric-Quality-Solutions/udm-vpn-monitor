@@ -331,7 +331,8 @@ create_interactive_config() {
 	default_tier1=$(get_config_default "TIER1_THRESHOLD" 2>/dev/null || echo "1")
 	default_tier2=$(get_config_default "TIER2_THRESHOLD" 2>/dev/null || echo "2")
 	default_tier3=$(get_config_default "TIER3_THRESHOLD" 2>/dev/null || echo "3")
-	local default_max_restarts=3
+	local default_max_restarts
+	default_max_restarts=$(get_config_default "MAX_RESTARTS_PER_WINDOW" 2>/dev/null || echo "20")
 	local default_log_file="${INSTALL_DIR}/logs/vpn-monitor.log"
 	local default_state_dir="${INSTALL_DIR}/state"
 	local default_cron_schedule="*/1 * * * *"

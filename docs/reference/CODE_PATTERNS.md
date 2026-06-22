@@ -2293,21 +2293,35 @@ source "${LIB_DIR}/config.sh"
 #
 
 # Determine lib directory (where this file is located)
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RECOVERY_DIR="${LIB_DIR}/recovery"
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" 2>/dev/null || {
+    echo "ERROR: Cannot determine lib directory from ${BASH_SOURCE[0]:-<unknown>}" >&2
+    exit 1
+}
 
-# Source all recovery modules in dependency order
+RECOVERY_DIR="${LIB_DIR}/recovery"
+if [[ ! -d "${RECOVERY_DIR}" ]]; then
+    echo "ERROR: Recovery module directory does not exist: ${RECOVERY_DIR}" >&2
+    exit 1
+fi
+
+# Source common.sh for log_module_error (same pattern as lib/detection.sh)
+# shellcheck source=lib/common.sh
+source "${LIB_DIR}/common.sh"
+
+# Source all recovery modules in dependency order — fail fast on any missing submodule
 # shellcheck source=lib/recovery/recovery_verification.sh
-source "${RECOVERY_DIR}/recovery_verification.sh" 2>/dev/null || {
-    echo "Warning: Failed to source recovery_verification.sh" >&2
+source "${RECOVERY_DIR}/recovery_verification.sh" || {
+    log_module_error "Failed to source recovery/recovery_verification.sh"
+    exit 1
 }
 
 # shellcheck source=lib/recovery/recovery_state.sh
-source "${RECOVERY_DIR}/recovery_state.sh" 2>/dev/null || {
-    echo "Warning: Failed to source recovery_state.sh" >&2
+source "${RECOVERY_DIR}/recovery_state.sh" || {
+    log_module_error "Failed to source recovery/recovery_state.sh"
+    exit 1
 }
 
-# ... source other modules ...
+# ... source other modules with the same || { log_module_error; exit 1; } pattern ...
 ```
 
 **Module Structure:**
