@@ -750,7 +750,7 @@ For detailed state management documentation including file structure, atomic ope
 
 ## License
 
-This tool is provided as-is without warranty. Use at your own risk.
+This project is licensed under the [MIT License](LICENSE).
 
 ## Testing
 
