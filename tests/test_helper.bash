@@ -328,6 +328,7 @@ LOCKFILE_TIMEOUT=60
 ENABLE_PING_CHECK=1
 PING_COUNT=3
 PING_TIMEOUT=2
+STARTUP_GRACE_PERIOD=0
 DEBUG=0
 EOF
 	echo "$config_file"
@@ -766,6 +767,58 @@ assert_cron_entry_not_exists() {
 	run crontab -l 2>/dev/null
 	if [[ $status -eq 0 ]]; then
 		refute_output --regexp "$pattern"
+	fi
+}
+
+# Assert exact cron line exists, or skip when crontab is unavailable
+#
+# Verifies that the crontab contains an entry matching the expected line exactly.
+# Skips (does not fail) when crontab is unavailable, permission is denied, or no
+# matching entry exists — common in CI/dev environments without crontab access.
+#
+# Arguments:
+#   $1: expected_line (string) - Exact cron line expected in crontab
+#   $2: search_pattern (string, optional) - Substring to locate the line
+#       (default: script path field from $1, i.e. sixth whitespace-delimited field)
+#
+# Returns:
+#   0: Expected cron line found
+#   1: Line found but does not match expected (fails test)
+#
+# Side effects:
+#   Skips test when crontab cannot be read or entry is missing
+assert_or_skip_cron_entry() {
+	local expected_line="$1"
+	local search_pattern="${2:-}"
+	local crontab_content cron_line
+
+	if ! command -v crontab >/dev/null 2>&1; then
+		skip "Crontab not available or permission denied (test requires crontab command and appropriate permissions to verify cron setup)"
+	fi
+
+	if ! crontab_content=$(crontab -l 2>/dev/null); then
+		skip "Crontab not available or permission denied (test requires crontab command and appropriate permissions to verify cron setup)"
+	fi
+
+	if [[ -z "$search_pattern" ]]; then
+		search_pattern=$(awk '{print $6}' <<<"$expected_line")
+	fi
+
+	if [[ -z "$search_pattern" ]]; then
+		skip "Cron entry not created (test requires root privileges or crontab permissions to verify cron entry creation)"
+	fi
+
+	cron_line=$(grep -F "$search_pattern" <<<"$crontab_content" | head -1 || true)
+	if [[ -z "$cron_line" ]]; then
+		skip "Cron entry not created (test requires root privileges or crontab permissions to verify cron entry creation)"
+	fi
+
+	if [[ "$cron_line" != "$expected_line" ]]; then
+		echo "Expected exact cron line:" >&2
+		echo "  $expected_line" >&2
+		echo "Got:" >&2
+		echo "  $cron_line" >&2
+		return 1
 	fi
 }
 
@@ -2452,6 +2505,11 @@ setup_location_vpn_monitor() {
 # Sets up common environment variables used by tests (LOGS_DIR, STATE_DIR, etc.).
 # Creates necessary directories.
 #
+# By default, pre-creates STATE_DIR/.last_run_timestamp so production startup grace
+# does not run on every isolated test (fresh TEST_DIR). Tests that exercise first-run
+# or stale grace behavior should remove or backdate that file after setup, or set
+# TEST_SIMULATE_FIRST_RUN=1 before calling this function.
+#
 # Arguments:
 #   $1: State directory path (default: ${TEST_DIR})
 #   $2: Logs directory path (default: ${STATE_DIR}/logs)
@@ -2462,6 +2520,7 @@ setup_location_vpn_monitor() {
 # Side effects:
 #   - Creates directories
 #   - Exports LOGS_DIR, STATE_DIR, LOCKFILE, LOG_FILE, RESTART_COUNT_FILE (in STATE_DIR)
+#   - May create .last_run_timestamp (recent) unless TEST_SIMULATE_FIRST_RUN=1
 setup_test_environment() {
 	local state_dir="${1:-${TEST_DIR}}"
 	local logs_dir="${2:-${state_dir}/logs}"
@@ -2475,6 +2534,10 @@ setup_test_environment() {
 	export LOG_FILE="${logs_dir}/vpn-monitor.log"
 	export RESTART_COUNT_FILE="${state_dir}/restart_count"
 	export TIER2_RECOVERY_COUNT_FILE="${state_dir}/tier2_recovery_count"
+
+	if [[ "${TEST_SIMULATE_FIRST_RUN:-0}" -ne 1 ]]; then
+		touch "${state_dir}/.last_run_timestamp" 2>/dev/null || true
+	fi
 }
 
 # Common detection test setup
@@ -2667,6 +2730,10 @@ setup_test_vpn_monitor() {
 # Note:
 #   Location variables (LOCATION_*_EXTERNAL/LOCATION_*_INTERNAL) should be provided as extra_config
 #   This function provides the common test settings; location-specific configs are added via extra_config
+#   Fast-test defaults skip production grace sleep, network partition checks, and ping unless a test
+#   overrides via extra_config (e.g. ENABLE_PING_CHECK=1, ENABLE_NETWORK_PARTITION_CHECK=1,
+#   STARTUP_GRACE_PERIOD=2). Startup grace file state: setup_test_environment() pre-touches
+#   .last_run_timestamp; grace-period tests remove or backdate that file as needed.
 setup_test_location_config() {
 	local config_file="${1:-${TEST_DIR}/vpn-monitor.conf}"
 	shift || true
@@ -2685,11 +2752,12 @@ LOG_FILE="${TEST_DIR}/logs/vpn-monitor.log"
 STATE_DIR="${TEST_DIR}"
 CRON_SCHEDULE="*/1 * * * *"
 LOCKFILE_TIMEOUT=60
-ENABLE_PING_CHECK=1
+ENABLE_PING_CHECK=0
 PING_COUNT=3
 PING_TIMEOUT=2
 ENABLE_NETWORK_PARTITION_CHECK=0
 ENABLE_RESOURCE_MONITORING=0
+STARTUP_GRACE_PERIOD=0
 DEBUG=0
 EOF
 

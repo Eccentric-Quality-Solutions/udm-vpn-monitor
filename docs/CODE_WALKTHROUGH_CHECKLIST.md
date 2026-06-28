@@ -79,7 +79,7 @@ Open `vpn-monitor.sh` and trace one cron execution top to bottom.
 - [ ] **Failure typing:** `tunnel_down` / `no_traffic` / `idle` / `unknown` state files
 - [ ] **System-wide:** `lib/detection/system_wide_failure.sh` — coordinated behavior when many peers fail
 - [ ] **Reliability safeguard:** block Tier 2/3 when detection tools unavailable and type is `unknown`
-- [ ] **Deep dives (optional):** [IP_XFRM_GUIDE.md](reference/IP_XFRM_GUIDE.md), [IPSEC_GUIDE.md](reference/IPSEC_GUIDE.md)
+- [ ] **Deep dives (optional):** [IP_XFRM_GUIDE.md](reference/IP_XFRM_GUIDE.md) (UDM ops), [IP_XFRM_IPROUTE2_REFERENCE.md](reference/IP_XFRM_IPROUTE2_REFERENCE.md) (generic syntax), [IPSEC_GUIDE.md](reference/IPSEC_GUIDE.md)
 - [ ] **ADRs:** [0019](adr/0019-byte-counter-detection-method.md), [0006](adr/0006-multi-method-detection-with-fallback.md), [0026](adr/0026-detection-reliability-safeguard.md), [0031](adr/0031-system-wide-failure-detection-and-coordination.md)
 
 ---

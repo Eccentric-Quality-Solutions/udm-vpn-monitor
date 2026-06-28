@@ -54,7 +54,7 @@ These files track state for a specific location and peer IP combination. Format:
 #### 3. Failure Type (`failure_type_<location>_<peer_ip>`)
 
 - **Purpose**: Tracks the type of failure for diagnostic purposes
-- **Format**: String (e.g., "tunnel_down", "routing_issue")
+- **Format**: String — `tunnel_down`, `routing_issue`, `rekey`, or `unknown` (`rekey` is stored for monitoring, not as a failure)
 - **Creation**: Created on-demand when failure type is determined during VPN check failure
 - **Usage**: Provides detailed failure information in logs
 - **Independence**: Each location has its own failure type file
@@ -125,11 +125,12 @@ These files track system-wide state shared across all peers and locations.
 #### 1. Restart Count (`restart_count`)
 
 - **Purpose**: Tracks Tier 3 recovery action timestamps for rate limiting
-- **Format**: Integer (defaults to "0" during initialization, then one Unix timestamp per line when timestamps are added)
-- **Creation**: Created during state initialization with default value "0"
-- **Usage**: Rate limiting prevents restart loops by limiting how frequently Tier 3 recovery actions can occur
-- **Update**: New timestamp appended when Tier 3 recovery is executed
-- **Cleanup**: Old entries (older than 24 hours) are automatically cleaned up
+- **Path**: `${STATE_DIR}/restart_count` (`RESTART_COUNT_FILE`)
+- **Format**: Empty file at initialization; one Unix timestamp per line when Tier 3 restarts are recorded (`timestamp_list`)
+- **Creation**: Created during state initialization (empty file)
+- **Usage**: Rate limiting prevents restart loops — sliding window (`RATE_LIMIT_WINDOW_MINUTES`, `MAX_RESTARTS_PER_WINDOW`) plus minimum spacing (`MIN_RESTART_INTERVAL_SECONDS`). During system-wide failures, the coordinator location may bypass the window limit (minimum interval still enforced).
+- **Update**: New timestamp appended when Tier 3 recovery is executed (`record_restart()`)
+- **Cleanup**: Entries older than 24 hours removed once per run at startup via `compact_restart_count_file()` (under main lock)
 - **Example**: Contains multiple timestamps, one per line:
   ```
   1703616000
@@ -137,7 +138,18 @@ These files track system-wide state shared across all peers and locations.
   1703616600
   ```
 
-#### 2. Network Partition State (`network_partition_state`)
+#### 2. Tier 2 Recovery Count (`tier2_recovery_count`)
+
+- **Purpose**: Tracks Tier 2 recovery action timestamps for rate limiting (surgical cleanup, xfrm per-connection recovery, ipsec reload)
+- **Path**: `${STATE_DIR}/tier2_recovery_count` (`TIER2_RECOVERY_COUNT_FILE`)
+- **Format**: Empty file at initialization; one Unix timestamp per line when Tier 2 recoveries are recorded (`timestamp_list`)
+- **Creation**: Created during state initialization when `TIER2_RECOVERY_COUNT_FILE` is set (empty file)
+- **Usage**: Sliding window (`RATE_LIMIT_WINDOW_MINUTES`, `MAX_TIER2_RECOVERIES_PER_WINDOW`) plus minimum spacing (`MIN_TIER2_INTERVAL_SECONDS`)
+- **Update**: New timestamp appended when Tier 2 recovery is executed (`record_tier2_recovery()`)
+- **Cleanup**: Entries older than 24 hours removed once per run at startup via `compact_tier2_recovery_count_file()` (under main lock)
+- **Example**: Same multi-line timestamp format as `restart_count`
+
+#### 3. Network Partition State (`network_partition_state`)
 
 - **Purpose**: Tracks network partition status (affects all peers)
 - **Format**: Integer (0 = healthy, 1 = partitioned)
@@ -146,7 +158,7 @@ These files track system-wide state shared across all peers and locations.
 - **Update**: Set to 1 when network partition is detected, 0 when network is healthy
 - **Example**: Contains `1` if network is partitioned
 
-#### 3. Network Partition Statistics
+#### 4. Network Partition Statistics
 
 These files track statistics for network partition checks (hourly summaries):
 
@@ -162,7 +174,7 @@ These files track statistics for network partition checks (hourly summaries):
 **Usage**: Hourly summary logging of network partition check statistics
 **Reset**: Counters reset to 0 after hourly summary is logged
 
-#### 4. Resource Monitoring Statistics
+#### 5. Resource Monitoring Statistics
 
 These files track statistics for resource monitoring checks (hourly summaries):
 
@@ -181,7 +193,7 @@ These files track statistics for resource monitoring checks (hourly summaries):
 **Usage**: Hourly summary logging of resource monitoring statistics
 **Reset**: Counters reset to 0 after hourly summary is logged
 
-#### 5. System-Wide Failure State (`system_wide_failure_state`)
+#### 6. System-Wide Failure State (`system_wide_failure_state`)
 
 - **Purpose**: Tracks system-wide failure state (affects all peers)
 - **Format**: Integer (0 = no failure, 1 = system-wide failure detected)
@@ -217,7 +229,7 @@ These are temporary variables passed between functions during a single script ex
 - **Relationship**: If `primary_check_passed=1`, then `sa_exists` MUST be 1 (invariant)
 - **Usage**: Passed through detection pipeline to avoid duplicate SA checks
 - **Scope**: Per-execution (not persisted)
-- **Note**: This variable may be eliminated in future refactoring (see STATE_SYSTEM_ANALYSIS.md)
+- **Note**: When `primary_check_passed=1`, callers derive `sa_exists=1` without a separate check (see `docs/adr/0028-state-passing-pattern-for-detection-functions.md`)
 
 ### 3. `xfrm_output`
 
@@ -242,9 +254,12 @@ Key configuration variables include:
 - `LOGS_DIR`: Directory for log files
 - `LOCKFILE`: Path to lockfile
 - `RESTART_COUNT_FILE`: Path to restart count file
-- `MAX_RESTARTS_PER_WINDOW`: Maximum restarts allowed in time window
-- `RATE_LIMIT_WINDOW_MINUTES`: Time window for rate limiting
-- `MIN_RESTART_INTERVAL_SECONDS`: Minimum interval between restarts
+- `TIER2_RECOVERY_COUNT_FILE`: Path to Tier 2 recovery count file
+- `MAX_RESTARTS_PER_WINDOW`: Maximum Tier 3 restarts allowed in time window
+- `MAX_TIER2_RECOVERIES_PER_WINDOW`: Maximum Tier 2 recoveries allowed in time window
+- `RATE_LIMIT_WINDOW_MINUTES`: Time window for rate limiting (shared by Tier 2 and Tier 3)
+- `MIN_RESTART_INTERVAL_SECONDS`: Minimum interval between Tier 3 restarts
+- `MIN_TIER2_INTERVAL_SECONDS`: Minimum interval between Tier 2 recoveries
 - `STATUS_LOG_INTERVAL_SECONDS`: Interval for periodic status logging
 - Location-specific variables: `LOCATION_<NAME>_EXTERNAL`, `LOCATION_<NAME>_INTERNAL`
 - And many more (see `lib/config/config_defaults.sh`)
@@ -288,7 +303,7 @@ These files control script execution and prevent concurrent runs.
 - **Creation**: Created on first script run, updated on every subsequent run
 - **Usage**: Determines if startup grace period should be applied
 - **Update**: Updated on every script run via `touch` command
-- **Detection Logic**: Grace period applies if file doesn't exist or is older than 5 minutes (indicates restart or script hasn't run recently)
+- **Detection Logic**: Grace period applies if file doesn't exist or is older than 5 minutes (indicates restart or script hasn't run recently). When applied, the script sleeps `STARTUP_GRACE_PERIOD` seconds (default 5) before VPN checks.
 
 ### 5. Operating Mode (`operating_mode`)
 
@@ -326,7 +341,9 @@ The application uses an abstraction layer for state file operations:
 - **`get_peer_state_file_path()`**: Generates state file paths with proper sanitization
 - **`get_peer_state()`**: Unified getter for per-peer state values
 - **`set_peer_state()`**: Unified setter for per-peer state values with atomic writes
+- **`set_peer_state_non_critical()`**: Wrapper around `set_peer_state()` that logs failures but never interrupts execution
 - **`delete_peer_state()`**: Removes per-peer state files
+- **`cleanup_peer_state()`**: Removes core per-peer files when a peer is removed from configuration (`failure_count`, `last_bytes`, `spi`, `idle_detected`, `connection_name`)
 
 **Supported State Keys**:
 The abstraction layer supports the following state keys:
@@ -341,7 +358,8 @@ The abstraction layer supports the following state keys:
 
 **Files Outside Abstraction Layer**:
 The following global state files are intentionally outside the abstraction layer (they represent global system state, not per-peer/location state):
-- `RESTART_COUNT_FILE`: Global restart tracking
+- `RESTART_COUNT_FILE`: Global Tier 3 restart timestamps for rate limiting
+- `TIER2_RECOVERY_COUNT_FILE`: Global Tier 2 recovery timestamps for rate limiting
 - `NETWORK_PARTITION_STATE_FILE`: Global network partition state
 - `LOCKFILE`: Global lockfile for execution control
 - `PIDFILE`: Global PID file for keepalive daemon
@@ -394,10 +412,12 @@ State initialization occurs at script startup via `init_state()` function (defin
 
 1. **Directory Creation**: Ensures `STATE_DIR` and `LOGS_DIR` exist
 2. **Global State Files**: Creates required global state files:
-   - `restart_count` (defaults to "0", timestamps added on-demand)
+   - `restart_count` (empty file; timestamps appended on-demand)
+   - `tier2_recovery_count` (empty file when `TIER2_RECOVERY_COUNT_FILE` is set; timestamps appended on-demand)
    - `network_partition_state` (defaults to 0, path from `get_network_partition_state_file()`)
    - `system_wide_failure_state` (defaults to 0, path from `get_system_wide_failure_state_file()` if available)
-3. **Per-Peer Files**: Created on-demand when first accessed
+3. **Compaction**: After `init_state()`, `vpn-monitor.sh` compacts `restart_count` and `tier2_recovery_count` to the last 24 hours (once per run, under main lock)
+4. **Per-Peer Files**: Created on-demand when first accessed
 
 **Initialization Details**:
 - `init_state()` validates that required variables (`LOGS_DIR`, `STATE_DIR`, `RESTART_COUNT_FILE`) are set before proceeding
@@ -429,7 +449,7 @@ When corruption is detected:
 
 - **`validate_state_file()`**: Validates individual state file format
 - **`validate_state_files_by_pattern()`**: Validates all files matching a pattern
-- **`validate_state()`**: Validates all state files at startup
+- **`validate_state()`**: Validates key state files at startup (`restart_count`, network partition state, per-peer `failure_count_*` and `last_bytes_*`); returns 1 if any file was repaired
 
 ### Recovery Functions
 
@@ -474,7 +494,7 @@ Each location's state is tracked independently:
 ### Global State
 
 Some state is shared across all locations:
-- Restart count (rate limiting affects all locations)
+- Restart count and Tier 2 recovery count (rate limiting affects all locations)
 - Network partition state (affects all locations)
 - System-wide failure state (affects all locations)
 
@@ -499,18 +519,17 @@ Some state is shared across all locations:
 - **Failure Type**: Cleared when VPN recovers
 - **Recovery Method**: Cleared after restoration is logged
 - **Idle Detection**: Cleared when traffic resumes or SA rekeys
-- **Restart Count**: Old entries (24+ hours) cleaned up automatically
+- **Restart Count / Tier 2 Recovery Count**: Timestamps older than 24 hours removed at startup via `compact_restart_count_file()` and `compact_tier2_recovery_count_file()`
 - **Statistics**: Reset to 0 after hourly summary
 
 ## Related Documentation
 
-- **`STATE_SYSTEM_ANALYSIS.md`**: Analysis of runtime state variables (`primary_check_passed`, `sa_exists`)
-- **`docs/ARCHITECTURE.md`**: Architecture overview including state management section
+- **`docs/reference/ARCHITECTURE.md`**: Architecture overview including state management section
 - **`docs/adr/0015-file-based-state-storage.md`**: Decision to use file-based state storage
 - **`docs/adr/0016-state-file-location-data-vpn-monitor.md`**: Decision on state file location
 - **`docs/adr/0012-atomic-file-operations.md`**: Decision on atomic file operations
 - **`docs/adr/0028-state-passing-pattern-for-detection-functions.md`**: Pattern for passing runtime state
-- **`docs/CODE_PATTERNS.md`**: Code patterns including state management patterns
+- **`docs/reference/CODE_PATTERNS.md`**: Code patterns including state management patterns
 
 ## Summary
 

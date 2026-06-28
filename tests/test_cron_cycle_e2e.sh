@@ -66,10 +66,6 @@ EOF
 	# Expected: Runs 1–3 escalate (Tier 1 then Tier 2); run 4 sees byte increase and resets failure count; run 5 stays healthy; lock released each time.
 	# Importance: Catches cross-run bugs (state, lockfile, tier/rate-limit interaction) that single-shot tests miss.
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" \
-		'STARTUP_GRACE_PERIOD=0' \
-		'ENABLE_RESOURCE_MONITORING=0' \
-		'ENABLE_PING_CHECK=0' \
-		'ENABLE_NETWORK_PARTITION_CHECK=0' \
 		'MIN_RESTART_INTERVAL_SECONDS=0' \
 		'MAX_RESTARTS_PER_WINDOW=20' \
 		'RATE_LIMIT_WINDOW_MINUTES=60' \
@@ -131,9 +127,6 @@ EOF
 	# Purpose: Partition skips VPN checks; after connectivity returns, monitoring resumes and logs restoration.
 	# Expected: Run 1–2 log partition/skip; run 3 logs connectivity restored and processes VPN; byte mock shows healthy tunnel.
 	setup_location_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}" \
-		'STARTUP_GRACE_PERIOD=0' \
-		'ENABLE_RESOURCE_MONITORING=0' \
-		'ENABLE_PING_CHECK=0' \
 		'ENABLE_NETWORK_PARTITION_CHECK=1' \
 		'NETWORK_PARTITION_INTERFACES=br0,eth0' \
 		'MIN_RESTART_INTERVAL_SECONDS=0' \

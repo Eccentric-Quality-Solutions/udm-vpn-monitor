@@ -19,10 +19,32 @@
 #   # Create test lib directory
 #   create_test_lib "${TEST_DIR}"
 
+# Write fast-test defaults to a config file (overwrite).
+#
+# Use before appending custom config lines for hand-written test configs.
+# Skips production startup grace, network partition checks, and resource monitoring
+# unless the test overrides those keys afterward.
+#
+# Arguments:
+#   $1: Config file path
+#
+# Returns:
+#   0: Always succeeds
+write_test_config_fast_defaults() {
+	local config_file="$1"
+	mkdir -p "$(dirname "$config_file")"
+	cat >"$config_file" <<EOF
+ENABLE_RESOURCE_MONITORING=0
+ENABLE_NETWORK_PARTITION_CHECK=0
+STARTUP_GRACE_PERIOD=0
+EOF
+}
+
 # Create a test config file with specified variables
 #
 # Creates a config file with the provided variable assignments.
-# Used to test various config scenarios.
+# Sets fast-test defaults so full-script runs skip production grace sleep and
+# network partition checks unless a test overrides them in extra_config.
 #
 # Arguments:
 #   $1: Config file path
@@ -47,6 +69,8 @@ create_test_config() {
 	cat >"$config_file" <<EOF
 # Test configuration file
 ENABLE_RESOURCE_MONITORING=0
+ENABLE_NETWORK_PARTITION_CHECK=0
+STARTUP_GRACE_PERIOD=0
 EOF
 
 	# Add each variable assignment

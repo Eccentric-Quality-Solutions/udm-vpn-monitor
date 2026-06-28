@@ -1807,7 +1807,7 @@ This runs all test files except the slow test files listed below. Fast tests inc
 - Integration tests: `test_integration_e2e_recovery.sh`, `test_integration_location.sh`
 - Other tests: `test_state_concurrent_updates.sh`, `test_state_location.sh`, `test_rapid_state_changes.sh`, `test_resources.sh`
 
-**Total**: ~1460 fast tests (approximate; see `filter_test_files()` in `tests/run_tests.sh`)
+**Total**: ~1490 fast tests (approximate; see `filter_test_files()` in `tests/run_tests.sh`)
 
 ### Run All Tests (Including Slow Tests)
 
@@ -1826,12 +1826,11 @@ Slow tests include (same fixed list as `filter_test_files()` in `tests/run_tests
 - `test_recovery.sh` - Recovery strategy selection, XFRM recovery, and fallback logic tests (50 tests)
 - `test_lockfile.sh` - Lockfile management tests (48 tests)
 - `test_state.sh` - State file management tests (48 tests)
-- `test_logging.sh` - Logging failure scenario tests (8 tests)
-- `test_connection.sh` - Connection name discovery and caching tests (8 tests)
-- `test_errors.sh` - Error handling during critical operations tests (15 tests)
 - `test_main.sh` - Main execution edge cases tests (37 tests)
 
-**Total**: ~335 slow tests
+High-risk but fast (included in default runs): `test_logging.sh` (8), `test_connection.sh` (8), `test_errors.sh` (15).
+
+**Total (slow file set)**: ~304 tests
 
 ### Run with Coverage
 
@@ -2123,25 +2122,24 @@ Fast tests include all test files except the slow test files listed below. This 
 - Integration tests: `test_integration_e2e_recovery.sh`, `test_integration_location.sh`
 - Other tests: `test_state_concurrent_updates.sh`, `test_state_location.sh`, `test_rapid_state_changes.sh`, `test_resources.sh`
 
-**Total**: ~1460 fast tests (approximate; see `filter_test_files()` in `tests/run_tests.sh`)
+**Total**: ~1490 fast tests (approximate; see `filter_test_files()` in `tests/run_tests.sh`)
 
 ### Slow Tests (excluded by default)
 
-Slow tests are high-risk tests and integration tests that take longer to run (same fixed list as `filter_test_files()` in `tests/run_tests.sh`):
+Slow tests are long-running monolith integration/high-risk files (same fixed list as `filter_test_files()` in `tests/run_tests.sh`):
 - `test_integration.sh` - Integration tests for full monitoring flow (18 tests)
 - `test_config.sh` - Main configuration tests (52 tests)
 - `test_detection.sh` - Main detection tests (51 tests)
 - `test_recovery.sh` - Recovery strategy selection, XFRM recovery, and fallback logic tests (50 tests)
 - `test_lockfile.sh` - Lockfile management tests (48 tests)
 - `test_state.sh` - State file management tests (48 tests)
-- `test_logging.sh` - Logging failure scenario tests (8 tests)
-- `test_connection.sh` - Connection name discovery and caching tests (8 tests)
-- `test_errors.sh` - Error handling during critical operations tests (15 tests)
 - `test_main.sh` - Main execution edge cases tests (37 tests)
 
-**Total (slow file set)**: ~335 tests
+High-risk but fast (default fast set): `test_logging.sh`, `test_connection.sh`, `test_errors.sh`.
 
-**Total Test Count**: ~1795 tests across 90 test files (~1460 fast by default, ~335 in the slow file set)
+**Total (slow file set)**: ~304 tests
+
+**Total Test Count**: ~1795 tests across 90 test files (~1490 fast by default, ~304 in the slow file set)
 
 **Note**: Slow tests are automatically included in CI/CD via the `RUN_SLOW_TESTS=1` environment variable (see `.github/workflows/tests.yml`).
 

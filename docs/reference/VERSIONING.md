@@ -61,7 +61,7 @@ During the pre-release phase (before `1.0.0`), we use the `0.MINOR.PATCH` format
 The **canonical** set of files that carry the project version is what `scripts/update-version.sh` updates. Update these via the script (see below); do not edit version numbers by hand except when adding a new file that should be tracked.
 
 1. **CHANGELOG.md** — Add a new version entry at the top (script does not modify CHANGELOG).
-2. **Main scripts** — `vpn-monitor.sh` and `vpn-keepalive.sh` have `SCRIPT_VERSION` and `# Version:`; `vpn-monitor-wrapper.sh` has `# Version:` only.
+2. **Main scripts** — `vpn-monitor.sh` and `vpn-keepalive.sh` have `SCRIPT_VERSION` and `# Version:`; `vpn-monitor-wrapper.sh` and `vpn-monitor-control.sh` have `# Version:` only.
 3. **Installation** — `# Version:` only:
    - `install.sh`
    - `uninstall.sh`
@@ -69,7 +69,7 @@ The **canonical** set of files that carry the project version is what `scripts/u
    - `analyze-logs.sh`
    - `check-config.sh`
    - `check-utilities.sh`
-5. **Library** — All `lib/**/*.sh` files (recursive), `# Version:` only. Includes top-level `lib/*.sh` and all files under `lib/config/`, `lib/detection/`, `lib/recovery/`, `lib/state/`, etc.
+5. **Library** — All `lib/**/*.sh` files (recursive), `# Version:` only. Includes top-level `lib/*.sh` and all files under `lib/config/`, `lib/control/`, `lib/detection/`, `lib/recovery/`, `lib/state/`, etc.
 
 **Other scripts** that carry a `# Version:` comment for their own use (e.g. `compare-config.sh`, `scripts/anonymize/*.sh`, `scripts/api/list-udm-vpns.sh`, `scripts/export-udm-routes-firewall.sh`) are **not** updated by `scripts/update-version.sh`. Update those manually when you change them, if desired.
 
@@ -89,16 +89,16 @@ The `scripts/update-version.sh` script updates version numbers in all tracked fi
 
 ```bash
 # Preview changes (dry run)
-./scripts/update-version.sh 0.8.2 --dry-run
+./scripts/update-version.sh 0.8.4 --dry-run
 
 # Apply updates
-./scripts/update-version.sh 0.8.2
+./scripts/update-version.sh 0.8.4
 ```
 
 The script:
 
 - Validates version format (SemVer: `MAJOR.MINOR.PATCH`).
-- Updates `SCRIPT_VERSION` and `# Version:` in `vpn-monitor.sh` and `vpn-keepalive.sh`; updates `# Version:` in `vpn-monitor-wrapper.sh`.
+- Updates `SCRIPT_VERSION` and `# Version:` in `vpn-monitor.sh` and `vpn-keepalive.sh`; updates `# Version:` in `vpn-monitor-wrapper.sh` and `vpn-monitor-control.sh`.
 - Updates `# Version:` in `install.sh`, `uninstall.sh`, `analyze-logs.sh`, `check-config.sh`, and `check-utilities.sh`.
 - Updates `# Version:` in every `lib/**/*.sh` file (discovered recursively).
 - Optionally stages files with `git add` when the only change in the file is the version update.
@@ -118,7 +118,7 @@ The script:
 1. **Update CHANGELOG.md first** — Document what changed before bumping the version.
 2. **Use `scripts/update-version.sh` for tracked files** — Keeps all canonical version locations in sync; avoid editing version numbers by hand in those files.
 3. **Use descriptive CHANGELOG entries** — Document what changed and why.
-4. **Tag releases in git** — Use tags like `v0.8.1` for releases.
+4. **Tag releases in git** — Use tags like `v0.8.3` for releases.
 5. **Reserve 1.0.0 for production-ready** — Don't rush to 1.0.0.
 
 The install package produced by `scripts/prepare_install_package.sh` is named `udm-vpn-monitor.zip` (or `.tar.gz`); the version is not in the filename. The version inside the package (from `vpn-monitor.sh`’s `SCRIPT_VERSION`) is what install and deployment scripts use.

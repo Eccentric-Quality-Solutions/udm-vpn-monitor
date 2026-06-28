@@ -3,9 +3,9 @@
 **Date:** 2026-06-28  
 **Scope:** `lib/`, root scripts, `scripts/manage/`, install/uninstall, and related tests
 
-This document catalogs significant **Don't Repeat Yourself (DRY)** opportunities in the UDM VPN Monitor codebase. Trivial one-liner duplication is omitted. Items are ranked by impact and drift risk.
+This document catalogs significant **Don't Repeat Yourself (DRY)** opportunities still open in the UDM VPN Monitor codebase. Trivial one-liner duplication is omitted. Items are ranked by impact and drift risk.
 
-The core monitor path is already well-factored — `lib/common.sh`, config loading, atomic writes, and SPI parsing are shared consistently. The biggest remaining duplication sits in **install/uninstall vs shared lib** and **test boilerplate**.
+The core monitor path is already well-factored — `lib/common.sh`, config loading, atomic writes, and SPI parsing are shared consistently. Remaining duplication sits in **hourly summary modules**, **install file manifest**, and a minor **test helper** gap.
 
 ---
 
@@ -14,23 +14,15 @@ The core monitor path is already well-factored — `lib/common.sh`, config loadi
 | Priority | Opportunity | Action | Est. savings | Drift risk if ignored |
 |----------|-------------|--------|--------------|------------------------|
 | **Medium** | Hourly summary modules | Shared summary skeleton; merge partition + resource modules | ~80–100 lines | Medium |
-| **Medium** | Test helpers | Control tree, dev install, SSH mocks, crontab scrub | ~300+ lines | Medium (maintenance) |
 | **Medium** | Install file manifest | Shared manifest for package prep + install | — | Medium |
 | **Low** | CLI colors, peer formatters, tier rate limits | Leave as-is | — | Low |
-
-### Suggested implementation order
-
-```mermaid
-flowchart TD
-    A["1. Test helpers: control tree + dev install"]
-```
+| **Low** | Cron test assertion helper | `assert_or_skip_cron_entry EXPECTED_LINE` | — | Low (maintenance) |
 
 ---
 
-
 ## Medium Impact
 
-### 3. Hourly summary stats modules
+### 1. Hourly summary stats modules
 
 Three parallel implementations of "track counter → log summary if interval elapsed → reset counters":
 
@@ -48,7 +40,7 @@ Shared pieces already used: `summary_interval_is_due`, `read_counter_file`, `ato
 
 ---
 
-### 4. Install file manifest in two places
+### 2. Install file manifest in two places
 
 | Location | Content |
 |----------|---------|
@@ -58,57 +50,6 @@ Shared pieces already used: `summary_interval_is_due`, `read_counter_file`, `ato
 Adding a new script (e.g. `vpn-monitor-control.sh`) requires updating both plus test fixtures.
 
 **Recommendation:** Single manifest array (e.g. in `scripts/install_manifest.sh`) consumed by package prep and install.
-
----
-
-## Test-Layer DRY
-
-High volume, lower production risk, but significant maintenance pain.
-
-| Opportunity | Where | Count | Fix |
-|-------------|-------|-------|-----|
-| Dev-install boilerplate | `tests/test_install.sh` | ~33 uses of `create_test_install_setup` + repeated stub config | `run_dev_install()` helper in `test_helper.bash` |
-| Control-script mini-install | `tests/test_operating_mode.sh` | 4× identical ~15-line copy block | `setup_control_script_install_tree()` |
-| SSH mocks | `tests/test_deploy_to_udm.sh` | ~11× mock bin setup | `setup_deploy_ssh_mocks()` in `tests/helpers/mocks.bash` |
-| Operating mode fixture | `test_main.sh`, `test_vpn_monitor_wrapper.sh` | Manual heredocs vs `set_operating_mode()` | `setup_operating_mode_fixture()` in `tests/helpers/state.bash` |
-| Crontab scrub | install/uninstall tests | 12+ inline `grep -v "vpn-monitor"` | `clear_vpn_monitor_crontab()` helper |
-| Stats test setup | `test_state_network_partition_stats.sh`, `test_state_resource_monitoring_stats.sh` | Nearly identical setup blocks | `setup_stats_summary_test()` in `tests/helpers/state.bash` |
-
-**Not significant:** `test_remote_control.sh` is appropriately thin (dry-run CLI tests, no SSH mocks needed).
-
-### Details
-
-#### `tests/test_install.sh` — repeated dev-install boilerplate (~25×)
-
-Nearly every test repeats:
-
-```bash
-cd "$TEST_DIR"
-local test_install
-test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
-run bash "$test_install" --dev --silent --no-cron
-```
-
-**Existing helper:** `create_test_install_setup()` in `tests/test_helper.bash` (lines 487–516).
-
-**Recommendation:** Add `prepare_dev_install_source()` / `run_dev_install()` in `test_helper.bash`.
-
-#### `tests/test_operating_mode.sh` — control-script mini-install copied 4×
-
-Identical block in four tests (lines 93–146): copy `vpn-monitor-control.sh`, `lib/control/*`, `control.sh`, `common.sh`, `logging.sh`, `constants.sh`, `lib/config`. Also partially duplicated in `tests/test_install.sh` (lines 1214–1218).
-
-**Recommendation:** Add `setup_control_script_install_tree()` in `test_helper.bash` (or extend `create_test_install_setup` with a `--with-control` flag).
-
-#### Cron test setup/teardown scattered
-
-- `tests/test_install.sh` — 12× `crontab -l | grep -v "vpn-monitor" | crontab -`
-- `tests/test_uninstall.sh` — mix of `grep -v "vpn-monitor"` and `grep -v "vpn-monitor.sh"`
-- `tests/test_helper.bash` — `create_test_cron_entry()` (695–703), teardown cleanup (268–279)
-
-**Recommendation:** Add `clear_vpn_monitor_crontab()` and `assert_or_skip_cron_entry EXPECTED_LINE` in `test_helper.bash`. Align filter pattern with production (`vpn-monitor`, not just `.sh`).
 
 ---
 
@@ -126,21 +67,6 @@ Identical block in four tests (lines 93–146): copy `vpn-monitor-control.sh`, `
 
 ---
 
-## Already DRY (Good Patterns to Extend)
-
-- **Timestamp list compaction:** `compact_timestamp_list_file` in `lib/state/global_state.sh` — used by `compact_restart_count_file` and `compact_tier2_recovery_count_file`
-- **Keepalive daemon control:** `lib/control/keepalive_control.sh` — used by `install.sh`, `uninstall.sh`, `vpn-monitor-control.sh`
-- **Cron management:** `lib/control/cron_control.sh` — used by `install.sh`, `uninstall.sh`, `vpn-monitor-control.sh`
-- **SSH ControlMaster:** `scripts/manage/lib/ssh_control.sh` — used by `deploy-to-udm.sh`, `control-remote-udm.sh`, `deploy-to-udms.sh`
-- **Control module split:** `lib/control.sh` → `operating_mode.sh` + `cron_control.sh`; remote control delegates to UDM script instead of reimplementing mode logic
-- **Config parsing:** `get_config_var_value_from_file` is the standard path for most code paths (including `vpn-monitor-wrapper.sh` `get_monitor_interval()`)
-- **File I/O:** `atomic_write_file`, counter helpers, `summary_interval_is_due` reused consistently in newer code
-- **Validated single-value state files:** `read_validated_state_file` / `write_validated_state_file` in `lib/state/global_state.sh` — used by network partition and system-wide failure state/timestamp wrappers
-- **SPI parsing:** Refactored to `lib/common.sh` helpers used by xfrm detection
-- **Documentation:** `CODE_PATTERNS.md` documents SSH and stats patterns — good foundation for consolidation without new dependencies
-
----
-
 ## Highest-ROI Next Step
 
-**Test helpers: control tree + dev install** — `setup_control_script_install_tree()` and `run_dev_install()` (see Test-Layer DRY above).
+**Install file manifest** — single source of truth for package prep and install reduces drift when adding scripts or lib modules.

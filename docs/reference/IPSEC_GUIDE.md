@@ -455,14 +455,14 @@ For surgical recovery of specific SAs:
 # Delete specific SA (must include all selectors if present)
 ip xfrm state delete src <src_ip> dst <dst_ip> proto esp spi <spi>
 
-# If SA has a mark selector, include it:
-ip xfrm state delete src <src_ip> dst <dst_ip> proto esp spi <spi> mark <value>/<mask>
+# If SA has a mark selector, include separate mark and mask parameters:
+ip xfrm state delete src <src_ip> dst <dst_ip> proto esp spi <spi> mark <value> mask <mask>
 
-# Get SA details first to see all selectors
-ip xfrm state get src <src_ip> dst <dst_ip> proto esp spi <spi>
+# Get SA details first to see all selectors (include mark/mask if present)
+ip xfrm state get src <src_ip> dst <dst_ip> proto esp spi <spi> [mark <value> mask <mask>]
 ```
 
-**Warning:** Manual SA deletion may trigger automatic rekeying by the IPsec daemon. See [IP_XFRM_GUIDE.md](IP_XFRM_GUIDE.md) for detailed XFRM operations.
+**Warning:** Manual SA deletion may trigger automatic rekeying by the IPsec daemon. See [IP_XFRM_GUIDE.md](IP_XFRM_GUIDE.md) for UDM monitoring and recovery operations.
 
 ### Monitoring and Diagnostics
 
@@ -763,7 +763,7 @@ src 10.0.0.1 dst 10.0.0.2
 - Multiple SAs may exist for the same peer (different SPIs)
 - Mark selectors may be present: `mark 0x1/0xffffffff`
 
-For detailed XFRM command reference, see [IP_XFRM_GUIDE.md](IP_XFRM_GUIDE.md).
+For UDM monitoring and recovery with `ip xfrm`, see [IP_XFRM_GUIDE.md](IP_XFRM_GUIDE.md). For generic iproute2 syntax, see [IP_XFRM_IPROUTE2_REFERENCE.md](IP_XFRM_IPROUTE2_REFERENCE.md).
 
 ### IPsec Status Output Format
 
@@ -1183,7 +1183,8 @@ fi
 
 ### Related Documentation
 
-- **[IP_XFRM_GUIDE.md](IP_XFRM_GUIDE.md)**: Detailed guide to `ip xfrm` commands
+- **[IP_XFRM_GUIDE.md](IP_XFRM_GUIDE.md)**: UDM monitoring and recovery with `ip xfrm`
+- **[IP_XFRM_IPROUTE2_REFERENCE.md](IP_XFRM_IPROUTE2_REFERENCE.md)**: Generic iproute2 `ip xfrm` syntax
 - **[CODE_PATTERNS.md](../CODE_PATTERNS.md)**: Code patterns used in the VPN monitor
 - **[DEVELOPER.md](../DEVELOPER.md)**: Development guidelines
 

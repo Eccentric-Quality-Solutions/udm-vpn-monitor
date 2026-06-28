@@ -378,6 +378,9 @@ find_files_with_versions() {
 	if [[ -f "${PROJECT_ROOT}/vpn-monitor-wrapper.sh" ]]; then
 		files+=("${PROJECT_ROOT}/vpn-monitor-wrapper.sh")
 	fi
+	if [[ -f "${PROJECT_ROOT}/vpn-monitor-control.sh" ]]; then
+		files+=("${PROJECT_ROOT}/vpn-monitor-control.sh")
+	fi
 
 	# Installation scripts
 	if [[ -f "${PROJECT_ROOT}/install.sh" ]]; then

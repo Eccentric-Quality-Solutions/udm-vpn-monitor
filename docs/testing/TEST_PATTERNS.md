@@ -2853,7 +2853,7 @@ Tests handling of rapid state changes and race conditions.
 
 ### Test Statistics
 
-- **Slow / high-risk file set (default exclusion)**: ~335 tests in a **fixed list of files** omitted by default `./tests/run_tests.sh` (see `filter_test_files()` in `tests/run_tests.sh`), including consolidated `test_config.sh`, `test_detection.sh`, `test_recovery.sh`, `test_state.sh`, `test_lockfile.sh`, `test_integration.sh`, and several other high-impact files
+- **Slow / high-risk file set (default exclusion)**: ~304 tests in a **fixed list of long-running monolith files** omitted by default `./tests/run_tests.sh` (see `filter_test_files()` in `tests/run_tests.sh`): `test_config.sh`, `test_detection.sh`, `test_recovery.sh`, `test_state.sh`, `test_lockfile.sh`, `test_integration.sh`, `test_main.sh`. High-risk but fast files (`test_errors.sh`, `test_logging.sh`, `test_connection.sh`) run in the default fast set.
 - **Tags**: Tests may also declare `category:high-risk` (and related tags) for `--filter-tags`; that is separate from the default slow file list
 - **Focus Areas**: Critical error handling, edge cases, security, race conditions, resource management
 
@@ -3174,9 +3174,8 @@ xfrm_state="${xfrm_state//reqid 1/reqid 2}"
 **Standard**:
 - Use `ENABLE_NETWORK_PARTITION_CHECK=0` when testing recovery actions, rate limiting, or any functionality that requires VPN checks to execute
 - Keep network partition check enabled when testing the partition detection mechanism itself
-- Note: `setup_test_location_config()` and `setup_vpn_at_tier_fixture()` already disable network partition check by default, but `create_test_config()` does not set defaults - you must explicitly disable it
-
-**Related**: See tests that use `create_test_config()` directly - they must explicitly set `ENABLE_NETWORK_PARTITION_CHECK=0` if they test recovery actions.
+- `setup_test_environment()` pre-touches `.last_run_timestamp` so production startup grace does not run on every isolated test; grace-period tests remove or backdate that file (or set `TEST_SIMULATE_FIRST_RUN=1` before setup)
+- `setup_test_location_config()` and `create_test_config()` set fast defaults: `STARTUP_GRACE_PERIOD=0`, `ENABLE_NETWORK_PARTITION_CHECK=0`, `ENABLE_PING_CHECK=0` (override with `=1` when testing ping or partition). Hand-written configs should use `write_test_config_fast_defaults()` first or include those keys explicitly
 
 ### 28. Complex XFRM State Mock Helpers
 

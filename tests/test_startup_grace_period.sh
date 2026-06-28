@@ -189,8 +189,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
 	create_test_config "$config_file" \
 		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
-		"STARTUP_GRACE_PERIOD=0"
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	local last_run_file="${STATE_DIR}/.last_run_timestamp"
@@ -246,9 +245,13 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	# Expected: Script uses 5 second default grace period
 	# Importance: Ensures reasonable default behavior
 	local config_file="${TEST_DIR}/vpn-monitor.conf"
-	create_test_config "$config_file" \
-		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
-		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
+	mkdir -p "$(dirname "$config_file")"
+	# Write config without STARTUP_GRACE_PERIOD so production default (5) applies
+	cat >"$config_file" <<EOF
+ENABLE_RESOURCE_MONITORING=0
+LOCATION_TEST_EXTERNAL="${TEST_PEER_IP}"
+LOCATION_TEST_INTERNAL="${TEST_PEER_IP}"
+EOF
 	# Note: STARTUP_GRACE_PERIOD not set - should use default
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"

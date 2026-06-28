@@ -480,18 +480,16 @@ filter_test_files() {
 		local filename
 		filename=$(basename "$test_file")
 
-		# Check if this is a slow test file
-		# Slow tests are: test_integration.sh and high-risk test files (test_config.sh, test_lockfile.sh, etc.)
-		# These were split from test_high_risk.sh for better organization
+		# Check if this is a slow test file (runtime-based default exclusion, not all high-risk files).
+		# Monolith integration/high-risk files (~7–9 min each sequential) stay here.
+		# Fast high-risk files (test_errors, test_logging, test_connection; ~2 min total) run by default.
+		# Keep in sync with is_slow_test_file() in tests/verify_test_isolation.sh.
 		if [[ "$filename" == "test_integration.sh" ]] ||
 			[[ "$filename" == "test_config.sh" ]] ||
 			[[ "$filename" == "test_lockfile.sh" ]] ||
 			[[ "$filename" == "test_detection.sh" ]] ||
 			[[ "$filename" == "test_recovery.sh" ]] ||
 			[[ "$filename" == "test_state.sh" ]] ||
-			[[ "$filename" == "test_logging.sh" ]] ||
-			[[ "$filename" == "test_connection.sh" ]] ||
-			[[ "$filename" == "test_errors.sh" ]] ||
 			[[ "$filename" == "test_main.sh" ]]; then
 			# Include slow tests only if RUN_SLOW_TESTS is enabled
 			if [[ "$RUN_SLOW_TESTS" -eq 1 ]]; then
@@ -2425,9 +2423,10 @@ Test Behavior:
     Tests that exceed 2 minutes (120 seconds) will be skipped automatically.
     Use --fail-fast or FAST_FAIL=1 to stop on first failure. Use --all or FAST_FAIL=0 to run all tests (default).
     
-    Slow tests (test_integration.sh and high-risk test files: test_config.sh, test_lockfile.sh,
-    test_detection.sh, test_recovery.sh, test_state.sh, test_logging.sh, test_connection.sh,
-    test_errors.sh, test_main.sh) are excluded by default.
+    Slow tests (long-running monolith files: test_integration.sh, test_config.sh,
+    test_lockfile.sh, test_detection.sh, test_recovery.sh, test_state.sh, test_main.sh)
+    are excluded by default. High-risk but fast files (test_errors.sh, test_logging.sh,
+    test_connection.sh) run in the default fast set.
     Use --slow flag or set RUN_SLOW_TESTS=1 to include them.
     
     Test timeout is set to 120 seconds (2 minutes) by default. Tests exceeding this

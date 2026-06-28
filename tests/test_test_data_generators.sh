@@ -218,7 +218,7 @@ load helpers/test_data
 # bats test_tags=category:test-infrastructure,priority:low
 @test "generate_config_file - minimal template" {
 	# Purpose: Verify generate_config_file creates minimal config file correctly
-	# Expected: Config file contains only LOCATION_EXTERNAL and LOCATION_INTERNAL
+	# Expected: Config file contains location fields and STARTUP_GRACE_PERIOD=0 fast-test default
 	local config_file="${BATS_TEST_TMPDIR}/test_minimal.conf"
 	local peer_ip="${TEST_PEER_IP}"
 	generate_config_file "minimal" "$config_file" "$peer_ip"
@@ -228,7 +228,8 @@ load helpers/test_data
 	# Verify file contains expected content
 	assert_file_contains "$config_file" "LOCATION_TEST_EXTERNAL=\"${peer_ip}\""
 	assert_file_contains "$config_file" "LOCATION_TEST_INTERNAL=\"${peer_ip}\""
-	# Verify file doesn't contain extra fields
+	assert_file_contains "$config_file" "STARTUP_GRACE_PERIOD=0"
+	# Verify file doesn't contain other standard template fields
 	refute_file_contains "$config_file" "PING_COUNT"
 	refute_file_contains "$config_file" "TIER1_THRESHOLD"
 }
@@ -286,7 +287,7 @@ load helpers/test_data
 # bats test_tags=category:test-infrastructure,priority:low
 @test "generate_config_file - custom_log template" {
 	# Purpose: Verify generate_config_file creates custom_log config file correctly
-	# Expected: Config file contains LOCATION fields and custom LOG_FILE
+	# Expected: Config file contains LOCATION fields, custom LOG_FILE, and STARTUP_GRACE_PERIOD=0
 	local config_file="${BATS_TEST_TMPDIR}/test_custom_log.conf"
 	local peer_ip="${TEST_PEER_IP}"
 	local log_file="/tmp/custom-test.log"
@@ -298,6 +299,7 @@ load helpers/test_data
 	assert_file_contains "$config_file" "LOCATION_TEST_EXTERNAL=\"${peer_ip}\""
 	assert_file_contains "$config_file" "LOCATION_TEST_INTERNAL=\"${peer_ip}\""
 	assert_file_contains "$config_file" "LOG_FILE=\"${log_file}\""
+	assert_file_contains "$config_file" "STARTUP_GRACE_PERIOD=0"
 }
 
 # bats test_tags=category:test-infrastructure,priority:low

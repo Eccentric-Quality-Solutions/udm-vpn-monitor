@@ -4750,7 +4750,7 @@ remove_vpn_monitor_cron
 
 **Wrapper default:** Missing `ENABLE_MONITOR_WRAPPER` in config → wrapper cron (ADR-0032). Schedule defaults to `*/1 * * * *` when `CRON_SCHEDULE` is absent or invalid.
 
-See also: `docs/reference/DRY_OPPORTUNITIES.md`, ADR-0032.
+See also: ADR-0032.
 
 ---
 
@@ -4783,8 +4783,6 @@ is_keepalive_enabled "${INSTALL_DIR}/vpn-monitor.conf"
 
 **Logging split:** Core functions do not log. `vpn-monitor-control.sh` uses `log_message`; `install.sh` keeps verbose install-time diagnostics (journal tail) in `enable_and_start_keepalive_service`. Uninstall keeps systemd unit removal in `remove_keepalive_service` separate from `stop_keepalive`.
 
-See also: `docs/reference/DRY_OPPORTUNITIES.md`.
-
 ---
 
 ## SSH Connection Management Patterns
@@ -4796,8 +4794,6 @@ See also: `docs/reference/DRY_OPPORTUNITIES.md`.
 | `deploy-to-udm.sh` | `setup_ssh_control_master`, `execute_ssh_control`, `execute_scp_control`, `collect_ssh_credentials_if_needed`; overrides `manage_log_*` for file logging |
 | `control-remote-udm.sh` | `setup_ssh_control_master`, `execute_ssh_control`, `collect_ssh_credentials_if_needed`, `read_manage_host_config`, `reset_ssh_between_hosts` |
 | `deploy-to-udms.sh` | `read_manage_host_config`, `manage_init_terminal_colors`; overrides `manage_log_*` for file logging |
-
-See also: `docs/reference/DRY_OPPORTUNITIES.md`.
 
 ### Pattern: SSH ControlMaster with `ControlPersist` + `true`
 

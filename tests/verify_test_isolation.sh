@@ -234,15 +234,13 @@ check_files_outside_test_dir() {
 #   1: file is not a slow test file
 is_slow_test_file() {
 	local filename="$1"
+	# Keep in sync with filter_test_files() in tests/run_tests.sh
 	[[ "$filename" == "test_integration.sh" ]] ||
 		[[ "$filename" == "test_config.sh" ]] ||
 		[[ "$filename" == "test_lockfile.sh" ]] ||
 		[[ "$filename" == "test_detection.sh" ]] ||
 		[[ "$filename" == "test_recovery.sh" ]] ||
 		[[ "$filename" == "test_state.sh" ]] ||
-		[[ "$filename" == "test_logging.sh" ]] ||
-		[[ "$filename" == "test_connection.sh" ]] ||
-		[[ "$filename" == "test_errors.sh" ]] ||
 		[[ "$filename" == "test_main.sh" ]]
 }
 
@@ -391,8 +389,8 @@ Examples:
 
 By default, slow test files are skipped for faster verification.
 Slow test files: test_integration.sh, test_config.sh, test_lockfile.sh,
-test_detection.sh, test_recovery.sh, test_state.sh, test_logging.sh,
-test_connection.sh, test_errors.sh, test_main.sh
+test_detection.sh, test_recovery.sh, test_state.sh, test_main.sh
+(Fast high-risk: test_errors.sh, test_logging.sh, test_connection.sh run by default.)
 
 EOF
 			exit 0
