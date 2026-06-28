@@ -60,7 +60,8 @@ Use this table to choose which test files to run for a given path or area. When 
 | **lib/recovery/ipsec_recovery.sh** | `test_recovery.sh`, `test_recovery_tier2.sh`, `test_recovery_tier3.sh` |
 | **lib/recovery/recovery_verification.sh** | `test_recovery.sh`, `test_recovery_state.sh` |
 | **lib/recovery/recovery_state.sh** | `test_recovery_state.sh`, `test_recovery.sh` |
-| **lib/state.sh**, **lib/state/** | `test_state.sh`, `test_state_location.sh`, `test_state_concurrent_updates.sh`, `test_state_atomic_write_failures.sh`, `test_state_network_partition_stats.sh`, `test_state_resource_monitoring_stats.sh`, `test_rapid_state_changes.sh` |
+| **lib/state/global_state.sh** (`read_validated_state_file`, `write_validated_state_file`) | `test_validated_state_file.sh`, `test_state.sh`, `test_state_atomic_write_failures.sh` |
+| **lib/state.sh**, **lib/state/** | `test_state.sh`, `test_state_location.sh`, `test_state_concurrent_updates.sh`, `test_state_atomic_write_failures.sh`, `test_state_network_partition_stats.sh`, `test_state_resource_monitoring_stats.sh`, `test_rapid_state_changes.sh`, `test_validated_state_file.sh` |
 | **lib/lockfile.sh** | `test_lockfile.sh` |
 | **lib/logging.sh** | `test_logging.sh`, `test_logging_prefix.sh` |
 | **lib/resources.sh** | `test_resources.sh` |

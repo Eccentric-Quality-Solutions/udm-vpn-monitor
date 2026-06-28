@@ -493,6 +493,118 @@ compact_tier2_recovery_count_file() {
 	return 0
 }
 
+# Read a single-value state file with format validation and corruption recovery
+#
+# Arguments:
+#   $1: State file path (empty path returns default)
+#   $2: Default value when file is missing, unreadable, or corrupted (optional, defaults to "0")
+#   $3: File label for corruption log messages (e.g., "Network partition state file")
+#   $4: Expected format ("binary" for 0/1 flags, "integer" for non-negative integers)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints validated value or default to stdout
+#
+# Note:
+#   Requires recover_corrupted_state_file, is_binary_flag, and is_non_negative_integer
+read_validated_state_file() {
+	local state_file="$1"
+	local default_value="${2:-0}"
+	local file_label="$3"
+	local format="$4"
+
+	if [[ -z "$state_file" ]]; then
+		echo "$default_value"
+		return 0
+	fi
+
+	if ! file_exists_and_readable "$state_file"; then
+		echo "$default_value"
+		return 0
+	fi
+
+	local value
+	value=$(cat "$state_file" 2>/dev/null || echo "$default_value")
+
+	local is_valid=0
+	case "$format" in
+	binary)
+		is_binary_flag "$value" && is_valid=1
+		;;
+	integer)
+		is_non_negative_integer "$value" && is_valid=1
+		;;
+	*)
+		handle_error "ERROR" "SYSTEM" "Unknown state file format for read: ${format}" 0
+		echo "$default_value"
+		return 0
+		;;
+	esac
+
+	if [[ $is_valid -eq 1 ]]; then
+		echo "$value"
+		return 0
+	fi
+
+	handle_error "WARNING" "SYSTEM" "${file_label} corrupted (recovering): ${state_file}" 0
+	recover_corrupted_state_file "$state_file" "$default_value" "integer"
+	echo "$default_value"
+	return 0
+}
+
+# Write a single-value state file with format validation and atomic write
+#
+# Arguments:
+#   $1: State file path (empty path fails)
+#   $2: Value to write
+#   $3: Value label for error messages (e.g., "network partition state")
+#   $4: Expected format ("binary" for 0/1 flags, "integer" for non-negative integers)
+#
+# Returns:
+#   0: Success
+#   1: Invalid value, empty path, or write failed
+#
+# Note:
+#   Requires atomic_write_file, is_binary_flag, and is_non_negative_integer
+write_validated_state_file() {
+	local state_file="$1"
+	local state_value="$2"
+	local value_label="$3"
+	local format="$4"
+
+	if [[ -z "$state_file" ]]; then
+		return 1
+	fi
+
+	case "$format" in
+	binary)
+		if ! is_binary_flag "$state_value"; then
+			handle_error "ERROR" "SYSTEM" "Invalid ${value_label} value (expected 0 or 1): ${state_value}" 0
+			return 1
+		fi
+		;;
+	integer)
+		if ! is_non_negative_integer "$state_value"; then
+			handle_error "ERROR" "SYSTEM" "Invalid ${value_label} value (expected numeric): ${state_value}" 0
+			return 1
+		fi
+		;;
+	*)
+		handle_error "ERROR" "SYSTEM" "Unknown state file format for write: ${format}" 0
+		return 1
+		;;
+	esac
+
+	if ! atomic_write_file "$state_file" "$state_value"; then
+		handle_error "ERROR" "SYSTEM" "Failed to update ${value_label} file: ${state_file}" 0
+		return 1
+	fi
+
+	return 0
+}
+
 # Get network partition state
 #
 # Retrieves the current network partition state (0 = healthy, 1 = partitioned).
@@ -518,26 +630,7 @@ compact_tier2_recovery_count_file() {
 get_network_partition_state() {
 	local state_file
 	state_file=$(get_network_partition_state_file)
-	[[ -z "$state_file" ]] && {
-		echo "0"
-		return 0
-	}
-
-	if file_exists_and_readable "$state_file"; then
-		local value
-		value=$(cat "$state_file" 2>/dev/null || echo "0")
-		# Validate value (must be 0 or 1)
-		if is_binary_flag "$value"; then
-			echo "$value"
-		else
-			# Corrupted file, backup and recover
-			handle_error "WARNING" "SYSTEM" "Network partition state file corrupted (recovering): $state_file" 0
-			recover_corrupted_state_file "$state_file" "0" "integer"
-			echo "0"
-		fi
-	else
-		echo "0"
-	fi
+	read_validated_state_file "$state_file" "0" "Network partition state file" "binary"
 }
 
 # Set network partition state
@@ -567,21 +660,7 @@ set_network_partition_state() {
 	local state_value="$1"
 	local state_file
 	state_file=$(get_network_partition_state_file)
-	[[ -z "$state_file" ]] && return 1
-
-	# Validate value (must be 0 or 1)
-	if ! is_binary_flag "$state_value"; then
-		handle_error "ERROR" "SYSTEM" "Invalid network partition state value (expected 0 or 1): $state_value" 0
-		return 1
-	fi
-
-	# Atomic write
-	if ! atomic_write_file "$state_file" "$state_value"; then
-		handle_error "ERROR" "SYSTEM" "Failed to update network partition state file: $state_file" 0
-		return 1
-	fi
-
-	return 0
+	write_validated_state_file "$state_file" "$state_value" "network partition state" "binary"
 }
 
 # Backup corrupted state file

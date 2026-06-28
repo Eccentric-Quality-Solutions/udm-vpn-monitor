@@ -1179,6 +1179,28 @@ fi
 - Naming conventions are enforced by `get_peer_state_file_path()`
 - Never construct state file paths directly - always use the abstraction layer
 
+### Pattern: Validated Single-Value State Files
+
+**When to Use:** Reading or writing global binary flags (0/1) or integer timestamps stored in a single-value state file
+
+**Pattern:**
+```bash
+# Read with automatic corruption recovery
+state=$(read_validated_state_file "$state_file" "0" "Network partition state file" "binary")
+timestamp=$(read_validated_state_file "$timestamp_file" "0" "System-wide failure timestamp file" "integer")
+
+# Write with validation and atomic write
+write_validated_state_file "$state_file" "$state_value" "network partition state" "binary"
+write_validated_state_file "$timestamp_file" "$timestamp_value" "system-wide failure timestamp" "integer"
+```
+
+**Key Points:**
+- Helpers live in `lib/state/global_state.sh`; domain wrappers resolve paths and apply side effects
+- `"binary"` format accepts only `0` or `1`; `"integer"` accepts non-negative integers
+- Empty read path returns default; empty write path returns failure
+- Corrupted files are recovered via `recover_corrupted_state_file` with the supplied default
+- Do not merge with `get_peer_state` — peer state has key-specific validation and timeout-wrapped reads
+
 ### Pattern: State File Format Validation
 
 **When to Use:** Reading state files to detect corruption

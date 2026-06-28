@@ -54,22 +54,7 @@ get_system_wide_failure_state_file() {
 get_system_wide_failure_state() {
 	local state_file
 	state_file=$(get_system_wide_failure_state_file)
-
-	if file_exists_and_readable "$state_file"; then
-		local value
-		value=$(cat "$state_file" 2>/dev/null || echo "0")
-		# Validate value (must be 0 or 1)
-		if is_binary_flag "$value"; then
-			echo "$value"
-		else
-			# Corrupted file, backup and recover
-			handle_error "WARNING" "SYSTEM" "System-wide failure state file corrupted (recovering): $state_file" 0
-			recover_corrupted_state_file "$state_file" "0" "integer"
-			echo "0"
-		fi
-	else
-		echo "0"
-	fi
+	read_validated_state_file "$state_file" "0" "System-wide failure state file" "binary"
 }
 
 # Set system-wide failure state
@@ -104,15 +89,7 @@ set_system_wide_failure_state() {
 	local state_file
 	state_file=$(get_system_wide_failure_state_file)
 
-	# Validate value (must be 0 or 1)
-	if ! is_binary_flag "$state_value"; then
-		handle_error "ERROR" "SYSTEM" "Invalid system-wide failure state value (expected 0 or 1): $state_value" 0
-		return 1
-	fi
-
-	# Atomic write
-	if ! atomic_write_file "$state_file" "$state_value"; then
-		handle_error "ERROR" "SYSTEM" "Failed to update system-wide failure state file: $state_file" 0
+	if ! write_validated_state_file "$state_file" "$state_value" "system-wide failure state" "binary"; then
 		return 1
 	fi
 
@@ -170,22 +147,7 @@ get_system_wide_failure_timestamp_file() {
 get_system_wide_failure_timestamp() {
 	local timestamp_file
 	timestamp_file=$(get_system_wide_failure_timestamp_file)
-
-	if file_exists_and_readable "$timestamp_file"; then
-		local value
-		value=$(cat "$timestamp_file" 2>/dev/null || echo "0")
-		# Validate value (must be numeric)
-		if is_non_negative_integer "$value"; then
-			echo "$value"
-		else
-			# Corrupted file, backup and recover
-			handle_error "WARNING" "SYSTEM" "System-wide failure timestamp file corrupted (recovering): $timestamp_file" 0
-			recover_corrupted_state_file "$timestamp_file" "0" "integer"
-			echo "0"
-		fi
-	else
-		echo "0"
-	fi
+	read_validated_state_file "$timestamp_file" "0" "System-wide failure timestamp file" "integer"
 }
 
 # Set system-wide failure detection timestamp
@@ -215,20 +177,7 @@ set_system_wide_failure_timestamp() {
 	local timestamp_value="$1"
 	local timestamp_file
 	timestamp_file=$(get_system_wide_failure_timestamp_file)
-
-	# Validate value (must be numeric)
-	if ! is_non_negative_integer "$timestamp_value"; then
-		handle_error "ERROR" "SYSTEM" "Invalid system-wide failure timestamp value (expected numeric): $timestamp_value" 0
-		return 1
-	fi
-
-	# Atomic write
-	if ! atomic_write_file "$timestamp_file" "$timestamp_value"; then
-		handle_error "ERROR" "SYSTEM" "Failed to update system-wide failure timestamp file: $timestamp_file" 0
-		return 1
-	fi
-
-	return 0
+	write_validated_state_file "$timestamp_file" "$timestamp_value" "system-wide failure timestamp" "integer"
 }
 
 # Detect system-wide failure
