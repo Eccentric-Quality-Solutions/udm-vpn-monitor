@@ -136,7 +136,7 @@ Open `vpn-monitor.sh` and trace one cron execution top to bottom.
 ## 10. Supporting scripts (~5 min, optional)
 
 - [ ] **Anonymization / sharing logs:** `scripts/anonymize/`, `lib/anonymize.sh`
-- [ ] **Quality gates:** `scripts/check-bash-guide-compliance.sh`, `scripts/check-logging-prefix.sh`
+- [ ] **Quality gates:** ShellCheck + shfmt (`.shellcheckrc`, pre-commit), `scripts/check-logging-prefix.sh`
 - [ ] **Git hooks:** `scripts/setup-git-hooks.sh` (run after hook changes)
 
 ---
@@ -156,9 +156,9 @@ Open `vpn-monitor.sh` and trace one cron execution top to bottom.
 ## 12. Documentation and decisions (~5 min, optional)
 
 - [ ] **Architecture (long form):** [ARCHITECTURE.md](reference/ARCHITECTURE.md) diagrams
-- [ ] **Patterns encyclopedia:** [CODE_PATTERNS.md](reference/CODE_PATTERNS.md) — search during review, not linear read
-- [ ] **Bash style:** [BASH_CODING_GUIDE.md](reference/BASH_CODING_GUIDE.md)
-- [ ] **Review pitfalls:** [CODE_REVIEW_LESSONS_LEARNED.md](reference/CODE_REVIEW_LESSONS_LEARNED.md)
+- [ ] **Patterns (review / coding):** [CODE_PATTERNS.md](reference/CODE_PATTERNS.md) — **canonical**; search during review, not linear read
+- [ ] **Bash gotchas:** [BASH_CODING_GUIDE.md](reference/BASH_CODING_GUIDE.md) — strict mode, traps, review items 39–41/45/47–49
+- [ ] **Review history (optional):** [CODE_REVIEW_LESSONS_LEARNED.md](reference/CODE_REVIEW_LESSONS_LEARNED.md) — *why* patterns exist; full sections 1–29 only, 30+ are summary index
 - [ ] **ADR index:** [docs/adr/README.md](adr/README.md) — pick 2–3 ADRs matching audience interest
 - [ ] **Research docs (future work):** `docs/research/*` — credential storage, server app ideas, etc.
 

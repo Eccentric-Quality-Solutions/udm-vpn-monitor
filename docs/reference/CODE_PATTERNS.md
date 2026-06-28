@@ -1508,7 +1508,7 @@ check_ping_if_enabled() {
 
 ### Pattern: Use Validation Functions Instead of Inline Regex
 
-**When to Use:** Always when validating input (IPs, timestamps, etc.)
+**When to Use:** Validating **config, user, or network input** (IPs, timestamps, etc.). Not for parsing trusted tool/kernel output — see "Shared Config and XFRM Regex Helpers" below.
 
 **Pattern:**
 ```bash
@@ -1524,7 +1524,7 @@ fi
 ```
 
 **Key Points:**
-- Always use existing validation functions instead of inline regex patterns
+- Use validation functions for **input**; use shared xfrm/config regex helpers for **structured output**
 - Validation functions provide consistent validation logic
 - Include proper range checks (not just format matching)
 - Handle edge cases (empty strings, etc.)
@@ -2097,7 +2097,7 @@ local external_peer_ip="${LOCATIONS[$location_name]}"
 
 **Related Patterns:**
 - See `CODE_REVIEW_LESSONS_LEARNED.md` section 24 for detailed examples and rationale
-- See `lib/recovery.sh:verify_ipsec_connections_active()` for correct pattern
+- See `lib/recovery/recovery_verification.sh:verify_ipsec_connections_active()` for correct pattern
 - `LOCATIONS` format: `"external:IP|internal:IPs"` (pipe separator)
 
 ### Pattern: Schema-Based Configuration Validation
@@ -3245,43 +3245,45 @@ fi
 
 **Pattern:**
 ```bash
-# ✅ GOOD: Extract duplicate awk script to helper function
+# ✅ GOOD: Deduplicate SA blocks by composite key (header + SPI), not header alone
+# Multiple SAs can share src/dst during rekey — see CODE_REVIEW_LESSONS_LEARNED summary item 30
 deduplicate_sa_blocks() {
     awk '
-        BEGIN { in_block = 0 }
+        BEGIN { in_block = 0; current_header = ""; current_spi = "" }
         /^src[[:space:]]+/ {
-            header = $0
-            if (header in seen_headers) {
-                in_block = 0
-                next
+            if (in_block == 1 && current_header != "" && current_spi != "") {
+                sa_key = current_header "|" current_spi
+                if (!(sa_key in seen_sas)) { seen_sas[sa_key] = 1; print saved_block }
             }
-            seen_headers[header] = 1
-            in_block = 1
-            print
-            next
+            current_header = $0; current_spi = ""; saved_block = $0; in_block = 1; next
         }
         in_block == 1 {
-            print
+            if (current_spi == "" && match($0, /spi[[:space:]]+(0x[0-9a-fA-F]+|[0-9]+)/)) {
+                current_spi = substr($0, RSTART, RLENGTH); gsub(/^spi[[:space:]]+/, "", current_spi)
+            }
+            saved_block = saved_block "\n" $0
+        }
+        END {
+            if (in_block == 1 && current_header != "" && current_spi != "") {
+                sa_key = current_header "|" current_spi
+                if (!(sa_key in seen_sas)) { print saved_block }
+            }
         }
     '
 }
+```
 
+Reference implementation: `lib/detection/xfrm_detection.sh:deduplicate_sa_blocks()`
+
+```bash
 # Use helper function in multiple places
 if [[ -n "$forward_output" ]] && [[ -n "$reverse_output" ]]; then
     local combined="${forward_output}"$'\n'"${reverse_output}"
     xfrm_output=$(echo "$combined" | deduplicate_sa_blocks)
 fi
 
+# ❌ BAD: Deduplicate by src/dst header only (drops distinct SPIs)
 # ❌ BAD: Duplicate awk script in multiple places
-if [[ -n "$forward_output" ]] && [[ -n "$reverse_output" ]]; then
-    local combined="${forward_output}"$'\n'"${reverse_output}"
-    xfrm_output=$(echo "$combined" | awk '
-        BEGIN { in_block = 0 }
-        /^src[[:space:]]+/ {
-            # ... duplicate logic ...
-        }
-    ')
-fi
 # Later in same function:
 if [[ -n "$forward_output" ]] && [[ -n "$reverse_output" ]]; then
     echo "$combined" | awk '
@@ -3295,6 +3297,7 @@ fi
 
 **Key Points:**
 - When awk scripts are duplicated, extract to a helper function
+- **SA deduplication:** use composite keys (src/dst header + SPI), not src/dst alone — summary item 30 in `CODE_REVIEW_LESSONS_LEARNED.md`
 - Helper functions can be defined in the same file or in a shared module
 - Use descriptive function names that explain what the awk script does
 - If the awk script is only used in one function, consider using a here-document variable
@@ -3948,6 +3951,7 @@ set -euo pipefail
 - Use in main scripts (`install.sh`, `vpn-monitor.sh`, `run_tests.sh`)
 - **Do NOT use in library modules** (`lib/*.sh`) - they are sourced and strict mode would affect caller
 - Library modules should handle errors gracefully and return error codes
+- With `pipefail`, a pipeline's exit status is the **last** command's — see next pattern if you need the first command's status
 
 **When NOT to Use:**
 - Library modules that are sourced (would affect caller's error handling)
@@ -3970,6 +3974,33 @@ fi
 #!/bin/bash
 set -euo pipefail  # BAD: Affects scripts that source this module!
 ```
+
+### Pattern: Avoid Masking Command Failures in Pipelines
+
+**When to Use:** Under `set -e` / `pipefail`, when the first command in a pipeline must not be masked by a later command (e.g. `ip xfrm state | grep`)
+
+**Pattern:**
+```bash
+# ❌ BAD: ip failure masked if grep finds no match (grep exits 0) or vice versa
+ip xfrm state 2>/dev/null | grep -E "$pattern" || true
+
+# ✅ GOOD: Capture first command status, then filter output
+local xfrm_output=""
+local xfrm_rc=0
+xfrm_output=$(ip xfrm state 2>/dev/null) || xfrm_rc=$?
+if [[ $xfrm_rc -ne 0 ]]; then
+    handle_error "WARNING" "$location_name" "ip xfrm state failed (rc=$xfrm_rc)"
+    return 1
+fi
+grep -E "$pattern" <<<"$xfrm_output" || true  # no match is OK when expected
+```
+
+**Key Points:**
+- Run the critical command first; capture output and exit code
+- Apply filters on captured output when grep's exit code is not the signal you need
+- Use `|| true` on grep only when "no match" is expected and acceptable
+
+**Related:** `CODE_REVIEW_LESSONS_LEARNED.md` summary item 41; `lib/recovery/xfrm_recovery.sh` pre-delete diagnostic
 
 ### Pattern: Handle Errors Explicitly When Strict Mode Would Exit
 

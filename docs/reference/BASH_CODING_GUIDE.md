@@ -1983,7 +1983,7 @@ validate_integer() {
 
 ### Common Validation Patterns
 
-**Note:** For project-specific validation patterns including using validation functions instead of inline regex, supplementary diagnostics, and codebase-specific validation functions, see `CODE_PATTERNS.md` section on [Validation Patterns](CODE_PATTERNS.md#validation-patterns). For historical context on validation lessons learned, see `CODE_REVIEW_LESSONS_LEARNED.md` [Lesson 2: Always Use Validation Functions Instead of Inline Regex](CODE_REVIEW_LESSONS_LEARNED.md#2-always-use-validation-functions-instead-of-inline-regex).
+**Note:** For project-specific validation patterns (input vs structured output), see `CODE_PATTERNS.md` [Validation Patterns](CODE_PATTERNS.md#validation-patterns) and [Shared Config and XFRM Regex Helpers](CODE_PATTERNS.md#pattern-shared-config-and-xfrm-regex-helpers). Historical context: [CODE_REVIEW_LESSONS_LEARNED.md §2](CODE_REVIEW_LESSONS_LEARNED.md#2-always-use-validation-functions-instead-of-inline-regex).
 
 This section provides reusable validation functions for common use cases:
 
@@ -2780,6 +2780,60 @@ socket="${sock_dir}/ctrl.sock"
 # Pattern-guard rmdir to prevent accidental deletion of wrong directory
 [[ "$sock_dir" == /tmp/ssh-deploy-* ]] && rmdir "$sock_dir" 2>/dev/null
 ```
+
+---
+
+## Review-Discovered Bash Gotchas
+
+Patterns from code review (summary items **39–41**, **45**, **47–49** in `CODE_REVIEW_LESSONS_LEARNED.md`). Items **42**, **43**, **44**, **46** remain in the lessons summary and `CODE_PATTERNS.md` (path resolution, script removal, test PATH isolation, SSH ControlMaster).
+
+### No `local` in `bash -c` subshells
+
+`local` only works inside functions. Top-level `bash -c "local x=1"` leaves variables empty silently.
+
+```bash
+# ✅ GOOD
+bash -c 'func_exit=$?; exit_code=$func_exit; echo "$exit_code"'
+
+# ❌ BAD
+bash -c 'local func_exit=$?; local exit_code=$func_exit'
+```
+
+### Awk ceiling (no built-in `ceil`)
+
+`int()` truncates toward zero, so `-int(-x)` is wrong for positive fractional values. For positive `v`:
+
+```awk
+(v == int(v)) ? int(v) : int(v) + 1
+```
+
+### Pipeline exit code is the last command's
+
+With `set -o pipefail`, `cmd1 | cmd2` returns `cmd2`'s status. To act on `cmd1`, run it first and capture output/rc — see `CODE_PATTERNS.md` → "Avoid Masking Command Failures in Pipelines".
+
+### Numeric compare when value may be non-numeric
+
+`[[ "$n" -gt "$limit" ]]` fails silently on non-numeric `n`. Prefer arithmetic context:
+
+```bash
+(( n > limit ))  # non-numeric n treated as 0
+```
+
+Example: `lib/lockfile.sh` `check_lockfile_stale()`.
+
+### Do not swallow `source` failures in test helpers
+
+Do not use `source ... 2>/dev/null || true` in `source_function()` — tests pass vacuously when the function under test never loaded.
+
+### Config `#` in quoted values
+
+Do not strip `#` from the RHS with `${assignment%%#*}` before quote-aware parsing — it breaks `VAR="host#1.example.com"`. Handle comments inside `parse_quoted_value()` (`lib/config/config_loading.sh`).
+
+### `set -e` + `[[ condition ]] && command` in sourced libraries
+
+When `condition` is often false, a failed `[[ ]]` as the last command in a function returns non-zero and can abort the caller under `set -e`. Use `if [[ condition ]]; then command; fi` instead.
+
+Example: `scripts/manage/lib/ssh_control.sh` optional color/verbose init.
 
 ---
 
