@@ -409,19 +409,19 @@ EOF
 	run bash "$test_install" --dev --silent
 
 	# In dev mode, INSTALL_DIR is ${PWD}/vpn-monitor (we cd to TEST_DIR). Minimal source config
-	# has no ENABLE_MONITOR_WRAPPER= line; setup_cron treats that as not wrapper, so expect direct
-	# vpn-monitor.sh (not wrapper) and default schedule from setup_cron: */1 * * * *
+	# has no ENABLE_MONITOR_WRAPPER= line; missing key defaults to wrapper (ADR-0032).
+	# Full install copies vpn-monitor.conf with ENABLE_MONITOR_WRAPPER=1.
 	local install_dir="${TEST_DIR}/vpn-monitor"
 	local expected_cron
-	expected_cron="*/1 * * * * ${install_dir}/vpn-monitor.sh >> ${install_dir}/logs/cron.log 2>&1"
+	expected_cron="*/1 * * * * ${install_dir}/vpn-monitor-wrapper.sh >> ${install_dir}/logs/cron.log 2>&1 &"
 
 	# Check if cron entry was created (even if script had warnings)
 	run crontab -l 2>/dev/null
 	if [[ $status -eq 0 ]]; then
 		# If crontab works, require the exact line (prevents wrong schedule, wrapper vs direct, or log path)
 		local cron_line
-		# -F: match the direct script path; avoids matching vpn-monitor-wrapper.sh
-		cron_line=$(crontab -l 2>/dev/null | grep -F "${install_dir}/vpn-monitor.sh" || true)
+		# -F: match the wrapper script path; avoids matching vpn-monitor.sh direct line
+		cron_line=$(crontab -l 2>/dev/null | grep -F "${install_dir}/vpn-monitor-wrapper.sh" || true)
 		if [[ -n "$cron_line" ]]; then
 			[[ "$cron_line" == "$expected_cron" ]] || {
 				echo "Expected exact cron line:" >&2

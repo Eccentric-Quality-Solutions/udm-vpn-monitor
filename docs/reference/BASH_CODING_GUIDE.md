@@ -906,6 +906,39 @@ local -n array_ref="$ref_name"  # Safe - temp variable prevents conflicts
 
 **Important:** When `set -u` is enabled, always store the reference name in a temp variable before creating the nameref to avoid expansion issues.
 
+### Returning Values via `printf -v` (Variable Name Parameters)
+
+Some helpers return values to the caller by writing to a variable whose **name** is passed as a parameter:
+
+```bash
+# ✅ GOOD: internal locals use distinct names (_prefix) so printf -v reaches the caller
+resolve_settings() {
+    local schedule_out="$1"
+    local flag_out="$2"
+    local _schedule="default"
+    local _flag=1
+    # ... compute _schedule and _flag ...
+    printf -v "$schedule_out" '%s' "$_schedule"
+    printf -v "$flag_out" '%s' "$_flag"
+}
+
+# Caller (set -u enabled):
+local cron_schedule enable_wrapper
+resolve_settings cron_schedule enable_wrapper
+```
+
+```bash
+# ❌ BAD: local name matches a possible output var name — printf -v updates the helper's local, not the caller's
+resolve_settings() {
+    local schedule_out="$1"
+    local enable_wrapper=1   # shadows caller's enable_wrapper under set -u
+    printf -v "$schedule_out" '%s' "$schedule"
+    printf -v "enable_wrapper" '%s' "$enable_wrapper"  # writes to helper local only
+}
+```
+
+**Rule:** In helpers that use `printf -v "$varname"`, never declare `local` variables with the same names as plausible output parameters. Use a `_` prefix for internals (see `resolve_vpn_monitor_cron_settings` in `lib/control/cron_control.sh`).
+
 **When to Use Namerefs vs Returning Arrays:**
 
 - **Use namerefs** when: Working with large arrays, modifying arrays in place, returning complex data structures

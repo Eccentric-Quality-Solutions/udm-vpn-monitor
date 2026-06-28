@@ -4581,6 +4581,36 @@ source "${LIB_DIR}/common.sh"
 
 ---
 
+## Cron Job Management (`lib/control/cron_control.sh`)
+
+**When to Use:** Any script that installs, updates, or removes the vpn-monitor crontab entry.
+
+**Single source of truth:** `lib/control/cron_control.sh` (sourced via `lib/control.sh` or directly with `logging.sh` + `config_loading.sh`). Do not reimplement cron parse/install/remove in `install.sh`, `uninstall.sh`, or manage scripts.
+
+| Caller | Functions used |
+|--------|----------------|
+| `install.sh` | `install_vpn_monitor_cron` (optional 2nd arg: variable name for install summary text) |
+| `uninstall.sh` | `has_vpn_monitor_cron_entry`, `remove_vpn_monitor_cron` |
+| `vpn-monitor-control.sh` | `install_vpn_monitor_cron`, `remove_vpn_monitor_cron` |
+
+**Pattern:**
+```bash
+# Install / update (reads CRON_SCHEDULE + ENABLE_MONITOR_WRAPPER from vpn-monitor.conf)
+install_vpn_monitor_cron "$INSTALL_DIR"           # control script
+install_vpn_monitor_cron "$INSTALL_DIR" summary  # install.sh: summary for log_info
+
+# Remove (grep -v "vpn-monitor"; uses || true when crontab would become empty)
+remove_vpn_monitor_cron
+```
+
+**Logging split:** `cron_control.sh` uses `log_message` (monitor log file). `install.sh` wraps with `log_info` for colored CLI output; pass the optional summary out-param to avoid re-reading config for display text.
+
+**Wrapper default:** Missing `ENABLE_MONITOR_WRAPPER` in config → wrapper cron (ADR-0032). Schedule defaults to `*/1 * * * *` when `CRON_SCHEDULE` is absent or invalid.
+
+See also: `docs/reference/DRY_OPPORTUNITIES.md` (item 1, done), ADR-0032.
+
+---
+
 ## SSH Connection Management Patterns
 
 ### Pattern: SSH ControlMaster with `ControlPersist` + `true`
@@ -4724,6 +4754,7 @@ This document consolidates code patterns used throughout the UDM VPN Monitor cod
 23. **Interactive Input**: Redirect prompts to stderr (`>&2`) before `read` to prevent interference with stdin redirection in tests
 24. **Script-Specific**: Parse command-line arguments with while/case pattern, use process substitution for reading function output, define fallback functions in standalone scripts
 25. **SSH Connection Management**: Use ControlMaster + ControlPersist + `true` for connection reuse; never combine `sshpass` + `ssh -f`; secure sockets with `mktemp -d`; cascade auth methods (sshpass → expect → manual /dev/tty)
+26. **Cron Job Management**: Use `lib/control/cron_control.sh` for all vpn-monitor crontab changes; do not duplicate parse/install/remove logic in install or manage scripts
 
 For more detailed information about specific patterns, see:
 - `CODE_REVIEW_LESSONS_LEARNED.md` - Historical lessons learned from code reviews (includes bug context and how patterns were discovered)

@@ -58,6 +58,12 @@ source "${INSTALL_SCRIPT_DIR}/lib/config_schema.sh"
 # shellcheck source=lib/config/config_loading.sh
 source "${INSTALL_SCRIPT_DIR}/lib/config/config_loading.sh"
 
+# Cron install/remove (shared with vpn-monitor-control.sh)
+# shellcheck source=lib/logging.sh
+source "${INSTALL_SCRIPT_DIR}/lib/logging.sh"
+# shellcheck source=lib/control/cron_control.sh
+source "${INSTALL_SCRIPT_DIR}/lib/control/cron_control.sh"
+
 # shellcheck source=lib/config/location_parsing.sh
 source "${INSTALL_SCRIPT_DIR}/lib/config/location_parsing.sh"
 
@@ -1003,80 +1009,10 @@ install_scripts() {
 	fi
 }
 
-# Parse and validate cron schedule from config file
-#
-# Extracts CRON_SCHEDULE from config file and validates it has proper format.
-#
-# Arguments:
-#   $1: Path to config file
-#
-# Returns:
-#   0: Valid cron schedule found and parsed
-#   1: No valid cron schedule found, config file not found, or config file unreadable (use default)
-#
-# Output:
-#   Prints the validated cron schedule to stdout (if valid)
-parse_cron_schedule() {
-	local config_file="$1"
-	local schedule=""
-
-	# Check if config file exists
-	if [[ ! -f "$config_file" ]]; then
-		return 1
-	fi
-
-	# Check file readability (prevents hangs on unreadable files)
-	if ! file_exists_and_readable "$config_file"; then
-		return 1
-	fi
-
-	if ! schedule=$(get_config_var_value_from_file "$config_file" "CRON_SCHEDULE" 2>/dev/null); then
-		return 1
-	fi
-
-	# Defensive: parser output should already be trimmed; normalize whitespace
-	schedule=$(trim "$schedule")
-
-	# Validate: must be non-empty
-	if [[ -z "$schedule" ]]; then
-		return 1
-	fi
-
-	# Validate: must contain at least one digit or asterisk (basic cron field requirement)
-	if [[ ! "$schedule" =~ [0-9*] ]]; then
-		return 1
-	fi
-
-	# Validate: must have exactly 5 space-separated fields
-	# Split into array and count fields
-	local IFS=' '
-	local -a fields
-	read -ra fields <<<"$schedule"
-
-	if [[ ${#fields[@]} -ne 5 ]]; then
-		return 1
-	fi
-
-	# Basic validation: each field should contain valid cron characters
-	# Valid characters: digits, asterisk, comma, dash, slash
-	# Note: Fields are already split by spaces, so individual fields shouldn't contain whitespace
-	local field
-	for field in "${fields[@]}"; do
-		if [[ ! "$field" =~ ^[0-9*,\-/\]+$ ]]; then
-			return 1
-		fi
-	done
-
-	# Valid schedule found
-	echo "$schedule"
-	return 0
-}
-
 # Setup cron job
 #
 # Adds a cron job entry to run the VPN monitor script on a schedule.
-# Reads CRON_SCHEDULE from config file if available, otherwise uses default (*/1 * * * *).
-# Skips if cron entry already exists (to avoid duplicates).
+# Delegates to lib/control/cron_control.sh (shared with vpn-monitor-control.sh).
 #
 # Returns:
 #   0: Always succeeds (warnings logged but don't fail)
@@ -1084,77 +1020,26 @@ parse_cron_schedule() {
 # Side effects:
 #   - Adds cron entry to root crontab
 #   - Displays current cron entries
-#
-# Note:
-#   Cron schedule format: minute hour day month weekday
-#   Example: "*/1 * * * *" = every 1 minute
 setup_cron() {
 	log_info "Setting up cron job..."
 
-	# Load cron schedule from config if it exists, otherwise use default
-	local cron_schedule="*/1 * * * *"
-	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
-		local config_schedule
-		if config_schedule=$(parse_cron_schedule "${INSTALL_DIR}/${CONFIG_NAME}"); then
-			cron_schedule="$config_schedule"
-			log_info "Using cron schedule from config: $cron_schedule"
-		else
-			log_info "Using default cron schedule: $cron_schedule"
-		fi
-	else
-		log_info "Using default cron schedule: $cron_schedule"
+	local had_existing=0 cron_install_summary=""
+	has_vpn_monitor_cron_entry && had_existing=1
+
+	if ! install_vpn_monitor_cron "$INSTALL_DIR" cron_install_summary; then
+		log_warn "Failed to install cron job (invalid install directory)"
+		return 0
 	fi
 
-	# Check if wrapper mode is enabled
-	local enable_wrapper=0
-	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
-		local val
-		if ! val=$(get_config_var_value_from_file "${INSTALL_DIR}/${CONFIG_NAME}" "ENABLE_MONITOR_WRAPPER" 2>/dev/null); then
-			val="1"
-		fi
-		[[ "$val" == "1" ]] && enable_wrapper=1
-	fi
-
-	local cron_entry
-	if [[ $enable_wrapper -eq 1 ]]; then
-		# Wrapper runs in background; cron starts it every minute for resurrection
-		cron_entry="${cron_schedule} ${INSTALL_DIR}/vpn-monitor-wrapper.sh >> ${INSTALL_DIR}/logs/cron.log 2>&1 &"
-		log_info "Using monitor wrapper (sub-minute execution via MONITOR_INTERVAL)"
-	else
-		cron_entry="${cron_schedule} ${INSTALL_DIR}/${SCRIPT_NAME} >> ${INSTALL_DIR}/logs/cron.log 2>&1"
-	fi
-
-	# Note: cron.log will be created automatically on first cron run in the logs directory.
-	# Log rotation is configured via logrotate (see install_logrotate_config function).
-
-	# Remove existing vpn-monitor cron entry (direct or wrapper) so we can add/update
-	local crontab_content
-	crontab_content=$(crontab -l 2>/dev/null || echo "")
-	if echo "$crontab_content" | grep -q "vpn-monitor"; then
-		# Note: grep -v "vpn-monitor" returns exit 1 when no lines survive
-		# the filter (every entry contains "vpn-monitor").  || true prevents
-		# set -e + pipefail from killing the script; the empty-string check
-		# below handles that case correctly via crontab -r.
-		local filtered_content
-		filtered_content=$(echo "$crontab_content" | grep -v "vpn-monitor" || true)
-		if [[ -n "$filtered_content" ]]; then
-			echo "$filtered_content" | crontab -
-		else
-			crontab -r 2>/dev/null || true
-		fi
+	if [[ $had_existing -eq 1 ]]; then
 		log_info "Removed existing vpn-monitor cron entry"
 	fi
 
-	# Add cron entry
-	(
-		crontab -l 2>/dev/null || true
-		echo "$cron_entry"
-	) | crontab -
-	log_info "Cron job installed: $([ $enable_wrapper -eq 1 ] && echo 'wrapper (sub-minute)' || echo "direct ($cron_schedule)")"
+	log_info "Cron job installed: ${cron_install_summary}"
 
-	# Display current cron entries
 	log_info "Current cron entries:"
 	crontab -l 2>/dev/null | grep -E "(vpn-monitor|^#)" || log_warn "No cron entries found"
+	return 0
 }
 
 # Install systemd service for keepalive daemon

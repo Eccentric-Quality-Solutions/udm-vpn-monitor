@@ -47,6 +47,57 @@ parse_cron_schedule_from_config() {
 	return 0
 }
 
+# Resolve cron schedule and wrapper mode from install directory config
+#
+# Arguments:
+#   $1: install directory (e.g. /data/vpn-monitor)
+#   $2: variable name to receive schedule (via printf -v)
+#   $3: variable name to receive wrapper flag 0|1 (via printf -v)
+#
+# Returns:
+#   0: Always
+resolve_vpn_monitor_cron_settings() {
+	local install_dir="$1"
+	local schedule_out="$2"
+	local wrapper_out="$3"
+	local config_file="${install_dir}/vpn-monitor.conf"
+	local _schedule="*/1 * * * *"
+	local _wrapper=1
+
+	if [[ -f "$config_file" ]]; then
+		local config_schedule val
+		if config_schedule=$(parse_cron_schedule_from_config "$config_file"); then
+			_schedule="$config_schedule"
+		fi
+		if val=$(get_config_var_value_from_file "$config_file" "ENABLE_MONITOR_WRAPPER" 2>/dev/null); then
+			[[ "$val" == "1" ]] || _wrapper=0
+		fi
+	fi
+
+	printf -v "$schedule_out" '%s' "$_schedule"
+	printf -v "$wrapper_out" '%s' "$_wrapper"
+	return 0
+}
+
+# Format user-facing install summary (wrapper vs direct schedule)
+#
+# Arguments:
+#   $1: cron schedule (five-field string)
+#   $2: wrapper flag (0 or 1)
+#
+# Output:
+#   Prints "wrapper (sub-minute)" or "direct (SCHEDULE)"
+format_vpn_monitor_cron_install_summary() {
+	local schedule="$1"
+	local enable_wrapper="$2"
+
+	if [[ "$enable_wrapper" == "1" ]]; then
+		echo "wrapper (sub-minute)"
+	else
+		echo "direct (${schedule})"
+	fi
+}
+
 # Check if vpn-monitor cron entry exists
 #
 # Returns:
@@ -82,36 +133,23 @@ remove_vpn_monitor_cron() {
 #
 # Arguments:
 #   $1: install directory (e.g. /data/vpn-monitor)
+#   $2: (optional) variable name to receive user-facing install summary for log_info
 #
 # Returns:
 #   0: Cron installed or updated
 #   1: install_dir missing or invalid
 install_vpn_monitor_cron() {
 	local install_dir="$1"
-	local config_file cron_schedule enable_wrapper=0 cron_entry script_name
+	local summary_out="${2:-}"
+	local cron_schedule enable_wrapper cron_entry script_name
 
 	if [[ -z "$install_dir" ]] || [[ ! -d "$install_dir" ]]; then
 		log_message "ERROR" "SYSTEM" "install_vpn_monitor_cron: invalid install directory"
 		return 1
 	fi
 
-	config_file="${install_dir}/vpn-monitor.conf"
 	script_name="vpn-monitor.sh"
-	cron_schedule="*/1 * * * *"
-
-	if [[ -f "$config_file" ]]; then
-		local config_schedule val
-		if config_schedule=$(parse_cron_schedule_from_config "$config_file"); then
-			cron_schedule="$config_schedule"
-		fi
-		if val=$(get_config_var_value_from_file "$config_file" "ENABLE_MONITOR_WRAPPER" 2>/dev/null); then
-			[[ "$val" == "1" ]] && enable_wrapper=1
-		else
-			enable_wrapper=1
-		fi
-	else
-		enable_wrapper=1
-	fi
+	resolve_vpn_monitor_cron_settings "$install_dir" cron_schedule enable_wrapper
 
 	if [[ $enable_wrapper -eq 1 ]]; then
 		cron_entry="${cron_schedule} ${install_dir}/vpn-monitor-wrapper.sh >> ${install_dir}/logs/cron.log 2>&1 &"
@@ -130,6 +168,10 @@ install_vpn_monitor_cron() {
 		log_message "INFO" "SYSTEM" "Cron job installed: wrapper (sub-minute execution)"
 	else
 		log_message "INFO" "SYSTEM" "Cron job installed: direct (${cron_schedule})"
+	fi
+
+	if [[ -n "$summary_out" ]]; then
+		printf -v "$summary_out" '%s' "$(format_vpn_monitor_cron_install_summary "$cron_schedule" "$enable_wrapper")"
 	fi
 	return 0
 }

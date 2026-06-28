@@ -32,6 +32,14 @@ UNINSTALL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "${UNINSTALL_SCRIPT_DIR}/lib/common.sh"
 
+# Cron removal (shared with install.sh and vpn-monitor-control.sh)
+# shellcheck source=lib/logging.sh
+source "${UNINSTALL_SCRIPT_DIR}/lib/logging.sh"
+# shellcheck source=lib/config/config_loading.sh
+source "${UNINSTALL_SCRIPT_DIR}/lib/config/config_loading.sh"
+# shellcheck source=lib/control/cron_control.sh
+source "${UNINSTALL_SCRIPT_DIR}/lib/control/cron_control.sh"
+
 # Validate installation directory path is safe
 #
 # Validates that INSTALL_DIR is exactly the expected path to prevent
@@ -101,7 +109,7 @@ check_installation() {
 # Remove cron entry
 #
 # Removes the VPN monitor cron job entry from the root crontab.
-# Filters out lines containing "vpn-monitor" and updates crontab.
+# Delegates to lib/control/cron_control.sh; verifies removal for uninstall safety.
 #
 # Returns:
 #   0: Cron entry removed successfully (or didn't exist)
@@ -112,27 +120,8 @@ check_installation() {
 remove_cron() {
 	log_info "Removing cron job..."
 
-	# Check if cron entry exists (matches both vpn-monitor.sh and vpn-monitor-wrapper.sh)
-	local crontab_content
-	crontab_content=$(crontab -l 2>/dev/null || echo "")
-	if echo "$crontab_content" | grep -q "vpn-monitor"; then
-		# Remove cron entry - only update crontab if there are other entries
-		local filtered_content
-		filtered_content=$(echo "$crontab_content" | grep -v "vpn-monitor")
-		if [ -n "$filtered_content" ]; then
-			if ! echo "$filtered_content" | crontab - 2>/dev/null; then
-				log_error "Failed to update crontab"
-				return 1
-			fi
-		else
-			# No other entries, clear crontab entirely
-			if ! crontab -r 2>/dev/null; then
-				log_warn "Failed to clear crontab (may not have permission or crontab already empty)"
-				# Don't fail if crontab is already empty - verification will catch if cron still exists
-			fi
-		fi
-
-		# Verify removal
+	if has_vpn_monitor_cron_entry; then
+		remove_vpn_monitor_cron
 		if crontab -l 2>/dev/null | grep -q "vpn-monitor"; then
 			log_error "Failed to remove cron job - verification check failed"
 			return 1
