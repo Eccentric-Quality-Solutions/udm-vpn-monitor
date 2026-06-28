@@ -1,6 +1,6 @@
 # Bash Coding Guide
 
-**Date:** 2026-01-19  
+**Date:** 2026-06-28  
 **Purpose:** Project-specific guide to coding in Bash for the UDM VPN Monitor codebase
 
 ## Purpose and Scope
@@ -19,9 +19,10 @@ This guide focuses on:
 - A complete guide to all Bash features
 
 **For exhaustive Bash documentation**, see the [References](#references) section, which includes:
-- GNU Bash Manual
-- Bash Guide
-- Advanced Bash Scripting Guide
+- [GNU Bash Manual](https://www.gnu.org/software/bash/manual/) (authoritative)
+- [Chet Ramey's official Bash FAQ](https://tiswww.case.edu/php/chet/bash/FAQ.html) (authoritative)
+- [Google Shell Style Guide](https://google.github.io/styleguide/shellguide.html) (widely adopted style reference)
+- [Greg's Bash Guide](https://mywiki.wooledge.org/BashGuide) and [Bash Pitfalls](https://mywiki.wooledge.org/BashPitfalls) (community-maintained; verify against the manual when in doubt)
 
 **This guide complements existing documentation:**
 - `CODE_PATTERNS.md` - Detailed project-specific patterns and codebase examples
@@ -119,9 +120,11 @@ set -euo pipefail
 ```
 
 **What each option does:**
-- `set -e` (errexit): Exit immediately if a command exits with a non-zero status
+- `set -e` (errexit): Exit immediately if a command exits with a non-zero status (with many exceptions; see pitfalls below)
 - `set -u` (nounset): Treat unset variables as an error and exit immediately
-- `set -o pipefail`: Pipeline returns the exit status of the last command to exit with a non-zero status
+- `set -o pipefail`: Pipeline returns the exit status of the first command in the pipeline to exit with a non-zero status (not just the last command)
+
+**Caveats:** Errexit rules are complex and context-dependent. [BashFAQ/105](https://mywiki.wooledge.org/BashFAQ/105) documents cases where `-e` does not behave intuitively. This project still enables strict mode in main scripts, but library code must not rely on `-e` implicitly — handle failures explicitly. Global `pipefail` can make early-exiting pipeline stages (e.g. `grep -q`) report failure via `SIGPIPE`; see Pitfall 3 below.
 
 **Example:**
 ```bash
@@ -131,7 +134,7 @@ set -euo pipefail
 
 **Important Notes:**
 - **Main scripts**: Always use `set -euo pipefail`
-- **Library modules**: Handle errors explicitly rather than relying on `set -e` (modules may be sourced by scripts with different error handling)
+- **Library modules**: Use a `.sh` extension and do not mark them executable ([Google Shell Style Guide](https://google.github.io/styleguide/shellguide.html)); handle errors explicitly rather than relying on `set -e`
 - **When commands are expected to fail**: Prefer using `if ! command` or `command || true` instead of temporarily disabling strict mode:
   ```bash
   # ✅ GOOD: Use if ! command pattern
@@ -176,51 +179,59 @@ process_item() {
 
 **Important:** `set -e` doesn't work in all contexts. Understanding these limitations helps avoid unexpected behavior.
 
-**Pitfall 1: `set -e` is disabled in certain contexts**
+**Pitfall 1: `set -e` is disabled in some contexts, silently ignored in others**
 
-`set -e` is automatically disabled in:
-- `if` statements (the condition itself)
-- `while` loops (the condition itself)
-- Command substitutions `$()` (unless the command substitution is in a context where `set -e` applies)
+Errexit is **disabled** for commands in `if`/`while`/`until` tests, `&&`/`||` lists (except the last command), and negated commands (`!`). That is why `if grep -q pattern file; then` is safe even when grep returns 1.
+
+Errexit is **cleared inside command-substitution subshells** (in non-POSIX bash mode). Failures there often do **not** exit the parent script — the danger is continuing with empty or stale output. Bash 4.4+ can restore inherited errexit with `shopt -s inherit_errexit`, but this project does not enable it by default.
 
 ```bash
 set -e
 
-# ⚠️ PROBLEMATIC: Command substitution failure can cause script exit
-result=$(check_condition)  # Script exits if check_condition returns non-zero
-# This line never executes if check_condition fails
+# ⚠️ PROBLEMATIC: Failure is silent — script keeps running with empty/wrong result
+result=$(check_condition)  # Non-zero exit is ignored inside $(...)
+echo "result=$result"      # Still runs; may proceed with bad data
 
-# ✅ GOOD: Use || true to handle expected failures in command substitution
-result=$(check_condition 2>/dev/null || true)
-if [[ -z "$result" ]]; then
+# ✅ GOOD: Check exit status explicitly when the result matters
+if ! result=$(check_condition 2>&1); then
     handle_error
 fi
+
+# ✅ GOOD: Use if/grep directly when "not found" is a normal outcome
+if grep -q "pattern" "$file"; then
+    echo "Found"
+fi
 ```
 
-**Pitfall 2: Functions or commands that return non-zero intentionally**
+**Pitfall 2: `local var=$(cmd)` masks failures; plain assignment does not**
 
-Functions or commands that return non-zero for valid reasons (e.g., "not found" is a valid result) can cause unexpected script termination:
+When `set -e` is enabled, combining `local` with command substitution discards the inner command's exit status:
 
 ```bash
 set -e
 
-# ❌ BAD: Script exits if grep finds nothing (even though that's a valid result)
-output=$(grep "pattern" "$file")  # Script exits if pattern not found
-if item_exists; then  # Script exits if item doesn't exist
-    echo "Found"
-fi
+# ❌ BAD: cd failure does not trigger errexit (local returns 0)
+f() { local dir=$(cd /no/such/path && pwd); }
 
-# ✅ GOOD: Use || true when failure is acceptable
-output=$(grep "pattern" "$file" 2>/dev/null || true)
-if item_exists || true; then
-    echo "Found"
-fi
+# ✅ GOOD: Separate declaration from assignment
+g() {
+    local dir
+    dir=$(cd /no/such/path && pwd)  # Non-zero exit triggers errexit
+}
 ```
 
+**Pitfall 3: Global `pipefail` and early-exiting pipeline stages**
+
+With `pipefail`, a command that stops reading early (e.g. `grep -q`, `head -n1`) can cause an upstream writer to get `SIGPIPE` and fail the whole pipeline — even when the logic succeeded. This is a known trade-off ([Bash Pitfalls #60.2](https://mywiki.wooledge.org/BashPitfalls#toc60)). Prefer testing the pipeline result explicitly when early exit is intentional, or disable `pipefail` around that pipeline.
+
+**Pitfall 4: Functions used as conditionals disable errexit inside the function**
+
+If a function is invoked as the condition of `if`, `while`, or in `&&`/`||` lists, errexit may not apply to commands inside that function — behavior can differ from calling the same function as a standalone statement ([BashFAQ/105](https://mywiki.wooledge.org/BashFAQ/105)).
+
 **Best Practices:**
-- Use `if ! command` for commands where you want to handle failure explicitly
-- Use `command || true` in command substitutions when failure is acceptable
-- Use explicit exit code checking (`exit_code=$?`) when you need to distinguish between different failure modes
+- Use `if ! command` or `if command; then` for commands where failure is an expected branch
+- Do not assume `$(...)` failures propagate under `set -e`; check exit status when the result matters
+- Use `command || rc=$?` to capture exit codes without triggering errexit
 - Avoid temporarily disabling `set -e` unless absolutely necessary (prefer the patterns above)
 
 ### Error Handling Decision Tree
@@ -1140,29 +1151,33 @@ Always quote command substitutions to prevent word splitting:
 local output="$(command "$arg")"
 local pid="$(cat "$pidfile")"
 local lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+```
 
 ### Defensive Command Substitution
 
-Use `|| true` when command substitution failure is acceptable:
+Because errexit is cleared inside `$(...)` subshells, a failing command often leaves you with empty output while the script continues. Use explicit checks when failure matters; use `|| true` only when you intentionally want to ignore failure **and** empty output is acceptable:
 
 ```bash
-# ✅ GOOD: Use || true when failure is acceptable
+# ✅ GOOD: Ignore "not found" when empty output is acceptable
 output=$(grep -F "pattern" "$file" 2>/dev/null || true)
-command_output=$(timeout 5 some_command 2>/dev/null || true)
-func_def=$(declare -f some_function 2>/dev/null || true)
 
-# ❌ BAD: Command substitution failure causes script failure (if set -e is enabled)
+# ✅ GOOD: Check exit status when failure must be handled
+if ! forward_output=$(echo "$xfrm_output" | grep -F "dst ${peer_ip}" 2>/dev/null); then
+    log_message "DEBUG" "SYSTEM" "No xfrm state for peer ${peer_ip}"
+fi
+
+# ❌ BAD: Assuming $(...) failure stops the script under set -e
 forward_output=$(echo "$xfrm_output" | grep -F "dst ${peer_ip}" 2>/dev/null)
-# If grep finds nothing, exit code is 1, which can cause script failure
+# grep exit 1 is ignored inside $(...); script continues with empty forward_output
 ```
 
 **When to Use `|| true`:**
-- `grep` commands that may not find matches (exit code 1 is normal)
-- Commands where failure is expected and handled gracefully
+- `grep`/`command` in `$(...)` when empty output on failure is acceptable
+- Background `wait`/`kill` when the process may already have exited
 
 **When NOT to Use `|| true`:**
-- Commands where failure indicates a real problem
-- Commands that should fail the script if they fail
+- When you need to distinguish failure from success — use `if ! var=$(cmd); then` instead
+- Commands where failure indicates a real problem that should stop or branch explicitly
 
 **Examples:**
 ```bash
@@ -1417,9 +1432,10 @@ fi
 ```
 
 **Key Points:**
-- `[[ ]]` supports pattern matching, regex, and more operators
-- **Always quote variables in `[[ ]]` tests** (prevents issues with `set -u`, spaces, and ensures consistency)
-- Use `[ ]` only for POSIX compatibility when needed
+- `[[ ]]` supports pattern matching, regex (`=~`), and more operators than `[ ]`
+- **Quote variables on the left side** of `[[ ]]` tests; for `=~`, leave the regex unquoted on the right (per [Google Shell Style Guide](https://google.github.io/styleguide/shellguide.html))
+- Use `[ ]` only for POSIX `sh` compatibility when needed
+- Prefer `(( ))` for numeric comparisons; `<` and `>` inside `[[ ]]` are lexicographic, not numeric
 
 ### Case Statements
 
@@ -1558,58 +1574,65 @@ done
 
 ### Breaking Out of Nested Loops
 
-When you need to exit multiple nested loops, use a flag variable:
+Bash supports `break N` to exit N enclosing loops (documented in `help break` and the [GNU Bash Manual](https://www.gnu.org/software/bash/manual/html_node/Loop-Builtins.html)):
 
 ```bash
-# ✅ GOOD: Use flag variable to break out of nested loops
-found=0
+# ✅ GOOD: break 2 exits both inner and outer loop
 for outer_item in "${outer_array[@]}"; do
     for inner_item in "${inner_array[@]}"; do
         if check_match "$outer_item" "$inner_item"; then
-            found=1
-            break  # Exit inner loop
+            break 2
         fi
     done
-    
-    # Check flag after inner loop
-    if [[ $found -eq 1 ]]; then
-        break  # Exit outer loop
-    fi
 done
-
-# ✅ GOOD: Using function return to exit nested loops
-search_nested() {
-    for outer in "${outer_array[@]}"; do
-        for inner in "${inner_array[@]}"; do
-            if check_match "$outer" "$inner"; then
-                return 0  # Exit function (and all loops)
-            fi
-        done
-    done
-    return 1  # Not found
-}
-
-# Usage:
-if search_nested; then
-    echo "Match found"
-fi
 ```
 
-**Key Points:**
-- Bash doesn't support labeled breaks (like `break 2` in some languages)
-- Use flag variables to break out of nested loops
-- Check the flag after each inner loop completes
-- Consider using functions to encapsulate nested loops (can use `return` to exit)
-- Use descriptive flag names (`found`, `match_found`, `done`, etc.)
+**Pitfall: `break` does not cross subshell boundaries.** Pipelines run the right-hand side in a subshell, so `cmd | while read -r line; do break; done` only breaks the subshell loop — not an outer loop in the parent shell ([Bash Pitfalls #1](https://mywiki.wooledge.org/BashPitfalls), [BashFAQ/105](https://mywiki.wooledge.org/BashFAQ/105)). Use process substitution instead:
 
-**When to Use Each Pattern:**
-- **Flag variable**: When you need to break out of 2-3 levels of nesting
-- **Function return**: When nesting is deep or the logic is complex enough to warrant a function
-- **Restructure**: Consider if nested loops can be simplified or if a function would be clearer
+```bash
+# ❌ BAD: while loop runs in subshell — break/exit cannot reach outer scope
+find "$dir" -type f | while read -r file; do
+    process "$file" && break
+done
+
+# ✅ GOOD: Process substitution keeps the loop in the current shell
+while IFS= read -r file; do
+    process "$file" && break
+done < <(find "$dir" -type f)
+# For filenames with arbitrary bytes, use find -exec or mapfile with NUL delimiters
+```
+
+Alternative patterns when subshells are unavoidable:
+- Use a flag variable checked after the inner loop
+- Encapsulate nested loops in a function and `return 0` to exit all levels
 
 ---
 
 ## File Operations
+
+### Do Not Parse `ls`, `find`, or Command Output as Filename Lists
+
+Never build filename lists from `ls`, `find`, or other command output inside `for` loops — word splitting, globbing, and newline handling break on real-world paths ([Bash Pitfalls #1](https://mywiki.wooledge.org/BashPitfalls#toc1), [Google Shell Style Guide — Wildcard Expansion](https://google.github.io/styleguide/shellguide.html)):
+
+```bash
+# ❌ BAD: Fragile — breaks on spaces, globs, newlines, leading dashes
+for f in $(ls *.mp3); do
+    process "$f"
+done
+
+for f in $(find . -type f); do
+    process "$f"
+done
+
+# ✅ GOOD: Use globs (with nullglob or existence check)
+shopt -s nullglob
+for f in ./*.mp3; do
+    process "$f"
+done
+
+# ✅ GOOD: find -exec (POSIX-portable) or -print0 | while read -d ''
+find . -type f -exec process {} +
+```
 
 ### Reading Files Line by Line
 
@@ -2222,8 +2245,8 @@ shfmt -d *.sh
 shfmt -w script.sh
 ```
 
-**Formatting Standards:**
-- Use **tabs** for indentation (enforced by shfmt)
+**Formatting Standards** (aligned with [Google Shell Style Guide](https://google.github.io/styleguide/shellguide.html) and GitLab's shell scripting guide):
+- Use **tabs** for indentation (enforced by `shfmt` in this project)
 - Tab width: 8 spaces (default)
 
 ---
@@ -2325,16 +2348,19 @@ fi
 
 ---
 
-## Common Mistakes
+## Common Pitfalls and Gotchas
 
 This section lists common mistakes not covered in detail elsewhere. For detailed explanations, see the referenced sections.
 
-**Common Mistakes Covered in Other Sections:**
+**Common Pitfalls Covered in Other Sections:**
 - **Array Iteration Mistakes**: See "Regular Arrays" and "Common Array Mistakes" sections
 - **Unquoted Variable Expansions**: See "Always Quote Variables" section
+- **Command Substitution and errexit**: See "Common Strict Mode Pitfalls" and "Defensive Command Substitution"
 - **Command Substitution Trailing Newlines**: See "Trailing Newline Pitfall" in Command Substitution section
 - **Strict Mode Pitfalls**: See "Common Strict Mode Pitfalls" in Error Handling and Strict Mode section
 - **Associative Array Declaration**: See "Associative Arrays" section
+- **Pipeline Subshells and `break`**: See "Breaking Out of Nested Loops" in Control Flow section
+- **Parsing `ls`/`find` output**: See "Do Not Parse ls, find, or Command Output as Filename Lists" in File Operations section
 - **Temporary File Security**: See "Temporary File Creation" in File Operations section
 - **Module Sourcing**: See "Module Sourcing" section
 - **Script Directory Setup**: See "Directory Setup" in Script Structure and Setup section
@@ -2372,17 +2398,20 @@ done
 
 **Before submitting code, check:**
 - [ ] Arrays use `[@]` not `[*]` for iteration
-- [ ] All variables are quoted
-- [ ] Command substitutions handle failures (`|| true` or `if` statement)
+- [ ] All variables are quoted (regex RHS of `=~` is the usual exception)
+- [ ] Command substitutions check exit status when failure matters (`if ! var=$(cmd); then`)
 - [ ] Function return values are checked
 - [ ] Loop variables are declared as `local` in functions
 - [ ] Associative arrays are pre-declared
+- [ ] No `for f in $(ls …)` or `for f in $(find …)` filename loops
+- [ ] No `cmd | while read` when loop body must affect parent scope
 - [ ] Temporary files use `mktemp` (not hardcoded paths)
 - [ ] Modules are idempotent (safe to source multiple times)
 - [ ] Script directory uses `BASH_SOURCE[0]` not `$0`
 - [ ] Commands are checked for availability before use
 - [ ] Linux-specific syntax is used (not BSD/macOS)
 - [ ] Network commands use timeout
+- [ ] `shellcheck` passes (or disables are documented)
 
 ---
 
@@ -2584,7 +2613,7 @@ Use TODO and FIXME comments to track future improvements and known issues:
 
 ## Module Sourcing
 
-Source modules safely with proper path resolution, error handling, and idempotency:
+Library files use a `.sh` extension and are sourced, not executed directly ([Google Shell Style Guide](https://google.github.io/styleguide/shellguide.html)). Source modules safely with proper path resolution, error handling, and idempotency:
 
 ```bash
 # ✅ GOOD: Safe module sourcing with path resolution
@@ -2723,32 +2752,40 @@ socket="${sock_dir}/ctrl.sock"
 
 ## References
 
-### Official Documentation
+### Authoritative Documentation
 
-- **GNU Bash Manual**: https://www.gnu.org/software/bash/manual/
-- **Bash Guide**: https://mywiki.wooledge.org/BashGuide
-- **Advanced Bash Scripting Guide**: https://tldp.org/LDP/abs/html/
+- **[GNU Bash Manual](https://www.gnu.org/software/bash/manual/)** — Official language reference (prefer over third-party summaries when behavior is unclear)
+- **[Chet Ramey's Bash FAQ](https://tiswww.case.edu/php/chet/bash/FAQ.html)** — Official FAQ from Bash's maintainer
+- **[POSIX Shell Command Language](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html)** — Relevant when portability to `/bin/sh` matters (this project targets bash on UDM only)
 
-### Tools and Resources
+### Widely Adopted Style and Review Guides
 
-- **ShellCheck**: https://www.shellcheck.net/ - Static analysis tool
-- **shfmt**: https://github.com/mvdan/sh - Shell script formatter
-- **BATS**: https://github.com/bats-core/bats-core - Testing framework
+- **[Google Shell Style Guide](https://google.github.io/styleguide/shellguide.html)** — Quoting, `[[ ]]`, naming, function layout; this project's `shfmt` settings align with it
+- **[GitLab Shell Scripting Guide](https://docs.gitlab.com/development/shell_scripting_guide/)** — ShellCheck/shfmt in CI; references Google style
+- **[ShellCheck](https://www.shellcheck.net/)** — Static analysis; [wiki check descriptions](https://github.com/koalaman/shellcheck/wiki/Checks) document each SC code
+
+### Community Resources (verify against the manual)
+
+Greg's Wiki ([BashGuide](https://mywiki.wooledge.org/BashGuide), [Bash Pitfalls](https://mywiki.wooledge.org/BashPitfalls), [BashFAQ/105 — errexit](https://mywiki.wooledge.org/BashFAQ/105)) is widely cited in `#bash` and ShellCheck discussions. The wiki itself recommends the man/info pages as authoritative when in doubt.
+
+- **[Advanced Bash Scripting Guide](https://tldp.org/LDP/abs/html/)** — Older tutorial; useful for examples but not authoritative for edge-case semantics
+
+### Tools
+
+- **ShellCheck**: https://www.shellcheck.net/
+- **shfmt**: https://github.com/mvdan/sh — Shell script formatter (Google style preset)
+- **BATS**: https://github.com/bats-core/bats-core — Testing framework
 
 ### Project-Specific Documentation
 
-- **CODE_PATTERNS.md** - Detailed patterns used in this codebase
-- **DEVELOPER.md** - Development workflow and tooling
-- **ARCHITECTURE.md** - System architecture and design decisions
-- **TEST_PATTERNS.md** - Testing patterns and best practices
+- **CODE_PATTERNS.md** — Detailed patterns used in this codebase
+- **DEVELOPER.md** — Development workflow and tooling
+- **ARCHITECTURE.md** — System architecture and design decisions
+- **TEST_PATTERNS.md** — Testing patterns and best practices
 
-### Best Practices Sources
+### How This Guide Was Curated
 
-The practices in this guide are based on:
-- GNU Bash Manual official documentation
-- ShellCheck recommendations and wiki
-- Community best practices from reputable sources
-- Patterns established in the UDM VPN Monitor codebase
+Practices here were cross-checked against the GNU Bash Manual, Chet Ramey's FAQ, the Google Shell Style Guide, ShellCheck's documented checks, Greg's Bash Pitfalls/BashFAQ/105 (community), and patterns established in the UDM VPN Monitor codebase. Where community guides disagree (notably around global `set -euo pipefail`), this guide documents the project's choice and the known caveats.
 
 ---
 
@@ -2757,12 +2794,12 @@ The practices in this guide are based on:
 This guide covers essential Bash coding practices:
 
 1. **Script Structure**: Use shebang, headers, and proper directory setup
-2. **Error Handling**: Enable strict mode in main scripts, handle errors explicitly in libraries
+2. **Error Handling**: Enable strict mode in main scripts (with documented errexit caveats), handle errors explicitly in libraries
 3. **Variables**: Always quote, use local in functions, follow naming conventions
 4. **Functions**: Document comprehensively, return error codes, validate parameters
 5. **Arrays**: Use arrays for lists, namerefs for passing by reference, pre-declare arrays populated by sourced files
 6. **Strings**: Trim and normalize input, use proper pattern matching
-7. **Command Substitution**: Use `$()` syntax, quote results, handle failures appropriately
+7. **Command Substitution**: Use `$()` syntax, quote results, check exit status when failures must not be silent
 8. **Arithmetic**: Use safe timestamp arithmetic, validate and clamp results
 9. **Control Flow**: Use `[[ ]]` for tests, case statements for multiple comparisons
 10. **Files**: Use atomic writes, check readability, handle missing newlines

@@ -6,42 +6,26 @@ This document tracks bugs and potential issues that have been reviewed and deter
 
 ---
 
-## Race Condition Between `check_rate_limit()` and `record_restart()`
+## Fallback Lockfile Stale Removal Race
 
-**Location**: `lib/state/global_state.sh:178-285` and `lib/state/global_state.sh:339-347`
+**Location**: `lib/lockfile.sh:462-508` (`acquire_lockfile_fallback`)
 
-**Issue**: `check_rate_limit()` reads `RESTART_COUNT_FILE` while `record_restart()` modifies it, potentially causing a race condition.
+**Issue**: On the fallback path (used only when `flock` is unavailable), there is a window between removing a stale lockfile and retrying atomic creation where another process could acquire the lock.
 
-**Why Acceptable**:
-- Very low likelihood (< 0.1% in normal operation) - lockfile mechanism prevents concurrent execution
-- Both functions run sequentially in the same process after lockfile is acquired
-- Limited impact: worst case is one extra restart per hour if race occurs exactly at limit boundary
-- Self-correcting: subsequent executions see correct count
+**Not applicable on primary path**: `acquire_lockfile_flock` reclaims stale locks via `flock` on the existing inode (lines 373-387) and does not remove the path after a failed `flock` (lines 396-400). Concurrent stale-lock contention on the flock path was fixed; see regression tests in `tests/test_lockfile.sh` (`acquire_lockfile_flock: loser must not unlink the winner's lockfile path`, `concurrent stale-lock contenders allow only one winner`).
 
-**Date Accepted**: 2025-12-31
+**Why Acceptable (fallback only)**:
+- Fallback is used only when `flock` is unavailable (rare on UDM OS 4.3+)
+- If Process B legitimately acquires the lock after Process A removes a stale lockfile, Process A exiting is the correct response
+- No actual negative impact — one process exits (as designed), the other continues normally
 
----
-
-## Race Condition in Lockfile Stale Removal
-
-**Location**: `lib/lockfile.sh:396-400` (primary flock path) and `lib/lockfile.sh:462-476`, `492-494` (fallback retry)
-
-**Issue**: Window between removing stale lockfile and retrying flock where another process could acquire the lock.
-
-**Why Acceptable**:
-- This is intentional and correct behavior, not a bug
-- Code comment (lines 397-399) explicitly acknowledges this scenario on the flock path
-- If Process B legitimately acquires lock after Process A removes stale lockfile, Process A exiting is the correct response
-- Non-blocking flock design intentionally prioritizes avoiding concurrent execution over waiting
-- No actual negative impact - one process exits (as designed), other process continues normally
-
-**Date Accepted**: 2025-12-31
+**Date Accepted**: 2025-12-31 (updated 2026-06-28 — primary flock path no longer applies)
 
 ---
 
 ## Lockfile Write Race Condition
 
-**Location**: `lib/lockfile.sh:302-314`, `373-379` (primary flock path); `lib/lockfile.sh:452-494` (fallback)
+**Location**: `lib/lockfile.sh:302-314`, `373-379` (primary flock path); `lib/lockfile.sh:452-508` (fallback)
 
 **Issue**: On the fallback path, atomic file creation has TOCTOU windows between check, read, and create. The primary flock path opens the lockfile with `exec 9<>"$LOCKFILE"` without truncating until after `flock -n` succeeds (lines 373-379), which mitigates the older pre-flock truncation race.
 
@@ -57,7 +41,7 @@ This document tracks bugs and potential issues that have been reviewed and deter
 
 ## Lockfile Acquisition Timing Window (Issue #18)
 
-**Location**: `vpn-monitor.sh:617-618` and `lib/lockfile.sh:649-695`
+**Location**: `vpn-monitor.sh:106-153` (top-level init before lock) and `vpn-monitor.sh:628`; `lib/lockfile.sh:649-695` (`acquire_lockfile`)
 
 **Issue**: Lockfile acquisition happens after script initialization (library sourcing, directory creation, config loading), creating a timing window where multiple instances can start before the lockfile is acquired. This can cause "Another instance is already running" warnings when cron triggers before the previous instance completes.
 
@@ -75,3 +59,11 @@ This document tracks bugs and potential issues that have been reviewed and deter
 **Date Accepted**: 2026-01-13
 
 ---
+
+## Removed: Rate Limit Read/Write Race
+
+**Previously**: Race between `check_rate_limit()` reading and `record_restart()` modifying `RESTART_COUNT_FILE`.
+
+**Status**: Mitigated — no longer listed as an acceptable risk. `record_restart()` uses append-only writes (no read-modify-write); `compact_restart_count_file()` runs once per run at startup under the main lock; `check_rate_limit()` and `record_restart()` run sequentially in the same process after lock acquisition. Same pattern applies to Tier 2 rate limiting (`record_tier2_recovery()` / `check_tier2_rate_limit()`).
+
+**Date Removed**: 2026-06-28

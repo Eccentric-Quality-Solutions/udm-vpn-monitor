@@ -72,8 +72,8 @@ This document describes the architecture and design of the UDM VPN Monitor syste
 │  │  • last_status_log_<location>_<peer_ip>  # Per-location │  │
 │  │  • recovery_method_<location>_<peer_ip>  # Per-location│  │
 │  │  • connection_name_<peer_ip>  # Per-peer (no location)│  │
-│  │  • cooldown_until  # System-wide                        │  │
-│  │  • restart_count  # System-wide                          │  │
+│  │  • restart_count  # System-wide (Tier 3 rate limiting)   │  │
+│  │  • tier2_recovery_count  # System-wide (Tier 2 rate limiting)│  │
 │  │  • network_partition_state  # System-wide               │  │
 │  │  • system_wide_failure_state  # System-wide            │  │
 │  │  • system_wide_failure_timestamp  # System-wide        │  │
@@ -135,8 +135,7 @@ graph TB
 
     subgraph "Safety Mechanisms"
         Lockfile[Lockfile Protection]
-        Cooldown[Cooldown Period]
-        RateLimit[Rate Limiting]
+        RateLimit[Rate Limiting<br/>Tier 2 & Tier 3]
         Validation[Input Validation]
         ResourceThrottle[Resource Throttling]
     end
@@ -162,11 +161,9 @@ graph TB
     RecoveryLib --> Tier1
     Tier1 -->|Threshold| Tier2
     Tier2 -->|Threshold| Tier3
-    Tier3 --> Cooldown
     Tier2 --> RateLimit
     Tier3 --> RateLimit
 
-    StateLib --> Cooldown
     StateLib --> RateLimit
     CommonLib --> Validation
     ResourcesLib --> ResourceThrottle
@@ -196,13 +193,20 @@ flowchart TD
     ResourceCheck -->|Constrained| Exit6([Exit: Resources<br/>Constrained])
     ResourceCheck -->|OK| NetworkPartitionCheck{Network<br/>Partition<br/>Check<br/>Enabled?}
     NetworkPartitionCheck -->|Yes| CheckPartition[Check Network<br/>Partition Status]
-    NetworkPartitionCheck -->|No| CooldownCheck{In<br/>Cooldown?}
+    NetworkPartitionCheck -->|No| CronCheck[Check Cron<br/>Persistence<br/>Once Per Run]
     CheckPartition -->|Partitioned| UpdatePartitionState[Update Partition State<br/>Continue Execution]
     CheckPartition -->|Healthy| UpdatePartitionState
-    UpdatePartitionState --> CooldownCheck{In<br/>Cooldown?}
-    CooldownCheck -->|Yes| Exit2([Exit: In<br/>cooldown period])
-    CooldownCheck -->|No| CronCheck[Check Cron<br/>Persistence<br/>Once Per Run]
-    CronCheck --> ForEachLocation[For Each Location]
+    UpdatePartitionState --> CronCheck
+    CronCheck --> CollectPriorFailures[Read Prior-Cycle<br/>Failure Counts per Location]
+    CollectPriorFailures --> SystemWideFailureCheck{System-Wide<br/>Failure<br/>Detection<br/>Enabled?}
+    SystemWideFailureCheck -->|No| ForEachLocation[For Each Location<br/>monitor_location]
+    SystemWideFailureCheck -->|Yes| CheckSystemWideFailure[Compare Failing %<br/>to Threshold]
+    CheckSystemWideFailure -->|Threshold Exceeded| SetSystemWideFailureState[Set System-Wide<br/>Failure State & Timestamp]
+    CheckSystemWideFailure -->|Below Threshold| ClearSystemWideFailureState{Previous<br/>System-Wide<br/>Failure?}
+    ClearSystemWideFailureState -->|Yes| ClearSystemWideState[Clear System-Wide<br/>Failure State<br/>Clear Coordinator]
+    ClearSystemWideFailureState -->|No| ForEachLocation
+    SetSystemWideFailureState --> ForEachLocation
+    ClearSystemWideState --> ForEachLocation
 
     ForEachLocation --> CheckVPN[check_vpn_status]
 
@@ -237,42 +241,34 @@ flowchart TD
 
     RateLimitCheck -->|No| Exit4([Exit: Rate<br/>Limited])
     RateLimitCheck -->|Yes| Tier3[Full Restart]
-    Tier3 --> RecordRestart[Record Restart]
-    RecordRestart --> SetCooldown[Set Cooldown Period]
+    Tier3 --> RecordRestart[Record Restart<br/>Timestamp for Rate Limit]
 
     ResetCounter --> NextLocation
-    SetCooldown --> NextLocation
+    RecordRestart --> NextLocation
     Exit4 --> NextLocation
 
     NextLocation --> MoreLocations{More<br/>Locations?}
     MoreLocations -->|Yes| ForEachLocation
-    MoreLocations -->|No| SystemWideFailureCheck{System-Wide<br/>Failure<br/>Detection<br/>Enabled?}
-    SystemWideFailureCheck -->|Yes| CheckSystemWideFailure[Check System-Wide<br/>Failure Status<br/>Compare Failure Counts<br/>to Threshold]
-    SystemWideFailureCheck -->|No| ReleaseLock[Release Lockfile]
-    CheckSystemWideFailure -->|System-Wide<br/>Failure<br/>Detected| SetSystemWideFailureState[Set System-Wide<br/>Failure State<br/>Designate Coordinator]
-    CheckSystemWideFailure -->|No System-Wide<br/>Failure| ClearSystemWideFailureState{Previous<br/>System-Wide<br/>Failure?}
-    ClearSystemWideFailureState -->|Yes| ClearSystemWideState[Clear System-Wide<br/>Failure State<br/>Clear Coordinator]
-    ClearSystemWideFailureState -->|No| ReleaseLock
-    SetSystemWideFailureState --> ReleaseLock
-    ClearSystemWideState --> ReleaseLock
+    MoreLocations -->|No| ReleaseLock[Release Lockfile]
     ReleaseLock --> End([End])
 
     Exit1 --> End
-    Exit2 --> End
     Exit6 --> End
 ```
 
 **Note**:
-- **Execution Order**: The actual execution flow includes more steps than shown in simplified form above. Full order: Directory creation (state, logs) → Log file initialization → Config loading → Config validation → Lockfile acquisition → Initialize monitor (parse args, log start, init state) → State validation → Resource check → Network partition check → Cooldown check → Cron persistence check → Location processing.
+- **Execution Order**: The actual execution flow includes more steps than shown in simplified form above. Full order: Directory creation (state, logs) → Log file initialization → Config loading → Config validation → Lockfile acquisition → Initialize monitor (parse args, log start, init state) → State validation → Resource check → Network partition check → Cron persistence check → Location processing (`process_locations()`: system-wide failure detection from prior-cycle failure counts, then `monitor_location()` per location).
 - **Sub-minute Execution (Optional)**: When `ENABLE_MONITOR_WRAPPER=1` (default), cron runs `vpn-monitor-wrapper.sh` instead of `vpn-monitor.sh` directly. The wrapper loops with `MONITOR_INTERVAL`-second sleeps (default: 20s). Cron resurrects the wrapper every minute if it exits. See [ADR-0032](../adr/0032-sub-minute-execution-via-wrapper.md), `vpn-monitor-wrapper.sh`, and config options `ENABLE_MONITOR_WRAPPER`, `MONITOR_INTERVAL`.
 
 - **State Validation**: State files are validated for format correctness (integer, timestamp, timestamp_list) early in execution (after state initialization). Corrupted files are automatically detected, backed up, and recovered with safe defaults. This validation step ensures state file integrity before proceeding.
 
 - **Resource Monitoring**: Checks CPU, RAM, and disk space usage early in the execution flow (after state validation). If system resources are severely constrained, the script exits early to avoid adding load to an already stressed system. This throttling mechanism prevents the monitor from contributing to system overload.
 
-- **Network Partition Check**: (if enabled via `ENABLE_NETWORK_PARTITION_CHECK`) occurs before cooldown check to ensure partition detection works even during cooldown periods. This timing is intentional - if the network is partitioned, VPN checks should be skipped regardless of cooldown status. When network is partitioned, the script updates partition state and continues execution (does not exit early). Recovery actions later check partition state and skip recovery if network is partitioned, allowing VPN checks to proceed but preventing unnecessary recovery actions.
+- **Network Partition Check**: (if enabled via `ENABLE_NETWORK_PARTITION_CHECK`) runs in `validate_monitor_state()` before location processing. When the network is partitioned, the script updates partition state and continues execution (does not exit early). Recovery actions later check partition state and skip recovery if network is partitioned.
 
-- **Cron Persistence Check**: Performed once per run (tracked via `.cron_checked` file) after cooldown check. Detects if cron jobs were removed during system upgrades (common after UniFi OS updates). Logs warnings but doesn't fail execution - this is a diagnostic check to help users detect configuration loss.
+- **Cron Persistence Check**: Performed once per run (tracked via `.cron_checked` file) after the network partition check. Detects if cron jobs were removed during system upgrades (common after UniFi OS updates). Logs warnings but doesn't fail execution - this is a diagnostic check to help users detect configuration loss.
+
+- **Rate Limiting (not cooldown)**: There is no global cooldown that skips monitoring. Tier 2 and Tier 3 recovery actions are gated by sliding-window rate limits (`tier2_recovery_count`, `restart_count`) and minimum intervals (`MIN_TIER2_INTERVAL_SECONDS`, `MIN_RESTART_INTERVAL_SECONDS`). Monitoring continues even when recovery is rate-limited. See [ADR-0008](../adr/0008-rate-limiting-and-cooldown-periods.md) and [Rate Limiting](#rate-limiting-staterestart_count) below.
 
 - **Ping Check** (enabled by default): When `ENABLE_PING_CHECK=1`, ping runs for every location (target = internal IP(s) or external IP). Ping failure is treated as VPN failed (routing_issue) and counts toward the recovery threshold; the diagram’s "Ping Success?" → No leads to VPN Failed.
 
@@ -298,10 +294,10 @@ System-wide failure detection addresses these issues by:
 
 ### Detection Mechanism
 
-System-wide failure detection occurs in `process_locations()` after all locations have been checked but before individual recovery attempts:
+System-wide failure detection occurs at the **start** of `process_locations()`, **before** the `monitor_location()` loop and **before** any VPN checks in the current cycle:
 
-1. **Failure Status Collection**: The system collects failure status for all locations from existing state (failure counts from previous cycle)
-   - Uses existing failure counts rather than re-checking VPNs (avoids double work)
+1. **Failure Status Collection**: The system collects failure status for all locations from existing state (failure counts from the **previous** cycle)
+   - Uses existing failure counts rather than re-checking VPNs in the current cycle (avoids double work)
    - One-cycle delay is acceptable for coordination purposes
    - Conservative approach: better to coordinate unnecessarily than miss a real system-wide failure
 
@@ -319,7 +315,7 @@ System-wide failure detection occurs in `process_locations()` after all location
 
 When system-wide failure is detected, recovery is coordinated using a "first location wins" approach:
 
-1. **Coordinator Designation**: First location to check during system-wide failure becomes the coordinator
+1. **Coordinator Designation**: First location to call `should_location_attempt_recovery()` during a system-wide failure becomes the coordinator
    - Uses atomic file write (`set -C` noclobber mode) to safely designate coordinator
    - Coordinator designation stored in `system_wide_failure_coordinator` state file
    - Coordinator persists until system-wide failure is resolved
@@ -374,15 +370,16 @@ See the "State Management" section above for detailed state file documentation.
 ### Integration Points
 
 1. **Detection** (`vpn-monitor.sh` → `process_locations()`):
-   - Runs after all locations are checked
-   - Collects failure status from existing state
-   - Updates system-wide failure state and timestamp
+   - Runs once at the start of location processing, **before** the `monitor_location()` loop
+   - Collects failure status from **prior-cycle** state (not from current VPN checks)
+   - Updates system-wide failure state and timestamp when threshold is crossed or cleared
    - Logs system-wide failure events
+   - Does **not** designate the recovery coordinator (that happens during recovery; see below)
 
-2. **Recovery Actions** (`lib/recovery/recovery_orchestration.sh` → `monitor_location()`):
+2. **Recovery Actions** (`lib/recovery/recovery_orchestration.sh` → `determine_recovery_action()`):
    - Checks `should_location_attempt_recovery()` before Tier 2/3 recovery attempts
-   - Coordinator attempts recovery normally
-   - Non-coordinator locations skip recovery actions
+   - First location to pass that check during a system-wide failure becomes the coordinator (atomic file create)
+   - Coordinator attempts recovery normally; non-coordinator locations skip recovery actions
    - Logs informative messages about skipped recovery
 
 ### Design Rationale
@@ -543,16 +540,15 @@ stateDiagram-v2
         CheckXfrm3 --> AttemptXfrm3: Xfrm Enabled
         CheckXfrm3 --> RestartIpsec: Xfrm Disabled
         AttemptXfrm3 --> VerifyRecovery3: SA Deleted
-        VerifyRecovery3 --> SetCooldown: SA Re-established
+        VerifyRecovery3 --> RecordRestart: SA Re-established
         VerifyRecovery3 --> RestartIpsec: Timeout/Failure
         AttemptXfrm3 --> RestartIpsec: Failure
-        RestartIpsec --> SetCooldown
-        SetCooldown --> [*]
+        RestartIpsec --> RecordRestart
+        RecordRestart --> [*]
         RateLimited --> [*]
     }
 
-    Tier3 --> Cooldown: After Restart
-    Cooldown --> Monitoring: Cooldown Expired
+    Tier3 --> Monitoring: After Recovery or Rate Limit
 
     Monitoring --> SkipRecovery: Network Partitioned
     SkipRecovery --> Monitoring: Continue Monitoring
@@ -593,7 +589,7 @@ graph LR
         RecoveryMethod[recovery_method_<location>_<peer_ip>]
         ConnectionName[connection_name_<peer_ip>]
         RestartLog[restart_count]
-        CooldownFile[cooldown_until]
+        Tier2RestartLog[tier2_recovery_count]
         NetworkPartition[network_partition_state]
     end
 
@@ -615,7 +611,7 @@ graph LR
     Decision --> RecoveryMethod
     Decision --> ConnectionName
     Decision --> RestartLog
-    Decision --> CooldownFile
+    Decision --> Tier2RestartLog
     Decision --> NetworkPartition
     Decision --> LogFile
     Decision --> Actions
@@ -625,7 +621,7 @@ graph LR
     IdleDetected --> Detection
     ConnectionName --> Detection
     RestartLog --> Decision
-    CooldownFile --> Decision
+    Tier2RestartLog --> Decision
     NetworkPartition --> Decision
 ```
 
@@ -652,8 +648,8 @@ State files are organized into two categories:
 - `${STATE_DIR}/connection_name_<peer_ip>`: Caches IPsec connection name discovered from `ipsec status` output (per-peer only, no location). Used for enhanced logging to show connection names in log messages. Format: `connection_name_<sanitized_peer_ip>` (e.g., `connection_name_203_0_113_1`)
 
 **System-Wide State Files** (shared across all peers):
-- `${STATE_DIR}/cooldown_until`: Cooldown expiration timestamp (prevents immediate re-restarts)
 - `${STATE_DIR}/restart_count`: Unix timestamps of Tier 3 recovery actions (one timestamp per line, for rate limiting) - see [Rate Limiting](#rate-limiting-staterestart_count) section below for details
+- `${STATE_DIR}/tier2_recovery_count`: Unix timestamps of Tier 2 recovery actions (one timestamp per line, for Tier 2 rate limiting) - see [Tier 2 Rate Limiting](#tier-2-rate-limiting-statetier2_recovery_count) below
 - `${STATE_DIR}/network_partition_state`: Network partition status (0 = healthy, 1 = partitioned) - used to detect network connectivity issues that affect all peers
 - `${STATE_DIR}/network_partition_dns_success_count`: DNS resolution check success counter (for hourly statistics summary)
 - `${STATE_DIR}/network_partition_dns_fail_count`: DNS resolution check failure counter (for hourly statistics summary)
@@ -897,7 +893,7 @@ Each peer's monitoring and recovery actions operate completely independently.
 - **Purpose**: Designates which location should attempt recovery during system-wide failure events
 - **Mechanism**: Stores location name (string) of the designated coordinator
 - **Usage**: Used by recovery coordination logic to ensure only one location attempts recovery during system-wide failures
-- **Behavior**: First location to check during system-wide failure becomes the coordinator (via atomic file write). Coordinator persists until system-wide failure is resolved. Non-coordinator locations skip recovery actions during system-wide failures
+- **Behavior**: First location to call `should_location_attempt_recovery()` during a system-wide failure becomes the coordinator (via atomic file write). Coordinator persists until system-wide failure is resolved. Non-coordinator locations skip recovery actions during system-wide failures
 - **Coordination Logic**: Uses `should_location_attempt_recovery()` function to check if current location is the coordinator before attempting recovery
 - **Configuration**: Controlled via `COORDINATE_SYSTEM_WIDE_RECOVERY` (default: 1, enabled). If disabled, all locations attempt recovery independently even during system-wide failures
 - **Race Condition Mitigation**: Uses atomic check-and-create pattern (noclobber mode, `set -C`) to prevent race conditions. Only the first location to successfully create the coordinator file becomes the coordinator, ensuring true atomicity
@@ -981,8 +977,8 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │   └── vpn-keepalive.log       # Keepalive daemon log file (if keepalive enabled)
 │
 └── state/                      # State directory
-    ├── cooldown_until          # Cooldown expiration timestamp
     ├── restart_count           # Unix timestamps of Tier 3 recovery actions (one per line)
+    ├── tier2_recovery_count    # Unix timestamps of Tier 2 recovery actions (one per line)
     ├── network_partition_state # Network partition status (0=healthy, 1=partitioned)
     ├── system_wide_failure_state      # System-wide failure status (0=no failure, 1=failure detected)
     ├── system_wide_failure_timestamp  # System-wide failure detection timestamp
@@ -1209,12 +1205,12 @@ The system uses a modular library architecture where functionality is organized 
 **Note**: See Design Decision #3 and Recovery Tier Flow diagram for recovery strategy details. The module split (completed 2026-01-16) decomposes the original 2633-line monolithic file into six files under `lib/recovery/` (five behavior modules plus `constants.sh`) for better organization and maintainability.
 
 #### `lib/state.sh`
-**Purpose**: State file management for failure counters, cooldown periods, and rate limiting. Aggregate entry point that sources all state modules.
+**Purpose**: State file management for failure counters, rate limiting, and global state. Aggregate entry point that sources all state modules.
 
 **Module Structure**: The state management functionality is organized into focused modules in the `lib/state/` subdirectory:
 - **`lib/state/state_paths.sh`**: State file path generation, sanitization, and path management utilities
 - **`lib/state/peer_state.sh`**: Per-peer state operations (connection name caching)
-- **`lib/state/global_state.sh`**: Global state operations (cooldown, restart count, network partition state)
+- **`lib/state/global_state.sh`**: Global state operations (restart/tier2 rate-limit timestamps, network partition state)
 - **`lib/state/state_init.sh`**: State initialization and validation functions
 - **`lib/state/network_partition_stats.sh`**: Network partition check statistics tracking (success/failure counting, hourly summary logging)
 - **`lib/state/resource_monitoring_stats.sh`**: Resource monitoring statistics tracking (success/failure counting, hourly summary logging for CPU, RAM, and disk checks)
@@ -1411,14 +1407,16 @@ The following improvements have been implemented to enhance system reliability a
 - **Benefit**: Easier onboarding for new developers, better code understanding, reduced need for external documentation
 
 ### 8. Rate Limiting
-- **Why**: Prevent restart loops if VPN has persistent issues
-- **Implementation**: Track restart timestamps, limit per hour
-- **Benefit**: Protects system from excessive restarts
+- **Why**: Prevent recovery loops if VPN has persistent issues
+- **Implementation**: Sliding-window limits on Tier 2 (`tier2_recovery_count`, `check_tier2_rate_limit()`) and Tier 3 (`restart_count`, `check_rate_limit()`) recovery actions, plus minimum intervals between recoveries (`MIN_TIER2_INTERVAL_SECONDS`, `MIN_RESTART_INTERVAL_SECONDS`). Monitoring continues when limits are hit; only recovery is skipped.
+- **Benefit**: Protects system from excessive restarts without delaying failure detection
+- **Related**: See [ADR-0008](../adr/0008-rate-limiting-and-cooldown-periods.md). The former cooldown mechanism (which blocked all monitoring) was removed in v0.6.0+.
 
-### 9. Cooldown Period
-- **Why**: Allow VPN to stabilize after restart
-- **Implementation**: Skip checks for configured minutes after restart
-- **Benefit**: Prevents false positives immediately after recovery
+### 9. Minimum Restart Interval (replaces cooldown)
+- **Why**: Prevent rapid-fire Tier 3 recoveries immediately after a restart
+- **Implementation**: `MIN_RESTART_INTERVAL_SECONDS` enforced inside `check_rate_limit()` before Tier 3 actions; timestamps recorded in `restart_count`. No global cooldown file or monitoring blackout.
+- **Benefit**: Same protection against restart storms as the old cooldown, without skipping VPN checks
+- **Related**: Cooldown (`cooldown_until`, `check_cooldown()`) was removed because it blocked monitoring for minutes after recovery. See [ADR-0008](../adr/0008-rate-limiting-and-cooldown-periods.md).
 
 ### 10. VPN Keepalive Daemon (Optional)
 - **Why**: Prevent idle VPN tunnels from triggering false positives
