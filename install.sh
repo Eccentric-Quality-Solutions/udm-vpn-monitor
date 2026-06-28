@@ -63,6 +63,8 @@ source "${INSTALL_SCRIPT_DIR}/lib/config/config_loading.sh"
 source "${INSTALL_SCRIPT_DIR}/lib/logging.sh"
 # shellcheck source=lib/control/cron_control.sh
 source "${INSTALL_SCRIPT_DIR}/lib/control/cron_control.sh"
+# shellcheck source=lib/control/keepalive_control.sh
+source "${INSTALL_SCRIPT_DIR}/lib/control/keepalive_control.sh"
 
 # shellcheck source=lib/config/location_parsing.sh
 source "${INSTALL_SCRIPT_DIR}/lib/config/location_parsing.sh"
@@ -1143,20 +1145,15 @@ enable_and_start_keepalive_service() {
 	fi
 
 	# Check if service file exists
-	local service_file="/etc/systemd/system/vpn-keepalive.service"
-	if [[ ! -f "$service_file" ]]; then
-		log_warn "Systemd service file not found: $service_file"
+	if ! keepalive_systemd_unit_installed; then
+		log_warn "Systemd service file not found: ${KEEPALIVE_SYSTEMD_UNIT_FILE}"
 		log_warn "Install service first, then enable: systemctl enable --now vpn-keepalive"
 		return 0
 	fi
 
 	# Check if keepalive is enabled in config
 	if [[ -f "${INSTALL_DIR}/${CONFIG_NAME}" ]]; then
-		local enable_keepalive
-		if ! enable_keepalive=$(get_config_var_value_from_file "${INSTALL_DIR}/${CONFIG_NAME}" "ENABLE_KEEPALIVE" 2>/dev/null); then
-			enable_keepalive="0"
-		fi
-		if [[ "$enable_keepalive" != "1" ]]; then
+		if ! is_keepalive_enabled "${INSTALL_DIR}/${CONFIG_NAME}"; then
 			log_warn "ENABLE_KEEPALIVE is not set to 1 in config file"
 			log_warn "Set ENABLE_KEEPALIVE=1 in ${INSTALL_DIR}/${CONFIG_NAME}, then enable service"
 			log_info "To enable later: systemctl enable --now vpn-keepalive"
@@ -1170,37 +1167,27 @@ enable_and_start_keepalive_service() {
 
 	log_info "Enabling and starting VPN keepalive service..."
 
-	# Enable service for auto-start on boot
-	if ! systemctl enable vpn-keepalive 2>&1; then
-		log_error "Failed to enable systemd service"
-		log_warn "Keepalive daemon can still be started manually: ${INSTALL_DIR}/vpn-keepalive.sh start"
-		return 0 # Don't fail installation for optional feature
-	fi
-
-	# Start or restart service immediately
-	# Use restart instead of start so it works whether service is running or not
-	# Note: the || captures the exit code without triggering set -e
-	# (split local + assignment means the assignment propagates the exit code)
-	local start_output
-	local start_exit=0
-	start_output=$(systemctl restart vpn-keepalive 2>&1) || start_exit=$?
-	if [[ $start_exit -ne 0 ]]; then
-		log_error "Failed to start/restart systemd service"
+	local start_output=""
+	if ! start_keepalive "${INSTALL_DIR}" start_output 1; then
 		if [[ -n "$start_output" ]]; then
+			log_error "Failed to start/restart systemd service"
 			log_error "Error details: $start_output"
+			# Try to get more details from systemd journal
+			local journal_output
+			journal_output=$(journalctl -u vpn-keepalive -n 10 --no-pager 2>&1 | tail -5 || true)
+			if [[ -n "$journal_output" ]]; then
+				log_error "Systemd journal output:"
+				# Use here-string to avoid subshell issues with while loop
+				while IFS= read -r line; do
+					log_error "  $line"
+				done <<<"$journal_output"
+			fi
+			log_warn "Service enabled but not started. Check status: systemctl status vpn-keepalive"
+			log_warn "Start manually: systemctl restart vpn-keepalive or ${INSTALL_DIR}/vpn-keepalive.sh start"
+		else
+			log_error "Failed to enable systemd service"
+			log_warn "Keepalive daemon can still be started manually: ${INSTALL_DIR}/vpn-keepalive.sh start"
 		fi
-		# Try to get more details from systemd journal
-		local journal_output
-		journal_output=$(journalctl -u vpn-keepalive -n 10 --no-pager 2>&1 | tail -5 || true)
-		if [[ -n "$journal_output" ]]; then
-			log_error "Systemd journal output:"
-			# Use here-string to avoid subshell issues with while loop
-			while IFS= read -r line; do
-				log_error "  $line"
-			done <<<"$journal_output"
-		fi
-		log_warn "Service enabled but not started. Check status: systemctl status vpn-keepalive"
-		log_warn "Start manually: systemctl restart vpn-keepalive or ${INSTALL_DIR}/vpn-keepalive.sh start"
 		return 0 # Don't fail installation for optional feature
 	fi
 

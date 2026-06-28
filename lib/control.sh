@@ -43,3 +43,9 @@ source "${CONTROL_MODULE_DIR}/cron_control.sh" 2>/dev/null || {
 	echo "ERROR: Failed to source lib/control/cron_control.sh" >&2
 	exit 1
 }
+
+# shellcheck source=lib/control/keepalive_control.sh
+source "${CONTROL_MODULE_DIR}/keepalive_control.sh" 2>/dev/null || {
+	echo "ERROR: Failed to source lib/control/keepalive_control.sh" >&2
+	exit 1
+}

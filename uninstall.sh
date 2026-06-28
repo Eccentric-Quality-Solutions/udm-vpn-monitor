@@ -39,6 +39,8 @@ source "${UNINSTALL_SCRIPT_DIR}/lib/logging.sh"
 source "${UNINSTALL_SCRIPT_DIR}/lib/config/config_loading.sh"
 # shellcheck source=lib/control/cron_control.sh
 source "${UNINSTALL_SCRIPT_DIR}/lib/control/cron_control.sh"
+# shellcheck source=lib/control/keepalive_control.sh
+source "${UNINSTALL_SCRIPT_DIR}/lib/control/keepalive_control.sh"
 
 # Validate installation directory path is safe
 #
@@ -658,21 +660,22 @@ stop_keepalive_daemon() {
 	local keepalive_script="${INSTALL_DIR}/vpn-keepalive.sh"
 	local pidfile="${INSTALL_DIR}/state/vpn-keepalive.pid"
 
-	# Try to use keepalive script's stop command if available
 	if [[ -f "$keepalive_script" ]] && [[ -x "$keepalive_script" ]]; then
 		if "$keepalive_script" status >/dev/null 2>&1; then
 			log_info "Stopping VPN keepalive daemon..."
-			"$keepalive_script" stop >/dev/null 2>&1 || log_warn "Failed to stop keepalive daemon via script"
 		fi
-	# Fallback: check PID file directly
-	elif [[ -f "$pidfile" ]] && file_exists_and_readable "$pidfile"; then
+	fi
+
+	stop_keepalive "$INSTALL_DIR"
+
+	# Fallback when script is unavailable but a stale PID file remains
+	if [[ ! -x "$keepalive_script" ]] && [[ -f "$pidfile" ]] && file_exists_and_readable "$pidfile"; then
 		local pid
 		pid=$(cat "$pidfile" 2>/dev/null || echo "")
 		if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
 			log_info "Stopping VPN keepalive daemon (PID: $pid)..."
 			kill -TERM "$pid" 2>/dev/null || true
 			sleep 1
-			# Force kill if still running
 			if kill -0 "$pid" 2>/dev/null; then
 				kill -KILL "$pid" 2>/dev/null || true
 			fi

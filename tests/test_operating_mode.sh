@@ -24,6 +24,8 @@ setup() {
 	source "${LIB_DIR}/control/operating_mode.sh"
 	# shellcheck source=../lib/control/cron_control.sh
 	source "${LIB_DIR}/control/cron_control.sh"
+	# shellcheck source=../lib/control/keepalive_control.sh
+	source "${LIB_DIR}/control/keepalive_control.sh"
 }
 
 # bats test_tags=category:unit

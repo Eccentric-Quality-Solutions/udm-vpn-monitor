@@ -4633,6 +4633,39 @@ See also: `docs/reference/DRY_OPPORTUNITIES.md`, ADR-0032.
 
 ---
 
+## Keepalive Daemon Control (`lib/control/keepalive_control.sh`)
+
+**When to Use:** Any script that starts or stops the vpn-keepalive daemon (systemd or script fallback).
+
+**Single source of truth:** `lib/control/keepalive_control.sh` (sourced via `lib/control.sh` or directly with `config/config_loading.sh`). Do not reimplement systemd/script dispatch in `install.sh`, `uninstall.sh`, or `vpn-monitor-control.sh`.
+
+| Caller | Functions used |
+|--------|----------------|
+| `install.sh` | `keepalive_systemd_unit_installed`, `is_keepalive_enabled`, `start_keepalive` (strict enable; optional output var for restart errors) |
+| `uninstall.sh` | `stop_keepalive` (via `stop_keepalive_daemon` wrapper; PID fallback stays in uninstall) |
+| `vpn-monitor-control.sh` | `is_keepalive_enabled`, `start_keepalive`, `stop_keepalive` (via thin wrappers) |
+
+**Pattern:**
+```bash
+# Stop (systemd if active, else script stop)
+stop_keepalive "$INSTALL_DIR"
+
+# Start (best effort; no config check)
+start_keepalive "$INSTALL_DIR"
+
+# Start with strict enable + capture restart output (install)
+start_keepalive "$INSTALL_DIR" start_output 1
+
+# Config gate
+is_keepalive_enabled "${INSTALL_DIR}/vpn-monitor.conf"
+```
+
+**Logging split:** Core functions do not log. `vpn-monitor-control.sh` uses `log_message`; `install.sh` keeps verbose install-time diagnostics (journal tail) in `enable_and_start_keepalive_service`. Uninstall keeps systemd unit removal in `remove_keepalive_service` separate from `stop_keepalive`.
+
+See also: `docs/reference/DRY_OPPORTUNITIES.md`.
+
+---
+
 ## SSH Connection Management Patterns
 
 **Single source of truth:** `scripts/manage/lib/ssh_control.sh` (sourced by `deploy-to-udm.sh`, `control-remote-udm.sh`, `deploy-to-udms.sh`). Do not reimplement ControlMaster setup in manage scripts.
@@ -4787,6 +4820,7 @@ This document consolidates code patterns used throughout the UDM VPN Monitor cod
 24. **Script-Specific**: Parse command-line arguments with while/case pattern, use process substitution for reading function output, define fallback functions in standalone scripts
 25. **SSH Connection Management**: Use ControlMaster + ControlPersist + `true` for connection reuse; never combine `sshpass` + `ssh -f`; secure sockets with `mktemp -d`; cascade auth methods (sshpass → expect → manual /dev/tty)
 26. **Cron Job Management**: Use `lib/control/cron_control.sh` for all vpn-monitor crontab changes; do not duplicate parse/install/remove logic in install or manage scripts
+27. **Keepalive Daemon Control**: Use `lib/control/keepalive_control.sh` for start/stop dispatch; keep install diagnostics and uninstall PID fallback in caller wrappers
 
 For more detailed information about specific patterns, see:
 - `CODE_REVIEW_LESSONS_LEARNED.md` - Historical lessons learned from code reviews (includes bug context and how patterns were discovered)

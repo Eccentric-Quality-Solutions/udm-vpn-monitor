@@ -132,15 +132,13 @@ stop_monitor_wrapper() {
 # Returns:
 #   0: Always (best effort)
 stop_keepalive_service() {
-	if command -v systemctl >/dev/null 2>&1; then
-		if systemctl is-active vpn-keepalive >/dev/null 2>&1; then
-			systemctl stop vpn-keepalive 2>/dev/null || true
-			log_message "INFO" "SYSTEM" "Stopped vpn-keepalive systemd service"
-			return 0
-		fi
+	local was_systemd=0
+	if command -v systemctl >/dev/null 2>&1 && systemctl is-active vpn-keepalive >/dev/null 2>&1; then
+		was_systemd=1
 	fi
-	if [[ -x "${INSTALL_DIR}/vpn-keepalive.sh" ]]; then
-		"${INSTALL_DIR}/vpn-keepalive.sh" stop 2>/dev/null || true
+	stop_keepalive "$INSTALL_DIR"
+	if [[ $was_systemd -eq 1 ]]; then
+		log_message "INFO" "SYSTEM" "Stopped vpn-keepalive systemd service"
 	fi
 	return 0
 }
@@ -150,21 +148,13 @@ stop_keepalive_service() {
 # Returns:
 #   0: Always (best effort)
 start_keepalive_if_enabled() {
-	local enable_keepalive=""
-	if [[ -f "$CONFIG_FILE" ]]; then
-		enable_keepalive=$(get_config_var_value_from_file "$CONFIG_FILE" "ENABLE_KEEPALIVE" 2>/dev/null || echo "0")
-	fi
-	if [[ "$enable_keepalive" != "1" ]]; then
+	if ! is_keepalive_enabled "$CONFIG_FILE"; then
 		return 0
 	fi
-	if command -v systemctl >/dev/null 2>&1 && [[ -f /etc/systemd/system/vpn-keepalive.service ]]; then
-		systemctl enable vpn-keepalive 2>/dev/null || true
-		systemctl restart vpn-keepalive 2>/dev/null || true
-		log_message "INFO" "SYSTEM" "Started vpn-keepalive systemd service"
-		return 0
-	fi
-	if [[ -x "${INSTALL_DIR}/vpn-keepalive.sh" ]]; then
-		"${INSTALL_DIR}/vpn-keepalive.sh" start 2>/dev/null || true
+	if start_keepalive "$INSTALL_DIR"; then
+		if command -v systemctl >/dev/null 2>&1 && keepalive_systemd_unit_installed; then
+			log_message "INFO" "SYSTEM" "Started vpn-keepalive systemd service"
+		fi
 	fi
 	return 0
 }
