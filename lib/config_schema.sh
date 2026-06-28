@@ -50,7 +50,7 @@ fi
 # delimiter or implement escaping).
 #
 # Examples:
-#   ["EXTERNAL_PEER_IPS"]="required|string|non-empty"
+#   ["LOCATION_NYC_EXTERNAL"]="required|string|non-empty"
 #   ["TIER1_THRESHOLD"]="required|integer|min:1"
 #   ["TIER2_THRESHOLD"]="required|integer|min:TIER1_THRESHOLD"
 #   ["ENABLE_PING_CHECK"]="optional|integer|values:0,1|default:1"
@@ -79,8 +79,7 @@ fi
 # pre-declared it as empty
 declare -gA CONFIG_SCHEMA=(
 	# Required configuration
-	# NOTE: Required variables have backward compatibility defaults for old config files
-	# These defaults are applied in load_config() but validation still requires them to be set
+	# NOTE: Required variables have schema defaults applied in load_config(); validation still requires them to be set
 	# Location-based configuration: LOCATION_*_EXTERNAL and LOCATION_*_INTERNAL are pattern-matched
 	# Pattern matching is handled in get_config_schema() function
 	["TIER1_THRESHOLD"]="required|integer|min:1|default:1"

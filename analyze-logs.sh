@@ -123,40 +123,39 @@ parse_args() {
 	done
 }
 
-# Extract peer IP from log message
+# Extract external peer IP from log message body
 #
-# Extracts peer IP address from log messages that contain peer IP information.
-# Supports both old format ("for IP") and new location-based format ("location name (IP)").
+# Parses peer IPs from format_peer_ip_display() output embedded in log messages:
+#   (external) or (internal, external). Location name is in the log prefix, not the message.
 #
 # Arguments:
-#   $1: Log message
+#   $1: Log message (body after "LOCATION: " prefix)
 #
 # Returns:
 #   0: Success
 #   1: No peer IP found
 #
 # Output:
-#   Prints peer IP to stdout if found
+#   Prints external peer IP to stdout if found
 extract_peer_ip() {
 	local message="$1"
-	# Pattern: New location-based format "location name (203.0.113.1)" or "location name (198.51.100.1)"
-	# Matches: "for location NYC (203.0.113.1)" or "location NYC (203.0.113.1)"
+	# IPv4: (internal, external) — external is second address
+	if [[ $message =~ \([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3},[[:space:]]*([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})\) ]]; then
+		echo "${BASH_REMATCH[1]}"
+		return 0
+	fi
+	# IPv4: (external) only
 	if [[ $message =~ \(([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})\) ]]; then
 		echo "${BASH_REMATCH[1]}"
 		return 0
 	fi
-	# Pattern: Old format "for 203.0.113.1" or "for 198.51.100.1"
-	if [[ $message =~ for\ ([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}) ]]; then
-		echo "${BASH_REMATCH[1]}"
+	# IPv6: (internal, external)
+	if [[ $message =~ \(([0-9a-fA-F:]+),[[:space:]]*([0-9a-fA-F:]+)\) ]]; then
+		echo "${BASH_REMATCH[2]}"
 		return 0
 	fi
-	# Pattern: IPv6 addresses in parentheses (new format)
+	# IPv6: (external) only
 	if [[ $message =~ \(([0-9a-fA-F:]+)\) ]]; then
-		echo "${BASH_REMATCH[1]}"
-		return 0
-	fi
-	# Pattern: IPv6 addresses (old format, simplified)
-	if [[ $message =~ for\ ([0-9a-fA-F:]+) ]]; then
 		echo "${BASH_REMATCH[1]}"
 		return 0
 	fi
@@ -320,7 +319,7 @@ determine_recovery_type() {
 #
 # Note:
 #   Requires extract_peer_ip, extract_failure_count, date_in_range functions
-#   Log format expected: "[YYYY-MM-DD HH:MM:SS] [LEVEL] message"
+#   Log format expected: "[YYYY-MM-DD HH:MM:SS] [LEVEL] LOCATION: message"
 #   Filters by date range if DATE_START and DATE_END are set
 analyze_logs() {
 	local log_file="$1"
@@ -355,14 +354,14 @@ analyze_logs() {
 		# Skip empty lines
 		[[ -z "$line" ]] && continue
 
-		# Parse log entry: [YYYY-MM-DD HH:MM:SS] [LEVEL] message
-		if [[ ! $line =~ ^\[([0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2})\]\ \[([A-Z]+)\]\ (.+)$ ]]; then
+		# Parse log entry: [YYYY-MM-DD HH:MM:SS] [LEVEL] LOCATION: message
+		if [[ ! $line =~ ^\[([0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2})\]\ \[([A-Z]+)\]\ ([^:]+):[[:space:]]*(.*)$ ]]; then
 			continue
 		fi
 
 		local timestamp="${BASH_REMATCH[1]}"
 		local level="${BASH_REMATCH[2]}"
-		local message="${BASH_REMATCH[3]}"
+		local message="${BASH_REMATCH[4]}"
 
 		# Check date range
 		if ! date_in_range "$timestamp" "$date_start" "$date_end"; then
@@ -377,8 +376,7 @@ analyze_logs() {
 			peer_ip="unknown"
 		fi
 
-		# Categorize log entries
-		# Note: Patterns support both old format (peer IP only) and new location-based format
+		# Categorize log entries (message body only; location is in log prefix)
 		case "$message" in
 		*"VPN check failed"* | *"check failed"*)
 			local failure_count=0

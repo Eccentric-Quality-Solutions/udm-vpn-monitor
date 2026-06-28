@@ -122,7 +122,7 @@ set -euo pipefail
 **What each option does:**
 - `set -e` (errexit): Exit immediately if a command exits with a non-zero status (with many exceptions; see pitfalls below)
 - `set -u` (nounset): Treat unset variables as an error and exit immediately
-- `set -o pipefail`: Pipeline returns the exit status of the first command in the pipeline to exit with a non-zero status (not just the last command)
+- `set -o pipefail`: Pipeline returns the exit status of the **rightmost command that exits non-zero**, or zero if every command succeeded (without `pipefail`, only the rightmost command's status is used regardless of earlier failures)
 
 **Caveats:** Errexit rules are complex and context-dependent. [BashFAQ/105](https://mywiki.wooledge.org/BashFAQ/105) documents cases where `-e` does not behave intuitively. This project still enables strict mode in main scripts, but library code must not rely on `-e` implicitly — handle failures explicitly. Global `pipefail` can make early-exiting pipeline stages (e.g. `grep -q`) report failure via `SIGPIPE`; see Pitfall 3 below.
 
@@ -183,24 +183,34 @@ process_item() {
 
 Errexit is **disabled** for commands in `if`/`while`/`until` tests, `&&`/`||` lists (except the last command), and negated commands (`!`). That is why `if grep -q pattern file; then` is safe even when grep returns 1.
 
-Errexit is **cleared inside command-substitution subshells** (in non-POSIX bash mode). Failures there often do **not** exit the parent script — the danger is continuing with empty or stale output. Bash 4.4+ can restore inherited errexit with `shopt -s inherit_errexit`, but this project does not enable it by default.
+Errexit is **cleared inside command-substitution subshells** (in non-POSIX bash mode). That has two consequences:
+
+1. **Inside `$(...)`, a failing command does not stop later commands** — the subshell keeps going, which can produce empty or stale output (the "realdir" bug).
+2. **The subshell's exit status is still the last command's status**, and a failing assignment `var=$(...)` **can** trigger errexit in the parent when that status is non-zero (unless the assignment is in an `if`/`while`/`||`/`&&` exception context).
+
+Bash 4.4+ can propagate errexit into substitution subshells with `shopt -s inherit_errexit`; this project does not enable it by default.
 
 ```bash
 set -e
 
-# ⚠️ PROBLEMATIC: Failure is silent — script keeps running with empty/wrong result
-result=$(check_condition)  # Non-zero exit is ignored inside $(...)
-echo "result=$result"      # Still runs; may proceed with bad data
+# ⚠️ PROBLEM A: Last command fails — parent exits (unless in if/||/etc.)
+output=$(grep -F "pattern" "$file")  # grep exit 1 → script exits
+
+# ⚠️ PROBLEM B: Failure is not last — parent continues with wrong data
+result=$(cd /no/such/path 2>/dev/null; pwd)  # cd fails, pwd still runs; result is wrong cwd
 
 # ✅ GOOD: Check exit status explicitly when the result matters
 if ! result=$(check_condition 2>&1); then
     handle_error
 fi
 
-# ✅ GOOD: Use if/grep directly when "not found" is a normal outcome
+# ✅ GOOD: Use if/grep directly when "not found" is a normal branch
 if grep -q "pattern" "$file"; then
     echo "Found"
 fi
+
+# ✅ GOOD: Ignore failure only when empty output is acceptable
+output=$(grep -F "pattern" "$file" 2>/dev/null || true)
 ```
 
 **Pitfall 2: `local var=$(cmd)` masks failures; plain assignment does not**
@@ -226,11 +236,11 @@ With `pipefail`, a command that stops reading early (e.g. `grep -q`, `head -n1`)
 
 **Pitfall 4: Functions used as conditionals disable errexit inside the function**
 
-If a function is invoked as the condition of `if`, `while`, or in `&&`/`||` lists, errexit may not apply to commands inside that function — behavior can differ from calling the same function as a standalone statement ([BashFAQ/105](https://mywiki.wooledge.org/BashFAQ/105)).
+If a function is invoked as the condition of `if`, `while`, or in `&&`/`||` lists, errexit may not apply to commands inside that function — behavior can differ from calling the same function as a standalone statement ([BashFAQ/105](https://mywiki.wooledge.org/BashFAQ/105)). The function's **return status** is still the last command executed inside it, so a failing command followed by `echo` can make the function appear to succeed.
 
 **Best Practices:**
 - Use `if ! command` or `if command; then` for commands where failure is an expected branch
-- Do not assume `$(...)` failures propagate under `set -e`; check exit status when the result matters
+- In `$(...)`, remember both risks: parent may exit if the last command fails, or may continue with wrong output if a failing command is not last
 - Use `command || rc=$?` to capture exit codes without triggering errexit
 - Avoid temporarily disabling `set -e` unless absolutely necessary (prefer the patterns above)
 
@@ -257,8 +267,8 @@ Choose the appropriate error handling pattern:
 **Fatal Errors:**
 ```bash
 # Use die() for fatal errors (no fake mode needed)
-if [[ ! -f "$CONFIG_FILE" ]] && [[ -z "${EXTERNAL_PEER_IPS:-}" ]]; then
-    die "Configuration file not found and EXTERNAL_PEER_IPS not set"
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    die "Configuration file not found: $CONFIG_FILE"
 fi
 
 # Use handle_error_or_exit_fake_mode() for fatal errors that need fake mode support
@@ -1155,20 +1165,22 @@ local lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ### Defensive Command Substitution
 
-Because errexit is cleared inside `$(...)` subshells, a failing command often leaves you with empty output while the script continues. Use explicit checks when failure matters; use `|| true` only when you intentionally want to ignore failure **and** empty output is acceptable:
+Command substitution has two errexit gotchas (see Pitfall 1): a **failing last command** can exit the parent under `set -e`, while a **non-final failure** inside `$(...)` can leave you with wrong output while the parent continues. Choose the pattern based on which case you are handling:
 
 ```bash
-# ✅ GOOD: Ignore "not found" when empty output is acceptable
+# ✅ GOOD: grep "not found" — continue with empty output (|| true makes last command succeed)
 output=$(grep -F "pattern" "$file" 2>/dev/null || true)
 
-# ✅ GOOD: Check exit status when failure must be handled
+# ✅ GOOD: grep failure must be handled — if disables errexit on the assignment test
 if ! forward_output=$(echo "$xfrm_output" | grep -F "dst ${peer_ip}" 2>/dev/null); then
     log_message "DEBUG" "SYSTEM" "No xfrm state for peer ${peer_ip}"
 fi
 
-# ❌ BAD: Assuming $(...) failure stops the script under set -e
+# ❌ BAD: grep exit 1 is last command in $(...) — parent exits under set -e
 forward_output=$(echo "$xfrm_output" | grep -F "dst ${peer_ip}" 2>/dev/null)
-# grep exit 1 is ignored inside $(...); script continues with empty forward_output
+
+# ❌ BAD: cd failure is not last — parent continues with wrong pwd in result
+dir=$(cd /no/such/path 2>/dev/null; pwd)
 ```
 
 **When to Use `|| true`:**
@@ -2249,6 +2261,27 @@ shfmt -w script.sh
 - Use **tabs** for indentation (enforced by `shfmt` in this project)
 - Tab width: 8 spaces (default)
 
+### Project enforcement
+
+**ShellCheck and shfmt are the official compliance tools** for bash in this repository. Do not add a separate custom linter for patterns ShellCheck already covers (quoting, array iteration, traps, etc.).
+
+| Tool | Role | When it runs |
+|---|---|---|
+| **ShellCheck** | Static analysis (bugs, quoting, SC codes) | Pre-commit (staged files), CI, local |
+| **shfmt** | Formatting (tabs, spacing) | Pre-commit (staged files), CI, local |
+| **`.shellcheckrc`** | Repo-wide ShellCheck dialect and optional checks | Any `shellcheck` run from repo root |
+
+```bash
+# Local checks (same as pre-commit / CI intent)
+shfmt -d *.sh lib/*.sh tests/*.sh
+shellcheck --severity=error *.sh lib/*.sh tests/*.sh
+
+# Broader review (warnings and style)
+shellcheck *.sh lib/*.sh tests/*.sh
+```
+
+Conventions documented in this guide but **not** enforced by ShellCheck or shfmt — function documentation (`Arguments` / `Returns`), `handle_error_or_exit_fake_mode` vs `die`, module sourcing order — rely on code review and Cursor/project rules.
+
 ---
 
 ## Bash Version and Platform Considerations
@@ -2399,7 +2432,7 @@ done
 **Before submitting code, check:**
 - [ ] Arrays use `[@]` not `[*]` for iteration
 - [ ] All variables are quoted (regex RHS of `=~` is the usual exception)
-- [ ] Command substitutions check exit status when failure matters (`if ! var=$(cmd); then`)
+- [ ] Command substitutions use `|| true`, `if ! var=$(cmd)`, or `if cmd` as appropriate for the failure mode
 - [ ] Function return values are checked
 - [ ] Loop variables are declared as `local` in functions
 - [ ] Associative arrays are pre-declared
@@ -2799,7 +2832,7 @@ This guide covers essential Bash coding practices:
 4. **Functions**: Document comprehensively, return error codes, validate parameters
 5. **Arrays**: Use arrays for lists, namerefs for passing by reference, pre-declare arrays populated by sourced files
 6. **Strings**: Trim and normalize input, use proper pattern matching
-7. **Command Substitution**: Use `$()` syntax, quote results, check exit status when failures must not be silent
+7. **Command Substitution**: Use `$()` syntax, quote results; handle both exit-on-failure and silent-wrong-output cases in `$(...)`
 8. **Arithmetic**: Use safe timestamp arithmetic, validate and clamp results
 9. **Control Flow**: Use `[[ ]]` for tests, case statements for multiple comparisons
 10. **Files**: Use atomic writes, check readability, handle missing newlines

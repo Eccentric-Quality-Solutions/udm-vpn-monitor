@@ -102,6 +102,8 @@ graph TB
     subgraph "UDM System"
         Cron[Cron Scheduler<br/>Every 1 minute]
         MainScript[vpn-monitor.sh<br/>Main Script]
+        WrapperScript[vpn-monitor-wrapper.sh<br/>Sub-Minute Wrapper]
+        ControlScript[vpn-monitor-control.sh<br/>Operating Mode CLI]
         Config[vpn-monitor.conf<br/>Configuration]
         StateDir["State Directory<br/>state/"]
         LogDir[Log Files]
@@ -117,6 +119,8 @@ graph TB
         ResourcesLib[lib/resources.sh<br/>Resource Monitoring]
         DetectionLib[lib/detection.sh<br/>VPN Detection<br/>Aggregate Entry]
         RecoveryLib[lib/recovery.sh<br/>Recovery Actions<br/>Aggregate Entry]
+        OperatingModeLib[lib/control/operating_mode.sh<br/>Operating Mode Check]
+        ControlLib[lib/control.sh<br/>Control Aggregate Entry]
         CommonLib[lib/common.sh<br/>Shared Utilities]
         ConstantsLib[lib/constants.sh<br/>Named Constants]
     end
@@ -141,6 +145,8 @@ graph TB
     end
 
     Cron --> MainScript
+    Cron --> WrapperScript
+    WrapperScript --> MainScript
     MainScript --> ConfigLib
     ConfigLib --> SchemaLib
     MainScript --> LockfileLib
@@ -149,8 +155,15 @@ graph TB
     MainScript --> ResourcesLib
     MainScript --> DetectionLib
     MainScript --> RecoveryLib
+    MainScript --> OperatingModeLib
     MainScript --> CommonLib
     MainScript --> ConstantsLib
+    WrapperScript --> OperatingModeLib
+
+    ControlScript --> ControlLib
+    ControlLib --> OperatingModeLib
+    ControlLib --> StateDir
+    OperatingModeLib --> StateDir
 
     DetectionLib --> XfrmCheck
     XfrmCheck -->|No SA| IpsecCheck
@@ -174,7 +187,10 @@ graph TB
     Keepalive -.->|reads| Config
 ```
 
-**Diagram note:** `vpn-keepalive.sh` is not part of the cron → monitor → detection → recovery chain. In addition to the config file, it sources `lib/config.sh` and `lib/detection.sh` for shared ping/DNS/LAN helpers (see [VPN Keepalive Daemon](#vpn-keepalive-daemon)).
+**Diagram notes:**
+- `vpn-keepalive.sh` is not part of the cron → monitor → detection → recovery chain. In addition to the config file, it sources `lib/config.sh` and `lib/detection.sh` for shared ping/DNS/LAN helpers (see [VPN Keepalive Daemon](#vpn-keepalive-daemon)).
+- `vpn-monitor-control.sh` manages operating mode (`start`, `stop`, `pause`, `observe-only`, `status`) via `lib/control.sh`. It is separate from the monitoring loop but shares cron/keepalive helpers with `install.sh` (see [Operating Mode Control](#operating-mode-control)).
+- `vpn-monitor.sh` and `vpn-monitor-wrapper.sh` call `check_operating_mode()` from `lib/control/operating_mode.sh` after lock acquisition; stopped/paused modes exit early, observe-only sets `NO_ESCALATE=1`.
 
 ## Execution Flow
 
@@ -764,32 +780,32 @@ All per-location state files use sanitized location names and peer IP addresses 
      - `"ipsec_reload"` → `"ipsec reload"`
      - `"ipsec_restart"` → `"ipsec restart"`
    - **Location**: Stored in `${STATE_DIR}` directory
-  - **Example Log Messages**:
-    - `"VPN restored for location NYC (203.0.113.1) after 3 failures (recovery method: xfrm-based recovery)"`
-    - `"VPN restored for location NYC (203.0.113.1) (recovery method: ipsec reload)"`
+  - **Example Log Messages** (format: `[timestamp] [LEVEL] LOCATION: message`):
+    - `"[INFO] NYC: VPN restored for (10.0.0.1, 203.0.113.1) after 3 failures (recovery method: xfrm-based recovery)"`
+    - `"[INFO] NYC: VPN restored for (203.0.113.1) (recovery method: ipsec reload)"`
 
 **Recovery Type Distinction**:
 The log analysis script (`analyze-logs.sh`) distinguishes between two types of recoveries based on log message patterns:
 
 1. **App-Managed Recoveries** (with intervention):
    - **Identification**: Log messages containing "recovery method" or "VPN restored" indicate that a recovery action (Tier 2 or Tier 3) was attempted
-   - **Pattern**: 
-     - `"VPN restored for LOCATION (IP) after N failures (recovery method: METHOD)"` - Explicit recovery method
-     - `"VPN restored for LOCATION (IP) (recovery method: METHOD)"` - Recovery method without failure count
-     - `"VPN restored for LOCATION (IP) after N failures"` - "restored" terminology indicates intervention
-     - `"VPN restored for LOCATION (IP)"` - "restored" terminology indicates intervention
+   - **Pattern** (message body after location prefix):
+     - `"VPN restored for (IP) after N failures (recovery method: METHOD)"` - Explicit recovery method
+     - `"VPN restored for (IP) (recovery method: METHOD)"` - Recovery method without failure count
+     - `"VPN restored for (IP) after N failures"` - "restored" terminology indicates intervention
+     - `"VPN restored for (IP)"` - "restored" terminology indicates intervention
    - **Meaning**: The system took action to restore the VPN tunnel (xfrm recovery, ipsec reload, or ipsec restart)
    - **Statistics**: Tracked separately to evaluate effectiveness of recovery actions and intervention needs
-   - **Example**: `"VPN restored for NYC (203.0.113.1) after 3 failures (recovery method: xfrm-based recovery)"`
+   - **Example**: `"[INFO] NYC: VPN restored for (10.0.0.1, 203.0.113.1) after 3 failures (recovery method: xfrm-based recovery)"`
 
 2. **Self-Healed Recoveries** (no intervention):
    - **Identification**: Log messages containing "VPN recovered" without "recovery method" indicate natural recovery
-   - **Pattern**: 
-     - `"VPN recovered for LOCATION (IP) after N failures"` - "recovered" without recovery method
-     - `"VPN recovered for LOCATION (IP)"` - "recovered" without recovery method or failure count
+   - **Pattern**:
+     - `"VPN recovered for (IP) after N failures"` - "recovered" without recovery method
+     - `"VPN recovered for (IP)"` - "recovered" without recovery method or failure count
    - **Meaning**: The VPN tunnel recovered on its own without requiring intervention (e.g., SA rekey, network recovery, transient issues)
    - **Statistics**: Tracked separately to evaluate VPN stability and natural recovery capabilities
-   - **Example**: `"VPN recovered for NYC (203.0.113.1) after 1 failures"`
+   - **Example**: `"[INFO] NYC: VPN recovered for (203.0.113.1) after 1 failures"`
 
 **Recovery Type Analysis**:
 - **Total Recoveries** = App-Managed Recoveries + Self-Healed Recoveries
@@ -933,10 +949,11 @@ The following structure shows the file layout. **All paths are relative to the s
 ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 ├── vpn-monitor.sh              # Main monitoring script
 ├── vpn-monitor-wrapper.sh      # Sub-minute wrapper (optional; cron runs this when ENABLE_MONITOR_WRAPPER=1)
+├── vpn-monitor-control.sh      # Operating mode CLI (start/stop/pause/observe-only/status)
 ├── vpn-monitor.conf            # Configuration file
 │
 ├── lib/                        # Library modules
-│   ├── common.sh               # Shared utilities (logging, validation, helpers)
+│   ├── common.sh               # Shared utilities (validation, helpers)
 │   ├── config.sh               # Configuration loading and management (aggregate entry; sources lib/config/)
 │   ├── config/                  # Configuration module subdirectory
 │   │   ├── config_loading.sh      # Configuration file loading and parsing
@@ -945,6 +962,11 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │   │   └── config_defaults.sh     # Default value application logic
 │   ├── config_schema.sh        # Configuration schema definitions and validation
 │   ├── constants.sh            # Named constants for magic numbers
+│   ├── control.sh                # Control aggregate entry (sources lib/control/)
+│   ├── control/                   # Operating mode and service control
+│   │   ├── operating_mode.sh      # Operating mode state (running/stopped/paused/observe-only)
+│   │   ├── cron_control.sh        # Cron install/remove (shared with install.sh)
+│   │   └── keepalive_control.sh   # Keepalive systemd/script control (shared with install.sh)
 │   ├── detection.sh            # VPN status detection (aggregate entry; sources lib/detection/)
 │   ├── detection/               # Detection module subdirectory
 │   │   ├── network_validation.sh  # IP validation, default LAN ping source (ip addr on DEFAULT_LAN_INTERFACE)
@@ -983,7 +1005,9 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
     ├── system_wide_failure_state      # System-wide failure status (0=no failure, 1=failure detected)
     ├── system_wide_failure_timestamp  # System-wide failure detection timestamp
     ├── system_wide_failure_coordinator # Recovery coordinator location name
+    ├── operating_mode          # Operating mode state (mode, paused_until, reason, set_by)
     ├── vpn-monitor.lock        # Lockfile (timestamp:pid format)
+    ├── vpn-monitor-wrapper.pid # Wrapper process lock (when sub-minute wrapper enabled)
     ├── .cron_checked           # Flag file for cron check
     ├── .last_run_timestamp     # Timestamp file for startup grace period detection
     ├── failure_count_NYC_203_0_113_1  # Per-location failure counters
@@ -1157,6 +1181,24 @@ The system uses a modular library architecture where functionality is organized 
 
 **Note**: See Design Decision #2 for implementation details.
 
+#### `lib/control.sh`
+**Purpose**: Operating mode and service control. Aggregate entry point that sources all `lib/control/*.sh` modules. Used by `vpn-monitor-control.sh`; monitor scripts source `lib/control/operating_mode.sh` directly.
+
+**Module Structure**:
+- **`lib/control/operating_mode.sh`**: Persists and checks operating mode in `state/operating_mode` (`running`, `stopped`, `paused`, `observe-only`)
+- **`lib/control/cron_control.sh`**: Cron job install/remove (shared with `install.sh`, `uninstall.sh`, `vpn-monitor-control.sh`)
+- **`lib/control/keepalive_control.sh`**: Keepalive systemd/script start/stop (shared with `install.sh`, `uninstall.sh`, `vpn-monitor-control.sh`)
+
+**Key Functions**:
+- `check_operating_mode()` - Called by `vpn-monitor.sh` and `vpn-monitor-wrapper.sh` after lock acquisition; returns 1 (exit early) for stopped/paused, sets `NO_ESCALATE=1` for observe-only
+- `get_operating_mode()`, `set_operating_mode()` - Read/write mode state atomically
+- `install_vpn_monitor_cron()`, `remove_vpn_monitor_cron()` - Cron management (in `cron_control.sh`)
+- `start_keepalive()`, `stop_keepalive()` - Keepalive service control (in `keepalive_control.sh`)
+
+**Used By**: `vpn-monitor-control.sh` (via `lib/control.sh`); `vpn-monitor.sh` and `vpn-monitor-wrapper.sh` (via `operating_mode.sh` only); `install.sh` / `uninstall.sh` (cron and keepalive helpers)
+
+**Dependencies**: `lib/common.sh`, `lib/logging.sh`, `lib/config/config_loading.sh`
+
 #### `lib/logging.sh`
 **Purpose**: Centralized logging functionality with timestamp and level support.
 
@@ -1246,6 +1288,28 @@ The system uses a modular library architecture where functionality is organized 
 **Dependencies**: `lib/constants.sh` (required first), `lib/common.sh`
 
 **Note**: See File Structure section and Design Decision #4 for state file details. The module split (completed 2026-01-11) decomposes the original 1404-line monolithic file into six focused modules (`state_paths`, `global_state`, `peer_state`, `state_init`, `network_partition_stats`, `resource_monitoring_stats`) for better organization and maintainability. Network partition statistics tracking and resource monitoring statistics tracking live in the last two modules and handle success/failure counting plus hourly summary logging for partition checks and resource checks respectively.
+
+## Operating Mode Control
+
+The monitor supports persistent operating modes controlled via `vpn-monitor-control.sh` and stored in `state/operating_mode`. This allows operators to halt monitoring, pause during maintenance, or run detection without recovery escalation.
+
+**CLI**: `vpn-monitor-control.sh` with commands `start`, `stop`, `pause`, `observe-only`, and `status`.
+
+**Modes** (persisted in `state/operating_mode` as `mode=`, optional `paused_until=`, `reason=`, `set_by=`):
+
+| Mode | Monitor behavior |
+|------|------------------|
+| `running` (default) | Normal detection and tiered recovery |
+| `stopped` | `check_operating_mode()` exits early; cron/wrapper/keepalive removed by `stop` command |
+| `paused` | Exits early until `paused_until` epoch; auto-resumes to `running` when expired |
+| `observe-only` | Runs detection and logging; sets `NO_ESCALATE=1` (same effect as `--fake` for recovery) |
+
+**Integration with monitor loop**:
+- `vpn-monitor.sh` → `main()` calls `check_operating_mode()` after `initialize_monitor()`, before `validate_monitor_state()`
+- `vpn-monitor-wrapper.sh` re-checks mode each loop iteration (pause/stop can take effect between sub-minute runs)
+- `stop` / `start` also manage cron entries and keepalive via `lib/control/cron_control.sh` and `lib/control/keepalive_control.sh`
+
+**Remote control**: `scripts/manage/control-remote-udm.sh` runs `vpn-monitor-control.sh` over SSH on deployed UDMs.
 
 ## VPN Keepalive Daemon
 

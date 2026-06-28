@@ -139,7 +139,7 @@ create_install_dir() {
 # Used during interactive installation mode to gather configuration values.
 #
 # Arguments:
-#   $1: Config parameter name (e.g., "EXTERNAL_PEER_IPS") - used for reference, not displayed
+#   $1: Config parameter name (e.g., "LOCATION_NYC_EXTERNAL") - used for reference, not displayed
 #   $2: Default value (shown in brackets, used if user presses Enter)
 #   $3: Description/prompt text (displayed to user)
 #
@@ -150,8 +150,8 @@ create_install_dir() {
 #   Prints the user's value (or default if empty) to stdout
 #
 # Examples:
-#   value=$(prompt_config_value "EXTERNAL_PEER_IPS" "" "External peer IP address(es)")
-#   # Prompts: "Peer IP address(es): "
+#   value=$(prompt_config_value "LOCATION_NYC_EXTERNAL" "" "External peer IP address")
+#   # Prompts: "External peer IP address: "
 #   value=$(prompt_config_value "TIER1_THRESHOLD" "1" "Tier 1 threshold")
 #   # Prompts: "Tier 1 threshold [1]: "
 #

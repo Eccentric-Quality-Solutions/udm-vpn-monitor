@@ -218,6 +218,8 @@ shellcheck --severity=error *.sh
 
 **Documentation**: https://www.shellcheck.net/
 
+**Project enforcement:** ShellCheck and shfmt are the official bash compliance tools for this repository. Repository-wide ShellCheck settings live in `.shellcheckrc` at the repo root (read automatically unless `--norc` is passed). The pre-commit hook runs `shellcheck --severity=error` and `shfmt -d` on staged `.sh` files; CI runs the same checks on the full tree. There is no separate custom bash linter — guide conventions not covered by ShellCheck (function docs, error-handling patterns) are enforced by review and project rules.
+
 #### shfmt - Shell Script Formatter
 
 **Purpose**: Formats shell scripts consistently using tabs for indentation.
@@ -492,8 +494,8 @@ Use `die()` for fatal errors that prevent the script from continuing:
 # - Security violations (invalid input that could be exploited)
 # - Missing required dependencies (critical commands not available)
 
-if [[ ! -f "$CONFIG_FILE" ]] && [[ -z "${EXTERNAL_PEER_IPS:-}" ]]; then
-    die "Configuration file not found and EXTERNAL_PEER_IPS not set"
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    die "Configuration file not found: $CONFIG_FILE"
 fi
 
 if ! command -v ip >/dev/null 2>&1; then

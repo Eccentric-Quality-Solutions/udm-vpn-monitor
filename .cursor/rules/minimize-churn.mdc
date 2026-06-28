@@ -1,0 +1,49 @@
+---
+description: Minimize churn — change only what the task requires; do not rewrite prose for style
+alwaysApply: true
+---
+
+# Minimize Churn
+
+Change only what the task requires. Do not rewrite existing text (docs, comments, commit messages, error strings, README prose) just because it could sound better.
+
+## When prose changes are warranted
+
+Update text only when the underlying facts changed, for example:
+
+- Code behavior, flags, defaults, or CLI usage changed
+- Errors, exit codes, or failure modes changed
+- Environment, install path, or setup steps changed
+- A doc was wrong, outdated, or missing information needed for the task
+
+## When to leave prose alone
+
+Do **not** edit surrounding documentation or comments when:
+
+- The change is stylistic (wording, tone, reordering) with no factual delta
+- You are fixing code and the existing docs/comments still describe behavior correctly
+- You would broaden scope by "cleaning up" nearby sections the task did not ask for
+
+Prefer the smallest diff that completes the task. If existing prose is accurate, leave it as-is.
+
+## Examples
+
+```markdown
+# ❌ BAD — stylistic rewrite with no factual change
+- "The monitor checks VPN tunnels every minute via cron."
++ "Cron runs the monitor once per minute to check VPN tunnels."
+
+# ✅ GOOD — behavior actually changed
+- "Recovery runs at tier 2 after 3 failures."
++ "Recovery runs at tier 2 after 5 failures."
+```
+
+```bash
+# ❌ BAD — rewording a still-accurate comment while fixing unrelated code
+# Check whether the tunnel has recent traffic
+# → "Determine if the tunnel recently carried traffic"
+
+# ✅ GOOD — comment updated because behavior changed
+# Check whether the tunnel has recent traffic
+# → "Check whether inbound or outbound byte counters increased"
+```

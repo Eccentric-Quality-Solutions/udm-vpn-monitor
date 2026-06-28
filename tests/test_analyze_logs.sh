@@ -8,6 +8,32 @@ load test_helper
 # Path to the analyze-logs script
 ANALYZE_LOGS_SCRIPT="${BATS_TEST_DIRNAME}/../analyze-logs.sh"
 
+# Format a log line matching lib/logging.sh log_message output
+#
+# Arguments:
+#   $1: Timestamp (YYYY-MM-DD HH:MM:SS)
+#   $2: Log level (DEBUG, INFO, WARNING, ERROR)
+#   $3: Location prefix (location name or SYSTEM)
+#   $4: Message body
+format_analyze_log_line() {
+	echo "[${1}] [${2}] ${3}: ${4}"
+}
+
+# Format peer display matching lib/common.sh format_peer_ip_display()
+#
+# Arguments:
+#   $1: External peer IP
+#   $2: Optional internal peer IP
+format_analyze_peer_display() {
+	local external="$1"
+	local internal="${2:-}"
+	if [[ -n "$internal" ]]; then
+		echo "(${internal}, ${external})"
+	else
+		echo "(${external})"
+	fi
+}
+
 # Create sample log file with various events
 #
 # Creates a log file with failures, recoveries, and tier actions for testing.
@@ -25,25 +51,30 @@ create_sample_log_file() {
 
 	mkdir -p "$(dirname "$log_file")"
 
+	local peer1
+	peer1=$(format_analyze_peer_display "192.168.1.1")
+	local peer2
+	peer2=$(format_analyze_peer_display "198.51.100.1")
+
 	cat >"$log_file" <<EOF
-[${date_prefix} 10:00:00] [DEBUG] Log file initialized
-[${date_prefix} 10:01:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 1)
-[${date_prefix} 10:01:00] [INFO] Tier 1: Logging VPN failure for 192.168.1.1
-[${date_prefix} 10:02:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 2)
-[${date_prefix} 10:03:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 3)
-[${date_prefix} 10:03:00] [INFO] Tier 2: Attempting surgical SA cleanup for 192.168.1.1
-[${date_prefix} 10:03:05] [INFO] xfrm-based surgical cleanup completed successfully for 192.168.1.1
-[${date_prefix} 10:04:00] [INFO] VPN recovered for 192.168.1.1 after 3 failures
-[${date_prefix} 10:05:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 1)
-[${date_prefix} 10:06:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 2)
-[${date_prefix} 10:07:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 3)
-[${date_prefix} 10:08:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 4)
-[${date_prefix} 10:09:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 5)
-[${date_prefix} 10:09:00] [INFO] Tier 3: Attempting IPsec restart for 192.168.1.1
-[${date_prefix} 10:09:10] [INFO] Full IPsec restart completed
-[${date_prefix} 10:10:00] [INFO] VPN recovered for 192.168.1.1 after 5 failures
-[${date_prefix} 10:11:00] [WARNING] VPN check failed for 198.51.100.1 (failure count: 1)
-[${date_prefix} 10:12:00] [INFO] VPN recovered for 198.51.100.1 after 1 failures
+$(format_analyze_log_line "${date_prefix} 10:00:00" "DEBUG" "SYSTEM" "Log file initialized")
+$(format_analyze_log_line "${date_prefix} 10:01:00" "WARNING" "NYC" "VPN check failed for ${peer1} (failure count: 1)")
+$(format_analyze_log_line "${date_prefix} 10:01:00" "INFO" "NYC" "Tier 1: Logging VPN failure for ${peer1}")
+$(format_analyze_log_line "${date_prefix} 10:02:00" "WARNING" "NYC" "VPN check failed for ${peer1} (failure count: 2)")
+$(format_analyze_log_line "${date_prefix} 10:03:00" "WARNING" "NYC" "VPN check failed for ${peer1} (failure count: 3)")
+$(format_analyze_log_line "${date_prefix} 10:03:00" "INFO" "NYC" "Tier 2: Attempting surgical SA cleanup for ${peer1}")
+$(format_analyze_log_line "${date_prefix} 10:03:05" "INFO" "NYC" "xfrm-based surgical cleanup completed successfully for ${peer1}")
+$(format_analyze_log_line "${date_prefix} 10:04:00" "INFO" "NYC" "VPN recovered for ${peer1} after 3 failures")
+$(format_analyze_log_line "${date_prefix} 10:05:00" "WARNING" "NYC" "VPN check failed for ${peer1} (failure count: 1)")
+$(format_analyze_log_line "${date_prefix} 10:06:00" "WARNING" "NYC" "VPN check failed for ${peer1} (failure count: 2)")
+$(format_analyze_log_line "${date_prefix} 10:07:00" "WARNING" "NYC" "VPN check failed for ${peer1} (failure count: 3)")
+$(format_analyze_log_line "${date_prefix} 10:08:00" "WARNING" "NYC" "VPN check failed for ${peer1} (failure count: 4)")
+$(format_analyze_log_line "${date_prefix} 10:09:00" "WARNING" "NYC" "VPN check failed for ${peer1} (failure count: 5)")
+$(format_analyze_log_line "${date_prefix} 10:09:00" "INFO" "NYC" "Tier 3: Attempting IPsec restart for ${peer1}")
+$(format_analyze_log_line "${date_prefix} 10:09:10" "INFO" "NYC" "Full IPsec restart completed")
+$(format_analyze_log_line "${date_prefix} 10:10:00" "INFO" "NYC" "VPN recovered for ${peer1} after 5 failures")
+$(format_analyze_log_line "${date_prefix} 10:11:00" "WARNING" "LON" "VPN check failed for ${peer2} (failure count: 1)")
+$(format_analyze_log_line "${date_prefix} 10:12:00" "INFO" "LON" "VPN recovered for ${peer2} after 1 failures")
 EOF
 }
 
@@ -65,30 +96,36 @@ create_recovery_type_test_log_file() {
 
 	mkdir -p "$(dirname "$log_file")"
 
+	local peer1 peer2 peer3 peer4
+	peer1=$(format_analyze_peer_display "192.168.1.1")
+	peer2=$(format_analyze_peer_display "192.168.1.2")
+	peer3=$(format_analyze_peer_display "192.168.1.3")
+	peer4=$(format_analyze_peer_display "192.168.1.4")
+
 	cat >"$log_file" <<EOF
-[${date_prefix} 10:00:00] [DEBUG] Log file initialized
+$(format_analyze_log_line "${date_prefix} 10:00:00" "DEBUG" "SYSTEM" "Log file initialized")
 # Self-healed recovery (no recovery method, just "after N failures")
-[${date_prefix} 10:01:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 1)
-[${date_prefix} 10:02:00] [INFO] VPN recovered for 192.168.1.1 after 1 failures
+$(format_analyze_log_line "${date_prefix} 10:01:00" "WARNING" "SITE1" "VPN check failed for ${peer1} (failure count: 1)")
+$(format_analyze_log_line "${date_prefix} 10:02:00" "INFO" "SITE1" "VPN recovered for ${peer1} after 1 failures")
 # App-managed recovery (with recovery method)
-[${date_prefix} 10:03:00] [WARNING] VPN check failed for 192.168.1.2 (failure count: 1)
-[${date_prefix} 10:04:00] [WARNING] VPN check failed for 192.168.1.2 (failure count: 2)
-[${date_prefix} 10:05:00] [WARNING] VPN check failed for 192.168.1.2 (failure count: 3)
-[${date_prefix} 10:05:00] [INFO] Tier 2: Attempting surgical SA cleanup for 192.168.1.2
-[${date_prefix} 10:05:05] [INFO] xfrm-based surgical cleanup completed successfully for 192.168.1.2
-[${date_prefix} 10:06:00] [INFO] VPN restored for 192.168.1.2 after 3 failures (recovery method: xfrm-based recovery)
+$(format_analyze_log_line "${date_prefix} 10:03:00" "WARNING" "SITE2" "VPN check failed for ${peer2} (failure count: 1)")
+$(format_analyze_log_line "${date_prefix} 10:04:00" "WARNING" "SITE2" "VPN check failed for ${peer2} (failure count: 2)")
+$(format_analyze_log_line "${date_prefix} 10:05:00" "WARNING" "SITE2" "VPN check failed for ${peer2} (failure count: 3)")
+$(format_analyze_log_line "${date_prefix} 10:05:00" "INFO" "SITE2" "Tier 2: Attempting surgical SA cleanup for ${peer2}")
+$(format_analyze_log_line "${date_prefix} 10:05:05" "INFO" "SITE2" "xfrm-based surgical cleanup completed successfully for ${peer2}")
+$(format_analyze_log_line "${date_prefix} 10:06:00" "INFO" "SITE2" "VPN restored for ${peer2} after 3 failures (recovery method: xfrm-based recovery)")
 # Another self-healed recovery
-[${date_prefix} 10:07:00] [WARNING] VPN check failed for 192.168.1.3 (failure count: 1)
-[${date_prefix} 10:08:00] [INFO] VPN recovered for 192.168.1.3 after 1 failures
+$(format_analyze_log_line "${date_prefix} 10:07:00" "WARNING" "SITE3" "VPN check failed for ${peer3} (failure count: 1)")
+$(format_analyze_log_line "${date_prefix} 10:08:00" "INFO" "SITE3" "VPN recovered for ${peer3} after 1 failures")
 # App-managed recovery with ipsec restart
-[${date_prefix} 10:09:00] [WARNING] VPN check failed for 192.168.1.4 (failure count: 1)
-[${date_prefix} 10:10:00] [WARNING] VPN check failed for 192.168.1.4 (failure count: 2)
-[${date_prefix} 10:11:00] [WARNING] VPN check failed for 192.168.1.4 (failure count: 3)
-[${date_prefix} 10:12:00] [WARNING] VPN check failed for 192.168.1.4 (failure count: 4)
-[${date_prefix} 10:13:00] [WARNING] VPN check failed for 192.168.1.4 (failure count: 5)
-[${date_prefix} 10:13:00] [INFO] Tier 3: Attempting IPsec restart for 192.168.1.4
-[${date_prefix} 10:13:10] [INFO] Full IPsec restart completed
-[${date_prefix} 10:14:00] [INFO] VPN restored for 192.168.1.4 after 5 failures (recovery method: ipsec restart)
+$(format_analyze_log_line "${date_prefix} 10:09:00" "WARNING" "SITE4" "VPN check failed for ${peer4} (failure count: 1)")
+$(format_analyze_log_line "${date_prefix} 10:10:00" "WARNING" "SITE4" "VPN check failed for ${peer4} (failure count: 2)")
+$(format_analyze_log_line "${date_prefix} 10:11:00" "WARNING" "SITE4" "VPN check failed for ${peer4} (failure count: 3)")
+$(format_analyze_log_line "${date_prefix} 10:12:00" "WARNING" "SITE4" "VPN check failed for ${peer4} (failure count: 4)")
+$(format_analyze_log_line "${date_prefix} 10:13:00" "WARNING" "SITE4" "VPN check failed for ${peer4} (failure count: 5)")
+$(format_analyze_log_line "${date_prefix} 10:13:00" "INFO" "SITE4" "Tier 3: Attempting IPsec restart for ${peer4}")
+$(format_analyze_log_line "${date_prefix} 10:13:10" "INFO" "SITE4" "Full IPsec restart completed")
+$(format_analyze_log_line "${date_prefix} 10:14:00" "INFO" "SITE4" "VPN restored for ${peer4} after 5 failures (recovery method: ipsec restart)")
 EOF
 }
 
@@ -315,10 +352,12 @@ EOF
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	# Create log with events on different dates
 	mkdir -p "$(dirname "$log_file")"
+	local peer
+	peer=$(format_analyze_peer_display "192.168.1.1")
 	cat >"$log_file" <<EOF
-[2025-01-10 10:00:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 1)
-[2025-01-15 10:00:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 1)
-[2025-01-20 10:00:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 1)
+$(format_analyze_log_line "2025-01-10 10:00:00" "WARNING" "NYC" "VPN check failed for ${peer} (failure count: 1)")
+$(format_analyze_log_line "2025-01-15 10:00:00" "WARNING" "NYC" "VPN check failed for ${peer} (failure count: 1)")
+$(format_analyze_log_line "2025-01-20 10:00:00" "WARNING" "NYC" "VPN check failed for ${peer} (failure count: 1)")
 EOF
 
 	# Analyze only January 15
@@ -337,10 +376,12 @@ EOF
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	# Create log with events on different dates
 	mkdir -p "$(dirname "$log_file")"
+	local peer
+	peer=$(format_analyze_peer_display "192.168.1.1")
 	cat >"$log_file" <<EOF
-[2025-01-10 10:00:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 1)
-[2025-01-15 10:00:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 1)
-[2025-01-20 10:00:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 1)
+$(format_analyze_log_line "2025-01-10 10:00:00" "WARNING" "NYC" "VPN check failed for ${peer} (failure count: 1)")
+$(format_analyze_log_line "2025-01-15 10:00:00" "WARNING" "NYC" "VPN check failed for ${peer} (failure count: 1)")
+$(format_analyze_log_line "2025-01-20 10:00:00" "WARNING" "NYC" "VPN check failed for ${peer} (failure count: 1)")
 EOF
 
 	# Analyze Jan 15-20
@@ -377,8 +418,8 @@ EOF
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "$(dirname "$log_file")"
 	cat >"$log_file" <<EOF
-[2025-01-15 10:00:00] [DEBUG] Log file initialized
-[2025-01-15 10:01:00] [INFO] Configuration loaded from: /data/vpn-monitor/vpn-monitor.conf
+$(format_analyze_log_line "2025-01-15 10:00:00" "DEBUG" "SYSTEM" "Log file initialized")
+$(format_analyze_log_line "2025-01-15 10:01:00" "INFO" "SYSTEM" "Configuration loaded from: /data/vpn-monitor/vpn-monitor.conf")
 EOF
 
 	run bash "$ANALYZE_LOGS_SCRIPT" -l "$log_file" -o "$TEST_DIR"
@@ -506,6 +547,28 @@ EOF
 }
 
 # bats test_tags=category:unit
+@test "analyze-logs.sh extracts external IP from dual peer display" {
+	# Purpose: Verify extract_peer_ip returns external IP when message uses (internal, external) display
+	# Expected: CSV contains external 203.0.113.1, not internal 10.0.0.1
+	# Importance: Production logs use format_peer_ip_display with both IPs when internal is configured
+	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
+	mkdir -p "$(dirname "$log_file")"
+	local peer
+	peer=$(format_analyze_peer_display "203.0.113.1" "10.0.0.1")
+	cat >"$log_file" <<EOF
+$(format_analyze_log_line "2025-01-15 10:00:00" "WARNING" "NYC" "VPN check failed for ${peer} (failure count: 1)")
+EOF
+
+	local csv_file="${TEST_DIR}/vpn-monitor-analysis.csv"
+	run bash "$ANALYZE_LOGS_SCRIPT" -l "$log_file" -c "$csv_file"
+
+	assert_success
+	assert_file_contains "$csv_file" "203.0.113.1"
+	run grep '10\.0\.0\.1' "$csv_file"
+	assert_failure
+}
+
+# bats test_tags=category:unit
 @test "analyze-logs.sh text report includes event timeline" {
 	# Purpose: Test verifies that the analyze-logs script includes detailed event timeline in text report
 	# Expected: Text report contains chronological timeline of failure and recovery events with timestamps
@@ -529,11 +592,14 @@ EOF
 	# Importance: Multi-peer support enables analysis of VPN deployments with multiple remote peers
 	local log_file="${TEST_DIR}/logs/vpn-monitor.log"
 	mkdir -p "$(dirname "$log_file")"
+	local peer1 peer2
+	peer1=$(format_analyze_peer_display "192.168.1.1")
+	peer2=$(format_analyze_peer_display "198.51.100.1")
 	cat >"$log_file" <<EOF
-[2025-01-15 10:00:00] [WARNING] VPN check failed for 192.168.1.1 (failure count: 1)
-[2025-01-15 10:01:00] [WARNING] VPN check failed for 198.51.100.1 (failure count: 1)
-[2025-01-15 10:02:00] [INFO] VPN recovered for 192.168.1.1 after 1 failures
-[2025-01-15 10:03:00] [INFO] VPN recovered for 198.51.100.1 after 1 failures
+$(format_analyze_log_line "2025-01-15 10:00:00" "WARNING" "NYC" "VPN check failed for ${peer1} (failure count: 1)")
+$(format_analyze_log_line "2025-01-15 10:01:00" "WARNING" "LON" "VPN check failed for ${peer2} (failure count: 1)")
+$(format_analyze_log_line "2025-01-15 10:02:00" "INFO" "NYC" "VPN recovered for ${peer1} after 1 failures")
+$(format_analyze_log_line "2025-01-15 10:03:00" "INFO" "LON" "VPN recovered for ${peer2} after 1 failures")
 EOF
 
 	local csv_file="${TEST_DIR}/vpn-monitor-analysis.csv"

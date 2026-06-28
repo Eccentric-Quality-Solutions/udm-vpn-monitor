@@ -57,8 +57,8 @@ These patterns should be followed consistently when writing or modifying code in
 **Pattern:**
 ```bash
 # Use handle_error_or_exit_fake_mode() for fatal errors that need fake mode support
-if [[ ! -f "$CONFIG_FILE" ]] && [[ -z "${EXTERNAL_PEER_IPS:-}" ]]; then
-    handle_error_or_exit_fake_mode "SYSTEM" "Configuration file not found and EXTERNAL_PEER_IPS not set" "${EXIT_CONFIG_ERROR:-2}"
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    handle_error_or_exit_fake_mode "SYSTEM" "Configuration file not found: $CONFIG_FILE" "${EXIT_CONFIG_ERROR:-2}"
 fi
 
 # Use die() for truly fatal errors that prevent script execution entirely

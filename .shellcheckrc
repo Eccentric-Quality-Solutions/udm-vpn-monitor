@@ -1,0 +1,10 @@
+# ShellCheck configuration for UDM VPN Monitor
+# See docs/reference/BASH_CODING_GUIDE.md and DEVELOPER.md
+#
+# Applied automatically when running shellcheck from the repo root (unless --norc).
+# Pre-commit uses: shellcheck --severity=error
+
+shell=bash
+
+# Optional checks (see: shellcheck --list-optional)
+enable=add-default-case,quote-safe-variables

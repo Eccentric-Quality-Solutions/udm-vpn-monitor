@@ -245,7 +245,7 @@ We have a comprehensive `test_helper.bash` file that provides:
 
 3. **Mock Functions**: Utilities to create mock commands (`mock_ip_xfrm_state`, `mock_ping`, `mock_ipsec`) that simulate system behavior for isolated testing.
 
-4. **Setup Helpers**: Functions like `setup_test_vpn_monitor`, `setup_test_config` that create consistent test environments. For state files, use `set_peer_state` directly.
+4. **Setup Helpers**: Functions like `setup_test_vpn_monitor`, `setup_test_location_config` that create consistent test environments. For state files, use `set_peer_state` directly.
 
 5. **Environment Setup**: Functions to create test directories and configure test environments.
 
@@ -1133,7 +1133,6 @@ bats tests/ -f "VPN status"
 
 **Setup Functions**:
 - `setup_test_vpn_monitor` - Complete VPN monitor setup
-- `setup_test_config` - Create config file (legacy format)
 - `setup_test_location_config` - Create location-based config file
 - `setup_location_config_and_load` - Create and load location config
 - `setup_mock_vpn_environment` - Setup mocks

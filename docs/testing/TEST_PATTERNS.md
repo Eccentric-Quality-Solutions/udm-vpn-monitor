@@ -1751,25 +1751,17 @@ mock_ipsec_status 0 "Connections:
 **Pattern**: Use appropriate config setup helper for your test type
 
 **When to use**:
-- `setup_test_config()` - For legacy EXTERNAL_PEER_IPS format
 - `setup_test_location_config()` - For location-based config format
-- `setup_test_config_with_recovery_disabled()` - When recovery actions should be disabled
 - `setup_location_config_and_load()` - After creating location config, to load it
 
 **Example**:
 ```bash
-# Legacy format
-setup_test_config "${TEST_DIR}/vpn-monitor.conf" "192.168.1.1" 'TIER1_THRESHOLD=1'
-
 # Location-based format
 local config_file="${TEST_DIR}/vpn-monitor.conf"
 setup_test_location_config "$config_file" \
     'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
     'LOCATION_NYC_INTERNAL="192.168.1.1"'
 setup_location_config_and_load "$config_file"
-
-# With recovery disabled
-setup_test_config_with_recovery_disabled "${TEST_DIR}/vpn-monitor.conf" "192.168.1.1"
 ```
 
 **Standard**:
@@ -2632,11 +2624,6 @@ Creates a location-based config file with common test settings.
 
 **Usage**: Call to create config file, then use `setup_location_config_and_load()` to load it.
 
-### `setup_test_config(config_file, peer_ips, ...)`
-Creates a legacy-format config file with EXTERNAL_PEER_IPS.
-
-**Usage**: For tests using legacy configuration format.
-
 ### `setup_test_vpn_monitor(peer_ips, state_dir, ...)`
 Sets up complete VPN monitor test environment (config, script, environment variables).
 
@@ -3394,7 +3381,7 @@ EOF
 
 - Old pattern `NO_ESCALATE=1; export NO_ESCALATE` → Use `enable_fake_mode()`
 - Old pattern manual CONFIG_FILE setup → Use `setup_location_config_and_load()`
-- Old pattern manual config creation → Use `setup_test_location_config()` or `setup_test_config()`
+- Old pattern manual config creation → Use `setup_test_location_config()`
 - Old pattern manual mock setup → Use `setup_mock_vpn_environment()` or fixtures
 - Old pattern missing cleanup → Always use `remove_mock_from_path()`
 - Old pattern manual location name extraction → Use `get_failure_counter_path_for_location_var()` or `get_location_name_from_config_var()`
