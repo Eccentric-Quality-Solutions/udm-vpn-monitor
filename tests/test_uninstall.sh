@@ -97,7 +97,7 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 	# Clean up
 	rm -rf "$install_dir" 2>/dev/null || true
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	clear_vpn_monitor_crontab
 }
 
 # bats test_tags=category:unit
@@ -123,7 +123,7 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	fi
 
 	# Clean up
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	clear_vpn_monitor_crontab
 }
 
 # bats test_tags=category:unit
@@ -150,7 +150,7 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 	# Clean up
 	rm -rf "$install_dir" 2>/dev/null || true
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	clear_vpn_monitor_crontab
 }
 
 # bats test_tags=category:unit
@@ -534,7 +534,7 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 
 	# Clean up
 	rm -rf "$install_dir" 2>/dev/null || true
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	clear_vpn_monitor_crontab
 }
 
 # bats test_tags=category:unit
@@ -546,7 +546,7 @@ UNINSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../uninstall.sh"
 	[[ $EUID -ne 0 ]] && skip "This test requires root access (uninstall.sh requires root privileges to remove system files and cron entries)"
 
 	# Ensure no vpn-monitor cron entry exists
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	clear_vpn_monitor_crontab
 
 	# Create mock installation directory
 	local install_dir="/data/vpn-monitor"
@@ -736,7 +736,7 @@ EOF
 	assert_output --partial "Uninstallation verification failed"
 
 	# Clean up
-	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+	clear_vpn_monitor_crontab
 	rm -f "$test_script" 2>/dev/null || true
 }
 
@@ -771,7 +771,7 @@ EOF
 	assert_output --partial "Uninstallation verification failed"
 
 	# Clean up
-	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+	clear_vpn_monitor_crontab
 	rm -f "$test_script" 2>/dev/null || true
 }
 
@@ -799,7 +799,7 @@ EOF
 	fi
 
 	rm -rf "$install_dir" 2>/dev/null || true
-	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+	clear_vpn_monitor_crontab
 }
 
 # bats test_tags=category:unit
@@ -816,7 +816,7 @@ EOF
 	echo "test" >"${install_dir}/vpn-monitor.sh"
 
 	# Ensure no cron entry exists
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	clear_vpn_monitor_crontab
 
 	# Create a wrapper script that calls verify_uninstallation
 	local test_script="${BATS_TEST_TMPDIR}/test_verify.sh"
@@ -879,7 +879,7 @@ EOF
 
 	# Clean up
 	rm -rf "$install_dir" 2>/dev/null || true
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	clear_vpn_monitor_crontab
 	rm -f "$logrotate_config" 2>/dev/null || true
 	rm -f "$test_script" 2>/dev/null || true
 }
@@ -894,7 +894,7 @@ EOF
 
 	# Ensure all components are removed
 	rm -rf /data/vpn-monitor 2>/dev/null || true
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	clear_vpn_monitor_crontab
 	rm -f /etc/logrotate.d/vpn-monitor 2>/dev/null || true
 
 	# Create a wrapper script that calls verify_uninstallation
@@ -963,7 +963,7 @@ EOF
 
 	# Clean up
 	rm -rf "$install_dir" 2>/dev/null || true
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	clear_vpn_monitor_crontab
 	rm -f "$logrotate_config" 2>/dev/null || true
 }
 
@@ -1032,7 +1032,7 @@ EOF
 
 	# Clean up
 	rm -rf "$install_dir" 2>/dev/null || true
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	clear_vpn_monitor_crontab
 }
 
 # bats test_tags=category:unit

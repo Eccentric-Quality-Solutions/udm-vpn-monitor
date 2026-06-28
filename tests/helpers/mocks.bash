@@ -929,3 +929,48 @@ EOF
 	chmod +x "$mock_ip"
 	echo "$mock_ip"
 }
+
+# Setup mock ssh/scp/sshpass for deploy-to-udm tests
+#
+# Creates mock_bin under TEST_DIR with default success mocks. Optionally
+# replaces the ssh mock with custom script content (for argv logging tests).
+#
+# Arguments:
+#   $1: Optional custom ssh mock script body (include #!/bin/bash line)
+#
+# Returns:
+#   0: Success
+#
+# Output:
+#   Path to mock_bin directory
+#
+# Side effects:
+#   Prepends mock_bin to PATH
+setup_deploy_ssh_mocks() {
+	local ssh_script="${1:-}"
+	local mock_bin="${TEST_DIR}/mock_bin"
+
+	mkdir -p "$mock_bin"
+	if [[ -n "$ssh_script" ]]; then
+		cat >"${mock_bin}/ssh" <<EOF
+$ssh_script
+EOF
+	else
+		cat >"${mock_bin}/ssh" <<'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+	fi
+	cat >"${mock_bin}/scp" <<'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+	cat >"${mock_bin}/sshpass" <<'MOCK'
+#!/bin/bash
+shift 2
+exec ssh "$@"
+MOCK
+	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
+	export PATH="${mock_bin}:${PATH}"
+	echo "$mock_bin"
+}

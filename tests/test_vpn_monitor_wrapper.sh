@@ -3,6 +3,7 @@
 # Tests for vpn-monitor-wrapper.sh — runtime behavior (cron invokes wrapper → monitor runs).
 
 load test_helper
+load helpers/state
 
 WRAPPER_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor-wrapper.sh"
 
@@ -70,12 +71,7 @@ EOF
 
 	local future
 	future=$(($(date +%s) + 3600))
-	cat >"${inst}/state/operating_mode" <<EOF
-mode=paused
-paused_until=${future}
-set_at=$(date +%s)
-set_by=test
-EOF
+	setup_operating_mode_fixture "paused" "$future" "" "test" "${inst}/state"
 
 	cp "$WRAPPER_SCRIPT" "${inst}/vpn-monitor-wrapper.sh"
 	chmod +x "${inst}/vpn-monitor-wrapper.sh"

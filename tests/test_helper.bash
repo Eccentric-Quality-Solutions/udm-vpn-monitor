@@ -266,17 +266,7 @@ standard_teardown() {
 	fi
 
 	# Clean up any test cron entries
-	# Remove both "test-vpn-monitor" entries (created by tests) and "vpn-monitor.sh" entries
-	# (created by create_test_cron_entry or install tests) to ensure complete isolation
-	if command -v crontab >/dev/null 2>&1; then
-		crontab -l 2>/dev/null | grep -v "test-vpn-monitor" | grep -v "vpn-monitor.sh" | crontab - || true
-		# If crontab is now empty, remove it completely
-		local crontab_content
-		crontab_content=$(crontab -l 2>/dev/null || echo "")
-		if [[ -z "$crontab_content" ]] || [[ "$crontab_content" =~ ^[[:space:]]*$ ]]; then
-			crontab -r 2>/dev/null || true
-		fi
-	fi
+	clear_vpn_monitor_crontab
 }
 
 # Teardown function run after each test
@@ -513,6 +503,107 @@ create_test_install_setup() {
 	fi
 
 	echo "${test_install_dir}/install.sh"
+}
+
+# Copy vpn-monitor-control.sh and lib dependencies into an install tree
+#
+# Arguments:
+#   $1: Install directory (default: TEST_DIR)
+#
+# Returns:
+#   0: Success
+#
+# Side effects:
+#   Creates control script and required lib/ files under the install directory
+setup_control_script_install_tree() {
+	local install_dir="${1:-${TEST_DIR}}"
+	local project_root
+	project_root=$(cd "${BATS_TEST_DIRNAME}/.." && pwd)
+
+	cp "${project_root}/vpn-monitor-control.sh" "${install_dir}/vpn-monitor-control.sh"
+	mkdir -p "${install_dir}/lib/control"
+	cp -r "${project_root}/lib/control/"* "${install_dir}/lib/control/"
+	cp "${project_root}/lib/control.sh" "${install_dir}/lib/control.sh"
+	cp "${project_root}/lib/common.sh" "${install_dir}/lib/common.sh"
+	cp "${project_root}/lib/logging.sh" "${install_dir}/lib/logging.sh"
+	cp "${project_root}/lib/constants.sh" "${install_dir}/lib/constants.sh"
+	cp -r "${project_root}/lib/config" "${install_dir}/lib/"
+	chmod +x "${install_dir}/vpn-monitor-control.sh"
+}
+
+# Prepare dev-install source tree (install.sh copy, stub monitor script, optional config)
+#
+# Arguments:
+#   $1: Path to original install.sh
+#   --no-config: Do not create vpn-monitor.conf
+#   --config CONTENT: Config file body (default: "# Test config")
+#   --with-control: Also copy vpn-monitor-control.sh and lib dependencies
+#
+# Returns:
+#   0: Success
+#   1: Unknown option
+#
+# Output:
+#   Path to test install.sh script
+setup_dev_install() {
+	local install_script="$1"
+	shift
+	local source_dir="${TEST_DIR}/source"
+	local config_content="# Test config"
+	local with_control=0
+	local no_config=0
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--no-config)
+			no_config=1
+			shift
+			;;
+		--config)
+			config_content="$2"
+			shift 2
+			;;
+		--with-control)
+			with_control=1
+			shift
+			;;
+		*)
+			echo "setup_dev_install: unknown option: $1" >&2
+			return 1
+			;;
+		esac
+	done
+
+	local test_install
+	test_install=$(create_test_install_setup "$install_script" "$source_dir")
+	echo "#!/bin/bash" >"${source_dir}/vpn-monitor.sh"
+	chmod +x "${source_dir}/vpn-monitor.sh"
+	if [[ $no_config -eq 0 ]]; then
+		echo "$config_content" >"${source_dir}/vpn-monitor.conf"
+	fi
+	if [[ $with_control -eq 1 ]]; then
+		setup_control_script_install_tree "$source_dir"
+	fi
+	echo "$test_install"
+}
+
+# Remove vpn-monitor cron entries from the current user's crontab
+#
+# Removes lines matching "vpn-monitor" and "test-vpn-monitor". Clears empty
+# crontab when nothing remains.
+#
+# Returns:
+#   0: Always succeeds (non-fatal if crontab unavailable)
+clear_vpn_monitor_crontab() {
+	if ! command -v crontab >/dev/null 2>&1; then
+		return 0
+	fi
+	crontab -l 2>/dev/null | grep -v "test-vpn-monitor" | grep -v "vpn-monitor" | crontab - || true
+	local crontab_content
+	crontab_content=$(crontab -l 2>/dev/null || echo "")
+	if [[ -z "$crontab_content" ]] || [[ "$crontab_content" =~ ^[[:space:]]*$ ]]; then
+		crontab -r 2>/dev/null || true
+	fi
 }
 
 # Create a test version of vpn-monitor.sh with custom paths

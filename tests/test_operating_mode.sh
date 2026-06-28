@@ -93,16 +93,7 @@ setup() {
 
 # bats test_tags=category:unit
 @test "vpn-monitor-control.sh status shows mode" {
-	# Minimal install layout for control script
-	cp "${BATS_TEST_DIRNAME}/../vpn-monitor-control.sh" "${TEST_DIR}/vpn-monitor-control.sh"
-	mkdir -p "${TEST_DIR}/lib/control"
-	cp -r "${LIB_DIR}/control/"* "${TEST_DIR}/lib/control/"
-	cp "${LIB_DIR}/control.sh" "${TEST_DIR}/lib/control.sh"
-	cp "${LIB_DIR}/common.sh" "${TEST_DIR}/lib/common.sh"
-	cp "${LIB_DIR}/logging.sh" "${TEST_DIR}/lib/logging.sh"
-	cp "${LIB_DIR}/constants.sh" "${TEST_DIR}/lib/constants.sh"
-	cp -r "${LIB_DIR}/config" "${TEST_DIR}/lib/"
-	chmod +x "${TEST_DIR}/vpn-monitor-control.sh"
+	setup_control_script_install_tree "${TEST_DIR}"
 	set_operating_mode "observe-only" "0" "" "test"
 	cd "${TEST_DIR}" || exit 1
 	run bash "${TEST_DIR}/vpn-monitor-control.sh" status
@@ -112,15 +103,7 @@ setup() {
 
 # bats test_tags=category:unit
 @test "vpn-monitor-control.sh pause requires --until" {
-	cp "${BATS_TEST_DIRNAME}/../vpn-monitor-control.sh" "${TEST_DIR}/vpn-monitor-control.sh"
-	mkdir -p "${TEST_DIR}/lib/control"
-	cp -r "${LIB_DIR}/control/"* "${TEST_DIR}/lib/control/"
-	cp "${LIB_DIR}/control.sh" "${TEST_DIR}/lib/control.sh"
-	cp "${LIB_DIR}/common.sh" "${TEST_DIR}/lib/common.sh"
-	cp "${LIB_DIR}/logging.sh" "${TEST_DIR}/lib/logging.sh"
-	cp "${LIB_DIR}/constants.sh" "${TEST_DIR}/lib/constants.sh"
-	cp -r "${LIB_DIR}/config" "${TEST_DIR}/lib/"
-	chmod +x "${TEST_DIR}/vpn-monitor-control.sh"
+	setup_control_script_install_tree "${TEST_DIR}"
 	cd "${TEST_DIR}" || exit 1
 	run bash "${TEST_DIR}/vpn-monitor-control.sh" pause
 	assert_failure
@@ -128,15 +111,7 @@ setup() {
 
 # bats test_tags=category:unit
 @test "stop logs operating mode transition" {
-	cp "${BATS_TEST_DIRNAME}/../vpn-monitor-control.sh" "${TEST_DIR}/vpn-monitor-control.sh"
-	mkdir -p "${TEST_DIR}/lib/control"
-	cp -r "${LIB_DIR}/control/"* "${TEST_DIR}/lib/control/"
-	cp "${LIB_DIR}/control.sh" "${TEST_DIR}/lib/control.sh"
-	cp "${LIB_DIR}/common.sh" "${TEST_DIR}/lib/common.sh"
-	cp "${LIB_DIR}/logging.sh" "${TEST_DIR}/lib/logging.sh"
-	cp "${LIB_DIR}/constants.sh" "${TEST_DIR}/lib/constants.sh"
-	cp -r "${LIB_DIR}/config" "${TEST_DIR}/lib/"
-	chmod +x "${TEST_DIR}/vpn-monitor-control.sh"
+	setup_control_script_install_tree "${TEST_DIR}"
 	set_operating_mode "running" "0" "" "test"
 	cd "${TEST_DIR}" || exit 1
 	run bash "${TEST_DIR}/vpn-monitor-control.sh" stop

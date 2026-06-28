@@ -62,10 +62,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 
 	run bash "$test_install" --dev --silent --no-cron
 	# Should succeed in dev mode even without root
@@ -81,10 +78,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 
 	run bash "$test_install" --dev --silent --no-cron
 	assert_success
@@ -102,10 +96,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 
 	run bash "$test_install" --dev --silent --no-cron
 	assert_success
@@ -129,9 +120,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 
 	# Create source files with install.sh and lib directory (without config)
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT" --no-config)
 
 	run bash "$test_install" --dev --silent --no-cron
 	assert_success
@@ -156,10 +145,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT" --config "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"")
 
 	# First installation
 	run bash "$test_install" --dev --silent --no-cron
@@ -185,10 +171,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT" --config "LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"")
 
 	# First installation
 	run bash "$test_install" --dev --silent --no-cron
@@ -213,8 +196,7 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	cd "$TEST_DIR"
 
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT" --no-config)
 	# Template with NO_ESCALATE (will be missing from existing after we remove it)
 	cat >"${TEST_DIR}/source/vpn-monitor.conf" <<EOF
 LOCATION_NYC_EXTERNAL="192.168.1.1"
@@ -249,8 +231,7 @@ EOF
 	cd "$TEST_DIR"
 
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT" --no-config)
 	cat >"${TEST_DIR}/source/vpn-monitor.conf" <<EOF
 LOCATION_NYC_EXTERNAL="192.168.1.1"
 TIER1_THRESHOLD=1
@@ -285,8 +266,7 @@ EOF
 
 	local project_root="${BATS_TEST_DIRNAME}/.."
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT" --no-config)
 	# Use repo default config so template has /data/vpn-monitor paths for LOG_FILE and STATE_DIR
 	cp "${project_root}/vpn-monitor.conf" "${TEST_DIR}/source/vpn-monitor.conf"
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
@@ -326,9 +306,7 @@ EOF
 	cd "$TEST_DIR"
 
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT" --no-config)
 	# No vpn-monitor.conf in source so install creates default config with empty LOCATION_NYC_EXTERNAL=""
 
 	# Run install without --silent so validate_config_after_install prompts when no locations
@@ -349,9 +327,7 @@ EOF
 	cd "$TEST_DIR"
 
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT" --no-config)
 
 	# Input: yes, NYC, 203.0.113.1, 192.168.1.1, 192.168.1.100, yes (add another), DC, 198.51.100.1, 10.0.0.1, (no local UDM prompt), no
 	run bash "$test_install" --dev --no-cron < <(printf 'yes\nNYC\n203.0.113.1\n192.168.1.1\n192.168.1.100\nyes\nDC\n198.51.100.1\n10.0.0.1\nno\n')
@@ -373,10 +349,7 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 
 	run bash "$test_install" --dev --silent --no-cron
 	assert_success
@@ -397,13 +370,10 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 
 	# Remove any existing vpn-monitor entries first (match install.sh: direct and wrapper)
-	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+	clear_vpn_monitor_crontab
 
 	# Run install script - may fail if crontab has issues, but should at least attempt setup
 	run bash "$test_install" --dev --silent
@@ -443,7 +413,7 @@ EOF
 	fi
 
 	# Clean up
-	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+	clear_vpn_monitor_crontab
 }
 
 # bats test_tags=category:unit
@@ -455,8 +425,7 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT" --no-config)
 	load helpers/config
 	create_test_config "${TEST_DIR}/source/vpn-monitor.conf" \
 		'LOCATION_TEST_EXTERNAL=""' \
@@ -464,7 +433,7 @@ EOF
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
 	# Remove any existing vpn-monitor entries first (match install.sh: direct and wrapper)
-	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+	clear_vpn_monitor_crontab
 
 	run bash "$test_install" --dev --silent
 	assert_success
@@ -490,7 +459,7 @@ EOF
 	fi
 
 	# Clean up
-	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+	clear_vpn_monitor_crontab
 }
 
 # bats test_tags=category:unit
@@ -502,8 +471,7 @@ EOF
 
 	# Create source files with install.sh, lib, and wrapper
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT" --no-config)
 	load helpers/config
 	create_test_config "${TEST_DIR}/source/vpn-monitor.conf" \
 		'LOCATION_TEST_EXTERNAL=""' \
@@ -513,7 +481,7 @@ EOF
 	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
 
 	# Remove any existing cron entries first
-	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+	clear_vpn_monitor_crontab
 
 	run bash "$test_install" --dev --silent
 	assert_success
@@ -532,7 +500,7 @@ EOF
 	fi
 
 	# Clean up
-	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+	clear_vpn_monitor_crontab
 }
 
 # bats test_tags=category:unit
@@ -544,10 +512,7 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 
 	run bash "$test_install" --dev --silent --no-cron
 	assert_success
@@ -584,10 +549,7 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 
 	# Test with invalid flag - should fail and show help
 	run bash "$test_install" --invalid-flag
@@ -609,10 +571,7 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 
 	# Test with multiple invalid flags - should fail on first invalid one
 	run bash "$test_install" --dev --unknown-flag
@@ -630,10 +589,7 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 
 	# --overwrite-conf without --silent should warn
 	run bash "$test_install" --dev --no-cron --overwrite-conf <<<"no"
@@ -650,9 +606,7 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT" --no-config)
 
 	# Create config file with multiple locations and multiple internal IPs
 	load helpers/config
@@ -767,7 +721,7 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT" --no-config)
 
 	# Create a vpn-monitor.sh with an old version
 	cat >"${TEST_DIR}/source/vpn-monitor.sh" <<'EOF'
@@ -809,10 +763,7 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 
 	# Create a directory that we can't write to
 	mkdir -p "${TEST_DIR}/readonly"
@@ -855,10 +806,7 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 
 	# Create installation directory but make it read-only after creation
 	# This simulates a scenario where directory exists but we can't write files
@@ -886,10 +834,7 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 
 	# Simulate partial installation: directory exists but lib is missing
 	mkdir -p "${TEST_DIR}/vpn-monitor"
@@ -915,10 +860,7 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 
 	# Simulate partial installation: directory and lib exist, but main script is missing
 	mkdir -p "${TEST_DIR}/vpn-monitor/lib"
@@ -943,10 +885,7 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 
 	# Simulate partial installation: lib directory exists but files are incomplete
 	mkdir -p "${TEST_DIR}/vpn-monitor/lib"
@@ -972,13 +911,10 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 
 	# Remove any existing vpn-monitor entries first (match install.sh: direct and wrapper)
-	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+	clear_vpn_monitor_crontab
 
 	# First installation - creates cron entry
 	run bash "$test_install" --dev --silent
@@ -1011,7 +947,7 @@ EOF
 	fi
 
 	# Clean up
-	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+	clear_vpn_monitor_crontab
 }
 
 # bats test_tags=category:unit
@@ -1023,13 +959,10 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 
 	# Remove any existing vpn-monitor entries first (match install.sh: direct and wrapper)
-	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+	clear_vpn_monitor_crontab
 
 	# Manually create multiple cron entries (simulating user error or previous issues)
 	local test_cron_entry
@@ -1064,7 +997,7 @@ EOF
 	fi
 
 	# Clean up
-	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+	clear_vpn_monitor_crontab
 }
 
 # bats test_tags=category:unit
@@ -1076,7 +1009,7 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT" --no-config)
 
 	# Create a vpn-monitor.sh that will cause validation to fail
 	# (missing required content or invalid syntax)
@@ -1132,11 +1065,8 @@ EOF
 
 	# Create source files with install.sh and lib directory
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT")
 	echo "SCRIPT_VERSION=\"0.7.0\"" >>"${TEST_DIR}/source/vpn-monitor.sh"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
 
 	# Create a corrupted installation: directory exists with only some files
 	mkdir -p "${TEST_DIR}/vpn-monitor/logs"
@@ -1165,7 +1095,7 @@ EOF
 	cd "$TEST_DIR"
 
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT" --no-config)
 	cat >"${TEST_DIR}/source/vpn-monitor.sh" <<'EOF'
 #!/bin/bash
 SCRIPT_VERSION="0.8.0"
@@ -1179,7 +1109,7 @@ EOF
 		'ENABLE_MONITOR_WRAPPER=1' \
 		'MONITOR_INTERVAL=30'
 
-	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+	clear_vpn_monitor_crontab
 
 	run bash "$test_install" --dev --silent
 	assert_success
@@ -1200,7 +1130,7 @@ EOF
 	key_count=$(grep -c '^ENABLE_MONITOR_WRAPPER=' "${TEST_DIR}/vpn-monitor/vpn-monitor.conf")
 	assert_equal "$key_count" 1
 
-	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
+	clear_vpn_monitor_crontab
 }
 
 # bats test_tags=category:unit
@@ -1208,14 +1138,7 @@ EOF
 	cd "$TEST_DIR"
 
 	local test_install
-	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
-	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
-	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
-	cp "${BATS_TEST_DIRNAME}/../vpn-monitor-control.sh" "${TEST_DIR}/source/vpn-monitor-control.sh"
-	mkdir -p "${TEST_DIR}/source/lib/control"
-	cp -r "${BATS_TEST_DIRNAME}/../lib/control/"* "${TEST_DIR}/source/lib/control/"
-	cp "${BATS_TEST_DIRNAME}/../lib/control.sh" "${TEST_DIR}/source/lib/control.sh"
-	chmod +x "${TEST_DIR}/source/vpn-monitor.sh" "${TEST_DIR}/source/vpn-monitor-control.sh"
+	test_install=$(setup_dev_install "$INSTALL_SCRIPT" --with-control)
 
 	run bash "$test_install" --dev --silent --no-cron
 	assert_success

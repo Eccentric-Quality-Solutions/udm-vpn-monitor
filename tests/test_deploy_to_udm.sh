@@ -13,6 +13,7 @@
 # - Full deploy flow with mocked ssh/scp/sshpass
 
 load test_helper
+load helpers/mocks
 
 DEPLOY_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/manage/deploy-to-udm.sh"
 PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
@@ -82,23 +83,7 @@ PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 	} >"${orig_conf}.tmp" 2>/dev/null && mv "${orig_conf}.tmp" "$orig_conf" || echo 'LOCAL_UDM_IP="172.31.17.77"' >"$orig_conf"
 
 	standard_setup
-	local mock_bin="${TEST_DIR}/mock_bin"
-	mkdir -p "$mock_bin"
-	cat >"${mock_bin}/ssh" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/scp" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/sshpass" <<'MOCK'
-#!/bin/bash
-shift 2
-exec ssh "$@"
-MOCK
-	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
-	export PATH="${mock_bin}:${PATH}"
+	setup_deploy_ssh_mocks >/dev/null
 
 	# Run deploy without --bind-ip; should use LOCAL_UDM_IP from config
 	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
@@ -124,23 +109,7 @@ MOCK
 	[[ -f udm-vpn-monitor.zip ]] || skip "Package file not available"
 
 	standard_setup
-	local mock_bin="${TEST_DIR}/mock_bin"
-	mkdir -p "$mock_bin"
-	cat >"${mock_bin}/ssh" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/scp" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/sshpass" <<'MOCK'
-#!/bin/bash
-shift 2
-exec ssh "$@"
-MOCK
-	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
-	export PATH="${mock_bin}:${PATH}"
+	setup_deploy_ssh_mocks >/dev/null
 
 	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
 		--target-ip 192.168.1.100 \
@@ -160,29 +129,14 @@ MOCK
 	[[ -f udm-vpn-monitor.zip ]] || skip "Package file not available"
 
 	standard_setup
-	local mock_bin="${TEST_DIR}/mock_bin"
 	local ssh_log="${TEST_DIR}/ssh_argv.log"
 	rm -f "$ssh_log"
-	mkdir -p "$mock_bin"
-	cat >"${mock_bin}/ssh" <<EOF
-#!/bin/bash
-printf '%s\\n' "\$0 \$*" >>"${ssh_log}"
-if [[ "\$*" == *"-O check"* ]] || [[ "\$*" == *"-O exit"* ]]; then
+	setup_deploy_ssh_mocks "#!/bin/bash
+printf '%s\\n' \"\$0 \$*\" >>\"${ssh_log}\"
+if [[ \"\$*\" == *\"-O check\"* ]] || [[ \"\$*\" == *\"-O exit\"* ]]; then
 	exit 0
 fi
-exit 0
-EOF
-	cat >"${mock_bin}/scp" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/sshpass" <<'MOCK'
-#!/bin/bash
-shift 2
-exec ssh "$@"
-MOCK
-	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
-	export PATH="${mock_bin}:${PATH}"
+exit 0" >/dev/null
 
 	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
 		--target-ip 192.168.1.100 \
@@ -206,23 +160,7 @@ MOCK
 	[[ -f udm-vpn-monitor.zip ]] || skip "Package file not available"
 
 	standard_setup
-	local mock_bin="${TEST_DIR}/mock_bin"
-	mkdir -p "$mock_bin"
-	cat >"${mock_bin}/ssh" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/scp" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/sshpass" <<'MOCK'
-#!/bin/bash
-shift 2
-exec ssh "$@"
-MOCK
-	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
-	export PATH="${mock_bin}:${PATH}"
+	setup_deploy_ssh_mocks >/dev/null
 
 	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
 		--target-ip 192.168.1.100 \
@@ -241,23 +179,7 @@ MOCK
 	[[ -f udm-vpn-monitor.zip ]] || skip "Package file not available"
 
 	standard_setup
-	local mock_bin="${TEST_DIR}/mock_bin"
-	mkdir -p "$mock_bin"
-	cat >"${mock_bin}/ssh" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/scp" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/sshpass" <<'MOCK'
-#!/bin/bash
-shift 2
-exec ssh "$@"
-MOCK
-	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
-	export PATH="${mock_bin}:${PATH}"
+	setup_deploy_ssh_mocks >/dev/null
 
 	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
 		--target-ip 192.168.1.100 \
@@ -276,23 +198,7 @@ MOCK
 	[[ -f udm-vpn-monitor.zip ]] || skip "Package file not available"
 
 	standard_setup
-	local mock_bin="${TEST_DIR}/mock_bin"
-	mkdir -p "$mock_bin"
-	cat >"${mock_bin}/ssh" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/scp" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/sshpass" <<'MOCK'
-#!/bin/bash
-shift 2
-exec ssh "$@"
-MOCK
-	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
-	export PATH="${mock_bin}:${PATH}"
+	setup_deploy_ssh_mocks >/dev/null
 
 	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
 		--target-ip 192.168.1.100 \
@@ -311,23 +217,7 @@ MOCK
 	[[ -f udm-vpn-monitor.zip ]] || skip "Package file not available"
 
 	standard_setup
-	local mock_bin="${TEST_DIR}/mock_bin"
-	mkdir -p "$mock_bin"
-	cat >"${mock_bin}/ssh" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/scp" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/sshpass" <<'MOCK'
-#!/bin/bash
-shift 2
-exec ssh "$@"
-MOCK
-	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
-	export PATH="${mock_bin}:${PATH}"
+	setup_deploy_ssh_mocks >/dev/null
 
 	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
 		--target-ip 192.168.1.100 \
@@ -348,23 +238,7 @@ MOCK
 	[[ -f udm-vpn-monitor.zip ]] || skip "Package file not available"
 
 	standard_setup
-	local mock_bin="${TEST_DIR}/mock_bin"
-	mkdir -p "$mock_bin"
-	cat >"${mock_bin}/ssh" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/scp" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/sshpass" <<'MOCK'
-#!/bin/bash
-shift 2
-exec ssh "$@"
-MOCK
-	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
-	export PATH="${mock_bin}:${PATH}"
+	setup_deploy_ssh_mocks >/dev/null
 
 	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \
 		--target-ip 192.168.1.100 \
@@ -386,23 +260,7 @@ MOCK
 	standard_setup
 	local log_file="${TEST_DIR}/logs/deploy-to-udm.log"
 	mkdir -p "$(dirname "$log_file")"
-	local mock_bin="${TEST_DIR}/mock_bin"
-	mkdir -p "$mock_bin"
-	cat >"${mock_bin}/ssh" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/scp" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/sshpass" <<'MOCK'
-#!/bin/bash
-shift 2
-exec ssh "$@"
-MOCK
-	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
-	export PATH="${mock_bin}:${PATH}"
+	setup_deploy_ssh_mocks >/dev/null
 	export DEPLOY_LOG_FILE="$log_file"
 
 	run bash -c "printf '%s\n' secretpassword123 | \"$DEPLOY_SCRIPT\" \
@@ -430,23 +288,7 @@ MOCK
 	standard_setup
 	mkdir -p "$(dirname "${TEST_DIR}/deploy-registry")"
 
-	local mock_bin="${TEST_DIR}/mock_bin"
-	mkdir -p "$mock_bin"
-	cat >"${mock_bin}/ssh" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/scp" <<'MOCK'
-#!/bin/bash
-exit 0
-MOCK
-	cat >"${mock_bin}/sshpass" <<'MOCK'
-#!/bin/bash
-shift 2
-exec ssh "$@"
-MOCK
-	chmod +x "${mock_bin}/ssh" "${mock_bin}/scp" "${mock_bin}/sshpass"
-	export PATH="${mock_bin}:${PATH}"
+	setup_deploy_ssh_mocks >/dev/null
 	export DEPLOY_REGISTRY_FILE="${TEST_DIR}/deploy-registry"
 
 	run bash -c "printf '%s\n' testpass | \"$DEPLOY_SCRIPT\" \

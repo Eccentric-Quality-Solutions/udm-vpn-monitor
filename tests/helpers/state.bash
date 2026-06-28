@@ -346,3 +346,65 @@ setup_readonly_state_file() {
 	# Return the path for use in tests
 	echo "$state_file"
 }
+
+# Setup state and log directories for hourly stats summary tests
+#
+# Initializes TEST_DIR/state and TEST_DIR/logs with STATE_DIR, LOGS_DIR, and
+# LOG_FILE exported. Requires standard_setup() from test_helper.bash.
+#
+# Returns:
+#   0: Always succeeds
+#
+# Side effects:
+#   Creates state and log directories; sets STATE_DIR, LOGS_DIR, LOG_FILE
+setup_stats_summary_test() {
+	standard_setup
+
+	export STATE_DIR="${TEST_DIR}/state"
+	mkdir -p "${STATE_DIR}"
+
+	export LOGS_DIR="${TEST_DIR}/logs"
+	mkdir -p "${LOGS_DIR}"
+	export LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
+}
+
+# Write operating_mode state file for tests without sourcing operating_mode.sh
+#
+# Arguments:
+#   $1: mode (running|stopped|paused|observe-only)
+#   $2: paused_until epoch (default: 0)
+#   $3: reason (optional)
+#   $4: set_by identity (default: test)
+#   $5: state directory (default: STATE_DIR)
+#
+# Returns:
+#   0: Success
+#
+# Side effects:
+#   Atomically writes operating_mode file under state directory
+setup_operating_mode_fixture() {
+	local mode="$1"
+	local paused_until="${2:-0}"
+	local reason="${3:-}"
+	local set_by="${4:-test}"
+	local state_dir="${5:-${STATE_DIR}}"
+	local file now content
+
+	mkdir -p "$state_dir"
+	file="${state_dir}/operating_mode"
+	now=$(date +%s)
+
+	content="mode=${mode}
+paused_until=${paused_until}
+set_at=${now}
+set_by=${set_by}"
+	if [[ -n "$reason" ]]; then
+		content="${content}
+reason=${reason}"
+	fi
+
+	if ! (printf '%s\n' "$content" >"${file}.tmp" && mv "${file}.tmp" "$file"); then
+		echo "Failed to write operating mode fixture: $file" >&2
+		return 1
+	fi
+}

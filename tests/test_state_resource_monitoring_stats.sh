@@ -7,6 +7,7 @@
 
 load test_helper
 load helpers/detection
+load helpers/state
 
 # Source the state library functions
 # shellcheck source=../lib/state.sh
@@ -20,37 +21,9 @@ source "${BATS_TEST_DIRNAME}/../lib/logging.sh"
 # shellcheck source=../lib/common.sh
 source "${BATS_TEST_DIRNAME}/../lib/common.sh"
 
-# Setup function for resource monitoring stats tests
-#
-# Sets up test environment for resource monitoring statistics tests.
-# Initializes state and log directories and sets required environment variables.
-#
-# Returns:
-#   0: Always succeeds
-#
-# Side effects:
-#   - Creates TEST_DIR/state and TEST_DIR/logs directories
-#   - Sets STATE_DIR, LOGS_DIR, and LOG_FILE environment variables
-#   - SECONDS_PER_HOUR is available from lib/constants.sh (sourced via lib/state.sh)
-#
-# Note:
-#   This is a test helper function. Requires standard_setup() to be available
-#   from test helpers.
+# Setup function for resource monitoring stats tests (delegates to shared helper)
 setup_resource_monitoring_stats_test() {
-	standard_setup
-
-	# Set up state directory
-	export STATE_DIR="${TEST_DIR}/state"
-	mkdir -p "${STATE_DIR}"
-
-	# Set up logs directory
-	export LOGS_DIR="${TEST_DIR}/logs"
-	mkdir -p "${LOGS_DIR}"
-	export LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
-
-	# Set constants (only if not already set as readonly)
-	# SECONDS_PER_HOUR is already defined as readonly in lib/constants.sh and lib/state.sh
-	# so we don't need to export it here - it will be available from the sourced libraries
+	setup_stats_summary_test
 }
 
 # ============================================================================

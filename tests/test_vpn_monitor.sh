@@ -422,7 +422,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	setup_test_vpn_monitor "${TEST_PEER_IP}" "${TEST_DIR}"
 
 	# Remove cron entry if it exists
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	clear_vpn_monitor_crontab
 
 	run bash "$TEST_SCRIPT" --fake
 
@@ -496,7 +496,7 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 	setup_vpn_active_fixture "${TEST_PEER_IP}" 1000 2000 "" 'ENABLE_RESOURCE_MONITORING=0' || fail "Fixture setup failed"
 
 	# Remove cron entry if it exists
-	crontab -l 2>/dev/null | grep -v "vpn-monitor.sh" | crontab - || true
+	clear_vpn_monitor_crontab
 
 	# Remove .cron_checked so this run performs the cron persistence check
 	rm -f "${STATE_DIR}/.cron_checked"

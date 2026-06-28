@@ -1309,13 +1309,7 @@ EOF
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
 	local future
 	future=$(($(date +%s) + 3600))
-	mkdir -p "${STATE_DIR}"
-	cat >"${STATE_DIR}/operating_mode" <<EOF
-mode=paused
-paused_until=${future}
-set_at=$(date +%s)
-set_by=test
-EOF
+	setup_operating_mode_fixture "paused" "$future"
 
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
@@ -1337,13 +1331,7 @@ EOF
 		"TIER3_THRESHOLD=3"
 
 	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
-	mkdir -p "${STATE_DIR}"
-	cat >"${STATE_DIR}/operating_mode" <<EOF
-mode=observe-only
-paused_until=0
-set_at=$(date +%s)
-set_by=test
-EOF
+	setup_operating_mode_fixture "observe-only" "0"
 
 	local test_script
 	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
