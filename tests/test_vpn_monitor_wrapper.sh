@@ -62,6 +62,39 @@ EOF
 }
 
 # bats test_tags=category:unit
+@test "vpn-monitor-wrapper.sh exits without running monitor when paused" {
+	local inst="${TEST_DIR}/wrapper-pause"
+	mkdir -p "${inst}/state" "${inst}/logs"
+	echo "MONITOR_INTERVAL=10" >"${inst}/vpn-monitor.conf"
+
+	local future
+	future=$(($(date +%s) + 3600))
+	cat >"${inst}/state/operating_mode" <<EOF
+mode=paused
+paused_until=${future}
+set_at=$(date +%s)
+set_by=test
+EOF
+
+	cp "$WRAPPER_SCRIPT" "${inst}/vpn-monitor-wrapper.sh"
+	chmod +x "${inst}/vpn-monitor-wrapper.sh"
+	cp -r "${BATS_TEST_DIRNAME}/../lib" "${inst}/lib"
+
+	local inv_file="${TEST_DIR}/monitor_invocations_paused"
+	rm -f "$inv_file"
+	cat >"${inst}/vpn-monitor.sh" <<EOF
+#!/bin/bash
+echo "ran" >>"${inv_file}"
+exit 0
+EOF
+	chmod +x "${inst}/vpn-monitor.sh"
+
+	run bash -c "cd '${inst}' && timeout 3 bash ./vpn-monitor-wrapper.sh"
+	assert_success
+	[[ ! -f "$inv_file" ]]
+}
+
+# bats test_tags=category:unit
 @test "vpn-monitor-wrapper.sh --help exits 0" {
 	run bash "$WRAPPER_SCRIPT" --help
 	assert_success

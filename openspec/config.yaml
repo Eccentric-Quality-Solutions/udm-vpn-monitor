@@ -1,0 +1,47 @@
+schema: spec-driven
+
+context: |
+  Project: UDM VPN Monitor — monitors Site-to-Site VPN on UniFi Dream Machines and
+  attempts recovery when tunnels appear active but are non-functional.
+
+  Platform: UDM OS 4.3+ only. Single deployment; no backwards compatibility required.
+  Language: POSIX shell (bash). Use only tools available on UDM OS (sh, grep, awk,
+  coreutils, ip, ipsec, ping, systemd, cron). Do NOT add python3, jq, node, or
+  similar dependencies.
+
+  Architecture: Cron-driven execution (not a long-running daemon). Modular lib/
+  layout — detection (xfrm byte counters, ping fallback), recovery tiers 1–3,
+  per-location state files, centralized logging.
+
+  Existing documentation (consult before proposing changes):
+  - docs/reference/ARCHITECTURE.md — system design
+  - docs/adr/ — architecture decision records
+  - docs/reference/CODE_PATTERNS.md — coding patterns and conventions
+  - docs/reference/STATE_SYSTEM.md — state file layout
+  - docs/testing/RELEVANT_TESTS.md — code-to-test mapping
+  - CLAUDE.md / .cursor/rules/ — error handling, testing, and project rules
+
+  Spec domains (create folders under openspec/specs/ as needed):
+  - detection, recovery, config, state, install, logging, resources
+
+  Error handling: handle_error_or_exit_fake_mode for config/validation errors;
+  die for truly fatal errors; log_message + return 1 for non-fatal.
+  Atomic writes: write to .tmp then mv. Logging: log_message LEVEL CONTEXT msg.
+
+rules:
+  proposal:
+    - Reference relevant ADRs in docs/adr/ when the change touches an existing decision
+    - State rollback or recovery impact on live VPN tunnels
+    - Identify affected lib/ modules and root scripts
+  specs:
+    - Use GIVEN/WHEN/THEN scenario format for behavioral requirements
+    - Requirements must be testable; note which BATS tests would verify each scenario
+    - Scope specs to the change (delta format); do not back-fill unrelated behavior
+  design:
+    - Confirm all proposed commands exist on UDM OS 4.3+
+    - Follow patterns in docs/reference/CODE_PATTERNS.md
+    - No new external dependencies
+  tasks:
+    - Include relevant test files from docs/testing/RELEVANT_TESTS.md
+    - Include shellcheck/shfmt checks when shell scripts change
+    - Use TEST_TIMEOUT=120 bats for relevant test runs

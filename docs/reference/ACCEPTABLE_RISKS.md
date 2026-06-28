@@ -8,7 +8,7 @@ This document tracks bugs and potential issues that have been reviewed and deter
 
 ## Race Condition Between `check_rate_limit()` and `record_restart()`
 
-**Location**: `lib/state.sh:842-870` and `lib/state.sh:898-940`
+**Location**: `lib/state/global_state.sh:178-285` and `lib/state/global_state.sh:339-347`
 
 **Issue**: `check_rate_limit()` reads `RESTART_COUNT_FILE` while `record_restart()` modifies it, potentially causing a race condition.
 
@@ -24,13 +24,13 @@ This document tracks bugs and potential issues that have been reviewed and deter
 
 ## Race Condition in Lockfile Stale Removal
 
-**Location**: `lib/lockfile.sh:402-410`
+**Location**: `lib/lockfile.sh:396-400` (primary flock path) and `lib/lockfile.sh:462-476`, `492-494` (fallback retry)
 
 **Issue**: Window between removing stale lockfile and retrying flock where another process could acquire the lock.
 
 **Why Acceptable**:
 - This is intentional and correct behavior, not a bug
-- Code comment (lines 412-413) explicitly acknowledges this scenario
+- Code comment (lines 397-399) explicitly acknowledges this scenario on the flock path
 - If Process B legitimately acquires lock after Process A removes stale lockfile, Process A exiting is the correct response
 - Non-blocking flock design intentionally prioritizes avoiding concurrent execution over waiting
 - No actual negative impact - one process exits (as designed), other process continues normally
@@ -41,17 +41,15 @@ This document tracks bugs and potential issues that have been reviewed and deter
 
 ## Lockfile Write Race Condition
 
-**Location**: `lib/lockfile.sh:448`
+**Location**: `lib/lockfile.sh:302-314`, `373-379` (primary flock path); `lib/lockfile.sh:452-494` (fallback)
 
-**Issue**: File descriptor opening with `9>"$LOCKFILE"` truncates file before flock is acquired, creating a window where another process might read empty file.
+**Issue**: On the fallback path, atomic file creation has TOCTOU windows between check, read, and create. The primary flock path opens the lockfile with `exec 9<>"$LOCKFILE"` without truncating until after `flock -n` succeeds (lines 373-379), which mitigates the older pre-flock truncation race.
 
 **Why Acceptable**:
-- Very low likelihood - window is microseconds between file descriptor opening and flock acquisition
-- File descriptor is opened in subshell `( ... ) 9>"$LOCKFILE"` - truncation happens when redirection is set up
-- `flock -n 9` acquires exclusive lock immediately after, preventing concurrent access
-- Even if another process reads between truncation and lock acquisition, it would see empty file and treat as "no lockfile" (correct behavior)
-- Pre-check at lines 300-339 reads lockfile BEFORE opening file descriptor, so PID is extracted before truncation
-- Impact is minimal: temporary empty lockfile read would cause process to attempt lock acquisition (correct behavior)
+- Primary flock path (UDM default): pre-check reads PID before open/flock (302-314); content is written only after lock acquisition (379)
+- Fallback is used only when `flock` is unavailable (rare on UDM OS 4.3+); documented TOCTOU limits at lines 417-435
+- Even if another process reads between open and flock, it sees prior lock content, not an empty file
+- Impact is minimal: duplicate-start attempts exit via conflict handling (correct behavior)
 
 **Date Accepted**: 2025-12-31
 
@@ -59,7 +57,7 @@ This document tracks bugs and potential issues that have been reviewed and deter
 
 ## Lockfile Acquisition Timing Window (Issue #18)
 
-**Location**: `vpn-monitor.sh:709` and `lib/lockfile.sh:663-692`
+**Location**: `vpn-monitor.sh:617-618` and `lib/lockfile.sh:649-695`
 
 **Issue**: Lockfile acquisition happens after script initialization (library sourcing, directory creation, config loading), creating a timing window where multiple instances can start before the lockfile is acquired. This can cause "Another instance is already running" warnings when cron triggers before the previous instance completes.
 

@@ -4630,6 +4630,14 @@ trap cleanup_control_master EXIT
 - **Pattern-guard `rmdir`** with `[[ "$dir" == /tmp/ssh-deploy-* ]]` to prevent accidental deletion of wrong directory
 - **Clean up temp dir on setup failure** — if master setup fails and you set `CONTROL_SOCKET=""`, the EXIT trap won't clean up; do it explicitly before clearing the variable
 
+**Batch multi-host SSH:** When iterating over several targets (e.g. `control-remote-udm.sh`, `deploy-to-udms.sh`), reset per-host connection state on each iteration:
+
+- Call `cleanup_control_master` (or equivalent) before the next host — do not rely on `trap - EXIT` alone
+- Reset `BIND_IP` from the config line or CLI default; do not let one host's `BindAddress` leak to the next
+- Clear `SSH_PASSWORD` if re-prompting per host
+
+Reference: `scripts/manage/control-remote-udm.sh` — `reset_ssh_between_hosts()`, batch loop in `main()`
+
 **Auth method cascade:**
 ```bash
 # Try sshpass (best), then expect (middle), then manual /dev/tty (fallback)

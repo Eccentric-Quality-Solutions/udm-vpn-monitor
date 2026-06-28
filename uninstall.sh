@@ -1161,6 +1161,7 @@ main() {
 
 	# Remove components - continue even if individual steps fail
 	# to ensure maximum cleanup is attempted
+	rm -f "${STATE_DIR}/operating_mode" 2>/dev/null || true
 	if ! remove_cron; then
 		log_warn "Failed to remove cron job, but continuing with uninstallation"
 	fi

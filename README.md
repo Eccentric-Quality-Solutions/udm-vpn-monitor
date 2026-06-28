@@ -256,6 +256,39 @@ Enabled by default for faster failure detection. The installer configures cron t
 
 To disable, set `ENABLE_MONITOR_WRAPPER=0` in vpn-monitor.conf and re-run `./install.sh`. With 20-second intervals and default thresholds (TIER2_THRESHOLD=2), Tier 2 triggers after ~40 seconds instead of ~1-2 minutes.
 
+### Operating Mode Control
+
+Control whether the monitor runs, is paused during maintenance, or logs without taking recovery action. State is persisted in `state/operating_mode` and honored by `vpn-monitor.sh` and the wrapper on every run.
+
+**Operating modes:**
+
+| Mode | Behavior |
+|------|----------|
+| `running` | Normal operation (default) |
+| `stopped` | Cron removed; wrapper and keepalive stopped; no execution |
+| `paused` | No execution until `--until` time; auto-resumes when expired |
+| `observe-only` | Detection and logging continue; all recovery actions suppressed |
+
+**Local control (on the UDM):**
+
+```bash
+/data/vpn-monitor/vpn-monitor-control.sh status
+/data/vpn-monitor/vpn-monitor-control.sh stop
+/data/vpn-monitor/vpn-monitor-control.sh pause --until +2h --reason "IPsec maintenance"
+/data/vpn-monitor/vpn-monitor-control.sh observe-only
+/data/vpn-monitor/vpn-monitor-control.sh start
+```
+
+**Remote control (from a server or another UDM):**
+
+```bash
+./scripts/manage/control-remote-udm.sh --host 192.168.1.100 status
+./scripts/manage/control-remote-udm.sh --host 192.168.1.100 pause --until +30m
+./scripts/manage/control-remote-udm.sh --config control-udms.conf stop
+```
+
+Copy `scripts/manage/control-udms.conf.example` to `control-udms.conf` for batch operations (same host-list format as `deploy-udms.conf`).
+
 ### Keepalive Daemon
 
 The VPN keepalive daemon is an optional background process that sends periodic ping traffic through VPN tunnels to prevent them from being marked as idle or disconnected by network devices. This helps prevent false positives where healthy but idle VPN tunnels are incorrectly detected as failed.

@@ -32,8 +32,9 @@ Use this table to choose which test files to run for a given path or area. When 
 | Code changed | Run these test files |
 |--------------|----------------------|
 | **Root / entry scripts** | |
-| `vpn-monitor.sh` | `test_vpn_monitor.sh`, `test_main.sh` |
-| `vpn-monitor-wrapper.sh` | `test_vpn_monitor_wrapper.sh`, `test_vpn_monitor.sh`, `test_main.sh` |
+| `vpn-monitor.sh` | `test_vpn_monitor.sh`, `test_main.sh`, `test_operating_mode.sh` |
+| `vpn-monitor-wrapper.sh` | `test_vpn_monitor_wrapper.sh`, `test_vpn_monitor.sh`, `test_main.sh`, `test_operating_mode.sh` |
+| `vpn-monitor-control.sh` | `test_operating_mode.sh`, `test_install.sh` |
 | **Integration (multi-run / cron-style)** | `test_cron_cycle_e2e.sh`, `test_integration_e2e_recovery.sh` |
 | `vpn-keepalive.sh` | `test_vpn_keepalive.sh` |
 | `install.sh` | `test_install.sh` |
@@ -63,8 +64,9 @@ Use this table to choose which test files to run for a given path or area. When 
 | **lib/lockfile.sh** | `test_lockfile.sh` |
 | **lib/logging.sh** | `test_logging.sh`, `test_logging_prefix.sh` |
 | **lib/resources.sh** | `test_resources.sh` |
+| **lib/control.sh**, **lib/control/** | `test_operating_mode.sh`, `test_main.sh`, `test_install.sh` |
 | **lib/anonymize.sh** | `test_anonymize.sh` (optional filter: `--filter-tags anonymize:ipset` / `anonymize:ip-rules` / `anonymize:firewall` / `anonymize:logs` / `anonymize:all`) |
-| **scripts/** (e.g. prepare_install_package, update-version, scripts/manage/deploy-to-udm, deploy-to-udms, centralize-logs, export, anonymize scripts) | `test_prepare_install_package.sh`, `test_update_version.sh`, `test_deploy_to_udm.sh`, `test_deploy_to_udms.sh`, `test_export_udm_routes_firewall.sh`, `test_anonymize.sh` for anonymize scripts |
+| **scripts/** (e.g. prepare_install_package, update-version, scripts/manage/deploy-to-udm, deploy-to-udms, control-remote-udm, centralize-logs, export, anonymize scripts) | `test_prepare_install_package.sh`, `test_update_version.sh`, `test_deploy_to_udm.sh`, `test_deploy_to_udms.sh`, `test_remote_control.sh`, `test_export_udm_routes_firewall.sh`, `test_anonymize.sh` for anonymize scripts |
 | **Tests / fixtures / helpers** | `test_test_isolation.sh`, `test_test_data_generators.sh`, `test_fixtures_vpn_at_tier.sh`, `test_fixtures_vpn_idle.sh`, `test_fixtures_vpn_multi_location.sh`; plus tests that use the changed helper/fixture |
 
 **Deploy tests**: `test_deploy_to_udm.sh` and `test_deploy_to_udms.sh` use `DEPLOY_LOG_FILE` to redirect deploy script logs and `DEPLOY_REGISTRY_FILE` for the deployment registry to test-specific paths, so logs and registry do not pollute the repo.

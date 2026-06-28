@@ -145,6 +145,37 @@ For a complete list of documentation files and their descriptions, see the [Docu
 
 All source files include comprehensive in-code function documentation with function purpose, parameters, return values, side effects, examples, and notes. When reading the codebase, refer to function documentation blocks for detailed information about each function's behavior, parameters, and usage.
 
+## Spec-Driven Development (OpenSpec)
+
+This project uses [OpenSpec](https://openspec.dev/) for spec-driven development with AI assistants. Specs live in `openspec/` and grow incrementally as changes are proposed and archived — you do not need to document the entire codebase before using OpenSpec.
+
+**Install the CLI** (development machine only):
+
+```bash
+npm install -g @fission-ai/openspec@latest
+openspec doctor   # verify setup
+```
+
+**Typical workflow in Cursor:**
+
+1. `/opsx:explore` — optional; map the code area before proposing
+2. `/opsx:propose <change-name>` — create proposal, design, delta specs, and tasks
+3. Review and refine artifacts in `openspec/changes/<change-name>/`
+4. `/opsx:apply` — implement tasks
+5. `/opsx:archive` — merge specs into `openspec/specs/` and archive the change
+
+Project-specific context and artifact rules are in [`openspec/config.yaml`](openspec/config.yaml). See [`openspec/README.md`](openspec/README.md) for directory layout and CLI commands.
+
+OpenSpec complements (does not replace) existing docs:
+
+- **ADRs** (`docs/adr/`) — why architectural decisions were made
+- **OpenSpec specs** (`openspec/specs/`) — what the system must do (behavioral requirements)
+- **CODE_PATTERNS** — how to implement
+
+After updating OpenSpec globally or changing the workflow profile, run `openspec update` in the repo to refresh Cursor commands and skills.
+
+**Operating mode control** (`lib/control/`, `vpn-monitor-control.sh`, `scripts/manage/control-remote-udm.sh`): local and remote start/stop/pause/observe-only for the monitor. State file: `state/operating_mode` (see `docs/reference/STATE_SYSTEM.md`). Tests: `tests/test_operating_mode.sh`, `tests/test_remote_control.sh`.
+
 ## Development Tooling
 
 > **Note**: These are **development prerequisites** for contributing to the project. For runtime requirements (what's needed to run the VPN monitor on a UDM), see the [Requirements section in README.md](README.md#requirements).
@@ -1059,6 +1090,7 @@ If shfmt makes unexpected changes:
 - [ShellCheck Wiki](https://www.shellcheck.net/wiki/)
 - [shfmt Documentation](https://github.com/mvdan/sh)
 - [bats-core Documentation](https://github.com/bats-core/bats-core)
+- [OpenSpec](https://openspec.dev/) — spec-driven development; see [openspec/README.md](openspec/README.md)
 - [Bash Guide](https://mywiki.wooledge.org/BashGuide)
 - [Shell Script Best Practices](https://github.com/koalaman/shellcheck/wiki)
 

@@ -118,6 +118,7 @@ copy_files_with_validation() {
 MAIN_FILES=(
 	"vpn-monitor.sh"
 	"vpn-monitor-wrapper.sh"
+	"vpn-monitor-control.sh"
 	"vpn-keepalive.sh"
 	"install.sh"
 	"uninstall.sh"
@@ -141,6 +142,7 @@ LIB_FILES=(
 	"lib/recovery.sh"
 	"lib/resources.sh"
 	"lib/state.sh"
+	"lib/control.sh"
 )
 
 # Script files (utility scripts)
@@ -156,6 +158,8 @@ SCRIPT_FILES=(
 	"scripts/manage/deploy-to-udm.sh"
 	"scripts/manage/deploy-to-udms.sh"
 	"scripts/manage/deploy-udms.conf.example"
+	"scripts/manage/control-remote-udm.sh"
+	"scripts/manage/control-udms.conf.example"
 )
 
 echo "Preparing install package..."
@@ -172,6 +176,7 @@ MODULE_DIRS=(
 	"lib/recovery"
 	"lib/config"
 	"lib/state"
+	"lib/control"
 )
 
 for dir in "${MODULE_DIRS[@]}"; do

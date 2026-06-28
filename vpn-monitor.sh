@@ -59,6 +59,11 @@ source "${SCRIPT_DIR}/lib/resources.sh" || {
 	echo "ERROR: Failed to source resources.sh" >&2
 	exit 2
 }
+# shellcheck source=lib/control/operating_mode.sh
+source "${SCRIPT_DIR}/lib/control/operating_mode.sh" || {
+	echo "ERROR: Failed to source lib/control/operating_mode.sh" >&2
+	exit 2
+}
 
 # Parse help flags early (before directory creation)
 # This allows --help/-h to work even if directories don't exist
@@ -545,6 +550,11 @@ process_locations() {
 main() {
 	# Initialize monitor script
 	initialize_monitor "$@"
+
+	# Honor operating mode (stop/pause early exit; observe-only sets NO_ESCALATE)
+	if ! check_operating_mode; then
+		exit "${EXIT_SUCCESS:-0}"
+	fi
 
 	# Validate state, resources, partition probe (may exit 0 if resources constrained)
 	validate_monitor_state

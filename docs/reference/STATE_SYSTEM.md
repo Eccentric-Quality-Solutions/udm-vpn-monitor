@@ -290,6 +290,20 @@ These files control script execution and prevent concurrent runs.
 - **Update**: Updated on every script run via `touch` command
 - **Detection Logic**: Grace period applies if file doesn't exist or is older than 5 minutes (indicates restart or script hasn't run recently)
 
+### 5. Operating Mode (`operating_mode`)
+
+- **Path**: `${STATE_DIR}/operating_mode`
+- **Purpose**: Controls whether the monitor runs, is paused, or operates in observe-only mode
+- **Format**: Key=value lines:
+  - `mode`: `running` (default), `stopped`, `paused`, or `observe-only`
+  - `paused_until`: Unix epoch seconds (required when `mode=paused`)
+  - `set_at`: Epoch when mode was last set
+  - `set_by`: Username or `remote`/`auto-resume`
+  - `reason`: Optional free-text reason
+- **Management**: Written by `vpn-monitor-control.sh` (local or via `scripts/manage/control-remote-udm.sh`)
+- **Usage**: `vpn-monitor.sh` and `vpn-monitor-wrapper.sh` call `check_operating_mode()` at startup; active pause/stopped skip execution; observe-only sets `NO_ESCALATE=1` for recovery suppression
+- **Auto-resume**: When `mode=paused` and `paused_until` is in the past, the next monitor run transitions to `running`
+
 ## State Management Patterns
 
 ### Atomic File Operations

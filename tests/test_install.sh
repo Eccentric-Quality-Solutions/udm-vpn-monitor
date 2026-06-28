@@ -1202,3 +1202,28 @@ EOF
 
 	crontab -l 2>/dev/null | grep -v "vpn-monitor" | crontab - || true
 }
+
+# bats test_tags=category:unit
+@test "install.sh installs vpn-monitor-control.sh and initializes operating mode" {
+	cd "$TEST_DIR"
+
+	local test_install
+	test_install=$(create_test_install_setup "$INSTALL_SCRIPT" "${TEST_DIR}/source")
+	echo "#!/bin/bash" >"${TEST_DIR}/source/vpn-monitor.sh"
+	echo "# Test config" >"${TEST_DIR}/source/vpn-monitor.conf"
+	cp "${BATS_TEST_DIRNAME}/../vpn-monitor-control.sh" "${TEST_DIR}/source/vpn-monitor-control.sh"
+	mkdir -p "${TEST_DIR}/source/lib/control"
+	cp -r "${BATS_TEST_DIRNAME}/../lib/control/"* "${TEST_DIR}/source/lib/control/"
+	cp "${BATS_TEST_DIRNAME}/../lib/control.sh" "${TEST_DIR}/source/lib/control.sh"
+	chmod +x "${TEST_DIR}/source/vpn-monitor.sh" "${TEST_DIR}/source/vpn-monitor-control.sh"
+
+	run bash "$test_install" --dev --silent --no-cron
+	assert_success
+
+	local install_dir="${TEST_DIR}/vpn-monitor"
+	assert_file_exist "${install_dir}/vpn-monitor-control.sh"
+	assert_file_executable "${install_dir}/vpn-monitor-control.sh"
+	assert_file_exist "${install_dir}/state/operating_mode"
+	run grep "^mode=running" "${install_dir}/state/operating_mode"
+	assert_success
+}

@@ -19,6 +19,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
+# shellcheck source=lib/logging.sh
+source "${SCRIPT_DIR}/lib/logging.sh"
+# shellcheck source=lib/control/operating_mode.sh
+source "${SCRIPT_DIR}/lib/control/operating_mode.sh"
 MONITOR_SCRIPT="${SCRIPT_DIR}/vpn-monitor.sh"
 CONFIG_FILE="${SCRIPT_DIR}/vpn-monitor.conf"
 STATE_DIR="${SCRIPT_DIR}/state"
@@ -117,7 +121,15 @@ run_loop() {
 		exit 0
 	fi
 
+	# Stopped/paused modes skip wrapper execution
+	if ! check_operating_mode; then
+		exit 0
+	fi
+
 	while true; do
+		if ! check_operating_mode; then
+			exit 0
+		fi
 		if [[ -x "$MONITOR_SCRIPT" ]]; then
 			local exit_code=0
 			"$MONITOR_SCRIPT" >>"$CRON_LOG" 2>&1 || exit_code=$?

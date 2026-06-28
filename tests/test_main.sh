@@ -1298,3 +1298,62 @@ EOF
 	# Note: The actual behavior may vary, but script should handle multiple unknown args
 	[[ $status -ne 0 ]] # Should fail
 }
+
+# bats test_tags=category:unit
+@test "vpn-monitor.sh exits early when operating mode is paused" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\""
+
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	local future
+	future=$(($(date +%s) + 3600))
+	mkdir -p "${STATE_DIR}"
+	cat >"${STATE_DIR}/operating_mode" <<EOF
+mode=paused
+paused_until=${future}
+set_at=$(date +%s)
+set_by=test
+EOF
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
+
+	run bash "$test_script" --fake
+	assert_success
+	[[ -f "$LOG_FILE" ]]
+	grep -q "paused until" "$LOG_FILE"
+}
+
+# bats test_tags=category:unit
+@test "vpn-monitor.sh runs in observe-only without recovery escalation" {
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	create_test_config "$config_file" \
+		"LOCATION_TEST_EXTERNAL=\"${TEST_PEER_IP}\"" \
+		"LOCATION_TEST_INTERNAL=\"${TEST_PEER_IP}\"" \
+		"TIER1_THRESHOLD=1" \
+		"TIER2_THRESHOLD=2" \
+		"TIER3_THRESHOLD=3"
+
+	setup_test_environment "${TEST_DIR}" "${TEST_DIR}/logs"
+	mkdir -p "${STATE_DIR}"
+	cat >"${STATE_DIR}/operating_mode" <<EOF
+mode=observe-only
+paused_until=0
+set_at=$(date +%s)
+set_by=test
+EOF
+
+	local test_script
+	test_script=$(create_test_vpn_monitor_script "$VPN_MONITOR_SCRIPT" "${TEST_DIR}/vpn-monitor.sh" "$config_file" "$STATE_DIR" "$LOG_FILE")
+
+	setup_mock_vpn_environment "${TEST_PEER_IP}" 0
+	add_mock_to_path
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$test_script"
+	assert_success
+	[[ -f "$LOG_FILE" ]]
+	grep -q "Observe-only mode" "$LOG_FILE"
+	remove_mock_from_path
+}

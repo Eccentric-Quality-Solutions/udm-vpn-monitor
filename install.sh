@@ -83,6 +83,32 @@ check_udm() {
 	log_info "Detected UDM system"
 }
 
+# Initialize operating mode state file if missing
+#
+# Creates state directory and default operating_mode (running).
+#
+# Returns:
+#   0: Always (best effort)
+init_operating_mode_state() {
+	mkdir -p "${INSTALL_DIR}/state" "${INSTALL_DIR}/logs"
+	export STATE_DIR="${INSTALL_DIR}/state"
+	export LOG_FILE="${INSTALL_DIR}/logs/vpn-monitor.log"
+	# shellcheck source=lib/logging.sh
+	if [[ -f "${INSTALL_SCRIPT_DIR}/lib/logging.sh" ]]; then
+		# shellcheck source=lib/logging.sh
+		source "${INSTALL_SCRIPT_DIR}/lib/logging.sh" 2>/dev/null || true
+	fi
+	# shellcheck source=lib/control/operating_mode.sh
+	if [[ -f "${INSTALL_SCRIPT_DIR}/lib/control/operating_mode.sh" ]]; then
+		# shellcheck source=lib/control/operating_mode.sh
+		source "${INSTALL_SCRIPT_DIR}/lib/control/operating_mode.sh" 2>/dev/null || true
+		if command -v ensure_operating_mode_initialized >/dev/null 2>&1; then
+			ensure_operating_mode_initialized || true
+		fi
+	fi
+	return 0
+}
+
 # Create installation directory
 #
 # Creates the installation directory (INSTALL_DIR) if it doesn't exist.
@@ -839,6 +865,13 @@ install_scripts() {
 		log_info "Installed vpn-monitor-wrapper.sh (sub-minute execution)"
 	fi
 
+	# Copy control script (operating mode management)
+	if [[ -f "${INSTALL_SCRIPT_DIR}/vpn-monitor-control.sh" ]]; then
+		cp "${INSTALL_SCRIPT_DIR}/vpn-monitor-control.sh" "${INSTALL_DIR}/vpn-monitor-control.sh"
+		chmod 755 "${INSTALL_DIR}/vpn-monitor-control.sh"
+		log_info "Installed vpn-monitor-control.sh (operating mode control)"
+	fi
+
 	# Copy log analysis script (optional utility)
 	if [[ -f "${INSTALL_SCRIPT_DIR}/analyze-logs.sh" ]]; then
 		cp "${INSTALL_SCRIPT_DIR}/analyze-logs.sh" "${INSTALL_DIR}/analyze-logs.sh"
@@ -872,6 +905,7 @@ install_scripts() {
 		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/centralize-logs.sh" ]] ||
 		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-to-udm.sh" ]] ||
 		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-to-udms.sh" ]] ||
+		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/control-remote-udm.sh" ]] ||
 		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-udms.conf.example" ]]; then
 		mkdir -p "${INSTALL_DIR}/scripts"
 	fi
@@ -913,6 +947,17 @@ install_scripts() {
 		mkdir -p "${INSTALL_DIR}/scripts/manage"
 		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-udms.conf.example" "${INSTALL_DIR}/scripts/manage/deploy-udms.conf.example"
 		log_info "Installed scripts/manage/deploy-udms.conf.example (template for deploy-udms.conf used by scripts/manage/deploy-to-udms.sh)"
+	fi
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/control-remote-udm.sh" ]]; then
+		mkdir -p "${INSTALL_DIR}/scripts/manage"
+		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/control-remote-udm.sh" "${INSTALL_DIR}/scripts/manage/control-remote-udm.sh"
+		chmod 755 "${INSTALL_DIR}/scripts/manage/control-remote-udm.sh"
+		log_info "Installed scripts/manage/control-remote-udm.sh (remote operating mode control)"
+	fi
+	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/control-udms.conf.example" ]]; then
+		mkdir -p "${INSTALL_DIR}/scripts/manage"
+		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/control-udms.conf.example" "${INSTALL_DIR}/scripts/manage/control-udms.conf.example"
+		log_info "Installed scripts/manage/control-udms.conf.example (template for control-udms.conf)"
 	fi
 
 	# Handle config file installation
@@ -2111,6 +2156,8 @@ main() {
 	display_upgrade_info
 
 	install_scripts
+
+	init_operating_mode_state
 
 	# Validate configuration after installation
 	validate_config_after_install
