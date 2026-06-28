@@ -15,10 +15,11 @@ WRAPPER_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor-wrapper.sh"
 	mkdir -p "${inst}/state" "${inst}/logs"
 
 	# Minimal config: interval only (get_monitor_interval reads MONITOR_INTERVAL)
-	cat >"${inst}/vpn-monitor.conf" <<EOF
-MONITOR_INTERVAL=10
+	cat >"${inst}/vpn-monitor.conf" <<'EOF'
+MONITOR_INTERVAL="10"  # fast interval for test
 EOF
 
+	cp -r "${BATS_TEST_DIRNAME}/../lib" "${inst}/lib"
 	cp "$WRAPPER_SCRIPT" "${inst}/vpn-monitor-wrapper.sh"
 	chmod +x "${inst}/vpn-monitor-wrapper.sh"
 
@@ -92,6 +93,33 @@ EOF
 	run bash -c "cd '${inst}' && timeout 3 bash ./vpn-monitor-wrapper.sh"
 	assert_success
 	[[ ! -f "$inv_file" ]]
+}
+
+# bats test_tags=category:unit
+@test "vpn-monitor-wrapper.sh get_monitor_interval uses last quoted MONITOR_INTERVAL with comment" {
+	local inst="${TEST_DIR}/wrapper-interval-parse"
+	mkdir -p "$inst"
+	cp -r "${BATS_TEST_DIRNAME}/../lib" "${inst}/lib"
+	cp "$WRAPPER_SCRIPT" "${inst}/vpn-monitor-wrapper.sh"
+	cat >"${inst}/vpn-monitor.conf" <<'EOF'
+MONITOR_INTERVAL=99
+MONITOR_INTERVAL="25"  # sub-minute
+EOF
+
+	run bash -c '
+		cd "'"$inst"'"
+		SCRIPT_DIR="$PWD"
+		CONFIG_FILE="${SCRIPT_DIR}/vpn-monitor.conf"
+		# shellcheck disable=SC1091
+		source "${SCRIPT_DIR}/lib/common.sh"
+		source "${SCRIPT_DIR}/lib/logging.sh"
+		source "${SCRIPT_DIR}/lib/config/config_loading.sh"
+		# shellcheck disable=SC1091
+		source <(sed -n "/^get_monitor_interval/,/^}/p" "${SCRIPT_DIR}/vpn-monitor-wrapper.sh")
+		get_monitor_interval
+	'
+	assert_success
+	assert_output "25"
 }
 
 # bats test_tags=category:unit

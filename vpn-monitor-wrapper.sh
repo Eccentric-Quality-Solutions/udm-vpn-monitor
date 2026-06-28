@@ -21,6 +21,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 # shellcheck source=lib/logging.sh
 source "${SCRIPT_DIR}/lib/logging.sh"
+# shellcheck source=lib/config/config_loading.sh
+source "${SCRIPT_DIR}/lib/config/config_loading.sh"
 # shellcheck source=lib/control/operating_mode.sh
 source "${SCRIPT_DIR}/lib/control/operating_mode.sh"
 MONITOR_SCRIPT="${SCRIPT_DIR}/vpn-monitor.sh"
@@ -32,7 +34,8 @@ PIDFILE="${STATE_DIR}/vpn-monitor-wrapper.pid"
 
 # Read MONITOR_INTERVAL from config (default: 20 seconds)
 #
-# Parses vpn-monitor.conf for MONITOR_INTERVAL, clamping to 10-60 second range.
+# Uses get_config_var_value_from_file for MONITOR_INTERVAL (last assignment wins;
+# quoted values and trailing comments supported). Clamps to 10-60 second range.
 # Range: 10-60 seconds per ADR-0032
 #
 # Returns:
@@ -44,12 +47,13 @@ get_monitor_interval() {
 	local interval=20
 	if [[ -f "$CONFIG_FILE" ]]; then
 		local val
-		val=$(grep "^MONITOR_INTERVAL=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr -d "'" || true)
-		if [[ -n "$val" ]] && is_non_negative_integer "$val"; then
-			interval="$val"
-			# Clamp to valid range
-			[[ $interval -lt 10 ]] && interval=10
-			[[ $interval -gt 60 ]] && interval=60
+		if val=$(get_config_var_value_from_file "$CONFIG_FILE" "MONITOR_INTERVAL" 2>/dev/null); then
+			if [[ -n "$val" ]] && is_non_negative_integer "$val"; then
+				interval="$val"
+				# Clamp to valid range
+				[[ $interval -lt 10 ]] && interval=10
+				[[ $interval -gt 60 ]] && interval=60
+			fi
 		fi
 	fi
 	echo "$interval"

@@ -284,21 +284,32 @@ check_rate_limit() {
 	return 0 # Within rate limit
 }
 
-# Compact restart count file to last 24 hours
+# Compact timestamp list file to last 24 hours
 #
-# Reads RESTART_COUNT_FILE, keeps only timestamps from the last 24 hours, and
-# atomically writes back. Prevents unbounded file growth. Safe to call once per
-# run at startup (under main lock); avoids read-modify-write in record_restart.
+# Reads a newline-delimited Unix timestamp list, keeps only timestamps from
+# the last 24 hours, and atomically writes back. Prevents unbounded file growth.
+# When all timestamps expire, removes the file instead of writing empty content
+# (atomic_write_file "" would write a newline, which fails timestamp_list validation).
+#
+# Arguments:
+#   $1: Timestamp list file path
+#   $2: File label for error messages (e.g., "restart count file")
 #
 # Returns:
 #   0: Always succeeds (logs warnings on errors but continues)
 #
 # Side effects:
-#   - May overwrite RESTART_COUNT_FILE with filtered content
+#   - May overwrite or remove the timestamp list file
 #
-# Note: Uses RESTART_COUNT_FILE and timestamp/IO helpers (see implementation).
-compact_restart_count_file() {
-	if ! file_exists_and_readable "$RESTART_COUNT_FILE"; then
+# Note:
+#   Requires get_unix_timestamp, safe_timestamp_subtract, SECONDS_PER_DAY,
+#   file_exists_and_readable, atomic_write_file, and handle_error
+compact_timestamp_list_file() {
+	local file="$1"
+	local file_label="${2:-timestamp list file}"
+
+	[[ -z "$file" ]] && return 0
+	if ! file_exists_and_readable "$file"; then
 		return 0
 	fi
 	local now
@@ -306,18 +317,32 @@ compact_restart_count_file() {
 	local one_day_ago
 	one_day_ago=$(safe_timestamp_subtract "$now" "$SECONDS_PER_DAY" 2>/dev/null || echo "0")
 	local filtered_content
-	filtered_content=$(awk -v cutoff="$one_day_ago" '$1 > cutoff' "$RESTART_COUNT_FILE" 2>/dev/null || echo "")
+	filtered_content=$(awk -v cutoff="$one_day_ago" '$1 > cutoff' "$file" 2>/dev/null || echo "")
 	if [[ -z "$filtered_content" ]]; then
-		# All timestamps expired; remove file instead of writing empty content.
-		# atomic_write_file "" would write a newline, which fails timestamp_list validation.
-		rm -f "$RESTART_COUNT_FILE" 2>/dev/null || true
+		rm -f "$file" 2>/dev/null || true
 	else
-		if ! atomic_write_file "$RESTART_COUNT_FILE" "$filtered_content"; then
-			handle_error "WARNING" "SYSTEM" "Failed to compact restart count file: $RESTART_COUNT_FILE"
+		if ! atomic_write_file "$file" "$filtered_content"; then
+			handle_error "WARNING" "SYSTEM" "Failed to compact ${file_label}: ${file}"
 			return 0
 		fi
 	fi
 	return 0
+}
+
+# Compact restart count file to last 24 hours
+#
+# Safe to call once per run at startup (under main lock); avoids read-modify-write
+# in record_restart().
+#
+# Returns:
+#   0: Always succeeds (logs warnings on errors but continues)
+#
+# Side effects:
+#   - May overwrite or remove RESTART_COUNT_FILE
+#
+# Note: Uses RESTART_COUNT_FILE and compact_timestamp_list_file()
+compact_restart_count_file() {
+	compact_timestamp_list_file "$RESTART_COUNT_FILE" "restart count file"
 }
 
 # Record restart timestamp
@@ -463,34 +488,15 @@ record_tier2_recovery() {
 
 # Compact Tier 2 recovery count file to last 24 hours
 #
-# Reads TIER2_RECOVERY_COUNT_FILE, keeps only timestamps from the last 24 hours, and
-# atomically writes back. Prevents unbounded file growth.
-#
 # Returns:
 #   0: Always succeeds (logs warnings on errors but continues)
 #
-# Note: Same 24h compaction pattern as compact_restart_count_file(); uses TIER2_RECOVERY_COUNT_FILE.
+# Side effects:
+#   - May overwrite or remove TIER2_RECOVERY_COUNT_FILE
+#
+# Note: Uses TIER2_RECOVERY_COUNT_FILE and compact_timestamp_list_file()
 compact_tier2_recovery_count_file() {
-	local count_file="${TIER2_RECOVERY_COUNT_FILE:-}"
-	[[ -z "$count_file" ]] && return 0
-	if ! file_exists_and_readable "$count_file"; then
-		return 0
-	fi
-	local now
-	now=$(get_unix_timestamp)
-	local one_day_ago
-	one_day_ago=$(safe_timestamp_subtract "$now" "$SECONDS_PER_DAY" 2>/dev/null || echo "0")
-	local filtered_content
-	filtered_content=$(awk -v cutoff="$one_day_ago" '$1 > cutoff' "$count_file" 2>/dev/null || echo "")
-	if [[ -z "$filtered_content" ]]; then
-		rm -f "$count_file" 2>/dev/null || true
-	else
-		if ! atomic_write_file "$count_file" "$filtered_content"; then
-			handle_error "WARNING" "SYSTEM" "Failed to compact Tier 2 recovery count file: $count_file"
-			return 0
-		fi
-	fi
-	return 0
+	compact_timestamp_list_file "${TIER2_RECOVERY_COUNT_FILE:-}" "Tier 2 recovery count file"
 }
 
 # Read a single-value state file with format validation and corruption recovery

@@ -1179,6 +1179,31 @@ fi
 - Naming conventions are enforced by `get_peer_state_file_path()`
 - Never construct state file paths directly - always use the abstraction layer
 
+### Pattern: Timestamp List File Compaction
+
+**When to Use:** Append-only timestamp list files used for rate limiting (e.g. restart and Tier 2 recovery counts) that can grow without bound
+
+**Pattern:**
+```bash
+# Called once per monitor run at startup (under main lock)
+compact_restart_count_file
+compact_tier2_recovery_count_file
+
+# Shared implementation for any 24-hour timestamp list file
+compact_timestamp_list_file "$file_path" "file label for errors"
+```
+
+**Implementation (`compact_timestamp_list_file` in `lib/state/global_state.sh`):**
+1. Skip if path is empty or file is missing/unreadable
+2. Filter lines with `awk -v cutoff="$one_day_ago" '$1 > cutoff'` (24-hour window via `SECONDS_PER_DAY`)
+3. If no timestamps remain: `rm -f` the file (do not write empty content — `atomic_write_file ""` leaves a newline and fails timestamp-list validation)
+4. Else: `atomic_write_file` with filtered content; log WARNING on write failure (non-fatal)
+
+**Key Points:**
+- Domain wrappers (`compact_restart_count_file`, `compact_tier2_recovery_count_file`) pass file path and label only
+- Append-only recording stays separate (`record_restart`, `record_tier2_recovery`) to avoid read-modify-write races
+- Rate-limit checks use the same `awk` cutoff filter but read/count only; do not merge with compaction unless a third duplicate appears
+
 ### Pattern: Validated Single-Value State Files
 
 **When to Use:** Reading or writing global binary flags (0/1) or integer timestamps stored in a single-value state file
