@@ -52,6 +52,9 @@ EXPECTED_SCRIPT_FILES=(
 	"scripts/manage/deploy-to-udm.sh"
 	"scripts/manage/deploy-to-udms.sh"
 	"scripts/manage/deploy-udms.conf.example"
+	"scripts/manage/uninstall-from-udm.sh"
+	"scripts/manage/uninstall-from-udms.sh"
+	"scripts/manage/status-udms.sh"
 )
 
 # bats test_tags=category:unit

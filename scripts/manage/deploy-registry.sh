@@ -181,3 +181,32 @@ record_deployment() {
 	rm -f "$tmp_path" 2>/dev/null
 	return 1
 }
+
+# Remove a host entry from the deployment registry.
+# Uses atomic write (write to .tmp, then mv).
+#
+# Arguments:
+#   $1: host - Target host or IP to remove
+#
+# Returns:
+#   0: Entry removed or host was not in registry
+#   1: Write failed
+remove_registry_entry() {
+	local host="$1"
+	local reg_path
+	local tmp_path
+
+	[[ -n "$host" ]] || return 1
+
+	reg_path=$(get_registry_path) || return 1
+	[[ -f "$reg_path" ]] || return 0
+
+	tmp_path="${reg_path}.tmp"
+	awk -F'\t' -v h="$host" '$1!=h {print}' "$reg_path" 2>/dev/null >"$tmp_path" || return 1
+
+	if mv "$tmp_path" "$reg_path" 2>/dev/null; then
+		return 0
+	fi
+	rm -f "$tmp_path" 2>/dev/null
+	return 1
+}
