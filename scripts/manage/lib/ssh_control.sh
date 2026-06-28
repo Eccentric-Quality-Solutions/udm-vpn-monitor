@@ -273,8 +273,9 @@ collect_ssh_credentials_if_needed() {
 				return 1
 			fi
 		else
-			if [[ ! -e /dev/tty ]]; then
-				manage_log_error "No sshpass or expect installed, and no controlling terminal."
+			# Defer to ssh + /dev/tty only when fully interactive; piped/empty stdin cannot prompt.
+			if [[ ! -t 0 ]] || [[ ! -t 1 ]] || [[ ! -e /dev/tty ]]; then
+				manage_log_error "Password is required. Run interactively or pipe password via stdin."
 				manage_log_error "Install sshpass (apt-get install sshpass) for non-interactive use."
 				return 1
 			fi

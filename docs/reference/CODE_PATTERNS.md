@@ -81,6 +81,7 @@ fi
 - `EXIT_PERMISSION_ERROR=4` - Permission error
 - `EXIT_COMMAND_NOT_FOUND=5` - Required command not found
 - `EXIT_STATE_ERROR=6` - State file error
+- `EXIT_MALFORMED_DATA=7` - Malformed or corrupted data (e.g. location data format violation)
 
 ### Pattern: Non-Fatal Errors (Function Should Return Error Code)
 
@@ -155,9 +156,9 @@ if [[ $is_writable -eq 0 ]]; then
     handle_error_or_exit_fake_mode "SYSTEM" "STATE_DIR is not writable: $lockfile_dir" "${EXIT_PERMISSION_ERROR:-4}"
 fi
 
-# ❌ BAD: Manual is_fake_mode() check
+# ❌ BAD: Manual is_fake_mode() check (use handle_error_or_exit_fake_mode instead)
 if is_fake_mode; then
-    handle_error "ERROR" "Config error" 0
+    handle_error "ERROR" "SYSTEM" "Config error" 0
     exit 0
 else
     die "Config error"
@@ -165,7 +166,8 @@ fi
 ```
 
 **Key Points:**
-- Use `handle_error_or_exit_fake_mode()` instead of manual `is_fake_mode()` checks
+- **Preferred (default):** Use `handle_error_or_exit_fake_mode()` for fatal errors that need fake mode support. It logs, returns 1 in fake mode, and dies in normal mode.
+- **Exception only:** Manual `is_fake_mode` branching (see below) when a path must exit 0 in fake mode so tests can `assert_success` and inspect logs. Document the intent in a comment; do not use when tests need `assert_failure`.
 - Standardizes fake mode handling across codebase
 - Fake mode (NO_ESCALATE=1): Logs error and returns 1 (allows caller to decide exit behavior)
 - Normal mode: Logs error and exits with specified exit code
@@ -571,7 +573,9 @@ value=$(cat "$file" 2>/dev/null || echo "default")  # Can still hang!
 
 **Key Points:**
 - Always use `file_exists_and_readable` before file read operations
-- Error suppression (`2>/dev/null`) does NOT prevent hangs on unreadable files
+- `cat` after a successful readability check is correct; `2>/dev/null` alone without the check does NOT prevent hangs
+- Prefer `read_counter_file()` / `read_validated_state_file()` for state files — they wrap the readability check internally
+- Error suppression (`2>/dev/null`) does NOT prevent hangs on unreadable files when used without the check
 - Provide sensible defaults when files are unreadable
 - Log warnings but don't fail the script
 
@@ -614,6 +618,10 @@ fi
 - Ensures files are never partially written
 - Prevents race conditions during concurrent access
 - Use `atomic_write_file()` helper function when available
+
+**Known exceptions (not atomic single-value writes):**
+- **Append-only timestamp list files** (`RESTART_COUNT_FILE`, `TIER2_RECOVERY_COUNT_FILE`): use `printf '%s\n' "$timestamp" >>"$file"` in `record_restart()` / `record_tier2_recovery()`. Compaction at startup (`compact_timestamp_list_file`) rewrites the full file atomically via `atomic_write_file()`.
+- Do not pass a third `"append"` argument to `atomic_write_file()` — it accepts only path and content.
 
 **Implementation:**
 1. Write to temporary file (`$file.tmp`)
@@ -705,21 +713,21 @@ atomic_write_file "$file" "$content"
 ```bash
 # ✅ GOOD: Clean up temp file even if operation fails
 if ! awk -v cutoff="$one_day_ago" '$1 > cutoff' "$file" >"${file}.tmp" 2>/dev/null; then
-    handle_error "WARNING" "Failed to filter file"
+    handle_error "WARNING" "SYSTEM" "Failed to filter file"
     rm -f "${file}.tmp" 2>/dev/null || true  # Clean up on error
     return 1
 fi
 
 # Atomic move
 if ! mv "${file}.tmp" "$file" 2>/dev/null; then
-    handle_error "WARNING" "Failed to update file"
+    handle_error "WARNING" "SYSTEM" "Failed to update file"
     rm -f "${file}.tmp" 2>/dev/null || true  # Clean up on error
     return 1
 fi
 
 # ❌ BAD: Don't clean up temp file on error (leaves orphaned files)
 if ! awk -v cutoff="$one_day_ago" '$1 > cutoff' "$file" >"${file}.tmp" 2>/dev/null; then
-    handle_error "WARNING" "Failed to filter file"
+    handle_error "WARNING" "SYSTEM" "Failed to filter file"
     return 1  # Bug: ${file}.tmp left behind!
 fi
 ```
@@ -1239,12 +1247,17 @@ if ! validate_state_file "$state_file" "integer"; then
     recover_corrupted_state_file "$state_file" "integer" "0"
 fi
 
-# Read validated state file
-value=$(cat "$state_file" 2>/dev/null || echo "0")
+# Read validated state file (only after readability check)
+if file_exists_and_readable "$state_file"; then
+    value=$(cat "$state_file" 2>/dev/null || echo "0")
+else
+    value="0"
+fi
 ```
 
 **Key Points:**
 - Validate state file format before reading (integer, timestamp, timestamp_list)
+- Always use `file_exists_and_readable` before `cat` (see "Check Readability Before File Operations")
 - Corrupted files are automatically detected, backed up, and recovered with safe defaults
 - Format validation ensures files contain expected data types and structures
 - Recovery mechanism preserves corrupted files for analysis while resetting to safe defaults
@@ -1260,11 +1273,11 @@ validate_state() {
     local validation_failed=0
     
     if ! validate_state_file "$state_file" "integer"; then
-        handle_error "WARNING" "State file corrupted, recovering: $state_file" 0
+        handle_error "WARNING" "SYSTEM" "State file corrupted, recovering: $state_file" 0
         if ! recover_corrupted_state_file "$state_file" "0" "integer"; then
             # Recovery failed (e.g., backup failed), mark validation as failed
             validation_failed=1
-            handle_error "ERROR" "Recovery failed, corrupted file preserved: $state_file" 0
+            handle_error "ERROR" "SYSTEM" "Recovery failed, corrupted file preserved: $state_file" 0
         fi
     fi
     
@@ -1279,7 +1292,7 @@ get_peer_state() {
     if file_exists_and_readable "$state_file"; then
         local value=$(cat "$state_file" 2>/dev/null || echo "$default_value")
         if [[ ! "$value" =~ ^[0-9]+$ ]]; then
-            handle_error "WARNING" "Corrupted peer state file (recovering): $state_file" 0
+            handle_error "WARNING" "SYSTEM" "Corrupted peer state file (recovering): $state_file" 0
             recover_corrupted_state_file "$state_file" "$default_value" "integer"
             # Continue with default value even if recovery fails
             # Corrupted file is preserved for later analysis
@@ -1559,12 +1572,12 @@ if [[ "$current_bytes" -eq 0 ]]; then
             fi
         else
             # Ping check disabled or internal_peer_ip not provided - fail-safe behavior
-            handle_error "WARNING" "VPN suspect: SA exists but bytes=0 (first check, may be idle, ping check disabled)"
+            handle_error "WARNING" "SYSTEM" "VPN suspect: SA exists but bytes=0 (first check, may be idle, ping check disabled)"
             return 1
         fi
     else
         # Bytes dropped to zero after previously having traffic - likely broken
-        handle_error "WARNING" "VPN suspect: SA exists but bytes dropped to 0 (was $last_bytes)"
+        handle_error "WARNING" "SYSTEM" "VPN suspect: SA exists but bytes dropped to 0 (was $last_bytes)"
         return 1
     fi
 fi
@@ -1573,7 +1586,7 @@ fi
 if [[ "$current_bytes" -eq 0 ]]; then
     if [[ "$last_bytes" -eq 0 ]]; then
         # First check with zero bytes - fails immediately (false positive for idle VPNs)
-        handle_error "WARNING" "VPN suspect: SA exists but bytes=0 (first check, may be idle)"
+        handle_error "WARNING" "SYSTEM" "VPN suspect: SA exists but bytes=0 (first check, may be idle)"
         return 1  # ← False positive for newly established idle VPNs
     fi
 fi
@@ -2066,7 +2079,7 @@ if external_peer_ip=$(get_location_external_ip "$location_name" 2>/dev/null); th
     # Use external_peer_ip
 else
     # Handle error: location not found or extraction failed
-    handle_error "WARNING" "$location_name" "Failed to get external IP"
+    handle_error "WARNING" "$location_name" "Failed to get external IP" 0
     continue  # or return, depending on context
 fi
 
@@ -2176,7 +2189,8 @@ log_message "ERROR" "NYC" "Failed to restart VPN for NYC"
 - Log levels: INFO, WARNING, ERROR, DEBUG
 - Format: `[YYYY-MM-DD HH:MM:SS] [LEVEL] PREFIX: message`
 - PREFIX is either a location name (e.g., "NYC") or "SYSTEM" for system-level messages
-- All messages must have a prefix (defaults to "SYSTEM" if not provided)
+- Prefix is **required** for `log_message()` — pass `"SYSTEM"` explicitly for system-level messages
+- `handle_error()` requires prefix as its second argument; if prefix is empty (bug), it falls back to `"SYSTEM"` and logs a bug warning
 - Log file write errors don't fail the script (resilient logging)
 - DEBUG messages only output if DEBUG=1
 - INFO messages output to stderr when running interactively (TTY attached)
@@ -2227,11 +2241,12 @@ source "${MODULE_DIR}/module.sh" 2>/dev/null || {
 **Pattern:**
 ```bash
 # ✅ GOOD: Return early on error, only log success when operation succeeds
+# Append-only timestamp lists use >> (see "Known exceptions" under Atomic File Writes)
 record_restart() {
     local timestamp
     timestamp=$(get_unix_timestamp)
-    if ! atomic_write_file "$RESTART_COUNT_FILE" "$timestamp" "append"; then
-        handle_error "ERROR" "SYSTEM" "Failed to record restart (file: $RESTART_COUNT_FILE)" 0
+    if ! (printf '%s\n' "$timestamp" >>"$RESTART_COUNT_FILE" 2>/dev/null); then
+        handle_error "WARNING" "SYSTEM" "Failed to record restart timestamp in $RESTART_COUNT_FILE"
         return 0  # Return early - don't log success
     fi
     log_message "INFO" "SYSTEM" "Restart recorded at $timestamp"  # Only logs on success
@@ -2241,8 +2256,8 @@ record_restart() {
 record_restart() {
     local timestamp
     timestamp=$(get_unix_timestamp)
-    if ! atomic_write_file "$RESTART_COUNT_FILE" "$timestamp" "append"; then
-        handle_error "ERROR" "SYSTEM" "Failed to record restart" 0
+    if ! (printf '%s\n' "$timestamp" >>"$RESTART_COUNT_FILE" 2>/dev/null); then
+        handle_error "WARNING" "SYSTEM" "Failed to record restart timestamp in $RESTART_COUNT_FILE"
         # Bug: Function continues and logs success below!
     fi
     log_message "INFO" "SYSTEM" "Restart recorded at $timestamp"  # Wrong! Logs even on failure
@@ -2865,7 +2880,7 @@ else
         return 0
     else
         # Process still running but we couldn't send signal - real error
-        handle_error "ERROR" "Failed to stop daemon" 1
+        handle_error "ERROR" "SYSTEM" "Failed to stop daemon" 1
     fi
 fi
 
@@ -2874,7 +2889,7 @@ if kill -TERM "$pid" 2>/dev/null; then
     # ... wait logic ...
 else
     # Always fails even if process already exited
-    handle_error "ERROR" "Failed to stop daemon" 1
+    handle_error "ERROR" "SYSTEM" "Failed to stop daemon" 1
 fi
 ```
 
@@ -4032,6 +4047,7 @@ rm -rf "$INSTALL_DIR"  # Dangerous if INSTALL_DIR is wrong!
 ```
 
 **Key Points:**
+- `uninstall.sh` uses `log_error()` from `lib/common.sh` for user-facing stderr during uninstall; monitor code uses `log_message "ERROR" "SYSTEM" "..."` — both are acceptable in their contexts
 - Always validate paths before performing destructive operations (`rm -rf`, `rm -f`)
 - Check that paths are not empty before use
 - Validate paths match expected values exactly (exact string match, not prefix)

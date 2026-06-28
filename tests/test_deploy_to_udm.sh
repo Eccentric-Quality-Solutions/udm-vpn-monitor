@@ -57,12 +57,17 @@ PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 
 # bats test_tags=category:unit
 @test "deploy-to-udm.sh requires password when not interactive and stdin empty" {
-	# Non-interactive with empty stdin: must pipe password or run interactively
+	# Non-interactive with empty stdin: must pipe password or run interactively.
+	# Use a dummy package so validation reaches credential collection (not help-only exit).
+	standard_setup
+	local pkg="${TEST_DIR}/dummy-package.zip"
+	touch "$pkg"
 	run bash "$DEPLOY_SCRIPT" \
 		--target-ip 192.168.1.100 \
-		--file "${PROJECT_ROOT}/udm-vpn-monitor.zip" </dev/null 2>&1
+		--file "$pkg" </dev/null 2>&1
 	assert_failure
-	assert_output --partial "password"
+	assert_output --partial "Password is required"
+	refute_output --partial "Could not connect to"
 }
 
 # bats test_tags=category:unit
