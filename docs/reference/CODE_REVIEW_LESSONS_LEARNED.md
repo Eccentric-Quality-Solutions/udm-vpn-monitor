@@ -1,10 +1,8 @@
 # Code Review Lessons Learned
 
 **Date:** 2025-01-15
-**Last Updated:** 2026-04-06
+**Last Updated:** 2026-06-28
 **Context:** Comprehensive codebase review for errors, bugs, DRY violations, and bad practices
-
-**Note:** For a pragmatic assessment of this document's value and recommendations for improvement, see `CODE_REVIEW_LESSONS_LEARNED_ASSESSMENT.md`.
 
 ## Overview
 
@@ -61,7 +59,7 @@ atomic_write_file "$state_file" "$value"
 
 ### Related Patterns
 - See `CODE_PATTERNS.md` section "State Management Patterns" → "Use Abstraction Layers for State File Paths" for the consolidated pattern
-- See `lib/state.sh:get_peer_state_file_path()` for reference implementation
+- See `lib/state/state_paths.sh:get_peer_state_file_path()` for reference implementation
 
 ### Best Practices Comparison
 
@@ -359,9 +357,9 @@ Initially flagged "potential division by zero" in `check_ping_multiple_ips()`, b
 **Actionability:** Medium
 
 ### Problem
-Found `sanitize_location_name()` defined in both:
-- `lib/config.sh` (lines 1516-1541)
-- `lib/state.sh` (lines 146-171)
+Found `sanitize_location_name()` defined in both aggregate entry files (pre-decomposition):
+- `lib/config.sh` (later `lib/config/location_parsing.sh`)
+- `lib/state.sh` (later `lib/state/state_paths.sh`)
 
 Identical implementations that could diverge over time.
 
@@ -393,7 +391,7 @@ Identical implementations that could diverge over time.
 ### Resolution Example
 When consolidating `sanitize_location_name()`:
 1. ✅ Moved function to `lib/common.sh` (shared utilities)
-2. ✅ Removed duplicates from `lib/config.sh` and `lib/state.sh`
+2. ✅ Removed duplicates from config and state modules (formerly `lib/config.sh` and `lib/state.sh`)
 3. ✅ Removed duplicate from `scripts/migrate-config-to-locations.sh`
 4. ✅ Updated documentation to note function location
 5. ✅ Verified all tests pass
@@ -704,7 +702,7 @@ parse_quoted_value() {
 
 ### Related Patterns
 - See `CODE_PATTERNS.md` section "String Parsing and Manipulation Patterns" → "Character-by-Character Parsing for Complex Syntax" for the consolidated pattern
-- See `lib/config.sh:safe_parse_config_file()` for reference implementation
+- See `lib/config/config_loading.sh:safe_parse_config_file()` for reference implementation
 
 ### Example: Quote Parsing Edge Cases
 
@@ -864,7 +862,7 @@ validate_config_var() {
 
 ### Related Patterns
 - See `CODE_PATTERNS.md` section "State Management Patterns" → "Persist Corrected Values After Validation" for the consolidated pattern
-- See `lib/config.sh:validate_config_var()` for reference implementation
+- See `lib/config/config_validation.sh:validate_config_var()` for reference implementation
 
 ### Example: Validation Correction Persistence
 
@@ -1296,7 +1294,7 @@ fi
 ### Related Patterns
 - See `CODE_PATTERNS.md` section "Error Handling Patterns" → "Fake Mode Support" for the consolidated pattern
 - See `DEVELOPER.md` section "Error Handling Patterns" for more examples
-- See `lib/config.sh:handle_fatal_config_error()` for reference implementation
+- See `lib/config/config_loading.sh:handle_fatal_config_error()` for reference implementation
 - See `lib/lockfile.sh:check_directory_writable_for_lockfile()` for fatal permission error handling example
 
 ### Best Practices Comparison
@@ -1371,7 +1369,7 @@ fi
 
 ### Related Patterns
 - See `CODE_PATTERNS.md` section "Error Handling Patterns" → "Track Error State When Functions Log But Don't Exit" for the consolidated pattern
-- See `lib/config.sh:safe_parse_config_file()` for reference implementation
+- See `lib/config/config_loading.sh:safe_parse_config_file()` for reference implementation
 - See `lib/logging.sh:handle_error_or_exit_fake_mode()` for return value behavior
 
 ### Best Practices Comparison
@@ -1485,7 +1483,7 @@ fi
 ### Problem
 Functions that check for operation success but log success messages regardless of the check result create misleading logs and hide failures.
 
-**Example Bug:**
+**Example Bug (historical — `set_cooldown()` removed; cooldown replaced by `MIN_RESTART_INTERVAL_SECONDS`):**
 ```bash
 # ❌ BAD: Logs success even when write fails
 set_cooldown() {
@@ -1542,8 +1540,7 @@ set_cooldown() {
 
 ### Related Patterns
 - See `CODE_PATTERNS.md` section "Logging Patterns" → "Don't Log Success When Operations Fail" for the consolidated pattern
-- See `lib/state.sh:set_cooldown()` for correct pattern
-- See `lib/state.sh:set_peer_state()` for comparison (returns error code, doesn't log success)
+- See `lib/state/peer_state.sh:set_peer_state()` for correct pattern (returns error code, doesn't log success on failure)
 - See `tests/test_recovery_cascading_failures.sh` for test that verifies error handling
 
 ### Best Practices Comparison
@@ -2179,8 +2176,8 @@ local external_peer_ip="${LOCATIONS[$location_name]}"
 
 ### Related Patterns
 - See `CODE_PATTERNS.md` section "Configuration Patterns" → "Extract External IP from LOCATIONS Using Helper Function" for the consolidated pattern
-- See `lib/recovery.sh:verify_ipsec_connections_active()` for correct pattern
-- See `lib/recovery.sh:full_restart()` for fixed pattern
+- See `lib/recovery/recovery_verification.sh:verify_ipsec_connections_active()` for correct pattern
+- See `lib/recovery/recovery_orchestration.sh:full_restart()` for fixed pattern
 - `LOCATIONS` format: `"external:IP|internal:IPs"` (pipe separator)
 - Always validate extracted IP is non-empty before use
 
@@ -2283,9 +2280,9 @@ When reviewing conditionals, check for:
 
 ### Related Patterns
 - See `CODE_PATTERNS.md` section "Error Handling Patterns" → "Simplify Complex Conditionals When All Branches Converge" for the consolidated pattern
-- See `lib/config.sh:696-713` for simplified log path computation
+- See `lib/config/config_loading.sh` (`compute_log_file_path()`) for simplified log path computation
 - **Update 2026-01-02**: Further simplified by removing unnecessary `expected_log_file` intermediate variable and redundant `dirname` call. The original code computed `expected_log_file` just to compare it, when direct directory comparison is clearer. Also removed unreachable error handling for empty `dirname` result (dirname always returns a value, even if it's `.`).
-- See `lib/state.sh:74-80` for simplified logging directory creation failure handling
+- See `lib/state/state_init.sh` for simplified logging directory creation failure handling
 - Always verify behavior is equivalent after simplification
 
 ### Best Practices Comparison
@@ -2349,7 +2346,7 @@ fi
 
 ### Related Patterns
 - See `CODE_PATTERNS.md` section "Error Handling Patterns" → "Distinguish Between Script Execution Success and Recovery Success" for the consolidated pattern
-- See `lib/recovery.sh:monitor_location()` lines 1514-1523 for implementation
+- See `lib/recovery/recovery_orchestration.sh:monitor_location()` for implementation
 - Recovery failures are logged via `handle_error()` and `log_message()`
 
 ### Best Practices Comparison
@@ -2420,7 +2417,7 @@ fi
 
 ### Related Patterns
 - See `CODE_PATTERNS.md` section "State Management Patterns" → "Always Re-Check Critical State Instead of Relying on Cached Values" for the consolidated pattern
-- See `lib/recovery.sh:monitor_location()` lines 1433-1466 for implementation
+- See `lib/recovery/recovery_orchestration.sh:monitor_location()` for implementation
 - Network partition state is checked in `vpn-monitor.sh` at script start, but recovery code always re-checks
 - Failure count increments before partition check to ensure accurate tracking even when recovery is skipped
 - Cached state (`get_network_partition_state()`) is used only for logging state transitions, not for decision-making
@@ -2689,8 +2686,7 @@ parse_xfrm_sa() {
 - Document which attributes are selectors vs. metadata
 
 ### Related Patterns
-- See `lib/recovery.sh:attempt_xfrm_recovery()` for mark selector parsing implementation
-- See `analyze/LOG_ANALYSIS_ISSUES.md` for root cause analysis
+- See `lib/recovery/xfrm_recovery.sh:attempt_xfrm_recovery()` for mark selector parsing implementation
 - Kernel interfaces that use selectors: xfrm (SAs, policies), netlink (routes, addresses), iproute2 (various)
 - Error code ESRCH (No such process) often means "selector mismatch" not "object doesn't exist"
 
@@ -2741,19 +2737,27 @@ fi
 
 ---
 
-## 28. Avoid Over-Engineering Edge Case Protections
+## 28. Avoid Over-Engineering Edge Case Protections and Theoretical Fallbacks
 
 **Impact Level:** Important  
 **Applicability:** Universal  
 **Actionability:** Medium
 
-### Problem
+### Problem (Policy deletion safeguard)
 Added a safeguard to prevent policy deletion when `peer_ip` matched `LOCAL_UDM_IP`, based on theoretical concern about misconfiguration.
 
+### Problem (Module sourcing fallbacks, 2026-01-18)
+The codebase also included a centralized fallback system (`lib/fallbacks.sh`) that provided fallback implementations when core modules failed to source. This system:
+- Required maintaining two implementations of the same functions (main + fallback)
+- Added complexity to module sourcing (9+ files had fallback logic)
+- Addressed theoretical edge cases (file corruption, syntax errors) that are extremely unlikely in production
+- Created maintenance burden (keeping implementations in sync)
+
 ### Impact
-- Added unnecessary complexity for an edge case that shouldn't happen
+- Added unnecessary complexity for edge cases that shouldn't happen
 - Increased code maintenance burden
-- Added a test case for a scenario that wouldn't occur in normal operation
+- Added test cases for scenarios that wouldn't occur in normal operation
+- **Fallbacks:** Two implementations to keep in sync (~289 lines of fallback code); cognitive load for developers; risk of drift between main and fallback implementations
 
 ### Root Cause
 Over-engineering based on theoretical concerns rather than practical risk assessment:
@@ -2762,52 +2766,66 @@ Over-engineering based on theoretical concerns rather than practical risk assess
 - These should never match in normal operation
 - If misconfigured, VPN wouldn't work anyway
 - Existing safeguards (fixed-string matching, exact IP match, scoped deletion) are sufficient
+- If `common.sh` can't be sourced, the application is broken anyway — fail fast is better than silent degradation
 
 ### Solution
-Removed the safeguard after pragmatic review:
-- Existing protections are sufficient
-- Edge case is extremely unlikely
-- If it happens, it would be caught by testing/deployment
+Removed the safeguard and the fallback system after pragmatic review:
+- Existing protections are sufficient for policy deletion
+- Edge cases are extremely unlikely and would be caught by testing/deployment
 - Code is simpler and more maintainable
+- **`lib/fallbacks.sh` removed** — modules source dependencies directly and fail fast
 
 ### Lesson
-**Don't add safeguards for edge cases that:**
+**Don't add safeguards or fallbacks for edge cases that:**
 1. Are extremely unlikely to occur
 2. Would be caught by normal testing/deployment
 3. Are protected by existing safeguards
 4. Add complexity without significant benefit
 
-**When to add safeguards:**
-- Realistic scenarios that could occur in production
+**When to add safeguards or fallbacks:**
+- Realistic scenarios that could occur in production (e.g., xfrm → ipsec detection fallback)
 - Scenarios that could cause significant harm if not prevented
 - Scenarios that existing safeguards don't cover
+- Optional features or command availability checks — not core module sourcing
 
 ### Pattern to Follow
 ```bash
 # ✅ GOOD: Trust existing safeguards when they're sufficient
 # peer_ip is validated, scoped deletion uses fixed-string matching
-# No need for additional edge case protection
 ip xfrm policy delete dst "$peer_ip" dir "$policy_dir"
+
+# ✅ GOOD: Direct sourcing, fail fast
+source "${LIB_DIR}/common.sh"
 
 # ❌ BAD: Adding unnecessary safeguard for theoretical edge case
 if [[ "$peer_ip" == "$LOCAL_UDM_IP" ]]; then
-    # Skip deletion - but this shouldn't happen anyway
     return
 fi
+
+# ❌ BAD: Over-engineered fallback when core module fails to source
+source "${LIB_DIR}/common.sh" 2>/dev/null || {
+    source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
+}
 ```
 
+### When Fallbacks Are Appropriate
+- **Real-world alternatives:** Multiple ways to accomplish the same goal (e.g., xfrm vs ipsec)
+- **Optional features:** Functionality can be disabled if dependencies are missing
+- **Command availability:** Optional commands that enhance but don't require functionality
+
+### When Fallbacks Are Over-Engineering
+- **Core dependencies:** Module is essential for application operation
+- **Theoretical failures:** File corruption, syntax errors — extremely unlikely in production
+- **Silent degradation:** Fallback masks real problems
+
 ### Systematic Application
-- Before adding edge case protections, assess:
-  1. How likely is this scenario?
-  2. Would existing safeguards prevent it?
-  3. What's the actual risk if it occurs?
-  4. Does the protection add significant value?
+- Before adding edge case protections, assess likelihood, existing safeguards, actual risk, and value
 - Prefer simpler code with existing safeguards over complex code with theoretical protections
 - Document decisions to remove unnecessary safeguards
 
 ### References
-- Implementation: `lib/recovery.sh:1055-1171` (policy deletion without LOCAL_UDM_IP safeguard)
-- Safety analysis: `POLICY_DELETION_SAFETY.md` (updated to reflect removal)
+- Implementation: `lib/recovery/xfrm_recovery.sh:delete_xfrm_policies()` (policy deletion without LOCAL_UDM_IP safeguard)
+- Fallback removal: `lib/fallbacks.sh` deleted; aggregate modules (`lib/recovery.sh`, `lib/state.sh`, etc.) source `lib/*/` modules directly
 
 ### Best Practices Comparison
 
@@ -2902,7 +2920,7 @@ log_message "INFO" "$location_name" "Surgical cleanup completed for $location_na
 - Verify terminology matches actual operation, not just function intent
 
 ### References
-- Implementation: `lib/recovery.sh:1793,1803` (changed "Surgical cleanup completed" to "Recovery completed" for ipsec fallback)
+- Implementation: `lib/recovery/ipsec_recovery.sh` (changed "Surgical cleanup completed" to "Recovery completed" for ipsec fallback)
 - Test update: `tests/test_recovery_tier2.sh:602` (updated assertion for ipsec fallback path)
 - Log analysis: `analyze-logs.sh:363` (updated pattern matching for new message format)
 
@@ -2926,80 +2944,7 @@ log_message "INFO" "$location_name" "Surgical cleanup completed for $location_na
 
 ---
 
-**Note:** Lessons 30-33 (testing-specific mock and fixture patterns) have been moved to `TEST_PATTERNS.md` where they belong with other testing patterns. See `TEST_PATTERNS.md` section 5 (Mock Setup and Cleanup) for:
-- Lesson 30: Mock Command Handling: Always Handle All Command Variants
-- Lesson 31: When Refactoring Helper Functions, Maintain Backward Compatibility or Update All Callers
-- Lesson 32: Centralize Test Data to Improve Maintainability
-- Lesson 33: Error Handling Functions Should Be Defensive with Invalid Input
-- Lesson 33: Fixtures Can Export Helper Functions for Dynamic Test Behavior
-- Lesson 34: Escape Variables in Heredocs When Creating Mock Scripts
-- Lesson 35: Mock Commands Must Handle Command Availability Checks
-- Lesson 36: Use Standalone `if` Statements in `additional_handlers` for Mock Helpers
-
----
-
-## Lesson 37: Avoid Over-Engineering for Theoretical Edge Cases
-
-**Impact Level:** Medium  
-**Applicability:** Architecture/Design  
-**Actionability:** High  
-**Date:** 2026-01-18
-
-### Problem
-The codebase included a centralized fallback system (`lib/fallbacks.sh`) that provided fallback implementations when core modules failed to source. This system:
-- Required maintaining two implementations of the same functions (main + fallback)
-- Added complexity to module sourcing (9+ files had fallback logic)
-- Addressed theoretical edge cases (file corruption, syntax errors) that are extremely unlikely in production
-- Created maintenance burden (keeping implementations in sync)
-
-### Impact
-- **Maintenance Burden:** Two implementations to keep in sync (289 lines of fallback code)
-- **Complexity:** Complex fallback sourcing patterns in every module
-- **Cognitive Load:** Developers need to understand both main and fallback implementations
-- **Risk:** Fallback implementations could drift from main implementations
-
-### Lesson
-**Don't over-engineer for theoretical edge cases.** If a dependency can't be sourced in production, the application is broken anyway. Fail fast is better than silent degradation.
-
-**When to use fallbacks:**
-- ✅ **Good:** Fallback to alternative detection method (xfrm → ipsec) - real-world scenario
-- ✅ **Good:** Fallback command availability checks (command -v → system directories) - real-world scenario
-- ❌ **Bad:** Fallback when core modules fail to source - theoretical edge case
-
-**Pragmatic approach:**
-- If `common.sh` can't be sourced, the app is broken - fail immediately
-- Installation scripts should ensure dependencies exist, not rely on fallbacks
-- Tests can source real modules, don't need fallbacks
-
-### Pattern to Follow
-```bash
-# ✅ GOOD: Direct sourcing, fail fast
-source "${LIB_DIR}/common.sh"
-
-# ❌ BAD: Over-engineered fallback
-source "${LIB_DIR}/common.sh" 2>/dev/null || {
-    if [[ -n "${LIB_DIR:-}" ]] && [[ -f "${LIB_DIR}/fallbacks.sh" ]] && [[ -r "${LIB_DIR}/fallbacks.sh" ]]; then
-        source "${LIB_DIR}/fallbacks.sh" 2>/dev/null && define_common_fallbacks
-    fi
-}
-```
-
-### When Fallbacks Are Appropriate
-- **Real-world alternatives:** When you have multiple ways to accomplish the same goal (e.g., xfrm vs ipsec)
-- **Optional features:** When functionality can be disabled if dependencies are missing
-- **Command availability:** When checking for optional commands that enhance but don't require functionality
-
-### When Fallbacks Are Over-Engineering
-- **Core dependencies:** When the module is essential for application operation
-- **Theoretical failures:** When the failure scenario is extremely unlikely (file corruption, syntax errors)
-- **Silent degradation:** When fallback provides minimal functionality that masks real problems
-
-### References
-- YAGNI Principle: "You Aren't Gonna Need It"
-- Fail Fast Principle: Better to fail immediately with clear error than degrade silently
-- Pragmatic Programming: Balance between robustness and simplicity
-
-**Recommendation:** ✅ **Keep** - Important lesson about avoiding over-engineering.
+**Note:** Testing-specific mock and fixture patterns are documented in `docs/testing/TEST_PATTERNS.md` section 6 (Mock Setup and Cleanup), including mock command variants, test data centralization, and helper backward compatibility.
 
 ---
 
@@ -3009,10 +2954,8 @@ These lessons should be applied systematically in future development and code re
 
 **Note:** Many of these lessons have been consolidated into actionable patterns in `CODE_PATTERNS.md`. For current coding patterns and best practices, refer to `CODE_PATTERNS.md`. This document preserves the historical context of how patterns were discovered.
 
-**Assessment:** For a pragmatic evaluation of this document's value, recommendations for improvement, and categorization of lessons, see `CODE_REVIEW_LESSONS_LEARNED_ASSESSMENT.md`.
-
 1. **Always use abstraction layers consistently** - Don't construct paths directly, use abstraction functions
-2. **Always use validation functions instead of inline regex** - Validation functions provide consistent, secure validation
+2. **Always use validation functions instead of inline regex** - Validation functions provide consistent, secure validation (exception: trusted structured output — see `CODE_PATTERNS.md` XFRM regex helpers)
 3. **Verify function signatures match calls** - Check argument counts and types before calling functions
 4. **Remove debug code, don't just comment it** - Commented code adds confusion and maintenance burden
 5. **Verify findings before documenting** - Confirm issues exist before documenting them
@@ -3027,17 +2970,20 @@ These lessons should be applied systematically in future development and code re
 14. **Track error state when functions log but don't exit** - Return error codes even when logging errors
 15. **Handle race conditions in process management operations** - Check process state after operations
 16. **Don't log success when operations fail** - Only log success when operation actually succeeds
+17. **Always sort timestamps when finding min/max values** - Unsorted timestamp lists produce wrong min/max results
 18. **Always validate timestamp arithmetic to prevent overflow/underflow** - Use safe timestamp functions for all timestamp calculations
 19. **Always validate arithmetic operations and clamp results** - Validate inputs and clamp results to expected ranges
 20. **Always preserve exit codes in cleanup functions** - Capture and preserve main function's exit code in EXIT trap handlers
+20a. **Wrapper/cron scripts: don't swallow child exit codes** - Log non-zero child exits instead of `|| true` without recording failure
 21. **Trap cleanup functions must handle unset variables with `set -u`** - Use default value expansion in cleanup functions
+21a. **Chain EXIT traps in test helpers** - When a helper may run multiple times, chain traps instead of overwriting
 22. **Always extract external IP from LOCATIONS using helper function** - LOCATIONS array stores delimited strings, not just IPs
 23. **Simplify complex conditionals when all branches converge** - Extract common operations outside conditionals
 24. **Distinguish between script execution success and recovery success** - Script execution success ≠ Operational success
 25. **Always re-check critical state instead of relying on cached values** - Cached state can become stale, especially when state changes can occur between checks
 26. **Handle hash collisions in anonymization functions** - When using hash-based mapping to ensure uniqueness, always implement collision resolution. Hash collisions are inevitable when mapping many inputs to fewer outputs. Track used values and implement linear probing or suffix appending to handle collisions and exhaustion.
 27. **Parse all selectors when interacting with kernel interfaces** - When parsing structured output from kernel interfaces (netlink, xfrm, iproute2), parse ALL attributes that could be selectors, not just the required ones. Optional attributes become required selectors when present. Missing selectors cause operations to fail with "No such process" errors even when the object exists. Include all parsed selectors in operations (get, delete, modify) to ensure successful matching.
-28. **Avoid over-engineering edge case protections** - Don't add safeguards for edge cases that are extremely unlikely, would be caught by testing, are protected by existing safeguards, or add complexity without significant benefit
+28. **Avoid over-engineering edge case protections and theoretical fallbacks** - Don't add safeguards or core-module fallbacks for edge cases that are extremely unlikely, would be caught by testing, are protected by existing safeguards, or add complexity without significant benefit (includes removal of `lib/fallbacks.sh`)
 29. **Log messages must accurately reflect the operation performed** - Use different terminology for different code paths when behavior differs, include context in messages, match terminology to actual behavior not function name
 30. **Include all identifying attributes in deduplication keys** - When deduplicating structured data (e.g., Security Associations), use composite keys that include all identifying attributes, not just a subset. Multiple objects can share some attributes (e.g., same src/dst IPs) but differ in others (e.g., SPI values). Deduplication based on partial keys will incorrectly treat unique objects as duplicates. Example: SA deduplication must use src+dst+SPI, not just src+dst, because multiple SAs can exist for the same peer IP with different SPI values during rekey transitions or mixed configurations.
 
@@ -3073,8 +3019,8 @@ These lessons should be applied systematically in future development and code re
 
 46. **`sshpass` + `ssh -f` = hang; use `true` + `ControlPersist` instead** - `sshpass` creates a pseudo-terminal (pty) and waits for EOF. `ssh -f` forks to background but the child keeps the pty slave fd open, so sshpass blocks forever. The fix is `ssh ... true` with `ControlPersist=60`: ssh runs `true`, exits, sshpass sees EOF cleanly, and ControlPersist keeps the socket alive via OpenSSH-managed background process. Additionally: (a) `set -e` kills the script if auth fails — use `|| auth_rc=$?` to capture the exit code, (b) EXIT traps need `set +e` at the start to prevent mid-cleanup abort, (c) `mktemp -d` + `chmod 700` prevents symlink attacks on socket paths, (d) clean up temp dir explicitly in failure path before setting `CONTROL_SOCKET=""` — the EXIT trap won't do it if the variable is empty. Example: `scripts/manage/deploy-to-udm.sh` `setup_control_master()` — see `CODE_PATTERNS.md` "SSH Connection Management Patterns" for the consolidated pattern.
 
-46. **Do not swallow sourcing failures in test helpers** - When a test helper sources production modules (e.g. `source_function()` sourcing `lib/constants.sh`, `lib/common.sh`, etc.), do **not** use `2>/dev/null || true` or `|| true` on the `source` command. Swallowing the exit code causes tests that fail to load the function under test to pass vacuously (the function was never defined, so assertions never run or run on stale definitions). Let sourcing failures propagate so the test fails with a clear error. Example: Removed `|| true` from all `source "${LIB_DIR}/...` calls inside `source_function()` in `tests/test_helper.bash` so that module load failures surface as test failures.
+47. **Do not swallow sourcing failures in test helpers** - When a test helper sources production modules (e.g. `source_function()` sourcing `lib/constants.sh`, `lib/common.sh`, etc.), do **not** use `2>/dev/null || true` or `|| true` on the `source` command. Swallowing the exit code causes tests that fail to load the function under test to pass vacuously (the function was never defined, so assertions never run or run on stale definitions). Let sourcing failures propagate so the test fails with a clear error. Example: Removed `|| true` from all `source "${LIB_DIR}/...` calls inside `source_function()` in `tests/test_helper.bash` so that module load failures surface as test failures.
 
-47. **Do not strip `#` from config RHS before quote-aware parsing** - Using `${assignment%%#*}` (or any “remove longest `#…` suffix” on the raw text after `=`) runs **before** quoted values are interpreted, so a valid line like `VAR="vpn#1.example.com"` is truncated to `"vpn` and fails as an unclosed quote; unquoted `VAR=host#1` could become `host` without error. **Handle comments inside `parse_quoted_value`**: for quoted strings, allow only whitespace and `#…` after the closing quote; for unquoted tokens, allow an optional trailing comment only as `token` + whitespace + `#` + rest (a `#` inside the token requires quoting). Example: `lib/config/config_loading.sh` `parse_assignment` passes the full RHS to `parse_quoted_value`; comment rules live there.
+48. **Do not strip `#` from config RHS before quote-aware parsing** - Using `${assignment%%#*}` (or any “remove longest `#…` suffix” on the raw text after `=`) runs **before** quoted values are interpreted, so a valid line like `VAR="vpn#1.example.com"` is truncated to `"vpn` and fails as an unclosed quote; unquoted `VAR=host#1` could become `host` without error. **Handle comments inside `parse_quoted_value`**: for quoted strings, allow only whitespace and `#…` after the closing quote; for unquoted tokens, allow an optional trailing comment only as `token` + whitespace + `#` + rest (a `#` inside the token requires quoting). Example: `lib/config/config_loading.sh` `parse_assignment` passes the full RHS to `parse_quoted_value`; comment rules live there.
 
-48. **`set -e` + `[[ ]] &&` inside sourced library functions** - Library modules sourced by `set -euo pipefail` scripts must not use `[[ condition ]] && command` when `condition` is often false (e.g. optional color init when `common.sh` already set `RED`, or `manage_log_verbose` when verbose is off). A failed `[[` as the last command in a function returns non-zero and can abort the caller. Use `if [[ condition ]]; then command; fi` instead. Same applies to `manage_init_terminal_colors()` — discovered when consolidating SSH helpers into `scripts/manage/lib/ssh_control.sh`.
+49. **`set -e` + `[[ ]] &&` inside sourced library functions** - Library modules sourced by `set -euo pipefail` scripts must not use `[[ condition ]] && command` when `condition` is often false (e.g. optional color init when `common.sh` already set `RED`, or `manage_log_verbose` when verbose is off). A failed `[[` as the last command in a function returns non-zero and can abort the caller. Use `if [[ condition ]]; then command; fi` instead. Same applies to `manage_init_terminal_colors()` — discovered when consolidating SSH helpers into `scripts/manage/lib/ssh_control.sh`.

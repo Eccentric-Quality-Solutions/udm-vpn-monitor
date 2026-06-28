@@ -158,7 +158,6 @@ graph TB
     MainScript --> RecoveryLib
     MainScript --> OperatingModeLib
     MainScript --> CommonLib
-    MainScript --> ConstantsLib
     WrapperScript --> OperatingModeLib
 
     ControlScript --> ControlLib
@@ -298,11 +297,13 @@ flowchart TD
 
 - **Cron Persistence Check**: Performed once per run (tracked via `.cron_checked` file) after the network partition check. Detects if cron jobs were removed during system upgrades (common after UniFi OS updates). Logs warnings but doesn't fail execution - this is a diagnostic check to help users detect configuration loss.
 
-- **Rate Limiting (not cooldown)**: There is no global cooldown that skips monitoring. Tier 2 recovery is gated by `check_tier2_rate_limit()` inside `surgical_cleanup()`; Tier 3 by `check_rate_limit()` inside `full_restart()`. Both use sliding-window timestamp files (`tier2_recovery_count`, `restart_count`) and minimum intervals (`MIN_TIER2_INTERVAL_SECONDS`, `MIN_RESTART_INTERVAL_SECONDS`). When rate-limited, **only that location's recovery is skipped**; the script continues for other locations. Monitoring continues on every run. See [ADR-0008](../adr/0008-rate-limiting-and-cooldown-periods.md) and [Rate Limiting](#rate-limiting-staterestart_count) below.
+- **Rate Limiting (not cooldown)**: There is no global cooldown that skips monitoring. Tier 2 recovery is gated by `check_tier2_rate_limit()` inside `surgical_cleanup()`; Tier 3 by `check_rate_limit()` inside `full_restart()`. Both use sliding-window timestamp files (`tier2_recovery_count`, `restart_count`) and minimum intervals (`MIN_TIER2_INTERVAL_SECONDS`, `MIN_RESTART_INTERVAL_SECONDS`). When rate-limited, **only that location's recovery is skipped**; the script continues for other locations. During system-wide failures, the coordinator may bypass the Tier 3 window limit (not the minimum interval). Monitoring continues on every run. See [ADR-0008](../adr/0008-rate-limiting-and-cooldown-periods.md) and [Rate Limiting](#rate-limiting-staterestart_count) below.
 
 - **Ping Check** (enabled by default): When `ENABLE_PING_CHECK=1`, ping runs for every location (target = internal IP(s) or external IP). Ping failure is treated as VPN failed (routing_issue) and counts toward the recovery threshold; the diagram’s "Ping Success?" → No leads to VPN Failed.
 
 - **System-Wide Failure Detection**: (if enabled via `ENABLE_SYSTEM_WIDE_FAILURE_DETECTION`) occurs in `process_locations()` after location names are resolved but before per-location recovery in `monitor_location()`. The system reads each location's **failure count from the previous cycle** (not a fresh VPN re-check) and compares the failing percentage to the configured threshold. If threshold exceeded, system-wide failure state is set and recovery coordination is enabled. Only the designated coordinator location attempts recovery during system-wide failures, preventing cascades and rate limiting issues. System-wide failure state is cleared when failures drop below threshold. See the "System-Wide Failure Detection" section below for detailed documentation.
+
+- **Diagram Simplifications**: The flowchart omits several per-location gates inside `monitor_location()` / `handle_recovery()`: system-wide coordination skip (`should_location_attempt_recovery()`), detection reliability safeguard (skip Tier 2/3 when `failure_type=unknown` and both `ip` and `ipsec` are unavailable), observe-only / fake mode (`NO_ESCALATE=1`), and ipsec-only “connection exists” paths when xfrm query fails but `ipsec status` shows the tunnel up.
 
 ## System-Wide Failure Detection
 
@@ -553,14 +554,18 @@ stateDiagram-v2
     }
 
     state Tier2 {
-        [*] --> CheckXfrm
+        [*] --> CheckTier2RateLimit
+        CheckTier2RateLimit --> Tier2RateLimited: Limit Exceeded
+        CheckTier2RateLimit --> CheckXfrm: Within Limit
         CheckXfrm --> AttemptXfrm: Xfrm Enabled
         CheckXfrm --> ReloadIpsec: Xfrm Disabled
         AttemptXfrm --> VerifyRecovery: SA Deleted
-        VerifyRecovery --> [*]: SA Re-established
+        VerifyRecovery --> RecordTier2: SA Re-established
         VerifyRecovery --> ReloadIpsec: Timeout/Failure
         AttemptXfrm --> ReloadIpsec: Failure
-        ReloadIpsec --> [*]
+        ReloadIpsec --> RecordTier2
+        RecordTier2 --> [*]
+        Tier2RateLimited --> [*]
     }
 
     state Tier3 {
@@ -905,6 +910,7 @@ Each peer's monitoring and recovery actions operate completely independently.
   - Uses sliding window: counts restarts in last N minutes from current time
   - Checks minimum interval first (prevents rapid-fire restarts)
   - If limit exceeded, Tier 3 recovery actions are skipped until rate limit window expires
+  - **Coordinator bypass**: During system-wide failures, the designated coordinator location bypasses the window limit in `check_rate_limit()` (minimum interval still enforced) so a single recovery attempt can proceed during infrastructure outages; see [ADR-0008](../adr/0008-rate-limiting-and-cooldown-periods.md)
 
 **Tier 2 Rate Limiting** (`state/tier2_recovery_count`):
 - **Purpose**: Prevents excessive Tier 2 recovery loops (surgical cleanup, ipsec reload, xfrm per-connection)
@@ -1005,6 +1011,12 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 ├── vpn-monitor.sh              # Main monitoring script
 ├── vpn-monitor-wrapper.sh      # Sub-minute wrapper (optional; cron runs this when ENABLE_MONITOR_WRAPPER=1)
 ├── vpn-monitor-control.sh      # Operating mode CLI (start/stop/pause/observe-only/status)
+├── vpn-keepalive.sh            # Optional keepalive daemon (systemd service)
+├── install.sh / uninstall.sh   # Installation and removal
+├── check-config.sh             # Configuration validator
+├── check-utilities.sh          # Required utility checker
+├── compare-config.sh           # Config comparison tool
+├── analyze-logs.sh             # Log analysis tool
 ├── vpn-monitor.conf            # Configuration file
 │
 ├── lib/                        # Library modules
@@ -1040,6 +1052,7 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
 │   │   ├── recovery_orchestration.sh # Recovery orchestration and coordination
 │   │   └── constants.sh              # Recovery-specific constants
 │   ├── resources.sh            # Resource monitoring and throttling
+│   ├── anonymize.sh            # Log/config anonymization (used by scripts/anonymize/)
 │   ├── state.sh                # State file management (aggregate entry; sources lib/state/)
 │   └── state/                   # State module subdirectory
 │       ├── state_paths.sh         # State file path generation and sanitization
@@ -1082,6 +1095,12 @@ ${SCRIPT_DIR}/                  # Typically /data/vpn-monitor/ when installed
     ├── last_status_log_NYC_203_0_113_1 # Per-location last status log timestamp
     ├── recovery_method_NYC_203_0_113_1 # Per-location recovery method tracking
     └── connection_name_203_0_113_1 # Per-peer connection name cache (no location)
+
+scripts/                          # Packaging, deployment, dev helpers (not loaded at monitor runtime)
+├── prepare_install_package.sh    # Build install zip/tar.gz
+├── setup-git-hooks.sh            # Install repo git hooks
+├── manage/                       # Multi-UDM deploy, log centralization, SSH helpers
+└── anonymize/                    # Anonymization wrappers (source lib/anonymize.sh)
 ```
 
 **Path Resolution**: The script uses `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` to determine its location. State files are created at `${SCRIPT_DIR}/state/` and logs at `${SCRIPT_DIR}/logs/`. When installed to `/data/vpn-monitor`, these resolve to `/data/vpn-monitor/state/` and `/data/vpn-monitor/logs/` respectively.
@@ -1198,7 +1217,7 @@ The system uses a modular library architecture where functionality is organized 
 - **`lib/detection/network_validation.sh`**: IP validation (IPv4/IPv6), default LAN ping source (`check_local_ip_on_default_lan`, `add_local_ip_to_default_lan_if_needed`), DNS resolution, interface state checks
 - **`lib/detection/xfrm_detection.sh`**: xfrm state checks, byte counter detection, SA rekey detection, IPsec status fallback. Includes timeout protection (`XFRM_STATE_TIMEOUT=5`) to prevent indefinite hangs during system stress (netlink socket timeouts, XFRM lock contention).
 - **`lib/detection/ping_detection.sh`**: Ping-based connectivity verification, multiple IP support, periodic ping summary via `log_ping_summary_if_due()` (`PING_SUMMARY_INTERVAL_MINUTES`, state files `ping_summary_last_time` / `ping_summary_count` under `STATE_DIR`)
-- **`lib/detection/failure_analysis.sh`**: Failure type classification, VPN status determination, network partition detection
+- **`lib/detection/failure_analysis.sh`**: Failure type classification, VPN status determination, network partition detection (`check_network_partition()` — also called from `validate_monitor_state()` in `vpn-monitor.sh` and from recovery orchestration before Tier 2/3 actions)
 - **`lib/detection/system_wide_failure.sh`**: System-wide failure detection and coordination (detects when all/majority of VPNs fail simultaneously)
 
 **Key Functions**:
@@ -1209,6 +1228,7 @@ The system uses a modular library architecture where functionality is organized 
 - `log_ping_summary_if_due()` - Logs a periodic INFO summary of successful ping checks (in `ping_detection.sh`)
 - `validate_ip_address()` - IP address validation (in `network_validation.sh`)
 - `detect_failure_type()` - Failure type classification (in `failure_analysis.sh`)
+- `check_network_partition()` - DNS/interface partition probe (in `failure_analysis.sh`; shared startup and recovery paths)
 - `detect_system_wide_failure()` - Detects system-wide failure across all locations (in `system_wide_failure.sh`)
 - `should_location_attempt_recovery()` - Determines if location should attempt recovery during system-wide failure (in `system_wide_failure.sh`)
 - `get_system_wide_failure_state()` - Retrieves current system-wide failure state (in `system_wide_failure.sh`)
@@ -1313,7 +1333,7 @@ The system uses a modular library architecture where functionality is organized 
 
 **Module Structure**: The state management functionality is organized into focused modules in the `lib/state/` subdirectory:
 - **`lib/state/state_paths.sh`**: State file path generation, sanitization, and path management utilities
-- **`lib/state/peer_state.sh`**: Per-peer state operations (connection name caching)
+- **`lib/state/peer_state.sh`**: Per-peer/per-location state (failure counts, byte counters, SPI, idle state, recovery method, connection name cache)
 - **`lib/state/global_state.sh`**: Global state operations (restart/tier2 rate-limit timestamps, network partition state)
 - **`lib/state/state_init.sh`**: State initialization and validation functions
 - **`lib/state/network_partition_stats.sh`**: Network partition check statistics tracking (success/failure counting, hourly summary logging)
@@ -1323,8 +1343,10 @@ The system uses a modular library architecture where functionality is organized 
 - `increment_failure()` - Increments per-location failure counter (in `peer_state.sh`)
 - `reset_failure_count()` - Resets per-location failure counter (in `peer_state.sh`)
 - `get_failure_count()` - Retrieves current failure count for a location (in `peer_state.sh`)
-- `check_rate_limit()` - Validates restart rate limiting (in `global_state.sh`)
-- `record_restart()` - Records restart timestamp (in `global_state.sh`)
+- `check_rate_limit()` - Validates Tier 3 restart rate limiting (in `global_state.sh`; optional location for coordinator bypass)
+- `record_restart()` - Records Tier 3 restart timestamp (in `global_state.sh`)
+- `check_tier2_rate_limit()` - Validates Tier 2 recovery rate limiting (in `global_state.sh`)
+- `record_tier2_recovery()` - Records Tier 2 recovery timestamp (in `global_state.sh`)
 - `set_peer_state()` - Updates per-location state (byte counters, SPI, etc.) (in `peer_state.sh`)
 - `get_peer_state()` - Retrieves per-location state values (in `peer_state.sh`)
 - `get_peer_state_file_path()` - Generates state file path with proper sanitization (in `state_paths.sh`)
@@ -1364,7 +1386,9 @@ The monitor supports persistent operating modes controlled via `vpn-monitor-cont
 | `running` (default) | Normal detection and tiered recovery |
 | `stopped` | `check_operating_mode()` exits early; cron/wrapper/keepalive removed by `stop` command |
 | `paused` | Exits early until `paused_until` epoch; auto-resumes to `running` when expired |
-| `observe-only` | Runs detection and logging; sets `NO_ESCALATE=1` (same effect as `--fake` for recovery) |
+| `observe-only` | Runs detection and logging; sets `NO_ESCALATE=1` (same recovery effect as `vpn-monitor.sh --fake`) |
+
+**One-shot dry run**: `vpn-monitor.sh --fake` sets `NO_ESCALATE=1` for a single invocation without changing `state/operating_mode` (useful for manual checks).
 
 **Integration with monitor loop**:
 - `vpn-monitor.sh` → `main()` calls `check_operating_mode()` after `initialize_monitor()`, before `validate_monitor_state()`
@@ -1397,6 +1421,8 @@ The system includes an optional VPN keepalive daemon (`vpn-keepalive.sh`) that r
 
 ## Component Interactions
 
+Runtime call graph for `vpn-monitor.sh` (and each `vpn-monitor-wrapper.sh` iteration). Control CLI (`vpn-monitor-control.sh`) is omitted; it writes `state/operating_mode` and manages cron/keepalive out of band.
+
 ```mermaid
 graph TB
     subgraph "External Commands"
@@ -1407,24 +1433,28 @@ graph TB
 
     subgraph "Main Script"
         MainScript[vpn-monitor.sh]
+        WrapperScript[vpn-monitor-wrapper.sh<br/>loops MainScript]
     end
 
     subgraph "Library Modules"
         DetectionLib[lib/detection.sh<br/>check_vpn_status]
-        RecoveryLib[lib/recovery.sh<br/>surgical_cleanup<br/>full_restart<br/>monitor_location]
-        StateLib[lib/state.sh<br/>check_rate_limit]
+        RecoveryLib[lib/recovery.sh<br/>monitor_location<br/>surgical_cleanup<br/>full_restart]
+        StateLib[lib/state.sh<br/>check_rate_limit<br/>check_tier2_rate_limit]
         LockfileLib[lib/lockfile.sh<br/>acquire_lockfile]
-        ConfigLib[lib/config.sh<br/>load_config<br/>parse_location_config]
+        ConfigLib[lib/config.sh<br/>load_config]
         LoggingLib[lib/logging.sh<br/>log_message]
         ResourcesLib[lib/resources.sh<br/>check_system_resources]
-        CommonLib[lib/common.sh<br/>validate_ip_address<br/>get_formatted_timestamp]
+        OperatingModeLib[lib/control/operating_mode.sh<br/>check_operating_mode]
+        CommonLib[lib/common.sh<br/>validate_ip_address]
     end
 
+    WrapperScript --> MainScript
     MainScript --> LockfileLib
     MainScript --> ConfigLib
     MainScript --> StateLib
     MainScript --> LoggingLib
     MainScript --> ResourcesLib
+    MainScript --> OperatingModeLib
     MainScript --> RecoveryLib
 
     RecoveryLib -->|monitor_location| DetectionLib
@@ -1442,6 +1472,8 @@ graph TB
     RecoveryLib --> LoggingLib
 
     StateLib --> LoggingLib
+    ResourcesLib --> LoggingLib
+    OperatingModeLib --> StateLib
     CommonLib --> LoggingLib
 ```
 
@@ -1517,7 +1549,7 @@ The following improvements have been implemented to enhance system reliability a
   - Single responsibility per module
   - Code reuse across scripts (install, uninstall, monitor)
   - Easier testing and maintenance
-  - Reduced main script from ~1900 lines to ~620 lines
+  - Reduced main script from ~1900 lines to ~628 lines (`vpn-monitor.sh`)
   - Better separation of concerns
 - **Note**: See "Modular Library Architecture" section above for detailed module documentation
 
@@ -1534,7 +1566,7 @@ The following improvements have been implemented to enhance system reliability a
 
 ### 8. Rate Limiting
 - **Why**: Prevent recovery loops if VPN has persistent issues
-- **Implementation**: Sliding-window limits on Tier 2 (`tier2_recovery_count`, `check_tier2_rate_limit()`) and Tier 3 (`restart_count`, `check_rate_limit()`) recovery actions, plus minimum intervals between recoveries (`MIN_TIER2_INTERVAL_SECONDS`, `MIN_RESTART_INTERVAL_SECONDS`). Monitoring continues when limits are hit; only recovery is skipped.
+- **Implementation**: Sliding-window limits on Tier 2 (`tier2_recovery_count`, `check_tier2_rate_limit()`) and Tier 3 (`restart_count`, `check_rate_limit()`) recovery actions, plus minimum intervals between recoveries (`MIN_TIER2_INTERVAL_SECONDS`, `MIN_RESTART_INTERVAL_SECONDS`). Monitoring continues when limits are hit; only recovery is skipped. During system-wide failures, the coordinator bypasses the Tier 3 window limit in `check_rate_limit()` (minimum interval still enforced).
 - **Benefit**: Protects system from excessive restarts without delaying failure detection
 - **Related**: See [ADR-0008](../adr/0008-rate-limiting-and-cooldown-periods.md). The former cooldown mechanism (which blocked all monitoring) was removed in v0.6.0+.
 

@@ -4302,6 +4302,55 @@ EOF
 
 This section covers patterns specific to standalone scripts and script execution. Some related patterns may also appear in other sections (e.g., "Process Substitution" in Loop and Iteration Patterns, "Fallback Function Definitions" in Module Organization Patterns).
 
+### Pattern: Entry Script Structure (`main()` and `BASH_SOURCE` Guard)
+
+**When to Use:** All root-level and `scripts/` entry scripts (executables, not `lib/` modules)
+
+**Pattern:**
+```bash
+#!/bin/bash
+set -euo pipefail
+
+# ... globals, source lib/, function definitions ...
+
+main() {
+    # Parse args, validate, run workflow, exit with appropriate code
+}
+
+# ✅ GOOD (default): execute-only entry script
+main "$@"
+
+# ✅ GOOD (rare): sourceable entry script — only when tests or another script must
+# source this file to call functions without running main
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
+
+# ❌ BAD: top-level workflow with no main() — hard to read and risky if ever sourced
+parse_args "$@"
+validate_config
+run_monitor  # runs at source time if file is sourced
+
+# ❌ BAD: guard on every script "for consistency" when nothing sources the file
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
+# (adds noise with no benefit when the script is execute-only)
+```
+
+**Key Points:**
+- **Use `main()` for structure** in entry scripts (`vpn-monitor.sh`, `install.sh`, `check-config.sh`, etc.) — keeps top-level scope to setup and one call site
+- **Default invocation:** `main "$@"` at the bottom (or `acquire_lockfile main "$@"` when a lock wraps the whole run)
+- **Add the `BASH_SOURCE` guard only when the script must be sourceable without running `main`** — rare; current example: `uninstall.sh` (tests source it to call `validate_install_dir_safety()` without executing uninstall)
+- **Prefer moving shared logic to `lib/`** instead of making entry scripts dual-purpose; tests should source `lib/` modules, not production entry scripts
+- **Do not source** `vpn-monitor.sh`, `install.sh`, or similar — they perform side effects at load time (sourcing, lock acquisition). Run with `bash script.sh` or `./script.sh`
+- Library modules (`lib/*.sh`) define functions only; never call `main` or use a `BASH_SOURCE` guard
+
+**Examples in this codebase:**
+- Execute-only: `install.sh`, `check-config.sh`, `check-utilities.sh` → `main "$@"`
+- Lock-wrapped: `vpn-monitor.sh` → `acquire_lockfile main "$@"`
+- Sourceable exception: `uninstall.sh` → `if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then main "$@"; fi`
+
 ### Pattern: Command-Line Argument Parsing
 
 **When to Use:** Scripts that accept command-line arguments with options and flags
