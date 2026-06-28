@@ -51,22 +51,11 @@ if [[ -f "${SCRIPT_DIR}/deploy-registry.sh" ]] && [[ -f "${REPO_ROOT}/lib/common
 	source "${SCRIPT_DIR}/deploy-registry.sh"
 fi
 
-# Colors (skip if already set e.g. from common.sh in test harness)
-if [[ -t 1 ]]; then
-	[[ -z "${RED:-}" ]] && RED='\033[0;31m'
-	[[ -z "${GREEN:-}" ]] && GREEN='\033[0;32m'
-	[[ -z "${YELLOW:-}" ]] && YELLOW='\033[1;33m'
-	[[ -z "${BLUE:-}" ]] && BLUE='\033[0;34m'
-	[[ -z "${NC:-}" ]] && NC='\033[0m'
-else
-	[[ -z "${RED:-}" ]] && RED=''
-	[[ -z "${GREEN:-}" ]] && GREEN=''
-	[[ -z "${YELLOW:-}" ]] && YELLOW=''
-	[[ -z "${BLUE:-}" ]] && BLUE=''
-	[[ -z "${NC:-}" ]] && NC=''
-fi
+# shellcheck source=scripts/manage/lib/ssh_control.sh
+source "${SCRIPT_DIR}/lib/ssh_control.sh"
+manage_init_terminal_colors
 
-# Append message to deploy log file.
+LOGS_DIR="${REPO_ROOT}/logs"
 #
 # Arguments:
 #   $1: level - INFO, SUCCESS, WARN, ERROR
@@ -82,26 +71,28 @@ deploy_log_write() {
 	echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $msg" >>"$DEPLOY_LOG_FILE" 2>/dev/null || true
 }
 
-# Logging helpers (write to stderr and append to deploy log file).
-log_info() {
+# Logging: override manage_log_* so shared helpers can append to deploy log.
+manage_log_info() {
 	echo -e "${BLUE}[INFO]${NC} $*" >&2
 	deploy_log_write "INFO" "$*"
 }
-# Log success message to stderr and log file.
-log_success() {
+manage_log_success() {
 	echo -e "${GREEN}[SUCCESS]${NC} $*" >&2
 	deploy_log_write "SUCCESS" "$*"
 }
-# Log warning message to stderr and log file.
-log_warn() {
+manage_log_warn() {
 	echo -e "${YELLOW}[WARN]${NC} $*" >&2
 	deploy_log_write "WARN" "$*"
 }
-# Log error message to stderr and log file.
-log_error() {
+manage_log_error() {
 	echo -e "${RED}[ERROR]${NC} $*" >&2
 	deploy_log_write "ERROR" "$*"
 }
+
+log_info() { manage_log_info "$@"; }
+log_success() { manage_log_success "$@"; }
+log_warn() { manage_log_warn "$@"; }
+log_error() { manage_log_error "$@"; }
 
 # Resolve bind IP from LOCAL_UDM_IP in vpn-monitor.conf when not explicitly set.
 #
@@ -237,13 +228,7 @@ main() {
 
 	# Read UDM list (skip comments and blank lines)
 	local -a udms=()
-	while IFS= read -r line || [[ -n "$line" ]]; do
-		line="${line%%#*}"
-		line="${line#"${line%%[![:space:]]*}"}"
-		line="${line%"${line##*[![:space:]]}"}"
-		[[ -z "$line" ]] && continue
-		udms+=("$line")
-	done <"$CONFIG_FILE"
+	read_manage_host_config "$CONFIG_FILE" udms
 
 	if [[ ${#udms[@]} -eq 0 ]]; then
 		log_error "No UDMs found in config: $CONFIG_FILE"

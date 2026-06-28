@@ -4607,11 +4607,21 @@ remove_vpn_monitor_cron
 
 **Wrapper default:** Missing `ENABLE_MONITOR_WRAPPER` in config → wrapper cron (ADR-0032). Schedule defaults to `*/1 * * * *` when `CRON_SCHEDULE` is absent or invalid.
 
-See also: `docs/reference/DRY_OPPORTUNITIES.md` (item 1, done), ADR-0032.
+See also: `docs/reference/DRY_OPPORTUNITIES.md`, ADR-0032.
 
 ---
 
 ## SSH Connection Management Patterns
+
+**Single source of truth:** `scripts/manage/lib/ssh_control.sh` (sourced by `deploy-to-udm.sh`, `control-remote-udm.sh`, `deploy-to-udms.sh`). Do not reimplement ControlMaster setup in manage scripts.
+
+| Caller | Functions used |
+|--------|----------------|
+| `deploy-to-udm.sh` | `setup_ssh_control_master`, `execute_ssh_control`, `execute_scp_control`, `collect_ssh_credentials_if_needed`; overrides `manage_log_*` for file logging |
+| `control-remote-udm.sh` | `setup_ssh_control_master`, `execute_ssh_control`, `collect_ssh_credentials_if_needed`, `read_manage_host_config`, `reset_ssh_between_hosts` |
+| `deploy-to-udms.sh` | `read_manage_host_config`, `manage_init_terminal_colors`; overrides `manage_log_*` for file logging |
+
+See also: `docs/reference/DRY_OPPORTUNITIES.md`.
 
 ### Pattern: SSH ControlMaster with `ControlPersist` + `true`
 
@@ -4620,7 +4630,7 @@ See also: `docs/reference/DRY_OPPORTUNITIES.md` (item 1, done), ADR-0032.
 **Pattern:**
 ```bash
 # 1. Create secure socket directory
-sock_dir=$(mktemp -d /tmp/ssh-deploy-XXXXXX)
+sock_dir=$(mktemp -d /tmp/ssh-manage-XXXXXX)
 chmod 700 "$sock_dir"
 CONTROL_SOCKET="${sock_dir}/ctrl.sock"
 
@@ -4644,7 +4654,7 @@ cleanup_control_master() {
     local dir
     dir="$(dirname "${CONTROL_SOCKET:-}" 2>/dev/null)"
     rm -f "${CONTROL_SOCKET:-}" 2>/dev/null
-    [[ -n "$dir" ]] && [[ "$dir" == /tmp/ssh-deploy-* ]] && rmdir "$dir" 2>/dev/null
+    [[ -n "$dir" ]] && [[ "$dir" == /tmp/ssh-manage-* ]] && rmdir "$dir" 2>/dev/null
     set -e
 }
 trap cleanup_control_master EXIT
@@ -4657,7 +4667,7 @@ trap cleanup_control_master EXIT
 - **`|| auth_rc=$?`** captures auth failures without triggering `set -e`
 - **`set +e` in EXIT trap** prevents cleanup from aborting if any cleanup command fails
 - **`mktemp -d` + `chmod 700`** prevents symlink attacks (vs predictable `/tmp/ssh-$host-$$.sock`)
-- **Pattern-guard `rmdir`** with `[[ "$dir" == /tmp/ssh-deploy-* ]]` to prevent accidental deletion of wrong directory
+- **Pattern-guard `rmdir`** with `[[ "$dir" == /tmp/ssh-manage-* ]]` to prevent accidental deletion of wrong directory
 - **Clean up temp dir on setup failure** — if master setup fails and you set `CONTROL_SOCKET=""`, the EXIT trap won't clean up; do it explicitly before clearing the variable
 
 **Batch multi-host SSH:** When iterating over several targets (e.g. `control-remote-udm.sh`, `deploy-to-udms.sh`), reset per-host connection state on each iteration:
@@ -4688,7 +4698,7 @@ fi
 
 **Password collection strategy:** Only collect password in `validate_params` when `sshpass` or `expect` is available (can feed it programmatically). When neither is available, let ssh prompt directly on `/dev/tty` during ControlMaster setup. For non-interactive use without `sshpass`: fail early with a clear error.
 
-**Reference implementation:** `scripts/manage/deploy-to-udm.sh` — `setup_control_master()`, `cleanup_control_master()`, `build_ssh_opts()`
+**Reference implementation:** `scripts/manage/lib/ssh_control.sh` — `setup_ssh_control_master()`, `cleanup_ssh_control_master()`, `build_ssh_opts()`
 
 ### Pattern: Build SSH Options Helper
 

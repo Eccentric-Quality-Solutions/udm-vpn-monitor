@@ -25,6 +25,10 @@ if [[ -f "${REPO_ROOT}/lib/common.sh" ]]; then
 	source "${REPO_ROOT}/lib/common.sh"
 fi
 
+# shellcheck source=scripts/manage/lib/ssh_control.sh
+source "${SCRIPT_DIR}/lib/ssh_control.sh"
+manage_init_terminal_colors
+
 REMOTE_INSTALL_DIR="/data/vpn-monitor"
 REMOTE_CONTROL_SCRIPT="${REMOTE_INSTALL_DIR}/vpn-monitor-control.sh"
 
@@ -40,24 +44,10 @@ REMOTE_COMMAND=""
 REMOTE_ARGS=()
 DRY_RUN=0
 
-if [[ -t 1 ]]; then
-	[[ -z "${RED:-}" ]] && RED='\033[0;31m'
-	[[ -z "${GREEN:-}" ]] && GREEN='\033[0;32m'
-	[[ -z "${YELLOW:-}" ]] && YELLOW='\033[1;33m'
-	[[ -z "${BLUE:-}" ]] && BLUE='\033[0;34m'
-	[[ -z "${NC:-}" ]] && NC='\033[0m'
-else
-	[[ -z "${RED:-}" ]] && RED=''
-	[[ -z "${GREEN:-}" ]] && GREEN=''
-	[[ -z "${YELLOW:-}" ]] && YELLOW=''
-	[[ -z "${BLUE:-}" ]] && BLUE=''
-	[[ -z "${NC:-}" ]] && NC=''
-fi
-
-log_info() { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $*" >&2; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+log_info() { manage_log_info "$@"; }
+log_success() { manage_log_success "$@"; }
+log_warn() { manage_log_warn "$@"; }
+log_error() { manage_log_error "$@"; }
 
 display_help() {
 	cat <<EOF
@@ -87,122 +77,6 @@ Examples:
   $0 --host 192.168.1.100 pause --until +30m --reason maintenance
   $0 --config control-udms.conf stop
 EOF
-}
-
-build_ssh_opts() {
-	local opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_TIMEOUT"
-	[[ -n "$BIND_IP" ]] && opts="$opts -o BindAddress=$BIND_IP"
-	[[ -n "$CONTROL_SOCKET" ]] && opts="$opts -o ControlPath=$CONTROL_SOCKET"
-	echo "$opts"
-}
-
-setup_control_master() {
-	local target_ip="$1"
-	local sock_dir auth_rc=0
-	sock_dir=$(mktemp -d /tmp/ssh-control-XXXXXX)
-	chmod 700 "$sock_dir"
-	CONTROL_SOCKET="${sock_dir}/ctrl.sock"
-	rm -f "$CONTROL_SOCKET" 2>/dev/null || true
-	trap cleanup_control_master EXIT
-
-	local master_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_TIMEOUT"
-	master_opts="$master_opts -o ControlMaster=yes -o ControlPath=$CONTROL_SOCKET -o ControlPersist=60"
-	[[ -n "$BIND_IP" ]] && master_opts="$master_opts -o BindAddress=$BIND_IP"
-
-	log_info "Connecting to ${target_ip}..."
-
-	if command -v sshpass >/dev/null 2>&1 && [[ -n "$SSH_PASSWORD" ]]; then
-		# shellcheck disable=SC2086
-		SSHPASS="$SSH_PASSWORD" sshpass -e ssh \
-			$master_opts -p "$SSH_PORT" "${SSH_USERNAME}@${target_ip}" true || auth_rc=$?
-	elif command -v expect >/dev/null 2>&1 && [[ -n "$SSH_PASSWORD" ]]; then
-		DEPLOY_PASSWORD="$SSH_PASSWORD" DEPLOY_TIMEOUT="$SSH_TIMEOUT" \
-			DEPLOY_MASTER_OPTS="$master_opts" DEPLOY_PORT="$SSH_PORT" \
-			DEPLOY_USER="$SSH_USERNAME" DEPLOY_HOST="$target_ip" \
-			expect <<'EXPECT_EOF' || auth_rc=$?
-set timeout $env(DEPLOY_TIMEOUT)
-spawn ssh {*}$env(DEPLOY_MASTER_OPTS) -p $env(DEPLOY_PORT) $env(DEPLOY_USER)@$env(DEPLOY_HOST) true
-expect {
-	"assword:" { send "$env(DEPLOY_PASSWORD)\r"; exp_continue }
-	"yes/no" { send "yes\r"; exp_continue }
-	eof
-}
-lassign [wait] pid spawnid os_error value
-exit $value
-EXPECT_EOF
-	else
-		# shellcheck disable=SC2086
-		ssh $master_opts -p "$SSH_PORT" "${SSH_USERNAME}@${target_ip}" \
-			true </dev/tty 2>/dev/tty || auth_rc=$?
-	fi
-
-	if [[ $auth_rc -eq 0 ]] && ssh -o ControlPath="$CONTROL_SOCKET" -O check "${SSH_USERNAME}@${target_ip}" 2>/dev/null; then
-		return 0
-	fi
-	log_error "Failed to connect to ${target_ip}"
-	rm -f "$CONTROL_SOCKET" 2>/dev/null || true
-	[[ -n "$sock_dir" ]] && [[ "$sock_dir" == /tmp/ssh-control-* ]] && rmdir "$sock_dir" 2>/dev/null || true
-	CONTROL_SOCKET=""
-	return 1
-}
-
-cleanup_control_master() {
-	set +e
-	if [[ -n "${CONTROL_SOCKET:-}" ]]; then
-		if [[ -e "$CONTROL_SOCKET" ]] && [[ -n "${TARGET_HOST:-}" ]]; then
-			ssh -o ControlPath="$CONTROL_SOCKET" -O exit "${SSH_USERNAME}@${TARGET_HOST}" 2>/dev/null
-		fi
-		local sock_dir
-		sock_dir="$(dirname "$CONTROL_SOCKET" 2>/dev/null)"
-		rm -f "$CONTROL_SOCKET" 2>/dev/null
-		[[ -n "$sock_dir" ]] && [[ "$sock_dir" == /tmp/ssh-control-* ]] && rmdir "$sock_dir" 2>/dev/null
-	fi
-	set -e
-}
-
-# Tear down SSH state between batch hosts (socket, trap, per-host overrides).
-#
-# Returns:
-#   0: Always
-reset_ssh_between_hosts() {
-	cleanup_control_master
-	trap - EXIT 2>/dev/null || true
-	CONTROL_SOCKET=""
-	SSH_PASSWORD=""
-	TARGET_HOST=""
-}
-
-execute_remote_ssh() {
-	local target_ip="$1"
-	local cmd="$2"
-	local ssh_opts
-	ssh_opts="$(build_ssh_opts)"
-	# shellcheck disable=SC2086
-	ssh $ssh_opts -p "$SSH_PORT" "${SSH_USERNAME}@${target_ip}" "$cmd"
-}
-
-collect_password_if_needed() {
-	local target_ip="$1"
-	if [[ -n "$SSH_PASSWORD" ]]; then
-		return 0
-	fi
-	if [[ -t 0 ]] && [[ -t 1 ]]; then
-		read -rp "Username for ${target_ip} [${SSH_USERNAME}]: " read_user
-		[[ -n "$read_user" ]] && SSH_USERNAME="$read_user"
-	fi
-	if command -v sshpass >/dev/null 2>&1 || command -v expect >/dev/null 2>&1; then
-		if [[ -t 0 ]] && [[ -t 1 ]]; then
-			read -rsp "Password for ${SSH_USERNAME}@${target_ip}: " SSH_PASSWORD
-			echo ""
-		else
-			SSH_PASSWORD=$(head -n 1 2>/dev/null || echo "")
-		fi
-		[[ -n "$SSH_PASSWORD" ]] || {
-			log_error "Password required for non-interactive SSH"
-			return 1
-		}
-	fi
-	return 0
 }
 
 # Build remote shell command string
@@ -241,13 +115,13 @@ run_on_host() {
 		return 0
 	fi
 
-	collect_password_if_needed "$host" || return 1
+	collect_ssh_credentials_if_needed "$host" || return 1
 
-	if ! setup_control_master "$host"; then
+	if ! setup_ssh_control_master "$host"; then
 		return 1
 	fi
 
-	if execute_remote_ssh "$host" "$remote_cmd"; then
+	if execute_ssh_control "$host" "$remote_cmd"; then
 		log_success "${host}: ${REMOTE_COMMAND} succeeded"
 		return 0
 	fi
@@ -335,13 +209,7 @@ main() {
 	fi
 
 	local -a hosts=()
-	while IFS= read -r line || [[ -n "$line" ]]; do
-		line="${line%%#*}"
-		line="${line#"${line%%[![:space:]]*}"}"
-		line="${line%"${line##*[![:space:]]}"}"
-		[[ -z "$line" ]] && continue
-		hosts+=("$line")
-	done <"$CONFIG_FILE"
+	read_manage_host_config "$CONFIG_FILE" hosts
 
 	if [[ ${#hosts[@]} -eq 0 ]]; then
 		log_error "No hosts in config: $CONFIG_FILE"

@@ -15,6 +15,18 @@ load test_helper
 
 DEPLOY_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/manage/deploy-to-udms.sh"
 PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
+MANAGE_LIB="${PROJECT_ROOT}/scripts/manage/lib/ssh_control.sh"
+
+# Minimal fake repo tree for tests that mock deploy-to-udm.sh (scripts/manage/ layout).
+setup_fake_manage_repo() {
+	local fake_root="$1"
+	mkdir -p "${fake_root}/scripts/manage/lib" "${fake_root}/lib"
+	cp "$DEPLOY_SCRIPT" "${fake_root}/scripts/manage/deploy-to-udms.sh"
+	cp "$MANAGE_LIB" "${fake_root}/scripts/manage/lib/ssh_control.sh"
+	cp "${PROJECT_ROOT}/lib/common.sh" "${fake_root}/lib/common.sh"
+	cp "${PROJECT_ROOT}/lib/constants.sh" "${fake_root}/lib/constants.sh"
+	cp "${PROJECT_ROOT}/scripts/manage/deploy-registry.sh" "${fake_root}/scripts/manage/deploy-registry.sh"
+}
 
 # bats test_tags=category:unit
 @test "deploy-to-udms.sh exists and is executable" {
@@ -212,20 +224,19 @@ EOF
 	export DEPLOY_TO_UDM_CAPTURE_FILE="$capture_file"
 
 	local fake_root="${TEST_DIR}/fake_repo"
-	mkdir -p "${fake_root}/scripts"
-	cp "$DEPLOY_SCRIPT" "${fake_root}/scripts/deploy-to-udms.sh"
+	setup_fake_manage_repo "$fake_root"
 	export DEPLOY_REGISTRY_FILE="${TEST_DIR}/deploy-registry"
 	# Mock deploy-to-udm.sh to record argv for assertion
-	cat >"${fake_root}/scripts/deploy-to-udm.sh" <<'MOCK'
+	cat >"${fake_root}/scripts/manage/deploy-to-udm.sh" <<'MOCK'
 #!/bin/bash
 echo "ARGS: $*" >> "${DEPLOY_TO_UDM_CAPTURE_FILE:-/tmp/deploy_args.txt}"
 exit 0
 MOCK
-	chmod +x "${fake_root}/scripts/deploy-to-udm.sh"
+	chmod +x "${fake_root}/scripts/manage/deploy-to-udm.sh"
 	cp "${PROJECT_ROOT}/udm-vpn-monitor.zip" "${fake_root}/" 2>/dev/null || true
 	cp "$config_file" "${fake_root}/deploy-udms.conf"
 
-	run bash "${fake_root}/scripts/deploy-to-udms.sh" \
+	run bash "${fake_root}/scripts/manage/deploy-to-udms.sh" \
 		--config "${fake_root}/deploy-udms.conf" \
 		--file "${fake_root}/udm-vpn-monitor.zip" \
 		--skip-tail 2>&1
@@ -265,20 +276,19 @@ EOF
 	export DEPLOY_TO_UDM_CAPTURE_FILE="$capture_file"
 
 	local fake_root="${TEST_DIR}/fake_repo"
-	mkdir -p "${fake_root}/scripts"
-	cp "$DEPLOY_SCRIPT" "${fake_root}/scripts/deploy-to-udms.sh"
+	setup_fake_manage_repo "$fake_root"
 	export DEPLOY_REGISTRY_FILE="${TEST_DIR}/deploy-registry"
-	cat >"${fake_root}/scripts/deploy-to-udm.sh" <<'MOCK'
+	cat >"${fake_root}/scripts/manage/deploy-to-udm.sh" <<'MOCK'
 #!/bin/bash
 echo "ARGS: $*" >> "${DEPLOY_TO_UDM_CAPTURE_FILE:-/tmp/deploy_args.txt}"
 exit 0
 MOCK
-	chmod +x "${fake_root}/scripts/deploy-to-udm.sh"
+	chmod +x "${fake_root}/scripts/manage/deploy-to-udm.sh"
 	cp "${PROJECT_ROOT}/udm-vpn-monitor.zip" "${fake_root}/" 2>/dev/null || true
 	cp "$config_file" "${fake_root}/deploy-udms.conf"
 
 	# Without --skip-tail, deploy-to-udms passes --tail-follow; pipe password + 'y' for mark successful
-	run bash -c "printf 'testpass\ny\n' | \"${fake_root}/scripts/deploy-to-udms.sh\" \
+	run bash -c "printf 'testpass\ny\n' | \"${fake_root}/scripts/manage/deploy-to-udms.sh\" \
 		--config \"${fake_root}/deploy-udms.conf\" \
 		--file \"${fake_root}/udm-vpn-monitor.zip\"" 2>&1
 
@@ -308,23 +318,19 @@ MOCK
 EOF
 
 	local fake_root="${TEST_DIR}/fake_repo"
-	mkdir -p "${fake_root}/scripts" "${fake_root}/lib"
-	cp "$DEPLOY_SCRIPT" "${fake_root}/scripts/deploy-to-udms.sh"
-	cp "${PROJECT_ROOT}/scripts/manage/deploy-registry.sh" "${fake_root}/scripts/deploy-registry.sh"
-	cp "${PROJECT_ROOT}/lib/common.sh" "${fake_root}/lib/common.sh"
-	cp "${PROJECT_ROOT}/lib/constants.sh" "${fake_root}/lib/constants.sh"
+	setup_fake_manage_repo "$fake_root"
 	# Mock deploy-to-udm to succeed (so we get to the prompt)
-	cat >"${fake_root}/scripts/deploy-to-udm.sh" <<'MOCK'
+	cat >"${fake_root}/scripts/manage/deploy-to-udm.sh" <<'MOCK'
 #!/bin/bash
 exit 0
 MOCK
-	chmod +x "${fake_root}/scripts/deploy-to-udm.sh"
+	chmod +x "${fake_root}/scripts/manage/deploy-to-udm.sh"
 	cp "${PROJECT_ROOT}/udm-vpn-monitor.zip" "${fake_root}/" 2>/dev/null || true
 	cp "$config_file" "${fake_root}/deploy-udms.conf"
 	export DEPLOY_REGISTRY_FILE="${TEST_DIR}/deploy-registry"
 
 	# Answer 'n' to "Mark as successful?"
-	run bash -c "printf 'testpass\nn\n' | \"${fake_root}/scripts/deploy-to-udms.sh\" \
+	run bash -c "printf 'testpass\nn\n' | \"${fake_root}/scripts/manage/deploy-to-udms.sh\" \
 		--config \"${fake_root}/deploy-udms.conf\" \
 		--file \"${fake_root}/udm-vpn-monitor.zip\"" 2>&1
 
