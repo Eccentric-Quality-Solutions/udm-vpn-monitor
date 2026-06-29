@@ -35,6 +35,7 @@
 #   --tail-follow            After deploy, run tail -f on log file until Ctrl+C
 #   --timeout SECONDS        SSH/SCP timeout in seconds (default: 30)
 #   --verbose                Enable verbose output
+#   --dry-run                Print planned SCP/SSH steps without connecting
 #   --help                   Show this help message
 #
 # Security Notes:
@@ -48,6 +49,7 @@
 # Examples:
 #   # Deploy (prompts for credentials)
 #   ./scripts/manage/deploy-to-udm.sh --target-ip 192.168.1.100
+#   ./scripts/manage/deploy-to-udm.sh --dry-run --target-ip 192.168.1.100
 #
 
 set -euo pipefail
@@ -93,6 +95,7 @@ TAIL_FOLLOW=0
 LOG_LINES=50
 SSH_TIMEOUT=30
 VERBOSE=0
+DRY_RUN=0
 CONTROL_SOCKET=""
 
 # Append message to deploy log file (sanitized: no username or password).
@@ -206,6 +209,7 @@ Output Options:
   --timeout SECONDS        SSH/SCP timeout in seconds (default: 30)
   --verbose                Enable verbose output
   --no-record              Do not record deployment in registry (used when tail -f will run)
+  --dry-run                Print planned SCP/SSH steps without connecting
   --help                   Show this help message
 
 Authentication:
@@ -217,6 +221,7 @@ Authentication:
 Examples:
   # Deploy (prompts for credentials)
   $0 --target-ip 192.168.1.100
+  $0 --dry-run --target-ip 192.168.1.100
 EOF
 }
 
@@ -290,6 +295,10 @@ parse_args() {
 			NO_RECORD=1
 			shift
 			;;
+		--dry-run)
+			DRY_RUN=1
+			shift
+			;;
 		--help | -h)
 			display_help
 			exit 0
@@ -322,9 +331,11 @@ validate_params() {
 		errors=$((errors + 1))
 	fi
 
-	# Prompt for username and password (shared SSH credential collection)
-	if ! collect_ssh_credentials_if_needed "$TARGET_IP"; then
-		errors=$((errors + 1))
+	# Prompt for username and password (skipped in dry-run; no SSH/SCP)
+	if [[ $DRY_RUN -eq 0 ]]; then
+		if ! collect_ssh_credentials_if_needed "$TARGET_IP"; then
+			errors=$((errors + 1))
+		fi
 	fi
 
 	# Resolve bind IP from LOCAL_UDM_IP in vpn-monitor.conf when not set
@@ -341,6 +352,143 @@ validate_params() {
 		display_help
 		exit 1
 	fi
+}
+
+# Return remote path for the package file under /tmp.
+#
+# Returns:
+#   0: Always; prints path to stdout
+remote_package_path() {
+	echo "/tmp/$(basename "$PACKAGE_FILE")"
+}
+
+# Build remote command to archive logs before uninstall.
+#
+# Returns:
+#   0: Always; prints command to stdout
+build_log_archive_cmd() {
+	echo "mkdir -p /tmp/vpn-monitor-logs-archive && if [ -d /data/vpn-monitor/logs ] && [ -n \"\$(ls -A /data/vpn-monitor/logs 2>/dev/null)\" ]; then tar -czf /tmp/vpn-monitor-logs-archive/vpn-monitor-logs-\$(date +%Y%m%d-%H%M%S).tar.gz -C /data/vpn-monitor logs && echo 'Logs archived'; else echo 'No logs to archive'; fi"
+}
+
+# Build remote uninstall command (no-op when install absent).
+#
+# Returns:
+#   0: Always; prints command to stdout
+build_uninstall_cmd() {
+	local uninstall_cmd="cd /tmp && if [ -f /data/vpn-monitor/uninstall.sh ]; then"
+	uninstall_cmd+=" /data/vpn-monitor/uninstall.sh --yes"
+	if [[ "$KEEP_CONFIG" == "yes" ]]; then
+		uninstall_cmd+=" --keep-config"
+	else
+		uninstall_cmd+=" --remove-config"
+	fi
+	if [[ "$REMOVE_STATE" == "yes" ]]; then
+		uninstall_cmd+=" --remove-state"
+	else
+		uninstall_cmd+=" --keep-state"
+	fi
+	if [[ "$REMOVE_LOGS" == "yes" ]]; then
+		uninstall_cmd+=" --remove-logs"
+	else
+		uninstall_cmd+=" --keep-logs"
+	fi
+	uninstall_cmd+="; else echo 'No existing installation found, skipping uninstall'; fi"
+	echo "$uninstall_cmd"
+}
+
+# Build remote command to extract the transferred package.
+#
+# Returns:
+#   0: Success; prints command to stdout
+#   1: Unknown package format (logs error)
+build_extract_cmd() {
+	local extract_cmd="cd /tmp && "
+	if [[ "$PACKAGE_FILE" == *.tar.gz ]] || [[ "$PACKAGE_FILE" == *.tgz ]]; then
+		extract_cmd+="tar -xzf $(basename "$PACKAGE_FILE")"
+	elif [[ "$PACKAGE_FILE" == *.zip ]]; then
+		extract_cmd+="unzip -o $(basename "$PACKAGE_FILE")"
+	else
+		log_error "Unknown package format: $PACKAGE_FILE"
+		return 1
+	fi
+	echo "$extract_cmd"
+}
+
+# Build remote install command.
+#
+# Returns:
+#   0: Always; prints command to stdout
+build_install_cmd() {
+	local install_cmd="cd /tmp && chmod +x install.sh && ./install.sh --silent"
+	[[ $APPEND_MISSING_CONFIG -eq 1 ]] && install_cmd+=" --append-missing-config"
+	echo "$install_cmd"
+}
+
+# Build remote command to show recent log lines.
+#
+# Returns:
+#   0: Always; prints command to stdout
+build_log_display_cmd() {
+	echo "tail -n $LOG_LINES /data/vpn-monitor/logs/vpn-monitor.log 2>/dev/null || echo 'Log file not found or empty'"
+}
+
+# Build remote tail -f command.
+#
+# Returns:
+#   0: Always; prints command to stdout
+build_tail_follow_cmd() {
+	echo "tail -f /data/vpn-monitor/logs/vpn-monitor.log 2>/dev/null || echo 'Log file not found'"
+}
+
+# Print bind= label for dry-run output when BIND_IP is set.
+#
+# Returns:
+#   0: Always; prints label to stdout (may be empty)
+dry_run_bind_label() {
+	[[ -n "${BIND_IP:-}" ]] && echo " bind=${BIND_IP}"
+}
+
+# Print planned deploy steps without SSH/SCP or registry writes.
+#
+# Returns:
+#   0: Always
+print_dry_run_steps() {
+	local bind_label remote_dest archive_cmd uninstall_cmd extract_cmd install_cmd log_cmd tail_cmd pkg_version
+
+	bind_label=$(dry_run_bind_label)
+	remote_dest=$(remote_package_path)
+
+	echo "[dry-run] ${TARGET_IP}${bind_label}: scp ${PACKAGE_FILE} -> ${remote_dest}"
+
+	if [[ $SKIP_UNINSTALL -eq 0 ]]; then
+		archive_cmd=$(build_log_archive_cmd)
+		echo "[dry-run] ${TARGET_IP}${bind_label}: ${archive_cmd}"
+		uninstall_cmd=$(build_uninstall_cmd)
+		echo "[dry-run] ${TARGET_IP}${bind_label}: ${uninstall_cmd}"
+	fi
+
+	extract_cmd=$(build_extract_cmd) || return 1
+	echo "[dry-run] ${TARGET_IP}${bind_label}: ${extract_cmd}"
+
+	install_cmd=$(build_install_cmd)
+	echo "[dry-run] ${TARGET_IP}${bind_label}: ${install_cmd}"
+
+	log_cmd=$(build_log_display_cmd)
+	echo "[dry-run] ${TARGET_IP}${bind_label}: ${log_cmd}"
+
+	if [[ $TAIL_FOLLOW -eq 1 ]]; then
+		tail_cmd=$(build_tail_follow_cmd)
+		echo "[dry-run] ${TARGET_IP}${bind_label}: ${tail_cmd} (interactive)"
+	fi
+
+	if [[ $NO_RECORD -eq 0 ]] && command -v get_package_version >/dev/null 2>&1; then
+		if pkg_version=$(get_package_version "$PACKAGE_FILE" 2>/dev/null); then
+			echo "[dry-run] ${TARGET_IP}${bind_label}: record deployment in registry (version ${pkg_version})"
+		fi
+	fi
+
+	log_success "${TARGET_IP}: deploy (dry-run)"
+	return 0
 }
 
 # Execute SSH command over the ControlMaster connection.
@@ -410,6 +558,12 @@ main() {
 	deploy_log_write "INFO" "  Log lines:       $LOG_LINES"
 	echo ""
 
+	if [[ $DRY_RUN -eq 1 ]]; then
+		log_info "Dry-run mode: no SSH/SCP operations will be performed"
+		print_dry_run_steps || exit 1
+		exit 0
+	fi
+
 	# Establish ControlMaster (authenticates once, all subsequent ssh/scp reuse it)
 	MANAGE_SSH_VERBOSE=$VERBOSE
 	if ! setup_ssh_control_master "$TARGET_IP"; then
@@ -431,7 +585,8 @@ main() {
 	# Step 2: Archive logs (before uninstall)
 	if [[ $SKIP_UNINSTALL -eq 0 ]]; then
 		log_info "Step 2: Archiving logs on target UDM (if present)..."
-		local archive_cmd="mkdir -p /tmp/vpn-monitor-logs-archive && if [ -d /data/vpn-monitor/logs ] && [ -n \"\$(ls -A /data/vpn-monitor/logs 2>/dev/null)\" ]; then tar -czf /tmp/vpn-monitor-logs-archive/vpn-monitor-logs-\$(date +%Y%m%d-%H%M%S).tar.gz -C /data/vpn-monitor logs && echo 'Logs archived'; else echo 'No logs to archive'; fi"
+		local archive_cmd
+		archive_cmd=$(build_log_archive_cmd)
 		if execute_ssh "$archive_cmd"; then
 			log_success "Log archive step completed"
 		else
@@ -443,24 +598,8 @@ main() {
 	# Step 3: Uninstall (if not skipped)
 	if [[ $SKIP_UNINSTALL -eq 0 ]]; then
 		log_info "Step 3: Uninstalling existing installation (if present)..."
-		local uninstall_cmd="cd /tmp && if [ -f /data/vpn-monitor/uninstall.sh ]; then"
-		uninstall_cmd+=" /data/vpn-monitor/uninstall.sh --yes"
-		if [[ "$KEEP_CONFIG" == "yes" ]]; then
-			uninstall_cmd+=" --keep-config"
-		else
-			uninstall_cmd+=" --remove-config"
-		fi
-		if [[ "$REMOVE_STATE" == "yes" ]]; then
-			uninstall_cmd+=" --remove-state"
-		else
-			uninstall_cmd+=" --keep-state"
-		fi
-		if [[ "$REMOVE_LOGS" == "yes" ]]; then
-			uninstall_cmd+=" --remove-logs"
-		else
-			uninstall_cmd+=" --keep-logs"
-		fi
-		uninstall_cmd+="; else echo 'No existing installation found, skipping uninstall'; fi"
+		local uninstall_cmd
+		uninstall_cmd=$(build_uninstall_cmd)
 
 		if execute_ssh "$uninstall_cmd"; then
 			log_success "Uninstall completed"
@@ -472,15 +611,8 @@ main() {
 
 	# Step 4: Extract package
 	log_info "Step 4: Extracting package on target UDM..."
-	local extract_cmd="cd /tmp && "
-	if [[ "$PACKAGE_FILE" == *.tar.gz ]] || [[ "$PACKAGE_FILE" == *.tgz ]]; then
-		extract_cmd+="tar -xzf $(basename "$PACKAGE_FILE")"
-	elif [[ "$PACKAGE_FILE" == *.zip ]]; then
-		extract_cmd+="unzip -o $(basename "$PACKAGE_FILE")"
-	else
-		log_error "Unknown package format: $PACKAGE_FILE"
-		exit 1
-	fi
+	local extract_cmd
+	extract_cmd=$(build_extract_cmd) || exit 1
 
 	if execute_ssh "$extract_cmd"; then
 		log_success "Package extracted successfully"
@@ -492,8 +624,8 @@ main() {
 
 	# Step 5: Install
 	log_info "Step 5: Installing VPN Monitor..."
-	local install_cmd="cd /tmp && chmod +x install.sh && ./install.sh --silent"
-	[[ $APPEND_MISSING_CONFIG -eq 1 ]] && install_cmd+=" --append-missing-config"
+	local install_cmd
+	install_cmd=$(build_install_cmd)
 
 	if execute_ssh "$install_cmd"; then
 		log_success "Installation completed successfully"
@@ -505,7 +637,8 @@ main() {
 
 	# Step 6: Display recent log output
 	log_info "Step 6: Displaying last $LOG_LINES lines of log file..."
-	local log_cmd="tail -n $LOG_LINES /data/vpn-monitor/logs/vpn-monitor.log 2>/dev/null || echo 'Log file not found or empty'"
+	local log_cmd
+	log_cmd=$(build_log_display_cmd)
 
 	if execute_ssh "$log_cmd"; then
 		log_success "Log output displayed"
@@ -517,7 +650,8 @@ main() {
 	# Step 6b: Optional tail -f (interactive until Ctrl+C; uses same credentials)
 	if [[ $TAIL_FOLLOW -eq 1 ]]; then
 		log_info "Tailing vpn-monitor.log (Ctrl+C to exit)..."
-		local tail_cmd="tail -f /data/vpn-monitor/logs/vpn-monitor.log 2>/dev/null || echo 'Log file not found'"
+		local tail_cmd
+		tail_cmd=$(build_tail_follow_cmd)
 		execute_ssh "$tail_cmd" "interactive" || true
 		echo ""
 	fi

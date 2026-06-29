@@ -200,7 +200,7 @@ Use this section for whatever is on your branch today. Example items from recent
 - [ ] Recap: detection → state → tier decision → recovery → verification
 - [ ] Identify open risks (upgrade wipes cron, global `ipsec restart`, false recovery)
 - [ ] Point maintainers to: change code → [RELEVANT_TESTS.md](testing/RELEVANT_TESTS.md) → run subset → ADR if design shifts
-- [ ] Schedule follow-up: live UDM trace, failure injection in `--fake`, or deploy dry-run
+- [ ] Schedule follow-up: live UDM trace or failure injection in `--fake` (deploy `--dry-run` is available on `deploy-to-udm.sh` / `deploy-to-udms.sh`)
 
 ---
 

@@ -32,6 +32,7 @@ PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 	assert_output --partial "--target-ip"
 	assert_output --partial "--bind-ip"
 	assert_output --partial "--username"
+	assert_output --partial "--dry-run"
 }
 
 # bats test_tags=category:unit
@@ -46,6 +47,71 @@ PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 	run bash "$DEPLOY_SCRIPT" --unknown-option
 	assert_failure
 	assert_output --partial "Unknown option"
+}
+
+# bats test_tags=category:unit
+@test "deploy-to-udm.sh dry-run prints planned steps without password or SSH" {
+	standard_setup
+	local pkg="${TEST_DIR}/dummy-package.zip"
+	touch "$pkg"
+	run bash "$DEPLOY_SCRIPT" \
+		--dry-run \
+		--target-ip 192.168.1.100 \
+		--file "$pkg" 2>&1
+	assert_success
+	assert_output --partial "[dry-run] 192.168.1.100"
+	assert_output --partial "scp ${pkg} -> /tmp/dummy-package.zip"
+	assert_output --partial "./install.sh --silent"
+	assert_output --partial "deploy (dry-run)"
+	refute_output --partial "Password is required"
+	refute_output --partial "Could not connect to"
+}
+
+# bats test_tags=category:unit
+@test "deploy-to-udm.sh dry-run skips archive and uninstall when --skip-uninstall" {
+	standard_setup
+	local pkg="${TEST_DIR}/dummy-package.zip"
+	touch "$pkg"
+	run bash "$DEPLOY_SCRIPT" \
+		--dry-run \
+		--skip-uninstall \
+		--target-ip 192.168.1.100 \
+		--file "$pkg" 2>&1
+	assert_success
+	assert_output --partial "unzip -o dummy-package.zip"
+	refute_output --partial "vpn-monitor-logs-archive"
+	refute_output --partial "uninstall.sh"
+}
+
+# bats test_tags=category:unit
+@test "deploy-to-udm.sh dry-run includes append-missing-config and tail-follow plans" {
+	standard_setup
+	local pkg="${TEST_DIR}/dummy-package.zip"
+	touch "$pkg"
+	run bash "$DEPLOY_SCRIPT" \
+		--dry-run \
+		--append-missing-config \
+		--tail-follow \
+		--target-ip 192.168.1.100 \
+		--file "$pkg" 2>&1
+	assert_success
+	assert_output --partial "--append-missing-config"
+	assert_output --partial "tail -f /data/vpn-monitor/logs/vpn-monitor.log"
+	assert_output --partial "(interactive)"
+}
+
+# bats test_tags=category:unit
+@test "deploy-to-udm.sh dry-run uses bind-ip in output label" {
+	standard_setup
+	local pkg="${TEST_DIR}/dummy-package.zip"
+	touch "$pkg"
+	run bash "$DEPLOY_SCRIPT" \
+		--dry-run \
+		--target-ip 192.168.1.100 \
+		--bind-ip 10.0.0.5 \
+		--file "$pkg" 2>&1
+	assert_success
+	assert_output --partial "[dry-run] 192.168.1.100 bind=10.0.0.5"
 }
 
 # bats test_tags=category:unit

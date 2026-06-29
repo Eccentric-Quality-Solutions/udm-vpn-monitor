@@ -42,6 +42,7 @@ setup_fake_manage_repo() {
 	assert_output --partial "--config"
 	assert_output --partial "--file"
 	assert_output --partial "--skip-tail"
+	assert_output --partial "--dry-run"
 }
 
 # bats test_tags=category:unit
@@ -205,6 +206,120 @@ EOF
 	# With --force, should attempt deploy (not skip)
 	assert_output --partial "Deploying to: 192.168.1.100"
 	refute_output --partial "Skipping 192.168.1.100"
+}
+
+# bats test_tags=category:unit
+@test "deploy-to-udms.sh dry-run forwards --dry-run and skips registry version hosts" {
+	cd "$PROJECT_ROOT"
+	[[ -f udm-vpn-monitor.zip ]] || ./scripts/prepare_install_package.sh >/dev/null 2>&1 || true
+	[[ -f udm-vpn-monitor.zip ]] || skip "Package file not available"
+
+	standard_setup
+	export DEPLOY_REGISTRY_FILE="${TEST_DIR}/deploy-registry"
+	mkdir -p "$(dirname "$DEPLOY_REGISTRY_FILE")"
+	local pkg_version
+	pkg_version=$(parse_script_version_line "$(unzip -p "${PROJECT_ROOT}/udm-vpn-monitor.zip" vpn-monitor.sh 2>/dev/null | grep -E '^SCRIPT_VERSION=' | head -1)")
+	[[ -z "$pkg_version" ]] && skip "Could not get package version"
+	echo -e "192.168.1.100\t${pkg_version}\t2025-02-14T12:00:00" >"$DEPLOY_REGISTRY_FILE"
+
+	local config_file="${TEST_DIR}/deploy-udms.conf"
+	cat >"$config_file" <<'EOF'
+192.168.1.100
+192.168.1.101 10.0.0.5
+EOF
+
+	local capture_file="${TEST_DIR}/deploy_to_udm_args.txt"
+	export DEPLOY_TO_UDM_CAPTURE_FILE="$capture_file"
+
+	local fake_root="${TEST_DIR}/fake_repo"
+	setup_fake_manage_repo "$fake_root"
+	export DEPLOY_REGISTRY_FILE="${TEST_DIR}/deploy-registry"
+	cat >"${fake_root}/scripts/manage/deploy-to-udm.sh" <<'MOCK'
+#!/bin/bash
+echo "ARGS: $*" >> "${DEPLOY_TO_UDM_CAPTURE_FILE:-/tmp/deploy_args.txt}"
+echo "[dry-run] $*"
+exit 0
+MOCK
+	chmod +x "${fake_root}/scripts/manage/deploy-to-udm.sh"
+	cp "${PROJECT_ROOT}/udm-vpn-monitor.zip" "${fake_root}/" 2>/dev/null || true
+	cp "$config_file" "${fake_root}/deploy-udms.conf"
+
+	run bash "${fake_root}/scripts/manage/deploy-to-udms.sh" \
+		--dry-run \
+		--config "${fake_root}/deploy-udms.conf" \
+		--file "${fake_root}/udm-vpn-monitor.zip" \
+		--skip-tail 2>&1
+
+	assert_success
+	assert_output --partial "[dry-run] Would skip 192.168.1.100 (already at version ${pkg_version})"
+	assert_output --partial "Dry-run summary: 1 planned, 1 would skip"
+	assert_file_exist "$capture_file"
+	local args
+	args=$(cat "$capture_file")
+	[[ "$args" == *"--dry-run"* ]] || {
+		echo "Expected --dry-run in deploy-to-udm args: $args"
+		return 1
+	}
+	[[ "$args" == *"--bind-ip"* ]] && [[ "$args" == *"10.0.0.5"* ]] || {
+		echo "Expected bind IP in deploy-to-udm args: $args"
+		return 1
+	}
+	refute_output --partial "Password is required"
+}
+
+# bats test_tags=category:unit
+@test "deploy-to-udms.sh dry-run default batch passes no-record and tail-follow to child" {
+	cd "$PROJECT_ROOT"
+	[[ -f udm-vpn-monitor.zip ]] || ./scripts/prepare_install_package.sh >/dev/null 2>&1 || true
+	[[ -f udm-vpn-monitor.zip ]] || skip "Package file not available"
+
+	standard_setup
+	export DEPLOY_REGISTRY_FILE="${TEST_DIR}/deploy-registry"
+	local pkg_version
+	pkg_version=$(parse_script_version_line "$(unzip -p "${PROJECT_ROOT}/udm-vpn-monitor.zip" vpn-monitor.sh 2>/dev/null | grep -E '^SCRIPT_VERSION=' | head -1)")
+	[[ -z "$pkg_version" ]] && skip "Could not get package version"
+
+	local config_file="${TEST_DIR}/deploy-udms.conf"
+	cat >"$config_file" <<'EOF'
+192.168.1.100
+EOF
+
+	local capture_file="${TEST_DIR}/deploy_to_udm_args.txt"
+	export DEPLOY_TO_UDM_CAPTURE_FILE="$capture_file"
+
+	local fake_root="${TEST_DIR}/fake_repo"
+	setup_fake_manage_repo "$fake_root"
+	cat >"${fake_root}/scripts/manage/deploy-to-udm.sh" <<'MOCK'
+#!/bin/bash
+echo "ARGS: $*" >> "${DEPLOY_TO_UDM_CAPTURE_FILE:-/tmp/deploy_args.txt}"
+exit 0
+MOCK
+	chmod +x "${fake_root}/scripts/manage/deploy-to-udm.sh"
+	cp "${PROJECT_ROOT}/udm-vpn-monitor.zip" "${fake_root}/" 2>/dev/null || true
+	cp "$config_file" "${fake_root}/deploy-udms.conf"
+
+	run bash "${fake_root}/scripts/manage/deploy-to-udms.sh" \
+		--dry-run \
+		--config "${fake_root}/deploy-udms.conf" \
+		--file "${fake_root}/udm-vpn-monitor.zip" 2>&1
+
+	assert_success
+	assert_output --partial "[dry-run] 192.168.1.100: prompt to mark deployment successful in registry (version ${pkg_version})"
+	assert_file_exist "$capture_file"
+	local args
+	args=$(cat "$capture_file")
+	[[ "$args" == *"--dry-run"* ]] || {
+		echo "Expected --dry-run in deploy-to-udm args: $args"
+		return 1
+	}
+	[[ "$args" == *"--no-record"* ]] || {
+		echo "Expected --no-record in deploy-to-udm args: $args"
+		return 1
+	}
+	[[ "$args" == *"--tail-follow"* ]] || {
+		echo "Expected --tail-follow in deploy-to-udm args: $args"
+		return 1
+	}
 }
 
 # bats test_tags=category:unit

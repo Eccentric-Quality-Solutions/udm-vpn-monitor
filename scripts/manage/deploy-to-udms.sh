@@ -18,6 +18,7 @@
 #   --file PACKAGE   Package file to deploy (default: /tmp/udm-vpn-monitor.zip)
 #   --skip-tail      Skip interactive tail -f after each deployment
 #   --force          Deploy even if registry shows host already at this version
+#   --dry-run        Print planned operations without connecting to UDMs
 #   --help           Show this help message
 #
 # Config format (one target per line):
@@ -36,6 +37,7 @@ CONFIG_FILE="${REPO_ROOT}/deploy-udms.conf"
 PACKAGE_FILE="/tmp/udm-vpn-monitor.zip"
 SKIP_TAIL=0
 FORCE_DEPLOY=0
+DRY_RUN=0
 
 # Shared helpers (version parsing); required by deploy-registry.sh
 # shellcheck source=lib/common.sh
@@ -134,6 +136,7 @@ Options:
   --file PACKAGE   Package file to deploy (default: /tmp/udm-vpn-monitor.zip)
   --skip-tail      Skip interactive tail -f after each deployment
   --force          Deploy even if registry shows host already at this version
+  --dry-run        Print planned operations without connecting to UDMs
   --help           Show this help message
 
 Config format: host_or_ip [bind_ip]
@@ -167,6 +170,10 @@ parse_args() {
 			;;
 		--force)
 			FORCE_DEPLOY=1
+			shift
+			;;
+		--dry-run)
+			DRY_RUN=1
 			shift
 			;;
 		--help | -h)
@@ -248,6 +255,7 @@ main() {
 	log_info "Package: $PACKAGE_FILE"
 	log_info "UDMs: ${#udms[@]}"
 	[[ -n "$pkg_version" ]] && log_info "Package version: $pkg_version"
+	[[ $DRY_RUN -eq 1 ]] && log_info "Dry-run mode: no SSH/SCP operations will be performed"
 	echo ""
 
 	local success_count=0
@@ -274,7 +282,11 @@ main() {
 		if [[ $FORCE_DEPLOY -eq 0 ]] && [[ -n "$pkg_version" ]] && command -v host_has_version >/dev/null 2>&1; then
 			if host_has_version "$host" "$pkg_version"; then
 				log_info "----------------------------------------"
-				log_info "Skipping $host (already at version $pkg_version)"
+				if [[ $DRY_RUN -eq 1 ]]; then
+					echo "[dry-run] Would skip ${host} (already at version ${pkg_version})"
+				else
+					log_info "Skipping $host (already at version $pkg_version)"
+				fi
 				skip_count=$((skip_count + 1))
 				echo ""
 				continue
@@ -282,7 +294,11 @@ main() {
 		fi
 
 		log_info "----------------------------------------"
-		log_info "Deploying to: $host"
+		if [[ $DRY_RUN -eq 1 ]]; then
+			log_info "Dry-run deploy to: $host"
+		else
+			log_info "Deploying to: $host"
+		fi
 		echo ""
 
 		local deploy_args=(
@@ -291,15 +307,18 @@ main() {
 			--append-missing-config
 		)
 		[[ -n "$bind_ip" ]] && deploy_args+=(--bind-ip "$bind_ip")
+		[[ $DRY_RUN -eq 1 ]] && deploy_args+=(--dry-run)
 
-		# When tail -f will run, use --no-record and --tail-follow; we record only after user confirms
+		# When tail -f will run, use --no-record and --tail-follow; batch records only after user confirms
 		if [[ $SKIP_TAIL -eq 0 ]]; then
 			deploy_args+=(--no-record --tail-follow)
 		fi
 
 		if "${SCRIPT_DIR}/deploy-to-udm.sh" "${deploy_args[@]}"; then
 			success_count=$((success_count + 1))
-			if [[ $SKIP_TAIL -eq 0 ]]; then
+			if [[ $SKIP_TAIL -eq 0 ]] && [[ $DRY_RUN -eq 1 ]] && [[ -n "$pkg_version" ]]; then
+				echo "[dry-run] ${host}: prompt to mark deployment successful in registry (version ${pkg_version})"
+			elif [[ $SKIP_TAIL -eq 0 ]] && [[ $DRY_RUN -eq 0 ]]; then
 				# Record only when user confirms yes; n = no record; invalid = re-prompt
 				if [[ -n "$pkg_version" ]] && command -v record_deployment >/dev/null 2>&1; then
 					echo ""
@@ -327,6 +346,14 @@ main() {
 	done
 
 	log_info "=================================="
+	if [[ $DRY_RUN -eq 1 ]]; then
+		if [[ $skip_count -gt 0 ]]; then
+			log_info "Dry-run summary: ${success_count} planned, ${skip_count} would skip (already at version)"
+		else
+			log_info "Dry-run summary: ${success_count} planned"
+		fi
+		exit 0
+	fi
 	if [[ $skip_count -gt 0 ]]; then
 		log_info "Deployment summary: ${success_count} succeeded, ${fail_count} failed, ${skip_count} skipped (already at version)"
 	else
