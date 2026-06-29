@@ -8,3 +8,19 @@ alwaysApply: false
 
 - **shellcheck** and **shfmt** are installed via Homebrew.
 - Use `shellcheck --severity=error` and `shfmt -d` / `shfmt -w` for checks and formatting (see CLAUDE.md for exact commands).
+
+## ⚠️ Never run shellcheck with `-x` / `--external-sources` on this repo
+
+This repo has 700+ `# shellcheck source=` directives and a deep diamond
+dependency graph (most `lib/` files source `lib/common.sh`, several levels
+deep). With source-following enabled, shellcheck re-analyzes each sourced file
+along **every** include path — an exponential blowup that has grown a single
+shellcheck process to ~30 GB RAM and frozen the machine (kernel OOM-kill).
+
+- **Do not** pass `-x`, `--external-sources`, or set `external-sources=true`
+  in `.shellcheckrc`. Plain `shellcheck --severity=error` is safe.
+- If you need a thorough source-following check, run it on **one file at a
+  time** under a hard memory cap, never the whole tree:
+  `( ulimit -v 2097152; shellcheck -x somefile.sh )`
+- Prefer `scripts/shellcheck-safe.sh` — a wrapper that caps memory and warns
+  on `-x` so a future run cannot take the machine down.

@@ -55,6 +55,7 @@ bats tests/test_install.sh -t "install.sh creates installation directory"
 shellcheck --severity=error *.sh lib/*.sh lib/**/*.sh
 shfmt -d *.sh lib/*.sh  # Check formatting (no changes)
 shfmt -w *.sh lib/*.sh  # Format in-place
+# WARNING: never add -x / --external-sources to shellcheck here (see below)
 
 # Create installation package
 ./scripts/prepare_install_package.sh        # Creates zip
@@ -190,6 +191,7 @@ function_name() {
 9. **Test case filtering**: When asked to run "some subset of tests", clarify if we want test files or test cases (usually cases, use BATS filtering)
 10. **Stream test output**: Always ensure tests stream output to terminal and aren't buffered
 11. **Document learnings**: When discovering UDM-specific limitations or BATS behaviors, update relevant documentation
+12. **Never run shellcheck with `-x` / `--external-sources`**: This repo's 700+ `# shellcheck source=` directives and diamond dependency graph cause exponential memory blowup under source-following (a single process reached ~30 GB and OOM-froze the machine). Plain `shellcheck --severity=error` is safe; for source-following lint one file at a time under `ulimit -v`, or use `scripts/shellcheck-safe.sh`. See `.cursor/rules/linting-formatting.mdc`.
 
 ## Exit Code Constants (lib/constants.sh)
 - `EXIT_SUCCESS=0`, `EXIT_GENERAL_ERROR=1`, `EXIT_CONFIG_ERROR=2`
