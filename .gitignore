@@ -13,6 +13,7 @@ vpn-monitor.lock
 vpn-monitor.conf.local
 *.conf.local
 deploy-udms.conf
+configs/
 
 # Editor files
 *.swp

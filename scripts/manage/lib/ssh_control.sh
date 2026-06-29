@@ -199,6 +199,109 @@ reset_ssh_between_hosts() {
 	TARGET_IP=""
 }
 
+# Log condensed stderr after a failed SSH/SCP operation.
+#
+# Arguments:
+#   $1: host
+#   $2: err_file path
+#   $3: operation description
+manage_log_ssh_stderr() {
+	local host="$1"
+	local err_file="$2"
+	local context="$3"
+	local err_msg=""
+
+	if [[ -f "$err_file" ]] && [[ -s "$err_file" ]]; then
+		err_msg=$(tr '\n' ' ' <"$err_file" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+		if [[ ${#err_msg} -gt 200 ]]; then
+			err_msg="${err_msg:0:200}..."
+		fi
+	fi
+	if [[ -z "$err_msg" ]]; then
+		manage_log_error "${host}: ${context} failed (no stderr)"
+	else
+		manage_log_error "${host}: ${context} failed: ${err_msg}"
+	fi
+	rm -f "$err_file"
+}
+
+# Run execute_ssh_control; capture stdout in MANAGE_SSH_CAPTURED_OUTPUT and log stderr on failure.
+#
+# Arguments:
+#   $1: target_host
+#   $2: remote_cmd
+#   $3: context — optional label for error logs
+#
+# Returns:
+#   Exit code of ssh
+execute_ssh_control_logged() {
+	local host="$1"
+	local cmd="$2"
+	local context="${3:-SSH command}"
+	local err_file
+
+	err_file=$(mktemp "${TMPDIR:-/tmp}/manage-ssh-err.XXXXXX")
+	if MANAGE_SSH_CAPTURED_OUTPUT=$(execute_ssh_control "$host" "$cmd" 2>"$err_file"); then
+		rm -f "$err_file"
+		return 0
+	fi
+	manage_log_ssh_stderr "$host" "$err_file" "$context"
+	MANAGE_SSH_CAPTURED_OUTPUT=""
+	return 1
+}
+
+# Run execute_scp_control; log stderr on failure.
+#
+# Arguments:
+#   $1: target_host
+#   $2: src_file
+#   $3: dest_path
+#   $4: context — optional label for error logs
+#
+# Returns:
+#   Exit code of scp
+execute_scp_control_logged() {
+	local host="$1"
+	local src_file="$2"
+	local dest_path="$3"
+	local context="${4:-SCP upload}"
+	local err_file
+
+	err_file=$(mktemp "${TMPDIR:-/tmp}/manage-ssh-err.XXXXXX")
+	if execute_scp_control "$host" "$src_file" "$dest_path" 2>"$err_file"; then
+		rm -f "$err_file"
+		return 0
+	fi
+	manage_log_ssh_stderr "$host" "$err_file" "$context"
+	return 1
+}
+
+# Run execute_scp_pull_control; log stderr on failure.
+#
+# Arguments:
+#   $1: target_host
+#   $2: remote_path
+#   $3: local_file
+#   $4: context — optional label for error logs
+#
+# Returns:
+#   Exit code of scp
+execute_scp_pull_control_logged() {
+	local host="$1"
+	local remote_path="$2"
+	local local_file="$3"
+	local context="${4:-SCP download}"
+	local err_file
+
+	err_file=$(mktemp "${TMPDIR:-/tmp}/manage-ssh-err.XXXXXX")
+	if execute_scp_pull_control "$host" "$remote_path" "$local_file" 2>"$err_file"; then
+		rm -f "$err_file"
+		return 0
+	fi
+	manage_log_ssh_stderr "$host" "$err_file" "$context"
+	return 1
+}
+
 # Run ssh over an established ControlMaster.
 #
 # Arguments:
@@ -236,6 +339,25 @@ execute_scp_control() {
 	scp_opts="$(build_ssh_opts)"
 	# shellcheck disable=SC2086
 	scp $scp_opts -P "${SSH_PORT:-22}" "$src_file" "${SSH_USERNAME}@${target_ip}:${dest_path}"
+}
+
+# Copy a remote file to the controller over an established ControlMaster.
+#
+# Arguments:
+#   $1: target_host
+#   $2: remote_path (without user@host prefix)
+#   $3: local_file
+#
+# Returns:
+#   Exit code of scp
+execute_scp_pull_control() {
+	local target_ip="$1"
+	local remote_path="$2"
+	local local_file="$3"
+	local scp_opts
+	scp_opts="$(build_ssh_opts)"
+	# shellcheck disable=SC2086
+	scp $scp_opts -P "${SSH_PORT:-22}" "${SSH_USERNAME}@${target_ip}:${remote_path}" "$local_file"
 }
 
 # Collect SSH username/password when sshpass or expect can feed the password.
