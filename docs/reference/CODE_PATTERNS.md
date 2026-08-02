@@ -4787,7 +4787,7 @@ is_keepalive_enabled "${INSTALL_DIR}/vpn-monitor.conf"
 
 ## SSH Connection Management Patterns
 
-**Single source of truth:** `scripts/manage/lib/ssh_control.sh` (sourced by `deploy-to-udm.sh`, `control-remote-udm.sh`, `deploy-to-udms.sh`). Do not reimplement ControlMaster setup in manage scripts.
+**Single source of truth:** `manage/lib/ssh_control.sh` (sourced by `deploy-to-udm.sh`, `control-remote-udm.sh`, `deploy-to-udms.sh`). Do not reimplement ControlMaster setup in manage scripts.
 
 | Caller | Functions used |
 |--------|----------------|
@@ -4848,7 +4848,7 @@ trap cleanup_control_master EXIT
 - Reset `BIND_IP` from the config line or CLI default; do not let one host's `BindAddress` leak to the next
 - Clear `SSH_PASSWORD` if re-prompting per host
 
-Reference: `scripts/manage/control-remote-udm.sh` — `reset_ssh_between_hosts()`, batch loop in `main()`
+Reference: `manage/control-remote-udm.sh` — `reset_ssh_between_hosts()`, batch loop in `main()`
 
 **Auth method cascade:**
 ```bash
@@ -4870,7 +4870,7 @@ fi
 
 **Password collection strategy:** Only collect password in `validate_params` when `sshpass` or `expect` is available (can feed it programmatically). When neither is available, let ssh prompt directly on `/dev/tty` during ControlMaster setup. For non-interactive use without `sshpass`: fail early with a clear error.
 
-**Reference implementation:** `scripts/manage/lib/ssh_control.sh` — `setup_ssh_control_master()`, `cleanup_ssh_control_master()`, `build_ssh_opts()`
+**Reference implementation:** `manage/lib/ssh_control.sh` — `setup_ssh_control_master()`, `cleanup_ssh_control_master()`, `build_ssh_opts()`
 
 ### Pattern: Build SSH Options Helper
 

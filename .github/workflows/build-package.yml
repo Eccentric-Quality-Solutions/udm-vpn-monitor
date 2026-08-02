@@ -1,0 +1,34 @@
+name: Build Install Package
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+  workflow_dispatch:
+
+jobs:
+  build-package:
+    name: Build zip and tar.gz
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build install packages
+        run: |
+          set -euo pipefail
+          ./scripts/prepare_install_package.sh
+          ./scripts/prepare_install_package.sh --tar
+          ls -lh udm-vpn-monitor.zip udm-vpn-monitor.tar.gz
+
+      - name: Upload install packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: udm-vpn-monitor-packages
+          path: |
+            udm-vpn-monitor.zip
+            udm-vpn-monitor.tar.gz
+          retention-days: 30
+          if-no-files-found: error

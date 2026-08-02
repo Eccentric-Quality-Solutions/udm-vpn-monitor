@@ -1,5 +1,5 @@
 #!/bin/bash
-# SSH ControlMaster helpers for scripts/manage/*.sh
+# SSH ControlMaster helpers for manage/*.sh
 #
 # Shared: terminal colors, colored logging, ControlMaster setup/teardown,
 # credential collection, and host-list config parsing.

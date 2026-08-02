@@ -1,10 +1,10 @@
 #!/usr/bin/env bats
 #
-# Tests for scripts/manage/status-udms.sh
+# Tests for manage/status-udms.sh
 
 load test_helper
 
-STATUS_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/manage/status-udms.sh"
+STATUS_SCRIPT="${BATS_TEST_DIRNAME}/../manage/status-udms.sh"
 PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 
 # Install mock ssh/scp/sshpass that simulates fleet probe responses by target host.

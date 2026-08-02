@@ -1,7 +1,7 @@
 # DRY Opportunities Review
 
 **Date:** 2026-06-28  
-**Scope:** `lib/`, root scripts, `scripts/manage/`, install/uninstall, and related tests
+**Scope:** `lib/`, root scripts, `manage/`, install/uninstall, and related tests
 
 This document catalogs significant **Don't Repeat Yourself (DRY)** opportunities still open in the UDM VPN Monitor codebase. Trivial one-liner duplication is omitted. Items are ranked by impact and drift risk.
 
@@ -63,7 +63,7 @@ Adding a new script (e.g. `vpn-monitor-control.sh`) requires updating both plus 
 | SPI handling in xfrm_detection | Already delegates to `extract_spi_from_xfrm_line` and `validate_spi_format` in `lib/common.sh` |
 | Atomic writes | Well centralized in `lib/common.sh`; manual `.tmp`+`mv` only outside `lib/` |
 | Install/uninstall logrotate patterns | Symmetric shape, different enough to defer |
-| `centralize-logs.sh` SSH | Uses `ssh -M -N -f` — different from ControlMaster multiplex pattern in `scripts/manage/lib/ssh_control.sh` |
+| `centralize-logs.sh` SSH | Uses `ssh -M -N -f` — different from ControlMaster multiplex pattern in `manage/lib/ssh_control.sh` |
 
 ---
 

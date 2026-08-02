@@ -17,7 +17,7 @@
 # (via sshpass or manual /dev/tty prompt) happens only during master setup.
 #
 # Usage:
-#   ./scripts/manage/deploy-to-udm.sh [OPTIONS]
+#   ./manage/deploy-to-udm.sh [OPTIONS]
 #
 # Options:
 #   --file FILE              Package file to deploy (default: udm-vpn-monitor.zip)
@@ -48,14 +48,14 @@
 #
 # Examples:
 #   # Deploy (prompts for credentials)
-#   ./scripts/manage/deploy-to-udm.sh --target-ip 192.168.1.100
-#   ./scripts/manage/deploy-to-udm.sh --dry-run --target-ip 192.168.1.100
+#   ./manage/deploy-to-udm.sh --target-ip 192.168.1.100
+#   ./manage/deploy-to-udm.sh --dry-run --target-ip 192.168.1.100
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Shared helpers (version parsing); required by deploy-registry.sh
 # shellcheck source=lib/common.sh
@@ -65,13 +65,13 @@ if [[ -f "${REPO_ROOT}/lib/common.sh" ]]; then
 fi
 
 # Source deployment registry helpers (requires lib/common.sh)
-# shellcheck source=scripts/deploy-registry.sh
+# shellcheck source=manage/deploy-registry.sh
 if [[ -f "${SCRIPT_DIR}/deploy-registry.sh" ]] && [[ -f "${REPO_ROOT}/lib/common.sh" ]]; then
-	# shellcheck source=scripts/deploy-registry.sh
+	# shellcheck source=manage/deploy-registry.sh
 	source "${SCRIPT_DIR}/deploy-registry.sh"
 fi
 
-# shellcheck source=scripts/manage/lib/ssh_control.sh
+# shellcheck source=manage/lib/ssh_control.sh
 source "${SCRIPT_DIR}/lib/ssh_control.sh"
 manage_init_terminal_colors
 

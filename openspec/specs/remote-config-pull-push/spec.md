@@ -6,7 +6,7 @@ Controller-side pull and push of live `vpn-monitor.conf` across a UDM fleet via 
 
 ### Requirement: Pull script copies live config from UDMs to controller working tree
 
-The system SHALL provide `scripts/manage/pull-config-from-udms.sh` that reads a fleet config file and for each listed host copies live `/data/vpn-monitor/vpn-monitor.conf` to a controller working path via SCP over SSH.
+The system SHALL provide `manage/pull-config-from-udms.sh` that reads a fleet config file and for each listed host copies live `/data/vpn-monitor/vpn-monitor.conf` to a controller working path via SCP over SSH.
 
 #### Scenario: Successful pull for installed host
 
@@ -38,7 +38,7 @@ _Verified by: `tests/test_pull_config_from_udms.sh`_
 
 ### Requirement: Pull uses standard fleet config and SSH transport
 
-The pull script SHALL read hosts using the same `host [bind_ip]` format as other manage scripts and reuse ControlMaster SSH patterns from `scripts/manage/lib/ssh_control.sh`.
+The pull script SHALL read hosts using the same `host [bind_ip]` format as other manage scripts and reuse ControlMaster SSH patterns from `manage/lib/ssh_control.sh`.
 
 #### Scenario: Default and explicit fleet config
 
@@ -60,7 +60,7 @@ _Verified by: `tests/test_pull_config_from_udms.sh`_
 
 ### Requirement: Push script installs local config with backup and validation
 
-The system SHALL provide `scripts/manage/push-config-to-udms.sh` that pushes a local config file to `/data/vpn-monitor/vpn-monitor.conf` on one or more UDMs with timestamped backup, atomic install, and remote validation.
+The system SHALL provide `manage/push-config-to-udms.sh` that pushes a local config file to `/data/vpn-monitor/vpn-monitor.conf` on one or more UDMs with timestamped backup, atomic install, and remote validation.
 
 #### Scenario: Successful push with backups
 

@@ -6,7 +6,7 @@ SSH-based remote invocation of operating-mode commands from a controller machine
 
 ### Requirement: Remote control via SSH
 
-The system SHALL provide `scripts/manage/control-remote-udm.sh` that executes `vpn-monitor-control.sh` on a target UDM over SSH using ControlMaster connection reuse consistent with `deploy-to-udm.sh`.
+The system SHALL provide `manage/control-remote-udm.sh` that executes `vpn-monitor-control.sh` on a target UDM over SSH using ControlMaster connection reuse consistent with `deploy-to-udm.sh`.
 
 #### Scenario: Remote stop on single host
 

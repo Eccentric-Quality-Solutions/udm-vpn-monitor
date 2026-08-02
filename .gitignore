@@ -37,6 +37,10 @@ test_results_*_*.txt
 # Test coverage reports
 coverage/
 
+# Generated install packages (built by CI Releases or prepare_install_package.sh)
+/udm-vpn-monitor.zip
+/udm-vpn-monitor.tar.gz
+
 # Generated reports
 /reports/vpn-monitor-report.txt
 /reports/vpn-monitor-analysis.csv

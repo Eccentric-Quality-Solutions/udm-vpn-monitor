@@ -93,7 +93,7 @@ check_udm() {
 
 # Initialize operating mode state file if missing
 #
-# Creates state directory and default operating_mode (running).
+# Creates state directory and default operating_mode (observe-only).
 #
 # Returns:
 #   0: Always (best effort)
@@ -829,9 +829,8 @@ auto_append_missing_config_values() {
 #   - Copies vpn-keepalive.sh to installation directory (if available)
 #   - Copies analyze-logs.sh to installation directory (if available)
 #   - Copies check-utilities.sh to installation directory (if available)
-#   - Copies scripts/ utilities to installation directory (if available): anonymize/, scripts/manage/
-#     (centralize-logs.sh, deploy-to-udm.sh, deploy-to-udms.sh, etc.)
-#   - Copies scripts/manage/deploy-udms.conf.example and scripts/manage/centralize.conf.example (if available)
+#   - Copies scripts/anonymize/ and top-level manage/ (fleet controller tools) when present
+#   - Removes legacy $INSTALL_DIR/scripts/manage if upgrading from the old layout
 #   - Sets executable permissions on scripts
 #   - Installs config file (may prompt user in interactive mode)
 install_scripts() {
@@ -908,64 +907,22 @@ install_scripts() {
 		log_info "Installed compare-config.sh (template vs existing config comparison)"
 	fi
 
-	# Copy scripts directory utilities (optional)
-	if [[ -d "${INSTALL_SCRIPT_DIR}/scripts/anonymize" ]] ||
-		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/centralize-logs.sh" ]] ||
-		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-to-udm.sh" ]] ||
-		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-to-udms.sh" ]] ||
-		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/control-remote-udm.sh" ]] ||
-		[[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-udms.conf.example" ]]; then
-		mkdir -p "${INSTALL_DIR}/scripts"
-	fi
+	# Copy optional controller / utility trees (manage/ is top-level; anonymize stays under scripts/)
 	if [[ -d "${INSTALL_SCRIPT_DIR}/scripts/anonymize" ]]; then
 		mkdir -p "${INSTALL_DIR}/scripts/anonymize"
 		cp -r "${INSTALL_SCRIPT_DIR}/scripts/anonymize"/* "${INSTALL_DIR}/scripts/anonymize/"
 		log_info "Installed scripts/anonymize/ (anonymization utilities)"
 	fi
-	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/centralize-logs.sh" ]]; then
-		mkdir -p "${INSTALL_DIR}/scripts/manage"
-		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/centralize-logs.sh" "${INSTALL_DIR}/scripts/manage/centralize-logs.sh"
-		chmod 755 "${INSTALL_DIR}/scripts/manage/centralize-logs.sh"
-		log_info "Installed scripts/manage/centralize-logs.sh (centralize logs utility)"
+	if [[ -d "${INSTALL_SCRIPT_DIR}/manage" ]]; then
+		mkdir -p "${INSTALL_DIR}/manage"
+		cp -r "${INSTALL_SCRIPT_DIR}/manage"/* "${INSTALL_DIR}/manage/"
+		find "${INSTALL_DIR}/manage" -type f -name '*.sh' -exec chmod 755 {} \;
+		log_info "Installed manage/ (fleet controller tools and helpers)"
 	fi
-	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/centralize.conf.example" ]]; then
-		mkdir -p "${INSTALL_DIR}/scripts/manage"
-		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/centralize.conf.example" "${INSTALL_DIR}/scripts/manage/centralize.conf.example"
-		log_info "Installed scripts/manage/centralize.conf.example (template for centralize-logs config)"
-	fi
-	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-to-udm.sh" ]]; then
-		mkdir -p "${INSTALL_DIR}/scripts/manage"
-		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-to-udm.sh" "${INSTALL_DIR}/scripts/manage/deploy-to-udm.sh"
-		chmod 755 "${INSTALL_DIR}/scripts/manage/deploy-to-udm.sh"
-		log_info "Installed scripts/manage/deploy-to-udm.sh (deploy to single UDM)"
-	fi
-	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-to-udms.sh" ]]; then
-		mkdir -p "${INSTALL_DIR}/scripts/manage"
-		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-to-udms.sh" "${INSTALL_DIR}/scripts/manage/deploy-to-udms.sh"
-		chmod 755 "${INSTALL_DIR}/scripts/manage/deploy-to-udms.sh"
-		log_info "Installed scripts/manage/deploy-to-udms.sh (deploy to multiple UDMs)"
-	fi
-	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-registry.sh" ]]; then
-		mkdir -p "${INSTALL_DIR}/scripts/manage"
-		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-registry.sh" "${INSTALL_DIR}/scripts/manage/deploy-registry.sh"
-		chmod 755 "${INSTALL_DIR}/scripts/manage/deploy-registry.sh"
-		log_info "Installed scripts/manage/deploy-registry.sh (deployment registry)"
-	fi
-	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-udms.conf.example" ]]; then
-		mkdir -p "${INSTALL_DIR}/scripts/manage"
-		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/deploy-udms.conf.example" "${INSTALL_DIR}/scripts/manage/deploy-udms.conf.example"
-		log_info "Installed scripts/manage/deploy-udms.conf.example (template for deploy-udms.conf used by scripts/manage/deploy-to-udms.sh)"
-	fi
-	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/control-remote-udm.sh" ]]; then
-		mkdir -p "${INSTALL_DIR}/scripts/manage"
-		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/control-remote-udm.sh" "${INSTALL_DIR}/scripts/manage/control-remote-udm.sh"
-		chmod 755 "${INSTALL_DIR}/scripts/manage/control-remote-udm.sh"
-		log_info "Installed scripts/manage/control-remote-udm.sh (remote operating mode control)"
-	fi
-	if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/manage/control-udms.conf.example" ]]; then
-		mkdir -p "${INSTALL_DIR}/scripts/manage"
-		cp "${INSTALL_SCRIPT_DIR}/scripts/manage/control-udms.conf.example" "${INSTALL_DIR}/scripts/manage/control-udms.conf.example"
-		log_info "Installed scripts/manage/control-udms.conf.example (template for control-udms.conf)"
+	# Drop legacy controller path if upgrading from scripts/manage/ layout
+	if [[ -d "${INSTALL_DIR}/scripts/manage" ]]; then
+		rm -rf "${INSTALL_DIR}/scripts/manage"
+		log_info "Removed legacy ${INSTALL_DIR}/scripts/manage (now manage/)"
 	fi
 
 	# Handle config file installation
@@ -1710,6 +1667,10 @@ display_next_steps() {
 	echo "     LOCATION_<NAME>_EXTERNAL=\"external_ip\""
 	echo "     LOCATION_<NAME>_INTERNAL=\"internal_ip\" (optional)"
 	echo "     Example: LOCATION_NYC_EXTERNAL=\"203.0.113.1\""
+	echo ""
+	echo "  3. Default mode is observe-only (detect and log; no recovery)."
+	echo "     Enable recovery when ready:"
+	echo "     ${INSTALL_DIR}/vpn-monitor-control.sh start"
 	echo ""
 	echo "  4. Test the script manually:"
 	echo "     ${INSTALL_DIR}/${SCRIPT_NAME}"

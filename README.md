@@ -65,25 +65,32 @@ For detailed recovery tier flow diagrams and technical implementation, see the [
 
 ## Installation
 
-The install package (recommended) includes all required files with proper directory structure. It can be created using `./scripts/prepare_install_package.sh` (creates zip) or `./scripts/prepare_install_package.sh --tar` (creates tar.gz).
+The install package (recommended) includes all required files with proper directory structure.
+
+**Download (preferred):**
+- **Release**: From the GitHub Release for a `v*` tag — includes `udm-vpn-monitor.zip` and `udm-vpn-monitor.tar.gz` (prefer **tar.gz** on UDM; `unzip` is not available on UniFi OS).
+- **CI artifact**: From a green Actions run of **Build Install Package** (`udm-vpn-monitor-packages` artifact).
+
+**Or build locally:**
+```bash
+./scripts/prepare_install_package.sh      # Creates zip file
+./scripts/prepare_install_package.sh --tar # Creates tar.gz file
+```
 
 1. **Transfer files to your UDM**:
    ```bash
-   # First, create the package:
-   ./scripts/prepare_install_package.sh      # Creates zip file
-   # Or create tar.gz:
-   ./scripts/prepare_install_package.sh --tar # Creates tar.gz file
-   # Then transfer and extract:
-   scp udm-vpn-monitor.zip root@<UDM_IP>:/tmp/
-
+   # Prefer tar.gz on UDM (no unzip on device):
+   scp udm-vpn-monitor.tar.gz root@<UDM_IP>:/tmp/
+   # Or zip if unpacking on a machine that has unzip:
+   # scp udm-vpn-monitor.zip root@<UDM_IP>:/tmp/
    ```
 
 2. **SSH into your UDM**:
    ```bash
    ssh root@<UDM_IP>
-   cd /tmp && unzip udm-vpn-monitor.zip
-   # Or for tar.gz:
-   # cd /tmp && tar -xzf udm-vpn-monitor.tar.gz
+   cd /tmp && tar -xzf udm-vpn-monitor.tar.gz
+   # Or for zip (requires unzip on the host):
+   # cd /tmp && unzip udm-vpn-monitor.zip
    ```
 
 3. **Run the installer**:
@@ -194,7 +201,7 @@ The install package (recommended) includes all required files with proper direct
    tail -f /data/vpn-monitor/logs/vpn-monitor.log
    ```
 
-   **Deploying to multiple UDMs:** Use `./scripts/manage/deploy-to-udms.sh` to deploy to several UDMs from a config file. Copy `scripts/manage/deploy-udms.conf.example` to `deploy-udms.conf`, add your UDMs (one per line: `host [bind_ip]`), then run the script. It will prompt for credentials per UDM, deploy, and run `tail -f` until you press Ctrl+C. See [DEPLOYMENT_ANALYSIS.md](docs/research/DEPLOYMENT_ANALYSIS.md) for details.
+   **Deploying to multiple UDMs:** Use `./manage/deploy-to-udms.sh` to deploy to several UDMs from a config file. Copy `manage/deploy-udms.conf.example` to `deploy-udms.conf`, add your UDMs (one per line: `host [bind_ip]`), then run the script. It will prompt for credentials per UDM, deploy, and run `tail -f` until you press Ctrl+C. See [DEPLOYMENT_ANALYSIS.md](docs/research/DEPLOYMENT_ANALYSIS.md) for details.
 
 ## Configuration
 
@@ -282,12 +289,12 @@ Control whether the monitor runs, is paused during maintenance, or logs without 
 **Remote control (from a server or another UDM):**
 
 ```bash
-./scripts/manage/control-remote-udm.sh --host 192.168.1.100 status
-./scripts/manage/control-remote-udm.sh --host 192.168.1.100 pause --until +30m
-./scripts/manage/control-remote-udm.sh --config control-udms.conf stop
+./manage/control-remote-udm.sh --host 192.168.1.100 status
+./manage/control-remote-udm.sh --host 192.168.1.100 pause --until +30m
+./manage/control-remote-udm.sh --config control-udms.conf stop
 ```
 
-Copy `scripts/manage/control-udms.conf.example` to `control-udms.conf` for batch operations (same host-list format as `deploy-udms.conf`).
+Copy `manage/control-udms.conf.example` to `control-udms.conf` for batch operations (same host-list format as `deploy-udms.conf`).
 
 ### Keepalive Daemon
 

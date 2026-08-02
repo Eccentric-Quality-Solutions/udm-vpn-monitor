@@ -4,28 +4,28 @@
 # SSH to one or more UDMs and report live version, mode, cron, and registry drift.
 #
 # Usage:
-#   ./scripts/manage/status-udms.sh [OPTIONS]
+#   ./manage/status-udms.sh [OPTIONS]
 #
 # Examples:
-#   ./scripts/manage/status-udms.sh
-#   ./scripts/manage/status-udms.sh --config deploy-udms.conf
-#   ./scripts/manage/status-udms.sh --host 192.168.1.100
-#   ./scripts/manage/status-udms.sh --dry-run --config control-udms.conf
+#   ./manage/status-udms.sh
+#   ./manage/status-udms.sh --config deploy-udms.conf
+#   ./manage/status-udms.sh --host 192.168.1.100
+#   ./manage/status-udms.sh --dry-run --config control-udms.conf
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # shellcheck source=lib/common.sh
 if [[ -f "${REPO_ROOT}/lib/common.sh" ]]; then
 	source "${REPO_ROOT}/lib/common.sh"
 fi
 
-# shellcheck source=scripts/manage/lib/ssh_control.sh
+# shellcheck source=manage/lib/ssh_control.sh
 source "${SCRIPT_DIR}/lib/ssh_control.sh"
-# shellcheck source=scripts/manage/deploy-registry.sh
+# shellcheck source=manage/deploy-registry.sh
 source "${SCRIPT_DIR}/deploy-registry.sh"
 
 manage_init_terminal_colors

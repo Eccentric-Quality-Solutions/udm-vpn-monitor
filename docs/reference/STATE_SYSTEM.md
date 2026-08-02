@@ -310,14 +310,14 @@ These files control script execution and prevent concurrent runs.
 - **Path**: `${STATE_DIR}/operating_mode`
 - **Purpose**: Controls whether the monitor runs, is paused, or operates in observe-only mode
 - **Format**: Key=value lines:
-  - `mode`: `running` (default), `stopped`, `paused`, or `observe-only`
-  - `paused_until`: Unix epoch seconds (required when `mode=paused`)
+  - `mode`: `observe-only` (default when missing or first install), `running`, `stopped`, or `paused`
+  - `paused_until`: Unix epoch seconds when `mode=paused` with a timed end; `0` means indefinite pause (no auto-resume)
   - `set_at`: Epoch when mode was last set
   - `set_by`: Username or `remote`/`auto-resume`
   - `reason`: Optional free-text reason
-- **Management**: Written by `vpn-monitor-control.sh` (local or via `scripts/manage/control-remote-udm.sh`)
+- **Management**: Written by `vpn-monitor-control.sh` (local or via `manage/control-remote-udm.sh`)
 - **Usage**: `vpn-monitor.sh` and `vpn-monitor-wrapper.sh` call `check_operating_mode()` at startup; active pause/stopped skip execution; observe-only sets `NO_ESCALATE=1` for recovery suppression
-- **Auto-resume**: When `mode=paused` and `paused_until` is in the past, the next monitor run transitions to `running`
+- **Auto-resume**: When `mode=paused` and `paused_until` is a past epoch (`> 0`), the next monitor run transitions to `running`. When `paused_until=0` (indefinite), the monitor stays paused until an explicit mode change (`start`, `observe-only`, or `stop`).
 
 ## State Management Patterns
 

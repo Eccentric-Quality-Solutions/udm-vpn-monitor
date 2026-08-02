@@ -1,10 +1,10 @@
 #!/usr/bin/env bats
 #
-# Tests for scripts/manage/pull-config-from-udms.sh
+# Tests for manage/pull-config-from-udms.sh
 
 load test_helper
 
-PULL_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/manage/pull-config-from-udms.sh"
+PULL_SCRIPT="${BATS_TEST_DIRNAME}/../manage/pull-config-from-udms.sh"
 PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 
 setup_pull_config_ssh_mocks() {

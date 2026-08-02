@@ -1,5 +1,5 @@
 #!/bin/bash
-# Shared fleet config pull/push helpers for scripts/manage/*-config-*-udms.sh
+# Shared fleet config pull/push helpers for manage/*-config-*-udms.sh
 #
 # Caller must set REPO_ROOT and source ssh_control.sh first.
 # Caller defines: process_host(), print_summary(), log_* wrappers, and script-specific globals.

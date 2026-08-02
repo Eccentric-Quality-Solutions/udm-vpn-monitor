@@ -6,7 +6,7 @@ SSH-based remote invocation of on-UDM `uninstall.sh` from a controller machine t
 
 ### Requirement: Remote uninstall via SSH
 
-The system SHALL provide `scripts/manage/uninstall-from-udm.sh` that executes the on-UDM `uninstall.sh` on a target UDM over SSH using ControlMaster connection reuse consistent with `deploy-to-udm.sh` and `control-remote-udm.sh`.
+The system SHALL provide `manage/uninstall-from-udm.sh` that executes the on-UDM `uninstall.sh` on a target UDM over SSH using ControlMaster connection reuse consistent with `deploy-to-udm.sh` and `control-remote-udm.sh`.
 
 #### Scenario: Remote uninstall on single host
 
@@ -38,7 +38,7 @@ _Verified by: `tests/test_remote_uninstall.sh`_
 
 ### Requirement: Batch remote uninstall
 
-The system SHALL provide `scripts/manage/uninstall-from-udms.sh` supporting batch operation via `--config FILE` reading one host per line using the same format as `deploy-udms.conf.example` (`host [bind_ip]`).
+The system SHALL provide `manage/uninstall-from-udms.sh` supporting batch operation via `--config FILE` reading one host per line using the same format as `deploy-udms.conf.example` (`host [bind_ip]`).
 
 #### Scenario: Batch uninstall across multiple hosts
 

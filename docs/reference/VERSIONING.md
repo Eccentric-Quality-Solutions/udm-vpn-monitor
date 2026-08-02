@@ -111,17 +111,17 @@ The script:
 1. **Primary**: Reads `SCRIPT_VERSION` from the source `vpn-monitor.sh` (via `get_script_version()`).
 2. **Fallback**: Reads `# Version:` from `install.sh` if `vpn-monitor.sh` has no `SCRIPT_VERSION`.
 
-**Deployment scripts** — `scripts/manage/deploy-to-udm.sh`, `deploy-to-udms.sh`, and `deploy-registry.sh` derive the package version by extracting `SCRIPT_VERSION` from `vpn-monitor.sh` inside the zip/tar package (for skip-if-same-version and deployment registry).
+**Deployment scripts** — `manage/deploy-to-udm.sh`, `deploy-to-udms.sh`, and `deploy-registry.sh` derive the package version by extracting `SCRIPT_VERSION` from `vpn-monitor.sh` inside the zip/tar package (for skip-if-same-version and deployment registry).
 
 ## Best Practices
 
 1. **Update CHANGELOG.md first** — Document what changed before bumping the version.
 2. **Use `scripts/update-version.sh` for tracked files** — Keeps all canonical version locations in sync; avoid editing version numbers by hand in those files.
 3. **Use descriptive CHANGELOG entries** — Document what changed and why.
-4. **Tag releases in git** — Use tags like `v0.8.3` for releases.
+4. **Tag releases in git** — Use tags like `v0.8.3` for releases. Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds and attaches `udm-vpn-monitor.zip` and `udm-vpn-monitor.tar.gz` to the GitHub Release.
 5. **Reserve 1.0.0 for production-ready** — Don't rush to 1.0.0.
 
-The install package produced by `scripts/prepare_install_package.sh` is named `udm-vpn-monitor.zip` (or `.tar.gz`); the version is not in the filename. The version inside the package (from `vpn-monitor.sh`’s `SCRIPT_VERSION`) is what install and deployment scripts use.
+The install package produced by `scripts/prepare_install_package.sh` (and by CI) is named `udm-vpn-monitor.zip` (or `.tar.gz`); the version is not in the filename. Packages are not committed to git. The version inside the package (from `vpn-monitor.sh`’s `SCRIPT_VERSION`) is what install and deployment scripts use. For untagged builds, download the `udm-vpn-monitor-packages` artifact from the **Build Install Package** workflow.
 
 ## Transitioning to 1.0.0
 

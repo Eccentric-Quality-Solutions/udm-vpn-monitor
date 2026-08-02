@@ -4,22 +4,22 @@
 # SSH to multiple UDMs and run uninstall.sh without transferring a package.
 #
 # Usage:
-#   ./scripts/manage/uninstall-from-udms.sh [OPTIONS]
+#   ./manage/uninstall-from-udms.sh [OPTIONS]
 #
 # Examples:
-#   ./scripts/manage/uninstall-from-udms.sh --config deploy-udms.conf --yes
-#   ./scripts/manage/uninstall-from-udms.sh --yes --keep-config --update-registry
-#   ./scripts/manage/uninstall-from-udms.sh --dry-run --config deploy-udms.conf
+#   ./manage/uninstall-from-udms.sh --config deploy-udms.conf --yes
+#   ./manage/uninstall-from-udms.sh --yes --keep-config --update-registry
+#   ./manage/uninstall-from-udms.sh --dry-run --config deploy-udms.conf
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 LOGS_DIR="${REPO_ROOT}/logs"
 UNINSTALL_LOG_FILE="${UNINSTALL_LOG_FILE:-${LOGS_DIR}/uninstall-from-udms.log}"
 
-# shellcheck source=scripts/manage/lib/ssh_control.sh
+# shellcheck source=manage/lib/ssh_control.sh
 source "${SCRIPT_DIR}/lib/ssh_control.sh"
 manage_init_terminal_colors
 
@@ -89,7 +89,7 @@ Options:
   --help              Show this help
 
 Config format: host_or_ip [bind_ip]
-See scripts/manage/deploy-udms.conf.example for details.
+See manage/deploy-udms.conf.example for details.
 
 Examples:
   $0 --config deploy-udms.conf --yes
@@ -197,7 +197,7 @@ main() {
 
 	if [[ ! -f "$CONFIG_FILE" ]]; then
 		log_error "Config file not found: $CONFIG_FILE"
-		log_info "Copy scripts/manage/deploy-udms.conf.example to deploy-udms.conf and add your UDMs"
+		log_info "Copy manage/deploy-udms.conf.example to deploy-udms.conf and add your UDMs"
 		exit 1
 	fi
 

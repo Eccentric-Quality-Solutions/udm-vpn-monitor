@@ -18,7 +18,7 @@ DEPLOY_REGISTRY_FILE="${DEPLOY_REGISTRY_FILE:-}"
 
 # Version parsing helpers (parse_script_version_line, etc.)
 _REGISTRY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_REGISTRY_REPO_ROOT="${REPO_ROOT:-$(cd "${_REGISTRY_SCRIPT_DIR}/../.." && pwd)}"
+_REGISTRY_REPO_ROOT="${REPO_ROOT:-$(cd "${_REGISTRY_SCRIPT_DIR}/.." && pwd)}"
 # shellcheck source=lib/common.sh
 if [[ ! -f "${_REGISTRY_REPO_ROOT}/lib/common.sh" ]]; then
 	echo "Error: lib/common.sh not found at ${_REGISTRY_REPO_ROOT}/lib/common.sh" >&2

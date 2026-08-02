@@ -1,10 +1,10 @@
 #!/usr/bin/env bats
 #
-# Tests for scripts/manage/control-remote-udm.sh
+# Tests for manage/control-remote-udm.sh
 
 load test_helper
 
-REMOTE_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/manage/control-remote-udm.sh"
+REMOTE_SCRIPT="${BATS_TEST_DIRNAME}/../manage/control-remote-udm.sh"
 
 # bats test_tags=category:unit
 @test "control-remote-udm.sh shows help" {

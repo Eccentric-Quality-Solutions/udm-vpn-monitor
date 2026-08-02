@@ -13,19 +13,19 @@
 
 load test_helper
 
-DEPLOY_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/manage/deploy-to-udms.sh"
+DEPLOY_SCRIPT="${BATS_TEST_DIRNAME}/../manage/deploy-to-udms.sh"
 PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
-MANAGE_LIB="${PROJECT_ROOT}/scripts/manage/lib/ssh_control.sh"
+MANAGE_LIB="${PROJECT_ROOT}/manage/lib/ssh_control.sh"
 
-# Minimal fake repo tree for tests that mock deploy-to-udm.sh (scripts/manage/ layout).
+# Minimal fake repo tree for tests that mock deploy-to-udm.sh (manage/ layout).
 setup_fake_manage_repo() {
 	local fake_root="$1"
-	mkdir -p "${fake_root}/scripts/manage/lib" "${fake_root}/lib"
-	cp "$DEPLOY_SCRIPT" "${fake_root}/scripts/manage/deploy-to-udms.sh"
-	cp "$MANAGE_LIB" "${fake_root}/scripts/manage/lib/ssh_control.sh"
+	mkdir -p "${fake_root}/manage/lib" "${fake_root}/lib"
+	cp "$DEPLOY_SCRIPT" "${fake_root}/manage/deploy-to-udms.sh"
+	cp "$MANAGE_LIB" "${fake_root}/manage/lib/ssh_control.sh"
 	cp "${PROJECT_ROOT}/lib/common.sh" "${fake_root}/lib/common.sh"
 	cp "${PROJECT_ROOT}/lib/constants.sh" "${fake_root}/lib/constants.sh"
-	cp "${PROJECT_ROOT}/scripts/manage/deploy-registry.sh" "${fake_root}/scripts/manage/deploy-registry.sh"
+	cp "${PROJECT_ROOT}/manage/deploy-registry.sh" "${fake_root}/manage/deploy-registry.sh"
 }
 
 # bats test_tags=category:unit
@@ -42,7 +42,9 @@ setup_fake_manage_repo() {
 	assert_output --partial "--config"
 	assert_output --partial "--file"
 	assert_output --partial "--skip-tail"
+	assert_output --partial "--tail-follow"
 	assert_output --partial "--dry-run"
+	assert_output --partial "udm-vpn-monitor.zip"
 }
 
 # bats test_tags=category:unit
@@ -234,17 +236,17 @@ EOF
 	local fake_root="${TEST_DIR}/fake_repo"
 	setup_fake_manage_repo "$fake_root"
 	export DEPLOY_REGISTRY_FILE="${TEST_DIR}/deploy-registry"
-	cat >"${fake_root}/scripts/manage/deploy-to-udm.sh" <<'MOCK'
+	cat >"${fake_root}/manage/deploy-to-udm.sh" <<'MOCK'
 #!/bin/bash
 echo "ARGS: $*" >> "${DEPLOY_TO_UDM_CAPTURE_FILE:-/tmp/deploy_args.txt}"
 echo "[dry-run] $*"
 exit 0
 MOCK
-	chmod +x "${fake_root}/scripts/manage/deploy-to-udm.sh"
+	chmod +x "${fake_root}/manage/deploy-to-udm.sh"
 	cp "${PROJECT_ROOT}/udm-vpn-monitor.zip" "${fake_root}/" 2>/dev/null || true
 	cp "$config_file" "${fake_root}/deploy-udms.conf"
 
-	run bash "${fake_root}/scripts/manage/deploy-to-udms.sh" \
+	run bash "${fake_root}/manage/deploy-to-udms.sh" \
 		--dry-run \
 		--config "${fake_root}/deploy-udms.conf" \
 		--file "${fake_root}/udm-vpn-monitor.zip" \
@@ -268,7 +270,7 @@ MOCK
 }
 
 # bats test_tags=category:unit
-@test "deploy-to-udms.sh dry-run default batch passes no-record and tail-follow to child" {
+@test "deploy-to-udms.sh dry-run default batch does not pass tail-follow" {
 	cd "$PROJECT_ROOT"
 	[[ -f udm-vpn-monitor.zip ]] || ./scripts/prepare_install_package.sh >/dev/null 2>&1 || true
 	[[ -f udm-vpn-monitor.zip ]] || skip "Package file not available"
@@ -289,22 +291,22 @@ EOF
 
 	local fake_root="${TEST_DIR}/fake_repo"
 	setup_fake_manage_repo "$fake_root"
-	cat >"${fake_root}/scripts/manage/deploy-to-udm.sh" <<'MOCK'
+	cat >"${fake_root}/manage/deploy-to-udm.sh" <<'MOCK'
 #!/bin/bash
 echo "ARGS: $*" >> "${DEPLOY_TO_UDM_CAPTURE_FILE:-/tmp/deploy_args.txt}"
 exit 0
 MOCK
-	chmod +x "${fake_root}/scripts/manage/deploy-to-udm.sh"
+	chmod +x "${fake_root}/manage/deploy-to-udm.sh"
 	cp "${PROJECT_ROOT}/udm-vpn-monitor.zip" "${fake_root}/" 2>/dev/null || true
 	cp "$config_file" "${fake_root}/deploy-udms.conf"
 
-	run bash "${fake_root}/scripts/manage/deploy-to-udms.sh" \
+	run bash "${fake_root}/manage/deploy-to-udms.sh" \
 		--dry-run \
 		--config "${fake_root}/deploy-udms.conf" \
 		--file "${fake_root}/udm-vpn-monitor.zip" 2>&1
 
 	assert_success
-	assert_output --partial "[dry-run] 192.168.1.100: prompt to mark deployment successful in registry (version ${pkg_version})"
+	refute_output --partial "prompt to mark deployment successful"
 	assert_file_exist "$capture_file"
 	local args
 	args=$(cat "$capture_file")
@@ -312,12 +314,12 @@ MOCK
 		echo "Expected --dry-run in deploy-to-udm args: $args"
 		return 1
 	}
-	[[ "$args" == *"--no-record"* ]] || {
-		echo "Expected --no-record in deploy-to-udm args: $args"
+	[[ "$args" != *"--no-record"* ]] || {
+		echo "Did not expect --no-record in default (skip-tail) deploy args: $args"
 		return 1
 	}
-	[[ "$args" == *"--tail-follow"* ]] || {
-		echo "Expected --tail-follow in deploy-to-udm args: $args"
+	[[ "$args" != *"--tail-follow"* ]] || {
+		echo "Did not expect --tail-follow in default deploy args: $args"
 		return 1
 	}
 }
@@ -342,16 +344,16 @@ EOF
 	setup_fake_manage_repo "$fake_root"
 	export DEPLOY_REGISTRY_FILE="${TEST_DIR}/deploy-registry"
 	# Mock deploy-to-udm.sh to record argv for assertion
-	cat >"${fake_root}/scripts/manage/deploy-to-udm.sh" <<'MOCK'
+	cat >"${fake_root}/manage/deploy-to-udm.sh" <<'MOCK'
 #!/bin/bash
 echo "ARGS: $*" >> "${DEPLOY_TO_UDM_CAPTURE_FILE:-/tmp/deploy_args.txt}"
 exit 0
 MOCK
-	chmod +x "${fake_root}/scripts/manage/deploy-to-udm.sh"
+	chmod +x "${fake_root}/manage/deploy-to-udm.sh"
 	cp "${PROJECT_ROOT}/udm-vpn-monitor.zip" "${fake_root}/" 2>/dev/null || true
 	cp "$config_file" "${fake_root}/deploy-udms.conf"
 
-	run bash "${fake_root}/scripts/manage/deploy-to-udms.sh" \
+	run bash "${fake_root}/manage/deploy-to-udms.sh" \
 		--config "${fake_root}/deploy-udms.conf" \
 		--file "${fake_root}/udm-vpn-monitor.zip" \
 		--skip-tail 2>&1
@@ -376,7 +378,7 @@ MOCK
 }
 
 # bats test_tags=category:unit
-@test "deploy-to-udms.sh passes --tail-follow to deploy-to-udm when not using --skip-tail" {
+@test "deploy-to-udms.sh passes --tail-follow to deploy-to-udm when --tail-follow is set" {
 	cd "$PROJECT_ROOT"
 	[[ -f udm-vpn-monitor.zip ]] || ./scripts/prepare_install_package.sh >/dev/null 2>&1 || true
 	[[ -f udm-vpn-monitor.zip ]] || skip "Package file not available"
@@ -393,17 +395,18 @@ EOF
 	local fake_root="${TEST_DIR}/fake_repo"
 	setup_fake_manage_repo "$fake_root"
 	export DEPLOY_REGISTRY_FILE="${TEST_DIR}/deploy-registry"
-	cat >"${fake_root}/scripts/manage/deploy-to-udm.sh" <<'MOCK'
+	cat >"${fake_root}/manage/deploy-to-udm.sh" <<'MOCK'
 #!/bin/bash
 echo "ARGS: $*" >> "${DEPLOY_TO_UDM_CAPTURE_FILE:-/tmp/deploy_args.txt}"
 exit 0
 MOCK
-	chmod +x "${fake_root}/scripts/manage/deploy-to-udm.sh"
+	chmod +x "${fake_root}/manage/deploy-to-udm.sh"
 	cp "${PROJECT_ROOT}/udm-vpn-monitor.zip" "${fake_root}/" 2>/dev/null || true
 	cp "$config_file" "${fake_root}/deploy-udms.conf"
 
-	# Without --skip-tail, deploy-to-udms passes --tail-follow; pipe password + 'y' for mark successful
-	run bash -c "printf 'testpass\ny\n' | \"${fake_root}/scripts/manage/deploy-to-udms.sh\" \
+	# With --tail-follow, batch passes --tail-follow + --no-record; pipe password + 'y' for mark successful
+	run bash -c "printf 'testpass\ny\n' | \"${fake_root}/manage/deploy-to-udms.sh\" \
+		--tail-follow \
 		--config \"${fake_root}/deploy-udms.conf\" \
 		--file \"${fake_root}/udm-vpn-monitor.zip\"" 2>&1
 
@@ -435,17 +438,17 @@ EOF
 	local fake_root="${TEST_DIR}/fake_repo"
 	setup_fake_manage_repo "$fake_root"
 	# Mock deploy-to-udm to succeed (so we get to the prompt)
-	cat >"${fake_root}/scripts/manage/deploy-to-udm.sh" <<'MOCK'
+	cat >"${fake_root}/manage/deploy-to-udm.sh" <<'MOCK'
 #!/bin/bash
 exit 0
 MOCK
-	chmod +x "${fake_root}/scripts/manage/deploy-to-udm.sh"
+	chmod +x "${fake_root}/manage/deploy-to-udm.sh"
 	cp "${PROJECT_ROOT}/udm-vpn-monitor.zip" "${fake_root}/" 2>/dev/null || true
 	cp "$config_file" "${fake_root}/deploy-udms.conf"
 	export DEPLOY_REGISTRY_FILE="${TEST_DIR}/deploy-registry"
 
 	# Answer 'n' to "Mark as successful?"
-	run bash -c "printf 'testpass\nn\n' | \"${fake_root}/scripts/manage/deploy-to-udms.sh\" \
+	run bash -c "printf 'testpass\nn\n' | \"${fake_root}/manage/deploy-to-udms.sh\" \
 		--config \"${fake_root}/deploy-udms.conf\" \
 		--file \"${fake_root}/udm-vpn-monitor.zip\"" 2>&1
 

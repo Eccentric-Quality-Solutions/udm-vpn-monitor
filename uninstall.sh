@@ -41,6 +41,8 @@ source "${UNINSTALL_SCRIPT_DIR}/lib/config/config_loading.sh"
 source "${UNINSTALL_SCRIPT_DIR}/lib/control/cron_control.sh"
 # shellcheck source=lib/control/keepalive_control.sh
 source "${UNINSTALL_SCRIPT_DIR}/lib/control/keepalive_control.sh"
+# shellcheck source=lib/control/wrapper_control.sh
+source "${UNINSTALL_SCRIPT_DIR}/lib/control/wrapper_control.sh"
 
 # Validate installation directory path is safe
 #
@@ -1082,12 +1084,13 @@ parse_args() {
 #   7. Handle state directory (prompt or use flag)
 #   8. Remove cron entry
 #   9. Remove logrotate config
-#  10. Remove keepalive service
-#  11. Stop keepalive daemon
-#  12. Remove installation directory (or files except preserved items if kept)
-#  13. Clean up stale lockfiles
-#  14. Verify uninstallation
-#  15. Display summary
+#  10. Stop monitor wrapper if running
+#  11. Remove keepalive service
+#  12. Stop keepalive daemon
+#  13. Remove installation directory (or files except preserved items if kept)
+#  14. Clean up stale lockfiles
+#  15. Verify uninstallation
+#  16. Display summary
 main() {
 	log_info "UDM VPN Monitor Uninstallation"
 	log_info "================================="
@@ -1153,6 +1156,8 @@ main() {
 
 	# Remove components - continue even if individual steps fail
 	# to ensure maximum cleanup is attempted
+	# Stop wrapper before deleting install tree (avoids racing a live process)
+	stop_monitor_wrapper || true
 	rm -f "${STATE_DIR}/operating_mode" 2>/dev/null || true
 	if ! remove_cron; then
 		log_warn "Failed to remove cron job, but continuing with uninstallation"

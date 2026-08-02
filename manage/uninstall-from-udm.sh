@@ -4,30 +4,30 @@
 # SSH to a UDM and run uninstall.sh without transferring a package.
 #
 # Usage:
-#   ./scripts/manage/uninstall-from-udm.sh [OPTIONS]
+#   ./manage/uninstall-from-udm.sh [OPTIONS]
 #
 # Examples:
-#   ./scripts/manage/uninstall-from-udm.sh --host 192.168.1.100 --yes
-#   ./scripts/manage/uninstall-from-udm.sh --host 192.168.1.100 --keep-config --update-registry
-#   ./scripts/manage/uninstall-from-udm.sh --dry-run --host 192.168.1.100
+#   ./manage/uninstall-from-udm.sh --host 192.168.1.100 --yes
+#   ./manage/uninstall-from-udm.sh --host 192.168.1.100 --keep-config --update-registry
+#   ./manage/uninstall-from-udm.sh --dry-run --host 192.168.1.100
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # shellcheck source=lib/common.sh
 if [[ -f "${REPO_ROOT}/lib/common.sh" ]]; then
 	source "${REPO_ROOT}/lib/common.sh"
 fi
 
-# shellcheck source=scripts/manage/deploy-registry.sh
+# shellcheck source=manage/deploy-registry.sh
 if [[ -f "${SCRIPT_DIR}/deploy-registry.sh" ]] && [[ -f "${REPO_ROOT}/lib/common.sh" ]]; then
 	source "${SCRIPT_DIR}/deploy-registry.sh"
 fi
 
-# shellcheck source=scripts/manage/lib/ssh_control.sh
+# shellcheck source=manage/lib/ssh_control.sh
 source "${SCRIPT_DIR}/lib/ssh_control.sh"
 manage_init_terminal_colors
 

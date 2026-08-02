@@ -83,6 +83,8 @@ else
 	exit 1
 fi
 
+# Color vars (RED/GREEN/YELLOW/BLUE/NC) come from lib/common.sh via the sources above.
+
 # Get default value for a config variable
 #
 # Extracts the default value from schema, formatting it appropriately.

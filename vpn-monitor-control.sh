@@ -16,7 +16,6 @@ CONFIG_FILE="${INSTALL_DIR}/vpn-monitor.conf"
 STATE_DIR="${INSTALL_DIR}/state"
 LOGS_DIR="${INSTALL_DIR}/logs"
 LOG_FILE="${LOGS_DIR}/vpn-monitor.log"
-WRAPPER_PIDFILE="${STATE_DIR}/vpn-monitor-wrapper.pid"
 
 # shellcheck source=lib/control.sh
 source "${SCRIPT_DIR}/lib/control.sh"
@@ -38,18 +37,20 @@ Manage VPN Monitor operating mode on this UDM.
 Commands:
   start          Restore normal operation (cron + keepalive if configured)
   stop           Halt monitoring (remove cron, stop wrapper and keepalive)
-  pause          Pause until a specified time (no detection or recovery)
+  pause          Pause until --until TIME, or indefinitely if --until omitted
   observe-only   Run detection and logging; suppress all recovery actions
   status         Show current operating mode and service state
 
 Options (pause):
-  --until TIME   End time: epoch, +30m/+2h/+1d, or YYYY-MM-DDTHH:MM:SS (required)
+  --until TIME   End time: epoch, +30m/+2h/+1d, or YYYY-MM-DDTHH:MM:SS
+                 Omit for indefinite pause (until start/observe-only/stop)
 
 Options (pause, observe-only):
   --reason TEXT  Optional reason recorded in state and logs
 
 Examples:
   $0 stop
+  $0 pause --reason "hold until operator resumes"
   $0 pause --until +2h --reason "IPsec maintenance"
   $0 observe-only --reason "Investigating false positives"
   $0 start
@@ -99,32 +100,6 @@ parse_args() {
 	done
 
 	[[ -n "$COMMAND" ]] || show_help
-}
-
-# Stop monitor wrapper process if running
-#
-# Returns:
-#   0: Always (best effort)
-stop_monitor_wrapper() {
-	local pid=""
-	if file_exists_and_readable "$WRAPPER_PIDFILE"; then
-		pid=$(cat "$WRAPPER_PIDFILE" 2>/dev/null || echo "")
-	fi
-	if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-		kill -TERM "$pid" 2>/dev/null || true
-		local count=0
-		while kill -0 "$pid" 2>/dev/null && [[ $count -lt 5 ]]; do
-			sleep 1
-			count=$((count + 1))
-		done
-		if kill -0 "$pid" 2>/dev/null; then
-			kill -KILL "$pid" 2>/dev/null || true
-		fi
-		log_message "INFO" "SYSTEM" "Stopped monitor wrapper (PID: $pid)"
-	fi
-	rm -f "$WRAPPER_PIDFILE" 2>/dev/null || true
-	rm -rf "${STATE_DIR}/.wrapper.lock" 2>/dev/null || true
-	return 0
 }
 
 # Stop keepalive daemon (systemd or script)
@@ -198,14 +173,18 @@ cmd_stop() {
 
 # Execute pause command
 #
+# Without --until: indefinite pause (paused_until=0) until start/observe-only/stop.
+# With --until: timed pause; expired timed pause auto-resumes to running.
+#
 # Returns:
 #   0: Success
 #   1: Invalid --until
 cmd_pause() {
-	local prev epoch
-	[[ -n "$PAUSE_UNTIL" ]] || die "pause requires --until TIME" "${EXIT_VALIDATION_ERROR:-3}"
-	if ! epoch=$(parse_pause_until_time "$PAUSE_UNTIL"); then
-		return 1
+	local prev epoch=0
+	if [[ -n "$PAUSE_UNTIL" ]]; then
+		if ! epoch=$(parse_pause_until_time "$PAUSE_UNTIL"); then
+			return 1
+		fi
 	fi
 	prev=$(get_operating_mode)
 	mkdir -p "$STATE_DIR" "$LOGS_DIR"
@@ -214,7 +193,11 @@ cmd_pause() {
 		return 1
 	fi
 	log_operating_mode_transition "$prev" "$OPERATING_MODE_PAUSED" "$REASON"
-	echo "Monitor paused until $(format_pause_until_display "$epoch")"
+	if [[ "$epoch" -eq 0 ]]; then
+		echo "Monitor paused indefinitely (resume with start or observe-only)"
+	else
+		echo "Monitor paused until $(format_pause_until_display "$epoch")"
+	fi
 	return 0
 }
 
@@ -258,8 +241,12 @@ cmd_status() {
 	fi
 
 	echo "Operating mode: ${mode}"
-	if [[ "$mode" == "$OPERATING_MODE_PAUSED" ]] && [[ "$paused_until" -gt 0 ]]; then
-		echo "Paused until: $(format_pause_until_display "$paused_until")"
+	if [[ "$mode" == "$OPERATING_MODE_PAUSED" ]]; then
+		if [[ "$paused_until" -eq 0 ]]; then
+			echo "Paused until: indefinite"
+		elif [[ "$paused_until" -gt 0 ]]; then
+			echo "Paused until: $(format_pause_until_display "$paused_until")"
+		fi
 	fi
 	echo "Cron: ${cron_status}"
 	echo "Keepalive: ${keepalive_status}"

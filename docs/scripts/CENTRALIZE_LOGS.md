@@ -10,15 +10,15 @@ The `centralize-logs.sh` script collects `vpn-monitor.log` from multiple UDMs li
 ## Usage
 
 ```bash
-./scripts/manage/centralize-logs.sh
+./manage/centralize-logs.sh
 ```
 
 The script reads **centralize.conf** from the same directory as the script. Create it from the example:
 
 ```bash
-cp scripts/manage/centralize.conf.example scripts/manage/centralize.conf
-# Edit scripts/manage/centralize.conf: BIND=IP (required), then NAME=IP per UDM (name shown before each host)
-./scripts/manage/centralize-logs.sh
+cp manage/centralize.conf.example manage/centralize.conf
+# Edit manage/centralize.conf: BIND=IP (required), then NAME=IP per UDM (name shown before each host)
+./manage/centralize-logs.sh
 ```
 
 ## Conf file format
@@ -29,7 +29,7 @@ cp scripts/manage/centralize.conf.example scripts/manage/centralize.conf
 - **NAME=IP** — target UDM (e.g. `NYC=192.168.1.1`). The **name is shown before each host** so you know which UDM you're logging into.
 - If only BIND is given (no targets), no logs are fetched (script exits 0 with a message).
 
-See `scripts/manage/centralize.conf.example` for a template.
+See `manage/centralize.conf.example` for a template.
 
 ## Behavior
 

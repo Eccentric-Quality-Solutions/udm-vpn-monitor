@@ -125,7 +125,7 @@ Open `vpn-monitor.sh` and trace one cron execution top to bottom.
 
 - [ ] **`install.sh`:** paths under `/data/vpn-monitor/`, cron entry, permissions, config prompts
 - [ ] **Package build:** `scripts/prepare_install_package.sh` (zip/tar)
-- [ ] **Deploy from machine:** `scripts/manage/deploy-registry.sh`, `deploy-to-udm.sh`, `deploy-to-udms.sh`
+- [ ] **Deploy from machine:** `manage/deploy-registry.sh`, `deploy-to-udm.sh`, `deploy-to-udms.sh`
 - [ ] **Post-deploy:** [DEPLOYMENT_CHECKLIST.md](../DEPLOYMENT_CHECKLIST.md)
 - [ ] **Sub-minute execution:** `vpn-monitor-wrapper.sh` + [ADR 0032](adr/0032-sub-minute-execution-via-wrapper.md)
 - [ ] **Keepalive:** `vpn-keepalive.sh` + [ADR 0009](adr/0009-vpn-keepalive-daemon.md)
@@ -176,7 +176,7 @@ Open `vpn-monitor.sh` and trace one cron execution top to bottom.
 
 Use this section for whatever is on your branch today. Example items from recent work:
 
-- [ ] Deploy registry and multi-UDM deploy scripts (`scripts/manage/`)
+- [ ] Deploy registry and multi-UDM deploy scripts (`manage/`)
 - [ ] Regex helper deduplication (`lib/common.sh`, anonymize, deploy scripts)
 - [ ] Config/location parsing changes (`lib/config/location_parsing.sh`)
 - [ ] System-wide failure / xfrm / recovery verification tweaks
@@ -215,5 +215,5 @@ Use this section for whatever is on your branch today. Example items from recent
 | State | `lib/state/peer_state.sh`, `global_state.sh`, [STATE_SYSTEM.md](reference/STATE_SYSTEM.md) |
 | Shared | `lib/common.sh`, `lib/constants.sh`, `lib/logging.sh`, `lib/lockfile.sh` |
 | Install | `install.sh`, `scripts/prepare_install_package.sh` |
-| Deploy | `scripts/manage/deploy-to-udm.sh`, `deploy-to-udms.sh`, `deploy-registry.sh` |
+| Deploy | `manage/deploy-to-udm.sh`, `deploy-to-udms.sh`, `deploy-registry.sh` |
 | Tests | `tests/run_tests.sh`, `tests/helpers/`, `docs/testing/RELEVANT_TESTS.md` |

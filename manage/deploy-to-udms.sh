@@ -6,17 +6,18 @@
 # For each UDM:
 # 1. Calls deploy-to-udm.sh (which prompts for username/password)
 # 2. SCP package, archive logs, uninstall (keep config), extract, install
-# 3. deploy-to-udm.sh runs tail -f on vpn-monitor.log until Ctrl+C (uses same credentials)
+# 3. By default continues immediately (auto-records registry); use --tail-follow for interactive log watch
 # 4. Continues to next UDM
 # 5. Logs deployment output to REPO_ROOT/logs/deploy-to-udms.log
 #
 # Usage:
-#   ./scripts/manage/deploy-to-udms.sh [OPTIONS]
+#   ./manage/deploy-to-udms.sh [OPTIONS]
 #
 # Options:
 #   --config FILE    Config file with UDM list (default: deploy-udms.conf)
-#   --file PACKAGE   Package file to deploy (default: /tmp/udm-vpn-monitor.zip)
-#   --skip-tail      Skip interactive tail -f after each deployment
+#   --file PACKAGE   Package file to deploy (default: REPO_ROOT/udm-vpn-monitor.zip)
+#   --skip-tail      Skip interactive tail -f (default)
+#   --tail-follow    After each host, interactive tail -f until Ctrl+C, then y/n registry confirm
 #   --force          Deploy even if registry shows host already at this version
 #   --dry-run        Print planned operations without connecting to UDMs
 #   --help           Show this help message
@@ -24,18 +25,18 @@
 # Config format (one target per line):
 #   host_or_ip [bind_ip]
 #
-# See scripts/manage/deploy-udms.conf.example for details.
+# See manage/deploy-udms.conf.example for details.
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 LOGS_DIR="${REPO_ROOT}/logs"
 DEPLOY_LOG_FILE="${DEPLOY_LOG_FILE:-${LOGS_DIR}/deploy-to-udms.log}"
 CONFIG_FILE="${REPO_ROOT}/deploy-udms.conf"
-PACKAGE_FILE="/tmp/udm-vpn-monitor.zip"
-SKIP_TAIL=0
+PACKAGE_FILE="${REPO_ROOT}/udm-vpn-monitor.zip"
+SKIP_TAIL=1
 FORCE_DEPLOY=0
 DRY_RUN=0
 
@@ -47,13 +48,13 @@ if [[ -f "${REPO_ROOT}/lib/common.sh" ]]; then
 fi
 
 # Source deployment registry helpers (requires lib/common.sh)
-# shellcheck source=scripts/deploy-registry.sh
+# shellcheck source=manage/deploy-registry.sh
 if [[ -f "${SCRIPT_DIR}/deploy-registry.sh" ]] && [[ -f "${REPO_ROOT}/lib/common.sh" ]]; then
-	# shellcheck source=scripts/deploy-registry.sh
+	# shellcheck source=manage/deploy-registry.sh
 	source "${SCRIPT_DIR}/deploy-registry.sh"
 fi
 
-# shellcheck source=scripts/manage/lib/ssh_control.sh
+# shellcheck source=manage/lib/ssh_control.sh
 source "${SCRIPT_DIR}/lib/ssh_control.sh"
 manage_init_terminal_colors
 
@@ -133,15 +134,16 @@ Deploy UDM VPN Monitor to multiple UDMs from a config file.
 
 Options:
   --config FILE    Config file with UDM list (default: deploy-udms.conf)
-  --file PACKAGE   Package file to deploy (default: /tmp/udm-vpn-monitor.zip)
-  --skip-tail      Skip interactive tail -f after each deployment
+  --file PACKAGE   Package file to deploy (default: REPO_ROOT/udm-vpn-monitor.zip)
+  --skip-tail      Skip interactive tail -f after each deployment (default)
+  --tail-follow    Interactive tail -f per host until Ctrl+C, then y/n registry confirm
   --force          Deploy even if registry shows host already at this version
   --dry-run        Print planned operations without connecting to UDMs
   --help           Show this help message
 
 Config format: host_or_ip [bind_ip]
 If bind_ip omitted, uses LOCAL_UDM_IP from vpn-monitor.conf.
-See scripts/manage/deploy-udms.conf.example for details.
+See manage/deploy-udms.conf.example for details.
 EOF
 }
 
@@ -166,6 +168,10 @@ parse_args() {
 			;;
 		--skip-tail)
 			SKIP_TAIL=1
+			shift
+			;;
+		--tail-follow)
+			SKIP_TAIL=0
 			shift
 			;;
 		--force)
@@ -227,7 +233,7 @@ main() {
 
 	if [[ ! -f "$CONFIG_FILE" ]]; then
 		log_error "Config file not found: $CONFIG_FILE"
-		log_info "Copy scripts/manage/deploy-udms.conf.example to deploy-udms.conf and add your UDMs"
+		log_info "Copy manage/deploy-udms.conf.example to deploy-udms.conf and add your UDMs"
 		exit 1
 	fi
 

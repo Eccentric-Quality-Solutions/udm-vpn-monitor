@@ -109,6 +109,11 @@ INSTALL_SCRIPT="${BATS_TEST_DIRNAME}/../install.sh"
 	assert_file_exist "${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
 	# Verify config file has readable permissions (644 is typical for config files)
 	assert_file_permission 644 "${TEST_DIR}/vpn-monitor/vpn-monitor.conf"
+	# Fleet controller tree (top-level manage/)
+	assert_dir_exist "${TEST_DIR}/vpn-monitor/manage"
+	assert_file_exist "${TEST_DIR}/vpn-monitor/manage/status-udms.sh"
+	assert_file_executable "${TEST_DIR}/vpn-monitor/manage/status-udms.sh"
+	assert_file_exist "${TEST_DIR}/vpn-monitor/manage/lib/ssh_control.sh"
 }
 
 # bats test_tags=category:unit
@@ -1102,6 +1107,6 @@ EOF
 	assert_file_exist "${install_dir}/vpn-monitor-control.sh"
 	assert_file_executable "${install_dir}/vpn-monitor-control.sh"
 	assert_file_exist "${install_dir}/state/operating_mode"
-	run grep "^mode=running" "${install_dir}/state/operating_mode"
+	run grep "^mode=observe-only" "${install_dir}/state/operating_mode"
 	assert_success
 }

@@ -4,28 +4,28 @@
 # SSH to one or more UDMs and run vpn-monitor-control.sh
 #
 # Usage:
-#   ./scripts/manage/control-remote-udm.sh [OPTIONS] COMMAND [ARGS]
+#   ./manage/control-remote-udm.sh [OPTIONS] COMMAND [ARGS]
 #
 # Commands: start | stop | pause | observe-only | status
 # Options for pause: --until TIME [--reason TEXT]
 #
 # Examples:
-#   ./scripts/manage/control-remote-udm.sh --host 192.168.1.100 status
-#   ./scripts/manage/control-remote-udm.sh --host 192.168.1.100 pause --until +2h
-#   ./scripts/manage/control-remote-udm.sh --config control-udms.conf stop
+#   ./manage/control-remote-udm.sh --host 192.168.1.100 status
+#   ./manage/control-remote-udm.sh --host 192.168.1.100 pause --until +2h
+#   ./manage/control-remote-udm.sh --config control-udms.conf stop
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # shellcheck source=lib/common.sh
 if [[ -f "${REPO_ROOT}/lib/common.sh" ]]; then
 	source "${REPO_ROOT}/lib/common.sh"
 fi
 
-# shellcheck source=scripts/manage/lib/ssh_control.sh
+# shellcheck source=manage/lib/ssh_control.sh
 source "${SCRIPT_DIR}/lib/ssh_control.sh"
 manage_init_terminal_colors
 
@@ -66,16 +66,19 @@ Options:
   --help            Show this help
 
 Commands:
-  start             Restore normal monitoring
+  start             Restore normal monitoring (recovery enabled)
   stop              Halt monitoring on target
-  pause             Pause until time (--until required on target)
+  pause             Pause until --until TIME, or indefinitely if omitted
   observe-only      Log only, no recovery
   status            Show operating mode on target
 
 Examples:
   $0 --host 192.168.1.100 status
+  $0 --host 192.168.1.100 pause --reason hold
   $0 --host 192.168.1.100 pause --until +30m --reason maintenance
   $0 --config control-udms.conf stop
+
+See also: docs/scripts/CONTROL_PLANE_ACCEPTANCE.md (stage-1 control-plane checklist)
 EOF
 }
 

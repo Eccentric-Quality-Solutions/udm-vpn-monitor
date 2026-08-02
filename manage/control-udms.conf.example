@@ -8,7 +8,7 @@
 # Username and password are prompted for each UDM.
 #
 # Copy to control-udms.conf (in repo root) and add your UDMs:
-#   cp scripts/manage/control-udms.conf.example control-udms.conf
+#   cp manage/control-udms.conf.example control-udms.conf
 #
 # Example entries:
 # 192.168.1.100

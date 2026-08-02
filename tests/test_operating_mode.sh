@@ -29,7 +29,25 @@ setup() {
 }
 
 # bats test_tags=category:unit
-@test "get_operating_mode defaults to running when state file missing" {
+@test "get_operating_mode defaults to observe-only when state file missing" {
+	run get_operating_mode
+	assert_success
+	assert_output "observe-only"
+}
+
+# bats test_tags=category:unit
+@test "ensure_operating_mode_initialized creates observe-only when missing" {
+	ensure_operating_mode_initialized
+	run get_operating_mode
+	assert_success
+	assert_output "observe-only"
+	grep -q "^mode=observe-only" "${STATE_DIR}/operating_mode"
+}
+
+# bats test_tags=category:unit
+@test "ensure_operating_mode_initialized preserves existing mode" {
+	set_operating_mode "running" "0" "" "test"
+	ensure_operating_mode_initialized
 	run get_operating_mode
 	assert_success
 	assert_output "running"
@@ -73,6 +91,58 @@ setup() {
 }
 
 # bats test_tags=category:unit
+@test "check_operating_mode exits early for indefinite pause" {
+	set_operating_mode "paused" "0" "hold" "test"
+	run check_operating_mode
+	assert_failure
+	run get_operating_mode
+	assert_output "paused"
+}
+
+# bats test_tags=category:unit
+@test "vpn-monitor-control.sh pause without --until is indefinite" {
+	setup_control_script_install_tree "${TEST_DIR}"
+	# Stub crontab so install_vpn_monitor_cron succeeds without system cron privileges
+	mkdir -p "${TEST_DIR}/bin"
+	cat >"${TEST_DIR}/bin/crontab" <<'EOF'
+#!/bin/bash
+# Minimal stub: accept list / remove / install from stdin
+case "${1:-}" in
+-l) exit 0 ;;
+-r) exit 0 ;;
+-)
+	cat >/dev/null
+	exit 0
+	;;
+*)
+	# crontab with no args sometimes means install from stdin
+	if [[ ! -t 0 ]]; then
+		cat >/dev/null
+	fi
+	exit 0
+	;;
+esac
+EOF
+	chmod +x "${TEST_DIR}/bin/crontab"
+	export PATH="${TEST_DIR}/bin:${PATH}"
+	cd "${TEST_DIR}" || exit 1
+	run bash "${TEST_DIR}/vpn-monitor-control.sh" pause --reason "hold"
+	assert_success
+	assert_output --partial "indefinitely"
+	run get_operating_mode
+	assert_output "paused"
+	grep -q "^paused_until=0" "${STATE_DIR}/operating_mode"
+}
+
+# bats test_tags=category:unit
+@test "vpn-monitor-control.sh pause rejects past --until" {
+	setup_control_script_install_tree "${TEST_DIR}"
+	cd "${TEST_DIR}" || exit 1
+	run bash "${TEST_DIR}/vpn-monitor-control.sh" pause --until 1000
+	assert_failure
+}
+
+# bats test_tags=category:unit
 @test "check_operating_mode auto-resumes expired pause" {
 	local past
 	past=$(($(date +%s) - 60))
@@ -99,14 +169,6 @@ setup() {
 	run bash "${TEST_DIR}/vpn-monitor-control.sh" status
 	assert_success
 	assert_output --partial "observe-only"
-}
-
-# bats test_tags=category:unit
-@test "vpn-monitor-control.sh pause requires --until" {
-	setup_control_script_install_tree "${TEST_DIR}"
-	cd "${TEST_DIR}" || exit 1
-	run bash "${TEST_DIR}/vpn-monitor-control.sh" pause
-	assert_failure
 }
 
 # bats test_tags=category:unit

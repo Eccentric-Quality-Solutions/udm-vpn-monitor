@@ -967,7 +967,7 @@ Each peer's monitoring and recovery actions operate completely independently.
 - **Purpose**: Persists operator-selected run mode set by `vpn-monitor-control.sh`
 - **Format**: Key=value lines (`mode`, optional `paused_until`, `reason`, `set_by`)
 - **Usage**: Read by `check_operating_mode()` at the start of each monitor/wrapper run
-- **Default**: `mode=running` when file is missing (initialized by `install.sh`)
+- **Default**: `mode=observe-only` when file is missing (initialized by `install.sh`)
 
 **Ping Summary** (`ping_summary_last_time`, `ping_summary_count`):
 - **Purpose**: Throttles periodic INFO summaries of successful ping checks
@@ -1383,10 +1383,10 @@ The monitor supports persistent operating modes controlled via `vpn-monitor-cont
 
 | Mode | Monitor behavior |
 |------|------------------|
-| `running` (default) | Normal detection and tiered recovery |
+| `running` | Normal detection and tiered recovery (enable with `vpn-monitor-control.sh start`) |
 | `stopped` | `check_operating_mode()` exits early; cron/wrapper/keepalive removed by `stop` command |
-| `paused` | Exits early until `paused_until` epoch; auto-resumes to `running` when expired |
-| `observe-only` | Runs detection and logging; sets `NO_ESCALATE=1` (same recovery effect as `vpn-monitor.sh --fake`) |
+| `paused` | Exits early until `paused_until` epoch, or indefinitely when `paused_until=0`; timed pause auto-resumes to `running` when expired |
+| `observe-only` (default) | Runs detection and logging; sets `NO_ESCALATE=1` (same recovery effect as `vpn-monitor.sh --fake`). Fresh installs and missing state files use this mode. |
 
 **One-shot dry run**: `vpn-monitor.sh --fake` sets `NO_ESCALATE=1` for a single invocation without changing `state/operating_mode` (useful for manual checks).
 
@@ -1395,7 +1395,7 @@ The monitor supports persistent operating modes controlled via `vpn-monitor-cont
 - `vpn-monitor-wrapper.sh` re-checks mode each loop iteration (pause/stop can take effect between sub-minute runs)
 - `stop` / `start` also manage cron entries and keepalive via `lib/control/cron_control.sh` and `lib/control/keepalive_control.sh`
 
-**Remote control**: `scripts/manage/control-remote-udm.sh` runs `vpn-monitor-control.sh` over SSH on deployed UDMs.
+**Remote control**: `manage/control-remote-udm.sh` runs `vpn-monitor-control.sh` over SSH on deployed UDMs.
 
 ## VPN Keepalive Daemon
 

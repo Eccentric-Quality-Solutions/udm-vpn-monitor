@@ -1,11 +1,11 @@
 #!/usr/bin/env bats
 #
-# Tests for scripts/manage/uninstall-from-udm.sh and uninstall-from-udms.sh
+# Tests for manage/uninstall-from-udm.sh and uninstall-from-udms.sh
 
 load test_helper
 
-SINGLE_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/manage/uninstall-from-udm.sh"
-BATCH_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/manage/uninstall-from-udms.sh"
+SINGLE_SCRIPT="${BATS_TEST_DIRNAME}/../manage/uninstall-from-udm.sh"
+BATCH_SCRIPT="${BATS_TEST_DIRNAME}/../manage/uninstall-from-udms.sh"
 PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 
 # bats test_tags=category:unit
@@ -68,8 +68,8 @@ PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 	mkdir -p "$(dirname "$DEPLOY_REGISTRY_FILE")"
 	printf '%s\n' $'192.168.1.100\t0.8.0\t2025-02-14T12:00:00' $'192.168.1.10\t0.8.0\t2025-02-14T12:01:00' >"$DEPLOY_REGISTRY_FILE"
 
-	# shellcheck source=scripts/manage/deploy-registry.sh
-	source "${PROJECT_ROOT}/scripts/manage/deploy-registry.sh"
+	# shellcheck source=manage/deploy-registry.sh
+	source "${PROJECT_ROOT}/manage/deploy-registry.sh"
 	remove_registry_entry "192.168.1.10"
 
 	grep -q $'192.168.1.100\t' "$DEPLOY_REGISTRY_FILE" || {
@@ -90,8 +90,8 @@ PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 	mkdir -p "$(dirname "$DEPLOY_REGISTRY_FILE")"
 	printf '%s\n' $'192.168.1.100\t0.8.0\t2025-02-14T12:00:00' >"$DEPLOY_REGISTRY_FILE"
 
-	# shellcheck source=scripts/manage/deploy-registry.sh
-	source "${PROJECT_ROOT}/scripts/manage/deploy-registry.sh"
+	# shellcheck source=manage/deploy-registry.sh
+	source "${PROJECT_ROOT}/manage/deploy-registry.sh"
 	remove_registry_entry "192.168.1.200"
 
 	grep -q $'192.168.1.100\t' "$DEPLOY_REGISTRY_FILE" || {

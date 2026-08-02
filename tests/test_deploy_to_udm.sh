@@ -15,7 +15,7 @@
 load test_helper
 load helpers/mocks
 
-DEPLOY_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/manage/deploy-to-udm.sh"
+DEPLOY_SCRIPT="${BATS_TEST_DIRNAME}/../manage/deploy-to-udm.sh"
 PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 
 # bats test_tags=category:unit
@@ -389,7 +389,7 @@ exit 0" >/dev/null
 	echo -e "192.168.1.100\t0.8.0\t2025-02-14T12:00:00" >"$DEPLOY_REGISTRY_FILE"
 
 	# Source and call record_deployment for 192.168.1.10 (substring of 192.168.1.100)
-	source "${PROJECT_ROOT}/scripts/manage/deploy-registry.sh"
+	source "${PROJECT_ROOT}/manage/deploy-registry.sh"
 	record_deployment "192.168.1.10" "0.8.0" "2025-02-14T12:01:00"
 
 	# 192.168.1.100 must still exist; 192.168.1.10 must be added

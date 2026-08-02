@@ -6,7 +6,7 @@ SSH-based live inventory of VPN Monitor installation state across a fleet of UDM
 
 ### Requirement: Fleet status script reports live inventory per UDM
 
-The system SHALL provide `scripts/manage/status-udms.sh` that reads a fleet config file and for each listed host reports live installation state gathered over SSH together with the local deploy-registry row (if any).
+The system SHALL provide `manage/status-udms.sh` that reads a fleet config file and for each listed host reports live installation state gathered over SSH together with the local deploy-registry row (if any).
 
 #### Scenario: Per-host report includes required fields
 
@@ -39,7 +39,7 @@ _Verified by: `tests/test_fleet_status.sh`_
 
 ### Requirement: Fleet status uses standard fleet config and SSH transport
 
-The fleet status script SHALL read hosts using the same `host [bind_ip]` format as `deploy-udms.conf.example` and reuse ControlMaster SSH patterns from other `scripts/manage/` tools.
+The fleet status script SHALL read hosts using the same `host [bind_ip]` format as `deploy-udms.conf.example` and reuse ControlMaster SSH patterns from other `manage/` tools.
 
 #### Scenario: Default and explicit config files
 

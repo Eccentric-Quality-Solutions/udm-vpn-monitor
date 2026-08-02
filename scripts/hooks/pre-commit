@@ -1,10 +1,10 @@
 #!/bin/bash
 #
 # Pre-commit hook for UDM VPN Monitor
-# Runs linting, formatting checks, and regenerates the install package
+# Runs linting and formatting checks on staged shell scripts.
 #
-# This ensures code quality and that the installer package is always up-to-date
-# with the current codebase when committing changes.
+# Install packages (udm-vpn-monitor.zip / .tar.gz) are built by GitHub Actions,
+# not committed. For a local package: ./scripts/prepare_install_package.sh
 #
 set -euo pipefail
 
@@ -140,35 +140,5 @@ if [[ ${#STAGED_SH_FILES[@]} -gt 0 ]]; then
 		fi
 	fi
 fi
-
-# Check if prepare_install_package.sh exists
-if [[ ! -f "${REPO_ROOT}/scripts/prepare_install_package.sh" ]]; then
-	echo "Error: prepare_install_package.sh not found" >&2
-	exit 1
-fi
-
-# Check if prepare_install_package.sh is executable
-if [[ ! -x "${REPO_ROOT}/scripts/prepare_install_package.sh" ]]; then
-	chmod +x "${REPO_ROOT}/scripts/prepare_install_package.sh"
-fi
-
-echo "Running prepare_install_package.sh..."
-
-# Run prepare_install_package.sh
-if ! "${REPO_ROOT}/scripts/prepare_install_package.sh"; then
-	echo "Error: prepare_install_package.sh failed" >&2
-	exit 1
-fi
-
-# Check if the zip file was created
-PACKAGE_FILE="${REPO_ROOT}/udm-vpn-monitor.zip"
-if [[ ! -f "$PACKAGE_FILE" ]]; then
-	echo "Error: Package file not created: $PACKAGE_FILE" >&2
-	exit 1
-fi
-
-# Add the package file to the staging area
-echo "Adding ${PACKAGE_FILE} to commit..."
-git add "$PACKAGE_FILE"
 
 echo "Pre-commit hook completed successfully."

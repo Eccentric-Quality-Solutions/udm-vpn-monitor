@@ -503,6 +503,11 @@ create_test_install_setup() {
 		chmod +x "${test_install_dir}/compare-config.sh"
 	fi
 
+	# Fleet controller tools (optional; install copies into $INSTALL_DIR/manage/)
+	if [[ -d "${project_root}/manage" ]]; then
+		cp -r "${project_root}/manage" "${test_install_dir}/manage"
+	fi
+
 	echo "${test_install_dir}/install.sh"
 }
 

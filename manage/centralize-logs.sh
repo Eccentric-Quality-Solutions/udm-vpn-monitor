@@ -8,7 +8,7 @@
 # archives them to a tar.gz and removes the loose .log files.
 #
 # Usage:
-#   ./scripts/manage/centralize-logs.sh
+#   ./manage/centralize-logs.sh
 #
 # Conf file: centralize.conf in the same directory as this script.
 # Copy centralize.conf.example to centralize.conf and edit.

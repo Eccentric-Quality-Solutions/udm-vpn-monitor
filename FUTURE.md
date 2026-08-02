@@ -1,6 +1,8 @@
 Considerations for the future—avoid overarchitecting (YAGNI). Remove a bullet when the behavior exists in-tree.
 
-**Context:** Deploy scripts: `scripts/manage/`. Anonymization: `scripts/anonymize/`. State: `lib/state/` (per-peer state with location as parameter; no `location_state.sh`). Tests: 90 `tests/test_*.sh`; mapping in `docs/testing/RELEVANT_TESTS.md`. For `ip` / `ip -s xfrm state` mocks, use `tests/test_helper.bash` and `tests/helpers/mocks.bash`—see `docs/testing/TEST_MAINTENANCE.md`.
+**Context:** Deploy scripts: `manage/`. Anonymization: `scripts/anonymize/`. State: `lib/state/` (per-peer state with location as parameter; no `location_state.sh`). Tests: 90 `tests/test_*.sh`; mapping in `docs/testing/RELEVANT_TESTS.md`. For `ip` / `ip -s xfrm state` mocks, use `tests/test_helper.bash` and `tests/helpers/mocks.bash`—see `docs/testing/TEST_MAINTENANCE.md`.
+
+- **Observe-only log wording / defense-in-depth** — Recovery suppression logs say “skipped in fake mode” even when mode is observe-only (shared `NO_ESCALATE` gate). Optional: clarify log text (“fake/observe-only”). Optional belt-and-suspenders: refuse `surgical_cleanup` / `full_restart` when `NO_ESCALATE=1` so a future mistaken caller cannot escalate. Priority: LOW (current single gate is correct for production path).
 
 - **`DEFAULT_LAN_INTERFACE` in config (optional)** — Today `lib/constants.sh` sets `DEFAULT_LAN_INTERFACE=br0` (readonly). Nice-to-have: `vpn-monitor.conf` key or auto-detect interface for `LOCAL_UDM_IP` (`ip -o addr show`). Priority: LOW.
 

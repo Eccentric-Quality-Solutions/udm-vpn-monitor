@@ -34,10 +34,12 @@ EXPECTED_LIB_FILES=(
 )
 
 EXPECTED_MODULE_DIRS=(
+	"manage/lib"
 	"lib/detection"
 	"lib/recovery"
 	"lib/config"
 	"lib/state"
+	"lib/control"
 )
 
 EXPECTED_SCRIPT_FILES=(
@@ -46,17 +48,19 @@ EXPECTED_SCRIPT_FILES=(
 	"scripts/anonymize/anonymize-ip-rules.sh"
 	"scripts/anonymize/anonymize-ipset.sh"
 	"scripts/anonymize/anonymize-logs.sh"
-	"scripts/manage/centralize-logs.sh"
-	"scripts/manage/centralize.conf.example"
-	"scripts/manage/deploy-registry.sh"
-	"scripts/manage/deploy-to-udm.sh"
-	"scripts/manage/deploy-to-udms.sh"
-	"scripts/manage/deploy-udms.conf.example"
-	"scripts/manage/uninstall-from-udm.sh"
-	"scripts/manage/uninstall-from-udms.sh"
-	"scripts/manage/status-udms.sh"
-	"scripts/manage/pull-config-from-udms.sh"
-	"scripts/manage/push-config-to-udms.sh"
+	"manage/centralize-logs.sh"
+	"manage/centralize.conf.example"
+	"manage/deploy-registry.sh"
+	"manage/deploy-to-udm.sh"
+	"manage/deploy-to-udms.sh"
+	"manage/deploy-udms.conf.example"
+	"manage/control-remote-udm.sh"
+	"manage/control-udms.conf.example"
+	"manage/uninstall-from-udm.sh"
+	"manage/uninstall-from-udms.sh"
+	"manage/status-udms.sh"
+	"manage/pull-config-from-udms.sh"
+	"manage/push-config-to-udms.sh"
 )
 
 # bats test_tags=category:unit

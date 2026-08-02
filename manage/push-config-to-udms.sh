@@ -3,30 +3,30 @@
 # Push VPN Monitor config from controller working tree to UDM devices.
 #
 # Usage:
-#   ./scripts/manage/push-config-to-udms.sh [OPTIONS]
+#   ./manage/push-config-to-udms.sh [OPTIONS]
 #
 # Workflow:
 #   pull-config-from-udms.sh → edit configs/<host>/vpn-monitor.conf → push
 #
 # Examples:
-#   ./scripts/manage/push-config-to-udms.sh --host 192.168.1.100
-#   ./scripts/manage/push-config-to-udms.sh --config deploy-udms.conf
-#   ./scripts/manage/push-config-to-udms.sh --host 192.168.1.100 --file ./my.conf --dry-run
+#   ./manage/push-config-to-udms.sh --host 192.168.1.100
+#   ./manage/push-config-to-udms.sh --config deploy-udms.conf
+#   ./manage/push-config-to-udms.sh --host 192.168.1.100 --file ./my.conf --dry-run
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # shellcheck source=lib/common.sh
 if [[ -f "${REPO_ROOT}/lib/common.sh" ]]; then
 	source "${REPO_ROOT}/lib/common.sh"
 fi
 
-# shellcheck source=scripts/manage/lib/ssh_control.sh
+# shellcheck source=manage/lib/ssh_control.sh
 source "${SCRIPT_DIR}/lib/ssh_control.sh"
-# shellcheck source=scripts/manage/lib/config_fleet_common.sh
+# shellcheck source=manage/lib/config_fleet_common.sh
 source "${SCRIPT_DIR}/lib/config_fleet_common.sh"
 
 manage_init_terminal_colors

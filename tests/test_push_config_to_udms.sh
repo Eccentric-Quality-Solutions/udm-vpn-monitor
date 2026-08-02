@@ -1,10 +1,10 @@
 #!/usr/bin/env bats
 #
-# Tests for scripts/manage/push-config-to-udms.sh
+# Tests for manage/push-config-to-udms.sh
 
 load test_helper
 
-PUSH_SCRIPT="${BATS_TEST_DIRNAME}/../scripts/manage/push-config-to-udms.sh"
+PUSH_SCRIPT="${BATS_TEST_DIRNAME}/../manage/push-config-to-udms.sh"
 PROJECT_ROOT="${BATS_TEST_DIRNAME}/.."
 
 write_local_push_config() {

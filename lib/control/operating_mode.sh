@@ -31,9 +31,9 @@ get_operating_mode_file_path() {
 # Get default operating mode when no state file exists
 #
 # Output:
-#   Prints default mode (running)
+#   Prints default mode (observe-only)
 get_default_operating_mode() {
-	echo "$OPERATING_MODE_RUNNING"
+	echo "$OPERATING_MODE_OBSERVE_ONLY"
 }
 
 # Read a key=value field from operating_mode file
@@ -66,7 +66,7 @@ _read_operating_mode_field() {
 # Read current operating mode from state file
 #
 # Output:
-#   Prints mode string (defaults to running)
+#   Prints mode string (defaults to observe-only)
 #
 # Returns:
 #   0: Always
@@ -110,7 +110,7 @@ get_operating_mode_paused_until() {
 #
 # Arguments:
 #   $1: mode (running|stopped|paused|observe-only)
-#   $2: paused_until epoch (optional, required when mode=paused)
+#   $2: paused_until epoch (0 = indefinite when mode=paused; future epoch = timed pause)
 #   $3: reason (optional)
 #   $4: set_by identity (optional)
 #
@@ -133,8 +133,9 @@ set_operating_mode() {
 	esac
 
 	if [[ "$mode" == "$OPERATING_MODE_PAUSED" ]]; then
-		if ! is_non_negative_integer "$paused_until" || [[ "$paused_until" -le 0 ]]; then
-			log_message "ERROR" "SYSTEM" "paused_until required for pause mode"
+		# 0 = indefinite pause (until explicit start/observe-only/stop)
+		if ! is_non_negative_integer "$paused_until"; then
+			log_message "ERROR" "SYSTEM" "paused_until must be non-negative integer for pause mode"
 			return 1
 		fi
 	else
@@ -165,7 +166,7 @@ reason=${reason}"
 	return 0
 }
 
-# Ensure operating_mode file exists with default running mode
+# Ensure operating_mode file exists with default observe-only mode
 #
 # Returns:
 #   0: Success
@@ -173,7 +174,7 @@ ensure_operating_mode_initialized() {
 	local file
 	file=$(get_operating_mode_file_path) || return 1
 	if [[ ! -f "$file" ]]; then
-		set_operating_mode "$OPERATING_MODE_RUNNING" "0" "" "system"
+		set_operating_mode "$OPERATING_MODE_OBSERVE_ONLY" "0" "" "system"
 	fi
 	return 0
 }
@@ -261,7 +262,8 @@ format_pause_until_display() {
 # Check operating mode at monitor startup
 #
 # Sets NO_ESCALATE=1 when mode is observe-only.
-# Auto-resumes from expired pause to running.
+# Auto-resumes from expired timed pause to running.
+# Indefinite pause (paused_until=0) never auto-resumes.
 #
 # Returns:
 #   0: Continue monitor execution
@@ -279,11 +281,15 @@ check_operating_mode() {
 		return 1
 		;;
 	"$OPERATING_MODE_PAUSED")
+		if [[ "$paused_until" -eq 0 ]]; then
+			log_message "INFO" "SYSTEM" "Monitor is paused indefinitely; skipping execution"
+			return 1
+		fi
 		if [[ "$paused_until" -gt "$now" ]]; then
 			log_message "INFO" "SYSTEM" "Monitor is paused until $(format_pause_until_display "$paused_until"); skipping execution"
 			return 1
 		fi
-		# Expired pause — auto-resume
+		# Expired timed pause — auto-resume
 		prev_mode="$mode"
 		if set_operating_mode "$OPERATING_MODE_RUNNING" "0" "" "auto-resume"; then
 			log_message "INFO" "SYSTEM" "Pause expired; operating mode changed from ${prev_mode} to ${OPERATING_MODE_RUNNING}"

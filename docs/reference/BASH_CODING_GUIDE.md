@@ -2833,7 +2833,7 @@ Do not strip `#` from the RHS with `${assignment%%#*}` before quote-aware parsin
 
 When `condition` is often false, a failed `[[ ]]` as the last command in a function returns non-zero and can abort the caller under `set -e`. Use `if [[ condition ]]; then command; fi` instead.
 
-Example: `scripts/manage/lib/ssh_control.sh` optional color/verbose init.
+Example: `manage/lib/ssh_control.sh` optional color/verbose init.
 
 ---
 
