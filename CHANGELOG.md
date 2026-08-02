@@ -4,7 +4,11 @@ All notable changes to the UDM VPN Monitor project will be documented in this fi
 
 ## Unreleased
 
+### Fixed
+- **Location scan starvation**: `process_locations()` sorts location names and rotates the start index via `${STATE_DIR}/location_scan_offset` (advanced at the start of each run) so slow or incomplete cycles do not always re-check the same first locations.
+
 ### Added
+- **Location scan offset state**: `${STATE_DIR}/location_scan_offset` for round-robin location check order across monitor runs (see `docs/reference/STATE_SYSTEM.md`).
 - **Indefinite pause**: `vpn-monitor-control.sh pause` without `--until` pauses until an explicit `start`, `observe-only`, or `stop` (`paused_until=0`). Timed `--until` pause is unchanged (expired timed pause still auto-resumes to `running`).
 - **Shared wrapper stop**: `lib/control/wrapper_control.sh` (`stop_monitor_wrapper`) used by `vpn-monitor-control.sh` and `uninstall.sh` so fleet deploy/uninstall stops a live monitor wrapper before deleting the install tree.
 - **CI / Release install packages**: GitHub Actions builds `udm-vpn-monitor.zip` and `udm-vpn-monitor.tar.gz` (workflow `build-package.yml` uploads the `udm-vpn-monitor-packages` artifact on push/PR; `release.yml` attaches both to GitHub Releases on `v*` tags).

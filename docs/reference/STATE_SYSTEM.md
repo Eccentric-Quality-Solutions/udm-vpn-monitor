@@ -305,7 +305,15 @@ These files control script execution and prevent concurrent runs.
 - **Update**: Updated on every script run via `touch` command
 - **Detection Logic**: Grace period applies if file doesn't exist or is older than 5 minutes (indicates restart or script hasn't run recently). When applied, the script sleeps `STARTUP_GRACE_PERIOD` seconds (default 5) before VPN checks.
 
-### 5. Operating Mode (`operating_mode`)
+### 5. Location Scan Offset (`location_scan_offset`)
+
+- **Path**: `${STATE_DIR}/location_scan_offset`
+- **Purpose**: Round-robin start index so slow or incomplete monitor runs do not always re-check the same first locations
+- **Format**: Non-negative integer (corrupt/missing → `0`)
+- **Usage**: `process_locations()` sorts location names (`LC_ALL=C sort`), starts at `offset % N`, then advances offset by 1 (mod N) at the **start** of each run so fairness still rotates when a run is cut short
+- **Write**: Atomic via `atomic_write_file()` (`chmod 600`)
+
+### 6. Operating Mode (`operating_mode`)
 
 - **Path**: `${STATE_DIR}/operating_mode`
 - **Purpose**: Controls whether the monitor runs, is paused, or operates in observe-only mode

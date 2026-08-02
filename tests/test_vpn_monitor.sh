@@ -557,7 +557,8 @@ VPN_MONITOR_SCRIPT="${BATS_TEST_DIRNAME}/../vpn-monitor.sh"
 		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
 		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\"" \
 		'LOCATION_DC_EXTERNAL="198.51.100.1"' \
-		'LOCATION_DC_INTERNAL="192.168.2.1"'
+		'LOCATION_DC_INTERNAL="192.168.2.1"' \
+		'ENABLE_RESOURCE_MONITORING=0'
 
 	TEST_CONFIG_FILE="$config_file"
 	TEST_SCRIPT=$(create_test_vpn_monitor_script \
@@ -594,6 +595,67 @@ EOF
 	assert_success
 	# Should process both locations
 	assert_file_exist "$LOG_FILE"
+	# First run (offset 0): sorted order DC then NYC; offset advances to 1
+	assert_file_contains "$LOG_FILE" "Found 2 location(s): DC"
+	assert_file_exist "${STATE_DIR}/location_scan_offset"
+	assert_equal "$(cat "${STATE_DIR}/location_scan_offset")" "1"
+
+	remove_mock_from_path
+}
+
+# bats test_tags=slow,category:unit
+@test "vpn-monitor.sh process_locations rotates scan start across runs" {
+	# Purpose: Successive runs advance location_scan_offset so later locations are not starved.
+	# Expected: Run 1 logs DC then NYC (sorted); run 2 logs NYC then DC; offset wraps 0→1→0.
+	setup_test_environment "${TEST_DIR}"
+	local config_file="${TEST_DIR}/vpn-monitor.conf"
+	setup_test_location_config "$config_file" \
+		'LOCATION_NYC_EXTERNAL="203.0.113.1"' \
+		"LOCATION_NYC_INTERNAL=\"${TEST_PEER_IP}\"" \
+		'LOCATION_DC_EXTERNAL="198.51.100.1"' \
+		'LOCATION_DC_INTERNAL="192.168.2.1"' \
+		'ENABLE_RESOURCE_MONITORING=0' \
+		'ENABLE_NETWORK_PARTITION_CHECK=0' \
+		'STARTUP_GRACE_PERIOD=0'
+
+	TEST_CONFIG_FILE="$config_file"
+	TEST_SCRIPT=$(create_test_vpn_monitor_script \
+		"$VPN_MONITOR_SCRIPT" \
+		"${TEST_DIR}/vpn-monitor.sh" \
+		"$TEST_CONFIG_FILE" \
+		"$STATE_DIR" \
+		"$LOG_FILE")
+	export TEST_CONFIG_FILE TEST_SCRIPT
+
+	local mock_ip="${TEST_DIR}/ip"
+	cat >"$mock_ip" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "xfrm" ]] && [[ "$2" == "state" ]]; then
+    echo "src 192.168.1.1 dst 203.0.113.1"
+    echo "    proto esp spi 0x12345678 reqid 1 mode tunnel"
+    echo "    lifetime current: 1000 bytes, 10 packets"
+    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+    echo "src 192.168.2.1 dst 198.51.100.1"
+    echo "    proto esp spi 0x87654321 reqid 2 mode tunnel"
+    echo "    lifetime current: 1000 bytes, 10 packets"
+    echo "    sel src 0.0.0.0/0 dst 0.0.0.0/0"
+fi
+EOF
+	chmod +x "$mock_ip"
+	add_mock_to_path
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
+	assert_success
+	assert_file_contains "$LOG_FILE" "Found 2 location(s): DC ("
+	assert_equal "$(cat "${STATE_DIR}/location_scan_offset")" "1"
+
+	# Truncate log so second-run Found line is unambiguous
+	: >"$LOG_FILE"
+
+	PATH="${TEST_DIR}:${PATH}" run bash "$TEST_SCRIPT" --fake
+	assert_success
+	assert_file_contains "$LOG_FILE" "Found 2 location(s): NYC ("
+	assert_equal "$(cat "${STATE_DIR}/location_scan_offset")" "0"
 
 	remove_mock_from_path
 }

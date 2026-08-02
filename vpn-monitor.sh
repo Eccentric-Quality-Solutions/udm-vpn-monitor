@@ -378,10 +378,98 @@ validate_monitor_state() {
 	fi
 }
 
+# Location scan offset state file path
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints ${STATE_DIR}/location_scan_offset
+get_location_scan_offset_file() {
+	echo "${STATE_DIR}/location_scan_offset"
+}
+
+# Read location scan offset for round-robin start (defaults to 0)
+#
+# Returns:
+#   0: Always succeeds
+#
+# Output:
+#   Prints non-negative integer offset
+get_location_scan_offset() {
+	read_counter_file "$(get_location_scan_offset_file)"
+}
+
+# Persist location scan offset for the next monitor run
+#
+# Arguments:
+#   $1: offset (non-negative integer)
+#
+# Returns:
+#   0: Write succeeded
+#   1: Write failed
+set_location_scan_offset() {
+	local offset="$1"
+	local offset_file
+	offset_file=$(get_location_scan_offset_file)
+	if ! atomic_write_file "$offset_file" "$offset"; then
+		log_message "WARNING" "SYSTEM" "Failed to write location scan offset: $offset_file"
+		return 1
+	fi
+	return 0
+}
+
+# Build sorted location names rotated by scan offset (round-robin fairness)
+#
+# Sorts location names, rotates so index "offset % N" is first, advances offset
+# for the next run immediately (so incomplete runs still rotate fairness).
+# Populates the named array with the rotated order.
+#
+# Arguments:
+#   $1: name of caller array to populate (nameref)
+#
+# Returns:
+#   0: Success (array populated; may be empty if LOCATIONS empty)
+#   1: LOCATIONS empty
+build_rotated_location_order() {
+	local -n _rotated_out="$1"
+	_rotated_out=()
+
+	if [[ ${#LOCATIONS[@]} -eq 0 ]]; then
+		return 1
+	fi
+
+	local sorted_names=()
+	local loc_name
+	while IFS= read -r loc_name; do
+		[[ -n "$loc_name" ]] && sorted_names+=("$loc_name")
+	done < <(printf '%s\n' "${!LOCATIONS[@]}" | LC_ALL=C sort)
+
+	local count=${#sorted_names[@]}
+	if [[ $count -eq 0 ]]; then
+		return 1
+	fi
+
+	local offset
+	offset=$(get_location_scan_offset)
+	offset=$((offset % count))
+
+	local i
+	for ((i = 0; i < count; i++)); do
+		_rotated_out+=("${sorted_names[$(((offset + i) % count))]}")
+	done
+
+	# Advance at start so the next run starts one slot later even if this run is cut short
+	set_location_scan_offset $(((offset + 1) % count)) || true
+	return 0
+}
+
 # Process all locations
 #
 # Iterates through configured locations and monitors each one.
 # Uses location external IP for xfrm state checks and location internal IPs for ping checks.
+# Location order is sorted then rotated by location_scan_offset so slow/incomplete runs
+# do not starve later locations across cycles.
 #
 # Returns:
 #   0: All locations are healthy (all monitor_location calls succeeded)
@@ -389,6 +477,7 @@ validate_monitor_state() {
 #
 # Side effects:
 #   - Uses LOCATIONS array populated by validate_config()
+#   - Advances ${STATE_DIR}/location_scan_offset at start of processing
 #   - Calls monitor_location() for each location
 #   - Logs warnings for invalid locations (skips them)
 #   - Enables debug output if DEBUG=1
@@ -401,9 +490,17 @@ process_locations() {
 		return 1
 	fi
 
-	# Log found locations
+	# Sorted + rotated order shared by logging, SWF prep, and monitoring
+	local scan_order=()
+	if ! build_rotated_location_order scan_order; then
+		handle_error_or_exit_fake_mode "SYSTEM" "No locations configured" "${EXIT_VALIDATION_ERROR:-3}"
+		return 1
+	fi
+
+	# Log found locations in this run's scan order (first entry is checked first)
 	local location_list=""
-	for loc in "${!LOCATIONS[@]}"; do
+	local loc
+	for loc in "${scan_order[@]}"; do
 		if [[ -n "$location_list" ]]; then
 			location_list="${location_list}, "
 		fi
@@ -420,7 +517,7 @@ process_locations() {
 			location_list="${location_list}${loc} (${external_ip})"
 		fi
 	done
-	log_message "INFO" "SYSTEM" "Found ${#LOCATIONS[@]} location(s): $location_list"
+	log_message "INFO" "SYSTEM" "Found ${#scan_order[@]} location(s): $location_list"
 
 	# DESIGN DECISION: System-wide failure detection uses failure counts from the previous cycle
 	# rather than checking VPN status in the current cycle. This is an intentional trade-off:
@@ -437,7 +534,8 @@ process_locations() {
 
 	# Step 1: Check existing failure counts from previous cycle
 	declare -A location_failure_status
-	for location_name in "${!LOCATIONS[@]}"; do
+	local location_name
+	for location_name in "${scan_order[@]}"; do
 		# Get external IP for this location
 		local external_peer_ip
 		if ! external_peer_ip=$(get_location_external_ip "$location_name"); then
@@ -466,7 +564,7 @@ process_locations() {
 	# Both arrays use location names as keys
 	declare -A location_names_for_detection
 	declare -A failure_statuses_for_detection
-	for loc in "${!LOCATIONS[@]}"; do
+	for loc in "${scan_order[@]}"; do
 		# location_names_for_detection: key = location name, value = 1 (just a marker)
 		location_names_for_detection["$loc"]=1
 		# failure_statuses_for_detection: key = location name, value = failure status (0 or 1)
@@ -501,7 +599,7 @@ process_locations() {
 	# Step 3: Process each location with recovery coordination
 	# monitor_location() will check should_location_attempt_recovery() internally
 	# to coordinate recovery during system-wide failures
-	for location_name in "${!LOCATIONS[@]}"; do
+	for location_name in "${scan_order[@]}"; do
 		# Get external IP for this location (resolved from DNS if needed)
 		local external_peer_ip
 		if ! external_peer_ip=$(get_location_external_ip_resolved "$location_name"); then
