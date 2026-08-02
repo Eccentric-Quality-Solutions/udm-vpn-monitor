@@ -1,6 +1,6 @@
 ## Context
 
-The repo already has a working Bash control plane under `scripts/manage/` (deploy, status, remote control, config pull/push, log centralize) with OpenSpec coverage for those capabilities. The on-UDM agent already supports `observe-only` (detection/logging with `NO_ESCALATE=1`, no recovery). Fresh installs still initialize `state/operating_mode` to `running` via `ensure_operating_mode_initialized`, so the first cron tick after deploy can recover.
+The repo already has a working Bash control plane under `manage/` (deploy, status, remote control, config pull/push, log centralize) with OpenSpec coverage for those capabilities. The on-UDM agent already supports `observe-only` (detection/logging with `NO_ESCALATE=1`, no recovery). Fresh installs still initialize `state/operating_mode` to `running` via `ensure_operating_mode_initialized`, so the first cron tick after deploy can recover.
 
 This change makes safe-by-default behavior match the near-term goal: prove the controller can manage the fleet while agents only observe. A long-lived management server remains future work (`docs/research/SERVER_APP_RECOMMENDATIONS.md`).
 
@@ -47,7 +47,7 @@ Constraints: UDM OS 4.3+, Bash only, no new dependencies, minimize churn, preser
 
 ### 4. Validation artifact = docs + thin optional helper
 
-**Choice:** Primary deliverable is a documented acceptance checklist under `docs/` (e.g. `docs/scripts/CONTROL_PLANE_ACCEPTANCE.md`) with exact script invocations. Optionally add `scripts/manage/prove-control-plane.sh` that prints/runs steps with `--dry-run` support later; prefer doc-first in implementation unless a wrapper is cheap.
+**Choice:** Primary deliverable is a documented acceptance checklist under `docs/` (e.g. `docs/scripts/CONTROL_PLANE_ACCEPTANCE.md`) with exact script invocations. Optionally add `manage/prove-control-plane.sh` that prints/runs steps with `--dry-run` support later; prefer doc-first in implementation unless a wrapper is cheap.
 
 **Rationale:** The manage scripts already exist; the gap is a single operator definition of “done,” not more fleet primitives.
 

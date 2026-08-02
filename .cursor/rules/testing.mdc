@@ -13,6 +13,7 @@ alwaysApply: true
   3. **Fix or skip** — optimize when reasonable; use BATS `skip` with a clear reason only when the test is legitimately slow/high-risk and cannot be fixed in the current task.
   4. **Update tags** — add or adjust `# bats test_tags=slow` (and existing category/priority tags) so slow tests are excluded from default runs. Use `./tests/tag_slow_tests.sh` to identify candidates.
 - Run **relevant tests** for your changes. Use the **code-to-test table** in `docs/testing/RELEVANT_TESTS.md` to choose which test files to run for the code you changed; not the full suite unless the change is broad or pre-commit.
+- When code behavior changes, **update related tests** in the same change (all matching cases, not a few). See `update-related-tests.mdc`.
 - When asked to run a subset of tests, clarify whether that means test files or test cases; usually test cases — use BATS test case filtering.
 - Ensure tests **stream output** to the terminal and are not buffered.
 - When writing tests, use BATS built-in features and the project's test fixtures and mocks in `tests/helpers/` and `tests/fixtures/`.

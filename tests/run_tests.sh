@@ -1107,7 +1107,9 @@ run_tests_sequential() {
 		# Run test file with timeout wrapper
 		# Capture exit code explicitly to prevent set -e from stopping execution
 		local test_result=0
-		if ! run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT"; then
+		if run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT"; then
+			test_result=0
+		else
 			test_result=$?
 		fi
 
@@ -1223,7 +1225,9 @@ run_tests_parallel() {
 
 		# Capture exit code explicitly to prevent set -e from stopping execution
 		local test_result=0
-		if ! run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT"; then
+		if run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT"; then
+			test_result=0
+		else
 			test_result=$?
 		fi
 
@@ -1817,7 +1821,9 @@ run_tests_sequential_with_coverage() {
 		# Run test file with per-test timeout and coverage
 		# Capture exit code explicitly to prevent set -e from stopping execution
 		local test_result=0
-		if ! run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT" "1" "$coverage_dir" "${kcov_args[@]}"; then
+		if run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT" "1" "$coverage_dir" "${kcov_args[@]}"; then
+			test_result=0
+		else
 			test_result=$?
 		fi
 
@@ -1962,7 +1968,9 @@ run_tests_parallel_with_coverage() {
 
 		# Capture exit code explicitly to prevent set -e from stopping execution
 		local test_result=0
-		if ! run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT" "1" "$COVERAGE_DIR" "${kcov_args_array[@]}"; then
+		if run_test_file_with_timeout "$test_file" "$TEST_TIMEOUT" "1" "$COVERAGE_DIR" "${kcov_args_array[@]}"; then
+			test_result=0
+		else
 			test_result=$?
 		fi
 

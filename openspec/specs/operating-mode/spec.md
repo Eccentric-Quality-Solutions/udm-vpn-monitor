@@ -10,13 +10,13 @@ The system SHALL persist the current monitor operating mode in `${STATE_DIR}/ope
 
 The file SHALL contain at minimum `mode` with one of: `running`, `stopped`, `paused`, `observe-only`.
 
-When `mode=paused`, the file SHALL also contain `paused_until` as Unix epoch seconds.
+When `mode=paused`, the file SHALL also contain `paused_until` as Unix epoch seconds (`0` means indefinite pause).
 
 #### Scenario: Default mode on missing state file
 
 - **GIVEN** no `operating_mode` state file exists
 - **WHEN** the operating mode is read
-- **THEN** the effective mode SHALL be `running`
+- **THEN** the effective mode SHALL be `observe-only`
 
 #### Scenario: Atomic write on mode change
 
@@ -26,6 +26,27 @@ When `mode=paused`, the file SHALL also contain `paused_until` as Unix epoch sec
 - **THEN** a partial write SHALL NOT leave a corrupt `operating_mode` file
 
 _Verified by: `tests/test_operating_mode.sh`_
+
+### Requirement: Fresh install initializes observe-only
+
+When the install path initializes operating mode and no `operating_mode` state file exists, the system SHALL create the file with `mode=observe-only`.
+
+When an `operating_mode` file already exists, install or upgrade SHALL NOT overwrite the existing mode.
+
+#### Scenario: First install creates observe-only
+
+- **GIVEN** a new installation with no prior `state/operating_mode`
+- **WHEN** install completes operating-mode initialization
+- **THEN** `state/operating_mode` SHALL contain `mode=observe-only`
+- **THEN** subsequent monitor runs SHALL detect and log without executing recovery until `start` is used
+
+#### Scenario: Upgrade preserves existing mode
+
+- **GIVEN** an existing installation with `mode=running`
+- **WHEN** install or upgrade re-runs operating-mode initialization
+- **THEN** `mode` SHALL remain `running`
+
+_Verified by: `tests/test_operating_mode.sh`, `tests/test_install.sh`_
 
 ### Requirement: Start command restores normal operation
 
@@ -55,13 +76,15 @@ The system SHALL provide `vpn-monitor-control.sh stop` which sets mode to `stopp
 
 _Verified by: `tests/test_operating_mode.sh`_
 
-### Requirement: Pause command suppresses execution until end time
+### Requirement: Pause command suppresses execution until end time or indefinitely
 
-The system SHALL provide `vpn-monitor-control.sh pause --until <time>` which sets mode to `paused` with a future `paused_until` timestamp and ensures cron is enabled.
+The system SHALL provide `vpn-monitor-control.sh pause` which sets mode to `paused` and ensures cron is enabled.
 
-While paused and current time is before `paused_until`, `vpn-monitor.sh` SHALL exit immediately without performing detection or recovery.
+When `--until <time>` is supplied, the system SHALL set `paused_until` to the parsed future epoch. While paused and current time is before `paused_until`, `vpn-monitor.sh` SHALL exit immediately without performing detection or recovery.
 
-#### Scenario: Active pause skips execution
+When `--until` is omitted, the system SHALL set `paused_until=0` (indefinite). While indefinitely paused, `vpn-monitor.sh` SHALL exit immediately without auto-resuming until an explicit mode change (`start`, `observe-only`, or `stop`).
+
+#### Scenario: Active timed pause skips execution
 
 - **GIVEN** mode is `paused` and `paused_until` is 10 minutes in the future
 - **WHEN** `vpn-monitor.sh` is invoked
@@ -70,21 +93,43 @@ While paused and current time is before `paused_until`, `vpn-monitor.sh` SHALL e
 
 _Verified by: `tests/test_operating_mode.sh`, `tests/test_main.sh`_
 
-#### Scenario: Pause auto-resumes after expiry
+#### Scenario: Indefinite pause skips execution
 
-- **GIVEN** mode is `paused` and `paused_until` is in the past
+- **GIVEN** mode is `paused` and `paused_until` is `0`
+- **WHEN** `vpn-monitor.sh` is invoked
+- **THEN** it SHALL exit without running detection or recovery
+- **THEN** mode SHALL remain `paused`
+
+#### Scenario: Pause auto-resumes after timed expiry
+
+- **GIVEN** mode is `paused` and `paused_until` is in the past and greater than zero
 - **WHEN** `vpn-monitor.sh` is invoked
 - **THEN** mode SHALL transition to `running`
 - **THEN** full detection and recovery SHALL proceed
 
 _Verified by: `tests/test_operating_mode.sh`_
 
-#### Scenario: Reject pause with past time
+#### Scenario: Reject timed pause with past time
 
 - **GIVEN** operator supplies `--until` with a timestamp in the past
 - **WHEN** `vpn-monitor-control.sh pause` is executed
 - **THEN** the command SHALL fail with a validation error
 - **THEN** operating mode SHALL remain unchanged
+
+_Verified by: `tests/test_operating_mode.sh`_
+
+### Requirement: Pause may be indefinite or timed
+
+The system SHALL accept `vpn-monitor-control.sh pause` without `--until`, setting `paused_until=0` (indefinite). Indefinite pause SHALL NOT auto-resume; operators SHALL clear it with `start`, `observe-only`, or `stop`.
+
+When `--until` is supplied with a valid future time, timed pause behavior (including auto-resume to `running` after expiry) SHALL remain available.
+
+#### Scenario: Indefinite pause without --until
+
+- **GIVEN** an installed monitor
+- **WHEN** `vpn-monitor-control.sh pause` is executed without `--until`
+- **THEN** mode SHALL become `paused` with `paused_until=0`
+- **THEN** subsequent monitor invocations SHALL skip detection until mode is changed explicitly
 
 _Verified by: `tests/test_operating_mode.sh`_
 

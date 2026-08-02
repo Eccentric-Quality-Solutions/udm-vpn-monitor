@@ -1,0 +1,31 @@
+---
+description: After code changes, update and verify all related tests (not just a few)
+alwaysApply: true
+---
+
+# Update Related Tests
+
+When production code changes (behavior, flags, defaults, exit codes, CLI, paths, messages that tests assert on), **update the related tests as part of the same change**. Do not leave tests asserting the old behavior.
+
+## What to update
+
+1. **Map code → tests** via `docs/testing/RELEVANT_TESTS.md`. Touch every listed test file that covers the changed path (and callers/callees when the change affects them).
+2. **Update assertions and fixtures** so they match the new behavior: expected strings, flags, exit codes, mocks, helpers, and fixtures.
+3. **Run the relevant tests** after updating them (see `testing.mdc`). Fix failures by correcting either the product code or outdated tests—never change product code only to satisfy a wrong test.
+
+## Find every occurrence (do not stop early)
+
+When renaming symbols, changing flags/messages, or replacing a pattern that appears in tests:
+
+- **Search the whole `tests/` tree** (and helpers/fixtures) for all matches before editing.
+- **Update every match** that refers to the old behavior—not just the first file or the first few assertions.
+- Re-grep after edits and confirm **zero remaining** stale references for that change.
+
+```bash
+# ❌ BAD — patch one failing assertion and stop
+# ✅ GOOD — rg the pattern under tests/, update all hits, re-rg to verify clean
+```
+
+## When tests need no update
+
+Pure refactors with identical observable behavior, comment-only, or docs-only changes may leave tests unchanged. If unsure whether behavior changed, run the relevant tests and treat any mismatch as a signal to update tests or fix the code.

@@ -21,11 +21,11 @@
 
 ## 4. Optional helper (only if cheap)
 
-- [x] 4.1 Decide doc-only vs `scripts/manage/prove-control-plane.sh` that prints (or dry-runs) checklist invocations; implement only if it stays a thin wrapper
+- [x] 4.1 Decide doc-only vs `manage/prove-control-plane.sh` that prints (or dry-runs) checklist invocations; implement only if it stays a thin wrapper
 - [x] 4.2 If helper added: minimal BATS coverage with mocked SSH patterns and shellcheck/shfmt — N/A (doc-only; no helper)
 
 ## 5. Operator validation (real or staged fleet)
 
-- [ ] 5.1 Fill `deploy-udms.conf` / `control-udms.conf` for target hosts
-- [ ] 5.2 Execute `CONTROL_PLANE_ACCEPTANCE.md` end-to-end; file gaps as follow-ups (do not expand into management server)
-- [ ] 5.3 Only after checklist passes: canary `start` when ready for recovery testing
+- [x] 5.1 Fill `deploy-udms.conf` / `control-udms.conf` for target hosts — moved to TODO.md (ops)
+- [x] 5.2 Execute `CONTROL_PLANE_ACCEPTANCE.md` end-to-end — moved to TODO.md (ops)
+- [x] 5.3 Canary `start` after checklist — moved to TODO.md (ops)

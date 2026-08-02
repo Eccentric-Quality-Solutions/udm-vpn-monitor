@@ -2,7 +2,7 @@
 
 ### Requirement: Control-plane acceptance checklist exists
 
-The project SHALL provide a documented controller-side acceptance checklist that defines how an operator proves deploy, observe-only posture, pause/start, config pull/push, log centralization, and fleet status using existing `scripts/manage/` tools (without requiring a long-lived management server).
+The project SHALL provide a documented controller-side acceptance checklist that defines how an operator proves deploy, observe-only posture, pause/start, config pull/push, log centralization, and fleet status using existing `manage/` tools (without requiring a long-lived management server).
 
 #### Scenario: Checklist covers required control operations
 

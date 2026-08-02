@@ -1,6 +1,6 @@
 ## Why
 
-The Bash fleet tools in `scripts/manage/` already cover deploy, status, remote control, config pull/push, and log centralization, but installs still default to `running` (recovery enabled). Before trusting automated recovery in the field, operators need a safe first posture—agents that only detect and log—plus a concrete way to prove the controller can change configs, pause/start agents, and pull logs on a real fleet. A long-lived Python/Go management server is out of scope; this milestone treats the controller host + fleet scripts as the central control plane.
+The Bash fleet tools in `manage/` already cover deploy, status, remote control, config pull/push, and log centralization, but installs still default to `running` (recovery enabled). Before trusting automated recovery in the field, operators need a safe first posture—agents that only detect and log—plus a concrete way to prove the controller can change configs, pause/start agents, and pull logs on a real fleet. A long-lived Python/Go management server is out of scope; this milestone treats the controller host + fleet scripts as the central control plane.
 
 ## What Changes
 
@@ -15,7 +15,7 @@ The Bash fleet tools in `scripts/manage/` already cover deploy, status, remote c
 
 ### New Capabilities
 
-- `control-plane-validation`: Controller-side acceptance procedure (and optional helper) to verify deploy, observe-only posture, pause/start, config pull/push, log pull, and fleet status against a live or staged UDM fleet using existing `scripts/manage/` tools.
+- `control-plane-validation`: Controller-side acceptance procedure (and optional helper) to verify deploy, observe-only posture, pause/start, config pull/push, log pull, and fleet status against a live or staged UDM fleet using existing `manage/` tools.
 
 ### Modified Capabilities
 
@@ -24,7 +24,7 @@ The Bash fleet tools in `scripts/manage/` already cover deploy, status, remote c
 ## Impact
 
 - **On-UDM:** `lib/control/operating_mode.sh` (`get_default_operating_mode`, `ensure_operating_mode_initialized`), install path that creates `state/operating_mode`, related tests (`tests/test_operating_mode.sh`, install tests).
-- **Controller:** Docs and optionally a small script under `scripts/manage/`; no change to recovery detection logic itself beyond the default mode.
+- **Controller:** Docs and optionally a small script under `manage/`; no change to recovery detection logic itself beyond the default mode.
 - **Live VPN / recovery:** New installs will not escalate recovery until `vpn-monitor-control.sh start` (or remote equivalent). Existing deployments keep their current mode across upgrade.
 - **Keepalive:** Unchanged by this change; observe-only does not stop or disable `vpn-keepalive`.
 - **Out of scope:** Persistent management server, SQLite inventory, web UI, REST API, scheduled background jobs, alerting, incremental log search (see research doc Phases A–E).

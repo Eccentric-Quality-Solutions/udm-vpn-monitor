@@ -832,6 +832,7 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture diagrams, 
 
 - **[README.md](README.md)** - This file: User-facing documentation, installation, and usage
 - **[QUICK_START.md](QUICK_START.md)** - 5-minute setup guide for new users
+- **[MANAGEMENT_SERVER.md](docs/MANAGEMENT_SERVER.md)** - Fleet management server (`manage/`): deploy, status, remote control, config pull/push, logs, uninstall
 - **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and solutions
 - **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System architecture, design decisions, and component interactions
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
